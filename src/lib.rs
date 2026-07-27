@@ -133,6 +133,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // disposable, so a binary update reseeds the latest.
     mind::views::install_builtin_views(&config.data_dir).context("installing built-in views")?;
 
+    // The agent's skill workshop. Seeds the factory layer under `skills/_builtin/`
+    // (rewritten each boot) and creates the tree, so the workshop exists before the
+    // first note is written. Agent-written skills land alongside and are never touched.
+    mind::skills::install_builtin_skills(&config.data_dir).context("installing built-in skills")?;
+
     // The agent's precious drive — where it files artifacts worth keeping (a user's
     // handed-over documents, its own kept work). Created here so it always exists;
     // filling it is the agent's job. (Verbatim annex of memory; see data-dir-layout.)

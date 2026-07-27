@@ -6,6 +6,8 @@
 //!   and the recency projection; the agent's autobiographical + semantic record.
 //! - `views` — agent-authored views (learned, presentational memory) and the
 //!   compiler that turns their source into served ESM.
+//! - `skills` — the workshop: procedures in the agent's own words, plus the factory
+//!   seed layer under `skills/_builtin/`.
 //!
 //! Reads are the worker grepping the tree; writes flow through these stores'
 //! APIs. The provenance-tagged, seed-shadowing write *port* described in
@@ -13,4 +15,5 @@
 //! and namespace, not yet a gate.
 
 pub mod memory;
+pub mod skills;
 pub mod views;

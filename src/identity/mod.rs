@@ -204,6 +204,21 @@ then nothing's proven — lean quiet.",
         hot.display(),
         proactivity.display(),
     );
+    // The workshop. One line, because it is a place to look rather than something to
+    // load: procedures sediment there over time, and the mind can only start from a
+    // note it knows exists. Named by absolute path for the same reason as the files
+    // above. Seeded at boot by [`crate::mind::skills::install_builtin_skills`].
+    seed.push_str(&format!(
+        "\n\nYour know-how sediments in a workshop: {} — short notes in your own words \
+on how you did a kind of job, the steps that worked, the tools, the traps. Look there \
+before something you may have done before, and leave a note behind when you crack \
+something hard that will come up again. A note is a starting point, not gospel: the \
+fast-moving parts are marked, and you re-check those; the durable steps you reuse as \
+they are. Notes under `_builtin/` came with you rather than from experience — same \
+rules apply.",
+        crate::mind::skills::skills_dir(&base).display(),
+    ));
+
     // A soft language preference, if the person set one in Settings ▸ General ▸
     // Language. `system` / unset yields no line, so the agent simply follows the
     // person's lead (the default). A real choice appends one guidance line — the
@@ -271,6 +286,19 @@ mod soul_tests {
         // A real language → one guidance sentence naming the endonym.
         set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
         assert!(load_soul(dir.path()).contains("Speak with the person in 简体中文"));
+    }
+
+    #[test]
+    fn seed_points_at_the_skill_workshop_by_absolute_path() {
+        // The workshop is discoverable or it may as well not exist. One pointer, not
+        // an inlined skill — the mind opens what it needs.
+        let dir = tempfile::tempdir().unwrap();
+        let seed = load_soul(dir.path());
+        let skills = crate::mind::skills::skills_dir(dir.path());
+        assert!(skills.is_absolute());
+        assert!(seed.contains(&skills.display().to_string()));
+        // And it says what shape a note takes, including the marked-perishable rule.
+        assert!(seed.contains("starting point, not gospel"));
     }
 
     #[test]
