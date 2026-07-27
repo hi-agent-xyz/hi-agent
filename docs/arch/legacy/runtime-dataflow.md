@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a reference implementation of the [human-interface](../../human-interface/docs/human-interface.md) spec — small enough to read in one sitting, faithful enough to actually talk to. Cognition is delegated to an ACP agent subprocess; hi-agent is the **human-interface layer around it**: the channels, the presence loop, the memory, and the session orchestration the spec implies.
+Build a reference implementation of the [human-interface](../../../../human-interface/docs/human-interface.md) spec — small enough to read in one sitting, faithful enough to actually talk to. Cognition is delegated to an ACP agent subprocess; hi-agent is the **human-interface layer around it**: the channels, the presence loop, the memory, and the session orchestration the spec implies.
 
 The guiding test for every decision is **fidelity to the human metaphor**, not simplicity at the HTTP or implementation level. Where a choice diverges from how a person would do it, that divergence is named and justified.
 
@@ -248,5 +248,5 @@ Other load-bearing terms:
 
 ## References
 
-- [human-interface spec](../../human-interface/docs/human-interface.md)
+- [human-interface spec](../../../../human-interface/docs/human-interface.md)
 - [Agent Client Protocol](https://agentclientprotocol.com) · [schema](https://agentclientprotocol.com/protocol/schema)

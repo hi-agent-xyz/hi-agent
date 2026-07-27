@@ -11,7 +11,7 @@ Two consequences shape the whole subsystem:
 - **One lossless source of truth, many cheap regenerable projections.** The raw signal stream is the only authority; episodes, facets, and the working set are *derivations* that can be thrown away and rebuilt. (Lambda architecture / hippocampus→neocortex.)
 - **Capture is mechanical; meaning is the mind's job.** Recording a signal is a dumb, lossless write. *Segmenting* it into events, *summarizing* it into understanding — those are judgments, and per the project's standing value (human-interface fidelity over code heuristics) they belong to a cognition session at reflection time, never to a heuristic in Rust.
 
-This document is the **durable design contract** for memory, in the spirit of `architecture.md`. It describes the target, not the path there; migration steps are disposable and live in `impl.md`. The raw foundation is now in place; the derived layers remain (see §9).
+This document is the **durable design contract** for memory, in the spirit of `docs/arch/arch.md`. It describes the target, not the path there; migration steps are disposable and live in `impl.md`. The raw foundation is now in place; the derived layers remain (see §9).
 
 ## Design decisions
 
@@ -27,7 +27,7 @@ This document is the **durable design contract** for memory, in the spirit of `a
 | **Forgetting is delegated judgment, not a rule** | *When* and *what* to fade is a content call made by a forgetting sub-agent (informed by byte-pressure), not an age-sweep; the only hard rail is never fading bytes a reflection hasn't consolidated |
 | **The interleaved timeline is derived, never stored** | A scene is one timeline but stored per-channel; the mind reads a merge built on read (ordered by uuidv7 `id`), so there is no second copy to drift |
 | **`appearance` is retained state, not an utterance stream** | The screen persists until changed, so it is recorded as timestamped whole-state snapshots; the newest is the current screen (no separate current-state file). View lifetime is the reactor's decision — no server-side auto-expiry |
-| **Workers are scenes too — a worker run is its own lossless `raw/` stream** | Uniform ("everything is a scene with a signal stream"), and `architecture.md` §7 already requires worker transcripts to be inspectable |
+| **Workers are scenes too — a worker run is its own lossless `raw/` stream** | Uniform ("everything is a scene with a signal stream"), and `docs/arch/agents.md` already requires worker transcripts to be inspectable |
 | **The always-loaded core = `self.md` (authored identity) + `commitments.md` (standing duties) + `hot.md` (recent activation)** | Permanence, obligation, and recent-significance — three small files of different volatility, present in every session |
 | **Identity is authored, never self-written** | `core.md` (bundled) and `self.md` (per-install) are read-only to the agent; only an app update or operator edit moves them. The agent does not learn by rewriting who it is — it learns by accumulating facts it then reads (facets, incl. facts about itself); its one identity-adjacent write is `commitments.md` |
 | **`self` is not a facet** | facets model *external* entities; the authored `self` sits on the selfhood gradient `core → self → hot`, not next to people/locations |
@@ -95,7 +95,7 @@ memory/
 
 ### Organized by scene, then by channel
 
-`raw/` is sliced **by scene** (the isolation unit, `architecture.md` §6). Scene ids are arbitrary strings (`alice@phone`), so the `<scene>` directory is a **path-safe percent-encoding** and the true id lives in `scene.json`.
+`raw/` is sliced **by scene** (the isolation unit, `docs/arch/core.md`). Scene ids are arbitrary strings (`alice@phone`), so the `<scene>` directory is a **path-safe percent-encoding** and the true id lives in `scene.json`.
 
 Within a scene, each **channel is its own folder** (`text/`, `audio/`, `vision/`, `appearance/`), sharded by UTC day. A channel is that sense's complete record; the day-folder keeps reads bounded and makes per-channel fading/archival a single subtree. Each channel-day carries a **surface log named for the channel** — `text.jsonl`, `audio.jsonl`, `vision.jsonl` — one JSON object per line, both directions interleaved. (The filename is self-describing even detached from its folder — the old generic `log.jsonl` was not.)
 
@@ -157,7 +157,7 @@ Every other channel is an **event stream** (utterances). `appearance` is **retai
 ### Files and workers
 
 - **Files** — named artifacts *exchanged or produced* (a user-sent PDF, a worker's deliverable): flat under `files/`, not date-sharded (they outlive any day), kept in their original format. Code under active development stays in its real workspace/repo and is referenced by path + commit — never copied in.
-- **Workers are scenes** — a worker run is its own `raw/<worker-scene>/` of the same shape; its report flows back to the parent scene as an ordinary signal. This keeps worker transcripts inspectable, which `architecture.md` §7 requires.
+- **Workers are scenes** — a worker run is its own `raw/<worker-scene>/` of the same shape; its report flows back to the parent scene as an ordinary signal. This keeps worker transcripts inspectable, which `docs/arch/agents.md` requires.
 
 ## 4. `episodes` — derived event bundles
 
@@ -246,5 +246,5 @@ Reflection also **tends the old store**, not just the frontier: alongside consol
 
 ## References
 
-- [Architecture](architecture.md) — §5 (journal as durable backstop), §6 (scene isolation), §7 (inspectable workers)
+- [Architecture](arch/arch.md) — [`core.md`](arch/core.md) (journal, scene isolation), [`agents.md`](arch/agents.md) (workers)
 - [human-interface spec](../../human-interface/docs/human-interface.md)

@@ -421,7 +421,7 @@ impl AgentConfig {
     /// when the reactor had accidentally inherited Opus *and* rode a hang-zone adapter,
     /// and the small model was a workaround for a ~7-min turn. The adapter is pinned now;
     /// the workaround is retired in favour of the smart model the contract calls for. See
-    /// docs/reactor-cognition-split.md.)
+    /// docs/arch/agents.md.)
     pub fn reactor_model(&self) -> Option<String> {
         match self.wire {
             LlmWire::Claude => self

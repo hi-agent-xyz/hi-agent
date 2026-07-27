@@ -2,7 +2,7 @@
 
 ## Goal
 
-The guiding test for every hi-agent decision is **fidelity to the human metaphor** (see `architecture.md`). That makes *how a person actually does this* a first-class design input, not a flourish reached for after the fact. This document records the **human cognitive behaviors we've decided to model** — each as a behavior, the principle drawn from it, and the design consequence. It explains *why* the system is shaped the way it is; the mechanisms live in the subsystem docs (`memory.md`, the people-recognition design).
+The guiding test for every hi-agent decision is **fidelity to the human metaphor** (see `docs/arch/arch.md`). That makes *how a person actually does this* a first-class design input, not a flourish reached for after the fact. This document records the **human cognitive behaviors we've decided to model** — each as a behavior, the principle drawn from it, and the design consequence. It explains *why* the system is shaped the way it is; the mechanisms live in the subsystem docs (`memory.md`, the people-recognition design).
 
 > The brain runs grossly desynchronized, noisy, ambiguous inputs and still produces a coherent, confident sense of the world — not by measuring precisely, but by **binding correlated evidence within tolerant windows and deferring what isn't yet clear.** Model the tolerance and the deferral, not a precise machine.
 

@@ -6,7 +6,7 @@
 //! session with ([`load_soul`]) and the **prompt cascade** that materialises the
 //! bundled prompts under `<data_dir>/prompts/`, composing each managed base with an
 //! optional operator `*.local.md` override ([`install_prompts`]). That cascade is
-//! the base‹override mechanism `arch.md` generalises to base‹user‹self.
+//! the base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
 //!
 //! Scope notes for the in-flight refactor:
 //! - `install_prompts` still materialises the **view-builder guides** (`appearance.md`,
@@ -91,7 +91,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 }
 
 /// The **reactor**'s system prompt — the fast conversational voice of the
-/// reactor/cognition split (see `docs/reactor-cognition-split.md`). Unlike
+/// reactor/cognition split (see `docs/arch/agents.md`). Unlike
 /// [`load_soul`] (a thin seed pointing an *agentic* session at files to Read), the
 /// reactor is a single non-agentic Messages call, so its brief is **inlined and
 /// singular**: `speaking.md` — when to speak, how much, when to stay quiet — *is* its

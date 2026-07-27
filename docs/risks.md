@@ -15,7 +15,7 @@ The original architecture multiplexed N concurrent ACP sessions over one
 `claude-code` subprocess (shared stdio), and it was unverified whether
 `claude-code` ran concurrent prompts in parallel or serialized them. That
 question is moot now: each session runs in **its own subprocess**
-(`architecture.md` §6), so cross-session concurrency comes from the OS, not the
+(`docs/arch/core.md`), so cross-session concurrency comes from the OS, not the
 adapter. The per-scene reactor loop still serializes one turn per scene — that is
 a reactor policy, not a subprocess limit. The cost this introduces — a subprocess
 spawn per session — is tracked under "MCP attachment" below.

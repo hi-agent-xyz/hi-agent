@@ -9,8 +9,8 @@
 //!
 //! Reads are the worker grepping the tree; writes flow through these stores'
 //! APIs. The provenance-tagged, seed-shadowing write *port* described in
-//! `docs/arch.md` is future work — for now this module is the faculty's home and
-//! namespace, not yet a gate.
+//! `docs/arch/stores.md` is future work — for now this module is the faculty's home
+//! and namespace, not yet a gate.
 
 pub mod memory;
 pub mod views;

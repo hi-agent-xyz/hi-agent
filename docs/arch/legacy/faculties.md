@@ -208,6 +208,6 @@ the load-bearing parts of `architecture.md` §8.
 
 ## References
 
-- [`architecture.md`](architecture.md) — the runtime data-flow contract
-- [`human.md`](human.md) — the human behaviors we model
-- [`data-dir-layout.md`](data-dir-layout.md) — the `data/` tree this doc's `identity`/`mind` sit over
+- [`runtime-dataflow.md`](runtime-dataflow.md) — the runtime data-flow contract (this doc's sibling)
+- [`human.md`](../../human.md) — the human behaviors we model
+- [`data-dir-layout.md`](../../data-dir-layout.md) — the `data/` tree this doc's `identity`/`mind` sit over

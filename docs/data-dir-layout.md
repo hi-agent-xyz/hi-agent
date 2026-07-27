@@ -199,6 +199,6 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
 
 ## References
 
-- [Architecture](architecture.md) — the layered stack, scenes, the reactor/worker split.
+- [Architecture](arch/arch.md) — the layered bands, scenes, the tempo ladder.
 - [Memory subsystem](memory.md) — the contract for `memory/` (raw, episodes, facets, reflection).
 - CLAUDE.md — "Testing user journeys live" (transcripts as ground truth), Mac-mini-as-disposable.
