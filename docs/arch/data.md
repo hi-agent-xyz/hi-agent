@@ -20,15 +20,20 @@ The question is not *where* something lives — it all lives here — but **who 
 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
-| `raw/` — every signal as it arrived | `memory/` — episodes, facets, tasks |
-| `journal/` — the durable backstop | `drive/` — what was decided worth keeping |
-| `prompts/` — the factory bases | `prompts/` — the self layer |
-| `skills/`, `views/` — the factory seeds | `skills/`, `views/` — everything learnt |
+| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks |
+| `prompts/` — the factory bases | `drive/` — what was decided worth keeping |
+| `skills/`, `views/` — the factory seeds | `prompts/`, `skills/`, `views/` — everything learnt |
 
-**Where a subtree has two writers, the layers stay separate.** An upgrade replaces the
-factory layer and never touches the learnt one — so there is never a merge conflict, only a
-precedence decision. Collapse them and an upgrade either clobbers what the agent learnt or
-can no longer refresh its own seeds.
+**One pen per subtree — and the subtree, not the top-level directory, is the unit.**
+`memory/raw/` is foundation's; the rest of `memory/` is the agents'. They share a roof and
+never a file, which is all the rule ever required. Reading it as a top-level boundary is what
+would push the log out to the root, where it means less.
+
+**Factory-versus-learnt is a different rule, and it still holds.** Where a subtree carries
+both layers — `prompts/`, `skills/`, `views/` — they stay physically separate. An upgrade
+replaces the factory layer and never touches the learnt one, so there is never a merge
+conflict, only a precedence decision. Collapse them and an upgrade either clobbers what the
+agent learnt or can no longer refresh its own seeds.
 
 ## Decisions
 
@@ -41,25 +46,37 @@ can no longer refresh its own seeds.
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
 | Secrets never enter a thinking layer | The one invariant structure alone cannot enforce |
 
-## `raw/`
+## `memory/raw/`
 
-Every signal, as it arrived: text, audio, vision, files. Append-only, and **precious the
-moment it lands** — before anything has understood it.
+**The log — one tree, not two.** Everything crossing the agent's boundary lands here, in
+order, as it arrived. What earlier drafts called the *journal* was never a second place; it
+was this same log named after its other half, and carrying both names is the one genuine
+confusion in this directory.
 
-That preciousness is exactly why foundation writes it: it must be safe without depending on
-any interpretation having happened yet. Graduation into `drive/` is *organization*, not
-safety.
+It sits **inside `memory/`** on purpose: what the agent heard belongs with what it remembers.
 
-Bulk payloads differ in mechanism, not principle: raw holds the **event**, and large bytes
-are staged and moved rather than copied through.
+Four properties, each earned:
 
-## `journal/`
+1. **Written before anything reacts to it.** Durability must not depend on a session
+   surviving. This is the claim the rest rests on — recovery reads the log, never a live
+   process.
+2. **Both directions, everything that crossed.** In *and* out: what was said and what was
+   shown, not just what was sent to us, and clock-driven wakes and worker reports alongside
+   them. A restart that cannot reconstruct what the agent already said will say it again.
+   **The honest gap today is outbound**, which is barely recorded — the concept is decided,
+   the coverage is not there yet.
+3. **Append-only, and precious the moment it lands** — before anything has understood it.
+   That preciousness is exactly why foundation holds the pen: it must be safe without
+   depending on any interpretation having happened. Graduation into `drive/` is
+   *organization*, not safety.
+4. **Authoritative for recovery and cold start** — not session lifetime, which is what makes
+   long-lived sessions safe to keep. Mechanical throughout: append, read back, snapshot.
 
-Every signal in and out, written **before anything reacts to it**. The journal — not session
-lifetime — is authoritative for durability, recovery and cold start, and it is what makes
-long-lived sessions safe to keep. Mechanical: append, read back, snapshot.
+Bulk differs in mechanism, not principle: the log holds the **event**, and large bytes are
+staged and moved rather than copied through.
 
-Distinct from the logger, which is a debug surface rather than a durability mechanism.
+Distinct from the logger and the [observatory](foundation.md#observatory), which are debug
+surfaces — lossy and disposable by design. That difference is argued once, there.
 
 ## `prompts/`
 
@@ -79,7 +96,9 @@ nowhere to land, and the same mistake returns next week.
 
 ## `memory/`
 
-Design detail lives in [`../memory.md`](../memory.md); this is the architectural shape.
+Design detail lives in [`../memory.md`](../memory.md); this is the architectural shape. The
+[log](#memoryraw) is part of this tree too — described first, because everything else here is
+derived from it.
 
 **Episodes** — what happened, with provenance. The evidence base from which competence is
 computed at read time rather than stored as a level, so answers can honestly distinguish
@@ -90,6 +109,17 @@ revisable, correctable by one sentence from the person.
 
 **Projected working sets** — what Reaction, Deliberation and Cognition carry into every
 window. **Written by code**, so their size stays bounded and their contents predictable.
+
+**Proactivity** — the standing licence to speak unprompted, *per subject*: which topics the
+person welcomes an unasked word on, which they tolerate, which are unproven, which are muted.
+It is **learnt, not configured** — every unprompted word is a bet, and how it was met is the
+evidence. Reflection folds each outcome back in.
+
+Two properties it cannot work without. It **moves asymmetrically**: one brush-off pulls a
+subject well back, warmth earns a small slow step up — because being talked at about the
+wrong thing costs far more than a missed heads-up. And it is **short enough to read every
+time**, since it is consulted before every proactive word; a licence too long to check is a
+licence nobody checks.
 
 ### Tasks
 
@@ -126,8 +156,10 @@ Distinct from the person's own archive.
 | Projects | artifacts and bytes it produced or was given |
 | Notes | verbatim pages — endpoints, calling conventions, where a key lives |
 | Accounts | what it is logged into, and **where** each secret lives — never the secret |
-| Devices | reachability, grants and accounts, per device |
 | Ledgers | append-only, e.g. message-id → done, so a serving task never duplicates or misses |
+
+There is no devices entry, on purpose: a device is [a tool plus a procedure](foundation.md#devices),
+so what is worth keeping about one is a note and a skill, not a registry row.
 
 **Two doors in.** Explicit — *"save this"* — goes through a worker now, at conversational
 latency. Emergent — *"this turned out to be worth keeping"* — is graduated later by

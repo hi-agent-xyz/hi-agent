@@ -13,7 +13,7 @@ hand — without any of that reaching the thinking layers as protocol.
 | A device is both a surface and an effector | Same hardware, two roles, told apart by who moved first |
 | File is a signal, but carries a **ref** — never content | A handed-over object, not something perceived |
 | Vision emits a ref; the agent decides whether to look | Perception is *pulled*, not pushed |
-| Emission is natural language; anything answerable is a tool call | People talk without invoking an API, but do take deliberate, answerable actions |
+| Everything outbound is a tool call, the voice included | The arbiter needs somewhere to stand: a call can be held, queued or refused, and the caller finds out. The words stay natural language |
 
 ## Surfaces
 
@@ -31,8 +31,8 @@ on the user's behalf.
 - **as an effector** — hi-agent initiates. It opens Reddit on its own Android, logged into
   its own account, because that is the only way to reach that content.
 
-Nothing distinguishes the two except who moved first. The device itself — its reachability,
-grants and accounts — is described in [`foundation.md`](foundation.md#devices).
+Nothing distinguishes the two except who moved first. On the effector side a device is just a
+tool plus a written procedure — see [`foundation.md`](foundation.md#devices).
 
 ## Channels
 
@@ -41,12 +41,12 @@ zero knowledge of the wire.
 
 | Channel | Direction | Carried as |
 |---|---|---|
-| text | in / out | content block · output stream |
+| text | in / out | content block · the `say` call |
 | audio | in | text after STT today; an audio block once we model paralinguistics |
-| audio | out | output stream → TTS, core-side |
+| audio | out | the same `say` call, rendered by TTS core-side |
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
-| surface (rich content) | out | inline markers — emission |
+| surface (rich content) | out | the `show` call, by **path ref** |
 | action | out | tool call — request/response |
 
 ### Why a ref and not the bytes
@@ -63,24 +63,39 @@ is exactly what the person wanted kept.
 
 ### Bulk
 
-Large payloads must **not flow through raw and then get copied** into drive — both trees
-are synced, so that is duplication with no durability gain. Raw holds the event; the bytes
-are staged and moved.
+Large payloads must **not flow through the log and then get copied** into drive — both trees
+are synced, so that is duplication with no durability gain. The log holds the event; the
+bytes are staged and moved.
 
 ## Carriers
 
-The agent reaches these channels over ACP, which has no concept of a channel. Three
-carriers, and the line between them is both technically real and human:
+The agent reaches these channels over ACP, which has no concept of a channel. One rule
+covers every direction:
 
-- **Emission — fire and forget.** Speaking and showing. Natural language plus inline
-  markers. No return value. A person talks and gestures without invoking anything.
-- **Perception and action — needs an answer.** "Look at that," "set a timer," "click this."
-  Tool calls: structured arguments, request/response. A person deliberately turns to look,
-  picks up the cup.
+> **Everything outbound is a tool call.** Looking, acting, showing — and speaking.
 
-Keeping the voice in natural language while routing *answerable* needs through tools is
-what preserves "think, then organize words". The thinking layers express intent; the core
-articulates it.
+**Speech was the last emission, and making it answerable is what gives the arbiter somewhere
+to stand.** `say` returns, so the arbiter can hold an utterance until the room is right,
+queue it behind another, or refuse it outright — and Reaction finds out which. Fire-and-forget
+has nowhere to put that decision, and the [presence gate](core.md#presence) is exactly the
+thing that needs one: an utterance that cannot be held is an utterance spoken into an empty
+room.
+
+**Showing is a call for the same reason and one of its own.** Putting something on a screen
+is an act, not a gesture: it can fail, it has an id, and it can be taken down again.
+
+**A worker hands a view over as a path ref.** The worker builds the view and passes its
+**ref**; Reaction calls `show` with the ref, and the **host resolves it server-side**. So
+view source never enters a thinking layer's context — which is the point. A view is a build
+artifact, sometimes thousands of lines, and the window that has to answer fastest is the last
+place it should be paid for.
+
+There is no marker vocabulary anywhere, and nothing is parsed back out of the model's text.
+
+What survives of "think, then organize words" is the half that mattered: **the voice is still
+natural language**. Reaction writes the sentence it means — it just hands it over instead of
+streaming it at the world. The thinking layers express intent; the core articulates it, and
+now it can also decline to.
 
 ## Batching
 

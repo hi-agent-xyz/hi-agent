@@ -585,7 +585,7 @@ struct ReactorInner {
     /// Structured visibility into the session lifecycle. Turn, session, swap,
     /// worker and alarm events feed it; the HTTP front serves it.
     observatory: Observatory,
-    /// Compiles agent-authored `[[view]]` source into an ESM module the browser
+    /// Compiles agent-authored view source into an ESM module the browser
     /// imports. Invoked just-in-time when a view segment is released, so the
     /// compiled module URL is what rides the /view channel.
     view_compiler: crate::mind::views::ViewCompiler,

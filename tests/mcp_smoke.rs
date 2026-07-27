@@ -91,9 +91,9 @@ async fn tools_list_is_role_gated() {
     .await
     .expect("json");
     let names = tool_names(&reactor);
-    assert!(names.contains(&"delegate".to_string()), "got {names:?}");
-    assert!(names.contains(&"alarm".to_string()), "got {names:?}");
-    assert!(!names.contains(&"ask".to_string()), "reactor must not see ask");
+    // The reactor is the fast conversational voice: its surface is exactly one
+    // expression tool. Everything heavy is delegated in code, not via a tool.
+    assert_eq!(names, vec!["show_view".to_string()], "got {names:?}");
 
     let worker = post_mcp(
         &client,

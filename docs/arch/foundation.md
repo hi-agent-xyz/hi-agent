@@ -2,8 +2,8 @@
 
 ## Goal
 
-Be everything the agent stands on and reaches with: the engine that runs it, and the tools
-and devices it acts through.
+Be everything the agent stands on and reaches with: the engine that runs it, and the tools it
+acts through — devices among them.
 
 Nothing here decides anything. It has to keep working while the thinking layers are slow,
 wrong, or gone — and [`data/`](data.md), not this, is where the agent itself lives.
@@ -12,15 +12,18 @@ wrong, or gone — and [`data/`](data.md), not this, is where the agent itself l
 
 > **Producing this requires no judgment.**
 
-A signal landing in raw, a line appended to the journal, a config value resolving, an
-embedding being computed, a shell command running — none of these need an agent to be
-correct. Everything requiring a decision belongs to an agent; foundation only carries it out.
+A signal appended to the log, a config value resolving, an embedding being computed, a shell
+command running — none of these need an agent to be correct. Everything requiring a decision belongs to an agent; foundation only carries it out.
 
 ## What it writes into `data/`
 
-Foundation holds the pen for the mechanical subtrees: `raw/`, `journal/`, the factory layer
-of `prompts/`, and the factory seeds under `skills/` and `views/`. Those are described where
-they live, in [`data.md`](data.md#who-holds-the-pen).
+Foundation holds the pen for the mechanical subtrees: the log at `memory/raw/`, the factory
+layer of `prompts/`, and the factory seeds under `skills/` and `views/`. Those are described
+where they live, in [`data.md`](data.md#who-holds-the-pen).
+
+The pen is held **per subtree, not per top-level directory** — the log sits inside `memory/`,
+whose other subtrees the agents write. Two writers under one roof is fine; two writers on one
+file is not.
 
 Wherever a subtree has both a factory and a learnt layer, the two stay physically separate,
 so an upgrade replaces one and never the other.
@@ -35,7 +38,32 @@ so an upgrade replaces one and never the other.
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
 | Build pipeline | esbuild and headless-browser rendering for views |
-| Logger / observatory | operational visibility — **distinct from the journal**, which is a durability mechanism, not a debug surface |
+| Logger / observatory | operational visibility — [not the log](#observatory), and the difference matters |
+
+### Observatory
+
+A **live operational mirror**: turns, sessions, swaps, workers, alarms — what the machine is
+doing *right now*, structured enough to answer "why is it quiet" without trawling output.
+
+**It is deliberately not [the log](data.md#memoryraw), and those two must not be merged** —
+this is the one place that distinction is argued, and everywhere else points here. The log is
+a durability mechanism: append-only, both directions, authoritative for recovery. The
+observatory and the logger are debug surfaces: lossy and disposable by design. Merge them and
+you get either a log shaped by what is convenient to display, or a debug view nobody dares
+drop. Both are worse than keeping two things that happen to look alike.
+
+Like every debug surface here, it shows [ground truth](#debug-surfaces) — raw fields, no
+per-event interpretation.
+
+### Energy
+
+What a turn costs and what is left: quota and spend, tracked per account and enforced at the
+gateway, not by the thinking layers.
+
+**Running out is a first-class state, not an error.** It is knowable in advance, it recovers
+on its own clock, and the person can do something about it — so it is surfaced plainly and
+early rather than as a failed turn. The failure this exists for is an agent that goes quietly
+useless and does not say why.
 
 ---
 
@@ -48,26 +76,32 @@ There is no separate "effector" layer. From the agent's side everything is a too
 
 | Decision | Reasoning |
 |---|---|
-| The side-effect boundary is a **grant table**, not a layer | Roles already differ only by prompt + tool surface; a table is testable, a drawing is not |
+| Per-role tool surfaces are a **context optimization**, not a boundary | A smaller surface is a smaller window and a faster turn. What actually divides the roles is who does the job, not who *could* call what |
 | Classify by **who had to be present** | That, not what the tool is, predicts whether a job stalls |
 | Operate UI where no API exists | A person with an account can do it; so can we |
 | A missing tool is part of the task | Degrading to a web search when the answer was "install it" is a failure |
 | Irreversible or outward-facing → ask | Publishing cannot be undone; caches and indexes outlive deletion |
 | General vision over per-app scripting | See-and-click works on any app; a script works on one |
 
-## Who may act
+## Default tool surfaces
 
-"Only workers act" is enforced here, by what each role is granted:
+Each role is handed a **default** surface, sized to keep its context small — every tool
+definition in the window costs tokens and latency on a turn that is trying to be fast. This
+is a default, not a rail: "only workers act" means workers do the actual jobs, not that the
+host fences anyone out.
 
-| Role | Tools granted |
-|---|---|
-| **Reaction** | none — it cannot fetch, and that is why it is fast |
-| **Deliberation** | memory reads · pure transforms (image→text, …) |
-| **Cognition** | memory read/write · task operations · dispatch |
-| **Workers** | everything — shell, devices, web, build |
+| Role | Default surface | Why that size |
+|---|---|---|
+| **Reaction** | `say` · `show` | its two expression channels and nothing else — it cannot fetch, and that is why it is fast |
+| **Deliberation** | memory reads · pure transforms (image→text, …) | enough to work out what was asked, without a window full of effectors |
+| **Cognition** | memory read/write · task operations · dispatch | it delegates rather than does |
+| **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |
 
-A **pure transform** changes data; an **effecting tool** changes the world. Only workers get
-the second kind.
+A **pure transform** changes data; an **effecting tool** changes the world. Workers carry the
+effecting ones because that is where the work is, not because anyone above is untrusted — a
+role reaching outside its default is a sizing mistake to correct, not an intrusion to block.
+The real guardrails are [invariant 9](arch.md#invariants) and the
+[gates](#gates) below, and both are judgment.
 
 ## Bundled
 
@@ -100,26 +134,29 @@ is the work — not a prerequisite to it.
 What gets equipped must become **discoverable later**, or the next job re-solves it. That is
 what [`skills/`](data.md#skills) is for.
 
----
+## Devices
 
-# Devices
+A device — an Android handset, a Mac, a box on the network — is **a tool plus a written
+procedure**, and nothing further. There is no device registry and no device data structure:
+that is deliberate, and it is the softest treatment available. Reachability and grants are
+things the agent **notes down when it learns them and re-verifies before relying on them**,
+because they change without telling us and a stale registry is worse than no registry.
 
-Machines and phones hi-agent can reach — an Android handset, a Mac, whatever gets added. All
-of them are equipped rather than bundled; none arrives for free.
+Devices are equipped, never bundled; none arrives for free. A device is also
+[a surface as well as an effector](surfaces.md#surfaces), told apart only by who moved first.
 
-A device is **both a surface and an effector**, told apart only by who moved first: a surface
-when someone messages hi-agent's account on it, an effector when hi-agent opens an app on it
-to get something done.
-
-Their state lives in [`drive/devices`](data.md#drive): **reachability** (can we get to it,
-and how), **grants** (what the OS will permit), **accounts** (what it is signed into).
+Adding one is a job, not a config step, so it ships as a **seeded skill**: it lays out the
+options and equips whichever the person picks — SSH to a machine they own, `adb` to an
+Android handset, or **https://abacad.ai** for a device reached over the network. Whatever
+gets equipped is written down like any other agent-learnt tool, in
+[`skills/`](data.md#skills), or the next job re-solves it.
 
 Two things about devices that no amount of code fixes:
 
 - **The same tool works or not depending on how the host was launched.** A process started
   over SSH has no window server and no granted permissions; identical code driven from a
-  desktop session does. That is an environment property, so it belongs in the registry, not
-  in the agent's beliefs.
+  desktop session does. So check the environment, and check again after a reboot — never
+  carry it as a belief.
 - **The logged-in session *is* the credential.** Publishing to a platform with no open API
   means driving an app that is already signed in — no key to store, nothing to leak.
 
@@ -144,8 +181,9 @@ never silently retry a blocked automation.
 Two, and they fire *inside* running work rather than before it starts:
 
 - **Sensitive or irreversible** — payment, deletion, outbound send, account operations. The
-  worker suspends, routes a question up, resumes. See
-  [Decision Maker](agents.md#decision-maker).
+  worker suspends, routes a question up, resumes. The call itself is a
+  [Decision Maker](agents.md#decision-maker)'s job — a specialized worker, not a checkpoint
+  in the path.
 - **Outward-facing publication** — staged for explicit approval, always.
 
 ## Verification
@@ -179,5 +217,5 @@ the built-versus-grown line is drawn by mechanics rather than design taste.
 
 [`arch.md`](arch.md) for the authorship rule ·
 [`data.md`](data.md) for everything this engine serves ·
-[`agents.md`](agents.md#workers) for who may call these ·
+[`agents.md`](agents.md#workers) for where the jobs that use these get done ·
 [`../data-dir-layout.md`](../data-dir-layout.md) for the concrete tree.
