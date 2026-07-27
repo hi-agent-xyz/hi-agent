@@ -20,7 +20,7 @@ The question is not *where* something lives — it all lives here — but **who 
 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
-| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks, system prompts |
+| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks, and `memory/prompts/` |
 | `prompts/` — the bundled system prompts, all of them | `drive/` — what was decided worth keeping |
 | `skills/`, `views/` — the factory seeds | `skills/`, `views/` — everything learnt |
 
@@ -35,7 +35,7 @@ factory layer and never touches the learnt one, so there is never a merge confli
 precedence decision. Collapse them and an upgrade either clobbers what the agent learnt or can
 no longer refresh its own seeds. `prompts/` no longer carries both: it is bundled through and
 through, and what the agent writes for itself lives in
-[`memory/system-prompts/`](#memorysystem-prompts) instead.
+[`memory/prompts/`](#memoryprompts) instead.
 
 ## Decisions
 
@@ -98,8 +98,9 @@ the cost, stated plainly: **there is no longer a lever that overrides the agent 
 through it.** A correction that does not stick is now a memory bug to fix, not a file to
 hand-edit.
 
-State the agent carries forward is not here at all. It is *generated*, and lives in
-[`memory/system-prompts/`](#memorysystem-prompts).
+State the agent carries forward is not here at all. It is *generated*, and lives one level
+down in [`memory/prompts/`](#memoryprompts) — the same leaf name under a different parent,
+and the parent is the point.
 
 ## `memory/`
 
@@ -115,7 +116,7 @@ computed at read time rather than stored as a level, so answers can honestly dis
 revisable, correctable by one sentence from the person.
 
 **Generated system prompts** — what each agent that needs state carries into every window.
-Written by an agent, injected and bounded by code; [below](#memorysystem-prompts).
+Written by an agent, injected and bounded by code; [below](#memoryprompts).
 
 **Proactivity** — the standing licence to speak unprompted, *per subject*: which topics the
 person welcomes an unasked word on, which they tolerate, which are unproven, which are muted.
@@ -128,7 +129,7 @@ wrong thing costs far more than a missed heads-up. And it is **short enough to r
 time**, since it is consulted before every proactive word; a licence too long to check is a
 licence nobody checks.
 
-### `memory/system-prompts/`
+### `memory/prompts/`
 
 One file per agent that needs state carried forward.
 
@@ -141,10 +142,13 @@ That is not a full set, on purpose — an agent gets one when it turns out to ne
 Reflection plausibly never will: its state is a frontier cursor plus the stores themselves,
 and neither belongs in a window.
 
-**Bundled versus generated is the whole distinction, and the parent directory carries it.**
-[`prompts/`](#prompts) is bundled — shipped in the binary, reinstalled every boot, disposable.
-`memory/system-prompts/` is generated — written by the agent, precious, and rebuildable by
-nothing else. Both are text fed to an agent at init; nothing further separates them.
+**Bundled versus generated is the whole distinction, and the parent directory is what carries
+it.** Both leaves are named `prompts/` on purpose — they hold the same kind of thing, text
+handed to an agent at init. Everything that differs is one level up:
+[`data/prompts/`](#prompts) is **bundled** — shipped in the binary, reinstalled every boot,
+disposable. `data/memory/prompts/` is **generated** — written by the agent, precious, and
+rebuildable by nothing else. It sits under `memory/` because that is what it is: what this
+agent remembers to bring.
 
 **The agent writes the content. Code owns injection and the bound.**
 
@@ -250,7 +254,7 @@ The toolbox of built surfaces, named by *what they are* rather than by the task 
 them — the name is what makes reuse possible.
 
 **Nothing graduates out of the toolbox.** A view used recently leaves a trace in its scene's
-[memory](#memorysystem-prompts) because it mattered there — the same way anything else that
+[memory](#memoryprompts) because it mattered there — the same way anything else that
 mattered does, written by the same judgment. Everything else is read on demand: list the
 toolbox, against the guidelines for building views. Slow, and it always works.
 

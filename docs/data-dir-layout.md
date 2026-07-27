@@ -23,7 +23,7 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 | **Ad-hoc views start in `views/`; their source *graduates* into `drive/` when worth keeping** | Filing is a deliberate act, the same fluid→solid move as `raw → facet`; most views die in `views/`, unmissed |
 | **Capabilities are reached as on-demand skills, not always-loaded tools** | MCP tools cost context every turn; a long tail of capabilities belongs in the loaded-on-demand tier |
 | **Secrets are resolved at call-time by the effector, never held in the mind's context** | You don't recite your password to use it; the value sits in the drive/env, the mind holds only a pointer |
-| **`prompts/` is bundled and disposable; carried-forward state is generated into `memory/system-prompts/`** | Both are text fed to an agent at init — the parent directory is what says who wrote it and whether losing it matters |
+| **`data/prompts/` is bundled and disposable; `data/memory/prompts/` is generated and precious** | Same kind of thing — text fed to an agent at init — so they share a leaf name; the parent directory is what says who wrote it and whether losing it matters |
 
 ---
 
@@ -36,7 +36,7 @@ data/
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
     tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
-    system-prompts/  #   GENERATED, one per agent that needs state — agent-written, precious
+    prompts/         #   GENERATED system prompts, one per agent that needs state — agent-written, precious
       scenes/<id>.md #     what one scene carries forward (written by that scene's Deliberation)
       cognition.md   #     the sceneless brain's
 
@@ -59,10 +59,10 @@ data/
 
 Five **kinds**, each a place on a person's computer:
 
-1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and what each agent carries into every window (`system-prompts/`). Mostly reconstructive: reflection summarizes and regenerates the understanding.
+1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and what each agent carries into every window (`memory/prompts/`, generated — the bundled `prompts/` at the root is the other one, and the parent directory is what says which). Mostly reconstructive: reflection summarizes and regenerates the understanding.
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
-4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent and reinstalled from the binary every boot; the *only* thing here is what we ship.
+4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent and reinstalled from the binary every boot; the *only* thing here is what we ship. Its counterpart is `memory/prompts/`, which the agent writes.
 5. **claude-config/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
 
 ## The two axes that place everything
@@ -91,11 +91,12 @@ understanding reflection distills from it. Precious and synced. Reflection **own
 reconstructive part of this tree — it rewrites facets whole, but never the log.
 
 Two things under `memory/` are **not** reconstructive and not reflection's: `tasks/` is the
-one ledger of what is owed (nothing else records a duty), and `system-prompts/` holds the
+one ledger of what is owed (nothing else records a duty), and `memory/prompts/` holds the
 **generated** system prompts — one per agent that needs state, written by that agent, injected
-and capped by code, and rebuildable by nothing else. A scene's is written by its
-Deliberation, because Reaction has no file access to write its own. Contract in
-[`arch/data.md`](arch/data.md#memorysystem-prompts).
+and capped by code, and rebuildable by nothing else. A scene's is written by its Deliberation,
+because Reaction has no file access to write its own. It shares a leaf name with the bundled
+`prompts/` at the root because it is the same kind of thing; the parent directory is the whole
+of the difference. Contract in [`arch/data.md`](arch/data.md#memoryprompts).
 
 **Outbound is the gap today.** The concept covers both directions; the capture does not yet —
 inbound is recorded, outbound barely, so a restart cannot reconstruct what was said or shown.
@@ -140,7 +141,7 @@ Read-only to the agent and re-materialized at every boot from the binary (`inclu
 an edit here does not survive and is not meant to. **One layer only** — there is no user
 override file and no agent-writable slot. An instruction from the person lands as a preference
 facet or a task like anything else they say, and what the agent carries forward is generated
-into `memory/system-prompts/`; the reasoning, and its cost, is in
+into `memory/prompts/`; the reasoning, and its cost, is in
 [`arch/data.md`](arch/data.md#prompts). Two flavors of seed:
 
 - **Behavior** — `core.md`, `speaking.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
@@ -208,7 +209,7 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
   does not.
 - **Not yet built:** outbound capture in `raw/`. The log is decided as both-directions; only
   inbound is recorded today.
-- **Not yet built:** `memory/system-prompts/`. Today a single mechanically-projected recency
+- **Not yet built:** `memory/prompts/`. Today a single mechanically-projected recency
   digest stands in for all of them — no agent writes it, it is seeded only when a session
   opens rather than injected every turn (a real bug, not just a gap), and nothing caps it.
 

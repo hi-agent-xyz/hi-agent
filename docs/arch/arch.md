@@ -23,7 +23,7 @@ So the question is never *where does this live* but **who holds the pen**:
   the bundled system prompts and the seed skills and views. All mechanical, none of it needing
   an agent to be correct.
 - **Agents write** episodes, facets, tasks, their own
-  [generated system prompts](data.md#memorysystem-prompts), drive, and everything learnt.
+  [generated system prompts](data.md#memoryprompts), drive, and everything learnt.
 
 The unit is the **subtree, not the top-level directory**. Foundation's log lives *inside*
 `memory/`, alongside what the agents write, because what the agent heard belongs with what it
@@ -68,7 +68,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
                all of the above = one ACP session, differing only by prompt + tools
   ─────────────────────────────────────────────────────────────────────────────
   data/        memory (raw = the log · episodes · facets · tasks ·
-                       system-prompts = generated, one per agent that needs state) ·
+                       prompts = generated, one per agent that needs state) ·
                prompts (bundled) · drive · skills · views
   ─────────────────────────────────────────────────────────────────────────────
   FOUNDATION   engine   runtime · ACP/MCP · gateway · config · store I/O · build ·

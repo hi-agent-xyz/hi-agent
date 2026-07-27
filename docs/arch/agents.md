@@ -38,7 +38,7 @@ the voice included. No reads, no fetches, no working directory: it is fast becau
 a hard problem and needs a capable model.
 
 Not blind, because its memory is **prepared**: the bundled prompt for its role, plus its
-scene's [generated one](data.md#memorysystem-prompts) — what the conversation carries forward,
+scene's [generated one](data.md#memoryprompts) — what the conversation carries forward,
 open tasks, the recent log tail — all in context before the first word. **Code injects that
 every turn and caps it**, so it cannot grow with usage. Two hundred open tasks project as a
 summary, not a list.
@@ -62,7 +62,7 @@ think without leaving the scene, and so that no scene ever waits on another.
 **Its second job is the scene's memory.** Reaction consumes a generated system prompt it
 cannot write, so someone has to decide what this conversation carries forward — and that is a
 judgment made out of having read around, which is exactly this rung. It writes
-[`memory/system-prompts/scenes/<id>.md`](data.md#memorysystem-prompts) the way reflection
+[`memory/prompts/scenes/<id>.md`](data.md#memoryprompts) the way reflection
 writes a facet: no new tool, no new machinery, file access it already has.
 
 Nothing **addresses** Deliberation except its own scene's Reaction — that is the direction of
