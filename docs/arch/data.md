@@ -20,9 +20,9 @@ The question is not *where* something lives — it all lives here — but **who 
 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
-| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks |
-| `prompts/` — the factory bases | `drive/` — what was decided worth keeping |
-| `skills/`, `views/` — the factory seeds | `prompts/`, `skills/`, `views/` — everything learnt |
+| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks, system prompts |
+| `prompts/` — the bundled system prompts, all of them | `drive/` — what was decided worth keeping |
+| `skills/`, `views/` — the factory seeds | `skills/`, `views/` — everything learnt |
 
 **One pen per subtree — and the subtree, not the top-level directory, is the unit.**
 `memory/raw/` is foundation's; the rest of `memory/` is the agents'. They share a roof and
@@ -30,10 +30,12 @@ never a file, which is all the rule ever required. Reading it as a top-level bou
 would push the log out to the root, where it means less.
 
 **Factory-versus-learnt is a different rule, and it still holds.** Where a subtree carries
-both layers — `prompts/`, `skills/`, `views/` — they stay physically separate. An upgrade
-replaces the factory layer and never touches the learnt one, so there is never a merge
-conflict, only a precedence decision. Collapse them and an upgrade either clobbers what the
-agent learnt or can no longer refresh its own seeds.
+both layers — `skills/` and `views/` — they stay physically separate. An upgrade replaces the
+factory layer and never touches the learnt one, so there is never a merge conflict, only a
+precedence decision. Collapse them and an upgrade either clobbers what the agent learnt or can
+no longer refresh its own seeds. `prompts/` no longer carries both: it is bundled through and
+through, and what the agent writes for itself lives in
+[`memory/system-prompts/`](#memorysystem-prompts) instead.
 
 ## Decisions
 
@@ -41,6 +43,8 @@ agent learnt or can no longer refresh its own seeds.
 |---|---|
 | Tasks are **global** | Created in one scene, delivered in another; a restart has no scene at all |
 | Open tasks are **projected, not retrieved** | Retrieval can miss; a missed duty is a silently broken promise |
+| **Projected** = what Reaction must know without reading | It is tools-off, so its window is the whole of what it knows; every other rung can go and look |
+| `prompts/` is **bundled**; carried-forward state is **generated** | Both are text handed to an agent at init — what differs is who wrote it and whether losing it matters |
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
@@ -83,16 +87,19 @@ surfaces — lossy and disposable by design. That difference is argued once, the
 The text for each role — Reaction, Deliberation, Cognition, Worker. Character and voice
 merge in here rather than living apart; a role's manner is part of its prompt.
 
-**Three slots, in precedence order:**
+**One slot: what the app installs from the binary.** Factory-authored, reinstalled every boot,
+replaced on upgrade, disposable — the binary is the original, so nothing here is worth backing
+up.
 
-| Slot | Author | On upgrade |
-|---|---|---|
-| base | factory | replaced |
-| user | the person — sovereign | untouched |
-| self | the agent | untouched |
+There is no user slot and no self slot. **An instruction from the person now lands the way
+everything else they say lands**: they say it, and it becomes a preference facet or a task
+depending on what it is. Nothing bypasses the agent's judgment on the way in — which is also
+the cost, stated plainly: **there is no longer a lever that overrides the agent without going
+through it.** A correction that does not stick is now a memory bug to fix, not a file to
+hand-edit.
 
-The self slot must be **real and writable**. Without it, a correction the agent accepts has
-nowhere to land, and the same mistake returns next week.
+State the agent carries forward is not here at all. It is *generated*, and lives in
+[`memory/system-prompts/`](#memorysystem-prompts).
 
 ## `memory/`
 
@@ -107,8 +114,8 @@ computed at read time rather than stored as a level, so answers can honestly dis
 **Facets** — what is believed, by subject: people, projects, user preference. Growable,
 revisable, correctable by one sentence from the person.
 
-**Projected working sets** — what Reaction, Deliberation and Cognition carry into every
-window. **Written by code**, so their size stays bounded and their contents predictable.
+**Generated system prompts** — what each agent that needs state carries into every window.
+Written by an agent, injected and bounded by code; [below](#memorysystem-prompts).
 
 **Proactivity** — the standing licence to speak unprompted, *per subject*: which topics the
 person welcomes an unasked word on, which they tolerate, which are unproven, which are muted.
@@ -120,6 +127,54 @@ subject well back, warmth earns a small slow step up — because being talked at
 wrong thing costs far more than a missed heads-up. And it is **short enough to read every
 time**, since it is consulted before every proactive word; a licence too long to check is a
 licence nobody checks.
+
+### `memory/system-prompts/`
+
+One file per agent that needs state carried forward.
+
+| File | Whose state |
+|---|---|
+| `scenes/<id>.md` | what one scene carries forward |
+| `cognition.md` | the sceneless brain's |
+
+That is not a full set, on purpose — an agent gets one when it turns out to need one.
+Reflection plausibly never will: its state is a frontier cursor plus the stores themselves,
+and neither belongs in a window.
+
+**Bundled versus generated is the whole distinction, and the parent directory carries it.**
+[`prompts/`](#prompts) is bundled — shipped in the binary, reinstalled every boot, disposable.
+`memory/system-prompts/` is generated — written by the agent, precious, and rebuildable by
+nothing else. Both are text fed to an agent at init; nothing further separates them.
+
+**The agent writes the content. Code owns injection and the bound.**
+
+| | |
+|---|---|
+| Content | the agent's — this is judgment about what matters, not a mechanical digest. Nobody's working memory is a truncation of their own transcript |
+| Injection | code's, **every turn** — not only on a fresh session. A window that is only correct at session open is stale for the rest of the conversation |
+| Size | code's, a **hard cap**. Over it, code truncates and says so — a ceiling that shows up as text is real; one that shows up as latency is not |
+| Floor | the **log tail**, which code already assembles from [`memory/raw/`](#memoryraw). An agent that never got round to writing its memory — busy, crashed, mid-restart — leaves a window that is uncurated, never empty |
+
+**Who writes a scene's.** Reaction holds `say` and `show` and nothing else, so it has no file
+access and cannot write its own. A scene's memory is therefore *consumed* by Reaction and
+*written by* [Deliberation](agents.md#deliberation--per-scene-seconds) — the rung that already
+reads around and works out what was asked. That falls out of the tool surfaces rather than
+being imposed on them, and it hands Deliberation its second job: deciding what this
+conversation carries forward. No new tool is needed — it has file access, and writes the
+scene's memory the way reflection writes a facet.
+
+**A fresh scene starts from what is global, not from nothing.** Who this install is, what is
+open, what is generally true of the person — the generator includes them, so a first reply is
+not generic. Per-install identity is therefore a *section*, not a file, not a slot, and not a
+separate always-projected block.
+
+#### What earns a place
+
+> **Projected = what Reaction must know without reading. Everything else is recall.**
+
+Reaction is tools-off by design, so the projected set is the entirety of what it knows; every
+other rung can read on demand. This is a test, not a list — it is what
+[open tasks](#tasks) pass, and what everything left to recall fails.
 
 ### Tasks
 
@@ -133,6 +188,10 @@ mechanisms:
 | watch | a value, a baseline, a threshold, a cadence |
 | deadline | a date and what to do at it |
 | staged | a multi-stage job suspended for approval |
+
+**One ledger, one file per task — `memory/tasks/<id>.md`.** Nothing else records a duty:
+there is no second, friendlier list of what is owed, because two ledgers means one of them is
+wrong and no way to tell which.
 
 Four properties, each earned by a real failure:
 
@@ -190,9 +249,10 @@ Facts go to memory, procedures go here.
 The toolbox of built surfaces, named by *what they are* rather than by the task that made
 them — the name is what makes reuse possible.
 
-Reuse works in three tiers: still in context (instant), graduated by reflection into a
-`purpose → ref` handle projected into hot memory (fast), or found by listing the toolbox
-(slow, but always works). The source stays in the toolbox; only the **handle** graduates.
+**Nothing graduates out of the toolbox.** A view used recently leaves a trace in its scene's
+[memory](#memorysystem-prompts) because it mattered there — the same way anything else that
+mattered does, written by the same judgment. Everything else is read on demand: list the
+toolbox, against the guidelines for building views. Slow, and it always works.
 
 ## Forgetting
 

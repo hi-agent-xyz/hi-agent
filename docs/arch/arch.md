@@ -20,9 +20,10 @@ directory. The binary is interchangeable.
 So the question is never *where does this live* but **who holds the pen**:
 
 - **Foundation writes** the log — `memory/raw/`, everything in and out as it crossed — plus
-  the factory prompts and the seed skills and views. All mechanical, none of it needing an
-  agent to be correct.
-- **Agents write** episodes, facets, tasks, drive, and everything learnt.
+  the bundled system prompts and the seed skills and views. All mechanical, none of it needing
+  an agent to be correct.
+- **Agents write** episodes, facets, tasks, their own
+  [generated system prompts](data.md#memorysystem-prompts), drive, and everything learnt.
 
 The unit is the **subtree, not the top-level directory**. Foundation's log lives *inside*
 `memory/`, alongside what the agents write, because what the agent heard belongs with what it
@@ -66,8 +67,9 @@ Below the ladder sit **workers** — where the actual jobs get done.
                workers:    general · view builder · view reviewer · decision maker
                all of the above = one ACP session, differing only by prompt + tools
   ─────────────────────────────────────────────────────────────────────────────
-  data/        memory (raw = the log · episodes · facets · tasks) ·
-               prompts · drive · skills · views
+  data/        memory (raw = the log · episodes · facets · tasks ·
+                       system-prompts = generated, one per agent that needs state) ·
+               prompts (bundled) · drive · skills · views
   ─────────────────────────────────────────────────────────────────────────────
   FOUNDATION   engine   runtime · ACP/MCP · gateway · config · store I/O · build ·
                         observatory · energy
@@ -89,7 +91,8 @@ Each is a statement we can test, and each has a real failure behind it.
 3. **Never wait on another scene.** Cross-scene reference is an accepted side effect of one
    shared memory — not a goal, and never worth a scene going deaf for.
 4. **Open tasks are projected, not retrieved.** Retrieval can miss, and a missed duty is a
-   silently broken promise.
+   silently broken promise. The general form — what earns a place in any window at all — is
+   the [projection test](data.md#what-earns-a-place).
 5. **Clocks wake agents; they never speak.** An empty room holds the turn rather than
    dropping it.
 6. **The clock holds no durable state.** Every timer is rebuilt from open tasks at startup.
@@ -111,7 +114,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
 | [`core.md`](core.md) | the Rust host: scene routing, the arbiter, sessions, reflex, clock |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
-| [`data.md`](data.md) | the directory that *is* the agent — memory (the log included), prompts, drive, skills, views |
+| [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |
 
 Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),

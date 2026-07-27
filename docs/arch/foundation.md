@@ -17,9 +17,13 @@ command running — none of these need an agent to be correct. Everything requir
 
 ## What it writes into `data/`
 
-Foundation holds the pen for the mechanical subtrees: the log at `memory/raw/`, the factory
-layer of `prompts/`, and the factory seeds under `skills/` and `views/`. Those are described
-where they live, in [`data.md`](data.md#who-holds-the-pen).
+Foundation holds the pen for the mechanical subtrees: the log at `memory/raw/`, all of
+`prompts/`, and the factory seeds under `skills/` and `views/`. Those are described where they
+live, in [`data.md`](data.md#who-holds-the-pen).
+
+It does **not** write the [generated system prompts](data.md#memorysystem-prompts) — deciding
+what an agent carries forward is judgment. It does install the bundled ones, inject the
+generated ones every turn, and enforce their cap.
 
 The pen is held **per subtree, not per top-level directory** — the log sits inside `memory/`,
 whose other subtrees the agents write. Two writers under one roof is fine; two writers on one
@@ -37,6 +41,7 @@ so an upgrade replaces one and never the other.
 | Gateway + vendors | model access, credentials, energy accounting |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
+| Prompt assembly | installs `prompts/` from the binary at boot; injects each agent's [generated system prompt](data.md#memorysystem-prompts) every turn and truncates it, audibly, at the cap |
 | Build pipeline | esbuild and headless-browser rendering for views |
 | Logger / observatory | operational visibility — [not the log](#observatory), and the difference matters |
 

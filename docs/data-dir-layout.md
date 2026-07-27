@@ -23,6 +23,7 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 | **Ad-hoc views start in `views/`; their source *graduates* into `drive/` when worth keeping** | Filing is a deliberate act, the same fluid→solid move as `raw → facet`; most views die in `views/`, unmissed |
 | **Capabilities are reached as on-demand skills, not always-loaded tools** | MCP tools cost context every turn; a long tail of capabilities belongs in the loaded-on-demand tier |
 | **Secrets are resolved at call-time by the effector, never held in the mind's context** | You don't recite your password to use it; the value sits in the drive/env, the mind holds only a pointer |
+| **`prompts/` is bundled and disposable; carried-forward state is generated into `memory/system-prompts/`** | Both are text fed to an agent at init — the parent directory is what says who wrote it and whether losing it matters |
 
 ---
 
@@ -34,7 +35,10 @@ data/
     raw/             #   the log: every signal IN and OUT, lossless, per-scene (verbatim, auto-captured)
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
-    hot.md           #   recency digest (default-loaded)
+    tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
+    system-prompts/  #   GENERATED, one per agent that needs state — agent-written, precious
+      scenes/<id>.md #     what one scene carries forward (written by that scene's Deliberation)
+      cognition.md   #     the sceneless brain's
 
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
     projects/<p>/    #   sedimented work: kept view source + assets (the source of record)
@@ -45,7 +49,7 @@ data/
     <project>/       #   ad-hoc views: source + build, until the source graduates to drive/projects/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)
 
-  prompts/           # what the FACTORY gives — read-only to the agent, operator-overridable   (seed)
+  prompts/           # the BUNDLED system prompts — installed from the binary each boot, disposable   (seed)
     core.md speaking.md aesthetic.md appearance.md meaning.md reflection.md
     world.md         #   (proposed) seeded world-priors: an "article from a trusted source" the agent digests into memory
 
@@ -55,10 +59,10 @@ data/
 
 Five **kinds**, each a place on a person's computer:
 
-1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), and what it understands of it (`episodes`, `facets`, `hot.md`). Reconstructive: reflection summarizes and regenerates it.
+1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and what each agent carries into every window (`system-prompts/`). Mostly reconstructive: reflection summarizes and regenerates the understanding.
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
-4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent, updatable by us.
+4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent and reinstalled from the binary every boot; the *only* thing here is what we ship.
 5. **claude-config/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
 
 ## The two axes that place everything
@@ -83,8 +87,15 @@ Owned by [`memory.md`](memory.md). The reconstructive store: `raw/` is the lossl
 auto-captured tape — **the log, and it runs both ways**: what arrived, and what the agent
 said, showed, or was woken to do. Verbatim but not *kept by choice* — captured by the system,
 written before anything reacts to it. `episodes/` and `facets/` are the regenerable
-understanding reflection distills from it; `hot.md` is the recency digest. Precious and
-synced. Reflection **owns** this tree — it rewrites facets whole, but never the log.
+understanding reflection distills from it. Precious and synced. Reflection **owns** the
+reconstructive part of this tree — it rewrites facets whole, but never the log.
+
+Two things under `memory/` are **not** reconstructive and not reflection's: `tasks/` is the
+one ledger of what is owed (nothing else records a duty), and `system-prompts/` holds the
+**generated** system prompts — one per agent that needs state, written by that agent, injected
+and capped by code, and rebuildable by nothing else. A scene's is written by its
+Deliberation, because Reaction has no file access to write its own. Contract in
+[`arch/data.md`](arch/data.md#memorysystem-prompts).
 
 **Outbound is the gap today.** The concept covers both directions; the capture does not yet —
 inbound is recorded, outbound barely, so a restart cannot reconstruct what was said or shown.
@@ -125,8 +136,12 @@ gitignored, so there is **no `.cache` dotdir** — the whole tree is the cache.
 
 ### prompts/ — what the factory gives (the seed)
 
-Read-only to the agent, materialized at boot from the binary (`include_str!`), operator-
-overridable via `*.local.md`. Two flavors of seed:
+Read-only to the agent and re-materialized at every boot from the binary (`include_str!`), so
+an edit here does not survive and is not meant to. **One layer only** — there is no user
+override file and no agent-writable slot. An instruction from the person lands as a preference
+facet or a task like anything else they say, and what the agent carries forward is generated
+into `memory/system-prompts/`; the reasoning, and its cost, is in
+[`arch/data.md`](arch/data.md#prompts). Two flavors of seed:
 
 - **Behavior** — `core.md`, `speaking.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
   `reflection.md`: how to be. Read as guidance.
@@ -193,6 +208,9 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
   does not.
 - **Not yet built:** outbound capture in `raw/`. The log is decided as both-directions; only
   inbound is recorded today.
+- **Not yet built:** `memory/system-prompts/`. Today a single mechanically-projected recency
+  digest stands in for all of them — no agent writes it, it is seeded only when a session
+  opens rather than injected every turn (a real bug, not just a gap), and nothing caps it.
 
 ## Open questions
 

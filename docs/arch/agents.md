@@ -37,10 +37,16 @@ the voice included. No reads, no fetches, no working directory: it is fast becau
 *cannot* wait on anything, not because it is small. Judging the edge of your own knowledge is
 a hard problem and needs a capable model.
 
-Not blind, because its memory is **prepared**: system prompt, open tasks, hot memory and
-scene recall are all in context before the first word. That set is **bounded and curated by
-code** — it is in every window, so it cannot grow with usage. Two hundred open tasks project
-as a summary, not a list.
+Not blind, because its memory is **prepared**: the bundled prompt for its role, plus its
+scene's [generated one](data.md#memorysystem-prompts) — what the conversation carries forward,
+open tasks, the recent log tail — all in context before the first word. **Code injects that
+every turn and caps it**, so it cannot grow with usage. Two hundred open tasks project as a
+summary, not a list.
+
+It does not write that memory; it has no file access to write anything with. Its scene's
+Deliberation writes it. And because this is the one rung that cannot go and look, it is also
+the measure for everything else: **projected = what Reaction must know without reading** —
+[the test](data.md#what-earns-a-place).
 
 ### Deliberation — per scene, seconds
 
@@ -52,6 +58,12 @@ gap is the whole reason for this rung. Reaction follows up with it every turn.
 Anything heavy — a real task, a standing duty, a long errand — is handed **up to Cognition**
 rather than done here. Deliberation stays light on purpose: it exists so that a scene can
 think without leaving the scene, and so that no scene ever waits on another.
+
+**Its second job is the scene's memory.** Reaction consumes a generated system prompt it
+cannot write, so someone has to decide what this conversation carries forward — and that is a
+judgment made out of having read around, which is exactly this rung. It writes
+[`memory/system-prompts/scenes/<id>.md`](data.md#memorysystem-prompts) the way reflection
+writes a facet: no new tool, no new machinery, file access it already has.
 
 Nothing **addresses** Deliberation except its own scene's Reaction — that is the direction of
 the call stack, and it is a stack in *addressing* only, not in **lifetime**: it can be woken
@@ -93,10 +105,12 @@ scene-partitioned.
 
 Its workers come in two kinds:
 
-- **Per-store organizers** — hot, people, episodes, facets, views, skills, tools.
+- **Per-store organizers** — people, episodes, facets, views, skills, tools.
 - **Cross-store graduations**, named by the edge they perform: `episode → skill`,
-  `view → handle → hot`, `raw → drive bytes + facets meaning`, and
-  `"promised, never delivered" → open task`.
+  `raw → drive bytes + facets meaning`, and `"promised, never delivered" → open task`.
+
+Views are not on that list. Reuse needs no promotion step — a view that mattered is already in
+the scene's own memory, and the rest of the toolbox is [read on demand](data.md#views).
 
 Both kinds are **prose in `reflection.md`**. Adding one is not a code change.
 
