@@ -62,6 +62,22 @@ pub enum Channel {
     Touch,
     Smell,
     Taste,
+    /// The agent's own presentation surface — what it put on the screen. Outbound
+    /// only, and like [`Channel::File`] not a sense: the agent doesn't perceive a
+    /// view, it *shows* one. Recorded so a restart can tell what is already up
+    /// (and so it doesn't show the same thing twice).
+    View,
+    /// The host's own clock: a pulse firing, a self-scheduled alarm coming due.
+    /// Inbound, because it drives a turn exactly like an utterance does — but it
+    /// came from no one, which is why it gets its own channel rather than being
+    /// mixed into `text` where it would read as something the person said.
+    /// Deliberately excluded from the "is this scene still alive" activity scan;
+    /// a heartbeat is not a conversation.
+    Clock,
+    /// Reports coming back from the agent's own delegated workers — cognition's
+    /// answer, a worker's question, an interim finding. Inbound and turn-driving,
+    /// from another of its own minds rather than from the person.
+    Worker,
 }
 
 impl Channel {
@@ -74,6 +90,9 @@ impl Channel {
             Channel::Touch => "touch",
             Channel::Smell => "smell",
             Channel::Taste => "taste",
+            Channel::View => "view",
+            Channel::Clock => "clock",
+            Channel::Worker => "worker",
         }
     }
 
@@ -111,6 +130,9 @@ impl FromStr for Channel {
             "touch" => Ok(Channel::Touch),
             "smell" => Ok(Channel::Smell),
             "taste" => Ok(Channel::Taste),
+            "view" => Ok(Channel::View),
+            "clock" => Ok(Channel::Clock),
+            "worker" => Ok(Channel::Worker),
             other => Err(ChannelParseError(other.to_owned())),
         }
     }
@@ -147,6 +169,10 @@ pub enum Origin {
     Human,
     Reactor,
     Worker,
+    /// The host process itself — the pulse clock. No mind produced it; the
+    /// machinery did. Kept distinct from `Reactor` so a reader can tell a wake the
+    /// agent asked for (an alarm) from one it simply received (a heartbeat).
+    Host,
 }
 
 // -----------------------------------------------------------------------------

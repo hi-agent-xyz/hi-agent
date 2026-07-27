@@ -181,6 +181,7 @@ async fn open_tts(
     match tts::start().await {
         Ok(TtsStream { mime, text, frames }) => {
             let out = reactor.inner.out.clone();
+            let codec = mime.clone();
             let _ = out
                 .send(OutboundSignal::AudioBegin { scene: scene.clone(), turn, codec: mime })
                 .await;
@@ -191,7 +192,14 @@ async fn open_tts(
                 .interrupts
                 .audio_began(scene, turn, tokio::time::Instant::now())
                 .await;
-            let handle = tokio::spawn(super::forward_frames(frames, out, scene.clone(), turn));
+            let handle = tokio::spawn(super::forward_frames(
+                reactor.clone(),
+                frames,
+                out,
+                scene.clone(),
+                turn,
+                codec,
+            ));
             *synth_tx = Some(text);
             *synth_handle = Some(handle);
         }

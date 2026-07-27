@@ -158,6 +158,21 @@ pub(super) async fn swap(
 /// they wait on the frontier for the next reflection tick.
 const MIN_REFLECT_SIGNALS: usize = 4;
 
+/// How many of a frontier's signals count toward [`MIN_REFLECT_SIGNALS`]: everything
+/// except the host's own clock (see [`super::NON_ACTIVITY_CHANNELS`]). The pulses stay
+/// *in* the frontier — "then it was quiet for three hours" is worth settling — they
+/// just may not be the reason a session opens. Otherwise a scene left alone would
+/// tick its way over the threshold on heartbeats alone and reflect on nothing, the
+/// same self-feeding loop the re-warm gate has to avoid.
+fn reflectable(tail: &[JournalEntry]) -> usize {
+    tail.iter()
+        .filter(|e| {
+            let channel = crate::mind::memory::journal::entry_channel(e);
+            !super::NON_ACTIVITY_CHANNELS.contains(&channel.as_str())
+        })
+        .count()
+}
+
 /// Whether the identity-cluster forgetting sweep only *reports* what it would forget
 /// (`true`) instead of deleting. Starts as a dry run so the criteria in
 /// [`people_vectors::sweep_forgettable`] can be watched on real data — the log shows
@@ -222,7 +237,7 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
         let cursor = episodes::scene_cursor(data_dir, scene).await?;
         let tail =
             after_cursor(data_dir, scene, cursor.as_deref(), episodes::REFLECTION_TAIL_LIMIT).await?;
-        if tail.len() < MIN_REFLECT_SIGNALS {
+        if reflectable(&tail) < MIN_REFLECT_SIGNALS {
             continue;
         }
         // Prior episode gists (scene-scoped) give continue-vs-new context; faces and
@@ -718,6 +733,43 @@ fn salient(f: &crate::body::capabilities::face::DetectedFace) -> bool {
     let w = (f.bbox[2] - f.bbox[0]).max(0.0);
     let h = (f.bbox[3] - f.bbox[1]).max(0.0);
     f.score >= 0.6 && w >= 50.0 && h >= 50.0
+}
+
+#[cfg(test)]
+mod frontier_tests {
+    use super::*;
+
+    fn on(channel: Channel) -> JournalEntry {
+        JournalEntry::SignalIn {
+            id: "x".into(),
+            ts: Utc::now(),
+            channel,
+            scene: Scene("s".into()),
+            body: String::new(),
+            stream: None,
+            media: None,
+            origin: None,
+        }
+    }
+
+    #[test]
+    fn heartbeats_alone_never_reach_the_threshold() {
+        let tail: Vec<JournalEntry> =
+            (0..MIN_REFLECT_SIGNALS * 3).map(|_| on(Channel::Clock)).collect();
+        assert_eq!(reflectable(&tail), 0, "a scene left alone must not reflect on its own pulses");
+    }
+
+    #[test]
+    fn real_signals_count_even_with_pulses_mixed_in() {
+        let tail = vec![
+            on(Channel::Clock),
+            on(Channel::Text),
+            on(Channel::Clock),
+            on(Channel::Worker),
+            on(Channel::View),
+        ];
+        assert_eq!(reflectable(&tail), 3);
+    }
 }
 
 #[cfg(test)]

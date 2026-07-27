@@ -563,6 +563,26 @@ say it now, in your own plain words, if the moment's right:\n{}",
     }
 }
 
+/// The same report with the prompt framing stripped: who reported, what happened,
+/// and what came back. [`render_report`] speaks *to* the voice ("this is the answer
+/// you owe them, relay it now") because it is building a turn; the durable log wants
+/// the signal itself, so a later reader sees what the worker actually returned
+/// rather than an instruction addressed to a mind that has since restarted.
+pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
+    let (verb, body) = match &report.kind {
+        WorkerReportKind::Done(answer) => ("finished", answer.trim()),
+        WorkerReportKind::Failed(err) => ("failed", err.trim()),
+        WorkerReportKind::Question(q) => ("asks", q.trim()),
+        WorkerReportKind::Surfaced(msg) => ("surfaced", msg.trim()),
+    };
+    let who = if report.is_cognition {
+        "cognition".to_string()
+    } else {
+        format!("worker {}", report.id)
+    };
+    format!("{who} {verb} — task \"{}\": {body}", report.task)
+}
+
 /// Drive one worker across one or more tasks, posting a terminal report after each
 /// and staying warm in between so a follow-up can resume the same session with full
 /// context. Runs as its own task so the reactor stays free; the session is closed

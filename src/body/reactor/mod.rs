@@ -805,16 +805,35 @@ async fn consolidated_reflection_loop(reactor: Reactor) {
     }
 }
 
+/// Channels that do **not** count as a scene being alive. Exactly one: `clock`,
+/// where the host's own wakes are recorded — a pulse firing, an alarm coming due.
+///
+/// This is load-bearing. Pulses are journaled (a restart otherwise sees a turn with
+/// no cause), but a heartbeat is not a conversation, and anything that spends money
+/// on the strength of "this scene looks busy" would otherwise feed itself: the
+/// re-warm gate below re-warms an idle scene, whose first act is a pulse, whose row
+/// makes the scene look freshly active, so it is re-warmed again next boot —
+/// forever, each one costing a subprocess and an LLM call. Reflection has the same
+/// shape (see [`heartbeat::reflectable`]): a scene left alone would tick its way over
+/// the frontier threshold on heartbeats and reflect on nothing.
+///
+/// Excluding the channel is exact rather than a heuristic on entry bodies: nothing
+/// but the clock is ever written there, which is the reason the clock got a channel
+/// of its own. Note this excludes clock rows from being a *reason* to act — never
+/// from being read; a reconstruction still sees every wake.
+const NON_ACTIVITY_CHANNELS: [&str; 1] = ["clock"];
+
 /// Scenes whose raw memory saw activity within `window`, each paired with the
-/// newest modification time seen across its day folders (its last signal). The
+/// newest modification time seen across its channel folders (its last signal). The
 /// directories are under `<data_dir>/memory/raw/`; errors read as "no scenes" —
 /// re-warm is best-effort.
 ///
-/// The mtime already ignores idle pulses: a pulse that concludes "nothing to do"
-/// emits nothing and so writes nothing under `raw/`, so the newest mtime marks the
-/// last *real* signal (an inbound utterance or an emitted reply), never a bare
-/// self-attention tick. That is what lets the re-warm gate treat mtime as "last
-/// input" without a separate journal scan.
+/// "Activity" means a signal that someone or something outside the host's own clock
+/// put there: an inbound utterance, an emitted reply, a view shown, a worker
+/// reporting. The clock's channel is skipped (see [`NON_ACTIVITY_CHANNELS`]), so the
+/// newest mtime still marks the last *real* signal and never a bare self-attention
+/// tick. That is what lets the re-warm gate treat mtime as "last input" without a
+/// separate journal scan.
 fn scenes_with_activity(
     data_dir: &std::path::Path,
     window: Duration,
@@ -832,9 +851,17 @@ fn scenes_with_activity(
         if !path.is_dir() {
             continue;
         }
-        // Newest day-folder mtime under this scene — the time of its last signal.
+        // Newest mtime across this scene's signal-bearing channel folders — the
+        // time of its last signal. Only directories: a channel folder's mtime moves
+        // when a day-folder is created in it, whereas `scene.json` is a one-time
+        // identity sidecar and says nothing about whether anyone is still here.
         let newest = std::fs::read_dir(&path).ok().and_then(|days| {
             days.flatten()
+                .filter(|d| d.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .filter(|d| match d.file_name().into_string() {
+                    Ok(name) => !NON_ACTIVITY_CHANNELS.contains(&name.as_str()),
+                    Err(_) => true,
+                })
                 .filter_map(|d| d.metadata().and_then(|m| m.modified()).ok())
                 .max()
         });
@@ -899,11 +926,13 @@ fn save_rewarm_state(data_dir: &std::path::Path, state: &HashMap<String, u64>) {
 ///      restarting the host repeatedly within a day doesn't re-warm a quiet scene
 ///      each time.
 ///
-/// "Input" here is raw-memory activity, which already excludes pulses (an idle
-/// pulse writes nothing — see [`scenes_with_activity`]). Standing/scheduled work
-/// (cron, serving) does NOT rely on re-warming: it belongs to the global heartbeat
-/// session, not a per-scene loop, so letting an idle scene go cold never drops a
-/// duty.
+/// "Input" here is raw-memory activity, which excludes the clock's own channel —
+/// pulses and alarms are journaled, but they are the host talking to itself and
+/// must never look like input, or condition 1 would be satisfied by the very
+/// heartbeat re-warming produced (see [`NON_ACTIVITY_CHANNELS`]). Standing/scheduled
+/// work (cron, serving) does NOT rely on re-warming: it belongs to the global
+/// heartbeat session, not a per-scene loop, so letting an idle scene go cold never
+/// drops a duty.
 fn scenes_to_rewarm(data_dir: &std::path::Path) -> Vec<Scene> {
     let prior = load_rewarm_state(data_dir);
     let mut warm = Vec::new();
@@ -925,6 +954,67 @@ fn scenes_to_rewarm(data_dir: &std::path::Path) -> Vec<Scene> {
     }
     save_rewarm_state(data_dir, &next);
     warm
+}
+
+#[cfg(test)]
+mod rewarm_tests {
+    use super::*;
+
+    /// Lay down `<data_dir>/memory/raw/<scene>/<channel>/<day>/<channel>.jsonl`,
+    /// the shape [`crate::mind::memory::layout`] writes.
+    fn seed_channel(data_dir: &std::path::Path, scene: &str, channel: &str) {
+        let day = data_dir
+            .join("memory")
+            .join("raw")
+            .join(scene)
+            .join(channel)
+            .join("2026-07-27");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join(format!("{channel}.jsonl")), b"{}\n").unwrap();
+    }
+
+    fn names(scenes: Vec<(Scene, std::time::SystemTime)>) -> Vec<String> {
+        scenes.into_iter().map(|(s, _)| s.0).collect()
+    }
+
+    /// The trap: a scene whose only record is its own heartbeat must not look
+    /// alive, or re-warming it would keep it alive on nothing but its own pulses.
+    #[test]
+    fn a_scene_with_only_clock_signals_is_not_active() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_channel(dir.path(), "quiet", "clock");
+        assert!(
+            names(scenes_with_activity(dir.path(), Duration::from_secs(3600))).is_empty(),
+            "pulses alone must not mark a scene active"
+        );
+        assert!(scenes_to_rewarm(dir.path()).is_empty(), "and so must not re-warm it");
+    }
+
+    /// Everything else a scene records still counts — including the newly
+    /// journaled outbound channels, which are real evidence someone is here.
+    #[test]
+    fn real_signals_still_mark_a_scene_active() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_channel(dir.path(), "talking", "text");
+        seed_channel(dir.path(), "talking", "clock");
+        seed_channel(dir.path(), "watching", "view");
+        let mut got = names(scenes_with_activity(dir.path(), Duration::from_secs(3600)));
+        got.sort();
+        assert_eq!(got, ["talking", "watching"]);
+    }
+
+    /// Condition 2 still holds once pulses are journaled: a scene re-warmed for a
+    /// given input is not re-warmed again while nothing but the clock has moved.
+    #[test]
+    fn a_scene_is_not_rewarmed_twice_for_the_same_input() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_channel(dir.path(), "talking", "text");
+        assert_eq!(scenes_to_rewarm(dir.path()), vec![Scene("talking".into())]);
+
+        // A later boot, after the scene has done nothing but pulse: still cold.
+        seed_channel(dir.path(), "talking", "clock");
+        assert!(scenes_to_rewarm(dir.path()).is_empty());
+    }
 }
 
 impl Reactor {
@@ -1166,7 +1256,7 @@ async fn per_scene_loop(
             };
             match woke {
                 Woke::Inbound(Some(s)) => {
-                    batch.push(s);
+                    enqueue(&reactor, &scene, &mut batch, s).await;
                     // While Down: collect mail without driving a turn. The
                     // probe cadence will attempt catch-up once the vendor
                     // recovers.
@@ -1189,7 +1279,7 @@ async fn per_scene_loop(
                     if let Some(input) =
                         apply_control(&reactor, &scene, &mut workers, &mut alarms, ctl).await
                     {
-                        batch.push(input);
+                        enqueue(&reactor, &scene, &mut batch, input).await;
                         if !down {
                             break 'wait;
                         }
@@ -1209,7 +1299,7 @@ async fn per_scene_loop(
                                 .observatory
                                 .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
                                 .await;
-                            batch.push(LoopInput::Alarm(fired));
+                            enqueue(&reactor, &scene, &mut batch, LoopInput::Alarm(fired)).await;
                         }
                         // Only a transient backoff drives a model retry, and only with
                         // mail to deliver. Out of energy holds instead — the shared
@@ -1230,7 +1320,7 @@ async fn per_scene_loop(
                             .observatory
                             .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
                             .await;
-                        batch.push(LoopInput::Alarm(fired));
+                        enqueue(&reactor, &scene, &mut batch, LoopInput::Alarm(fired)).await;
                     }
                     if let Some(at) = pulse_at
                         && at <= now
@@ -1248,7 +1338,7 @@ async fn per_scene_loop(
                         // Reset so a swallowed pulse doesn't re-fire in a tight loop.
                         last_activity = now;
                         tracing::info!(scene = %scene, "pulse fired");
-                        batch.push(LoopInput::Pulse { note });
+                        enqueue(&reactor, &scene, &mut batch, LoopInput::Pulse { note }).await;
                     }
                     if !batch.is_empty() {
                         break 'wait;
@@ -1272,12 +1362,13 @@ async fn per_scene_loop(
         if !was_down {
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
-                    batch.push(extra);
+                    enqueue(&reactor, &scene, &mut batch, extra).await;
                 }
                 match timeout(RESPONSE_SETTLE, inbound.recv()).await {
-                    Ok(Some(extra)) => batch.push(extra), // another utterance — keep collecting
-                    Ok(None) => break true,               // inbound closed mid-settle
-                    Err(_) => break false,                // quiet elapsed → commit to a reply
+                    // another utterance — keep collecting
+                    Ok(Some(extra)) => enqueue(&reactor, &scene, &mut batch, extra).await,
+                    Ok(None) => break true, // inbound closed mid-settle
+                    Err(_) => break false,  // quiet elapsed → commit to a reply
                 }
             };
             if closed {
@@ -1388,7 +1479,7 @@ async fn per_scene_loop(
         // alarms (those are generated inside `'wait`, not sent over `inbound`).
         if !reactor.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
-                batch.push(extra);
+                enqueue(&reactor, &scene, &mut batch, extra).await;
             }
         }
     }
@@ -1602,20 +1693,64 @@ async fn drive_voice(session: &AcpSession, scene: &Scene, context: String) -> an
 }
 
 
-async fn emit_thought_chunk(reactor: &Reactor, scene: &Scene, text: String) {
-    let ts = Utc::now();
+/// Append one signal the agent *emitted* — worded text, a voiced span, a view it
+/// put up — to the durable log, then carry on. Every carrier that puts something
+/// in front of the person routes through here rather than settling for a
+/// `tracing::` line, because a log that only holds the inbound half cannot tell a
+/// restarted mind what it already said and showed, and a mind that can't tell will
+/// say it again.
+///
+/// Recorded at the moment the thing leaves — never buffered to make a tidier row.
+/// Best-effort, like every other append site: a failed write is logged and the
+/// reply still goes out; the log is not allowed to swallow a turn.
+async fn record_out(reactor: &Reactor, scene: &Scene, channel: Channel, body: String) {
     let entry = JournalEntry::SignalOut {
         id: Uuid::now_v7().to_string(),
-        ts,
-        channel: Channel::Text,
+        ts: Utc::now(),
+        channel,
         scene: scene.clone(),
-        body: text.clone(),
+        body,
         media: None,
         origin: Some(Origin::Reactor),
     };
     if let Err(err) = reactor.inner.memory.journal.append(entry).await {
-        tracing::error!(scene = %scene, error = %err, "journal append failed for outbound thought");
+        tracing::error!(scene = %scene, channel = %channel, error = %err, "journal append failed for outbound signal");
     }
+}
+
+/// Append one turn-driving signal that reached the mind without crossing a wire —
+/// a pulse, a fired alarm, a worker's report. Without these the log shows a turn's
+/// output with nothing that could have caused it, and a restart cannot tell that
+/// the turn happened at all, let alone why.
+async fn record_in(
+    reactor: &Reactor,
+    scene: &Scene,
+    channel: Channel,
+    origin: Origin,
+    body: String,
+) {
+    let entry = JournalEntry::SignalIn {
+        id: Uuid::now_v7().to_string(),
+        ts: Utc::now(),
+        channel,
+        scene: scene.clone(),
+        body,
+        stream: None,
+        media: None,
+        origin: Some(origin),
+    };
+    if let Err(err) = reactor.inner.memory.journal.append(entry).await {
+        tracing::error!(scene = %scene, channel = %channel, error = %err, "journal append failed for internal signal");
+    }
+}
+
+async fn emit_thought_chunk(reactor: &Reactor, scene: &Scene, text: String) {
+    // Per chunk, as it is written — not coalesced into one row per utterance. The
+    // log's promise is durability before reaction, and buffering to make a neater
+    // row would mean a crash mid-utterance loses words the agent already sent.
+    // Readers re-join the chunks in `(ts, id)` order, which is exactly what the
+    // merge already gives them.
+    record_out(reactor, scene, Channel::Text, text.clone()).await;
     let _ = reactor
         .inner
         .out
@@ -1701,27 +1836,83 @@ fn render_batch(batch: &[LoopInput]) -> String {
                 let _ = writeln!(s, "{}", workers::render_report(report));
             }
             LoopInput::Alarm(a) => {
-                let _ = writeln!(s, "(alarm) \"{}\"", a.note);
+                let _ = writeln!(s, "{}", render_alarm(a));
             }
             LoopInput::Pulse { note } => {
-                let _ = writeln!(s, "(pulse) {note}");
+                let _ = writeln!(s, "{}", render_pulse(note));
             }
         }
     }
     s
 }
 
+fn render_alarm(a: &AlarmFired) -> String {
+    format!("(alarm) \"{}\"", a.note)
+}
+
+fn render_pulse(note: &str) -> String {
+    format!("(pulse) {note}")
+}
+
+/// How one turn-driving input is recorded in the durable log, or `None` when it
+/// needs no row of its own.
+///
+/// A human signal returns `None`: the wire handler that accepted it already
+/// journaled it, with its stream and its media, before it ever reached this queue.
+/// Recording it again here would show every utterance twice.
+///
+/// The rest reach the mind without crossing a wire, so this is their only chance to
+/// be written down. Each goes on the channel that names its origin — a heartbeat is
+/// not something the person said, and neither is cognition's answer coming back.
+/// A worker's row keeps the substance and drops the framing [`workers::render_report`]
+/// wraps it in for the prompt; that framing is an instruction to the voice, not part
+/// of the signal.
+fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
+    match input {
+        LoopInput::Human(_) => None,
+        LoopInput::Worker(report) => Some((
+            Channel::Worker,
+            Origin::Worker,
+            workers::render_report_plainly(report),
+        )),
+        // An alarm is a wake the mind asked for; a pulse is one the host simply
+        // delivers. Same channel, different hand on it.
+        LoopInput::Alarm(a) => Some((Channel::Clock, Origin::Reactor, render_alarm(a))),
+        LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
+    }
+}
+
+/// Record one turn-driving input, then queue it for the turn. Every path that puts
+/// something in a scene's batch goes through here, so nothing can drive a turn
+/// unlogged — which is the whole point: a turn whose cause was never written down
+/// is a turn a restart cannot account for.
+async fn enqueue(reactor: &Reactor, scene: &Scene, batch: &mut Vec<LoopInput>, input: LoopInput) {
+    if let Some((channel, origin, body)) = journal_form(&input) {
+        record_in(reactor, scene, channel, origin, body).await;
+    }
+    batch.push(input);
+}
+
 /// Background task: drain one turn's synthesized audio frames onto the /audio
 /// channel, emitting an `AudioFrame` per chunk and a closing `AudioEnd`. The
 /// span's `AudioBegin` (which carries the codec) is sent by the caller before
 /// this task is spawned. Send errors are ignored — no subscriber connected is
-/// fine. Logs the turn's total bytes once at the end; the spoken text is already
-/// logged on /thought.
+/// fine.
+///
+/// One journal row per *span*, written as the span closes — a span is one voiced
+/// utterance, and a frame is not a signal, so there is no smaller honest unit
+/// here. The row records the act of voicing (codec and size), not the words: the
+/// words are already on /text as they were written, and repeating them would show
+/// every reply twice in a reconstruction. Reading the two together says what was
+/// said *and* that it was actually spoken aloud — which the text rows alone can't,
+/// since a turn with TTS unconfigured is silent and writes no span at all.
 async fn forward_frames(
+    reactor: Reactor,
     mut frames: mpsc::Receiver<Bytes>,
     out: mpsc::Sender<OutboundSignal>,
     scene: Scene,
     turn: u64,
+    codec: String,
 ) {
     let mut total = 0usize;
     while let Some(bytes) = frames.recv().await {
@@ -1749,6 +1940,17 @@ async fn forward_frames(
         bytes = total,
         "channel out (tts stream)",
     );
+    // A span that carried no frames was never heard — TTS opened and produced
+    // nothing — so there is nothing to record.
+    if total > 0 {
+        record_out(
+            &reactor,
+            &scene,
+            Channel::Audio,
+            format!("spoke the reply aloud ({codec}, {total} bytes)"),
+        )
+        .await;
+    }
 }
 
 /// Emit one agent-authored view on the /view channel for this scene. A `show`/
@@ -1785,6 +1987,11 @@ async fn emit_view(
         module = module_url.as_deref().unwrap_or(""),
         "channel out (view)",
     );
+    // Before it goes on the wire: showing something is as much an utterance as
+    // saying it, and the screen persists across restarts, so a mind that can't read
+    // back what it put up will put it up again.
+    let line = render_view_line(&id, op, module_url.as_deref());
+    record_out(reactor, scene, Channel::View, line).await;
     let _ = reactor
         .inner
         .out
@@ -1793,6 +2000,24 @@ async fn emit_view(
             envelope: ViewEnvelope { id, op, module_url, geometry },
         })
         .await;
+}
+
+/// One view operation as a transcript line. Deliberately not the view's source:
+/// the compiled module is already on disk and its URL is a content hash, so the
+/// hash identifies *what* was shown at a fixed cost, while the JSX itself would
+/// put kilobytes of markup on the hot path and back into every later prompt. The
+/// id carries the meaning — it is what the agent shows, replaces and dismisses by,
+/// and what `## On screen now` lists.
+fn render_view_line(id: &str, op: ViewOp, module_url: Option<&str>) -> String {
+    let verb = match op {
+        ViewOp::Show => "showed",
+        ViewOp::Replace => "replaced",
+        ViewOp::Dismiss => "dismissed",
+    };
+    match module_url {
+        Some(url) => format!("{verb} \"{id}\" ({url})"),
+        None => format!("{verb} \"{id}\""),
+    }
 }
 
 #[cfg(test)]

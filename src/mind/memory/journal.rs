@@ -1,5 +1,13 @@
 //! The lossless raw signal store.
 //!
+//! **Both directions, everything that crossed.** In *and* out: what was said and
+//! what was shown, and the clock-driven wakes and worker reports that drove a turn
+//! alongside them. Anything a restart would otherwise have to guess at — or repeat —
+//! belongs here. Each of those has its own channel ([`Channel::View`],
+//! [`Channel::Clock`], [`Channel::Worker`]) so the record says plainly where a
+//! signal came from, and so one kind can be excluded from a scan without
+//! filtering entry bodies.
+//!
 //! Every signal in and out is appended to its scene's per-channel day-log,
 //! `<data_dir>/memory/raw/<scene_enc>/<channel>/<YYYY-MM-DD>/<channel>.jsonl`
 //! (see [`super::layout`]). One JSON `JournalEntry` per line. The first signal in
