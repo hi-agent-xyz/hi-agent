@@ -31,7 +31,7 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 ```
 data/
   memory/            # the mind — what the agent experiences & understands   (precious; see memory.md)
-    raw/             #   lived signals, lossless, per-scene (verbatim, auto-captured)
+    raw/             #   the log: every signal IN and OUT, lossless, per-scene (verbatim, auto-captured)
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
     hot.md           #   recency digest (default-loaded)
@@ -41,7 +41,7 @@ data/
     notes/  papers/  #   agent-curated keeps: the notebook, references, the digested world-doc — open shape
     …                #   the agent makes folders like a person organizes Documents
 
-  views/             # the view workshop — disposable, gitignored, regenerable   (proposed; replaces workspace/)
+  views/             # the view workshop — disposable, gitignored, regenerable   (replaced workspace/)
     <project>/       #   ad-hoc views: source + build, until the source graduates to drive/projects/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)
 
@@ -55,7 +55,7 @@ data/
 
 Five **kinds**, each a place on a person's computer:
 
-1. **memory/** — the mind. What the agent experienced (`raw/`) and what it understands (`episodes`, `facets`, `hot.md`). Reconstructive: reflection summarizes and regenerates it.
+1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), and what it understands of it (`episodes`, `facets`, `hot.md`). Reconstructive: reflection summarizes and regenerates it.
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
 4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent, updatable by us.
@@ -80,9 +80,16 @@ Every directory sits where it does because of two questions:
 ### memory/ — the mind (reconstructive)
 
 Owned by [`memory.md`](memory.md). The reconstructive store: `raw/` is the lossless,
-auto-captured tape (verbatim but not *kept by choice* — captured by the system); `episodes/`
-and `facets/` are the regenerable understanding reflection distills from it; `hot.md` is the
-recency digest. Precious and synced. Reflection **owns** this tree — it rewrites facets whole.
+auto-captured tape — **the log, and it runs both ways**: what arrived, and what the agent
+said, showed, or was woken to do. Verbatim but not *kept by choice* — captured by the system,
+written before anything reacts to it. `episodes/` and `facets/` are the regenerable
+understanding reflection distills from it; `hot.md` is the recency digest. Precious and
+synced. Reflection **owns** this tree — it rewrites facets whole, but never the log.
+
+**Outbound is the gap today.** The concept covers both directions; the capture does not yet —
+inbound is recorded, outbound barely, so a restart cannot reconstruct what was said or shown.
+Decided, not there in fact. Why it has to be both is argued in
+[`arch/data.md`](arch/data.md#memoryraw).
 
 ### drive/ — what the agent keeps (verbatim, precious)
 
@@ -175,17 +182,17 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
 
 ## Status & migration
 
-- **Today:** the data dir has `memory/`, `prompts/`, `claude-config/`, `sessions.jsonl`, and a
-  single `workspace/` that mixes kept projects with a disposable `.cache/` (compiled views,
-  preview harness) — segregated only by the dotdir convention.
-- **Target:** split `workspace/` into **`drive/`** (precious — the kept projects move under
-  `drive/projects/`) and **`views/`** (disposable — the `.cache/` contents and view build).
-  This makes the durability rule a directory boundary ("sync `drive/`, ignore `views/`")
-  instead of "back up everything except dotdirs", and retires the `.cache` marker. Served
-  paths change from `/workspace/.cache/views/<hash>.mjs` to a `/views/…` path; the view-ref
-  resolver, `appearance.md`'s `/workspace/…` asset URLs, and the static route move with it.
-- `drive/notes`/`papers` (the notebook), `prompts/world.md`, and explicit claim-provenance are
-  **design, not yet built**.
+- **Done:** `workspace/` is gone. It split into **`drive/`** (precious) and **`views/`**
+  (disposable — the old `.cache/` contents and the view build); both are created at startup.
+  The durability rule is now a directory boundary — "sync `drive/`, ignore `views/`" — instead
+  of "back up everything except dotdirs", and the `.cache` marker is retired. Served paths
+  moved from `/workspace/.cache/views/<hash>.mjs` to `/views/…`, and the view-ref resolver,
+  `appearance.md`'s asset URLs and the static route moved with them.
+- **Not yet built:** graduation into `drive/projects/`, `drive/notes`/`papers` (the notebook),
+  `prompts/world.md`, and explicit claim-provenance. The `drive/` tree exists; its contract
+  does not.
+- **Not yet built:** outbound capture in `raw/`. The log is decided as both-directions; only
+  inbound is recorded today.
 
 ## Open questions
 
