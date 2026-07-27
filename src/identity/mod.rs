@@ -174,6 +174,20 @@ pub fn load_soul(data_dir: &Path) -> String {
     let commitments = commitments_path(&base);
     let hot = crate::mind::memory::layout::hot_path(&base);
     let proactivity = crate::mind::memory::layout::proactivity_path(&base);
+    // One extra line on a genuine first meeting — the brand-new install where nothing
+    // has accrued yet. It disappears on its own the moment any history exists (a
+    // memory episode, the first reflected `hot.md`, a duty written), so it can only
+    // ever colour the very first hello, never nag.
+    let first_meeting = if is_first_meeting(&base) {
+        "\n\nOne more thing, true only right now: this is a brand-new install — you and \
+this person haven't met yet. So when they first reach out, treat it as a first meeting: \
+open with a real first hello (speaking.md has the shape of it), put the built-in welcome \
+on screen while you speak it (`show_view` with ref `_builtin/welcome`), then hand over the \
+floor. One warm beat that lands who you are — not a tour, not a walkthrough, and nothing to \
+teach them; you'll show them by doing, from here on."
+    } else {
+        ""
+    };
     let mut seed = format!(
         "You're warm, honest, and kind-hearted — easy company. You like being \
 useful, and when there's a hand to lend you're glad to lend it.\n\n\
@@ -195,7 +209,7 @@ It may not exist yet; that's fine.\n\
 - {} — what the person welcomes you raising unprompted, and what they don't: a per-topic \
 read you've built from how your past nudges landed, refreshed as you reflect. Consult it \
 before you ever speak up on your own initiative, and respect it. It may not exist yet; \
-then nothing's proven — lean quiet.",
+then nothing's proven — lean quiet.{}",
         core.display(),
         speaking.display(),
         meaning.display(),
@@ -203,6 +217,7 @@ then nothing's proven — lean quiet.",
         commitments.display(),
         hot.display(),
         proactivity.display(),
+        first_meeting,
     );
     // The workshop. One line, because it is a place to look rather than something to
     // load: procedures sediment there over time, and the mind can only start from a
@@ -235,9 +250,65 @@ write to you in another language — then follow their lead."
     seed
 }
 
+/// Whether this looks like a genuine **first meeting** — a brand-new install where the
+/// agent has no history with the person yet. True when none of the accruing traces
+/// exist: no recency digest (`hot.md`), no memory episodes, and no standing duties
+/// written. The authored `self.md` is deliberately *not* consulted — an operator may
+/// pre-author identity on a fresh box, and that says nothing about whether the person
+/// has been met. The predicate self-clears: the first jotted memory, reflection, or
+/// duty flips it false, so the first-hello cue can never repeat.
+fn is_first_meeting(base: &Path) -> bool {
+    use crate::mind::memory::layout;
+    let no_hot = !layout::hot_path(base).exists();
+    let no_episodes = match std::fs::read_dir(layout::episodes_dir(base)) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true, // dir absent ⇒ nothing recorded
+    };
+    let no_commitments = match std::fs::read_to_string(commitments_path(base)) {
+        Ok(text) => text.trim().is_empty(),
+        Err(_) => true,
+    };
+    no_hot && no_episodes && no_commitments
+}
+
 #[cfg(test)]
 mod soul_tests {
     use super::*;
+
+    #[test]
+    fn fresh_install_gets_the_first_meeting_cue() {
+        // A brand-new data dir has no hot.md, no episodes, no commitments — so the
+        // seed carries the one-time first-hello cue pointing at the welcome view.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_first_meeting(dir.path()));
+        let seed = load_soul(dir.path());
+        assert!(seed.contains("first meeting"));
+        assert!(seed.contains("_builtin/welcome"));
+    }
+
+    #[test]
+    fn any_history_clears_the_first_meeting_cue() {
+        // The moment anything has accrued — here a reflected `hot.md` — it's no longer
+        // a first meeting, so the cue disappears and can never nag on later wakes.
+        let dir = tempfile::tempdir().unwrap();
+        let hot = crate::mind::memory::layout::hot_path(dir.path());
+        std::fs::create_dir_all(hot.parent().unwrap()).unwrap();
+        std::fs::write(&hot, "lately on my mind…").unwrap();
+        assert!(!is_first_meeting(dir.path()));
+        let seed = load_soul(dir.path());
+        assert!(!seed.contains("_builtin/welcome"));
+    }
+
+    #[test]
+    fn authored_self_md_is_not_history() {
+        // An operator may pre-author `self.md` on a fresh box; that says nothing about
+        // whether the person has been met, so it must not suppress the first hello.
+        let dir = tempfile::tempdir().unwrap();
+        let self_md = self_path(dir.path());
+        std::fs::create_dir_all(self_md.parent().unwrap()).unwrap();
+        std::fs::write(&self_md, "You are called Momo.").unwrap();
+        assert!(is_first_meeting(dir.path()));
+    }
 
     #[test]
     fn seed_references_the_prompt_files_by_absolute_path() {

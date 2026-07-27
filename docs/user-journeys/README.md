@@ -76,6 +76,7 @@ What "done" looks like, and how the user knows it worked.
 
 - [26 · 看懂一帧:举起来当场问 / 存下来回头找](26-look-and-recall.md) — 通用视觉**最典型一路**(frame endpoint):举起实物 / 发来照片,既当场答到点(剂量、成分、跨设备读报错),这份"看懂"又留存让图按**内容**找回;升级现有固定字幕路径(`server/vision.rs`)。与 [16](16-recognize-people.md)(脸=内置模型软证据)、[19](19-upload-passport.md)(文件=物件不走感官)区分。
 - [27 · 看我做,给我反馈(看一段过程,不是一帧)](27-watch-and-guide.md) — 通用视觉 **video endpoint**:看懂一段过程的先后 / 节奏 / 对错(发球、做菜),给针对性反馈、跨段对比进步;语气陪练式(连 [12](12-play-with-child.md))。区别于 [10](10-vision-sam-yolo.md)(建项目跑 CV 模型)。
+- [28 · 第一次跟它说 "hi"(开箱第一面:欢迎 view + 自我介绍,然后让位)](28-first-meeting.md) — OOTB 第一印象:全新 install(seed 据空 history 判"第一次见")时,一句温暖简短的自我介绍——你就跟我说话一起干活、我记得你、我能用你的工具、而且**能被教会**学一次就会——边说边摆预置内置 view `_builtin/welcome`,然后**收住让位**。不是导览 / 向导 / 教学,只落印象和几条核心念头;**只此一次**(有 history 后提示自清)。欢迎 view 是预置 seed(像 `_builtin/upload`),"不预置资产"的有意例外。net-new 已写待实测。
 
 > **测试即素材(29)**:把"体验一个产品 + 传播"整件交出去——agent 在能碰到的设备上真操作、录下来、剪成对外成片、操作登录态 app 发出去。缝合已有几路(操作设备 / 浏览器 / 看一段过程 / 研究+批判反射);盘完**核心回路无硬缺口**,都是驱动已有 effector。
 
