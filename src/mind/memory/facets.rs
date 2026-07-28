@@ -14,7 +14,11 @@
 //!
 //! Dimensions are open-ended: `people`/`locations`/`projects`/`culture` are seeds,
 //! not an enum. The mind supplies the dimension and subject; this module only does
-//! the IO and keeps the on-disk name path-safe ([`slug`]).
+//! the IO and keeps the on-disk name path-safe ([`slug`]). One dimension is read by
+//! code as well as by the mind — `tasks` (see [`super::tasks`]), where each subject
+//! is something the agent owes. It is written and read through this module like any
+//! other facet; only its frontmatter carries a shape code understands, and unlike
+//! every other facet it is **not** reflection's to prune while it is open.
 //!
 //! ## Concurrency
 //!

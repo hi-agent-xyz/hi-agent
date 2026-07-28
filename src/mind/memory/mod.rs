@@ -17,6 +17,7 @@ pub mod media;
 pub mod people_vectors;
 pub mod proactivity;
 pub mod snapshot;
+pub mod tasks;
 
 pub use self::core::refresh_hot;
 pub use journal::Journal;

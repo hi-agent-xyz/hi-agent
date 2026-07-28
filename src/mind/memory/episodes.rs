@@ -285,12 +285,19 @@ pub async fn scene_from_dates(data_dir: &Path, scene: &Scene) -> anyhow::Result<
 /// One frontmatter scalar by key, JSON-decoding a quoted value (so a colon inside
 /// it survives) and returning a bare value as-is. `None` if there's no
 /// frontmatter block or the key is absent. Splits on the first `:` so an RFC3339
-/// value's own colons stay in the value.
-fn frontmatter_field(content: &str, key: &str) -> Option<String> {
+/// value's own colons stay in the value. A line carrying no `:` at all is skipped
+/// rather than ending the scan — some frontmatter is hand-written by the mind
+/// ([`super::tasks`]), and one stray line must not hide every field after it.
+///
+/// Shared with [`super::tasks`] so the whole store reads one frontmatter
+/// convention rather than two that drift.
+pub(super) fn frontmatter_field(content: &str, key: &str) -> Option<String> {
     let fm = content.strip_prefix("---\n")?;
     let block = &fm[..fm.find("\n---\n")?];
     for line in block.lines() {
-        let (k, v) = line.split_once(':')?;
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         if k.trim() != key {
             continue;
         }
@@ -306,7 +313,7 @@ fn frontmatter_field(content: &str, key: &str) -> Option<String> {
 }
 
 /// Strip a leading `---\n…\n---\n` YAML frontmatter block, returning the body.
-fn strip_frontmatter(content: &str) -> &str {
+pub(super) fn strip_frontmatter(content: &str) -> &str {
     let Some(rest) = content.strip_prefix("---\n") else {
         return content;
     };
@@ -339,7 +346,7 @@ fn slugify(s: &str) -> String {
 }
 
 /// A string as a JSON (⊂ YAML) scalar; falls back to an empty string literal.
-fn jstr(s: &str) -> String {
+pub(super) fn jstr(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
 
