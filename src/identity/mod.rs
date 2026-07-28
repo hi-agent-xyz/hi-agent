@@ -39,6 +39,7 @@ const MEANING_BASE: &str = include_str!("meaning.md");
 const APPEARANCE_BASE: &str = include_str!("appearance.md");
 const AESTHETIC_BASE: &str = include_str!("aesthetic.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
+const DELIBERATION_BASE: &str = include_str!("deliberation.md");
 
 /// Separator that introduces the operator's override layer. Placed after the
 /// bundled base so its instructions take precedence — the model honors the
@@ -73,8 +74,31 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     std::fs::write(dir.join("appearance.md"), compose_prompt(APPEARANCE_BASE, &dir, "appearance.local.md"))?;
     std::fs::write(dir.join("aesthetic.md"), compose_prompt(AESTHETIC_BASE, &dir, "aesthetic.local.md"))?;
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
-    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, speaking.md, meaning.md, appearance.md, aesthetic.md, reflection.md)");
+    std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
+    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, speaking.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md)");
     Ok(())
+}
+
+/// **Deliberation**'s role layer — what it is beyond being a working session, and the
+/// job that makes it load-bearing: writing its scene's
+/// [generated prompt](../../docs/arch/data.md#memoryprompts), the brief Reaction reads
+/// every turn and cannot write for itself.
+///
+/// This is a *layer*, not a whole prompt. Deliberation genuinely is a working session —
+/// same tools, same capability guidance — so the caller appends this to the worker base
+/// rather than replacing it. Read fresh each spawn (operator-overridable via
+/// `deliberation.local.md`), so an edit takes effect without a restart.
+///
+/// `{scene_memory}` is interpolated to the **absolute** path of the file it must write,
+/// because an agent-facing path that is relative is a path to the wrong file.
+pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -> String {
+    let path = data_dir.join("prompts").join("deliberation.md");
+    let base = match tokio::fs::read_to_string(&path).await {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => DELIBERATION_BASE.to_string(),
+    };
+    let target = crate::mind::memory::layout::scene_prompt_path(data_dir, scene);
+    base.replace("{scene_memory}", &target.display().to_string())
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -422,6 +446,40 @@ mod soul_tests {
         assert_eq!(read("appearance.md"), APPEARANCE_BASE);
         assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
         assert_eq!(read("reflection.md"), REFLECTION_BASE);
+        assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
+    }
+
+    /// The one thing in this prompt that can silently be wrong: the path. A relative
+    /// one would have Deliberation write a real file that no reader ever looks at —
+    /// the failure would look like "the agent never bothered", not like a bug.
+    #[tokio::test]
+    async fn deliberation_is_told_the_absolute_path_of_the_file_it_must_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let scene = crate::types::Scene("alice@phone".into());
+        let prompt = deliberation_prompt(dir.path(), &scene).await;
+
+        let expected = crate::mind::memory::layout::scene_prompt_path(dir.path(), &scene);
+        assert!(expected.is_absolute(), "the target path must be absolute");
+        assert!(
+            prompt.contains(&expected.display().to_string()),
+            "the prompt must name the exact file the window reads back"
+        );
+        assert!(!prompt.contains("{scene_memory}"), "the placeholder must be interpolated");
+
+        // Two scenes must not be handed the same file.
+        let other = crate::types::Scene("bob@feishu".into());
+        assert!(!deliberation_prompt(dir.path(), &other).await.contains(&expected.display().to_string()));
+    }
+
+    #[tokio::test]
+    async fn deliberation_prompt_takes_the_operator_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompts = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts).unwrap();
+        std::fs::write(prompts.join("deliberation.local.md"), "Keep the brief in French.").unwrap();
+        install_prompts(dir.path()).unwrap();
+        let prompt = deliberation_prompt(dir.path(), &crate::types::Scene("alice@phone".into())).await;
+        assert!(prompt.contains("Keep the brief in French."));
     }
 
     #[test]

@@ -44,6 +44,7 @@ use tokio::time::timeout;
 use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
+use crate::mind::memory::layout;
 use crate::types::Scene;
 
 use super::{LoopInput, Reactor};
@@ -304,6 +305,28 @@ impl WorkerRegistry {
         let id = self.next_id;
         self.next_id += 1;
 
+        // Deliberation is a working session plus a role. It gets the same capability
+        // guidance every worker gets — it has the same tools — and then the layer that
+        // says what it is for and hands it the scene's memory to write. A new role here
+        // is a new prompt, not new machinery (`docs/arch/agents.md`).
+        let system_prompt = if is_deliberation {
+            let data_dir = reactor.inner.memory.data_dir();
+            // The agent is told to create this itself, but a directory that already
+            // exists is one less thing between it and the write.
+            if let Some(parent) = layout::scene_prompt_path(data_dir, &self.scene).parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    tracing::warn!(scene = %self.scene, error = %e, "could not pre-create the scene prompt dir");
+                }
+            }
+            format!(
+                "{}\n\n{}",
+                worker_system_prompt(&self.scene),
+                crate::identity::deliberation_prompt(data_dir, &self.scene).await
+            )
+        } else {
+            worker_system_prompt(&self.scene)
+        };
+
         let session = Arc::new(
             reactor
                 .inner
@@ -313,7 +336,7 @@ impl WorkerRegistry {
                     SessionRole::Worker,
                     Some(id),
                     SessionOpts {
-                        system_prompt: Some(worker_system_prompt(&self.scene)),
+                        system_prompt: Some(system_prompt),
                         // The worker's cwd is the agent's view workshop, so a
                         // build sub-agent works in a real project dir (ls/write).
                         cwd: Some(reactor.inner.views_dir.clone()),
