@@ -208,12 +208,13 @@ pub(super) struct WorkerReport {
     pub(super) id: WorkerId,
     pub(super) task: String,
     pub(super) kind: WorkerReportKind,
-    /// Whether this is the scene's **cognition** worker (vs. an ordinary task worker).
-    /// Cognition is the reactor's own thinking, so its result is not one signal among
-    /// many the voice may note or drop — it is the substance of a reply the reactor
-    /// asked for, and [`render_report`] frames it as a must-relay instruction. A plain
-    /// worker's report stays an observation the reactor voices on its own social timing.
-    pub(super) is_cognition: bool,
+    /// Whether this is the scene's **Deliberation** (vs. an ordinary task worker).
+    /// Deliberation is the scene's own reading and thinking, so its result is not one
+    /// signal among many the voice may note or drop — it is the substance of a reply
+    /// Reaction asked for, and [`render_report`] frames it as a must-relay instruction.
+    /// A plain worker's report stays an observation the voice surfaces on its own
+    /// social timing.
+    pub(super) is_deliberation: bool,
 }
 
 pub(super) enum WorkerReportKind {
@@ -259,11 +260,12 @@ pub(super) struct WorkerRegistry {
     inbound: mpsc::Sender<LoopInput>,
     workers: HashMap<WorkerId, Worker>,
     next_id: WorkerId,
-    /// The scene's persistent **cognition** worker, if spawned — the agentic thinker
-    /// the reactor hands every human turn to in split mode (the reactor/cognition
-    /// split). Followed up rather than respawned each turn, so it keeps full context.
-    /// `None` until the first turn that needs it. See [`WorkerRegistry::cognize`].
-    cognition: Option<WorkerId>,
+    /// The scene's persistent **Deliberation**, if spawned — the rung that reads a
+    /// little, checks the file, looks at the photo, and works out what was actually
+    /// asked, per scene, so no scene ever waits on another. Reaction follows up with it
+    /// every turn; followed up rather than respawned, so it keeps full context.
+    /// `None` until the first turn that needs it. See [`WorkerRegistry::deliberate`].
+    deliberation: Option<WorkerId>,
 }
 
 impl WorkerRegistry {
@@ -273,7 +275,7 @@ impl WorkerRegistry {
             inbound,
             workers: HashMap::new(),
             next_id: 1,
-            cognition: None,
+            deliberation: None,
         }
     }
 
@@ -289,15 +291,15 @@ impl WorkerRegistry {
         self.spawn_inner(reactor, task, false).await
     }
 
-    /// `spawn`, plus the `is_cognition` flag that tags every report this worker posts
-    /// so the reactor can tell its own thinking (must-relay) from a task worker's
-    /// observation. Cognition goes through [`cognize`](Self::cognize); everything else
-    /// through [`spawn`](Self::spawn) with the flag false.
+    /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
+    /// so the voice can tell the scene's own thinking (must-relay) from a task worker's
+    /// observation. Deliberation goes through [`deliberate`](Self::deliberate);
+    /// everything else through [`spawn`](Self::spawn) with the flag false.
     async fn spawn_inner(
         &mut self,
         reactor: &Reactor,
         task: String,
-        is_cognition: bool,
+        is_deliberation: bool,
     ) -> anyhow::Result<WorkerId> {
         let id = self.next_id;
         self.next_id += 1;
@@ -338,7 +340,7 @@ impl WorkerRegistry {
             self.scene.clone(),
             mailbox.clone(),
             busy.clone(),
-            is_cognition,
+            is_deliberation,
         ));
 
         self.workers.insert(
@@ -368,7 +370,7 @@ impl WorkerRegistry {
         reactor: &Reactor,
         id: WorkerId,
         task: String,
-        is_cognition: bool,
+        is_deliberation: bool,
     ) -> anyhow::Result<WorkerId> {
         if let Some(w) = self.workers.get_mut(&id) {
             // Merge under the mailbox lock — the same critical section the drive
@@ -402,22 +404,26 @@ impl WorkerRegistry {
             self.workers.remove(&id);
         }
         tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
-        self.spawn_inner(reactor, task, is_cognition).await
+        self.spawn_inner(reactor, task, is_deliberation).await
     }
 
-    /// Ensure the scene's persistent **cognition** worker is working on `task`:
-    /// resume the warm one if it exists (full context, no clobbering), else spawn it.
-    /// The reactor/cognition split calls this each turn that carries a human request,
-    /// so cognition thinks and works continuously off the floor while the reactor
-    /// voices; its output rides back as an ordinary [`WorkerReport`] the reactor
-    /// articulates. [`follow_up`](Self::follow_up) already falls back to a fresh spawn
-    /// if the tracked worker has gone, so the id is re-stored from whatever it returns.
-    pub(super) async fn cognize(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
-        let id = match self.cognition {
+    /// Ensure the scene's persistent **Deliberation** is working on `task`: resume the
+    /// warm one if it exists (full context, no clobbering), else spawn it. Reaction
+    /// follows up with it each turn that carries a human request, so the scene keeps
+    /// reading and thinking off the floor while the voice speaks; its output rides back
+    /// as an ordinary [`WorkerReport`] Reaction articulates.
+    /// [`follow_up`](Self::follow_up) already falls back to a fresh spawn if the tracked
+    /// worker has gone, so the id is re-stored from whatever it returns.
+    ///
+    /// Anything heavy — a real task, a standing duty, a long errand — belongs *up* at
+    /// Cognition rather than here. Deliberation stays light on purpose: it exists so a
+    /// scene can think without leaving the scene.
+    pub(super) async fn deliberate(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
+        let id = match self.deliberation {
             Some(id) => self.follow_up(reactor, id, task, true).await?,
             None => self.spawn_inner(reactor, task, true).await?,
         };
-        self.cognition = Some(id);
+        self.deliberation = Some(id);
         Ok(())
     }
 
@@ -441,13 +447,13 @@ impl WorkerRegistry {
             id,
             task,
             kind: WorkerReportKind::Question(question),
-            is_cognition: self.cognition == Some(id),
+            is_deliberation: self.deliberation == Some(id),
         }
     }
 
     /// Build a surfaced report for the `surface` tool — something a worker handed to
     /// the voice mid-work. Like [`question_report`](Self::question_report) it resolves
-    /// the worker's task and flags whether it's cognition (whose surfaced word is
+    /// the worker's task and flags whether it's Deliberation (whose surfaced word is
     /// must-relay). The loop folds the returned report in as a turn-driving signal, so
     /// the voice gets a chance to say it even with no human input.
     pub(super) fn surface_report(&self, id: WorkerId, message: String) -> WorkerReport {
@@ -460,7 +466,7 @@ impl WorkerRegistry {
             id,
             task,
             kind: WorkerReportKind::Surfaced(message),
-            is_cognition: self.cognition == Some(id),
+            is_deliberation: self.deliberation == Some(id),
         }
     }
 
@@ -505,10 +511,10 @@ impl WorkerRegistry {
 
 /// Render one report for the `## New signals` section the reactor sees.
 ///
-/// A **cognition** report is the reactor's own thinking coming back — the answer to
+/// A **Deliberation** report is the scene's own thinking coming back — the answer to
 /// something it told the person it would look into — so it is framed as a *must-relay
 /// instruction*, not a passive "a worker finished" line the voice might note in passing
-/// and drop. This is the fix for cognition's substance never reaching the person: the
+/// and drop. This is the fix for that substance never reaching the person: the
 /// result was structurally optional, one signal among many a mute-by-default voice
 /// discarded. A plain **task worker** report stays an observation the reactor voices on
 /// its own social timing (it may already have spoken to it, or choose to show a view
@@ -517,7 +523,7 @@ impl WorkerRegistry {
 /// it in its own plain words, reconciling with what it already said.
 pub(super) fn render_report(report: &WorkerReport) -> String {
     match &report.kind {
-        WorkerReportKind::Done(answer) if report.is_cognition => format!(
+        WorkerReportKind::Done(answer) if report.is_deliberation => format!(
             "Your thinking on \"{}\" is back — this is the answer you owe the person, so \
 relay what matters here in your own plain words now (don't leave them waiting, and \
 don't just acknowledge it — tell them what you found):\n{}",
@@ -530,7 +536,7 @@ don't just acknowledge it — tell them what you found):\n{}",
             report.task,
             answer.trim()
         ),
-        WorkerReportKind::Failed(err) if report.is_cognition => format!(
+        WorkerReportKind::Failed(err) if report.is_deliberation => format!(
             "Your thinking on \"{}\" hit a wall: {} — let the person know you couldn't get \
 there (plainly, no jargon), rather than going silent.",
             report.task,
@@ -542,7 +548,7 @@ there (plainly, no jargon), rather than going silent.",
             report.task,
             err.trim()
         ),
-        WorkerReportKind::Surfaced(msg) if report.is_cognition => format!(
+        WorkerReportKind::Surfaced(msg) if report.is_deliberation => format!(
             "You have something to tell the person (from your own thinking on \"{}\") — \
 say it now, in your own plain words, if the moment's right:\n{}",
             report.task,
@@ -575,8 +581,8 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
         WorkerReportKind::Question(q) => ("asks", q.trim()),
         WorkerReportKind::Surfaced(msg) => ("surfaced", msg.trim()),
     };
-    let who = if report.is_cognition {
-        "cognition".to_string()
+    let who = if report.is_deliberation {
+        "deliberation".to_string()
     } else {
         format!("worker {}", report.id)
     };
@@ -597,7 +603,7 @@ async fn drive_worker(
     scene: Scene,
     mailbox: Arc<FollowMailbox>,
     busy: Arc<AtomicBool>,
-    is_cognition: bool,
+    is_deliberation: bool,
 ) {
     let mut task = initial_task;
     loop {
@@ -620,7 +626,7 @@ async fn drive_worker(
         observatory
             .record(&scene, EventKind::WorkerFinished { id, state, summary_chars })
             .await;
-        let report = WorkerReport { id, task: task.clone(), kind, is_cognition };
+        let report = WorkerReport { id, task: task.clone(), kind, is_deliberation };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
             tracing::warn!(worker = id, "worker report dropped; scene loop gone");
             return;

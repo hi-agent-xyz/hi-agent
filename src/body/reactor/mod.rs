@@ -2,7 +2,7 @@
 //!
 //! One mpsc per scene, one task per scene; turns run serially against a single
 //! ACP session that is opened on the scene's first turn and reused forever as
-//! the scene's continuous mind. Cognition is delegated to that session; the
+//! the scene's continuous mind. Deliberation is delegated to that session; the
 //! reactor never blocks on it.
 //!
 //! ## Turn-taking lives here, not in the client
@@ -617,7 +617,7 @@ struct ReactorInner {
     /// real project dir — `ls`-ing existing projects, writing source — like a human
     /// in their repo. Absolutized at startup (the child may run with a different cwd).
     views_dir: PathBuf,
-    /// Monotonic cognition-turn counter. Each turn claims the next id;
+    /// Monotonic turn counter. Each turn claims the next id;
     /// it tags audio spans and the channel logs so a reply is traceable end to
     /// end. (The client no longer needs it — turns are internal to the mind.)
     turn_seq: AtomicU64,
@@ -1125,8 +1125,8 @@ async fn apply_control(
     match ctl {
         SceneControl::Delegate { task, worker } => {
             let outcome = match worker {
-                // An explicit `delegate` is a plain task worker, never cognition —
-                // cognition is driven only through `cognize`, which tags its reports.
+                // An explicit `delegate` is a plain task worker, never Deliberation —
+                // Deliberation is driven only through `deliberate`, which tags its reports.
                 Some(id) => workers.follow_up(reactor, id, task, false).await,
                 None => workers.spawn(reactor, task).await,
             };
@@ -1155,7 +1155,7 @@ async fn apply_control(
                 .await;
             // Return it as a turn-driving signal (like a worker question), so the loop
             // breaks 'wait and runs a turn — the voice gets to say it even with no human
-            // input. This is the mechanism for cognition-initiated speech.
+            // input. This is the mechanism for deliberation-initiated speech.
             Some(LoopInput::Worker(workers.surface_report(id, message)))
         }
     }
@@ -1486,8 +1486,8 @@ async fn per_scene_loop(
 }
 
 /// Render just the human requests in a batch (skipping worker reports, alarms, and
-/// pulses) — the text handed to cognition as the turn's task. Skipping reports is
-/// what keeps cognition from re-ingesting its own prior output (a feedback loop).
+/// pulses) — the text handed to Deliberation as the turn's task. Skipping reports is
+/// what keeps it from re-ingesting its own prior output (a feedback loop).
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
     use std::fmt::Write as _;
@@ -1510,8 +1510,8 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 /// to put a view a worker already built on screen; both feed the sequencer. The speed
 /// comes from the small model + a single generation, not from bypassing the adapter.
 ///
-/// Cognition — the agentic thinker/worker — runs in parallel: the turn's human request
-/// is handed to a persistent cognition worker ([`workers::WorkerRegistry::cognize`]),
+/// Deliberation — the scene's reading and thinking — runs in parallel: the turn's human
+/// request is handed to it ([`workers::WorkerRegistry::deliberate`]),
 /// which works off the floor and reports back as an ordinary `LoopInput::Worker` the
 /// reactor voices on a later turn. So the reactor stays the single fast voice.
 ///
@@ -1527,7 +1527,7 @@ async fn run_reactor_turn(
 ) -> anyhow::Result<()> {
     let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
 
-    // This turn's delta: live worker status (so the voice can surface cognition's
+    // This turn's delta: live worker status (so the voice can surface deliberation's
     // progress), presence, any barge-in note, and the new signals. The projected state
     // it all hangs off is assembled in [`turn_context`].
     let worker_status = workers.render_status().await;
@@ -1603,14 +1603,14 @@ async fn run_reactor_turn(
 
     if spoke {
         let _ = reactor.inner.vendor.note_success();
-        // Hand the turn's human request to cognition — the agentic thinker — so it works
+        // Hand the turn's human request to Deliberation — the scene's reader — so it works
         // off the floor while the voice moves on; its report rides back as a WorkerReport
         // the reactor voices on a later turn. Spawned once per scene, then followed up.
         // Nothing to hand off on a pure report/pulse turn.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
-            if let Err(e) = workers.cognize(reactor, task).await {
-                tracing::warn!(scene = %scene, error = %e, "cognition spawn/follow-up failed");
+            if let Err(e) = workers.deliberate(reactor, task).await {
+                tracing::warn!(scene = %scene, error = %e, "deliberation spawn/follow-up failed");
             }
         }
     }
@@ -1946,7 +1946,7 @@ fn render_pulse(note: &str) -> String {
 ///
 /// The rest reach the mind without crossing a wire, so this is their only chance to
 /// be written down. Each goes on the channel that names its origin — a heartbeat is
-/// not something the person said, and neither is cognition's answer coming back.
+/// not something the person said, and neither is deliberation's answer coming back.
 /// A worker's row keeps the substance and drops the framing [`workers::render_report`]
 /// wraps it in for the prompt; that framing is an instruction to the voice, not part
 /// of the signal.
