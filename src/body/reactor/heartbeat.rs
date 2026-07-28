@@ -113,9 +113,10 @@ pub(super) async fn swap(
         .unwrap_or_default();
 
     // Seed the replacement with the soul plus the briefing and recent tail, so it
-    // continues without a visible seam. self.md, commitments.md, and hot.md are
-    // referenced by the soul by path, so the fresh session re-reads the current
-    // duties and digest rather than a stale copy.
+    // continues without a visible seam. The soul names `self.md`, `hot.md` and the
+    // task ledger by path rather than inlining them, so the fresh session reads the
+    // current duties and digest rather than a stale copy — and what a scene carries
+    // forward rides in on every turn anyway now, not on the open.
     let seeded_system_prompt = format!(
         "{}\n\n## Briefing from your earlier conversation\n{}\n\n{}",
         reactor.inner.soul,

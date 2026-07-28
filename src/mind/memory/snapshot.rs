@@ -1,38 +1,135 @@
-//! Snapshot — the per-scene view passed into a scene's reactor session.
+//! Snapshot — the per-scene state projected into a scene's reactor session, and the
+//! recent-signals tail underneath it.
+//!
+//! **Projected = what Reaction must know without reading; everything else is recall.**
+//! Reaction is tools-off by design, so its window is the entirety of what it knows —
+//! it cannot go and look the way an agentic session does via
+//! [`crate::identity::load_soul`]. [`window`] is that whole projection, assembled here
+//! and handed to the model as text.
+//!
+//! Three properties of it are code's, and each is a decision (`docs/arch/data.md`):
+//!
+//! - **Injection is every turn**, not once at session open. A window that is only
+//!   correct when the session rotates is stale for the rest of the conversation — a
+//!   task opened mid-thread, or a scene memory written a minute ago, would simply not
+//!   be there. This is the one that everything else here exists to serve.
+//! - **The bound is code's**, never the agent's: [`CARRIED_FORWARD_CHARS`], and over it
+//!   the text says so. A ceiling that shows up as text is real; one that shows up as
+//!   latency is not.
+//! - **The floor is the log tail** ([`build_for_scene`]). An agent that never got round
+//!   to writing its memory — busy, crashed, mid-restart — leaves a window that is
+//!   uncurated, never empty.
+//!
+//! Every source is read independently and every absence is ordinary: nothing writes
+//! the generated prompts yet, a fresh install owes nothing, an unreflected store has
+//! no digest. A missing or unreadable file is skipped, never an error — the window
+//! degrades to less context, it does not fail a turn.
 
 use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::mind::memory::Memory;
+use crate::mind::memory::{Memory, layout, tasks};
 use crate::types::{Channel, JournalEntry, Scene};
 
 pub const RECENT_WINDOW_MIN: i64 = 30;
 pub const RECENT_ENTRY_LIMIT: usize = 200;
 
-/// The durable working set the reactor carries so it is fast but never blind: who it is
-/// to this install (`self.md`), its standing duties (`commitments.md`), and what's
-/// lately been on its mind (`hot.md`). The reactor is tools-off — it cannot Read these
-/// itself the way an agentic session does via [`crate::identity::load_soul`] — so the
-/// durable memory is inlined into its prompt. Assembled when a reactor session opens
-/// (its warm-up) and retained by the session across the turns that follow; the cost is
-/// three small file reads, not a retrieval, so it never spends the turn's latency.
+/// Hard cap, in **characters**, on one generated prompt as injected.
 ///
-/// Every source is optional and read independently: a fresh install has no
-/// `commitments.md`, an unreflected store no `hot.md`, an operator who authored nothing
-/// no `self.md`. A missing or blank file is skipped, never an error — the reactor
-/// degrades to less context, it does not fail a turn. Returns `""` when nothing is
-/// present, which the reactor's `join_sections` drops.
-pub async fn working_set(data_dir: &Path) -> String {
+/// **Six thousand, and the number is code's.** The agent decides what it carries
+/// forward; it does not get to decide how much of the window that costs, because a
+/// bound held in judgment is not a bound. Six thousand is roughly two pages — about
+/// what a person can actually hold as "what I'm bringing into this conversation", and
+/// small enough that it plus the task projection (itself bounded, at ~2.5k) plus the
+/// recent tail still leave the fast model's window mostly free for the conversation
+/// it is there to have. It rides *every* turn on a latency budget, so the cost is
+/// paid over and over; that is what argues for a page or two rather than ten.
+///
+/// Characters, not bytes: a prompt written in Chinese clips at the same visible
+/// length as one written in English, and costs more bytes — which is the trade we
+/// want, and the same one [`tasks`] makes on its own lines.
+pub const CARRIED_FORWARD_CHARS: usize = 6_000;
+
+/// Everything the scene's reactor must know without reading, in one block, rebuilt
+/// **on every turn**.
+///
+/// In order: what this scene carries forward (the generated prompt, capped), what the
+/// agent owes ([`tasks::projection`]), the legacy authored/digest files still in play,
+/// and the recent-signals tail — the tail last, so it sits against the turn's new
+/// signals and reads as one continuous thread.
+///
+/// Nothing here can fail the turn. Each source resolves to `""` on absence or error
+/// and drops out of the join, and the tail says so in words rather than pretending
+/// nothing happened. The cost is one small read per section plus one directory scan
+/// of the task dimension — small, but genuinely per-turn now, which is why every read
+/// in here has to stay small.
+pub async fn window(memory: &Memory, scene: &Scene) -> String {
+    let data_dir = memory.data_dir();
+    let carried = carried_forward(&layout::scene_prompt_path(data_dir, scene)).await;
+    let owed = match tasks::projection(data_dir).await {
+        Ok(text) => text,
+        Err(err) => {
+            tracing::warn!(error = %err, "open tasks unreadable; window goes without them");
+            String::new()
+        }
+    };
+    let legacy = legacy_working_set(data_dir).await;
+    let tail = recent_tail(memory, scene).await;
+    join(&[carried.as_str(), owed.as_str(), legacy.as_str(), tail.as_str()])
+}
+
+/// One generated prompt, read and bounded. Missing, unreadable or blank ⇒ `""`, which
+/// the join drops — **absence is the normal case today**, since nothing writes these
+/// files until Deliberation is given the job
+/// (`docs/arch/data.md#memoryprompts`). The floor underneath is what makes that
+/// survivable.
+///
+/// Over [`CARRIED_FORWARD_CHARS`] the text is cut and the cut is *announced in the
+/// injected text itself*, addressed to the agent whose file it is: it is the only one
+/// who can do anything about it, and it can only act on what it can see.
+async fn carried_forward(path: &Path) -> String {
     use std::fmt::Write as _;
 
-    use crate::identity::{commitments_path, self_path};
-    use crate::mind::memory::layout::hot_path;
+    let Ok(body) = tokio::fs::read_to_string(path).await else {
+        return String::new();
+    };
+    let body = body.trim();
+    if body.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("## What I carry forward\n");
+    if body.chars().count() <= CARRIED_FORWARD_CHARS {
+        s.push_str(body);
+        return s;
+    }
+    s.extend(body.chars().take(CARRIED_FORWARD_CHARS));
+    let _ = write!(
+        s,
+        "\n\n[Cut here by the host: what you carry forward runs past the \
+{CARRIED_FORWARD_CHARS}-character cap, so the rest of it is missing from this window. \
+Trim the file down to what you actually need in every turn — whatever doesn't fit, you \
+go without.]"
+    );
+    s
+}
+
+/// The two files from the superseded always-loaded core that still have writers.
+///
+/// TODO(`docs/arch/data.md#memoryprompts`): both come out with the change that gives
+/// Deliberation the writer's job. `self.md` is the per-install authored identity —
+/// under the contract, who this install is is a *section* of a generated prompt, not
+/// a file. `hot.md` is a mechanical digest of recent gists, and a digest is not a
+/// working memory. Removing them before anything writes the generated prompts would
+/// strip the window down to the log tail, so they stay until there is something to
+/// replace them with. Standing duties left here already: they are [`tasks`] now, one
+/// ledger and no second one.
+async fn legacy_working_set(data_dir: &Path) -> String {
+    use std::fmt::Write as _;
 
     let sources = [
-        ("Who I am to this person", self_path(data_dir)),
-        ("My standing commitments", commitments_path(data_dir)),
-        ("Lately on my mind", hot_path(data_dir)),
+        ("Who I am to this person", crate::identity::self_path(data_dir)),
+        ("Lately on my mind", layout::hot_path(data_dir)),
     ];
     let mut s = String::new();
     for (title, path) in sources {
@@ -45,6 +142,31 @@ pub async fn working_set(data_dir: &Path) -> String {
     }
     s.truncate(s.trim_end().len());
     s
+}
+
+/// The floor: the scene's recent signals, straight off the log. Never empty — an
+/// unwritten window is uncurated, not blank — and never fatal: a log that cannot be
+/// read says exactly that, rather than rendering `(none)` and claiming a quiet room.
+async fn recent_tail(memory: &Memory, scene: &Scene) -> String {
+    match build_for_scene(memory, scene).await {
+        Ok(snap) => snap.render_for_prompt(),
+        Err(err) => {
+            tracing::warn!(scene = %scene, error = %err, "recent tail unreadable");
+            format!("## Recent (last {RECENT_WINDOW_MIN} minutes)\n(unavailable — I couldn't read the log just now)\n")
+        }
+    }
+}
+
+/// Join the non-empty sections with a blank line between them. Local to this module
+/// so `mind` never reaches into `body` for it; the reactor's `join_sections` does the
+/// same for the turn's delta sections.
+fn join(sections: &[&str]) -> String {
+    sections
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[derive(Debug, Clone)]
@@ -131,5 +253,165 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max).collect();
         format!("{}\u{2026}", truncated)
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+
+    fn scene() -> Scene {
+        Scene("boss".into())
+    }
+
+    /// Put one line in the scene's log, so the floor has something to stand on.
+    async fn heard(memory: &Memory, scene: &Scene, body: &str) {
+        memory
+            .journal
+            .append(JournalEntry::SignalIn {
+                id: uuid::Uuid::now_v7().to_string(),
+                ts: Utc::now(),
+                channel: Channel::Text,
+                scene: scene.clone(),
+                body: body.to_string(),
+                stream: None,
+                media: None,
+                origin: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn write_scene_prompt(data_dir: &Path, scene: &Scene, body: &str) {
+        let path = layout::scene_prompt_path(data_dir, scene);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, body).await.unwrap();
+    }
+
+    /// The absence that is normal today — nothing writes the generated prompts yet —
+    /// must still leave a usable window. Uncurated, never empty.
+    #[tokio::test]
+    async fn a_missing_generated_prompt_still_leaves_the_log_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = scene();
+        heard(&memory, &scene, "把周报发我").await;
+
+        // Not merely absent as a file — absent as a whole tree.
+        assert!(!layout::generated_prompts_dir(dir.path()).exists());
+
+        let text = window(&memory, &scene).await;
+        assert!(!text.trim().is_empty());
+        assert!(!text.contains("## What I carry forward"), "{text}");
+        assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
+        assert!(text.contains("把周报发我"), "{text}");
+
+        // A blank file is the same as no file, not an empty section header.
+        write_scene_prompt(dir.path(), &scene, "   \n\t\n").await;
+        let text = window(&memory, &scene).await;
+        assert!(!text.contains("## What I carry forward"), "{text}");
+        assert!(text.contains("把周报发我"), "{text}");
+    }
+
+    /// Even with nothing at all on disk the floor holds: a header and `(none)`, not
+    /// an empty string the join would drop.
+    #[tokio::test]
+    async fn an_empty_store_still_yields_a_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let text = window(&memory, &scene()).await;
+        assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
+        assert!(text.contains("(none)"), "{text}");
+    }
+
+    /// The bound is code's, and it announces itself. A ceiling that shows up as text
+    /// is real; one that shows up as latency is not.
+    #[tokio::test]
+    async fn over_the_cap_the_text_is_cut_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = scene();
+
+        // Just under the cap: whole, and no notice.
+        write_scene_prompt(dir.path(), &scene, &"a".repeat(CARRIED_FORWARD_CHARS)).await;
+        let text = window(&memory, &scene).await;
+        assert!(text.contains("## What I carry forward"), "{text}");
+        assert!(!text.contains("Cut here by the host"), "{text}");
+
+        // Over it: cut to the cap, and the cut is stated in the injected text.
+        // `q` appears nowhere in the headings or the notice, so counting it counts
+        // exactly what survived the cut.
+        let long = format!("{}TAIL-THAT-MUST-NOT-SURVIVE", "q".repeat(CARRIED_FORWARD_CHARS));
+        write_scene_prompt(dir.path(), &scene, &long).await;
+        let text = window(&memory, &scene).await;
+        assert!(!text.contains("TAIL-THAT-MUST-NOT-SURVIVE"), "the tail rode past the cap");
+        assert!(text.contains("Cut here by the host"), "{text}");
+        assert!(text.contains(&CARRIED_FORWARD_CHARS.to_string()), "{text}");
+        assert_eq!(text.matches('q').count(), CARRIED_FORWARD_CHARS);
+
+        // Characters, not bytes — a CJK prompt clips at the same visible length.
+        write_scene_prompt(dir.path(), &scene, &"记".repeat(CARRIED_FORWARD_CHARS * 2)).await;
+        let text = window(&memory, &scene).await;
+        assert_eq!(text.matches('记').count(), CARRIED_FORWARD_CHARS);
+        assert!(text.contains("Cut here by the host"), "{text}");
+    }
+
+    /// Projected, not retrieved: the reactor is tools-off, so what it owes has to be
+    /// in the window before it says a word. No tool call fetched this.
+    #[tokio::test]
+    async fn open_tasks_are_in_the_window_with_nothing_fetching_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = scene();
+
+        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        owed.title = "Ship the flash cards".into();
+        write_task(dir.path(), &owed).await.unwrap();
+
+        let mut done = Task::new("Renew the domain", TaskKind::Deadline);
+        done.title = "Renew the domain".into();
+        done.state = crate::mind::memory::tasks::TaskState::Done;
+        write_task(dir.path(), &done).await.unwrap();
+
+        let text = window(&memory, &scene).await;
+        assert!(text.contains("# Open tasks"), "{text}");
+        assert!(text.contains("- [wip] Ship the flash cards"), "{text}");
+        // Closed ones are history, not window furniture.
+        assert!(!text.contains("Renew the domain"), "{text}");
+    }
+
+    /// The order the block reads in: what I carry forward, what I owe, then the tail
+    /// — the tail last so it sits against the turn's new signals.
+    #[tokio::test]
+    async fn the_block_reads_in_one_fixed_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = scene();
+        write_scene_prompt(dir.path(), &scene, "He is mid-migration and wants terse answers.").await;
+        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        owed.title = "Ship the flash cards".into();
+        write_task(dir.path(), &owed).await.unwrap();
+        heard(&memory, &scene, "还有多久").await;
+
+        let text = window(&memory, &scene).await;
+        let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
+        assert!(at("## What I carry forward") < at("# Open tasks"));
+        assert!(at("# Open tasks") < at("## Recent (last 30 minutes)"));
+    }
+
+    /// The one ledger. `commitments.md` was the second one, and it is no longer
+    /// inlined — a duty reaches the window as a task or not at all.
+    #[tokio::test]
+    async fn the_old_commitments_file_is_not_inlined_any_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let commitments = crate::identity::commitments_path(dir.path());
+        tokio::fs::create_dir_all(commitments.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&commitments, "- watch the ops group\n").await.unwrap();
+
+        let text = window(&memory, &scene()).await;
+        assert!(!text.contains("watch the ops group"), "{text}");
+        assert!(!text.contains("standing commitments"), "{text}");
     }
 }

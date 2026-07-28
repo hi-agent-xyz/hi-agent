@@ -54,6 +54,40 @@ pub fn hot_path(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("hot.md")
 }
 
+/// `<memory>/prompts` — the **generated** system prompts: one file per agent that
+/// carries state forward into every window.
+///
+/// The leaf name is `prompts/` on both sides of the tree on purpose — both hold the
+/// same kind of thing, text handed to an agent at init — and the parent directory is
+/// the whole of the difference. `<data_dir>/prompts/` is **bundled**: shipped in the
+/// binary, reinstalled every boot, disposable. This one is **generated**: written by
+/// the agent, precious, and rebuildable by nothing else. See
+/// `docs/arch/data.md#memoryprompts`.
+///
+/// **Nothing writes here yet.** Deliberation gets that job in a later change, so
+/// every reader today must treat an absent file as ordinary and degrade to the log
+/// tail rather than raise it as an error.
+pub fn generated_prompts_dir(data_dir: &Path) -> PathBuf {
+    memory_dir(data_dir).join("prompts")
+}
+
+/// `<memory>/prompts/scenes/<scene_enc>.md` — what one scene carries forward,
+/// written by that scene's Deliberation and injected into every one of its turns.
+/// The file name is [`encode_scene`]d for the same reason the raw slice's folder is:
+/// a scene id is an arbitrary string and may carry path-unsafe characters.
+pub fn scene_prompt_path(data_dir: &Path, scene: &Scene) -> PathBuf {
+    generated_prompts_dir(data_dir)
+        .join("scenes")
+        .join(format!("{}.md", encode_scene(scene)))
+}
+
+/// `<memory>/prompts/<agent>.md` — what a **sceneless** agent carries forward
+/// (`cognition.md`). Not a full set on purpose: an agent gets a file when it turns
+/// out to need one. `agent` is a code-supplied name, never a user string.
+pub fn agent_prompt_path(data_dir: &Path, agent: &str) -> PathBuf {
+    generated_prompts_dir(data_dir).join(format!("{agent}.md"))
+}
+
 /// `<memory>/proactivity.md` — the learned read on speaking up unprompted: which
 /// subjects the person welcomes a proactive word on, and which they don't. A
 /// derived projection like [`hot_path`] — the reflection pass regenerates it from
@@ -164,5 +198,27 @@ mod tests {
         assert_eq!(encode_scene(&Scene("alice@phone".into())), "alice%40phone");
         assert_eq!(encode_scene(&Scene("a/b".into())), "a%2Fb");
         assert_eq!(encode_scene(&Scene("plain-1.0_x".into())), "plain-1.0_x");
+    }
+
+    /// The generated tree sits under `memory/`, never beside the bundled
+    /// `<data_dir>/prompts/` — the parent directory is what says who wrote the file.
+    #[test]
+    fn generated_prompts_live_under_memory_not_beside_the_bundled_ones() {
+        let root = Path::new("/tmp/jack.hi");
+        assert_eq!(generated_prompts_dir(root), root.join("memory").join("prompts"));
+        assert_ne!(generated_prompts_dir(root), root.join("prompts"));
+        assert_eq!(
+            agent_prompt_path(root, "cognition"),
+            root.join("memory").join("prompts").join("cognition.md")
+        );
+        // A scene id with path-unsafe characters cannot escape the tree.
+        assert_eq!(
+            scene_prompt_path(root, &Scene("alice@phone".into())),
+            root.join("memory").join("prompts").join("scenes").join("alice%40phone.md")
+        );
+        assert!(
+            scene_prompt_path(root, &Scene("../../etc/passwd".into()))
+                .starts_with(root.join("memory").join("prompts").join("scenes"))
+        );
     }
 }

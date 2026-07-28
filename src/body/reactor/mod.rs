@@ -77,7 +77,7 @@ use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::{AgentLayer, SessionRole};
 use crate::foundation::config;
 use crate::foundation::shutdown::Shutdown;
-use crate::mind::memory::{Memory, build_for_scene, working_set};
+use crate::mind::memory::{Memory, snapshot};
 use crate::foundation::observatory::{EventKind, Observatory, SessionKind};
 use crate::types::{Channel, Geometry, JournalEntry, Origin, Scene, Signal, ViewEnvelope, ViewOp};
 use bytes::Bytes;
@@ -104,7 +104,7 @@ const SWAP_TIMEOUT: Duration = Duration::from_secs(180);
 /// Default idle interval between host pulses — the scene's recurring moment of
 /// self-attention. A pulse is not a schedule of work: it injects bare situational
 /// facts ("nothing new for 30m") and core.md tells the mind what such a moment is
-/// for (review commitments, glance at setups it owns); most pulses should
+/// for (read down its open tasks, glance at setups it owns); most pulses should
 /// conclude with nothing to do or say. Override via `pulse`; `0`/`off`
 /// disables. Boot is not a special case — the first pulse after the host starts
 /// simply carries that fact.
@@ -1527,9 +1527,9 @@ async fn run_reactor_turn(
 ) -> anyhow::Result<()> {
     let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
 
-    // Assemble the turn context: recent conversation (so the voice reconciles with what
-    // was already said rather than repeating it), live worker status (so it can surface
-    // cognition's progress), presence, any barge-in note, and the new signals.
+    // This turn's delta: live worker status (so the voice can surface cognition's
+    // progress), presence, any barge-in note, and the new signals. The projected state
+    // it all hangs off is assembled in [`turn_context`].
     let worker_status = workers.render_status().await;
     let presence_note = format!("## Presence\n{}", reactor.inner.presence.render(scene));
     let interrupted = reactor
@@ -1546,37 +1546,28 @@ async fn run_reactor_turn(
     // real id instead of guessing from the transcript.
     let on_screen = render_on_screen(&reactor.inner.views.on_screen(scene).await);
 
-    // Open (or reuse) the persistent reactor session. `speaking.md` is prepended
-    // to its first prompt; the session then remembers prior turns, so only a *fresh*
-    // session is handed the durable working set and the memory snapshot — later turns
-    // send just the delta, inheriting both from the session's own memory of the open.
-    let (session, fresh) = match reactor_session {
-        Some(s) => (s.clone(), false),
+    // Open (or reuse) the persistent reactor session. `speaking.md` is prepended to its
+    // first prompt; the session then remembers prior turns. Whether it is fresh no
+    // longer changes what the turn carries — see [`turn_context`].
+    let session = match reactor_session {
+        Some(s) => s.clone(),
         None => {
             let opened = open_reactor_session(reactor, scene).await?;
             *reactor_session = Some(opened.clone());
-            (opened, true)
+            opened
         }
     };
 
-    let context = if fresh {
-        // The reactor is tools-off, so its durable memory — identity, standing
-        // commitments, and what's lately been on its mind — has to be handed to it
-        // here rather than Read on its own. Prepended on the fresh turn so the voice is
-        // grounded from its very first word; the session retains it thereafter.
-        let snap = build_for_scene(&reactor.inner.memory, scene).await?;
-        join_sections(&[
-            &working_set(reactor.inner.memory.data_dir()).await,
-            &snap.render_for_prompt(),
-            &worker_status,
-            &on_screen,
-            &presence_note,
-            &interrupted,
-            &new_signals,
-        ])
-    } else {
-        join_sections(&[&worker_status, &on_screen, &presence_note, &interrupted, &new_signals])
-    };
+    let context = turn_context(
+        &reactor.inner.memory,
+        scene,
+        &worker_status,
+        &on_screen,
+        &presence_note,
+        &interrupted,
+        &new_signals,
+    )
+    .await;
 
     tracing::info!(scene = %scene, ctx_chars = context.chars().count(), "reactor: prompting session");
     let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
@@ -1624,6 +1615,98 @@ async fn run_reactor_turn(
         }
     }
     Ok(())
+}
+
+/// One turn's whole prompt: the projected state, then this turn's delta.
+///
+/// **There is no fresh-session branch here, and that absence is the change.** The
+/// projection used to be inlined only when a session was opened, on the reasoning that
+/// the session remembers its own open and later turns need send only the delta. That
+/// reasoning holds for a *transcript* and fails for *state*: a task opened, a duty
+/// closed, or a scene memory written mid-conversation is exactly what the session
+/// cannot have remembered, because it did not exist yet. So the window was correct at
+/// session open and drifted for every turn after — and since a scene's session is
+/// long-lived by design, that is most of the conversation. Code re-reads the current
+/// state and injects it on every turn instead.
+///
+/// The costs are real and accepted. The block rides in every user message, so the
+/// session's history accumulates one copy per turn until the next hot-swap rotates it
+/// — which is why the bound in [`crate::mind::memory::snapshot::CARRIED_FORWARD_CHARS`]
+/// belongs to code. And the reads (the generated prompt, the task dimension, the log
+/// tail) now happen per turn rather than per session; each is small, none can fail the
+/// turn, and the alternative is an agent that answers from a stale window.
+async fn turn_context(
+    memory: &Memory,
+    scene: &Scene,
+    worker_status: &str,
+    on_screen: &str,
+    presence: &str,
+    interrupted: &str,
+    new_signals: &str,
+) -> String {
+    let projected = snapshot::window(memory, scene).await;
+    join_sections(&[projected.as_str(), worker_status, on_screen, presence, interrupted, new_signals])
+}
+
+#[cfg(test)]
+mod turn_context_tests {
+    use super::*;
+    use crate::mind::memory::layout;
+    use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+
+    /// The bug this change exists to fix. A scene's memory written — or a task opened
+    /// — *after* the session was already up used to be invisible until the session
+    /// rotated; the second turn of one live session must carry it.
+    #[tokio::test]
+    async fn the_projection_rides_a_reused_session_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = Scene("boss".into());
+
+        // Turn one, on a session opened just now: nothing written yet.
+        let first = turn_context(&memory, &scene, "", "", "", "", "## New signals\n>在吗").await;
+        assert!(!first.contains("mid-migration"), "{first}");
+
+        // Mid-conversation, the state moves under the live session.
+        let path = layout::scene_prompt_path(dir.path(), &scene);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, "He is mid-migration this week; keep answers terse.")
+            .await
+            .unwrap();
+        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        owed.title = "Ship the flash cards".into();
+        write_task(dir.path(), &owed).await.unwrap();
+
+        // Turn two, same session — no re-open, no rotation.
+        let second = turn_context(&memory, &scene, "", "", "", "", "## New signals\n>那卡片呢").await;
+        assert!(second.contains("mid-migration"), "{second}");
+        assert!(second.contains("- [wip] Ship the flash cards"), "{second}");
+        assert!(second.contains("## New signals"), "{second}");
+    }
+
+    /// The projected state leads and the turn's delta follows, so the new signals sit
+    /// last — closest to the reply the model is about to write.
+    #[tokio::test]
+    async fn projected_state_leads_and_the_new_signals_come_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = Scene("boss".into());
+        let text = turn_context(
+            &memory,
+            &scene,
+            "## Workers\nbuilding a view",
+            "",
+            "## Presence\nhere",
+            "",
+            "## New signals\n>好了没",
+        )
+        .await;
+        let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
+        assert!(at("## Recent (last 30 minutes)") < at("## Workers"));
+        assert!(at("## Workers") < at("## Presence"));
+        assert!(at("## Presence") < at("## New signals"));
+        assert!(text.trim_end().ends_with("好了没"), "{text}");
+    }
 }
 
 /// Open a fresh **reactor** session for `scene`, carrying `speaking.md` as its system

@@ -1,8 +1,9 @@
 //! identity — who the agent is.
 //!
-//! The factory-authored character (`core.md`, `speaking.md`, `meaning.md`), the
-//! per-install authored `self.md`, and the agent-written standing duties
-//! (`commitments.md`). This module owns the **seed** the reactor opens every scene
+//! The factory-authored character (`core.md`, `speaking.md`, `meaning.md`) and the
+//! per-install authored `self.md`. Standing duties are no longer here at all — they
+//! are tasks ([`crate::mind::memory::tasks`]), one ledger, projected into every
+//! window rather than pointed at by a path. This module owns the **seed** the reactor opens every scene
 //! session with ([`load_soul`]) and the **prompt cascade** that materialises the
 //! bundled prompts under `<data_dir>/prompts/`, composing each managed base with an
 //! optional operator `*.local.md` override ([`install_prompts`]). That cascade is
@@ -14,9 +15,10 @@
 //!   identity prompts — they share one cascade. A later slice moves those non-identity
 //!   prompts to where they belong (mind / the loop), leaving identity with just
 //!   `core`/`speaking`/`meaning`.
-//! - The on-disk identity files (`self.md`, `commitments.md`) still live under
-//!   `<data_dir>/memory/` for now (no data migration); a later slice relocates them
-//!   under `<data_dir>/identity/`.
+//! - `self.md` still lives under `<data_dir>/memory/` for now (no data migration).
+//!   Under `docs/arch/data.md#memoryprompts` it does not get relocated at all: who
+//!   this install is becomes a *section* of a generated prompt, so the file goes away
+//!   with the change that gives Deliberation the writer's job.
 
 use std::path::{Path, PathBuf};
 
@@ -138,11 +140,13 @@ pub fn self_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join("self.md")
 }
 
-/// `<data_dir>/memory/commitments.md` — the agent's standing duties (what it watches,
-/// runs, where its ledgers live). The one identity-adjacent file the agent *writes*:
-/// it loads into every fresh session, so it is how a duty survives a restart. Named
-/// everywhere by this single absolute path, so the duty written is the duty recovered.
-/// (Still under `memory/` pending the identity-dir relocation.)
+/// `<data_dir>/memory/commitments.md` — the **superseded** duty ledger.
+///
+/// Duties are [`crate::mind::memory::tasks`] now: one ledger, and this is no longer
+/// it. Nothing inlines this file into a window and nothing points the mind at it any
+/// more. It survives for one reason — [`is_first_meeting`] still reads it, so an
+/// install that wrote duties here before the change is not mistaken for a brand-new
+/// one and greeted with a first hello.
 pub fn commitments_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join("commitments.md")
 }
@@ -150,16 +154,21 @@ pub fn commitments_path(data_dir: &Path) -> PathBuf {
 /// The mind's system-prompt seed: a short bundled personality plus a manifest that
 /// hands the agent the absolute paths of every file that holds its fuller self —
 /// the static manual (`core.md`, `speaking.md`, `meaning.md`), the per-install
-/// authored identity `self.md` (read-only, optional), its standing duties
-/// `commitments.md` (to read and to *write* — the one identity-adjacent file the
-/// agent writes), and its recency digest `hot.md` (a mind projection, read for what's
-/// lately been on its mind) — and tells it to Read them all up front. We send this thin
-/// seed rather than inlining the character *or* the memory core on every turn: every
-/// file is a ref the mind reads itself. The paths are absolutized here so the
-/// Read/Write targets resolve regardless of the session's cwd (which is `None`). The
-/// commitments path is the same [`commitments_path`] the seed names everywhere, so a
-/// duty the mind writes is the duty recovery loads — never a second copy. Built at
-/// startup and reused on each hot-swap. (Named `load_soul` for the reactor's history.)
+/// authored identity `self.md` (read-only, optional), the `tasks` facet dimension
+/// (to read and to *write* — the one ledger of what it owes), and its recency digest
+/// `hot.md` (a mind projection, read for what's lately been on its mind) — and tells
+/// it to Read them all up front. We send this thin seed rather than inlining the
+/// character *or* the memory core on every turn: every file is a ref the mind reads
+/// itself. The paths are absolutized here so the Read/Write targets resolve regardless
+/// of the session's cwd (which is `None`).
+///
+/// **The duty ledger the seed names is the one code projects.** It is the same
+/// `facets/tasks/` tree [`crate::mind::memory::tasks`] scans and
+/// [`crate::mind::memory::snapshot::window`] puts in front of every turn, so a duty
+/// the mind writes is the duty recovery reads. Naming a second file here — which is
+/// what the superseded `commitments.md` line did — is exactly how two ledgers come
+/// back. Built at startup and reused on each hot-swap. (Named `load_soul` for the
+/// reactor's history.)
 pub fn load_soul(data_dir: &Path) -> String {
     let base = if data_dir.is_absolute() {
         data_dir.to_path_buf()
@@ -171,7 +180,8 @@ pub fn load_soul(data_dir: &Path) -> String {
     let speaking = prompts.join("speaking.md");
     let meaning = prompts.join("meaning.md");
     let self_md = self_path(&base);
-    let commitments = commitments_path(&base);
+    let tasks = crate::mind::memory::layout::facets_dir(&base)
+        .join(crate::mind::memory::tasks::DIMENSION);
     let hot = crate::mind::memory::layout::hot_path(&base);
     let proactivity = crate::mind::memory::layout::proactivity_path(&base);
     // One extra line on a genuine first meeting — the brand-new install where nothing
@@ -200,10 +210,17 @@ you answer:\n\n\
 More files hold not how you were made but who you've become — read them too:\n\n\
 - {} — who this install asked you to be, in its own words. Read it if it's there; it \
 may be empty, and that's fine. It's authored, not yours to edit.\n\
-- {} — your standing duties: what you watch, what you run, where your ledgers live. It \
-loads into every fresh session, so it's how you remember a duty across a restart. It's \
-yours to write: note a duty there the moment you take one on, strike it when it ends. \
-Always use that exact absolute path, never a relative one, so there is only ever one such file.\n\
+- {} — your tasks: a folder, not a file, holding one subfolder per thing you owe, each \
+with a `facet.md` inside. Nothing to read up front — what's still open is put in front \
+of you rather than fetched, so a duty survives a restart without you going to look for \
+it. But this is the only ledger of what's owed, and writing it is yours: open one the \
+moment you take work on, close it when the work is actually done. A `facet.md` \
+is frontmatter between `---` lines, then your own prose: `kind:` (wip / serving / watch \
+/ deadline / staged), `state:` (open / done / dropped), `title:`, and where they apply \
+`due:` (a date or an RFC3339 time), `report_to:` (a scene), and for anything you keep \
+running `verify:` (how to tell it's really alive — a count, not \"something is \
+running\"), `restart:`, `owner:`, `start_key:`. Anything missing or misspelt reads as \
+still owed, so a half-written task is never a lost one.\n\
 - {} — a rolling digest of what's lately been on your mind, refreshed as you reflect. \
 It may not exist yet; that's fine.\n\
 - {} — what the person welcomes you raising unprompted, and what they don't: a per-topic \
@@ -214,7 +231,7 @@ then nothing's proven — lean quiet.{}",
         speaking.display(),
         meaning.display(),
         self_md.display(),
-        commitments.display(),
+        tasks.display(),
         hot.display(),
         proactivity.display(),
         first_meeting,
@@ -252,23 +269,30 @@ write to you in another language — then follow their lead."
 
 /// Whether this looks like a genuine **first meeting** — a brand-new install where the
 /// agent has no history with the person yet. True when none of the accruing traces
-/// exist: no recency digest (`hot.md`), no memory episodes, and no standing duties
-/// written. The authored `self.md` is deliberately *not* consulted — an operator may
-/// pre-author identity on a fresh box, and that says nothing about whether the person
-/// has been met. The predicate self-clears: the first jotted memory, reflection, or
-/// duty flips it false, so the first-hello cue can never repeat.
+/// exist: no recency digest (`hot.md`), no memory episodes, and nothing owed. The
+/// authored `self.md` is deliberately *not* consulted — an operator may pre-author
+/// identity on a fresh box, and that says nothing about whether the person has been
+/// met. The predicate self-clears: the first jotted memory, reflection, or task flips
+/// it false, so the first-hello cue can never repeat.
+///
+/// Duties are checked in both places on purpose. A task is where one lands now; the
+/// superseded `commitments.md` is read too, so an install that wrote duties there
+/// before the change is not mistaken for a stranger and greeted with a first hello.
 fn is_first_meeting(base: &Path) -> bool {
     use crate::mind::memory::layout;
-    let no_hot = !layout::hot_path(base).exists();
-    let no_episodes = match std::fs::read_dir(layout::episodes_dir(base)) {
+    let empty_dir = |dir: PathBuf| match std::fs::read_dir(dir) {
         Ok(mut entries) => entries.next().is_none(),
         Err(_) => true, // dir absent ⇒ nothing recorded
     };
+    let no_hot = !layout::hot_path(base).exists();
+    let no_episodes = empty_dir(layout::episodes_dir(base));
+    let no_tasks =
+        empty_dir(layout::facets_dir(base).join(crate::mind::memory::tasks::DIMENSION));
     let no_commitments = match std::fs::read_to_string(commitments_path(base)) {
         Ok(text) => text.trim().is_empty(),
         Err(_) => true,
     };
-    no_hot && no_episodes && no_commitments
+    no_hot && no_episodes && no_tasks && no_commitments
 }
 
 #[cfg(test)]
@@ -329,17 +353,19 @@ mod soul_tests {
     }
 
     #[test]
-    fn seed_names_the_commitments_ledger_by_the_canonical_absolute_path() {
-        // The mind must be handed the *same* path the loader reads from
-        // ([`commitments_path`]), so a duty it writes is the duty recovery loads — a
-        // relative path here is what let a second ledger exist and broke restart
-        // recovery. The authored `self.md` is named too (read-only).
+    fn seed_names_the_task_ledger_and_no_second_one() {
+        // The mind must be handed the *same* tree code projects and scans, so a duty it
+        // writes is the duty recovery reads — naming a second place is what let two
+        // ledgers exist and broke restart recovery. The authored `self.md` is named too
+        // (read-only).
         let dir = tempfile::tempdir().unwrap();
         let seed = load_soul(dir.path());
-        let commitments = commitments_path(dir.path());
-        assert!(seed.contains(&commitments.display().to_string()));
-        // And it must be absolute — no relative `memory/commitments.md` slipping through.
-        assert!(commitments.is_absolute());
+        let tasks = crate::mind::memory::layout::facets_dir(dir.path())
+            .join(crate::mind::memory::tasks::DIMENSION);
+        assert!(tasks.is_absolute());
+        assert!(seed.contains(&tasks.display().to_string()));
+        // And the superseded ledger is gone from the seed entirely.
+        assert!(!seed.contains("commitments"));
         // The per-install authored identity is referenced as well.
         let self_md = self_path(dir.path());
         assert!(seed.contains(&self_md.display().to_string()));

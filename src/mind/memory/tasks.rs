@@ -343,7 +343,7 @@ pub async fn due_before(data_dir: &Path, cutoff: DateTime<Utc>) -> anyhow::Resul
 /// [`PROJECTED_TASKS`], not by anyone's judgment.
 ///
 /// Empty string when nothing is open, so a caller joining sections drops it (the
-/// same contract as [`super::snapshot::working_set`]'s sources).
+/// same contract as the other sections [`super::snapshot::window`] joins).
 pub async fn projection(data_dir: &Path) -> anyhow::Result<String> {
     Ok(render_projection(&open_tasks(data_dir).await?, Utc::now()))
 }
