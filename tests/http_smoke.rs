@@ -211,7 +211,7 @@ async fn all_sensory_stubs_return_501() {
     assert_eq!(resp.status(), reqwest::StatusCode::NOT_IMPLEMENTED);
     let body = resp.text().await.expect("body");
     assert!(
-        body.contains("STT_PROVIDER"),
+        body.contains("capability not configured"),
         "501 body should explain the capability gate, got: {body}"
     );
 }
