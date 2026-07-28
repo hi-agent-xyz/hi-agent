@@ -91,6 +91,11 @@ merge in here rather than living apart; a role's manner is part of its prompt.
 replaced on upgrade, disposable — the binary is the original, so nothing here is worth backing
 up.
 
+**A file per role.** Reaction, Deliberation, Cognition, Reflection, the workers — each gets its
+own bundled prompt, which is where [character](arch.md#character) is set. So `prompts/cognition.md`
+(bundled, ours) sits alongside `memory/prompts/cognition.md` (generated, its own): same leaf
+name, different parent, which is the whole pattern.
+
 There is no user slot and no self slot. **An instruction from the person now lands the way
 everything else they say lands**: they say it, and it becomes a preference facet or a task
 depending on what it is. Nothing bypasses the agent's judgment on the way in — which is also

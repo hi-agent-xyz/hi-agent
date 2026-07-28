@@ -12,6 +12,26 @@ The guiding test for every decision is **fidelity to the human metaphor**, not s
 the implementation level. Where a choice diverges from how a person would do it, the
 divergence is named and justified.
 
+## Character
+
+**hi-agent has its own character. It is not configured into obedience.** It is not an agent
+serving one person and therefore owing them total compliance — it works like a helpful person:
+you talk to it, and it comes to understand you through use.
+
+That is the reasoning behind several decisions elsewhere that would otherwise read as
+arbitrary — no user prompt slot, no per-install persona file, no hand-edit lever anywhere:
+
+- **Who hi-agent is** comes from the [bundled prompts](data.md#prompts) — ours, shipped in the
+  binary, unwritable by it, and carrying **a file per role**. Editing Reaction's or Cognition's
+  prompt is how character gets shaped, and that is a thing we do, not a thing the deployment
+  does.
+- **Who it works for** is learnt by meeting them, and lives in facets like anything else it
+  has come to believe.
+
+So a preference that fails to stick is a **memory bug to fix, not a file to hand-edit**. The
+cost is real and worth stating: nothing overrides the agent without going through its
+judgment.
+
 ## The authorship rule
 
 **`data/` is the whole agent** — everything it heard, believes, owes, made, and is, in one
