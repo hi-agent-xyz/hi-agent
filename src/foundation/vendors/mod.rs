@@ -8,6 +8,7 @@
 
 pub mod anthropic_messages;
 pub mod campplus;
+pub mod chrome_headless;
 pub mod doubao_image_gen;
 pub mod doubao_video_gen;
 pub mod doubao_vision;

@@ -12,6 +12,7 @@ fn main() {
     println!("cargo:rustc-env=HI_AGENT_NODE_VERSION={}", manifest.node_version);
     println!("cargo:rustc-env=HI_AGENT_ADAPTER_VERSION={}", manifest.adapter_version);
     println!("cargo:rustc-env=HI_AGENT_CLAUDE_VERSION={}", manifest.claude_version);
+    println!("cargo:rustc-env=HI_AGENT_CHROME_VERSION={}", manifest.chrome_version);
 
     // macOS only: compile + link the native SwiftUI Settings window (the Phase-1 shell
     // client of the config API — see src/foundation/vendors/macos_swift_settings.rs).
@@ -89,6 +90,7 @@ struct ManifestVersions {
     node_version: String,
     adapter_version: String,
     claude_version: String,
+    chrome_version: String,
 }
 
 /// Minimal manifest read. Avoids extra build-deps by scanning for keys; falls
@@ -107,6 +109,7 @@ fn read_manifest_versions() -> ManifestVersions {
     let node_version = get("node_version").unwrap_or_else(|| "dev".to_string());
     let adapter_version = get("adapter_version").unwrap_or_else(|| "dev".to_string());
     let claude_version = get("claude_version").unwrap_or_else(|| "dev".to_string());
+    let chrome_version = get("chrome_version").unwrap_or_else(|| "dev".to_string());
 
-    ManifestVersions { node_version, adapter_version, claude_version }
+    ManifestVersions { node_version, adapter_version, claude_version, chrome_version }
 }

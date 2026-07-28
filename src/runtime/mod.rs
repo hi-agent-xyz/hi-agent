@@ -38,6 +38,10 @@ use tokio::process::Command;
 
 use crate::foundation::config::LlmWire;
 
+/// The headless browser the view render pipeline drives. Same system-first,
+/// managed-fallback shape as the tools above; provisioned lazily on first render.
+pub mod browser;
+
 /// Pinned Node version (no leading `v`), stamped from `src/runtime/manifest.toml`.
 const NODE_VERSION: &str = env!("HI_AGENT_NODE_VERSION");
 
@@ -491,7 +495,10 @@ fn resolve_bundled(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRunti
 /// GET `url` and buffer the whole body through the shared timeout client, so a
 /// connect failure or a mid-stream stall surfaces as an error (lettable
 /// [`crate::net::with_retries`] re-attempt) instead of hanging.
-async fn fetch_url_bytes(client: &reqwest::Client, url: &str) -> anyhow::Result<bytes::Bytes> {
+pub(crate) async fn fetch_url_bytes(
+    client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<bytes::Bytes> {
     let resp = client
         .get(url)
         .send()
@@ -698,7 +705,7 @@ fn esbuild_rel_in_node_modules(os: &str, arch: &str) -> PathBuf {
 /// with any execute bit set; Windows has no execute bit, so existence as a regular
 /// file is the test.
 #[cfg(unix)]
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     match std::fs::metadata(p) {
         Ok(m) => m.is_file() && (m.permissions().mode() & 0o111 != 0),
@@ -707,7 +714,7 @@ fn is_executable(p: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
 }
 
@@ -780,7 +787,7 @@ fn adapter_version_on_path(entry: &Path) -> Option<String> {
 /// Windows, where executables carry an extension, each `PATHEXT` suffix is also
 /// tried, so a bare `node` finds `node.exe` and `claude-agent-acp` finds its
 /// `.cmd` shim.
-fn find_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let bare = dir.join(name);
@@ -899,7 +906,7 @@ fn is_app_bundle_path(p: &Path) -> bool {
 
 /// First-run user-facing hint. Goes straight to stderr (not `tracing`) so it is
 /// visible regardless of `RUST_LOG`.
-fn hint(msg: &str) {
+pub(crate) fn hint(msg: &str) {
     eprintln!("hi-agent: {msg}");
 }
 

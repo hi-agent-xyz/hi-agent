@@ -177,6 +177,12 @@ export default defineConfig({
       preserveEntrySignatures: "exports-only",
       input: {
         index: r("index.html"),
+        // The headless render page (served by Rust at `/render/view`). A second
+        // HTML entry in the SAME build on purpose: Rollup then emits the shared
+        // modules once, so this page's React/@hi/core are the very chunks the
+        // import map names — the page and the view it mounts share one instance,
+        // exactly as the real face does.
+        render: r("render.html"),
         "share-react": r("src/shared/react.ts"),
         "share-react-dom": r("src/shared/react-dom.ts"),
         "share-jsx-runtime": r("src/shared/jsx-runtime.ts"),

@@ -16,7 +16,10 @@ RUN cargo build --release
 
 # Stage 3: minimal runtime
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+# `unzip`: Chrome for Testing publishes the headless browser the view renderer
+# drives as a `.zip`, and GNU tar (unlike the bsdtar macOS/Windows ship as `tar`)
+# cannot read one. Without this the browser provisioner has no extractor here.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates unzip \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=rust /build/target/release/hi-agent /usr/local/bin/hi-agent
 EXPOSE 8080

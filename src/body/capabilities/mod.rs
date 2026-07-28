@@ -22,7 +22,10 @@
 //! [`accessibility`], [`audio_capture`], [`desktop_context`], [`hotkey`],
 //! [`input`], [`screencast`], and [`tray`] are the exceptions to the env-config
 //! pattern: their vendor is the operating system, selected at compile time, so they
-//! have no `init` and do not appear in the composition root.
+//! have no `init` and do not appear in the composition root. [`view_render`] is the
+//! same shape with a provisioned rather than compile-time vendor: its browser is
+//! resolved lazily on first render (system, else a pinned managed build), so it
+//! too has no `init` and nothing for the operator to set.
 
 use crate::foundation::models;
 
@@ -39,6 +42,7 @@ pub mod stt;
 pub mod tray;
 pub mod tts;
 pub mod video_gen;
+pub mod view_render;
 pub mod vision;
 pub mod voiceprint;
 

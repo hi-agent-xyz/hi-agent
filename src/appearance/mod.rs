@@ -85,6 +85,12 @@ where
         // direct load or refresh of `/settings` boots the app rather than 404ing.
         .route("/settings", get(index))
         .route("/settings/{*path}", get(index))
+        // The headless render page — one agent view, mounted standalone, for the
+        // renderer to screenshot. It lives here rather than in the server router
+        // because everything it needs is embedded (the built page + the build's
+        // import map), and because the import-map injection it depends on is
+        // *this* module's job — see `render_view`.
+        .route("/render/view", get(render_view))
         .route("/favicon.ico", get(favicon))
         // Brand icon set + PWA manifest. The router only serves paths it names,
         // so each root-level asset Vite copies from `public/` needs an explicit
@@ -155,6 +161,43 @@ async fn index() -> Response {
 /// `GET /assets/*path` — serve a hashed asset from the embedded dist.
 async fn asset(Path(path): Path<String>) -> Response {
     serve_embedded(&format!("assets/{path}"))
+}
+
+/// `GET /render/view?module=…&region=…&size=…&theme=…` — a host page carrying
+/// exactly one agent view, for the headless renderer to load and screenshot.
+///
+/// **Why a route at all.** A compiled view keeps its bare imports (`react`,
+/// `@hi/ui`, `@hi/core`, `motion/react`) unresolved by design, so the host and
+/// the view share one React instance. There is therefore no such thing as
+/// rendering a view by pointing a browser at its `.mjs`: it has to be loaded by a
+/// page that carries the import map. Backend routes are the one thing the agent
+/// cannot hot-load, so this ships as a bundled seed (see
+/// `docs/arch/foundation.md#hot-loading`).
+///
+/// **One map, not two.** The map comes from the same embedded `importmap.json`
+/// the SPA's `index()` injects, through the same [`inject_importmap`] — a second,
+/// hand-maintained copy would drift the moment a shim is added, and views would
+/// fail to resolve only in review.
+///
+/// The query string is read client-side (`src/render/main.tsx`), so the HTML is
+/// identical for every render and needs no state here.
+async fn render_view() -> Response {
+    match embed::get("render.html") {
+        Some(file) => {
+            let html = String::from_utf8_lossy(file.data.as_ref()).into_owned();
+            html_response(inject_importmap(html), StatusCode::OK)
+        }
+        // Debug builds before `npm run build`: there is no built page and no
+        // import map, so a render could only produce a misleading blank. Say so.
+        None => html_response(
+            "<!doctype html><title>hi-agent view render</title>\
+             <p>The web bundle has not been built, so there is no render page and \
+             no import map. Run `npm run build` in src/appearance/web/ (or \
+             `make build`) and rebuild.</p>"
+                .to_string(),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    }
 }
 
 /// Inject the build's `importmap.json` (if embedded) as a `<script type=

@@ -10,7 +10,13 @@ import { getScene } from "../lib/scene";
 //
 // Stage 0 bridge: the provider still sources its value from `useAgentSession`.
 // Stage 7 inlines that hook's body here and the provider becomes the owner.
-const SessionContext = createContext<AgentSession | null>(null);
+// Exported (but deliberately NOT re-exported from `core/index.ts`, so it stays
+// out of the `@hi/core` surface a view authors against): the headless render page
+// provides a fabricated session here instead of mounting `SessionProvider`, which
+// would open the mic, the camera and every channel long-poll — and would register
+// as a live scene subscriber, making a review render look like a person in the
+// room. See `src/render/main.tsx`.
+export const SessionContext = createContext<AgentSession | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const session = useAgentSession();

@@ -7,6 +7,11 @@
 # does not auto-reinstall — delete the runtime dir to force a fresh install.
 node_version    = "22.14.0"
 adapter_version = "0.58.1"
+# Headless browser for the view render pipeline (see src/runtime/browser.rs). A
+# Chrome-for-Testing `chrome-headless-shell` build, downloaded per-host from
+# storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/. Only
+# used when the host has no system Chrome/Chromium/Edge.
+chrome_version  = "151.0.7922.47"
 # claude_version is resolved by `npm ci` from the lockfile; recorded here for
 # the `--version` stamp only.
 claude_version  = "unknown"

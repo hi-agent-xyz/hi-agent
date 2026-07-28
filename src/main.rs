@@ -25,8 +25,9 @@ struct Cli {
     purge_voice_galleries: bool,
 
     /// Package-time only: download + lay out the full managed runtime, recognition
-    /// models, and static ffmpeg under <DIR> (a `.app`'s `Contents/Resources`),
-    /// then exit. Hidden — driven by `make dmg`, not a normal run mode.
+    /// models, static ffmpeg, and the headless browser under <DIR> (a `.app`'s
+    /// `Contents/Resources`), then exit. Hidden — driven by `make dmg`, not a
+    /// normal run mode.
     #[arg(long, hide = true, value_name = "DIR")]
     provision_into: Option<PathBuf>,
 
@@ -43,7 +44,8 @@ fn version_string() -> &'static str {
         env!("CARGO_PKG_VERSION"),
         " (node ", env!("HI_AGENT_NODE_VERSION"),
         "; adapter ", env!("HI_AGENT_ADAPTER_VERSION"),
-        "; claude ", env!("HI_AGENT_CLAUDE_VERSION"), ")"
+        "; claude ", env!("HI_AGENT_CLAUDE_VERSION"),
+        "; chrome ", env!("HI_AGENT_CHROME_VERSION"), ")"
     )
 }
 
@@ -95,6 +97,12 @@ async fn provision(into: PathBuf) -> anyhow::Result<()> {
     hi_agent::foundation::vendors::ffmpeg::provision_into(&into.join("ffmpeg"))
         .await
         .context("provisioning static ffmpeg")?;
+    // The headless browser the view renderer drives. Staged like the rest so a
+    // shipped app can review a view with no first-run download — and so the
+    // Mach-O inside it is co-signed with everything else at package time.
+    hi_agent::runtime::browser::provision_into(&into.join("browser"))
+        .await
+        .context("provisioning the headless browser")?;
     tracing::info!(into = %into.display(), "bundle resources provisioned");
     Ok(())
 }
