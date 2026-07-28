@@ -15,7 +15,7 @@
 1. **第一次**:用户"我想看羽毛球男单前十" → agent delegate,builder 造好一组卡片、存成 ref(`badminton-top10/leader` …)、show 出来(完整流程见 [01](01-badminton-top10.md))。
 2. **隔些时候再要同一份**:用户"再给我看下上次那个羽毛球前十" → agent **不再 delegate、不重查、不重造**,直接 `show_view(ref=...)` 把那组已存的 view 再摆出来。
 3. **观感**:**明显更快**(几乎瞬时:server 读盘 + esbuild 缓存命中),且画面与上次**逐像素一致**(同一编译产物);agent 不重复自检、不重复口播研究过程。
-4. **前提是 agent 能拿到那个 ref**;而"从哪拿到"随会话边界分三层(见下「复用怎么找到旧 view」):同一 session 里 ref 还在上下文,直接复用;跨 session 靠 reflection 把它沉淀出来;都没有时 builder `ls` 工具箱兜底。
+4. **前提是 agent 能拿到那个 ref**;而"从哪拿到"随会话边界分三层(见下「复用怎么找到旧 view」):同一 session 里 ref 还在上下文,直接复用;session 轮换而对话还在继续时,靠这个 scene 自己带过去;都没有时 builder `ls` 工具箱兜底。
 
 ### Case B · 同一种 view、内容是新的 → 软引导复用,按重复/新增比例决策
 
@@ -41,10 +41,12 @@
 | 层 | mind 怎么拿到 ref | 成本 / 时延 |
 |---|---|---|
 | **同一 reactor session** | ref 还在对话上下文里(刚委托造完、刚 show 过)| 即时;只需一句软引导——重造前先看本会话是否已建过 |
-| **跨 session** | reflection 把重复的 view 沉淀成 handle,经 `hot.md` 常驻载入 | 有 reflection 时延(可接受,非实时场景)|
-| **冷兜底** | builder `ls` 工具箱、按主题找回 | 慢,但总能成 |
+| **跨 session(session 轮换、scene 继续)** | 这个 scene 的 generated system prompt 里带着它:Deliberation 判断"这张卡这段对话还要接着用",写进 scene 的常驻记忆,代码每轮注入 | 一轮 Deliberation 的时延(可接受,非实时场景)|
+| **冷兜底** | builder `ls` 工具箱、按主题找回(或从记忆里想起 `facets/views/` 那条) | 慢,但总能成 |
 
-**沉淀落到哪**:view 本体(`.jsx` 源)始终留在工具箱 `views/<project>/<name>.jsx`,reflection **不搬它**;沉淀的只是一条 **purpose→ref 的 handle**,作为一个 facet 落在 `memory/facets/views/<subject>/facet.md`(facet 维度本就开放、非枚举),像别的 facet 一样**由 episodes 重生成、claim 带出处**(造它 / show 它的 episode);最热的若干条投影进 `memory/hot.md` 常驻,让"我已经有了 → `show_view(ref)`"在上下文里直接触发。这一整套沿用现成的记忆梯度(raw → episodes → facets → hot.md),不另起炉灶——一个反复有用的 view,就是 agent 理解的又一个 subject。
+**沉淀落到哪**:view 本体(`.jsx` 源)始终留在工具箱 `views/<project>/<name>.jsx`,谁都**不搬它**;一条反复有用的 view 会像别的 subject 一样在记忆里留下一条 **purpose→ref**,作为 facet 落在 `memory/facets/views/<subject>/facet.md`(facet 维度本就开放、非枚举),**由 episodes 重生成、claim 带出处**(造它 / show 它的 episode)。
+
+**但常驻的那份不是"晋升"来的**:没有"把 handle 提拔进常驻区"这一步。正在用的那张卡之所以在上下文里,是因为**它对这段对话确实要紧**——Deliberation 把它写进 scene 的 generated prompt,和这段对话要接着用的别的东西一起,理由与写别的东西完全相同;不再要紧了就不再写,不用谁来降级。其余的一律**用时再找**(`ls` 工具箱 / 想起那条 facet)。判据是一句话:**投进窗口的 = Reaction 不查就得知道的,其余都是回忆**(见 [`arch/data.md`](../arch/data.md#what-earns-a-place))。
 
 ## Expected outcome
 
@@ -71,14 +73,16 @@
 
 ## Open questions
 
-- **跨 session 复用依赖 hot.md 策展(当前 deferred)**:把 handle 沉成 `facets/views/` 已贴合现有 facet 机制([[project_memory_subsystem_redesign]]),但"必复用"要它常驻 `hot.md` 才在上下文里触发;hot.md 的常驻策展尚未建,这条链依赖它先落地。**in-session 那层不依赖它**——只差一句软引导。
+- **跨 session 复用依赖 scene 的 generated prompt(未建)**:把这条 purpose→ref 沉成 `facets/views/` 已贴合现有 facet 机制([[project_memory_subsystem_redesign]]),但"必复用"要它在上下文里才触发,而那取决于 Deliberation 把它写进 `memory/prompts/scenes/<scene>.md` —— 这套整体未建。**in-session 那层不依赖它**——只差一句软引导。
 - **要不要做参数化 view**:给 `show_view` 加一条 data 通道 → 同一编译产物喂不同数据,把 Case B 的"同形换数据"降到接近零成本。代价:引入数据面、偏离现在"内容烤进源码、JSX 不进 mind 上下文"的静态模型——是一次有意的架构取舍,不是免费午餐。
 - **软引导给到多细**:"重复占比"到什么程度该改 vs 从头,全交给 builder 判断够不够?要不要一句粗略指引?
 - **三者权衡**:复用(快 / 一致) vs 新鲜(对得上当前数据) vs 从头(最贴合)——有没有需要明示的优先级?
 
-_机制:**同一 session 复用**零件已在(`show_view` by ref + 内容寻址编译缓存),只差一句软引导;**跨 session** 靠 reflection 把 handle 沉成 `facets/views/` 并投影进 `hot.md`(贴合现成 facet 梯度,但 **hot.md 策展未建**);**冷兜底**靠 builder `ls` 工具箱([appearance.md](../../src/reactor/appearance.md) 现有 guidance)。Case B 软引导同样靠 appearance.md,受限于 view **静态、换数据必重编译**(参数化 view 见 Open questions)。成熟度:**in-session 与 ls 兜底部分具备、reflection 沉淀 / hot.md / 参数化 view 未建**。_
+_机制:**同一 session 复用**零件已在(`show_view` by ref + 内容寻址编译缓存),只差一句软引导;**跨 session** 靠 Deliberation 把它写进 scene 的 generated prompt(记忆里那条 purpose→ref 仍是普通 facet,**scene 记忆整套未建**);**冷兜底**靠 builder `ls` 工具箱([appearance.md](../../src/reactor/appearance.md) 现有 guidance)。Case B 软引导同样靠 appearance.md,受限于 view **静态、换数据必重编译**(参数化 view 见 Open questions)。成熟度:**in-session 与 ls 兜底部分具备、facets 沉淀 / scene 记忆 / 参数化 view 未建**。_
 
 ## 实测 2026-06-21 · origin/main efb228e(boss 文字通道 + 隔离实例驱动)
+
+> 这次实测跑在旧布局上,下面提到的 `hot.md` 是当时那个"机械近期摘要"文件。它已被 **scene 的 generated prompt**(`memory/prompts/scenes/<scene>.md`,Deliberation 写、每轮注入)取代;结论不变——当时看的是"跨 session 那层有没有把 ref 带过去",答案仍是没有。
 
 环境:Mac mini,用 `--data-dir` 起**独立空目录的隔离实例**(避开旧 scene 污染),挂 `/api/out/view` 长轮询当"屏幕在场"。三幕:① 做"本周三目标"卡片 → ② 做"下周目标"卡片 → 清屏 → ③ 让它把第一张再放出来。Ground truth 取自 reactor transcript 的 `tool_use`、`channel out (view)` 事件、ACP spawn 时间线、views 树、`facets/` 与 `hot.md`。
 

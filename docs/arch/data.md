@@ -193,9 +193,24 @@ mechanisms:
 | deadline | a date and what to do at it |
 | staged | a multi-stage job suspended for approval |
 
-**One ledger, one file per task — `memory/tasks/<id>.md`.** Nothing else records a duty:
-there is no second, friendlier list of what is owed, because two ledgers means one of them is
-wrong and no way to tell which.
+**A task is a facet.** It lives as one more open-ended dimension — `memory/facets/tasks/` —
+because the dimension list was always meant to be open, so this uses the design rather than
+bending it: no new store, no new file format, and no new tools, since the agent already reads
+and writes facets. What is special is the guidance attached, not the machinery.
+
+**One ledger.** Nothing else records a duty: there is no second, friendlier list of what is
+owed, because two ledgers means one of them is wrong and no way to tell which.
+
+Reflection owns `facets/` and rewrites facets whole — so the one rule that keeps this safe is
+guidance, not a rail: it may read the `tasks` dimension freely, and may notice that something
+long-promised was never delivered, but while a task is open it does not prune, close, tidy or
+merge it.
+
+> **TODO — closed tasks accumulate.** A task is a subject, a closed task is the record that it
+> was closed, and nothing deletes it. The cost is not disk but anything that *enumerates* —
+> reflection's own prompt is seeded from the subject index. The invariant below says never
+> pruned *while open*, which is the shape of the answer: closed, cold tasks age out the way
+> ambient identity clusters already do. Deferred on purpose; not designed here.
 
 Four properties, each earned by a real failure:
 

@@ -255,7 +255,7 @@ Reflection also **tends the old store**, not just the frontier: alongside consol
 - **The recency digest** (`refresh_hot`): regenerated from recent episode gists after each reflection — a mechanical projection, and the stand-in for the whole of `memory/prompts/` until that is built.
 
 **Still to build:**
-- **`memory/prompts/` — the whole of §6.** Nothing of it is built. One mechanical digest stands in for one generated prompt per agent; no agent writes it; Deliberation has not been given the job; it is seeded at session open rather than injected every turn; and nothing caps it. `memory/tasks/` likewise replaces the duty ledger only on paper.
+- **`memory/prompts/` — the whole of §6.** Nothing of it is built. One mechanical digest stands in for one generated prompt per agent; no agent writes it; Deliberation has not been given the job; it is seeded at session open rather than injected every turn; and nothing caps it. `memory/facets/tasks/` exists in code but nothing projects it yet.
 - **Semantic trigger** — reflection now fires on one adaptive time/activity clock (base cadence when there's fresh input, exponential backoff to a cap while quiet); a true *semantic* trigger (detecting the topic/event actually changed, not just that the base gap of silence passed) remains future. It would live in the same global reflection task.
 - **Episode attachments + per-claim citations** — an episode is just its `episode.md` today (no materialized thumbnails/deliverables); claims cite at episode granularity, not per-signal.
 - **Vision attention policy** — perception currently fires on every still and every camera minute; a real cadence/salience policy (when to actually look) is the deliberate placeholder left open.
