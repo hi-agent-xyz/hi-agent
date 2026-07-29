@@ -235,6 +235,10 @@ pub(super) struct WorkerReport {
     /// A plain worker's report stays an observation the voice surfaces on its own
     /// social timing.
     pub(super) is_deliberation: bool,
+    /// The session this report is *for*. `None` means the scene loop — the report
+    /// becomes a signal the voice may speak to. `Some` means it travels up to the
+    /// session that asked for the work, and the scene never sees it.
+    pub(super) owner: Option<SessionId>,
 }
 
 pub(super) enum WorkerReportKind {
@@ -390,6 +394,7 @@ impl WorkerRegistry {
             mailbox.clone(),
             busy.clone(),
             is_deliberation,
+            owner,
         ));
 
         self.workers.insert(
@@ -504,6 +509,7 @@ impl WorkerRegistry {
             task,
             kind: WorkerReportKind::Question(question),
             is_deliberation: self.deliberation == Some(id),
+            owner: self.workers.get(&id).and_then(|w| w.owner),
         }
     }
 
@@ -523,7 +529,34 @@ impl WorkerRegistry {
             task,
             kind: WorkerReportKind::Surfaced(message),
             is_deliberation: self.deliberation == Some(id),
+            owner: self.workers.get(&id).and_then(|w| w.owner),
         }
+    }
+
+    /// Hand `text` to session `id` as if it were a follow-up, returning whether the
+    /// session was still there to take it.
+    ///
+    /// This is how work travels **up**: a worker reports to the session that asked,
+    /// which reads it on its next prompt and decides what, if anything, is worth
+    /// passing further up. A worker never reaches a scene, because a scene is where a
+    /// person is spoken to and only Reaction speaks there.
+    ///
+    /// `false` means the owner is gone. The caller must fall back to the scene loop
+    /// rather than drop the report — losing finished work because its requester shut
+    /// down is worse than surfacing it one rung too high.
+    pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> bool {
+        let Some(w) = self.workers.get_mut(&id) else { return false };
+        let mut st = w.mailbox.state.lock().unwrap();
+        if st.closed {
+            return false;
+        }
+        st.pending = Some(match st.pending.take() {
+            Some(prev) => format!("{prev}\n\n{text}"),
+            None => text,
+        });
+        drop(st);
+        w.mailbox.notify.notify_one();
+        true
     }
 
     /// A compact, stable-ordered view of every live worker — its id, task, whether
@@ -664,6 +697,7 @@ async fn drive_worker(
     mailbox: Arc<FollowMailbox>,
     busy: Arc<AtomicBool>,
     is_deliberation: bool,
+    owner: Option<SessionId>,
 ) {
     let mut task = initial_task;
     loop {
@@ -686,7 +720,7 @@ async fn drive_worker(
         observatory
             .record(&scene, EventKind::WorkerFinished { id, state, summary_chars })
             .await;
-        let report = WorkerReport { id, task: task.clone(), kind, is_deliberation };
+        let report = WorkerReport { id, task: task.clone(), kind, is_deliberation, owner };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
             tracing::warn!(worker = id, "worker report dropped; scene loop gone");
             return;
@@ -778,4 +812,35 @@ fn tail_chars(s: &str, n: usize) -> String {
     let start = trimmed.chars().count().saturating_sub(n);
     let tail: String = trimmed.chars().skip(start).collect();
     tail.replace('\n', " ").trim().to_string()
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    fn registry() -> WorkerRegistry {
+        let (tx, _rx) = mpsc::channel(8);
+        WorkerRegistry::new(Scene("alice@phone".into()), tx)
+    }
+
+    /// The fallback that keeps finished work from vanishing. An owner can shut down
+    /// while the worker it asked for is still running; when that happens `deliver_to`
+    /// must *say so* rather than quietly accept the report, so the caller can surface
+    /// it to the scene instead. A silent `true` here would lose completed work in the
+    /// one case nobody would think to test by hand.
+    #[test]
+    fn delivering_to_a_vanished_owner_reports_failure_rather_than_swallowing_it() {
+        let mut reg = registry();
+        assert!(!reg.deliver_to(4242, "the errand is done".into()));
+    }
+
+    /// Session ids are process-wide, not per registry — two scenes must never mint
+    /// the same id, or a report would be delivered into the wrong conversation.
+    #[test]
+    fn session_ids_are_unique_across_registries() {
+        let (a, b, c) = (mint_session_id(), mint_session_id(), mint_session_id());
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
 }

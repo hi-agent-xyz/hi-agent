@@ -1256,7 +1256,7 @@ async fn per_scene_loop(
             };
             match woke {
                 Woke::Inbound(Some(s)) => {
-                    enqueue(&reactor, &scene, &mut batch, s).await;
+                    enqueue(&reactor, &scene, &mut workers, &mut batch, s).await;
                     // While Down: collect mail without driving a turn. The
                     // probe cadence will attempt catch-up once the vendor
                     // recovers.
@@ -1279,7 +1279,7 @@ async fn per_scene_loop(
                     if let Some(input) =
                         apply_control(&reactor, &scene, &mut workers, &mut alarms, ctl).await
                     {
-                        enqueue(&reactor, &scene, &mut batch, input).await;
+                        enqueue(&reactor, &scene, &mut workers, &mut batch, input).await;
                         if !down {
                             break 'wait;
                         }
@@ -1299,7 +1299,7 @@ async fn per_scene_loop(
                                 .observatory
                                 .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
                                 .await;
-                            enqueue(&reactor, &scene, &mut batch, LoopInput::Alarm(fired)).await;
+                            enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
                         }
                         // Only a transient backoff drives a model retry, and only with
                         // mail to deliver. Out of energy holds instead — the shared
@@ -1320,7 +1320,7 @@ async fn per_scene_loop(
                             .observatory
                             .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
                             .await;
-                        enqueue(&reactor, &scene, &mut batch, LoopInput::Alarm(fired)).await;
+                        enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
                     }
                     if let Some(at) = pulse_at
                         && at <= now
@@ -1338,7 +1338,7 @@ async fn per_scene_loop(
                         // Reset so a swallowed pulse doesn't re-fire in a tight loop.
                         last_activity = now;
                         tracing::info!(scene = %scene, "pulse fired");
-                        enqueue(&reactor, &scene, &mut batch, LoopInput::Pulse { note }).await;
+                        enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Pulse { note }).await;
                     }
                     if !batch.is_empty() {
                         break 'wait;
@@ -1362,11 +1362,11 @@ async fn per_scene_loop(
         if !was_down {
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
-                    enqueue(&reactor, &scene, &mut batch, extra).await;
+                    enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await;
                 }
                 match timeout(RESPONSE_SETTLE, inbound.recv()).await {
                     // another utterance — keep collecting
-                    Ok(Some(extra)) => enqueue(&reactor, &scene, &mut batch, extra).await,
+                    Ok(Some(extra)) => enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await,
                     Ok(None) => break true, // inbound closed mid-settle
                     Err(_) => break false,  // quiet elapsed → commit to a reply
                 }
@@ -1479,7 +1479,7 @@ async fn per_scene_loop(
         // alarms (those are generated inside `'wait`, not sent over `inbound`).
         if !reactor.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
-                enqueue(&reactor, &scene, &mut batch, extra).await;
+                enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await;
             }
         }
     }
@@ -1969,9 +1969,38 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
 /// something in a scene's batch goes through here, so nothing can drive a turn
 /// unlogged — which is the whole point: a turn whose cause was never written down
 /// is a turn a restart cannot account for.
-async fn enqueue(reactor: &Reactor, scene: &Scene, batch: &mut Vec<LoopInput>, input: LoopInput) {
+/// Put one input in front of the mind, journaling it on the way.
+///
+/// The one input that may not end up here is a worker's report: if the worker was
+/// spawned by another session, the report belongs to *that* session and is delivered
+/// into it instead, never reaching the scene. Work travels up the chain of owners to
+/// whoever asked for it; it does not appear beside the person's own words in a
+/// conversation nobody addressed it to.
+///
+/// It is still journaled either way — the report crossed an agent boundary, and the
+/// log records what crossed regardless of where it went next.
+async fn enqueue(
+    reactor: &Reactor,
+    scene: &Scene,
+    workers: &mut workers::WorkerRegistry,
+    batch: &mut Vec<LoopInput>,
+    input: LoopInput,
+) {
     if let Some((channel, origin, body)) = journal_form(&input) {
         record_in(reactor, scene, channel, origin, body).await;
+    }
+    if let LoopInput::Worker(report) = &input
+        && let Some(owner) = report.owner
+    {
+        let text = workers::render_report(report);
+        if workers.deliver_to(owner, text) {
+            return;
+        }
+        // The owner is gone. Surfacing one rung too high beats losing finished work.
+        tracing::info!(
+            scene = %scene, session = report.id, owner,
+            "report owner is gone; falling back to the scene"
+        );
     }
     batch.push(input);
 }
