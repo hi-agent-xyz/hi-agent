@@ -45,6 +45,26 @@ pub enum McpReply {
 /// `show_view` (it speaks via plain message text, not a tool); a worker gets the
 /// work tools but no voice; reflection reads/writes derived memory. The `_` fallback
 /// is the legacy agentic reactor's full toolset, kept for untagged sessions.
+/// The `say` tool — Reaction's voice.
+///
+/// Speech is a **call, not message text**, and that is the whole point: a call returns.
+/// The host can hold an utterance until the room is right, queue it behind another, or
+/// refuse it — and Reaction finds out which. Text streamed into the transcript is
+/// fire-and-forget and leaves nowhere for that decision to live.
+fn say_tool() -> Value {
+    tool(
+        "say",
+        "Speak to the person. Everything you want said aloud goes through this tool — \
+         plain text you write is NOT spoken. Call it with one natural chunk at a time; \
+         several calls in a turn are spoken in order. To stay silent, don't call it at all.",
+        json!({
+            "type": "object",
+            "properties": { "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." } },
+            "required": ["text"],
+        }),
+    )
+}
+
 fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
@@ -261,22 +281,12 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // text (not a `say` tool) and gets exactly one expression tool — `show_view` —
         // to put a view a worker already built on screen. Nothing else; the heavy work
         // is delegated to workers in code, not via a tool.
-        Some("reactor") => vec![show_view_tool()],
+        Some("reactor") => vec![say_tool(), show_view_tool()],
         // Fallback for an unheadered/unknown role — the legacy agentic reactor's full
         // toolset. No live role maps here after the reactor/cognition split, but keep
         // it so an untagged session still degrades to something usable.
         _ => vec![
-            tool(
-                "say",
-                "Speak to the person. Everything you want said aloud goes through this tool — \
-                 plain text you write is NOT spoken. Call it with one natural chunk at a time; \
-                 several calls in a turn are spoken in order. To stay silent, don't call it at all.",
-                json!({
-                    "type": "object",
-                    "properties": { "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." } },
-                    "required": ["text"],
-                }),
-            ),
+            say_tool(),
             show_view_tool(),
             tool(
                 "delegate",
@@ -1438,5 +1448,36 @@ mod vision_tool_tests {
         assert_eq!(parse_last_secs("30 seconds"), Some(30.0));
         assert_eq!(parse_last_secs("what just happened"), None);
         assert_eq!(parse_last_secs(""), None);
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    fn names(role: Option<&str>) -> Vec<String> {
+        tools_for_role(role)
+            .iter()
+            .filter_map(|t| t.get("name")?.as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// Reaction's whole surface, pinned. `say` lived in the unreachable fallback arm
+    /// for the entire life of the reactor/cognition split — defined, dispatchable, and
+    /// advertised to nobody — so the voice fell back to plain message text. Nothing
+    /// failed; it just quietly stopped being a call that returns.
+    #[test]
+    fn reaction_holds_say_and_show_and_nothing_else() {
+        let mut got = names(Some("reactor"));
+        got.sort();
+        assert_eq!(got, vec!["say".to_string(), "show_view".to_string()]);
+    }
+
+    /// The other half of "and nothing else": a worker must not be able to speak.
+    #[test]
+    fn no_other_role_can_speak() {
+        for role in [Some("worker"), Some("reflection")] {
+            assert!(!names(role).contains(&"say".to_string()), "{role:?} must not hold say");
+        }
     }
 }

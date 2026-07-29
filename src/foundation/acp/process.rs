@@ -48,6 +48,23 @@ pub struct SessionOpts {
     /// Working directory for the session. Defaults to the current process's
     /// cwd when not set. ACP requires this to be absolute.
     pub cwd: Option<PathBuf>,
+
+    /// Which of the agent's **own** built-in tools this session may use — its
+    /// file, shell, and web tools, which are separate from the tools we serve it
+    /// over MCP.
+    ///
+    /// `None` leaves the agent's default set alone. `Some([])` takes them all away,
+    /// which is what a session whose surface is supposed to be exactly two calls
+    /// needs: restricting our MCP list alone would leave "holds nothing else" meaning
+    /// "was asked to hold nothing else".
+    ///
+    /// **Vendor-specific, deliberately.** ACP standardises no way to do this — the
+    /// spec never even shows the client which tools exist — and its maintainers have
+    /// said constraining an agent belongs to a future layer between client and agent,
+    /// not to the agent surface. What it does standardise is `_meta` as the sanctioned
+    /// place for exactly this kind of extension, so that is where this rides. Honoured
+    /// by the Claude adapter; another agent would ignore it.
+    pub builtin_tools: Option<Vec<String>>,
 }
 
 /// One child-process-hosted ACP connection, hosting a single session.
@@ -289,7 +306,20 @@ impl AcpProcess {
             None => std::env::current_dir().context("reading current dir for new session")?,
         };
 
-        let req = NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
+        let mut req = NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
+        if let Some(tools) = &opts.builtin_tools {
+            let mut meta = serde_json::Map::new();
+            // The adapter reads an explicit list first and falls back to this legacy
+            // flag; sending both keeps an empty list meaning "none" on either path.
+            meta.insert(
+                "claudeCode".into(),
+                serde_json::json!({ "options": { "tools": tools } }),
+            );
+            if tools.is_empty() {
+                meta.insert("disableBuiltInTools".into(), serde_json::Value::Bool(true));
+            }
+            req = req.meta(meta);
+        }
 
         let resp = self
             .connection

@@ -133,7 +133,7 @@ pub(super) async fn swap(
             None,
             SessionOpts {
                 system_prompt: Some(seeded_system_prompt),
-                cwd: None,
+                cwd: None, builtin_tools: None,
             },
         )
         .await?;
@@ -317,7 +317,7 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
             &sentinel,
             SessionRole::Reflection,
             None,
-            SessionOpts { system_prompt: Some(system_prompt), cwd: None },
+            SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
         )
         .await?;
     reactor

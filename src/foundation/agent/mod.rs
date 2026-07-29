@@ -134,7 +134,7 @@ impl AgentLayer {
             )]
         };
 
-        let SessionOpts { system_prompt, cwd } = opts;
+        let SessionOpts { system_prompt, cwd, builtin_tools } = opts;
         // Never let a session root at the process cwd. `session/new` requires a cwd,
         // and an unset one falls through to `std::env::current_dir()` (acp/process.rs)
         // — which for a Finder-launched `.app` is `/` and in dev is often `~`. The
@@ -175,7 +175,7 @@ impl AgentLayer {
         )
         .await?;
         let id = process
-            .open_session(SessionOpts { system_prompt: None, cwd }, mcp_servers)
+            .open_session(SessionOpts { system_prompt: None, cwd, builtin_tools }, mcp_servers)
             .await?;
 
         Ok(AcpSession::new(id, process, rx, system_prompt))

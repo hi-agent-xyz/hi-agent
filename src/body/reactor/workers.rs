@@ -369,7 +369,7 @@ impl WorkerRegistry {
                         system_prompt: Some(system_prompt),
                         // The worker's cwd is the agent's view workshop, so a
                         // build sub-agent works in a real project dir (ls/write).
-                        cwd: Some(reactor.inner.views_dir.clone()),
+                        cwd: Some(reactor.inner.views_dir.clone()), builtin_tools: None,
                     },
                 )
                 .await?,

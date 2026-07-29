@@ -1504,11 +1504,12 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 
 /// A reactor turn: the single fast conversational voice. An ACP session
 /// ([`SessionRole::Reactor`]) on the small model, carrying `speaking.md` as its system
-/// prompt and a minimal `show_view`-only `/mcp` surface. A turn is a single quick
-/// generation: it speaks via the session's plain message text — [`SessionRun::wait`]
-/// concatenates every `agent_message_chunk` into the reply — and may call `show_view`
-/// to put a view a worker already built on screen; both feed the sequencer. The speed
-/// comes from the small model + a single generation, not from bypassing the adapter.
+/// prompt and a `say` + `show_view` `/mcp` surface, with the agent's own built-in tools
+/// switched off at session open. A turn is a single quick generation: it speaks by
+/// calling `say`, and may call `show_view` to put a view a worker already built on
+/// screen; both feed the sequencer. Text it merely types is working-out and is never
+/// voiced. The speed comes from the small model + a single generation, not from
+/// bypassing the adapter.
 ///
 /// Deliberation — the scene's reading and thinking — runs in parallel: the turn's human
 /// request is handed to it ([`workers::WorkerRegistry::deliberate`]),
@@ -1574,10 +1575,15 @@ async fn run_reactor_turn(
 
     let spoke = match drive_voice(&session, scene, context).await {
         Ok(text) => {
-            tracing::info!(scene = %scene, reply_chars = text.chars().count(), "reactor: replied");
-            if !text.trim().is_empty() {
-                let _ = beats.send(sequencer::Beat::Say(text)).await;
-            }
+            // Speech arrives as `say` calls, which the MCP surface already put on the
+            // sequencer while the turn was running. Anything the model *typed* is
+            // working-out, not utterance — voicing it too would say every reply twice,
+            // and the tool's own description promises plain text is not spoken.
+            tracing::info!(
+                scene = %scene,
+                unspoken_chars = text.chars().count(),
+                "reactor: turn done"
+            );
             true
         }
         Err(err) => {
@@ -1725,6 +1731,10 @@ async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Resul
                 SessionOpts {
                     system_prompt: Some(crate::identity::reactor_system_prompt()),
                     cwd: None,
+                    // `say` and `show`, and nothing else — enforced, not requested.
+                    // The rung is fast because it *cannot* wait on anything, and that
+                    // argument is worth nothing if it can quietly open a file.
+                    builtin_tools: Some(Vec::new()),
                 },
             )
             .await?,
