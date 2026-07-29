@@ -1123,12 +1123,12 @@ async fn apply_control(
     ctl: SceneControl,
 ) -> Option<LoopInput> {
     match ctl {
-        SceneControl::Delegate { task, worker } => {
+        SceneControl::Delegate { task, worker, owner } => {
             let outcome = match worker {
                 // An explicit `delegate` is a plain task worker, never Deliberation —
                 // Deliberation is driven only through `deliberate`, which tags its reports.
-                Some(id) => workers.follow_up(reactor, id, task, false).await,
-                None => workers.spawn(reactor, task).await,
+                Some(id) => workers.follow_up(reactor, id, task, false, owner).await,
+                None => workers.spawn(reactor, task, owner).await,
             };
             if let Err(err) = outcome {
                 tracing::warn!(scene = %scene, error = %err, "failed to delegate working session");

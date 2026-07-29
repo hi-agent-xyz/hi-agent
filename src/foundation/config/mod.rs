@@ -164,7 +164,7 @@ pub mod tunables {
 /// working session raised an `ask`.
 pub const HEADER_SCENE: &str = "X-HI-Scene";
 pub const HEADER_ROLE: &str = "X-HI-Role";
-pub const HEADER_WORKER_ID: &str = "X-HI-Worker-Id";
+pub const HEADER_SESSION_ID: &str = "X-HI-Session-Id";
 
 /// Models that serve a 1M-token context window. The ACP child (the Claude CLI)
 /// only requests the larger window when the model id carries a `[1m]` suffix;

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema::v1::{HttpHeader, McpServer, McpServerHttp};
 
 use crate::foundation::acp::{AcpProcess, AcpSession, AcpTap, ProcessRegistry, SessionOpts};
-use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SCENE, HEADER_WORKER_ID};
+use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SCENE, HEADER_SESSION_ID};
 use crate::types::Scene;
 
 /// Which tool surface a session gets, carried as `X-HI-Role` on its MCP attach so
@@ -112,7 +112,7 @@ impl AgentLayer {
         &self,
         scene: &Scene,
         role: SessionRole,
-        worker_id: Option<u64>,
+        session_id: Option<u64>,
         opts: SessionOpts,
     ) -> anyhow::Result<AcpSession> {
         // Every role attaches hi-agent's tool surface, routed server-side by the
@@ -125,8 +125,8 @@ impl AgentLayer {
                 HttpHeader::new(HEADER_SCENE, scene.0.clone()),
                 HttpHeader::new(HEADER_ROLE, role.as_str()),
             ];
-            if let Some(id) = worker_id {
-                headers.push(HttpHeader::new(HEADER_WORKER_ID, id.to_string()));
+            if let Some(id) = session_id {
+                headers.push(HttpHeader::new(HEADER_SESSION_ID, id.to_string()));
             }
             vec![McpServer::Http(
                 McpServerHttp::new("hi-agent", format!("{}/mcp", self.inner.server_base_url))

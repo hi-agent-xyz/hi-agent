@@ -432,7 +432,7 @@ pub async fn handle(
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
     scene: Option<Scene>,
     role: Option<&str>,
-    worker_id: Option<u64>,
+    session_id: Option<u64>,
     msg: &Value,
 ) -> McpReply {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -466,7 +466,7 @@ pub async fn handle(
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             McpReply::Json(result(
                 id,
-                dispatch_tool(registry, data_dir, video_partial, scene.as_ref(), worker_id, role, name, &args).await,
+                dispatch_tool(registry, data_dir, video_partial, scene.as_ref(), session_id, role, name, &args).await,
             ))
         }
         // ping is a no-op request the client may send.
@@ -484,7 +484,7 @@ async fn dispatch_tool(
     data_dir: &std::path::Path,
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
     scene: Option<&Scene>,
-    worker_id: Option<u64>,
+    session_id: Option<u64>,
     role: Option<&str>,
     name: &str,
     args: &Value,
@@ -572,7 +572,7 @@ async fn dispatch_tool(
                 return tool_error("delegate requires a non-empty `task`");
             }
             let worker = args.get("worker").and_then(Value::as_u64);
-            sink.send(SceneControl::Delegate { task, worker }).await.map(|()| "delegated to a working session")
+            sink.send(SceneControl::Delegate { task, worker, owner: session_id }).await.map(|()| "delegated to a working session")
         }
         "alarm" => {
             let delay = arg_str("delay");
@@ -582,13 +582,13 @@ async fn dispatch_tool(
             sink.send(SceneControl::Alarm { delay, note: arg_str("note") }).await.map(|()| "alarm scheduled")
         }
         "ask" => {
-            let Some(id) = worker_id else {
+            let Some(id) = session_id else {
                 return tool_error("ask is only available to working sessions");
             };
             sink.send(SceneControl::WorkerAsk { id, question: arg_str("question") }).await.map(|()| "question noted")
         }
         "surface" => {
-            let Some(id) = worker_id else {
+            let Some(id) = session_id else {
                 return tool_error("surface is only available to working sessions");
             };
             let message = arg_str("message");

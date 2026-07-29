@@ -49,9 +49,28 @@ use crate::types::Scene;
 
 use super::{LoopInput, Reactor};
 
-/// Per-scene-unique handle for a working session. Small and `Copy`; it tags the
-/// worker in status lines and in the reports it posts back.
-pub(super) type WorkerId = u64;
+/// Handle for one **agent session**, unique process-wide.
+///
+/// It identifies a *session*, not a role: the same role has many sessions over a run,
+/// and two scenes' Deliberations are two sessions of one role. So this is never a
+/// "worker id" — ownership, addressing and reporting all key on the session, which is
+/// the thing that is actually singular.
+///
+/// Process-wide rather than per-scene because ownership crosses scenes: a sceneless
+/// owner (Cognition, Reflection) holds sessions that no scene counter could name
+/// without colliding.
+///
+/// Minted before the ACP session is opened, because the MCP surface identifies its
+/// caller by this id in a request header — so it cannot be the id the adapter assigns.
+pub(super) type SessionId = u64;
+
+/// Source of [`SessionId`]s. One counter for the process; see the type's note on why
+/// this is not per scene.
+static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn mint_session_id() -> SessionId {
+    NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// How long a finished working session stays warm — its ACP session held open and
 /// resumable via `delegate worker:<id>` — before it closes itself to free the
@@ -206,7 +225,7 @@ fn worker_system_prompt(scene: &Scene) -> String {
 /// queue as a `LoopInput::Worker`, so it waits its turn and never interrupts
 /// live speech.
 pub(super) struct WorkerReport {
-    pub(super) id: WorkerId,
+    pub(super) id: SessionId,
     pub(super) task: String,
     pub(super) kind: WorkerReportKind,
     /// Whether this is the scene's **Deliberation** (vs. an ordinary task worker).
@@ -248,6 +267,14 @@ struct Worker {
     mailbox: Arc<FollowMailbox>,
     /// Whether the drive loop is mid-prompt right now, vs. idle and resumable.
     busy: Arc<AtomicBool>,
+    /// The session that created this one, and to which its work reports.
+    ///
+    /// `None` means the scene loop itself spawned it — the legacy path, where a
+    /// report goes to the scene's queue. Once an agent session spawns a worker, the
+    /// worker answers to *that session*, never to a scene: a scene is somewhere a
+    /// person is spoken to, and only Reaction speaks. Work travels up the chain of
+    /// owners; it does not shortcut sideways into a conversation.
+    owner: Option<SessionId>,
     drive: JoinHandle<()>,
 }
 
@@ -259,14 +286,13 @@ pub(super) struct WorkerRegistry {
     /// A clone of the scene's queue sender, handed to each worker's drive task so
     /// its reports land back in the same loop.
     inbound: mpsc::Sender<LoopInput>,
-    workers: HashMap<WorkerId, Worker>,
-    next_id: WorkerId,
+    workers: HashMap<SessionId, Worker>,
     /// The scene's persistent **Deliberation**, if spawned — the rung that reads a
     /// little, checks the file, looks at the photo, and works out what was actually
     /// asked, per scene, so no scene ever waits on another. Reaction follows up with it
     /// every turn; followed up rather than respawned, so it keeps full context.
     /// `None` until the first turn that needs it. See [`WorkerRegistry::deliberate`].
-    deliberation: Option<WorkerId>,
+    deliberation: Option<SessionId>,
 }
 
 impl WorkerRegistry {
@@ -275,7 +301,6 @@ impl WorkerRegistry {
             scene,
             inbound,
             workers: HashMap::new(),
-            next_id: 1,
             deliberation: None,
         }
     }
@@ -288,8 +313,9 @@ impl WorkerRegistry {
         &mut self,
         reactor: &Reactor,
         task: String,
-    ) -> anyhow::Result<WorkerId> {
-        self.spawn_inner(reactor, task, false).await
+        owner: Option<SessionId>,
+    ) -> anyhow::Result<SessionId> {
+        self.spawn_inner(reactor, task, false, owner).await
     }
 
     /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
@@ -301,9 +327,9 @@ impl WorkerRegistry {
         reactor: &Reactor,
         task: String,
         is_deliberation: bool,
-    ) -> anyhow::Result<WorkerId> {
-        let id = self.next_id;
-        self.next_id += 1;
+        owner: Option<SessionId>,
+    ) -> anyhow::Result<SessionId> {
+        let id = mint_session_id();
 
         // Deliberation is a working session plus a role. It gets the same capability
         // guidance every worker gets — it has the same tools — and then the layer that
@@ -373,10 +399,16 @@ impl WorkerRegistry {
                 transcript,
                 mailbox,
                 busy,
+                owner,
                 drive,
             },
         );
-        tracing::info!(scene = %self.scene, worker = id, "spawned working session");
+        tracing::info!(
+            scene = %self.scene,
+            session = id,
+            owner = owner.map(|o| o.to_string()).unwrap_or_else(|| "scene-loop".into()),
+            "spawned working session"
+        );
         Ok(id)
     }
 
@@ -391,10 +423,11 @@ impl WorkerRegistry {
     pub(super) async fn follow_up(
         &mut self,
         reactor: &Reactor,
-        id: WorkerId,
+        id: SessionId,
         task: String,
         is_deliberation: bool,
-    ) -> anyhow::Result<WorkerId> {
+        owner: Option<SessionId>,
+    ) -> anyhow::Result<SessionId> {
         if let Some(w) = self.workers.get_mut(&id) {
             // Merge under the mailbox lock — the same critical section the drive
             // loop takes when deciding to close, so we can't lose a task to a
@@ -427,7 +460,7 @@ impl WorkerRegistry {
             self.workers.remove(&id);
         }
         tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
-        self.spawn_inner(reactor, task, is_deliberation).await
+        self.spawn_inner(reactor, task, is_deliberation, owner).await
     }
 
     /// Ensure the scene's persistent **Deliberation** is working on `task`: resume the
@@ -443,8 +476,8 @@ impl WorkerRegistry {
     /// scene can think without leaving the scene.
     pub(super) async fn deliberate(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
         let id = match self.deliberation {
-            Some(id) => self.follow_up(reactor, id, task, true).await?,
-            None => self.spawn_inner(reactor, task, true).await?,
+            Some(id) => self.follow_up(reactor, id, task, true, None).await?,
+            None => self.spawn_inner(reactor, task, true, None).await?,
         };
         self.deliberation = Some(id);
         Ok(())
@@ -460,7 +493,7 @@ impl WorkerRegistry {
     /// task. The MCP `ask` handler only knows the worker id; the loop owns the
     /// registry, so it resolves the task here. An ask from an unknown id (already
     /// reaped, say) still surfaces, tagged as such.
-    pub(super) fn question_report(&self, id: WorkerId, question: String) -> WorkerReport {
+    pub(super) fn question_report(&self, id: SessionId, question: String) -> WorkerReport {
         let task = self
             .workers
             .get(&id)
@@ -479,7 +512,7 @@ impl WorkerRegistry {
     /// the worker's task and flags whether it's Deliberation (whose surfaced word is
     /// must-relay). The loop folds the returned report in as a turn-driving signal, so
     /// the voice gets a chance to say it even with no human input.
-    pub(super) fn surface_report(&self, id: WorkerId, message: String) -> WorkerReport {
+    pub(super) fn surface_report(&self, id: SessionId, message: String) -> WorkerReport {
         let task = self
             .workers
             .get(&id)
@@ -501,7 +534,7 @@ impl WorkerRegistry {
         if self.workers.is_empty() {
             return String::new();
         }
-        let mut ids: Vec<&WorkerId> = self.workers.keys().collect();
+        let mut ids: Vec<&SessionId> = self.workers.keys().collect();
         ids.sort();
 
         let mut s = String::from("## Working sessions (delegated)\n");
@@ -513,9 +546,13 @@ impl WorkerRegistry {
                 let t = w.transcript.lock().await;
                 tail_chars(&t, 240)
             };
+            let under = match w.owner {
+                Some(o) => format!(" [under session {o}]"),
+                None => String::new(),
+            };
             if busy {
                 let suffix = if queued { "; follow-up queued" } else { "" };
-                let _ = write!(s, "- worker {id} (running{suffix}): \"{}\"", w.task);
+                let _ = write!(s, "- session {id}{under} (running{suffix}): \"{}\"", w.task);
             } else {
                 let _ = write!(
                     s,
@@ -617,7 +654,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 /// context. Runs as its own task so the reactor stays free; the session is closed
 /// (this returns) once the worker sits idle past [`WORKER_IDLE_TTL`].
 async fn drive_worker(
-    id: WorkerId,
+    id: SessionId,
     initial_task: String,
     session: Arc<AcpSession>,
     transcript: Arc<Mutex<String>>,
@@ -705,7 +742,7 @@ async fn wait_for_followup(mailbox: &FollowMailbox) -> Option<String> {
 /// longer parsed from the text — the worker raises them by calling the `ask`
 /// tool, which arrives on the loop's control channel out of band.
 async fn run_worker(
-    id: WorkerId,
+    id: SessionId,
     task: &str,
     session: &AcpSession,
     transcript: &Arc<Mutex<String>>,

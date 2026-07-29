@@ -28,7 +28,10 @@ pub enum SceneControl {
     /// set, the task is handed to that still-warm working session to continue —
     /// resuming it with full context instead of starting a fresh one; an unknown
     /// or already-closed id falls back to spawning a new worker.
-    Delegate { task: String, worker: Option<u64> },
+    /// `owner` is the session that asked. A worker answers to the session that
+    /// created it, not to the scene it happens to run in — `None` only for the
+    /// scene loop's own legacy dispatch.
+    Delegate { task: String, worker: Option<u64>, owner: Option<u64> },
     /// Schedule a self-wake after `delay` (e.g. `30s`, `20m`, `1h`) carrying
     /// `note` (the `alarm` tool). The delay is parsed loop-side; an unparseable
     /// one is dropped.
