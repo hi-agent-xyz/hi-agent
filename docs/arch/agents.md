@@ -18,6 +18,34 @@ prompt, not new machinery.
 | Only workers act | The moment there is an artifact or a side effect, that is a worker. A division of labour, not a security boundary — [tool surfaces](foundation.md#default-tool-surfaces) are sized for context, not to fence anyone out |
 | Cognition never speaks | Single-voice coherence: it proposes, Reaction voices |
 | The switchboard is the host | No agent↔agent link; all routing and timers are Rust |
+| A worker belongs to the session that created it | Not to a scene. Ownership is what makes a *sceneless* agent able to delegate at all — and a worker whose owner is a scene has nowhere to report but into someone's conversation |
+| Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches a scene except through Reaction, because a scene is where a person is spoken to |
+| An id names a **session**, not a role | A role has many sessions over a run; two scenes' Deliberations are two sessions of one role |
+| Owners pull, the host pushes | A worker has no outbound tool. The host knows when a session ends because it drives it, so completion needs no tool; everything else the owner reads when it decides to spend the context |
+
+### Ownership and addressing
+
+Every agent session has a process-wide id. **Process-wide, not per scene** — ownership
+crosses scenes, and a sceneless owner holds sessions no per-scene counter could name
+without collision.
+
+It is a locally minted id rather than the underlying agent-protocol session id, and that
+is forced rather than chosen: the tool surface identifies its caller by a header set when
+the session opens, so the identifier must exist before the protocol assigns one.
+
+A worker records the session that created it. Its report is delivered to that session,
+which reads it on its next prompt. If the owner has shut down, the report falls back to
+the scene rather than being dropped — **surfacing finished work one rung too high beats
+losing it.**
+
+Two things follow, and both are load-bearing:
+
+- **An agent that owns live children is not idle.** Idle-reaping an owner out from under
+  running work is what creates orphans; the fix is to not call it idle. Shutdown is
+  graceful: finish or hand off, then close.
+- **A session id addresses a live agent; a task subject addresses work.** Session ids die
+  with the process, so nothing durable may reference one. Recovery reconstructs from
+  [Tasks](data.md#tasks), never from a session.
 
 ## The ladder
 
@@ -36,6 +64,12 @@ question onward.
 the voice included. No reads, no fetches, no working directory: it is fast because it
 *cannot* wait on anything, not because it is small. Judging the edge of your own knowledge is
 a hard problem and needs a capable model.
+
+> **Enforced, not merely instructed.** This is the one place where a tool surface is a hard
+> limit rather than a division of labour: the whole argument for the rung — that it *cannot*
+> wait — is worth nothing if it can quietly open a file. Restricting our own tool surface is
+> not sufficient on its own; the session's underlying toolset has to be restricted too, or
+> "cannot" means "was asked not to".
 
 Not blind, because its memory is **prepared**: the bundled prompt for its role, plus its
 scene's [generated one](data.md#memoryprompts) — what the conversation carries forward,
@@ -70,9 +104,11 @@ the call stack, and it is a stack in *addressing* only, not in **lifetime**: it 
 independently and surface upward. Handing work up to Cognition is not a contradiction; that
 is Deliberation calling out, not something calling in.
 
-> **A naming correction.** This rung has existed for a while as the per-scene follow-up the
-> reactor drives each turn; it was called "cognition", which is now the name of the sceneless
-> brain below. Per-scene reading is *Deliberation*; the shared brain is *Cognition*.
+> **A naming correction, now carried out.** This rung existed for a while as the per-scene
+> follow-up the reactor drives each turn, under the name "cognition" — now the name of the
+> sceneless brain below. Per-scene reading is *Deliberation*; the shared brain is
+> *Cognition*. The rename landed in the code; the unrelated *cognition tunables* (the
+> agentic model config) keep the word in its other sense.
 
 ### Cognition — sceneless, minutes and beyond
 
@@ -95,9 +131,19 @@ decides the timing.
 
 ### Reflection — sceneless, background
 
-Curates `data/`. Never speaks, never dispatches — those belong to Reaction and Cognition
-respectively, and putting either inside the consolidation loop would create a second mouth
-or a second dispatcher.
+Curates `data/`. Never speaks — that belongs to Reaction, and a second mouth inside the
+consolidation loop is a second voice.
+
+It **does** dispatch. That is a correction: dispatching was once listed here alongside
+speaking as something Reflection must not do, on the reasoning that it would make a second
+dispatcher. The reasoning does not survive ownership — a worker belongs to the session that
+created it, so Reflection's workers are Reflection's, report to Reflection, and are visible
+to no scene. There is no contention to avoid. What must stay singular is the *mouth* and
+the *task ledger*, not the act of asking for help.
+
+The earlier wording also conflated two things: the "workers" listed below are, today, jobs
+Reflection performs itself in prose. Being able to hand one to a real worker is what the
+correction buys.
 
 Reflection must be **global, not per scene**: it merges a person seen in two scenes,
 dedupes skills, and does drive housekeeping. It is the one agent that is legitimately not
@@ -148,9 +194,22 @@ They are **capability peers**, not children: a worker reaches the same memory, s
 tools, and may spawn further workers. The one asymmetry is channels — a worker cannot speak
 or show. It produces an intent; Reaction articulates it.
 
-The bus is **bidirectional and non-blocking**. A worker posts progress, a question, or a
-need for input; Cognition injects guidance or "proceed with a placeholder". Asks are intents,
-never blocking calls — the worker keeps going and reconciles later.
+The bus is **bidirectional and non-blocking**, but the two directions are not symmetric,
+and the asymmetry is the point.
+
+**Down** is a message: an owner sends its worker guidance, a correction, or "proceed with a
+placeholder", merged into the worker's next prompt rather than interrupting it.
+
+**Up is a read, not a push.** A worker has no outbound tool at all. Its owner asks for its
+output when it decides to — mid-task for progress, or on completion. The one thing pushed
+is the completion event itself, and that comes from the **host**, which knows a session
+ended because it drove it. Nothing about "is this worth interrupting for?" is left to the
+worker, and no context is spent on a worker's output until someone wants it.
+
+> **What this costs.** A worker that finds something urgent mid-errand cannot say so; it
+> waits to be read. Unprompted news therefore travels no faster than its owner's next
+> look. Accepted for now — the alternative is a worker deciding when to interrupt, which
+> is the judgment we most want out of the fast path.
 
 ### Decision Maker
 
