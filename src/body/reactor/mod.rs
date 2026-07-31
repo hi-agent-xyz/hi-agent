@@ -1739,6 +1739,20 @@ async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Resul
             )
             .await?,
     );
+    // A scene's address resolves to its Reaction — register it so anything above can
+    // reach the conversation without knowing a session id.
+    {
+        use crate::foundation::registry;
+        let id = registry::mint();
+        registry::global().register(
+            id,
+            registry::Role::Reaction,
+            Some(scene.clone()),
+            None,
+            "the scene's voice".to_string(),
+        );
+    }
+
     reactor
         .inner
         .observatory

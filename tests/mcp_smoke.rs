@@ -91,14 +91,18 @@ async fn tools_list_is_role_gated() {
     .await
     .expect("json");
     let names = tool_names(&reactor);
-    // The reactor is the fast conversational voice: its surface is exactly its two
-    // expression channels, both of them calls. Everything heavy is delegated in code.
+    // The reactor is the fast conversational voice: its two expression channels, both
+    // calls, plus the one verb that reaches another agent. Nothing that reads or fetches.
     // This asserted one tool while `say` sat in the unreachable fallback arm and the
     // voice fell back to plain message text — the test agreed with the code and both
     // were wrong about the design.
     let mut names = names;
     names.sort();
-    assert_eq!(names, vec!["say".to_string(), "show_view".to_string()], "got {names:?}");
+    assert_eq!(
+        names,
+        vec!["say".to_string(), "send_message".to_string(), "show_view".to_string()],
+        "got {names:?}"
+    );
 
     let worker = post_mcp(
         &client,

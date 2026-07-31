@@ -38,6 +38,10 @@ pub enum SessionRole {
     #[default]
     Reactor,
     Worker,
+    /// The scene's reading and thinking rung.
+    Deliberation,
+    /// The sceneless shared brain.
+    Cognition,
     Reflection,
 }
 
@@ -47,6 +51,8 @@ impl SessionRole {
             SessionRole::Reactor => "reactor",
             SessionRole::Worker => "worker",
             SessionRole::Reflection => "reflection",
+            SessionRole::Deliberation => "deliberation",
+            SessionRole::Cognition => "cognition",
         }
     }
 }

@@ -33,6 +33,19 @@ pub type SessionId = u64;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// How much of a session's recent output the registry keeps for `SessionMessages`.
+///
+/// A live tail, not an archive: enough for "how's it going?" without turning the
+/// switchboard into a second transcript store. The durable copy is the log, and anything
+/// older is replayed from the protocol's own session load.
+const OUTPUT_TAIL_CHARS: usize = 4_000;
+
+/// The process's registry. One switchboard, as the design says.
+pub fn global() -> &'static Registry {
+    static G: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
+    G.get_or_init(Registry::new)
+}
+
 /// Mint the next session id. Called before the underlying session is opened, because the
 /// tool surface identifies its caller by this id in a request header — so it cannot be an
 /// id the protocol assigns later.
@@ -121,6 +134,8 @@ struct Entry {
     turns: u64,
     started: DateTime<Utc>,
     inbox: Inbox,
+    /// Bounded tail of what this session has said, for `SessionMessages`.
+    output: String,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
 }
@@ -159,6 +174,7 @@ impl Registry {
                 turns: 0,
                 started: Utc::now(),
                 inbox: Inbox::default(),
+                output: String::new(),
                 notify: notify.clone(),
             },
         );
@@ -235,6 +251,24 @@ impl Registry {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
             e.busy = false;
         }
+    }
+
+    /// Append to a session's visible output, keeping only the recent tail.
+    pub fn record_output(&self, id: SessionId, chunk: &str) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+            e.output.push_str(chunk);
+            let n = e.output.chars().count();
+            if n > OUTPUT_TAIL_CHARS {
+                e.output = e.output.chars().skip(n - OUTPUT_TAIL_CHARS).collect();
+            }
+        }
+    }
+
+    /// What a session has recently said. Costs context — which is exactly why it is a
+    /// different call from [`status`](Self::status).
+    pub fn messages(&self, id: SessionId) -> Option<String> {
+        let map = self.sessions.lock().unwrap();
+        map.get(&id).map(|e| e.output.clone())
     }
 
     /// Metadata for one session. Cheap by construction — no content crosses.
@@ -414,6 +448,21 @@ mod tests {
 
         r.finish_turn(b);
         assert!(!r.status(b).unwrap().busy);
+    }
+
+    #[test]
+    fn output_is_a_bounded_tail_not_an_archive() {
+        let r = reg();
+        let a = mint();
+        r.register(a, Role::Worker, None, None, String::new());
+        r.record_output(a, "hello ");
+        r.record_output(a, "world");
+        assert_eq!(r.messages(a).as_deref(), Some("hello world"));
+
+        r.record_output(a, &"x".repeat(OUTPUT_TAIL_CHARS + 500));
+        let kept = r.messages(a).unwrap();
+        assert_eq!(kept.chars().count(), OUTPUT_TAIL_CHARS, "the tail is capped");
+        assert!(kept.ends_with('x'), "it is the *recent* tail that survives");
     }
 
     #[test]

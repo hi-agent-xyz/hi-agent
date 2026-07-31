@@ -64,12 +64,10 @@ use super::{LoopInput, Reactor};
 /// caller by this id in a request header — so it cannot be the id the adapter assigns.
 pub(super) type SessionId = u64;
 
-/// Source of [`SessionId`]s. One counter for the process; see the type's note on why
-/// this is not per scene.
-static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+use crate::foundation::registry;
 
 fn mint_session_id() -> SessionId {
-    NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+    registry::mint()
 }
 
 /// How long a finished working session stays warm — its ACP session held open and
@@ -397,6 +395,16 @@ impl WorkerRegistry {
             owner,
         ));
 
+        // Announce it to the switchboard, so it can be addressed and read.
+        registry::global().register(
+            id,
+            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
+            Some(self.scene.clone()),
+            owner,
+            task.clone(),
+        );
+
+
         self.workers.insert(
             id,
             Worker {
@@ -463,6 +471,7 @@ impl WorkerRegistry {
             // The worker closed itself (idle past TTL) before we got the lock; drop
             // the stale handle and fall through to a fresh spawn.
             self.workers.remove(&id);
+            registry::global().unregister(id);
         }
         tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
         self.spawn_inner(reactor, task, is_deliberation, owner).await
@@ -491,7 +500,13 @@ impl WorkerRegistry {
     /// Forget workers whose drive task has finished, so the map doesn't grow.
     /// Their result already rode back as a report; this just drops the handle.
     pub(super) fn reap(&mut self) {
-        self.workers.retain(|_, w| !w.drive.is_finished());
+        self.workers.retain(|id, w| {
+            let alive = !w.drive.is_finished();
+            if !alive {
+                registry::global().unregister(*id);
+            }
+            alive
+        });
     }
 
     /// Build a question report for the `ask` tool, attributing it to the worker's

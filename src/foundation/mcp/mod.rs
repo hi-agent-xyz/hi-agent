@@ -25,6 +25,7 @@ use std::sync::Mutex;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
+use crate::foundation::registry;
 use crate::mind::memory::people_vectors;
 use crate::body::reactor::{SceneControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
@@ -65,9 +66,80 @@ fn say_tool() -> Value {
     )
 }
 
+/// `SendMessage` — the one verb between agents.
+///
+/// One direction, no reply. A reply is this same call going the other way, which is why
+/// the sender is stamped host-side from the calling session rather than passed in.
+fn send_message_tool() -> Value {
+    tool(
+        "send_message",
+        "Send a message to another agent session. One direction — it does not wait for a \
+         reply, and the return value only tells you whether it was delivered. If you want an \
+         answer, the other side sends you one the same way; your identity travels with the \
+         message so it knows where to reach you. `to` is either a session id (a number you \
+         were given when you created it, or the sender of a message you received) or a scene \
+         name, which reaches that conversation's voice.",
+        json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "A session id, or a scene name." },
+                "message": { "type": "string", "description": "What you want them to know, in plain words." },
+            },
+            "required": ["to", "message"],
+        }),
+    )
+}
+
+fn create_worker_tool() -> Value {
+    tool(
+        "create_worker",
+        "Start a working session to carry out a job, and get back its session id. It runs \
+         with the full toolset and no voice of its own; it reports to you and to nobody else. \
+         Send it the brief with `send_message`, ask how it is doing with `session_status`, and \
+         read what it has produced with `session_messages`.",
+        json!({
+            "type": "object",
+            "properties": {
+                "task": { "type": "string", "description": "A self-contained description of the work." },
+            },
+            "required": ["task"],
+        }),
+    )
+}
+
+fn session_status_tool() -> Value {
+    tool(
+        "session_status",
+        "How a session you created is doing — whether it is working right now, what it is \
+         on, how many turns it has taken. Costs you nothing but a line, so check it freely; \
+         it deliberately carries none of the session's actual output.",
+        json!({
+            "type": "object",
+            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "required": ["id"],
+        }),
+    )
+}
+
+fn session_messages_tool() -> Value {
+    tool(
+        "session_messages",
+        "What a session you created has actually said, most recent last. This is real \
+         reading and it costs context, so reach for it when you want the substance — when it \
+         has finished, or when someone is asking after progress — rather than as a routine \
+         check.",
+        json!({
+            "type": "object",
+            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "required": ["id"],
+        }),
+    )
+}
+
 fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
+            send_message_tool(),
             tool(
                 "ask",
                 "Raise a non-blocking question for the agent about an ambiguity in your task. \
@@ -132,6 +204,10 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // from 1 — so every scene-specific tool (`record_episode`, `keep_and_fade`,
         // `see`) names the scene it acts on.
         Some("reflection") => vec![
+            send_message_tool(),
+            create_worker_tool(),
+            session_status_tool(),
+            session_messages_tool(),
             tool(
                 "record_episode",
                 "File one coherent event as an episode. You are shown each scene's still-unconsolidated \
@@ -281,7 +357,7 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // text (not a `say` tool) and gets exactly one expression tool — `show_view` —
         // to put a view a worker already built on screen. Nothing else; the heavy work
         // is delegated to workers in code, not via a tool.
-        Some("reactor") => vec![say_tool(), show_view_tool()],
+        Some("reactor") => vec![say_tool(), show_view_tool(), send_message_tool()],
         // Fallback for an unheadered/unknown role — the legacy agentic reactor's full
         // toolset. No live role maps here after the reactor/cognition split, but keep
         // it so an untagged session still degrades to something usable.
@@ -545,6 +621,64 @@ async fn dispatch_tool(
     let arg_opt = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
 
     let outcome = match name {
+        "send_message" => {
+            let Some(from) = session_id else {
+                return tool_error("send_message needs a session identity; this session has none");
+            };
+            let to = arg_str("to");
+            let message = arg_str("message");
+            if to.trim().is_empty() || message.trim().is_empty() {
+                return tool_error("send_message requires `to` and a non-empty `message`");
+            }
+            // A bare number is a session; anything else names a scene.
+            let addr = match to.trim().parse::<u64>() {
+                Ok(id) => registry::Address::Session(id),
+                Err(_) => registry::Address::Scene(Scene(to.trim().to_string())),
+            };
+            match registry::global().send(from, &addr, message) {
+                registry::Delivery::Delivered => Ok("delivered"),
+                registry::Delivery::Unknown => {
+                    return tool_error(&format!(
+                        "nothing live at `{}` — it may have finished. Nothing was delivered.",
+                        to.trim()
+                    ));
+                }
+                registry::Delivery::NotPermitted => {
+                    return tool_error(
+                        "a working session reports to whoever asked for the work, and to nobody else",
+                    );
+                }
+            }
+        }
+        "session_status" => {
+            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
+                return tool_error("session_status requires a numeric `id`");
+            };
+            let Some(st) = registry::global().status(id) else {
+                return tool_error(&format!("no live session {id}"));
+            };
+            let state = if st.busy {
+                "working right now"
+            } else if st.queued {
+                "idle, with mail waiting"
+            } else {
+                "idle"
+            };
+            return tool_ok(&format!(
+                "session {} — {state}; {} turn(s) so far; on: {}",
+                st.id, st.turns, st.task
+            ));
+        }
+        "session_messages" => {
+            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
+                return tool_error("session_messages requires a numeric `id`");
+            };
+            match registry::global().messages(id) {
+                Some(text) if !text.trim().is_empty() => return tool_ok(&text),
+                Some(_) => Ok("that session has not said anything yet"),
+                None => return tool_error(&format!("no live session {id}")),
+            }
+        }
         "say" => {
             let text = arg_str("text");
             if text.trim().is_empty() {
@@ -1470,10 +1604,38 @@ mod surface_tests {
     fn reaction_holds_say_and_show_and_nothing_else() {
         let mut got = names(Some("reactor"));
         got.sort();
-        assert_eq!(got, vec!["say".to_string(), "show_view".to_string()]);
+        assert_eq!(
+            got,
+            vec!["say".to_string(), "send_message".to_string(), "show_view".to_string()],
+            "its two expression channels, plus the one verb that reaches another agent"
+        );
     }
 
     /// The other half of "and nothing else": a worker must not be able to speak.
+    /// The one verb has to be on every rung, or an agent is unreachable by design.
+    #[test]
+    fn every_role_can_send_a_message() {
+        for role in [Some("reactor"), Some("worker"), Some("reflection")] {
+            assert!(
+                names(role).contains(&"send_message".to_string()),
+                "{role:?} must hold send_message"
+            );
+        }
+    }
+
+    /// One dispatcher. A scene rung that could create workers would be a second one,
+    /// spawning against Cognition unseen.
+    #[test]
+    fn only_the_sceneless_rungs_create_workers() {
+        assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
+        for role in [Some("reactor"), Some("worker")] {
+            assert!(
+                !names(role).contains(&"create_worker".to_string()),
+                "{role:?} must not create workers"
+            );
+        }
+    }
+
     #[test]
     fn no_other_role_can_speak() {
         for role in [Some("worker"), Some("reflection")] {
