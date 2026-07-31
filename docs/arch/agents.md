@@ -21,7 +21,9 @@ prompt, not new machinery.
 | A worker belongs to the session that created it | Not to a scene. Ownership is what makes a *sceneless* agent able to delegate at all — and a worker whose owner is a scene has nowhere to report but into someone's conversation |
 | Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches a scene except through Reaction, because a scene is where a person is spoken to |
 | An id names a **session**, not a role | A role has many sessions over a run; two scenes' Deliberations are two sessions of one role |
-| Owners pull, the host pushes | A worker has no outbound tool. The host knows when a session ends because it drives it, so completion needs no tool; everything else the owner reads when it decides to spend the context |
+| **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
+| A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
+| Cognition is the sole writer of the ledger | Two writers to one ledger means one of them is wrong and no way to tell which |
 
 ### Ownership and addressing
 
@@ -60,10 +62,15 @@ process-wide, for the reason given in [invariant 1](arch.md#invariants). It spea
 floor, manages the interaction, and decides whether to answer from what it holds or hand the
 question onward.
 
-**Tools: `say` and `show`, and nothing else.** Both of its expression channels are calls —
-the voice included. No reads, no fetches, no working directory: it is fast because it
-*cannot* wait on anything, not because it is small. Judging the edge of your own knowledge is
-a hard problem and needs a capable model.
+**Tools: `say`, `show`, and `SendMessage`.** Its two expression channels are calls — the
+voice included — plus the one verb that reaches another agent. **No reads, no fetches, no
+working directory, and no built-ins at all**: it is fast because it *cannot* wait on
+anything, not because it is small. Judging the edge of your own knowledge is a hard problem
+and needs a capable model.
+
+**It also owns the social layer** — the mouth, the presence gate, and the timing of anything
+unprompted. That was once a separate host component; all four of its duties were per-scene,
+and this is the per-scene thing that speaks. See [`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
 
 > **Enforced, not merely instructed.** This is the one place where a tool surface is a hard
 > limit rather than a division of labour: the whole argument for the rung — that it *cannot*
@@ -90,8 +97,19 @@ work out what was actually asked — per scene, before anything reaches the shar
 gap is the whole reason for this rung. Reaction follows up with it every turn.
 
 Anything heavy — a real task, a standing duty, a long errand — is handed **up to Cognition**
-rather than done here. Deliberation stays light on purpose: it exists so that a scene can
-think without leaving the scene, and so that no scene ever waits on another.
+rather than done here, by message. **Deliberation has no workers of its own**, and that is
+deliberate: one dispatcher, so no two rungs can spawn against each other unseen. Its own
+surface enforces it — reads and one write, no shell and no editor, so heavy work has nowhere
+to go but up.
+
+The hand-up must be **asynchronous**, and that is a requirement rather than a convenience: if
+a scene waited on Cognition, one global session would serialize every scene, which is
+[invariant 3](arch.md#invariants) broken where it matters most. `SendMessage` does not wait,
+so it cannot happen.
+
+Perception needs no tool here. A photo or a file arrives as a **ref**, a ref is a path, and
+an agent that can read files can open it. What Deliberation needs is not a grant but knowing
+where things land.
 
 **Its second job is the scene's memory.** Reaction consumes a generated system prompt it
 cannot write, so someone has to decide what this conversation carries forward — and that is a
@@ -117,12 +135,20 @@ hands work up to it. It does its heavy lifting by **delegating** — owns [Tasks
 dispatches workers, reasons across everything in memory, and tries hard to stay idle so it
 is free the moment something arrives.
 
+It is the **only** thing that creates workers, and the **only** writer of the task ledger.
+Both follow from the same idea: durable work is what it means for something to be real, and
+deciding that is judgment, not bookkeeping a scene rung should do in passing.
+
 It has no scene, which is what makes it the right home for everything that has no scene:
 
 > **After a restart, before any user input:** the clock fires → Cognition wakes → reads open
-> tasks → checks what already landed so nothing is redone → dispatches workers for what is
-> still wanted → for the user-facing ones, `surface` into the task's own scene, where
-> Reaction voices it when the room is right.
+> tasks → checks what already landed so nothing is redone → creates workers for what is still
+> wanted → for the user-facing ones, messages the task's `report_to` scene, where its
+> Deliberation frames it and Reaction voices it when the room is right.
+
+Answers travel back the way they came: what a Deliberation handed up returns to that
+Deliberation. Cognition is sceneless, so its results arrive unframed — the scene rung is what
+turns "the build failed" into something that fits the conversation it belongs to.
 
 Cognition never calls `say`. Everything it wants said is a **proposal** the arbiter
 schedules. Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, the
@@ -194,22 +220,20 @@ They are **capability peers**, not children: a worker reaches the same memory, s
 tools, and may spawn further workers. The one asymmetry is channels — a worker cannot speak
 or show. It produces an intent; Reaction articulates it.
 
-The bus is **bidirectional and non-blocking**, but the two directions are not symmetric,
-and the asymmetry is the point.
+There is **one verb** between agents, in both directions:
+`SendMessage(to, message)` — one way, no reply, queued and merged while the target is busy.
+An owner steers its worker with it; the worker answers with it. A reply is just a message
+going the other way, which is why `from` is stamped by the registry: it is the return
+address.
 
-**Down** is a message: an owner sends its worker guidance, a correction, or "proceed with a
-placeholder", merged into the worker's next prompt rather than interrupting it.
+A worker may address **only its owner** — structural, because that is routing. Whether
+something is worth saying at all is judgment and lives in its prompt: **reply, don't
+narrate.** Progress is not something a worker announces; it is something an owner asks for,
+with a status read that costs no context until it wants the content.
 
-**Up is a read, not a push.** A worker has no outbound tool at all. Its owner asks for its
-output when it decides to — mid-task for progress, or on completion. The one thing pushed
-is the completion event itself, and that comes from the **host**, which knows a session
-ended because it drove it. Nothing about "is this worth interrupting for?" is left to the
-worker, and no context is spent on a worker's output until someone wants it.
-
-> **What this costs.** A worker that finds something urgent mid-errand cannot say so; it
-> waits to be read. Unprompted news therefore travels no faster than its owner's next
-> look. Accepted for now — the alternative is a worker deciding when to interrupt, which
-> is the judgment we most want out of the fast path.
+Nothing routes automatically. A turn's output goes nowhere unless the agent sends it, so
+**silence is legal** — and the host's completion event is what keeps silence visible rather
+than indistinguishable from a hang.
 
 ### Decision Maker
 

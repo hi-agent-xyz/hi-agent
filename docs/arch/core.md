@@ -33,9 +33,12 @@ lives here so that none of it exists above.
 
 A **scene** is the situation a signal belongs to: with a person, with a group, or alone.
 It is the context-isolation unit — one Reaction and one [Deliberation](agents.md#deliberation--per-scene-seconds)
-per scene, one memory slice, one tag on every session's tool attach. Reaction is followed up
-each turn by its scene's Deliberation; [Cognition](agents.md#cognition--sceneless-minutes-and-beyond)
-is sceneless and the router never addresses it.
+per scene, one memory slice, one tag on every session's tool attach. **The router's only
+target is Reaction** — it is the scene's front door. Everything deeper is reached by
+[message](foundation.md#the-agent-session-registry), agent to agent, through the registry:
+Reaction hands down to its Deliberation, Deliberation hands up to
+[Cognition](agents.md#cognition--sceneless-minutes-and-beyond), and answers come back the way
+they went. Cognition is sceneless and the router never addresses it.
 
 Participants are *soft*, inferred from content, never a structural key. An external source
 maps onto a scene (a group chat is a scene). The topology is decided once by judgment when
@@ -47,30 +50,35 @@ Fans N input channels into one prompt, and fans one output stream back out to N 
 by the carrier rules. This is a consequence of ACP carrying a single conversation, not a
 goal in itself.
 
-### Arbiter
+### The social layer lives in Reaction, not here
 
-The social layer, and the only place where "should this be said, now" is answered.
+*This was once a host component called the arbiter.* It has been retired, and its four
+duties moved into [Reaction](agents.md#reaction--per-scene-one-generation) — because all four
+are per-scene, and Reaction is already the only per-scene thing that speaks. A separate
+module arbitrating a mouth that only one agent owns was machinery around a decision that
+belonged to the agent making it.
 
-- **Mouth singleton, per scene.** Utterances queue for one mouth *per scene* and never
-  overlap within it. The singleton is **scene-wide, not process-wide**: a global mouth would
-  make one scene wait on another's turn, which is exactly what
-  [invariant 3](arch.md#invariants) forbids. Inside a scene it binds ordinary replies,
-  clock-driven surfacing and worker reports alike — which is why it cannot live inside any
-  one of them.
-- **Turn-taking.** The quiet-settle commit that decides a turn is over.
-- **Presence gate.** Self-initiated speech is held while nobody is there, and released when
-  they come back. It reads the derived [presence](#presence) model.
-- **Social timing.** When to voice a worker's question, when to let it wait, when to tell
-  the worker to proceed with a placeholder instead.
+- **Mouth singleton, per scene** — now structural rather than enforced: one Reaction per
+  scene, taking one turn at a time. The singleton is scene-wide, never process-wide, because
+  a global mouth would make one scene wait on another —
+  [invariant 3](arch.md#invariants).
+- **Turn-taking** — the quiet-settle commit that decides a turn is over. Still host-side:
+  it is [batching](surfaces.md#batching), and it happens before Reaction is woken.
+- **Presence gate** — Reaction reads [presence](#presence) and decides whether to speak into
+  a room that may be empty.
+- **Social timing** — when to voice a worker's answer, when to let it wait.
+
+What the host keeps is what has no model in it: the queue behind `say`, and the fact that
+`say` **returns** so a held or failed utterance is answerable.
 
 ### Presence
 
 Whether anyone is actually there. **Nobody sends it — it is derived**, a soft model fused
 from several weak signals, none of which is trustworthy alone: channel activity, OS idle and
 lock, a face seen, speech heard. Any single one lies (a person reading is idle; a face is a
-photo), so presence is a confidence, not a boolean, and it is rendered for exactly two
-readers — the arbiter's presence gate and Reaction, which needs to know whether it is
-talking to a room or to nobody.
+photo), so presence is a confidence, not a boolean, and it is rendered for exactly one
+reader — Reaction, which decides both whether it is talking to a room or to nobody, and
+whether an unprompted word should wait.
 
 The failure it exists for: talking to an empty room. An utterance addressed to no one is
 worse than silence, because it is spent — the person comes back and never learns it happened.

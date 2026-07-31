@@ -88,19 +88,70 @@ There is no separate "effector" layer. From the agent's side everything is a too
 | Irreversible or outward-facing → ask | Publishing cannot be undone; caches and indexes outlive deletion |
 | General vision over per-app scripting | See-and-click works on any app; a script works on one |
 
+## The agent session registry
+
+**Every agent-to-agent edge goes through one code component with no model in it.** Agents do
+not hold references to each other; they hold *addresses*, and the registry resolves them.
+That is what makes "the switchboard is the host" a mechanism rather than an aspiration.
+
+| Call | Who | Contract |
+|---|---|---|
+| `SendMessage(to, message)` | every agent | One direction, **no reply**. Returns whether it was *delivered*, never a response. Queues per target and merges while the target is mid-turn, so a burst arrives as one prompt |
+| `CreateWorker(type)` | Cognition, Reflection | → a session id |
+| `SessionStatus(id)` | owners | alive · busy/idle · what it is on · turns. **Meta only** — free to call |
+| `SessionMessages(id)` | owners | its actual output. Costs context, so it is a separate call from status |
+
+**`from` is stamped by the registry, never passed by the caller.** The host knows who is
+calling; letting an agent name itself is letting it impersonate.
+
+**Addresses are session ids or scenes.** A session id names a live agent and dies with the
+process, so nothing durable may hold one — a task holds a scene. The registry resolves a
+scene to its Reaction.
+
+One structural restriction, because it is routing rather than policy: **a worker may only
+address its owner.** Whether something is worth saying mid-task is a judgment and lives in
+its prompt; who it is allowed to reach is a fact and lives here.
+
+Two consequences worth stating. **Silence is legal** — a turn's output routes nowhere, so an
+agent that finishes without sending has said nothing; the completion event is what keeps that
+visible rather than indistinguishable from a hang. And **agents can talk in circles**: nothing
+structurally prevents two long-lived agents messaging each other indefinitely. That is
+expected, guided by prompt, and worth logging rather than blocking.
+
+### Full frames, not modelled events
+
+The host **records the session stream verbatim and interprets none of it.** An earlier design
+modelled a handful of protocol update types so the host could work out what an agent meant;
+with intent carried explicitly by `SendMessage`, that reading is no longer anyone's job.
+Recording is. Partial modelling was also silently lossy — it discarded every tool-call
+payload, which is exactly what [verification](#verification) needs and what a replayed
+session is made of.
+
+Historical messages come from the protocol's own session load, not from a second copy we keep.
+
 ## Default tool surfaces
 
-Each role is handed a **default** surface, sized to keep its context small — every tool
+Each role is handed a **default** surface, sized to keep its context small, sized to keep its context small — every tool
 definition in the window costs tokens and latency on a turn that is trying to be fast. This
 is a default, not a rail: "only workers act" means workers do the actual jobs, not that the
 host fences anyone out.
 
 | Role | Default surface | Why that size |
 |---|---|---|
-| **Reaction** | `say` · `show` | its two expression channels and nothing else — it cannot fetch, and that is why it is fast |
-| **Deliberation** | memory reads · pure transforms (image→text, …) | enough to work out what was asked, without a window full of effectors |
-| **Cognition** | memory read/write · task operations · dispatch | it delegates rather than does |
+| **Reaction** | `say` · `show` · `SendMessage`, and **no built-ins at all** | its expression channels plus the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
+| **Deliberation** | `SendMessage` · reads (files, memory, web) · write **only** its scene's brief | enough to work out what was asked. No shell and no editor, so heavy work has nowhere to go but up |
+| **Cognition** | `SendMessage` · `CreateWorker` · session reads · task writes | it delegates rather than does, and it is the **sole writer** of the ledger |
+| **Reflection** | as Cognition, minus task writes, plus memory curation | it curates `data/`; duties are not its to record |
 | **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |
+
+Reaction is the one exception to "default, not rail". Its surface is **enforced at session
+open**, because the argument for the rung — that it is fast since it *cannot* wait — is worth
+nothing if it can quietly open a file. Restricting our own tools is not enough for that; the
+underlying agent's built-ins have to be restricted too, or "cannot" means "was asked not to".
+
+Perception needs no tool of its own. An agent that can read files can open a photo that
+arrived, because the signal carried a **ref** and a ref is a path. What it needs is not a
+grant but *knowing where things land* — which is prompt, not plumbing.
 
 A **pure transform** changes data; an **effecting tool** changes the world. Workers carry the
 effecting ones because that is where the work is, not because anyone above is untrusted — a
