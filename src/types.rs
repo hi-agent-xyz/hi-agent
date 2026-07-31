@@ -25,6 +25,21 @@ impl fmt::Display for Scene {
     }
 }
 
+impl Scene {
+    /// Whether this is a **pseudo-scene** — a `*…*` placeholder a sceneless rung is
+    /// opened under so the `/mcp` dispatch and the subprocess logs have something to
+    /// route and label by, never a conversation anyone is having.
+    ///
+    /// The convention was already relied on (`*consolidation*`, chosen because the
+    /// `*…*` form cannot collide with a real scene id) but existed only as a comment,
+    /// so every consumer had to either hardcode the literal or accidentally treat the
+    /// placeholder as real. Anything that would *show* a scene to a person, or file
+    /// data under one, should ask this first.
+    pub fn is_pseudo(&self) -> bool {
+        self.0.len() >= 2 && self.0.starts_with('*') && self.0.ends_with('*')
+    }
+}
+
 #[derive(Debug, Error)]
 #[error("scene id may not be empty")]
 pub struct SceneParseError;

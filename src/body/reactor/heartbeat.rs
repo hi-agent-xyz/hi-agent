@@ -201,7 +201,9 @@ const SWEEP_DRY_RUN: bool = true;
 const CONSOLIDATION_SCENE: &str = "*consolidation*";
 
 fn consolidation_scene() -> Scene {
-    Scene(CONSOLIDATION_SCENE.to_string())
+    let s = Scene(CONSOLIDATION_SCENE.to_string());
+    debug_assert!(s.is_pseudo(), "the sentinel must be recognizable as one");
+    s
 }
 
 /// One scene's gathered frontier and context for the consolidated pass — the input

@@ -25,6 +25,7 @@ use std::sync::Mutex;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
+use crate::foundation::observatory::{EventKind, Observatory};
 use crate::foundation::registry;
 use crate::mind::memory::people_vectors;
 use crate::body::reactor::{SceneControl, ToolRegistry};
@@ -470,6 +471,7 @@ pub async fn handle(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
+    observatory: &Observatory,
     scene: Option<Scene>,
     role: Option<&str>,
     session_id: Option<u64>,
@@ -506,7 +508,7 @@ pub async fn handle(
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             McpReply::Json(result(
                 id,
-                dispatch_tool(registry, data_dir, video_partial, scene.as_ref(), session_id, role, name, &args).await,
+                dispatch_tool(registry, data_dir, video_partial, observatory, scene.as_ref(), session_id, role, name, &args).await,
             ))
         }
         // ping is a no-op request the client may send.
@@ -523,6 +525,7 @@ async fn dispatch_tool(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
+    observatory: &Observatory,
     scene: Option<&Scene>,
     session_id: Option<u64>,
     role: Option<&str>,
@@ -593,7 +596,28 @@ async fn dispatch_tool(
                 Ok(id) => registry::Address::Session(id),
                 Err(_) => registry::Address::Scene(Scene(to.trim().to_string())),
             };
-            return match registry::global().send(from, &addr, message) {
+            let (delivery, to_session) =
+                registry::global().send_traced(from, &addr, message.clone());
+
+            // The edge, observed. Attributed to the **sender's** scene, because that is
+            // the one fact we hold at this point — the switchboard resolves the target
+            // and does not report its scene. For a sceneless rung the header carries a
+            // sentinel, so pass `None` rather than let a placeholder become a
+            // conversation in the mirror.
+            observatory
+                .record(
+                    Some(scene).filter(|s| !s.is_pseudo()),
+                    EventKind::MessageSent {
+                        from: Some(from),
+                        to: to.trim().to_string(),
+                        to_session,
+                        delivery,
+                        message,
+                    },
+                )
+                .await;
+
+            return match delivery {
                 registry::Delivery::Delivered => tool_ok("delivered"),
                 registry::Delivery::Unknown => tool_error(&format!(
                     "nothing live at `{}` — it may have finished. Nothing was delivered.",
@@ -1647,6 +1671,7 @@ mod surface_tests {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reactor::ToolRegistry::new();
         let partial = Mutex::new(HashMap::new());
+        let obs = Observatory::new(None, 48_000);
         let scene = Scene("boss".to_string());
 
         for role in [Some("reactor"), Some("worker"), Some("deliberation"), None] {
@@ -1654,6 +1679,7 @@ mod surface_tests {
                 &tools,
                 dir.path(),
                 &partial,
+                &obs,
                 Some(&scene),
                 // An identity, so this cannot pass for the old accidental rejection.
                 Some(7),
@@ -1666,5 +1692,46 @@ mod surface_tests {
             let text = got["content"][0]["text"].as_str().unwrap();
             assert!(text.contains("may not dispatch work"), "{role:?} got: {text}");
         }
+    }
+
+    /// The one verb crossing has to be *observable*, including when it fails. The send
+    /// happens here in MCP, which held no observatory handle — so every agent-to-agent
+    /// edge was invisible while workers were not, and the inspector showed the nodes of
+    /// the graph and none of its arrows.
+    ///
+    /// A miss is the interesting case, so that is what this pins: nothing is live at
+    /// `99`, and the event still lands carrying `delivery: unknown`.
+    #[tokio::test]
+    async fn a_send_that_reaches_nobody_is_still_recorded_as_an_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reactor::ToolRegistry::new();
+        let partial = Mutex::new(HashMap::new());
+        let obs = Observatory::new(None, 48_000);
+        let scene = Scene("boss".to_string());
+
+        let got = dispatch_tool(
+            &tools,
+            dir.path(),
+            &partial,
+            &obs,
+            Some(&scene),
+            Some(7),
+            Some("reactor"),
+            "send_message",
+            &json!({ "to": "99", "message": "are you there" }),
+        )
+        .await;
+        assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true));
+
+        let (replay, _rx) = obs.subscribe().await;
+        assert_eq!(replay.len(), 1, "the failed edge is history too");
+        let v = serde_json::to_value(&replay[0]).unwrap();
+        assert_eq!(v["event"], "message_sent");
+        assert_eq!(v["from"], 7);
+        assert_eq!(v["to"], "99");
+        assert_eq!(v["delivery"], "unknown");
+        assert_eq!(v["to_session"], Value::Null, "nothing to resolve to");
+        assert_eq!(v["message"], "are you there");
+        assert_eq!(v["scene"], "boss");
     }
 }

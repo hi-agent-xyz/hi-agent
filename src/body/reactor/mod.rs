@@ -2126,7 +2126,26 @@ async fn enqueue(
         && let Some(owner) = report.owner
     {
         let text = workers::render_report(report);
-        if workers.deliver_to(owner, text) {
+        let delivery = workers.deliver_to(owner, text.clone());
+        // Work travelling *up* is the edge most worth seeing, and it is host-posted
+        // (`from: None`) — so nothing observed it while only `send_message` was
+        // instrumented. Recorded whether or not it landed: a report that missed its
+        // owner is precisely what you would open the inspector to find.
+        reactor
+            .inner
+            .observatory
+            .record(
+                Some(scene).filter(|s| !s.is_pseudo()),
+                EventKind::MessageSent {
+                    from: None,
+                    to: owner.to_string(),
+                    to_session: Some(owner),
+                    delivery,
+                    message: text,
+                },
+            )
+            .await;
+        if matches!(delivery, registry::Delivery::Delivered) {
             return;
         }
         // The owner is gone. Surfacing one rung too high beats losing finished work.

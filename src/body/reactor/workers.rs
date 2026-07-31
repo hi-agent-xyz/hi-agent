@@ -428,11 +428,25 @@ impl WorkerRegistry {
             // Into the switchboard inbox, which decides the race for us: a worker
             // that closed itself between our lookup and this send reports `Unknown`
             // rather than swallowing the task.
-            let accepted = matches!(
-                registry::global().post(id, task.clone()),
-                registry::Delivery::Delivered
-            );
-            if accepted {
+            let delivery = registry::global().post(id, task.clone());
+            // A host-posted edge: `from: None`, because the host is not an agent. Same
+            // event as `send_message`, so the inspector shows every crossing on one
+            // timeline rather than only the ones an agent initiated.
+            reactor
+                .inner
+                .observatory
+                .record(
+                    Some(&self.scene).filter(|s| !s.is_pseudo()),
+                    EventKind::MessageSent {
+                        from: None,
+                        to: id.to_string(),
+                        to_session: Some(id),
+                        delivery,
+                        message: task.clone(),
+                    },
+                )
+                .await;
+            if matches!(delivery, registry::Delivery::Delivered) {
                 w.task = task.clone();
                 reactor
                     .inner
@@ -491,11 +505,14 @@ impl WorkerRegistry {
     /// passing further up. A worker never reaches a scene, because a scene is where a
     /// person is spoken to and only Reaction speaks there.
     ///
-    /// `false` means the owner is gone. The caller must fall back to the scene loop
-    /// rather than drop the report — losing finished work because its requester shut
-    /// down is worse than surfacing it one rung too high.
-    pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> bool {
-        matches!(registry::global().post(id, text), registry::Delivery::Delivered)
+    /// Anything but `Delivered` means the owner is gone. The caller must fall back to
+    /// the scene loop rather than drop the report — losing finished work because its
+    /// requester shut down is worse than surfacing it one rung too high.
+    ///
+    /// Returns the outcome rather than a bool so the caller can *record* the edge; a
+    /// `Delivery` collapsed to `false` loses which way it failed.
+    pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> registry::Delivery {
+        registry::global().post(id, text)
     }
 
     /// A compact, stable-ordered view of every live worker — its id, task, whether
@@ -764,12 +781,19 @@ mod ownership_tests {
     /// The fallback that keeps finished work from vanishing. An owner can shut down
     /// while the worker it asked for is still running; when that happens `deliver_to`
     /// must *say so* rather than quietly accept the report, so the caller can surface
-    /// it to the scene instead. A silent `true` here would lose completed work in the
+    /// it to the scene instead. A silent success here would lose completed work in the
     /// one case nobody would think to test by hand.
+    ///
+    /// Asserted as `Unknown` specifically, not merely "not delivered": the caller now
+    /// records the outcome, and *why* it failed is the difference between "the owner
+    /// finished" and "a worker addressed someone it shouldn't".
     #[test]
     fn delivering_to_a_vanished_owner_reports_failure_rather_than_swallowing_it() {
         let mut reg = registry();
-        assert!(!reg.deliver_to(4242, "the errand is done".into()));
+        assert_eq!(
+            reg.deliver_to(4242, "the errand is done".into()),
+            registry::Delivery::Unknown
+        );
     }
 
     /// Session ids are process-wide, not per registry — two scenes must never mint

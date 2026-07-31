@@ -161,6 +161,29 @@ pub enum EventKind {
     WorkerFinished { id: u64, state: WorkerState, summary_chars: usize },
     AlarmScheduled { note: String, delay_s: u64 },
     AlarmFired { note: String },
+    /// One agent-to-agent edge: the one verb crossing, and what became of it.
+    ///
+    /// Recorded for **both** directions of host mediation. `from: Some(id)` is one agent
+    /// reaching another (`send_message`); `from: None` is the host putting something in
+    /// a mailbox on nobody's behalf — a finished worker's report handed up to its owner,
+    /// or a follow-up merged into a warm session. That is exactly the meaning `from`
+    /// carries on [`crate::foundation::registry::Message`], mirrored rather than
+    /// reinterpreted.
+    ///
+    /// `to` is the address as written (a session id or a scene name); `to_session` is
+    /// what it resolved to, which is the only way to correlate an edge addressed to a
+    /// *scene* with the session that actually received it.
+    ///
+    /// The full `message` travels, like `TurnStarted { input }` and
+    /// `TurnFinished { reply }`. An edge you can see the existence but not the content
+    /// of does not answer the question you opened the inspector to ask.
+    MessageSent {
+        from: Option<u64>,
+        to: String,
+        to_session: Option<u64>,
+        delivery: crate::foundation::registry::Delivery,
+        message: String,
+    },
 }
 
 /// Cloneable handle over the shared observatory state.
@@ -348,6 +371,12 @@ impl Observatory {
             EventKind::WorkerSpawned { .. }
             | EventKind::WorkerResumed { .. }
             | EventKind::WorkerFinished { .. } => {}
+            // Also history-only, and deliberately not summarized onto the scene. An
+            // edge has two ends and at most one of them is this scene, so any
+            // per-scene slot would have to pick one and pretend. `last_question` was
+            // that mistake — one slot fed by two different events, each overwriting
+            // the other — and `docs/arch/foundation.md#debug-surfaces` forbids it.
+            EventKind::MessageSent { .. } => {}
             EventKind::AlarmScheduled { note, delay_s } => {
                 view.pending_alarms.push(AlarmView {
                     note: note.clone(),

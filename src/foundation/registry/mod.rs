@@ -78,7 +78,8 @@ pub enum Address {
 
 /// What happened to a message — **delivery, never a response.** `send` does not wait for
 /// the target to read, act, or agree; it reports whether the message reached a mailbox.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Delivery {
     /// In the target's mailbox. It will be picked up whole on its next prompt.
     Delivered,
@@ -254,6 +255,29 @@ impl Registry {
     /// One direction, no reply. The return value says whether it reached a mailbox — a
     /// reply, if there is one, arrives later as its own `send` in the other direction.
     pub fn send(&self, from: SessionId, to: &Address, message: String) -> Delivery {
+        self.send_traced(from, to, message).0
+    }
+
+    /// [`send`](Self::send), also reporting **which session** it resolved to.
+    ///
+    /// For anything that wants to *observe* an edge rather than travel it. An
+    /// `Address::Scene` names a conversation, and resolving it to the session that
+    /// actually received the message happens under this lock — so a caller cannot ask
+    /// afterwards without racing, and cannot name the target from the address alone.
+    ///
+    /// The observatory could not simply be called from in here: `record` is async and
+    /// this holds a `std::sync::Mutex`. Handing the resolved id back instead keeps the
+    /// switchboard synchronous and free of any handle to a debug surface, which is
+    /// what lets it stay the one thing that "cannot be slow, confused, or dead".
+    ///
+    /// `None` accompanies every non-`Delivered` outcome, and also `NotPermitted` —
+    /// there was a target, but naming it would leak an address the sender may not have.
+    pub fn send_traced(
+        &self,
+        from: SessionId,
+        to: &Address,
+        message: String,
+    ) -> (Delivery, Option<SessionId>) {
         let mut map = self.sessions.lock().unwrap();
 
         let target = match to {
@@ -264,7 +288,7 @@ impl Registry {
                 });
                 match found {
                     Some((id, _)) => *id,
-                    None => return Delivery::Unknown,
+                    None => return (Delivery::Unknown, None),
                 }
             }
         };
@@ -274,18 +298,18 @@ impl Registry {
             && sender.role == Role::Worker
             && sender.owner != Some(target)
         {
-            return Delivery::NotPermitted;
+            return (Delivery::NotPermitted, None);
         }
 
         let Some(entry) = map.get_mut(&target) else {
-            return Delivery::Unknown;
+            return (Delivery::Unknown, None);
         };
         if entry.inbox.closed {
-            return Delivery::Unknown;
+            return (Delivery::Unknown, None);
         }
         entry.inbox.pending.push(Message { from: Some(from), text: message });
         entry.notify.notify_one();
-        Delivery::Delivered
+        (Delivery::Delivered, Some(target))
     }
 
     /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of

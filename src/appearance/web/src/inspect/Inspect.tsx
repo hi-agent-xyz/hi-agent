@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { usePath } from "./router";
+import { EventsView } from "./EventsView";
 import { ScenesView } from "./ScenesView";
 import { SessionsView } from "./SessionsView";
 import "./inspect.css";
@@ -14,6 +15,7 @@ interface Tab {
 const TABS: Tab[] = [
   { key: "scenes", label: "Scenes", path: "/inspect/scenes", render: () => <ScenesView /> },
   { key: "sessions", label: "Sessions", path: "/inspect/sessions", render: () => <SessionsView /> },
+  { key: "events", label: "Events", path: "/inspect/events", render: () => <EventsView /> },
 ];
 // TABS is a static, non-empty list; the first tab is the default landing.
 const FIRST_TAB = TABS[0]!;

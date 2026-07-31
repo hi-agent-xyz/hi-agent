@@ -46,7 +46,18 @@ pub async fn post_mcp(
         }
     };
 
-    match mcp::handle(&state.tool_registry, &state.data_dir, &state.video_in_partial, scene, role.as_deref(), session_id, &msg).await {
+    match mcp::handle(
+        &state.tool_registry,
+        &state.data_dir,
+        &state.video_in_partial,
+        &state.observatory,
+        scene,
+        role.as_deref(),
+        session_id,
+        &msg,
+    )
+    .await
+    {
         McpReply::Json(value) => Json(value).into_response(),
         McpReply::Accepted => StatusCode::ACCEPTED.into_response(),
     }

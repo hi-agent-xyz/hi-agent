@@ -124,7 +124,7 @@
 .evtable .ts { color: var(--dim); white-space: nowrap; }
 .evtable .evname { font-weight: 600; white-space: nowrap; }
 .evtable .evseq { color: var(--dim); }
-.evtable .evname.worker_question { color: var(--warn); }
+.evtable .evname.message_sent { color: var(--warn); }
 .evtable .evname.hot_swap, .evtable .evname.session_opened { color: var(--accent); }
 .evtable .evname.worker_finished { color: var(--ok); }
 .evtable .evname.process_restarted, .evtable .evname.session_closed { color: var(--bad); }
@@ -163,6 +163,33 @@
 }
 .frtable .evraw details[open] > summary { color: var(--fg); margin-bottom: 4px; }
 .frtable .evraw pre { margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   Events tab — the observatory's history, one row per recorded event.
+   Reuses .evtable/.frtable wholesale; only the kind filter and the
+   agent-to-agent edge summary are its own.
+   --------------------------------------------------------------------------- */
+.evfilter { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.evfilter button {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  background: none;
+  border: 1px solid rgba(42, 47, 58, .9);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.evfilter button:hover { color: var(--fg); border-color: var(--dim); }
+.evfilter button.sel { color: var(--fg); border-color: var(--accent); }
+
+/* One agent-to-agent crossing. Coloured by outcome, because a message that did
+   not land is the thing you opened this tab to find. */
+.edge b { font-weight: 700; }
+.edge.delivered b { color: var(--ok); }
+.edge.unknown b { color: var(--bad); }
+.edge.not_permitted b { color: var(--warn); }
+.edge-msg { color: var(--fg); }
 
 /* session-kind tag in the ACP list */
 .skind {
