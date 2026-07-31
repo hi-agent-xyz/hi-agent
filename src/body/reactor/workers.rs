@@ -252,6 +252,56 @@ struct Worker {
 /// The scene's live working sessions. Owned by the per-scene loop, so a plain
 /// map suffices — no locking. Survives reactor-session hot-swaps: workers are
 /// independent of the mind's own lifecycle within a scene.
+///
+/// **TODO — this map is an optimization that currently optimizes nothing, and the
+/// switchboard already is the process-wide session pool. Do not "move the pool";
+/// delete it, whenever the code next comes through here.**
+///
+/// It looked like the pool was per-scene and had to be re-homed, because a worker
+/// belongs to Cognition or Reflection and neither has a scene. But there is no pool to
+/// move — `registry::global()` is already keyed by `SessionId`, process-wide, and holds
+/// `task`, `busy`, `owner`, `scene` and a bounded output tail. Everything in `Worker`
+/// except the `JoinHandle` is a second copy of that, and the copies can disagree.
+///
+/// What the map is actually for, checked one by one:
+///
+/// - **Warm reuse** ([`WorkerRegistry::follow_up`]) — the thing a pool exists for. Its
+///   only caller is [`WorkerRegistry::deliberate`]. A worker made by `create_worker` is
+///   never followed up; it runs once and ends. So the whole `WORKER_IDLE_TTL` warm-idle
+///   machinery serves exactly one client, and that client is **Deliberation** — one
+///   long-lived session per scene, which the scene already tracks in the single
+///   `deliberation` field below. A map is not needed to hold one id.
+/// - **Reaping** ([`WorkerRegistry::reap`]) — bookkeeping, and the only reader of
+///   `Worker::drive`. A session that has finished is the thing that knows it finished;
+///   self-removal at the end of `drive_worker` replaces both, and works for a worker
+///   with no scene loop to reap it.
+/// - **Status** ([`WorkerRegistry::render_status`]) — the only genuine reader, and it
+///   wants metadata the switchboard already has (`registry::status`), plus a transcript
+///   tail the switchboard also keeps (`record_output`).
+///
+/// So on-demand creation is fine: spawn, register, self-remove. What a spawn needs is
+/// *dependencies* (memory, agent layer, observatory, views dir), not a home.
+///
+/// **What is a real bug and is NOT covered by deleting this** — all of it latent today,
+/// because `create_worker` is offered only to the sceneless rungs and Cognition does not
+/// exist yet, so nothing actually creates a worker this way. It bites the moment
+/// Cognition lands, which is where it belongs (see `docs/arch/agents.md`):
+///
+/// 1. [`super::tools::ToolRegistry::any_host`] lends an **arbitrary** scene (lowest name)
+///    to host a sceneless-owned worker. That scene then goes into the worker's
+///    `X-HI-Scene` header — so `watch`/`see` resolve to a stranger's camera — into
+///    `{scene}` in its system prompt, and into the scene its report is journaled under,
+///    which feeds that scene's episodes. Hosting is being used as provenance. The fix is
+///    to pass the origin scene explicitly, the way the reflection tools already take the
+///    scene they act on as an argument.
+/// 2. `create_worker` answers "brief it with `send_message`" *before* `register` runs
+///    (registration is after an `agent.session().await`, a subprocess spawn), so a model
+///    that follows the instruction immediately gets `Delivery::Unknown`. Mint, register,
+///    *then* spawn.
+/// 3. The `{scene}` in `WORKER_SYSTEM_PROMPT`'s `memory/raw/{scene}/file/` is
+///    interpolated raw, but the directory is [`layout::encode_scene`] — so for any scene
+///    with an `@` in it (every `user@device`) the file-filing worker has always been
+///    pointed at a path that does not exist.
 pub(super) struct WorkerRegistry {
     scene: Scene,
     /// A clone of the scene's queue sender, handed to each worker's drive task so

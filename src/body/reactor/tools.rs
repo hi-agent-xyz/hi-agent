@@ -125,6 +125,19 @@ impl ToolRegistry {
     ///
     /// Chosen deterministically (lowest scene name) rather than arbitrarily, so a run
     /// is reproducible and a log names the same host twice.
+    ///
+    /// **TODO — hosting is leaking into provenance, and this should go with the map it
+    /// exists to reach.** The borrowed scene does not stay a hosting detail: it becomes
+    /// the worker's `X-HI-Scene` header (so `watch`/`see` resolve to a stranger's
+    /// camera), the `{scene}` in its system prompt, and the scene its report is
+    /// journaled under — which then feeds *that* scene's episodes. The doc comment above
+    /// says the scene is not told; it is told, three ways.
+    ///
+    /// Latent, not live: `create_worker` is offered only to the sceneless rungs, and
+    /// Cognition does not exist yet. It becomes real the moment it does. The fix is to
+    /// take the origin scene as an explicit argument (as the reflection tools already
+    /// do) and to stop needing a host at all — see the TODO on `WorkerRegistry` in
+    /// `workers.rs`, which is why there is nothing to borrow.
     pub async fn any_host(&self) -> Option<(Scene, ToolSink)> {
         let map = self.inner.lock().await;
         let scene = map.keys().min().cloned()?;
