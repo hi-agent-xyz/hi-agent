@@ -112,14 +112,13 @@ pub(super) async fn swap(
         .map(Snapshot::render_for_prompt)
         .unwrap_or_default();
 
-    // Seed the replacement with the soul plus the briefing and recent tail, so it
-    // continues without a visible seam. The soul names `self.md`, `hot.md` and the
-    // task ledger by path rather than inlining them, so the fresh session reads the
-    // current duties and digest rather than a stale copy — and what a scene carries
-    // forward rides in on every turn anyway now, not on the open.
+    // Seed the replacement with the same brief a fresh Reaction opens with, plus the
+    // briefing and recent tail, so it continues without a visible seam. Everything
+    // else the voice knows — what the scene carries forward, what's owed, the
+    // proactivity read — rides in on every turn anyway now, not on the open.
     let seeded_system_prompt = format!(
         "{}\n\n## Briefing from your earlier conversation\n{}\n\n{}",
-        reactor.inner.soul,
+        crate::identity::reactor_system_prompt(reactor.inner.memory.data_dir()).await,
         briefing.trim(),
         tail.trim(),
     );
@@ -133,7 +132,11 @@ pub(super) async fn swap(
             None,
             SessionOpts {
                 system_prompt: Some(seeded_system_prompt),
-                cwd: None, builtin_tools: None,
+                cwd: None,
+                // Same hard limit as a fresh Reaction: a swap that handed the built-ins
+                // back would make "cannot wait on anything" true only until the first
+                // rotation.
+                builtin_tools: Some(Vec::new()),
             },
         )
         .await?;

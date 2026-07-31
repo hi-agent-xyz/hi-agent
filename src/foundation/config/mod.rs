@@ -83,7 +83,8 @@ pub const KEY_THEME: &str = "theme";
 /// The language the agent should speak/write in with the user: `system` (follow the
 /// person's lead — the default when unset), or a language code from [`LANGUAGES`]
 /// (e.g. `en`, `zh-Hans`). Surfaced to the mind as one soft-guidance line in the
-/// system-prompt seed (see `crate::identity::load_soul`); applies on restart, like
+/// system prompts (see `crate::identity::character_seed` and
+/// `crate::identity::reactor_system_prompt`); applies on restart, like
 /// the other cognition tunables. Set from Settings ▸ General ▸ Language.
 pub const KEY_LANGUAGE: &str = "language";
 

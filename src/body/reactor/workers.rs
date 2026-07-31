@@ -333,10 +333,16 @@ impl WorkerRegistry {
     ) -> anyhow::Result<SessionId> {
         let id = mint_session_id();
 
-        // Deliberation is a working session plus a role. It gets the same capability
-        // guidance every worker gets — it has the same tools — and then the layer that
-        // says what it is for and hands it the scene's memory to write. A new role here
-        // is a new prompt, not new machinery (`docs/arch/agents.md`).
+        // Deliberation is *the agent*, working at the scene's tempo — so its prompt is
+        // three layers, in the order they get more specific: who it is
+        // ([`crate::identity::character_seed`], which it Reads for itself), the
+        // capability guidance every worker gets (it has the same tools), and the layer
+        // that says what it is for and hands it the scene's memory to write. A new role
+        // here is a new prompt, not new machinery (`docs/arch/agents.md`).
+        //
+        // The seed is what a plain worker goes without: a worker is dispatched for one
+        // job and its report is read by the agent, whereas Deliberation *is* the agent
+        // in that conversation and its judgment has to be the agent's judgment.
         let system_prompt = if is_deliberation {
             let data_dir = reactor.inner.memory.data_dir();
             // The agent is told to create this itself, but a directory that already
@@ -347,7 +353,8 @@ impl WorkerRegistry {
                 }
             }
             format!(
-                "{}\n\n{}",
+                "{}\n\n{}\n\n{}",
+                crate::identity::character_seed(data_dir),
                 worker_system_prompt(&self.scene),
                 crate::identity::deliberation_prompt(data_dir, &self.scene).await
             )

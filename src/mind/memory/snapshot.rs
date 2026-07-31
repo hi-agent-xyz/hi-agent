@@ -4,7 +4,7 @@
 //! **Projected = what Reaction must know without reading; everything else is recall.**
 //! Reaction is tools-off by design, so its window is the entirety of what it knows —
 //! it cannot go and look the way an agentic session does via
-//! [`crate::identity::load_soul`]. [`window`] is that whole projection, assembled here
+//! [`crate::identity::character_seed`]. [`window`] is that whole projection, assembled here
 //! and handed to the model as text.
 //!
 //! Three properties of it are code's, and each is a decision (`docs/arch/data.md`):
@@ -56,8 +56,8 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 ///
 /// In order: what this scene carries forward (the generated prompt, capped), what the
 /// agent owes ([`tasks::projection`]), the legacy authored/digest files still in play,
-/// and the recent-signals tail — the tail last, so it sits against the turn's new
-/// signals and reads as one continuous thread.
+/// the learned read on speaking up unprompted, and the recent-signals tail — the tail
+/// last, so it sits against the turn's new signals and reads as one continuous thread.
 ///
 /// Nothing here can fail the turn. Each source resolves to `""` on absence or error
 /// and drops out of the join, and the tail says so in words rather than pretending
@@ -75,8 +75,37 @@ pub async fn window(memory: &Memory, scene: &Scene) -> String {
         }
     };
     let legacy = legacy_working_set(data_dir).await;
+    let unprompted = speaking_up_unprompted(data_dir).await;
     let tail = recent_tail(memory, scene).await;
-    join(&[carried.as_str(), owed.as_str(), legacy.as_str(), tail.as_str()])
+    join(&[
+        carried.as_str(),
+        owed.as_str(),
+        legacy.as_str(),
+        unprompted.as_str(),
+        tail.as_str(),
+    ])
+}
+
+/// The learned read on speaking up unprompted (`proactivity.md`), projected rather
+/// than fetched.
+///
+/// It is consulted **before breaking a silence**, and the only rung that can break one
+/// is the voice — which cannot open a file. So a path to it would be a path nobody can
+/// follow: this is the projection test (`docs/arch/data.md#what-earns-a-place`) coming
+/// out the other way from the tasks ledger. Written whole by the reflection pass
+/// ([`crate::mind::memory::proactivity`]); absent until the first reflection, which is
+/// ordinary — `speaking.md` says an unproven subject earns no licence anyway.
+async fn speaking_up_unprompted(data_dir: &Path) -> String {
+    match crate::mind::memory::proactivity::read(data_dir).await {
+        Ok(Some(body)) if !body.trim().is_empty() => {
+            format!("## Speaking up unprompted\n{}\n", body.trim())
+        }
+        Ok(_) => String::new(),
+        Err(err) => {
+            tracing::warn!(error = %err, "proactivity read unreadable; window goes without it");
+            String::new()
+        }
+    }
 }
 
 /// One generated prompt, read and bounded. Missing, unreadable or blank ⇒ `""`, which

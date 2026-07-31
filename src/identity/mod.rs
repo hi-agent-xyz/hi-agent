@@ -3,8 +3,10 @@
 //! The factory-authored character (`core.md`, `speaking.md`, `meaning.md`) and the
 //! per-install authored `self.md`. Standing duties are no longer here at all — they
 //! are tasks ([`crate::mind::memory::tasks`]), one ledger, projected into every
-//! window rather than pointed at by a path. This module owns the **seed** the reactor opens every scene
-//! session with ([`load_soul`]) and the **prompt cascade** that materialises the
+//! window rather than pointed at by a path. This module owns the two shapes a rung's
+//! self can take — the **seed** an agentic rung Reads its character from
+//! ([`character_seed`]) and the **inlined** brief the voice gets because it cannot read
+//! ([`reactor_system_prompt`]) — and the **prompt cascade** that materialises the
 //! bundled prompts under `<data_dir>/prompts/`, composing each managed base with an
 //! optional operator `*.local.md` override ([`install_prompts`]). That cascade is
 //! the base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
@@ -23,11 +25,11 @@
 use std::path::{Path, PathBuf};
 
 /// Built-in base prompts, embedded at compile time and materialised to disk by
-/// [`install_prompts`]. Most are authored as files an agent *reads*, not text inlined
-/// into context: the mind is handed `core.md` — who it is and the machinery
-/// (talking, presenting by ref, delegating) — `speaking.md` — the rhythm of
-/// conversation, when to speak and how much — and `meaning.md` — that its purpose is
-/// its own to find — by [`load_soul`]'s seed, and Reads them itself. `appearance.md`
+/// [`install_prompts`]. They divide by which rung can *fetch*: an agentic rung is
+/// handed `core.md` — who it is and how it works — and `meaning.md` — that its purpose
+/// is its own to find — by [`character_seed`], and Reads them itself. `speaking.md` is
+/// the exception among the identity prompts: the voice is tools-off, so its whole
+/// brief is **inlined** by [`reactor_system_prompt`]. `appearance.md`
 /// and `aesthetic.md` are the view builder's guides — the mechanics of authoring/saving
 /// a view, and the taste it has to clear — read off disk by a build sub-agent.
 /// `reflection.md` is the exception: it is the consolidation session's whole instruction
@@ -116,16 +118,26 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
     }
 }
 
-/// The **reactor**'s system prompt — the fast conversational voice of the
-/// reactor/cognition split (see `docs/arch/agents.md`). Unlike
-/// [`load_soul`] (a thin seed pointing an *agentic* session at files to Read), the
-/// reactor is a single non-agentic Messages call, so its brief is **inlined and
-/// singular**: `speaking.md` — when to speak, how much, when to stay quiet — *is* its
+/// **Reaction**'s system prompt — the scene's voice (`docs/arch/agents.md#reaction`).
+///
+/// Unlike [`character_seed`] (a thin seed pointing an *agentic* rung at files to
+/// Read), Reaction is tools-off by design: it has no Read, so nothing it needs may be
+/// a path. Its brief is therefore **inlined and singular** — `speaking.md` *is* its
 /// whole system prompt, under a one-line frame. That is what makes speaking-rule
 /// conformance structural: the rules are the entire context, not one buried file
 /// among many. (Mirrors how `reflection.md` is inlined for the reflection session.)
-pub fn reactor_system_prompt() -> String {
-    format!(
+///
+/// Read from `<data_dir>/prompts/speaking.md`, so an operator's `speaking.local.md`
+/// reaches the voice too, falling back to the embedded [`SPEAKING_BASE`]. Two things
+/// the seed used to carry ride along here, because they are the *voice's* and it
+/// cannot fetch them: the **first-meeting** cue, and the **language** preference.
+pub async fn reactor_system_prompt(data_dir: &Path) -> String {
+    let base = data_dir.join("prompts").join("speaking.md");
+    let speaking = match tokio::fs::read_to_string(&base).await {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => SPEAKING_BASE.to_string(),
+    };
+    let mut prompt = format!(
         "You are a warm, attentive presence, talking with someone in real time. You are \
 ONE self — they are talking to you, and only you. Part of you speaks in this moment; \
 another part of you works in the background — looking things up, using tools, getting \
@@ -157,8 +169,46 @@ you're on it (because you are) and keep the conversation going. Otherwise reply 
 spoken words.\n\n\
 Everything about how to talk — when to speak, how much, when to stay quiet, when to put \
 something on screen, how to hold the floor — is below; follow it closely.\n\n{}",
-        SPEAKING_BASE
-    )
+        speaking.trim()
+    );
+    if is_first_meeting(data_dir) {
+        prompt.push_str(FIRST_MEETING_CUE);
+    }
+    if let Some(lang) = language_line(data_dir) {
+        prompt.push_str(&lang);
+    }
+    prompt
+}
+
+/// One extra line on a genuine first meeting — the brand-new install where nothing has
+/// accrued yet. It disappears on its own the moment any history exists (a memory
+/// episode, the first reflected `hot.md`, a duty written), so it can only ever colour
+/// the very first hello, never nag. It rides on **Reaction**, because the hello and the
+/// welcome view are both the voice's to give.
+const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
+brand-new install — you and this person haven't met yet. So when they first reach out, \
+treat it as a first meeting: open with a real first hello (the shape of it is above), \
+put the built-in welcome on screen while you speak it (`show_view` with ref \
+`_builtin/welcome`), then hand over the floor. One warm beat that lands who you are — \
+not a tour, not a walkthrough, and nothing to teach them; you'll show them by doing, \
+from here on.";
+
+/// A soft language preference, if the person set one in Settings ▸ General ▸ Language.
+/// `system` / unset yields nothing, so the agent simply follows the person's lead (the
+/// default). A real choice appends one guidance line — the agent still switches if the
+/// person clearly writes in another language.
+fn language_line(data_dir: &Path) -> Option<String> {
+    let lang = crate::foundation::config::language_name(
+        crate::foundation::credentials::get_setting(
+            data_dir,
+            crate::foundation::config::KEY_LANGUAGE,
+        )
+        .as_deref(),
+    )?;
+    Some(format!(
+        "\n\nSpeak with the person in {lang} by default, unless they clearly \
+write to you in another language — then follow their lead."
+    ))
 }
 
 /// `<data_dir>/memory/self.md` — per-install authored identity (optional).
@@ -179,25 +229,29 @@ pub fn commitments_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join("commitments.md")
 }
 
-/// The mind's system-prompt seed: a short bundled personality plus a manifest that
-/// hands the agent the absolute paths of every file that holds its fuller self —
-/// the static manual (`core.md`, `speaking.md`, `meaning.md`), the per-install
-/// authored identity `self.md` (read-only, optional), the `tasks` facet dimension
-/// (to read and to *write* — the one ledger of what it owes), and its recency digest
-/// `hot.md` (a mind projection, read for what's lately been on its mind) — and tells
-/// it to Read them all up front. We send this thin seed rather than inlining the
-/// character *or* the memory core on every turn: every file is a ref the mind reads
-/// itself. The paths are absolutized here so the Read/Write targets resolve regardless
-/// of the session's cwd (which is `None`).
+/// The character seed for an **agentic** rung: a short bundled personality plus the
+/// absolute paths of the files that hold the fuller self — the manual (`core.md`), what
+/// it is for (`meaning.md`), the per-install authored identity `self.md` (read-only,
+/// optional), and the skills workshop — with the instruction to Read them up front.
 ///
-/// **The duty ledger the seed names is the one code projects.** It is the same
-/// `facets/tasks/` tree [`crate::mind::memory::tasks`] scans and
-/// [`crate::mind::memory::snapshot::window`] puts in front of every turn, so a duty
-/// the mind writes is the duty recovery reads. Naming a second file here — which is
-/// what the superseded `commitments.md` line did — is exactly how two ledgers come
-/// back. Built at startup and reused on each hot-swap. (Named `load_soul` for the
-/// reactor's history.)
-pub fn load_soul(data_dir: &Path) -> String {
+/// A seed rather than an inlined character, because a rung that can Read should fetch
+/// its own self: the character is ~30 KB and would otherwise ride every session open.
+/// The paths are absolutized here so Read resolves regardless of the session's cwd.
+///
+/// **This is the layer that makes a rung the agent rather than a generic assistant.**
+/// It goes under the capability guidance and the role layer, not instead of them: a new
+/// role is a new prompt, not new machinery (`docs/arch/agents.md`).
+///
+/// Three things the old monolithic seed carried are deliberately **not** here:
+/// - `speaking.md` and the `say` tool — the voice's, and [`reactor_system_prompt`]
+///   inlines them. A rung with no mouth told how to talk is a rung told a falsehood.
+/// - `hot.md` and `proactivity.md` — projections, put in front of the voice by
+///   [`crate::mind::memory::snapshot::window`] rather than fetched.
+/// - the **write** side of the task ledger — Cognition is its sole writer
+///   (`docs/arch/agents.md`), so the instruction to open and close a task belongs in
+///   Cognition's role layer, not in a seed every agentic rung shares. `core.md`
+///   describes how work owed is *held*; it does not hand out the pen.
+pub fn character_seed(data_dir: &Path) -> String {
     let base = if data_dir.is_absolute() {
         data_dir.to_path_buf()
     } else {
@@ -205,67 +259,23 @@ pub fn load_soul(data_dir: &Path) -> String {
     };
     let prompts = base.join("prompts");
     let core = prompts.join("core.md");
-    let speaking = prompts.join("speaking.md");
     let meaning = prompts.join("meaning.md");
     let self_md = self_path(&base);
-    let tasks = crate::mind::memory::layout::facets_dir(&base)
-        .join(crate::mind::memory::tasks::DIMENSION);
-    let hot = crate::mind::memory::layout::hot_path(&base);
-    let proactivity = crate::mind::memory::layout::proactivity_path(&base);
-    // One extra line on a genuine first meeting — the brand-new install where nothing
-    // has accrued yet. It disappears on its own the moment any history exists (a
-    // memory episode, the first reflected `hot.md`, a duty written), so it can only
-    // ever colour the very first hello, never nag.
-    let first_meeting = if is_first_meeting(&base) {
-        "\n\nOne more thing, true only right now: this is a brand-new install — you and \
-this person haven't met yet. So when they first reach out, treat it as a first meeting: \
-open with a real first hello (speaking.md has the shape of it), put the built-in welcome \
-on screen while you speak it (`show_view` with ref `_builtin/welcome`), then hand over the \
-floor. One warm beat that lands who you are — not a tour, not a walkthrough, and nothing to \
-teach them; you'll show them by doing, from here on."
-    } else {
-        ""
-    };
     let mut seed = format!(
         "You're warm, honest, and kind-hearted — easy company. You like being \
 useful, and when there's a hand to lend you're glad to lend it.\n\n\
-You speak only through the `say` tool; anything you type as text is never heard.\n\n\
 Your fuller self lives in files — open them with Read and read them all now, before \
-you answer:\n\n\
+you do anything else:\n\n\
 - {} — who you are, and how you act.\n\
-- {} — how you talk: when to speak, how much, when to stay quiet.\n\
-- {} — what you're for, and that finding it is yours to do.\n\n\
-More files hold not how you were made but who you've become — read them too:\n\n\
+- {} — what you're for, and that finding it is yours to do.\n\
 - {} — who this install asked you to be, in its own words. Read it if it's there; it \
-may be empty, and that's fine. It's authored, not yours to edit.\n\
-- {} — your tasks: a folder, not a file, holding one subfolder per thing you owe, each \
-with a `facet.md` inside. Nothing to read up front — what's still open is put in front \
-of you rather than fetched, so a duty survives a restart without you going to look for \
-it. But this is the only ledger of what's owed, and writing it is yours: open one the \
-moment you take work on, close it when the work is actually done. A `facet.md` \
-is frontmatter between `---` lines, then your own prose: `kind:` (wip / serving / watch \
-/ deadline / staged), `state:` (open / done / dropped), `title:`, and where they apply \
-`due:` (a date or an RFC3339 time), `report_to:` (a scene), and for anything you keep \
-running `verify:` (how to tell it's really alive — a count, not \"something is \
-running\"), `restart:`, `owner:`, `start_key:`. Anything missing or misspelt reads as \
-still owed, so a half-written task is never a lost one.\n\
-- {} — a rolling digest of what's lately been on your mind, refreshed as you reflect. \
-It may not exist yet; that's fine.\n\
-- {} — what the person welcomes you raising unprompted, and what they don't: a per-topic \
-read you've built from how your past nudges landed, refreshed as you reflect. Consult it \
-before you ever speak up on your own initiative, and respect it. It may not exist yet; \
-then nothing's proven — lean quiet.{}",
+may be missing or empty, and that's fine. It's authored, not yours to edit.",
         core.display(),
-        speaking.display(),
         meaning.display(),
         self_md.display(),
-        tasks.display(),
-        hot.display(),
-        proactivity.display(),
-        first_meeting,
     );
     // The workshop. One line, because it is a place to look rather than something to
-    // load: procedures sediment there over time, and the mind can only start from a
+    // load: procedures sediment there over time, and an agent can only start from a
     // note it knows exists. Named by absolute path for the same reason as the files
     // above. Seeded at boot by [`crate::mind::skills::install_builtin_skills`].
     seed.push_str(&format!(
@@ -279,18 +289,8 @@ rules apply.",
         crate::mind::skills::skills_dir(&base).display(),
     ));
 
-    // A soft language preference, if the person set one in Settings ▸ General ▸
-    // Language. `system` / unset yields no line, so the agent simply follows the
-    // person's lead (the default). A real choice appends one guidance line — the
-    // agent still switches if the person clearly writes in another language.
-    if let Some(lang) = crate::foundation::config::language_name(
-        crate::foundation::credentials::get_setting(&base, crate::foundation::config::KEY_LANGUAGE)
-            .as_deref(),
-    ) {
-        seed.push_str(&format!(
-            "\n\nSpeak with the person in {lang} by default, unless they clearly \
-write to you in another language — then follow their lead."
-        ));
+    if let Some(lang) = language_line(&base) {
+        seed.push_str(&lang);
     }
     seed
 }
@@ -327,19 +327,21 @@ fn is_first_meeting(base: &Path) -> bool {
 mod soul_tests {
     use super::*;
 
-    #[test]
-    fn fresh_install_gets_the_first_meeting_cue() {
+    #[tokio::test]
+    async fn fresh_install_gets_the_first_meeting_cue_in_the_voice() {
         // A brand-new data dir has no hot.md, no episodes, no commitments — so the
-        // seed carries the one-time first-hello cue pointing at the welcome view.
+        // *voice's* prompt carries the one-time first-hello cue and the welcome view.
+        // It rides here rather than on an agentic seed because the hello is the
+        // voice's to give and it cannot go and read anything.
         let dir = tempfile::tempdir().unwrap();
         assert!(is_first_meeting(dir.path()));
-        let seed = load_soul(dir.path());
-        assert!(seed.contains("first meeting"));
-        assert!(seed.contains("_builtin/welcome"));
+        let prompt = reactor_system_prompt(dir.path()).await;
+        assert!(prompt.contains("first meeting"));
+        assert!(prompt.contains("_builtin/welcome"));
     }
 
-    #[test]
-    fn any_history_clears_the_first_meeting_cue() {
+    #[tokio::test]
+    async fn any_history_clears_the_first_meeting_cue() {
         // The moment anything has accrued — here a reflected `hot.md` — it's no longer
         // a first meeting, so the cue disappears and can never nag on later wakes.
         let dir = tempfile::tempdir().unwrap();
@@ -347,8 +349,8 @@ mod soul_tests {
         std::fs::create_dir_all(hot.parent().unwrap()).unwrap();
         std::fs::write(&hot, "lately on my mind…").unwrap();
         assert!(!is_first_meeting(dir.path()));
-        let seed = load_soul(dir.path());
-        assert!(!seed.contains("_builtin/welcome"));
+        let prompt = reactor_system_prompt(dir.path()).await;
+        assert!(!prompt.contains("this is a brand-new install"));
     }
 
     #[test]
@@ -363,40 +365,47 @@ mod soul_tests {
     }
 
     #[test]
-    fn seed_references_the_prompt_files_by_absolute_path() {
+    fn seed_references_the_character_files_by_absolute_path() {
         let dir = tempfile::tempdir().unwrap();
-        let seed = load_soul(dir.path());
+        let seed = character_seed(dir.path());
         let prompts = dir.path().join("prompts");
         assert!(seed.contains(&prompts.join("core.md").display().to_string()));
-        assert!(seed.contains(&prompts.join("speaking.md").display().to_string()));
         assert!(seed.contains(&prompts.join("meaning.md").display().to_string()));
-        // The recency digest is referenced by path too, never inlined.
-        let hot = crate::mind::memory::layout::hot_path(dir.path());
-        assert!(seed.contains(&hot.display().to_string()));
-        // The proactivity license is referenced the same way — read, never inlined.
-        let proactivity = crate::mind::memory::layout::proactivity_path(dir.path());
-        assert!(seed.contains(&proactivity.display().to_string()));
-        // It tells the mind to read them up front.
+        // The per-install authored identity is referenced as well (read-only).
+        assert!(seed.contains(&self_path(dir.path()).display().to_string()));
+        // And it says to read them up front.
         assert!(seed.contains("read them all now"));
     }
 
     #[test]
-    fn seed_names_the_task_ledger_and_no_second_one() {
-        // The mind must be handed the *same* tree code projects and scans, so a duty it
-        // writes is the duty recovery reads — naming a second place is what let two
-        // ledgers exist and broke restart recovery. The authored `self.md` is named too
-        // (read-only).
+    fn seed_leaves_the_voice_and_the_projections_alone() {
+        // Three things the old monolithic seed carried belong elsewhere now, and a
+        // rung told about a tool it does not have is a rung told a falsehood.
         let dir = tempfile::tempdir().unwrap();
-        let seed = load_soul(dir.path());
+        let seed = character_seed(dir.path());
+        // The voice's: `speaking.md` and the `say` tool are inlined into Reaction.
+        assert!(!seed.contains("speaking.md"));
+        assert!(!seed.contains("`say`"));
+        // Projected, not fetched: the digest and the proactivity read ride the window.
+        let hot = crate::mind::memory::layout::hot_path(dir.path());
+        assert!(!seed.contains(&hot.display().to_string()));
+        let proactivity = crate::mind::memory::layout::proactivity_path(dir.path());
+        assert!(!seed.contains(&proactivity.display().to_string()));
+        // And the superseded second ledger is nowhere in it.
+        assert!(!seed.contains("commitments"));
+    }
+
+    #[test]
+    fn the_ledger_is_described_but_the_pen_is_not_handed_out() {
+        // Cognition is the sole writer of the task ledger (`docs/arch/agents.md`), so a
+        // seed every agentic rung shares must not tell its reader to open and close
+        // tasks. `core.md` describes how what's owed is held; it hands out no pen.
+        let dir = tempfile::tempdir().unwrap();
+        let seed = character_seed(dir.path());
         let tasks = crate::mind::memory::layout::facets_dir(dir.path())
             .join(crate::mind::memory::tasks::DIMENSION);
-        assert!(tasks.is_absolute());
-        assert!(seed.contains(&tasks.display().to_string()));
-        // And the superseded ledger is gone from the seed entirely.
-        assert!(!seed.contains("commitments"));
-        // The per-install authored identity is referenced as well.
-        let self_md = self_path(dir.path());
-        assert!(seed.contains(&self_md.display().to_string()));
+        assert!(!seed.contains(&tasks.display().to_string()));
+        assert!(CORE_BASE.contains("the only ledger of what's owed"));
     }
 
     #[test]
@@ -404,21 +413,46 @@ mod soul_tests {
         use crate::foundation::credentials::set_setting;
         let dir = tempfile::tempdir().unwrap();
         // No setting → the agent follows the person; no language sentence.
-        assert!(!load_soul(dir.path()).contains("Speak with the person in"));
+        assert!(!character_seed(dir.path()).contains("Speak with the person in"));
         // `system` is explicit "follow the person" → still no sentence.
         set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "system").unwrap();
-        assert!(!load_soul(dir.path()).contains("Speak with the person in"));
+        assert!(!character_seed(dir.path()).contains("Speak with the person in"));
         // A real language → one guidance sentence naming the endonym.
         set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
-        assert!(load_soul(dir.path()).contains("Speak with the person in 简体中文"));
+        assert!(character_seed(dir.path()).contains("Speak with the person in 简体中文"));
+    }
+
+    #[tokio::test]
+    async fn the_voice_gets_the_language_line_too() {
+        // Settings ▸ Language has to reach the rung that actually talks, and that rung
+        // cannot read a file to find it.
+        use crate::foundation::credentials::set_setting;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!reactor_system_prompt(dir.path()).await.contains("Speak with the person in"));
+        set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
+        assert!(
+            reactor_system_prompt(dir.path()).await.contains("Speak with the person in 简体中文")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_voice_takes_the_operator_override() {
+        // Reaction reads the *installed* speaking.md, so `speaking.local.md` reaches
+        // the voice the same way it reaches every other prompt.
+        let dir = tempfile::tempdir().unwrap();
+        let prompts = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts).unwrap();
+        std::fs::write(prompts.join("speaking.local.md"), "Always end with 好的。").unwrap();
+        install_prompts(dir.path()).unwrap();
+        assert!(reactor_system_prompt(dir.path()).await.contains("Always end with 好的。"));
     }
 
     #[test]
     fn seed_points_at_the_skill_workshop_by_absolute_path() {
         // The workshop is discoverable or it may as well not exist. One pointer, not
-        // an inlined skill — the mind opens what it needs.
+        // an inlined skill — the agent opens what it needs.
         let dir = tempfile::tempdir().unwrap();
-        let seed = load_soul(dir.path());
+        let seed = character_seed(dir.path());
         let skills = crate::mind::skills::skills_dir(dir.path());
         assert!(skills.is_absolute());
         assert!(seed.contains(&skills.display().to_string()));
@@ -428,15 +462,14 @@ mod soul_tests {
 
     #[test]
     fn seed_is_a_thin_bootstrap_not_the_full_character() {
-        // The seed carries the say-floor (so a turn that skips the read still
-        // produces speech) but must not inline the full core.md body — referencing
-        // the file instead of pasting it is the whole point.
+        // Referencing the file instead of pasting it is the whole point: ~30 KB of
+        // character must not ride every session open.
         let dir = tempfile::tempdir().unwrap();
-        let seed = load_soul(dir.path());
-        assert!(seed.contains("`say`"));
+        let seed = character_seed(dir.path());
+        assert!(seed.len() < CORE_BASE.len() / 10);
         // A heading that lives only in the full core.md, never in the seed:
-        assert!(CORE_BASE.contains("A few exchanges"));
-        assert!(!seed.contains("A few exchanges"));
+        assert!(CORE_BASE.contains("What you know vs. what you remember"));
+        assert!(!seed.contains("What you know vs. what you remember"));
     }
 
     #[test]

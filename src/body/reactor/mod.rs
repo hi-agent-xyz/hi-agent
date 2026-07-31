@@ -571,12 +571,6 @@ pub struct Reactor {
 struct ReactorInner {
     memory: Memory,
     agent: AgentLayer,
-    /// The bootstrap seed opening every scene's reactor-session system prompt: a
-    /// short personality plus a manifest pointing the mind at `core.md`/`speaking.md`
-    /// to Read (see [`load_soul`]). Built once at startup, shared read-only across
-    /// scenes; the heartbeat re-seeds replacement sessions with it too, so a
-    /// hot-swapped mind boots the same way.
-    soul: String,
     /// The reactor's single outbound seam: every channel signal it produces —
     /// text, synthesized speech, views — goes out here in transport-free form
     /// (see [`outbound`]). A transport adapter binds these to a wire. The reactor
@@ -647,7 +641,6 @@ struct SceneHandle {
 pub fn start(
     memory: Memory,
     agent: AgentLayer,
-    soul: String,
     mut inbound_rx: mpsc::Receiver<Signal>,
     mut warm_rx: mpsc::Receiver<Scene>,
     out: mpsc::Sender<OutboundSignal>,
@@ -664,7 +657,6 @@ pub fn start(
         inner: Arc::new(ReactorInner {
             memory,
             agent,
-            soul,
             out,
             observatory,
             view_compiler,
@@ -1729,7 +1721,12 @@ async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Resul
                 SessionRole::Reactor,
                 None,
                 SessionOpts {
-                    system_prompt: Some(crate::identity::reactor_system_prompt()),
+                    system_prompt: Some(
+                        crate::identity::reactor_system_prompt(
+                            reactor.inner.memory.data_dir(),
+                        )
+                        .await,
+                    ),
                     cwd: None,
                     // `say` and `show`, and nothing else — enforced, not requested.
                     // The rung is fast because it *cannot* wait on anything, and that

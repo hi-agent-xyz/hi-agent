@@ -65,7 +65,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // processes via env, which may run with a different cwd) and strip `.`/`..`
     // components so the paths we hand the mind read as clean absolutes —
     // `.../hi-agent/data/prompts/core.md`, not `.../hi-agent/./data/prompts/core.md`.
-    // Every downstream consumer (load_soul, prompts_dir, views_dir, …) inherits this.
+    // Every downstream consumer (character_seed, prompts_dir, views_dir, …) inherits this.
     let mut config = config;
     config.data_dir =
         normalize_dir(&config.data_dir).context("resolving cwd to absolutize data dir")?;
@@ -307,7 +307,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // shares the same process registry.
     let agent_for_shutdown = agent.clone();
 
-    let soul = identity::load_soul(&config.data_dir);
     // The reactor compiles view source to ESM via esbuild; modules land under
     // data_dir/views/_compiled. esbuild is hi-agent's own tool (not the
     // adapter's) — `ensure_view_esbuild` guarantees one whether the runtime came
@@ -323,7 +322,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     let _reactor = body::reactor::start(
         memory,
         agent,
-        soul,
         seams.inbound_rx,
         seams.warm_rx,
         seams.out_tx,
