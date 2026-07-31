@@ -359,7 +359,7 @@ impl WorkerRegistry {
 
         let observatory = reactor.inner.observatory.clone();
         observatory
-            .record(&self.scene, EventKind::WorkerSpawned { id, task: task.clone() })
+            .record(Some(&self.scene), EventKind::WorkerSpawned { id, task: task.clone() })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));
@@ -437,7 +437,7 @@ impl WorkerRegistry {
                 reactor
                     .inner
                     .observatory
-                    .record(&self.scene, EventKind::WorkerResumed { id, task })
+                    .record(Some(&self.scene), EventKind::WorkerResumed { id, task })
                     .await;
                 tracing::info!(scene = %self.scene, worker = id, "merged follow-up into working session");
                 return Ok(id);
@@ -621,7 +621,7 @@ async fn drive_worker(
     let mut task = initial_task;
     loop {
         busy.store(true, Ordering::Relaxed);
-        let kind = match run_worker(id, &task, &session, &transcript, &observatory, &scene).await {
+        let kind = match run_worker(id, &task, &session, &transcript).await {
             Ok(answer) => WorkerReportKind::Done(answer),
             Err(err) => WorkerReportKind::Failed(err.to_string()),
         };
@@ -634,7 +634,7 @@ async fn drive_worker(
             WorkerReportKind::Failed(err) => (WorkerState::Failed, err.chars().count()),
         };
         observatory
-            .record(&scene, EventKind::WorkerFinished { id, state, summary_chars })
+            .record(Some(&scene), EventKind::WorkerFinished { id, state, summary_chars })
             .await;
         let report = WorkerReport { id, task: task.clone(), kind, is_deliberation, owner };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
@@ -713,8 +713,6 @@ async fn run_worker(
     task: &str,
     session: &AcpSession,
     transcript: &Arc<Mutex<String>>,
-    observatory: &Observatory,
-    scene: &Scene,
 ) -> anyhow::Result<String> {
     let mut run = session.prompt(task.to_string()).await?;
     let mut full = String::new();
@@ -728,10 +726,12 @@ async fn run_worker(
                 // can ask `session_messages` what this one has found without waiting
                 // for it to finish. Without this the tool answers "nothing yet" for
                 // the whole life of every session.
+                //
+                // This is also the *only* live-progress mirror now: the observatory's
+                // per-scene worker tail is gone, because a worker's progress is not a
+                // fact about a conversation. Whoever asked for the work can read it
+                // here, keyed by the session id they were handed.
                 registry::global().record_output(id, &text);
-                // Mirror the live tail so the dashboard shows what the worker is
-                // doing right now.
-                observatory.worker_progress(scene, id, &full).await;
             }
             // Thoughts, tool calls, and unmodelled events don't enter the
             // transcript — only the worker's text output does.

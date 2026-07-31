@@ -36,8 +36,6 @@ const HISTORY_CAP: usize = 1000;
 /// Broadcast backlog; a subscriber that lags past this misses events (logged on
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
-/// Characters of a worker's transcript kept as a live tail for the mirror.
-const TRANSCRIPT_TAIL: usize = 240;
 
 /// Which kind of ACP session this is — the reactor's persistent mind, an
 /// ephemeral worker, the throwaway summarizer a hot-swap briefs from, or the
@@ -71,17 +69,6 @@ pub enum WorkerState {
     Failed,
 }
 
-/// Live state of one working session in the mirror.
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkerView {
-    pub id: u64,
-    pub task: String,
-    pub state: WorkerState,
-    pub started_at: DateTime<Utc>,
-    /// A short tail of the worker's transcript, for an at-a-glance "what's it doing".
-    pub transcript_tail: String,
-}
-
 /// A pending self-alarm the mind scheduled, shown until it fires.
 #[derive(Debug, Clone, Serialize)]
 pub struct AlarmView {
@@ -100,11 +87,17 @@ pub struct TurnView {
 }
 
 /// The full live picture of one scene, served by `GET /api/sessions`.
+///
+/// **Scene-shaped state only.** There is deliberately no `workers` here: a working
+/// session belongs to whoever created it, and the sceneless rungs are precisely the
+/// ones that create them, so a per-scene list could only ever hold the subset that
+/// happened to be hosted in that scene — a number with no meaning. Worker lifecycle is
+/// carried by the event log ([`EventKind::WorkerSpawned`] and friends), which is keyed
+/// by session and does not have to lie about where the work lives.
 #[derive(Debug, Clone, Serialize)]
 pub struct SceneView {
     pub scene: Scene,
     pub reactor_session: Option<SessionView>,
-    pub workers: Vec<WorkerView>,
     /// Accumulated prompt+reply chars since the live session was last opened/swapped.
     pub budget_chars: usize,
     /// The soft ceiling at which the heartbeat hot-swaps (mirrors `SWAP_AFTER_CHARS`).
@@ -121,7 +114,6 @@ impl SceneView {
         Self {
             scene,
             reactor_session: None,
-            workers: Vec::new(),
             budget_chars: 0,
             swap_after_chars,
             swap_count: 0,
@@ -139,7 +131,11 @@ pub struct SessionEvent {
     /// Monotonic, gap-free sequence number assigned at record time.
     pub seq: u64,
     pub ts: DateTime<Utc>,
-    pub scene: Scene,
+    /// The conversation this happened in, or `None` when it happened outside every
+    /// conversation — Cognition and Reflection have no scene, and inventing one for
+    /// them is not free: the mirror keys on scene, so a sentinel would render as a
+    /// conversation in the dashboard that nobody is having.
+    pub scene: Option<Scene>,
     #[serde(flatten)]
     pub kind: EventKind,
 }
@@ -209,7 +205,11 @@ impl Observatory {
     /// the ring, append to the journal, and broadcast — the ring push and the
     /// broadcast both happen under the history lock so a concurrent
     /// [`subscribe`](Self::subscribe) sees a consistent, dup-free cut.
-    pub async fn record(&self, scene: &Scene, kind: EventKind) {
+    ///
+    /// `scene: None` records the event in history without touching the per-scene
+    /// mirror — for the sceneless rungs, whose events are real history but describe no
+    /// conversation. History takes everything; the mirror only takes what it can key.
+    pub async fn record(&self, scene: Option<&Scene>, kind: EventKind) {
         // Mirror first (its own lock), so a snapshot taken right after the event
         // lands reflects it.
         self.apply_to_mirror(scene, &kind).await;
@@ -219,7 +219,7 @@ impl Observatory {
         let event = SessionEvent {
             seq: hist.seq,
             ts: Utc::now(),
-            scene: scene.clone(),
+            scene: scene.cloned(),
             kind,
         };
         hist.ring.push_back(event.clone());
@@ -259,22 +259,19 @@ impl Observatory {
         scenes.entry(scene.clone()).or_insert_with(|| self.fresh(scene)).budget_chars = chars;
     }
 
-    /// Update a worker's transcript tail in the mirror (mirror-only; high-frequency).
-    pub async fn worker_progress(&self, scene: &Scene, worker_id: u64, transcript: &str) {
-        let mut scenes = self.inner.scenes.write().await;
-        if let Some(view) = scenes.get_mut(scene)
-            && let Some(w) = view.workers.iter_mut().find(|w| w.id == worker_id)
-        {
-            w.transcript_tail = tail_chars(transcript, TRANSCRIPT_TAIL);
-        }
-    }
-
     fn fresh(&self, scene: &Scene) -> SceneView {
         SceneView::new(scene.clone(), self.inner.swap_after_chars)
     }
 
     /// Fold an event into the live mirror. Pure state transition; no I/O.
-    async fn apply_to_mirror(&self, scene: &Scene, kind: &EventKind) {
+    ///
+    /// A sceneless event folds into nothing — and returns **before** the map entry is
+    /// touched, which is the whole point: `entry().or_insert_with()` materializes a
+    /// `SceneView` whether or not any arm below uses it, so reaching this function with
+    /// a placeholder scene is enough to put a conversation on the dashboard that does
+    /// not exist.
+    async fn apply_to_mirror(&self, scene: Option<&Scene>, kind: &EventKind) {
+        let Some(scene) = scene else { return };
         let now = Utc::now();
         let mut scenes = self.inner.scenes.write().await;
         let view = scenes
@@ -344,34 +341,13 @@ impl Observatory {
                     turns: 0,
                 });
             }
-            EventKind::WorkerSpawned { id, task } => {
-                view.workers.push(WorkerView {
-                    id: *id,
-                    task: task.clone(),
-                    state: WorkerState::Running,
-                    started_at: now,
-                    transcript_tail: String::new(),
-                });
-            }
-            EventKind::WorkerResumed { id, task } => {
-                if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
-                    w.state = WorkerState::Running;
-                    w.task = task.clone();
-                } else {
-                    view.workers.push(WorkerView {
-                        id: *id,
-                        task: task.clone(),
-                        state: WorkerState::Running,
-                        started_at: now,
-                            transcript_tail: String::new(),
-                    });
-                }
-            }
-            EventKind::WorkerFinished { id, state, .. } => {
-                if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
-                    w.state = *state;
-                }
-            }
+            // Worker lifecycle is history, not scene state — see [`SceneView`]. A
+            // working session is keyed by its own id and owned by whoever asked for it,
+            // so folding it into whichever scene happened to record the event would
+            // answer a question nobody asked. Read these off the event log.
+            EventKind::WorkerSpawned { .. }
+            | EventKind::WorkerResumed { .. }
+            | EventKind::WorkerFinished { .. } => {}
             EventKind::AlarmScheduled { note, delay_s } => {
                 view.pending_alarms.push(AlarmView {
                     note: note.clone(),
@@ -423,14 +399,6 @@ async fn append_jsonl(path: &PathBuf, event: &SessionEvent) {
     }
 }
 
-/// Last `n` characters of `s`, flattened to a single line.
-fn tail_chars(s: &str, n: usize) -> String {
-    let trimmed = s.trim();
-    let start = trimmed.chars().count().saturating_sub(n);
-    let tail: String = trimmed.chars().skip(start).collect();
-    tail.replace('\n', " ").trim().to_string()
-}
-
 /// Convenience for the SSE handler: turn a broadcast receiver into a stream of
 /// events, skipping lag gaps and ending on close.
 pub fn event_stream(
@@ -463,11 +431,11 @@ mod tests {
         let obs = Observatory::new(None, 48_000);
         let s = scene();
         obs.record(
-            &s,
+            Some(&s),
             EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
         )
         .await;
-        obs.record(&s, EventKind::TurnStarted { turn: 0, input: "hi".into() }).await;
+        obs.record(Some(&s), EventKind::TurnStarted { turn: 0, input: "hi".into() }).await;
 
         let snap = obs.snapshot().await;
         assert_eq!(snap.len(), 1);
@@ -477,7 +445,7 @@ mod tests {
         assert!(rs.in_flight, "turn in flight");
 
         obs.record(
-            &s,
+            Some(&s),
             EventKind::TurnFinished {
                 turn: 0,
                 stop_reason: Some("end_turn".into()),
@@ -497,13 +465,13 @@ mod tests {
         let obs = Observatory::new(None, 48_000);
         let s = scene();
         obs.record(
-            &s,
+            Some(&s),
             EventKind::SessionOpened { kind: SessionKind::Reactor, id: "old".into() },
         )
         .await;
         obs.set_budget(&s, 50_000).await;
         obs.record(
-            &s,
+            Some(&s),
             EventKind::HotSwap { old_id: "old".into(), new_id: "new".into(), briefing_chars: 800 },
         )
         .await;
@@ -513,23 +481,43 @@ mod tests {
         assert_eq!(v.reactor_session.as_ref().unwrap().id, "new");
     }
 
+    /// Worker lifecycle is history, and *only* history. It used to fold into a
+    /// per-scene `workers` vec — a list that could only ever hold the workers hosted
+    /// in that scene, which after the pool moved process-wide meant none of them.
     #[tokio::test]
-    async fn worker_lifecycle() {
+    async fn worker_lifecycle_is_history_not_scene_state() {
         let obs = Observatory::new(None, 48_000);
         let s = scene();
-        obs.record(&s, EventKind::WorkerSpawned { id: 1, task: "research X".into() }).await;
-        obs.worker_progress(&s, 1, "looking into it...").await;
-        let v = &obs.snapshot().await[0];
-        assert_eq!(v.workers.len(), 1);
-        assert_eq!(v.workers[0].state, WorkerState::Running);
-        assert_eq!(v.workers[0].transcript_tail, "looking into it...");
-
+        obs.record(Some(&s), EventKind::WorkerSpawned { id: 1, task: "research X".into() }).await;
         obs.record(
-            &s,
+            Some(&s),
             EventKind::WorkerFinished { id: 1, state: WorkerState::Done, summary_chars: 120 },
         )
         .await;
-        assert_eq!(obs.snapshot().await[0].workers[0].state, WorkerState::Done);
+
+        let (replay, _rx) = obs.subscribe().await;
+        assert_eq!(replay.len(), 2, "both events are in history");
+        assert_eq!(replay[0].scene.as_ref(), Some(&s));
+        assert_eq!(obs.event_count().await, 2);
+    }
+
+    /// A sceneless rung's events are real history and must not invent a conversation.
+    /// The trap is `apply_to_mirror`'s `entry().or_insert_with()`: it materializes a
+    /// `SceneView` before any arm runs, so merely *passing* a placeholder scene put a
+    /// row on the dashboard — no arm had to use it.
+    #[tokio::test]
+    async fn a_sceneless_event_is_recorded_and_mirrors_nothing() {
+        let obs = Observatory::new(None, 48_000);
+        obs.record(
+            None,
+            EventKind::SessionOpened { kind: SessionKind::Reflection, id: "refl-1".into() },
+        )
+        .await;
+
+        assert!(obs.snapshot().await.is_empty(), "no scene was invented");
+        let (replay, _rx) = obs.subscribe().await;
+        assert_eq!(replay.len(), 1, "but it is still history");
+        assert!(replay[0].scene.is_none());
     }
 
     #[tokio::test]
@@ -537,7 +525,7 @@ mod tests {
         let obs = Observatory::new(None, 48_000);
         let s = scene();
         obs.record(
-            &s,
+            Some(&s),
             EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
         )
         .await;
@@ -546,7 +534,7 @@ mod tests {
         assert_eq!(replay[0].seq, 1);
 
         obs.record(
-            &s,
+            Some(&s),
             EventKind::SessionClosed { kind: SessionKind::Reactor, id: "sess-1".into() },
         )
         .await;
@@ -558,9 +546,10 @@ mod tests {
     async fn alarms_scheduled_and_fired() {
         let obs = Observatory::new(None, 48_000);
         let s = scene();
-        obs.record(&s, EventKind::AlarmScheduled { note: "wake them".into(), delay_s: 60 }).await;
+        obs.record(Some(&s), EventKind::AlarmScheduled { note: "wake them".into(), delay_s: 60 })
+            .await;
         assert_eq!(obs.snapshot().await[0].pending_alarms.len(), 1);
-        obs.record(&s, EventKind::AlarmFired { note: "wake them".into() }).await;
+        obs.record(Some(&s), EventKind::AlarmFired { note: "wake them".into() }).await;
         assert!(obs.snapshot().await[0].pending_alarms.is_empty());
     }
 }

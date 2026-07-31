@@ -556,7 +556,7 @@ async fn schedule_alarm(reactor: &Reactor, alarms: &mut Alarms, scene: &Scene, d
                 .inner
                 .observatory
                 .record(
-                    scene,
+                    Some(scene),
                     EventKind::AlarmScheduled { note: note.to_owned(), delay_s: delay.as_secs() },
                 )
                 .await;
@@ -1356,7 +1356,7 @@ async fn per_scene_loop(
                             reactor
                                 .inner
                                 .observatory
-                                .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
+                                .record(Some(&scene), EventKind::AlarmFired { note: fired.note.clone() })
                                 .await;
                             enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
                         }
@@ -1377,7 +1377,7 @@ async fn per_scene_loop(
                         reactor
                             .inner
                             .observatory
-                            .record(&scene, EventKind::AlarmFired { note: fired.note.clone() })
+                            .record(Some(&scene), EventKind::AlarmFired { note: fired.note.clone() })
                             .await;
                         enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
                     }
@@ -1490,7 +1490,7 @@ async fn per_scene_loop(
                                         .inner
                                         .observatory
                                         .record(
-                                            &scene,
+                                            Some(&scene),
                                             EventKind::SessionClosed {
                                                 kind: SessionKind::Reactor,
                                                 id: dead.id().0.to_string(),
@@ -1514,7 +1514,7 @@ async fn per_scene_loop(
                         .inner
                         .observatory
                         .record(
-                            &scene,
+                            Some(&scene),
                             EventKind::SessionClosed {
                                 kind: SessionKind::Reactor,
                                 id: dead.id().0.to_string(),
@@ -1833,7 +1833,7 @@ async fn open_reactor_session(
         .inner
         .observatory
         .record(
-            scene,
+            Some(scene),
             EventKind::SessionOpened {
                 kind: SessionKind::Reactor,
                 id: session.id().0.to_string(),

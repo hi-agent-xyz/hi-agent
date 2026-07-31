@@ -18,14 +18,6 @@ export interface SessionView {
   turns: number;
 }
 
-export interface WorkerView {
-  id: number;
-  task: string;
-  state: WorkerState;
-  started_at: string;
-  transcript_tail: string;
-}
-
 export interface AlarmView {
   note: string;
   fires_at: string;
@@ -39,10 +31,13 @@ export interface TurnView {
   reply_chars: number | null;
 }
 
+// Scene-shaped state only. Worker lifecycle is NOT here: a working session belongs to
+// whoever created it, and the rungs that create them have no scene — so a per-scene
+// list could only hold the ones incidentally hosted there. Read workers off the event
+// stream instead (`worker_spawned` / `worker_finished`), which is keyed by session.
 export interface SceneView {
   scene: string;
   reactor_session: SessionView | null;
-  workers: WorkerView[];
   budget_chars: number;
   swap_after_chars: number;
   swap_count: number;
@@ -58,7 +53,8 @@ export interface SceneView {
 export interface SessionEvent {
   seq: number;
   ts: string;
-  scene: string;
+  /** null when the event happened outside every conversation — the sceneless rungs. */
+  scene: string | null;
   event: string;
   [k: string]: unknown;
 }

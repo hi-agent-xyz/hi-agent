@@ -153,7 +153,7 @@ pub(super) async fn swap(
         .inner
         .observatory
         .record(
-            scene,
+            Some(scene),
             EventKind::HotSwap {
                 old_id: current.id().0.to_string(),
                 new_id: fresh.id().0.to_string(),
@@ -359,7 +359,11 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
         .inner
         .observatory
         .record(
-            &sentinel,
+            // Sceneless: Reflection spans every scene at once, so attributing its
+            // open to one would be arbitrary, and attributing it to the sentinel put
+            // `*consolidation*` in the dashboard's scene list — a conversation nobody
+            // is having. The MCP header keeps the sentinel; the mirror gets nothing.
+            None,
             EventKind::SessionOpened {
                 kind: crate::foundation::observatory::SessionKind::Reflection,
                 id: session.id().0.to_string(),
