@@ -16,12 +16,13 @@
 //! await. A `std::sync::Mutex` guards a short, IO-free critical section.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 /// How many recent frames the in-memory ring retains for SSE replay-on-connect.
 /// Larger than the observatory's event ring: frames are higher-frequency (every
@@ -76,6 +77,14 @@ pub struct AcpTap {
 struct Inner {
     state: Mutex<State>,
     tx: broadcast::Sender<RawFrame>,
+    /// Durable sink. `None` when the tap is purely an inspector window (tests), which
+    /// is why it is an option rather than a path: a tap with nowhere to write is a
+    /// legitimate configuration, a tap that *pretends* to write is not.
+    ///
+    /// Unbounded on purpose. The ring above and the broadcast beside it are debug
+    /// surfaces and may drop; this is the record, and a record that quietly loses
+    /// frames under load is worse than no record — it is a record you would trust.
+    durable: Option<mpsc::UnboundedSender<RawFrame>>,
 }
 
 struct State {
@@ -84,12 +93,35 @@ struct State {
 }
 
 impl AcpTap {
+    /// An inspector-only tap: the in-memory ring and the live broadcast, nothing on
+    /// disk. For tests and for anything that has no data dir yet.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State { seq: 0, ring: VecDeque::new() }),
                 tx,
+                durable: None,
+            }),
+        }
+    }
+
+    /// A tap that also **keeps** what it sees, under
+    /// [`acp_frames_path`](crate::mind::memory::layout::acp_frames_path).
+    ///
+    /// Spawns one writer task; [`record`](Self::record) hands frames to it and never
+    /// touches the filesystem itself, because it runs inside the ACP debug callback on
+    /// the subprocess's own I/O path — a blocking write there would stall the agent
+    /// mid-turn.
+    pub fn with_durable_log(data_dir: PathBuf) -> Self {
+        let (tx, _) = broadcast::channel(BROADCAST_CAP);
+        let (dtx, drx) = mpsc::unbounded_channel();
+        tokio::spawn(write_frames(data_dir, drx));
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(State { seq: 0, ring: VecDeque::new() }),
+                tx,
+                durable: Some(dtx),
             }),
         }
     }
@@ -117,6 +149,13 @@ impl AcpTap {
             id,
             raw: line.to_string(),
         };
+        if let Some(durable) = &self.inner.durable {
+            // Send failure means the writer task is gone — say so once per frame rather
+            // than pretending the line was kept.
+            if durable.send(frame.clone()).is_err() {
+                tracing::warn!(seq = frame.seq, "acp frame log writer is gone; frame not kept");
+            }
+        }
         state.ring.push_back(frame.clone());
         while state.ring.len() > RING_CAP {
             state.ring.pop_front();
@@ -171,6 +210,60 @@ fn parse_meta(line: &str) -> (Option<String>, Option<String>, Option<Value>) {
 mod tests {
     use super::*;
 
+    /// The whole point: what crossed the wire is still there afterwards, byte for byte.
+    ///
+    /// Asserts on a **tool-call payload**, because that is precisely what the old
+    /// modelling threw away — `raw_input`/`raw_output` were reduced to the string
+    /// `"tool_call"` — and it is what verification has to read.
+    #[tokio::test]
+    async fn frames_are_kept_verbatim_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
+
+        let tool_call = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"Read","kind":"read","status":"completed","rawInput":{"path":"/etc/hosts"},"rawOutput":{"content":"127.0.0.1"}}}}"#;
+        tap.record(1, "boss", Dir::Recv, tool_call);
+        tap.record(1, "boss", Dir::Stderr, "a warning from the subprocess");
+
+        // Let the writer task drain.
+        let path = crate::mind::memory::layout::acp_frames_path(dir.path(), Utc::now());
+        let mut body = String::new();
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && text.lines().count() >= 2
+            {
+                body = text;
+                break;
+            }
+        }
+        assert!(!body.is_empty(), "nothing was written to {}", path.display());
+
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2, "both directions are kept, not just the interesting one");
+
+        let first: Value = serde_json::from_str(lines[0]).expect("a json object per line");
+        assert_eq!(first["scene"], "boss");
+        assert_eq!(first["dir"], "recv");
+        assert_eq!(first["session_id"], "s1", "grouping metadata is parsed out beside the line");
+        // ...and the line itself is untouched, payload and all.
+        assert_eq!(first["raw"].as_str().unwrap(), tool_call);
+        let inner: Value = serde_json::from_str(first["raw"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["params"]["update"]["rawInput"]["path"], "/etc/hosts");
+        assert_eq!(inner["params"]["update"]["rawOutput"]["content"], "127.0.0.1");
+
+        let second: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second["dir"], "stderr");
+    }
+
+    /// A tap with nowhere to write must not pretend, and must not panic.
+    #[test]
+    fn an_inspector_only_tap_keeps_nothing() {
+        let tap = AcpTap::new();
+        tap.record(1, "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        let (backlog, _live) = tap.subscribe();
+        assert_eq!(backlog.len(), 1, "still an inspector window");
+    }
+
     #[test]
     fn parses_session_id_from_params() {
         let line = r#"{"jsonrpc":"2.0","method":"session/prompt","id":3,"params":{"sessionId":"sess-abc","prompt":[]}}"#;
@@ -208,5 +301,71 @@ mod tests {
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live frame follows replay with no gap or dup");
         assert_eq!(live.dir, Dir::Recv);
+    }
+}
+
+/// Append every frame to the day's file, verbatim, one JSON object per line.
+///
+/// Batches whatever is already queued into a single write, so a busy turn costs one
+/// syscall rather than one per line. Rolls over by day because the path is derived per
+/// frame from its own timestamp — a process running past midnight writes into the new
+/// day's file without being told.
+///
+/// Failures are logged and the loop continues. Losing the log must never take the agent
+/// down with it, and a disk that has stopped accepting writes is not something a retry
+/// here can fix.
+async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFrame>) {
+    use tokio::io::AsyncWriteExt as _;
+
+    let mut batch: Vec<RawFrame> = Vec::new();
+    while let Some(first) = rx.recv().await {
+        batch.push(first);
+        while let Ok(more) = rx.try_recv() {
+            batch.push(more);
+        }
+
+        // One file per distinct day in the batch — normally exactly one.
+        let mut day = batch[0].ts;
+        let mut buf = String::new();
+        for frame in batch.drain(..) {
+            let same_day = frame.ts.date_naive() == day.date_naive();
+            if !same_day && !buf.is_empty() {
+                flush(&data_dir, day, &buf).await;
+                buf.clear();
+            }
+            day = frame.ts;
+            match serde_json::to_string(&frame) {
+                Ok(line) => {
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, seq = frame.seq, "acp frame would not serialize");
+                }
+            }
+        }
+        if !buf.is_empty() {
+            flush(&data_dir, day, &buf).await;
+        }
+    }
+
+    async fn flush(data_dir: &std::path::Path, day: DateTime<Utc>, buf: &str) {
+        let path = crate::mind::memory::layout::acp_frames_path(data_dir, day);
+        if let Some(parent) = path.parent()
+            && let Err(err) = tokio::fs::create_dir_all(parent).await
+        {
+            tracing::error!(error = %err, path = %parent.display(), "cannot make the acp frame log dir");
+            return;
+        }
+        match tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await {
+            Ok(mut f) => {
+                if let Err(err) = f.write_all(buf.as_bytes()).await {
+                    tracing::error!(error = %err, path = %path.display(), "acp frame log write failed");
+                }
+            }
+            Err(err) => {
+                tracing::error!(error = %err, path = %path.display(), "cannot open the acp frame log");
+            }
+        }
     }
 }

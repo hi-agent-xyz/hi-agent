@@ -154,7 +154,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // Raw ACP wire tap — every JSON-RPC frame, business-logic agnostic. The agent
     // layer hands it to each scene's subprocess; `GET /api/acp/frames/events`
     // streams it to the raw session inspector.
-    let acp_tap = foundation::acp::AcpTap::new();
+    let acp_tap = foundation::acp::AcpTap::with_durable_log(config.data_dir.clone());
 
     // Resolve all keyed capabilities BYOK-first: each vendor's key from the
     // credential store (`<data_dir>/credentials.json`) wins, else its `.env` key.

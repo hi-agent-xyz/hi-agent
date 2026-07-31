@@ -42,43 +42,56 @@ pub enum SessionUpdate {
     Text(String),
     /// A chunk of agent internal reasoning. Routers may or may not care.
     Thought(String),
-    /// A tool-call notification — opaque for Step 2. Step 4 expands this.
-    ToolCall(ToolCallStub),
-    /// An ACP event we did not specifically model. Carries the variant name
-    /// so reactors can decide to log it; we never invent shape on the wire.
-    Other(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolCallStub {
-    pub raw_variant: &'static str,
+    /// **The update itself, verbatim.** Emitted for every update without exception,
+    /// including the ones [`Text`](Self::Text) and [`Thought`](Self::Thought) also
+    /// project.
+    ///
+    /// Those two are conveniences for the speech path, which genuinely wants text
+    /// concatenated; this is the record. Earlier there was no record — a tool call
+    /// became a stub naming its variant and everything else became the string
+    /// `"unmodelled"`, so `raw_input`, `raw_output`, `content`, `locations`, `status`
+    /// and `kind` were all dropped on the floor. That is exactly what verification
+    /// reads and what a replayed session is made of, and the host was throwing it away
+    /// to answer a question — *what did the agent mean?* — that nothing asks any more,
+    /// now that intent is carried explicitly by `send_message`.
+    ///
+    /// See `docs/arch/foundation.md#full-frames-not-modelled-events`.
+    Frame(serde_json::Value),
 }
 
 impl SessionUpdate {
+    /// Every update, verbatim — plus a text projection where one applies.
+    ///
+    /// The frame comes first and is never conditional: a variant this build has never
+    /// heard of still arrives whole, because recording does not require understanding.
+    /// The schema enum is `#[non_exhaustive]`, so "a variant we do not know" is a
+    /// permanent condition, not a gap to close.
     pub(crate) fn from_acp(u: &acp_schema::SessionUpdate) -> Vec<SessionUpdate> {
         use acp_schema::SessionUpdate as U;
+
+        let mut out = match serde_json::to_value(u) {
+            Ok(v) => vec![SessionUpdate::Frame(v)],
+            Err(err) => {
+                // Nothing to do but say so. A silently missing frame is the failure
+                // this whole change exists to end.
+                tracing::error!(error = %err, "session update would not serialize; frame lost");
+                Vec::new()
+            }
+        };
         match u {
-            U::AgentMessageChunk(chunk) => match content_block_text(&chunk.content) {
-                Some(text) => vec![SessionUpdate::Text(text)],
-                None => vec![SessionUpdate::Other(
-                    "agent_message_chunk:nontext".to_string(),
-                )],
-            },
-            U::AgentThoughtChunk(chunk) => match content_block_text(&chunk.content) {
-                Some(text) => vec![SessionUpdate::Thought(text)],
-                None => vec![SessionUpdate::Other(
-                    "agent_thought_chunk:nontext".to_string(),
-                )],
-            },
-            U::UserMessageChunk(_) => Vec::new(),
-            U::ToolCall(_) => vec![SessionUpdate::ToolCall(ToolCallStub {
-                raw_variant: "tool_call",
-            })],
-            U::ToolCallUpdate(_) => vec![SessionUpdate::ToolCall(ToolCallStub {
-                raw_variant: "tool_call_update",
-            })],
-            _ => vec![SessionUpdate::Other("unmodelled".to_string())],
+            U::AgentMessageChunk(chunk) => {
+                if let Some(text) = content_block_text(&chunk.content) {
+                    out.push(SessionUpdate::Text(text));
+                }
+            }
+            U::AgentThoughtChunk(chunk) => {
+                if let Some(text) = content_block_text(&chunk.content) {
+                    out.push(SessionUpdate::Thought(text));
+                }
+            }
+            _ => {}
         }
+        out
     }
 }
 

@@ -1789,9 +1789,10 @@ async fn drive_voice(session: &AcpSession, scene: &Scene, context: String) -> an
             }
             // `show_view` dispatches server-side via `/mcp`; the reactor keeps speaking.
             // Its surface is `show_view`-only and the dispatch guard blocks any other
-            // expression tool, so there is nothing to intercept here.
-            SessionUpdate::ToolCall(_) => {}
-            SessionUpdate::Other(_) => {}
+            // expression tool, so there is nothing to intercept here. The frame is
+            // recorded at the wire by the tap, not read here — this rung interprets
+            // nothing it is not about to say.
+            SessionUpdate::Frame(_) => {}
         }
     }
     let result = run.wait().await?;
