@@ -276,17 +276,25 @@ impl WorkerRegistry {
         }
     }
 
-    /// Spawn a channel-mute working session for `task` on this scene's process
-    /// (workers multiplex inside the scene's single subprocess). Returns once the
-    /// session is open and its drive task is running; the work proceeds in the
-    /// background and reports back through the queue.
-    pub(super) async fn spawn(
+    /// Start a channel-mute working session for `task`, under an id the **caller
+    /// already holds**.
+    ///
+    /// `create_worker` answers with the id before the session is open, because a caller
+    /// that cannot name what it made cannot brief it, ask after it, or read it. So the
+    /// id is minted at the tool surface and carried here; minting a second one would
+    /// hand back an address that names nothing. There is no id-minting variant, so that
+    /// cannot drift back.
+    ///
+    /// Returns once the session is open and its drive task is running; the work proceeds
+    /// in the background and its report goes to `owner`.
+    pub(super) async fn spawn_with_id(
         &mut self,
         reactor: &Reactor,
+        id: SessionId,
         task: String,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reactor, task, false, owner).await
+        self.spawn_inner(reactor, id, task, false, owner).await
     }
 
     /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
@@ -296,11 +304,11 @@ impl WorkerRegistry {
     async fn spawn_inner(
         &mut self,
         reactor: &Reactor,
+        id: SessionId,
         task: String,
         is_deliberation: bool,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
-        let id = mint_session_id();
 
         // Deliberation is *the agent*, working at the scene's tempo — so its prompt is
         // three layers, in the order they get more specific: who it is
@@ -440,7 +448,7 @@ impl WorkerRegistry {
             registry::global().unregister(id);
         }
         tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
-        self.spawn_inner(reactor, task, is_deliberation, owner).await
+        self.spawn_inner(reactor, mint_session_id(), task, is_deliberation, owner).await
     }
 
     /// Ensure the scene's persistent **Deliberation** is working on `task`: resume the
@@ -457,7 +465,7 @@ impl WorkerRegistry {
     pub(super) async fn deliberate(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
         let id = match self.deliberation {
             Some(id) => self.follow_up(reactor, id, task, true, None).await?,
-            None => self.spawn_inner(reactor, task, true, None).await?,
+            None => self.spawn_inner(reactor, mint_session_id(), task, true, None).await?,
         };
         self.deliberation = Some(id);
         Ok(())

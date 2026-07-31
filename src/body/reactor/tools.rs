@@ -35,7 +35,7 @@ pub enum SceneControl {
     /// channel like everything else that touches it. `owner` is who the finished work
     /// answers to; a worker belongs to the session that created it, never to the scene
     /// it happens to run in.
-    CreateWorker { task: String, owner: Option<u64> },
+    CreateWorker { id: u64, task: String, owner: Option<u64> },
     /// Schedule a self-wake after `delay` (e.g. `30s`, `20m`, `1h`) carrying
     /// `note` (the `alarm` tool). The delay is parsed loop-side; an unparseable
     /// one is dropped.
@@ -112,5 +112,23 @@ impl ToolRegistry {
     /// registered for it (e.g. a stale or unknown scene).
     pub async fn get(&self, scene: &Scene) -> Option<ToolSink> {
         self.inner.lock().await.get(scene).cloned()
+    }
+
+    /// Any live scene loop, for work that must *run* somewhere but belongs to nobody's
+    /// conversation.
+    ///
+    /// A worker belongs to the session that created it, and a sceneless rung —
+    /// Reflection now, Cognition next — creates workers with no conversation to put
+    /// them in. Its worker still needs a host: a loop to hold its handle and reap it.
+    /// So one is borrowed. This is **hosting, not ownership**: the report goes to the
+    /// owner, never into the borrowed scene, and the scene is not told.
+    ///
+    /// Chosen deterministically (lowest scene name) rather than arbitrarily, so a run
+    /// is reproducible and a log names the same host twice.
+    pub async fn any_host(&self) -> Option<(Scene, ToolSink)> {
+        let map = self.inner.lock().await;
+        let scene = map.keys().min().cloned()?;
+        let sink = map.get(&scene).cloned()?;
+        Some((scene, sink))
     }
 }

@@ -15,7 +15,7 @@ use thiserror::Error;
 /// or being alone doing something, e.g. `alice@phone`. It is the unit of context
 /// isolation (one reactor session / journal slice / subprocess per scene); the
 /// human who spoke is soft, inferred content, not part of this key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Scene(pub String);
 

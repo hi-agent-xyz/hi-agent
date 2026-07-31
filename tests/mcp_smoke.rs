@@ -129,6 +129,42 @@ async fn tools_list_is_role_gated() {
     assert!(!names.contains(&"create_worker".to_string()), "got {names:?}");
 }
 
+/// The switchboard is process-wide, so reaching it must not require a scene loop.
+///
+/// This is the shape that was wrong: `create_worker` belongs to the sceneless rungs,
+/// and every switchboard call sat *below* a per-scene sink lookup — so the one rung
+/// holding the tool ran under a sentinel scene with no loop and could never call it.
+/// A sceneless caller must get a real answer (even "no live session 9999"), never
+/// "no active scene loop".
+#[tokio::test]
+async fn the_switchboard_needs_no_scene_loop() {
+    let (base, _dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    for (id, call) in [
+        // `id` is declared a string in both schemas, so send one.
+        (10, json!({ "name": "session_status", "arguments": { "id": "9999" } })),
+        (11, json!({ "name": "session_messages", "arguments": { "id": "9999" } })),
+    ] {
+        let resp = post_mcp(
+            &client,
+            &base,
+            "reflection",
+            json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": call }),
+        )
+        .await
+        .json::<Value>()
+        .await
+        .expect("json");
+        let text = serde_json::to_string(&resp).expect("serialize");
+        assert!(
+            !text.contains("no active scene loop"),
+            "a switchboard call must not need a scene: {text}"
+        );
+        assert!(text.contains("no live session 9999"), "expected a real answer: {text}");
+    }
+}
+
 #[tokio::test]
 async fn notification_is_accepted_without_body() {
     let (base, _dir, _seams) = spawn_server().await;

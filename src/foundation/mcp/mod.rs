@@ -566,15 +566,19 @@ async fn dispatch_tool(
         _ => {}
     }
 
-    let Some(sink) = registry.get(scene).await else {
-        return tool_error(&format!("no active scene loop for {}", scene.0));
-    };
-
     let arg_str =
         |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     let arg_opt = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
 
-    let outcome = match name {
+    // The switchboard calls, handled **before** any scene is looked up.
+    //
+    // They reach the process-wide session registry and touch no scene at all, so
+    // requiring a live scene loop to make one was a category error — and a load-bearing
+    // one: `create_worker` belongs to the sceneless rungs, and Reflection runs under a
+    // sentinel scene that has no loop, so the one rung holding the tool was the one rung
+    // that could never call it. Same for the one verb: a sceneless agent could be sent
+    // to, but could not send.
+    match name {
         "send_message" => {
             let Some(from) = session_id else {
                 return tool_error("send_message needs a session identity; this session has none");
@@ -589,29 +593,16 @@ async fn dispatch_tool(
                 Ok(id) => registry::Address::Session(id),
                 Err(_) => registry::Address::Scene(Scene(to.trim().to_string())),
             };
-            match registry::global().send(from, &addr, message) {
-                registry::Delivery::Delivered => Ok("delivered"),
-                registry::Delivery::Unknown => {
-                    return tool_error(&format!(
-                        "nothing live at `{}` — it may have finished. Nothing was delivered.",
-                        to.trim()
-                    ));
-                }
-                registry::Delivery::NotPermitted => {
-                    return tool_error(
-                        "a working session reports to whoever asked for the work, and to nobody else",
-                    );
-                }
-            }
-        }
-        "create_worker" => {
-            let task = arg_str("task");
-            if task.trim().is_empty() {
-                return tool_error("create_worker requires a non-empty `task`");
-            }
-            sink.send(SceneControl::CreateWorker { task, owner: session_id })
-                .await
-                .map(|()| "working session starting; watch for its report")
+            return match registry::global().send(from, &addr, message) {
+                registry::Delivery::Delivered => tool_ok("delivered"),
+                registry::Delivery::Unknown => tool_error(&format!(
+                    "nothing live at `{}` — it may have finished. Nothing was delivered.",
+                    to.trim()
+                )),
+                registry::Delivery::NotPermitted => tool_error(
+                    "a working session reports to whoever asked for the work, and to nobody else",
+                ),
+            };
         }
         "session_status" => {
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
@@ -636,12 +627,59 @@ async fn dispatch_tool(
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
                 return tool_error("session_messages requires a numeric `id`");
             };
-            match registry::global().messages(id) {
-                Some(text) if !text.trim().is_empty() => return tool_ok(&text),
-                Some(_) => Ok("that session has not said anything yet"),
-                None => return tool_error(&format!("no live session {id}")),
-            }
+            return match registry::global().messages(id) {
+                Some(text) if !text.trim().is_empty() => tool_ok(&text),
+                Some(_) => tool_ok("that session has not said anything yet"),
+                None => tool_error(&format!("no live session {id}")),
+            };
         }
+        "create_worker" => {
+            let Some(owner) = session_id else {
+                return tool_error("create_worker needs a session identity; this session has none");
+            };
+            let task = arg_str("task");
+            if task.trim().is_empty() {
+                return tool_error("create_worker requires a non-empty `task`");
+            }
+            // The id is minted **here**, before the session exists, and handed back in
+            // this reply — the contract is `CreateWorker → a session id`, and a caller
+            // that cannot name what it made cannot brief it, ask after it, or read it.
+            // Minting early is the same trick the whole session layer already uses: the
+            // tool surface identifies its caller by a header, so an id has to exist
+            // before the protocol assigns one.
+            let id = registry::mint();
+            // A worker must *run* somewhere. Its owner may have no conversation — the
+            // sceneless rungs are precisely the ones that create workers — so borrow a
+            // host loop. Hosting is not ownership: the report goes to `owner`.
+            let host = match registry.get(scene).await {
+                Some(sink) => Some((scene.clone(), sink)),
+                None => registry.any_host().await,
+            };
+            let Some((host_scene, sink)) = host else {
+                return tool_error(
+                    "no live scene loop to host a working session yet — nothing is running",
+                );
+            };
+            return match sink
+                .send(SceneControl::CreateWorker { id, task, owner: Some(owner) })
+                .await
+            {
+                Ok(()) => tool_ok(&format!(
+                    "session {id} starting (running under scene `{}`); brief it with \
+                     send_message, check it with session_status",
+                    host_scene.0
+                )),
+                Err(err) => tool_error(&err.to_string()),
+            };
+        }
+        _ => {}
+    }
+
+    let Some(sink) = registry.get(scene).await else {
+        return tool_error(&format!("no active scene loop for {}", scene.0));
+    };
+
+    let outcome = match name {
         "say" => {
             let text = arg_str("text");
             if text.trim().is_empty() {
