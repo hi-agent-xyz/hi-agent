@@ -32,6 +32,7 @@ pub mod models;
 pub mod observatory;
 pub mod pcm;
 pub mod registry;
+pub mod run;
 pub mod segment;
 pub mod server;
 pub mod shutdown;

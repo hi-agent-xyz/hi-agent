@@ -116,21 +116,29 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
 }
 
 /// `<raw>/<scene_enc>` — one slice per scene.
-/// `<memory>/raw/_acp/<YYYY-MM-DD>.jsonl` — the **session stream, verbatim**.
+/// `<memory>/raw/sessions/<run>/<session>.jsonl` — **one agent session's stream,
+/// verbatim**.
 ///
-/// One append-only file per day holding every JSON-RPC line that crossed to or from an
-/// agent subprocess, in order, uninterpreted. This is what
+/// Every JSON-RPC line that crossed to or from that session's subprocess, in order,
+/// uninterpreted — including the `initialize`/`session/new` handshake that precedes the
+/// protocol's own session id. This is what
 /// `docs/arch/foundation.md#full-frames-not-modelled-events` asks for and what
 /// verification reads: a tool call's `raw_input`/`raw_output`/`content` live here and
 /// nowhere else.
 ///
+/// **Per session, because a session is the thing that gets replayed.** A day file mixes
+/// every agent alive that day and makes reading one of them back a filtering exercise;
+/// one subprocess hosts exactly one session, so the natural unit is already there.
+///
+/// **Under a run id, because session ids restart at 1 every boot**
+/// ([`crate::foundation::run`]). Without it, today's session 3 and tomorrow's session 3
+/// are one file, and a record that silently merges two different agents is worse than no
+/// record.
+///
 /// Under `raw/` because foundation holds that pen and the rule there is *written before
-/// anything reacts to it*. Not scene-partitioned like a channel: a connection precedes
-/// its own `sessionId` (the `initialize` handshake carries none), and each line names
-/// its scene anyway, so partitioning by day keeps the record whole rather than splitting
-/// a session's own opening away from it.
-pub fn acp_frames_path(data_dir: &Path, day: DateTime<Utc>) -> PathBuf {
-    raw_root(data_dir).join("_acp").join(format!("{}.jsonl", day.format("%Y-%m-%d")))
+/// anything reacts to it*.
+pub fn session_frames_path(data_dir: &Path, run: &str, session: u64) -> PathBuf {
+    raw_root(data_dir).join("sessions").join(run).join(format!("{session}.jsonl"))
 }
 
 pub fn scene_dir(data_dir: &Path, scene: &Scene) -> PathBuf {

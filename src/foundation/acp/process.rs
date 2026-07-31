@@ -145,6 +145,10 @@ impl AcpProcess {
         env: Vec<(String, String)>,
         tap: AcpTap,
         scene: String,
+        // hi-agent's minted session id, when the caller has one. The tap files this
+        // connection's frames under it; `None` means they reach the inspector but are
+        // not kept, because there is nothing durable to file them as.
+        session_id: Option<u64>,
         registry: &ProcessRegistry,
     ) -> anyhow::Result<(Self, mpsc::UnboundedReceiver<SessionUpdate>)> {
         let program_str = program
@@ -165,6 +169,7 @@ impl AcpProcess {
             // tagged with this connection + scene, before the existing tracing.
             tap.record(
                 conn,
+                session_id,
                 &scene,
                 match direction {
                     acp::LineDirection::Stdin => Dir::Send,

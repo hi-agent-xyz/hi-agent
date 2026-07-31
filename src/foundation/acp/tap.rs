@@ -54,6 +54,13 @@ pub struct RawFrame {
     /// session, so the inspector groups a session's frames by this — including the
     /// `initialize`/`session/new` frames that precede (and so carry no) `sessionId`.
     pub conn: u64,
+    /// hi-agent's own session id for that connection, when it has one.
+    ///
+    /// Distinct from [`session_id`](Self::session_id), which is the *protocol's* id
+    /// parsed off the line and absent during the handshake. This one is minted by the
+    /// host before the subprocess starts, so it names every frame including the first —
+    /// which is what makes a durable per-session file possible at all.
+    pub agent_session: Option<u64>,
     pub scene: String,
     pub dir: Dir,
     /// `sessionId` parsed from `params`/`result`, when present. The `initialize`
@@ -131,7 +138,7 @@ impl AcpTap {
     /// hook (no await, no IO under the lock). A poisoned lock is ignored — the
     /// tap is a convenience, never load-bearing. `conn` identifies the emitting
     /// subprocess so the inspector can group one session's frames together.
-    pub fn record(&self, conn: u64, scene: &str, dir: Dir, line: &str) {
+    pub fn record(&self, conn: u64, agent_session: Option<u64>, scene: &str, dir: Dir, line: &str) {
         let (session_id, method, id) = parse_meta(line);
         let mut state = match self.inner.state.lock() {
             Ok(g) => g,
@@ -142,6 +149,7 @@ impl AcpTap {
             seq: state.seq,
             ts: Utc::now(),
             conn,
+            agent_session,
             scene: scene.to_string(),
             dir,
             session_id,
@@ -149,12 +157,14 @@ impl AcpTap {
             id,
             raw: line.to_string(),
         };
-        if let Some(durable) = &self.inner.durable {
-            // Send failure means the writer task is gone — say so once per frame rather
-            // than pretending the line was kept.
-            if durable.send(frame.clone()).is_err() {
-                tracing::warn!(seq = frame.seq, "acp frame log writer is gone; frame not kept");
-            }
+        // Only frames that name a session are kept. A connection with no agent session
+        // id has nothing durable to be filed as, and inventing a bucket for it would put
+        // frames somewhere no reader will look.
+        if let Some(durable) = &self.inner.durable
+            && frame.agent_session.is_some()
+            && durable.send(frame.clone()).is_err()
+        {
+            tracing::warn!(seq = frame.seq, "acp frame log writer is gone; frame not kept");
         }
         state.ring.push_back(frame.clone());
         while state.ring.len() > RING_CAP {
@@ -221,11 +231,14 @@ mod tests {
         let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
 
         let tool_call = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"Read","kind":"read","status":"completed","rawInput":{"path":"/etc/hosts"},"rawOutput":{"content":"127.0.0.1"}}}}"#;
-        tap.record(1, "boss", Dir::Recv, tool_call);
-        tap.record(1, "boss", Dir::Stderr, "a warning from the subprocess");
+        tap.record(1, Some(42), "boss", Dir::Recv, tool_call);
+        tap.record(1, Some(42), "boss", Dir::Stderr, "a warning from the subprocess");
+        // A different session must not land in the same file.
+        tap.record(2, Some(43), "boss", Dir::Recv, r#"{"jsonrpc":"2.0","method":"initialize"}"#);
 
         // Let the writer task drain.
-        let path = crate::mind::memory::layout::acp_frames_path(dir.path(), Utc::now());
+        let run = crate::foundation::run::id();
+        let path = crate::mind::memory::layout::session_frames_path(dir.path(), run, 42);
         let mut body = String::new();
         for _ in 0..100 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -253,13 +266,34 @@ mod tests {
 
         let second: Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["dir"], "stderr");
+
+        // Session 43's frame went to session 43's file, not into 42's.
+        let other = crate::mind::memory::layout::session_frames_path(dir.path(), run, 43);
+        let other_body = std::fs::read_to_string(&other).expect("session 43 has its own file");
+        assert_eq!(other_body.lines().count(), 1);
+        assert!(other_body.contains("initialize"), "the handshake is kept too: {other_body}");
+    }
+
+    /// A connection with no agent session id has nothing durable to be filed as. It must
+    /// still reach the inspector, and must not invent a bucket on disk.
+    #[tokio::test]
+    async fn a_frame_with_no_session_is_seen_but_not_filed() {
+        let dir = tempfile::tempdir().unwrap();
+        let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
+        tap.record(9, None, "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        let (backlog, _live) = tap.subscribe();
+        assert_eq!(backlog.len(), 1, "the inspector still sees it");
+        let sessions = crate::mind::memory::layout::raw_root(dir.path()).join("sessions");
+        assert!(!sessions.exists(), "nothing was invented on disk");
     }
 
     /// A tap with nowhere to write must not pretend, and must not panic.
     #[test]
     fn an_inspector_only_tap_keeps_nothing() {
         let tap = AcpTap::new();
-        tap.record(1, "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        tap.record(1, Some(1), "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         let (backlog, _live) = tap.subscribe();
         assert_eq!(backlog.len(), 1, "still an inspector window");
     }
@@ -290,33 +324,35 @@ mod tests {
     #[tokio::test]
     async fn subscribe_replays_then_streams_live() {
         let tap = AcpTap::new();
-        tap.record(0, "alice@phone", Dir::Send, r#"{"method":"initialize","id":0}"#);
+        tap.record(0, Some(7), "alice@phone", Dir::Send, r#"{"method":"initialize","id":0}"#);
         let (replay, mut rx) = tap.subscribe();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].seq, 1);
         assert_eq!(replay[0].conn, 0);
         assert_eq!(replay[0].dir, Dir::Send);
 
-        tap.record(0, "alice@phone", Dir::Recv, r#"{"id":0,"result":{}}"#);
+        tap.record(0, Some(7), "alice@phone", Dir::Recv, r#"{"id":0,"result":{}}"#);
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live frame follows replay with no gap or dup");
         assert_eq!(live.dir, Dir::Recv);
     }
 }
 
-/// Append every frame to the day's file, verbatim, one JSON object per line.
+/// Append every frame to its **session's** file, verbatim, one JSON object per line.
 ///
-/// Batches whatever is already queued into a single write, so a busy turn costs one
-/// syscall rather than one per line. Rolls over by day because the path is derived per
-/// frame from its own timestamp — a process running past midnight writes into the new
-/// day's file without being told.
+/// Batches whatever is already queued and groups it by session, so a busy turn costs one
+/// open-and-write per session rather than one per line. Frames arrive in order and a
+/// session's frames are contiguous in practice, but grouping does not assume that — a
+/// batch spanning two sessions writes each to its own file.
 ///
 /// Failures are logged and the loop continues. Losing the log must never take the agent
 /// down with it, and a disk that has stopped accepting writes is not something a retry
 /// here can fix.
 async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFrame>) {
+    use std::collections::BTreeMap;
     use tokio::io::AsyncWriteExt as _;
 
+    let run = crate::foundation::run::id();
     let mut batch: Vec<RawFrame> = Vec::new();
     while let Some(first) = rx.recv().await {
         batch.push(first);
@@ -324,18 +360,12 @@ async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFram
             batch.push(more);
         }
 
-        // One file per distinct day in the batch — normally exactly one.
-        let mut day = batch[0].ts;
-        let mut buf = String::new();
+        let mut by_session: BTreeMap<u64, String> = BTreeMap::new();
         for frame in batch.drain(..) {
-            let same_day = frame.ts.date_naive() == day.date_naive();
-            if !same_day && !buf.is_empty() {
-                flush(&data_dir, day, &buf).await;
-                buf.clear();
-            }
-            day = frame.ts;
+            let Some(session) = frame.agent_session else { continue };
             match serde_json::to_string(&frame) {
                 Ok(line) => {
+                    let buf = by_session.entry(session).or_default();
                     buf.push_str(&line);
                     buf.push('\n');
                 }
@@ -344,27 +374,24 @@ async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFram
                 }
             }
         }
-        if !buf.is_empty() {
-            flush(&data_dir, day, &buf).await;
-        }
-    }
 
-    async fn flush(data_dir: &std::path::Path, day: DateTime<Utc>, buf: &str) {
-        let path = crate::mind::memory::layout::acp_frames_path(data_dir, day);
-        if let Some(parent) = path.parent()
-            && let Err(err) = tokio::fs::create_dir_all(parent).await
-        {
-            tracing::error!(error = %err, path = %parent.display(), "cannot make the acp frame log dir");
-            return;
-        }
-        match tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await {
-            Ok(mut f) => {
-                if let Err(err) = f.write_all(buf.as_bytes()).await {
-                    tracing::error!(error = %err, path = %path.display(), "acp frame log write failed");
-                }
+        for (session, buf) in by_session {
+            let path = crate::mind::memory::layout::session_frames_path(&data_dir, run, session);
+            if let Some(parent) = path.parent()
+                && let Err(err) = tokio::fs::create_dir_all(parent).await
+            {
+                tracing::error!(error = %err, path = %parent.display(), "cannot make the session frame dir");
+                continue;
             }
-            Err(err) => {
-                tracing::error!(error = %err, path = %path.display(), "cannot open the acp frame log");
+            match tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await {
+                Ok(mut f) => {
+                    if let Err(err) = f.write_all(buf.as_bytes()).await {
+                        tracing::error!(error = %err, path = %path.display(), "session frame write failed");
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, path = %path.display(), "cannot open the session frame log");
+                }
             }
         }
     }

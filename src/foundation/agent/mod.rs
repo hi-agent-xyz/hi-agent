@@ -177,6 +177,9 @@ impl AgentLayer {
             env,
             self.inner.tap.clone(),
             scene.0.clone(),
+            // hi-agent's own session id, not the protocol's: it exists before the
+            // subprocess does, which is exactly what a durable per-session record needs.
+            session_id,
             &self.inner.registry,
         )
         .await?;
