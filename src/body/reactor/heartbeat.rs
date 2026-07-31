@@ -24,6 +24,7 @@ use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
 use crate::mind::memory::{Snapshot, build_for_scene, decay, episodes, facets, layout, people_vectors, refresh_hot};
 use crate::foundation::observatory::EventKind;
+use crate::foundation::registry;
 use crate::types::{Channel, JournalEntry, Scene};
 use crate::foundation::vendors::ffmpeg_frame;
 
@@ -87,10 +88,17 @@ continue the conversation seamlessly. Output only the briefing.";
 /// with that briefing plus the recent journal tail. Runs between turns, so the
 /// session is free to take the summarize prompt. On any failure the caller
 /// keeps the existing warm session — the swap is best-effort.
+///
+/// `voice_id` is the scene's standing switchboard registration, reused verbatim — a
+/// swap rotates the subprocess, not the voice. It is deliberately **not** re-registered
+/// here: the entry belongs to the per-scene loop and is scope-bound to it, and minting
+/// a second Reaction for one scene is the bug `9e6ae45` fixed (`Address::Scene` then
+/// resolved to whichever the lookup happened to find first).
 pub(super) async fn swap(
     reactor: &Reactor,
     scene: &Scene,
     current: &Arc<AcpSession>,
+    voice_id: registry::SessionId,
 ) -> anyhow::Result<Arc<AcpSession>> {
     // Ask the live session to brief its successor. The reply is captured here and
     // never emitted or spoken — it seeds the new session so the conversation
@@ -129,7 +137,7 @@ pub(super) async fn swap(
         .session(
             scene,
             crate::foundation::agent::SessionRole::Reactor,
-            None,
+            Some(voice_id),
             SessionOpts {
                 system_prompt: Some(seeded_system_prompt),
                 cwd: None,
@@ -313,13 +321,37 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
     let system_prompt = crate::identity::reflection_prompt(data_dir).await;
 
     let sentinel = consolidation_scene();
+
+    // Reflection joins the switchboard for the length of this pass. Two things it did
+    // not have: an identity (so `create_worker`, which it alone is offered, rejected it
+    // for having none) and an address (so nothing could reach it).
+    //
+    // **Registered with `scene: None`, while the MCP header stays the sentinel.** Those
+    // are different facts: `docs/arch/agents.md` says the sceneless rungs have no scene,
+    // and `Address::Scene` resolves only `Role::Reaction` — so a scene here could never
+    // route anything, only read as a conversation that does not exist. The header is a
+    // routing tag the `/mcp` dispatch needs, and keeps its own meaning (see
+    // [`CONSOLIDATION_SCENE`]).
+    //
+    // **Known-incomplete, deliberately: nothing drains this inbox.** The pass is one
+    // `prompt` then `wait`, so Reflection can now create a worker and still cannot read
+    // its report — the worker outlives the session that asked. A sceneless rung that
+    // dispatches work needs a loop, and that loop is Cognition's shape; faking one here
+    // would be the wrong owner made permanent. **N3 takes this back.**
+    let reflection = registry::register_scoped(
+        registry::mint(),
+        registry::Role::Reflection,
+        None,
+        None,
+        "consolidating the day".to_string(),
+    );
     let session = reactor
         .inner
         .agent
         .session(
             &sentinel,
             SessionRole::Reflection,
-            None,
+            Some(reflection.id()),
             SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
         )
         .await?;

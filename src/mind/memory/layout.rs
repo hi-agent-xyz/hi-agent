@@ -138,7 +138,25 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
 /// Under `raw/` because foundation holds that pen and the rule there is *written before
 /// anything reacts to it*.
 pub fn session_frames_path(data_dir: &Path, run: &str, session: u64) -> PathBuf {
-    raw_root(data_dir).join("sessions").join(run).join(format!("{session}.jsonl"))
+    raw_root(data_dir).join(SESSIONS_DIR).join(run).join(format!("{session}.jsonl"))
+}
+
+/// The one child of `raw/` that is **not** a scene: foundation's own per-session frame
+/// log ([`session_frames_path`]). Every other child is `encode_scene(scene)`.
+///
+/// Named here, beside the path that creates it, because a walker of `raw/` cannot tell
+/// the difference structurally — a scene's `scene.json` sidecar is written best-effort,
+/// so its absence proves nothing and using it as the test would hide a real scene whose
+/// sidecar write failed. A name list is exact for the one case that exists.
+///
+/// The cost, stated: a scene literally named `sessions` encodes to this same folder and
+/// would be skipped by anything consulting [`is_scene_dir`]. Degraded (invisible to
+/// re-warm), not corrupt — its log still writes and reads normally.
+pub const SESSIONS_DIR: &str = "sessions";
+
+/// Whether a directory name directly under `raw/` names a scene. See [`SESSIONS_DIR`].
+pub fn is_scene_dir(name: &str) -> bool {
+    name != SESSIONS_DIR
 }
 
 pub fn scene_dir(data_dir: &Path, scene: &Scene) -> PathBuf {

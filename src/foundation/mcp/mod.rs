@@ -634,6 +634,21 @@ async fn dispatch_tool(
             };
         }
         "create_worker" => {
+            // Workers belong to the sceneless rungs — Cognition and Reflection, per
+            // `docs/arch/foundation.md`. Reaction speaks and Deliberation reads; neither
+            // dispatches, and a scene-bound rung that could would be a second dispatcher
+            // (`docs/arch/agents.md`: "one dispatcher is the point").
+            //
+            // Structural, not just absent from the advertised surface — the same reason
+            // `say`/`show_view` are checked above. Until now this was enforced only by
+            // accident: Reaction had no `X-HI-Session-Id`, so the identity check below
+            // rejected it. That fence is gone as of this commit, so the real one goes in.
+            if !matches!(role, Some("reflection") | Some("cognition")) {
+                return tool_error(&format!(
+                    "`create_worker` belongs to the sceneless rungs; role `{}` may not dispatch work",
+                    role.unwrap_or("<none>")
+                ));
+            }
             let Some(owner) = session_id else {
                 return tool_error("create_worker needs a session identity; this session has none");
             };
@@ -1617,6 +1632,39 @@ mod surface_tests {
     fn no_other_role_can_speak() {
         for role in [Some("worker"), Some("reflection")] {
             assert!(!names(role).contains(&"say".to_string()), "{role:?} must not hold say");
+        }
+    }
+
+    /// Surface membership is a context optimization, not a rail — so the rungs that
+    /// must not dispatch are refused at *dispatch*, whatever their model emits.
+    ///
+    /// This was enforced only by accident until Reaction was given a session id: the
+    /// identity check rejected it for having no `X-HI-Session-Id`, which reads as a
+    /// guard and is not one. A rung with an identity and no advertised `create_worker`
+    /// could call it anyway.
+    #[tokio::test]
+    async fn create_worker_is_refused_to_the_scene_rungs_at_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reactor::ToolRegistry::new();
+        let partial = Mutex::new(HashMap::new());
+        let scene = Scene("boss".to_string());
+
+        for role in [Some("reactor"), Some("worker"), Some("deliberation"), None] {
+            let got = dispatch_tool(
+                &tools,
+                dir.path(),
+                &partial,
+                Some(&scene),
+                // An identity, so this cannot pass for the old accidental rejection.
+                Some(7),
+                role,
+                "create_worker",
+                &json!({ "task": "do a thing" }),
+            )
+            .await;
+            assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{role:?}");
+            let text = got["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("may not dispatch work"), "{role:?} got: {text}");
         }
     }
 }

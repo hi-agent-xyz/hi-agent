@@ -78,7 +78,7 @@ use crate::foundation::agent::{AgentLayer, SessionRole};
 use crate::foundation::config;
 use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
-use crate::mind::memory::{Memory, snapshot};
+use crate::mind::memory::{Memory, layout, snapshot};
 use crate::foundation::observatory::{EventKind, Observatory, SessionKind};
 use crate::types::{Channel, Geometry, JournalEntry, Origin, Scene, Signal, ViewEnvelope, ViewOp};
 use bytes::Bytes;
@@ -818,6 +818,17 @@ async fn consolidated_reflection_loop(reactor: Reactor) {
 /// but the clock is ever written there, which is the reason the clock got a channel
 /// of its own. Note this excludes clock rows from being a *reason* to act — never
 /// from being read; a reconstruction still sees every wake.
+///
+/// **Only the clock belongs here, and `worker` specifically does not** — this list is
+/// read by two questions, and they want different answers. "Is the scene alive?" (the
+/// re-warm gate below) and "is there enough here to consolidate?"
+/// ([`heartbeat::reflectable`]) share it, and a worker report is not presence but *is*
+/// content worth settling into an episode. Excluding it here would silently stop
+/// finished work from ever reaching a scene's episodes.
+///
+/// The related bug — a report journaled into a *stranger's* scene, because a
+/// sceneless-owned worker ran in a borrowed one — is fixed where it is caused, by
+/// journaling under the work's own origin scene, not by making the channel invisible.
 const NON_ACTIVITY_CHANNELS: [&str; 1] = ["clock"];
 
 /// Scenes whose raw memory saw activity within `window`, each paired with the
@@ -846,6 +857,17 @@ fn scenes_with_activity(
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
+            continue;
+        }
+        // Not every child of `raw/` is a scene — foundation's own frame log lives
+        // there too, and its `<run>/` children look exactly like channel folders.
+        // Without this, every boot after the first recorded frame stands a full
+        // per-scene loop up for a directory: subprocess, pulse, consolidation.
+        if !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(layout::is_scene_dir)
+        {
             continue;
         }
         // Newest mtime across this scene's signal-bearing channel folders — the
@@ -985,6 +1007,29 @@ mod rewarm_tests {
             "pulses alone must not mark a scene active"
         );
         assert!(scenes_to_rewarm(dir.path()).is_empty(), "and so must not re-warm it");
+    }
+
+    /// Foundation's own frame log lives under `raw/` beside the scenes, and its
+    /// `<run>/` children are indistinguishable from channel folders by shape. Before
+    /// the reserved-name skip this returned `Scene("sessions")`, so every boot after
+    /// the first recorded frame warmed a full loop for a directory.
+    #[test]
+    fn the_frame_log_is_not_a_scene() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = dir
+            .path()
+            .join("memory")
+            .join("raw")
+            .join("sessions")
+            .join("a1b2c3d4e5f6");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(run.join("1.jsonl"), b"{}\n").unwrap();
+
+        assert!(
+            names(scenes_with_activity(dir.path(), Duration::from_secs(3600))).is_empty(),
+            "the frame log is foundation's, not a conversation"
+        );
+        assert!(scenes_to_rewarm(dir.path()).is_empty(), "and must not be warmed");
     }
 
     /// Everything else a scene records still counts — including the newly
@@ -1394,7 +1439,17 @@ async fn per_scene_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
-        match run_reactor_turn(&reactor, &scene, &batch, &mut workers, &mut reactor_session, &beats).await {
+        match run_reactor_turn(
+            &reactor,
+            &scene,
+            &batch,
+            &mut workers,
+            &mut reactor_session,
+            voice_id,
+            &beats,
+        )
+        .await
+        {
             Ok(()) => {
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
@@ -1410,7 +1465,12 @@ async fn per_scene_loop(
                 // periodic clock in the wait loop above, decoupled from compaction.)
                 if budget.should_swap() {
                     if let Some(current) = reactor_session.clone() {
-                        match timeout(SWAP_TIMEOUT, heartbeat::swap(&reactor, &scene, &current)).await {
+                        match timeout(
+                            SWAP_TIMEOUT,
+                            heartbeat::swap(&reactor, &scene, &current, voice_id),
+                        )
+                        .await
+                        {
                             Ok(Ok(fresh)) => {
                                 reactor_session = Some(fresh);
                                 budget.reset();
@@ -1538,6 +1598,7 @@ async fn run_reactor_turn(
     batch: &[LoopInput],
     workers: &mut workers::WorkerRegistry,
     reactor_session: &mut Option<Arc<AcpSession>>,
+    voice_id: registry::SessionId,
     beats: &mpsc::Sender<sequencer::Beat>,
 ) -> anyhow::Result<()> {
     let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
@@ -1567,7 +1628,7 @@ async fn run_reactor_turn(
     let session = match reactor_session {
         Some(s) => s.clone(),
         None => {
-            let opened = open_reactor_session(reactor, scene).await?;
+            let opened = open_reactor_session(reactor, scene, voice_id).await?;
             *reactor_session = Some(opened.clone());
             opened
         }
@@ -1733,7 +1794,17 @@ mod turn_context_tests {
 /// prompt (prepended to the first prompt). It speaks via plain message text and gets a
 /// minimal `show_view`-only `/mcp` surface, so a turn is a single quick generation that
 /// may also put one already-built view on screen.
-async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Result<Arc<AcpSession>> {
+///
+/// `voice_id` is the loop's own switchboard registration — the *same* id across every
+/// reopen and every hot-swap, because the scene has one voice however many subprocesses
+/// have hosted it. Passing it is what puts `X-HI-Session-Id` on the session's MCP
+/// attach; without it the voice held a mailbox it had no identity to send from, and
+/// `send_message` answered "this session has none" to the one rung that talks most.
+async fn open_reactor_session(
+    reactor: &Reactor,
+    scene: &Scene,
+    voice_id: registry::SessionId,
+) -> anyhow::Result<Arc<AcpSession>> {
     let session = Arc::new(
         reactor
             .inner
@@ -1741,7 +1812,7 @@ async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Resul
             .session(
                 scene,
                 SessionRole::Reactor,
-                None,
+                Some(voice_id),
                 SessionOpts {
                     system_prompt: Some(
                         crate::identity::reactor_system_prompt(
