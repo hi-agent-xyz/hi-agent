@@ -114,14 +114,26 @@ pub struct Status {
     pub started: DateTime<Utc>,
 }
 
-/// A session's inbox: one pending message, merged rather than queued.
+/// One message in flight, with the return address the registry stamped on it.
 ///
-/// Several messages landing while a session is mid-turn are **concatenated**, so it picks
-/// all of them up in one prompt rather than running each as its own round-trip. No
-/// LLM-smart merge — the receiving model reads the combined text.
+/// **`from` travels with the text and is not optional.** A reply is just a message going
+/// the other way, so a message that arrives anonymously is one that cannot be answered —
+/// and "answer whoever asked" is the whole of a worker's addressing rule.
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub from: SessionId,
+    pub text: String,
+}
+
+/// A session's inbox: messages merged rather than queued.
+///
+/// Several landing while a session is mid-turn are picked up **together**, so it reads
+/// all of them in one prompt rather than running each as its own round-trip. No
+/// LLM-smart merge — they are handed over in arrival order and the receiving model
+/// reads them as one batch.
 #[derive(Default)]
 struct Inbox {
-    pending: Option<String>,
+    pending: Vec<Message>,
     closed: bool,
 }
 
@@ -227,23 +239,50 @@ impl Registry {
         if entry.inbox.closed {
             return Delivery::Unknown;
         }
-        entry.inbox.pending = Some(match entry.inbox.pending.take() {
-            Some(prev) => format!("{prev}\n\n{message}"),
-            None => message,
-        });
+        entry.inbox.pending.push(Message { from, text: message });
         entry.notify.notify_one();
         Delivery::Delivered
     }
 
     /// Take everything queued for `id`, if anything is. Marks the session busy — it is
     /// about to take a turn, and an agent with a turn in flight is not idle.
-    pub fn take_pending(&self, id: SessionId) -> Option<String> {
+    pub fn take_pending(&self, id: SessionId) -> Option<Vec<Message>> {
         let mut map = self.sessions.lock().unwrap();
         let entry = map.get_mut(&id)?;
-        let text = entry.inbox.pending.take()?;
+        if entry.inbox.pending.is_empty() {
+            return None;
+        }
         entry.busy = true;
         entry.turns += 1;
-        Some(text)
+        Some(std::mem::take(&mut entry.inbox.pending))
+    }
+
+    /// Take everything queued for `id` — or, finding nothing, **close the inbox** and
+    /// report that by returning `None` with the mailbox now shut.
+    ///
+    /// One call because it is one decision under one lock. A session that has idled out
+    /// wants to stop; a message racing that decision must either be taken or must find
+    /// the mailbox already closed and spawn its own fresh session. Split into a peek and
+    /// a close, the message that lands between them is lost — silently, and only under
+    /// load, which is the worst way to find out.
+    pub fn take_pending_or_close(&self, id: SessionId) -> Option<Vec<Message>> {
+        let mut map = self.sessions.lock().unwrap();
+        let Some(entry) = map.get_mut(&id) else {
+            return None;
+        };
+        if entry.inbox.pending.is_empty() {
+            entry.inbox.closed = true;
+            return None;
+        }
+        entry.busy = true;
+        entry.turns += 1;
+        Some(std::mem::take(&mut entry.inbox.pending))
+    }
+
+    /// The handle woken when mail lands for `id`, for a loop that wants to wait on its
+    /// own inbox without polling. Same `Notify` [`register`](Self::register) returned.
+    pub fn notifier(&self, id: SessionId) -> Option<std::sync::Arc<Notify>> {
+        self.sessions.lock().unwrap().get(&id).map(|e| e.notify.clone())
     }
 
     /// Mark a turn finished.
@@ -282,7 +321,7 @@ impl Registry {
             owner: e.owner,
             task: e.task.clone(),
             busy: e.busy,
-            queued: e.inbox.pending.is_some(),
+            queued: !e.inbox.pending.is_empty(),
             turns: e.turns,
             started: e.started,
         })
@@ -327,8 +366,11 @@ mod tests {
         r.register(b, Role::Worker, None, Some(a), "the errand".into());
 
         assert_eq!(r.send(a, &Address::Session(b), "go".into()), Delivery::Delivered);
-        assert_eq!(r.take_pending(b).as_deref(), Some("go"));
-        assert_eq!(r.take_pending(b), None, "taking drains the inbox");
+        let mail = r.take_pending(b).expect("delivered");
+        assert_eq!(mail.len(), 1);
+        assert_eq!(mail[0].text, "go");
+        assert_eq!(mail[0].from, a, "the return address rides with the message");
+        assert!(r.take_pending(b).is_none(), "taking drains the inbox");
     }
 
     /// Several messages arriving while a session is mid-turn must cost one turn, not
@@ -342,7 +384,51 @@ mod tests {
 
         r.send(a, &Address::Session(b), "first".into());
         r.send(a, &Address::Session(b), "second".into());
-        assert_eq!(r.take_pending(b).as_deref(), Some("first\n\nsecond"));
+        let mail = r.take_pending(b).expect("both delivered");
+        assert_eq!(
+            mail.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            ["first", "second"],
+            "a burst is taken together, in arrival order"
+        );
+        assert_eq!(r.status(b).unwrap().turns, 1, "a burst costs one turn, not several");
+    }
+
+    /// The race the atomic take-or-close exists for: a session idling out and a message
+    /// landing are one decision, so exactly one of them wins and neither is lost.
+    #[test]
+    fn taking_or_closing_never_loses_the_racing_message() {
+        let r = reg();
+        let (a, b) = (mint(), mint());
+        r.register(a, Role::Cognition, None, None, String::new());
+        r.register(b, Role::Worker, None, Some(a), String::new());
+
+        // Mail present: it is taken, and the inbox stays open for more.
+        r.send(a, &Address::Session(b), "one more thing".into());
+        let mail = r.take_pending_or_close(b).expect("mail wins over the close");
+        assert_eq!(mail[0].text, "one more thing");
+        assert_eq!(
+            r.send(a, &Address::Session(b), "and another".into()),
+            Delivery::Delivered,
+            "taking mail must not close the mailbox"
+        );
+
+        // Drain, then find it empty: now it closes, and later sends are told so.
+        r.take_pending(b);
+        assert!(r.take_pending_or_close(b).is_none());
+        assert_eq!(
+            r.send(a, &Address::Session(b), "too late".into()),
+            Delivery::Unknown,
+            "a closed inbox reports Unknown so the sender starts something fresh"
+        );
+    }
+
+    #[test]
+    fn a_notifier_is_reachable_after_registration() {
+        let r = reg();
+        let a = mint();
+        r.register(a, Role::Reaction, Some(Scene("boss".into())), None, String::new());
+        assert!(r.notifier(a).is_some());
+        assert!(r.notifier(9_999).is_none());
     }
 
     /// The sender must be able to tell the difference between "it arrived" and "there was
@@ -395,8 +481,8 @@ mod tests {
         r.register(dl, Role::Deliberation, Some(scene.clone()), None, String::new());
 
         assert_eq!(r.send(cog, &Address::Scene(scene), "news".into()), Delivery::Delivered);
-        assert_eq!(r.take_pending(rx).as_deref(), Some("news"));
-        assert_eq!(r.take_pending(dl), None, "the scene's address is its voice");
+        assert_eq!(r.take_pending(rx).expect("delivered")[0].text, "news");
+        assert!(r.take_pending(dl).is_none(), "the scene's address is its voice");
     }
 
     #[test]
