@@ -17,13 +17,12 @@
 //! channel: expression (speech and views alike) stays the reactor's, so a worker
 //! reports what it found and the reactor decides what to show.
 //!
-//! The collaboration bus is asynchronous and worker→reactor here: a worker runs
-//! to completion (or until it must ask something), then posts a [`WorkerReport`]
-//! back into the scene's queue as a `LoopInput::Worker`. It never interrupts live
-//! speech — the report waits its turn like any other input, and the next turn
-//! folds it into what the mind says. Questions are *non-blocking*: a worker that
-//! hits ambiguity flags it via the `ask` tool and then proceeds on its best
-//! assumption (fix-forward), so the floor is never held waiting on an answer.
+//! The collaboration bus is asynchronous: a worker runs to completion, then posts a
+//! [`WorkerReport`] to whoever asked for the work. It never interrupts live speech —
+//! the report waits its turn like any other input. Mid-flight it may reach its owner
+//! with `send_message`, the one verb, which does not wait for a reply; a worker that
+//! hits ambiguity notes its best assumption and keeps going (fix-forward), so the
+//! floor is never held waiting on an answer.
 //!
 //! Progress-checking is emergent rather than wired: each worker streams its
 //! output into an inspectable transcript, and [`WorkerRegistry::render_status`]
@@ -76,31 +75,11 @@ fn mint_session_id() -> SessionId {
 /// session with full context; a later one falls back to a fresh worker.
 const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 
-/// A worker's follow-up mailbox: a single pending message the registry merges into
-/// while the worker is busy, drained by the drive loop the moment it goes free. This
-/// is the worker-side analog of the reactor's commit-after-quiet — every follow-up
-/// that lands while the session is occupied is *concatenated* into this one message,
-/// so the worker picks up all of it in a single next prompt rather than running each
-/// as its own round-trip. No LLM-smart merge: the worker's own model parses the
-/// combined text. The `notify` wakes the drive loop when it's idle-waiting; `closed`
-/// (flipped under the same lock the drive loop takes) lets a racing follow-up tell
-/// the worker has shut down and fall back to a fresh spawn.
-#[derive(Default)]
-struct MailboxState {
-    pending: Option<String>,
-    closed: bool,
-}
-
-struct FollowMailbox {
-    state: std::sync::Mutex<MailboxState>,
-    notify: Notify,
-}
-
-impl FollowMailbox {
-    fn new() -> Arc<Self> {
-        Arc::new(Self { state: std::sync::Mutex::new(MailboxState::default()), notify: Notify::new() })
-    }
-}
+// A worker used to keep a private follow-up mailbox here, beside the switchboard's.
+// Two mailboxes for one session is one mailbox too many: whichever the sender picked
+// decided whether the message was ever read, and only one of them had a reader. The
+// switchboard's inbox is now the only one — it already merges a burst, already carries
+// the sender, and already knows how to shut itself when a session idles out.
 
 const WORKER_SYSTEM_PROMPT: &str = "You are a working session spun up by a \
 human-interface agent to carry out one specific delegated task. You have full \
@@ -244,12 +223,6 @@ pub(super) enum WorkerReportKind {
     Done(String),
     /// The task errored out (session open failed, prompt failed, etc.).
     Failed(String),
-    /// A non-blocking question raised mid-flight; the worker keeps going.
-    Question(String),
-    /// Something the worker handed to the voice mid-work via the `surface` tool —
-    /// an interim finding, progress, or an unprompted heads-up — while it keeps
-    /// working. Interim, never terminal; the worker's drive loop is untouched.
-    Surfaced(String),
 }
 
 /// One live working session. The registry holds it to inspect its transcript, to
@@ -263,10 +236,6 @@ struct Worker {
     /// The worker's accumulated (channel-stripped) output, grown by its drive
     /// task and read by [`WorkerRegistry::render_status`].
     transcript: Arc<Mutex<String>>,
-    /// Follow-up mailbox. Merging a task in resumes the warm session with full
-    /// context; if the worker is still mid-prompt, the task is concatenated into the
-    /// pending message and picked up whole when it next goes free.
-    mailbox: Arc<FollowMailbox>,
     /// Whether the drive loop is mid-prompt right now, vs. idle and resumable.
     busy: Arc<AtomicBool>,
     /// The session that created this one, and to which its work reports.
@@ -387,7 +356,16 @@ impl WorkerRegistry {
 
         let transcript = Arc::new(Mutex::new(String::new()));
         let busy = Arc::new(AtomicBool::new(true));
-        let mailbox = FollowMailbox::new();
+        // Announce it to the switchboard *before* the drive task starts, so the inbox
+        // exists the instant anything can address it. The handle it returns is the
+        // worker's only mailbox.
+        let mail = registry::global().register(
+            id,
+            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
+            Some(self.scene.clone()),
+            owner,
+            task.clone(),
+        );
         let drive = tokio::spawn(drive_worker(
             id,
             task.clone(),
@@ -396,20 +374,11 @@ impl WorkerRegistry {
             self.inbound.clone(),
             observatory,
             self.scene.clone(),
-            mailbox.clone(),
+            mail.clone(),
             busy.clone(),
             is_deliberation,
             owner,
         ));
-
-        // Announce it to the switchboard, so it can be addressed and read.
-        registry::global().register(
-            id,
-            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
-            Some(self.scene.clone()),
-            owner,
-            task.clone(),
-        );
 
 
         self.workers.insert(
@@ -417,7 +386,6 @@ impl WorkerRegistry {
             Worker {
                 task,
                 transcript,
-                mailbox,
                 busy,
                 owner,
                 drive,
@@ -449,23 +417,14 @@ impl WorkerRegistry {
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
         if let Some(w) = self.workers.get_mut(&id) {
-            // Merge under the mailbox lock — the same critical section the drive
-            // loop takes when deciding to close, so we can't lose a task to a
-            // simultaneously-closing worker.
-            let accepted = {
-                let mut st = w.mailbox.state.lock().unwrap();
-                if st.closed {
-                    false
-                } else {
-                    st.pending = Some(match st.pending.take() {
-                        Some(prev) => format!("{prev}\n\n{task}"),
-                        None => task.clone(),
-                    });
-                    true
-                }
-            };
+            // Into the switchboard inbox, which decides the race for us: a worker
+            // that closed itself between our lookup and this send reports `Unknown`
+            // rather than swallowing the task.
+            let accepted = matches!(
+                registry::global().post(id, task.clone()),
+                registry::Delivery::Delivered
+            );
             if accepted {
-                w.mailbox.notify.notify_one();
                 w.task = task.clone();
                 reactor
                     .inner
@@ -516,45 +475,6 @@ impl WorkerRegistry {
         });
     }
 
-    /// Build a question report for the `ask` tool, attributing it to the worker's
-    /// task. The MCP `ask` handler only knows the worker id; the loop owns the
-    /// registry, so it resolves the task here. An ask from an unknown id (already
-    /// reaped, say) still surfaces, tagged as such.
-    pub(super) fn question_report(&self, id: SessionId, question: String) -> WorkerReport {
-        let task = self
-            .workers
-            .get(&id)
-            .map(|w| w.task.clone())
-            .unwrap_or_else(|| "(finished worker)".to_string());
-        WorkerReport {
-            id,
-            task,
-            kind: WorkerReportKind::Question(question),
-            is_deliberation: self.deliberation == Some(id),
-            owner: self.workers.get(&id).and_then(|w| w.owner),
-        }
-    }
-
-    /// Build a surfaced report for the `surface` tool — something a worker handed to
-    /// the voice mid-work. Like [`question_report`](Self::question_report) it resolves
-    /// the worker's task and flags whether it's Deliberation (whose surfaced word is
-    /// must-relay). The loop folds the returned report in as a turn-driving signal, so
-    /// the voice gets a chance to say it even with no human input.
-    pub(super) fn surface_report(&self, id: SessionId, message: String) -> WorkerReport {
-        let task = self
-            .workers
-            .get(&id)
-            .map(|w| w.task.clone())
-            .unwrap_or_else(|| "(finished worker)".to_string());
-        WorkerReport {
-            id,
-            task,
-            kind: WorkerReportKind::Surfaced(message),
-            is_deliberation: self.deliberation == Some(id),
-            owner: self.workers.get(&id).and_then(|w| w.owner),
-        }
-    }
-
     /// Hand `text` to session `id` as if it were a follow-up, returning whether the
     /// session was still there to take it.
     ///
@@ -567,18 +487,7 @@ impl WorkerRegistry {
     /// rather than drop the report — losing finished work because its requester shut
     /// down is worse than surfacing it one rung too high.
     pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> bool {
-        let Some(w) = self.workers.get_mut(&id) else { return false };
-        let mut st = w.mailbox.state.lock().unwrap();
-        if st.closed {
-            return false;
-        }
-        st.pending = Some(match st.pending.take() {
-            Some(prev) => format!("{prev}\n\n{text}"),
-            None => text,
-        });
-        drop(st);
-        w.mailbox.notify.notify_one();
-        true
+        matches!(registry::global().post(id, text), registry::Delivery::Delivered)
     }
 
     /// A compact, stable-ordered view of every live worker — its id, task, whether
@@ -596,7 +505,7 @@ impl WorkerRegistry {
         for id in ids {
             let w = &self.workers[id];
             let busy = w.busy.load(Ordering::Relaxed);
-            let queued = w.mailbox.state.lock().unwrap().pending.is_some();
+            let queued = registry::global().status(*id).is_some_and(|st| st.queued);
             let tail = {
                 let t = w.transcript.lock().await;
                 tail_chars(&t, 240)
@@ -663,24 +572,6 @@ there (plainly, no jargon), rather than going silent.",
             report.task,
             err.trim()
         ),
-        WorkerReportKind::Surfaced(msg) if report.is_deliberation => format!(
-            "You have something to tell the person (from your own thinking on \"{}\") — \
-say it now, in your own plain words, if the moment's right:\n{}",
-            report.task,
-            msg.trim()
-        ),
-        WorkerReportKind::Surfaced(msg) => format!(
-            "working session {} (task \"{}\") surfaced: {}",
-            report.id,
-            report.task,
-            msg.trim()
-        ),
-        WorkerReportKind::Question(q) => format!(
-            "working session {} (task \"{}\") asks: {}",
-            report.id,
-            report.task,
-            q.trim()
-        ),
     }
 }
 
@@ -693,8 +584,6 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
     let (verb, body) = match &report.kind {
         WorkerReportKind::Done(answer) => ("finished", answer.trim()),
         WorkerReportKind::Failed(err) => ("failed", err.trim()),
-        WorkerReportKind::Question(q) => ("asks", q.trim()),
-        WorkerReportKind::Surfaced(msg) => ("surfaced", msg.trim()),
     };
     let who = if report.is_deliberation {
         "deliberation".to_string()
@@ -716,7 +605,7 @@ async fn drive_worker(
     inbound: mpsc::Sender<LoopInput>,
     observatory: Observatory,
     scene: Scene,
-    mailbox: Arc<FollowMailbox>,
+    mail: Arc<Notify>,
     busy: Arc<AtomicBool>,
     is_deliberation: bool,
     owner: Option<SessionId>,
@@ -729,15 +618,12 @@ async fn drive_worker(
             Err(err) => WorkerReportKind::Failed(err.to_string()),
         };
         busy.store(false, Ordering::Relaxed);
+        // The turn is over — say so, or `session_status` reports every session as
+        // permanently mid-turn once it has taken any mail at all.
+        registry::global().finish_turn(id);
         let (state, summary_chars) = match &kind {
             WorkerReportKind::Done(answer) => (WorkerState::Done, answer.chars().count()),
             WorkerReportKind::Failed(err) => (WorkerState::Failed, err.chars().count()),
-            // Questions and surfaced findings are interim, never terminal — a drive
-            // pass only ever ends in Done or Failed, so these arms are unreachable,
-            // but keep the match total.
-            WorkerReportKind::Question(_) | WorkerReportKind::Surfaced(_) => {
-                (WorkerState::Running, 0)
-            }
         };
         observatory
             .record(&scene, EventKind::WorkerFinished { id, state, summary_chars })
@@ -749,9 +635,9 @@ async fn drive_worker(
         }
 
         // Stay warm for a follow-up; pick up everything that accumulated in the
-        // mailbox as one merged prompt. Close (return, dropping the session) once
-        // idle past the TTL.
-        match wait_for_followup(&mailbox).await {
+        // inbox as one prompt. Close (return, dropping the session) once idle past
+        // the TTL.
+        match wait_for_mail(id, &mail).await {
             Some(next) => task = next,
             None => {
                 tracing::info!(scene = %scene, worker = id, "working session idle past ttl; closing");
@@ -761,42 +647,59 @@ async fn drive_worker(
     }
 }
 
-/// Block until the worker has a follow-up to run, returning the merged pending
-/// message — or `None` if it sat idle past [`WORKER_IDLE_TTL`], in which case the
-/// mailbox is flipped `closed` (under the same lock `follow_up` takes) so a racing
-/// follow-up spawns a fresh worker instead of merging into a dead one.
-async fn wait_for_followup(mailbox: &FollowMailbox) -> Option<String> {
+/// Block until this session has mail to act on, returning it as one prompt — or
+/// `None` if it sat idle past [`WORKER_IDLE_TTL`], in which case the inbox is now
+/// closed, so a racing sender is told `Unknown` and starts a fresh session rather
+/// than posting into a dead one.
+///
+/// Everything waiting is taken together and rendered with its sender, because a
+/// worker may only answer *whoever asked*, and it cannot answer an address it was
+/// never given.
+async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
     loop {
-        // Fast path: take whatever's already merged in.
-        {
-            let mut st = mailbox.state.lock().unwrap();
-            if let Some(task) = st.pending.take() {
-                return Some(task);
-            }
+        if let Some(batch) = registry::global().take_pending(id) {
+            return Some(render_inbox(&batch));
         }
-        // Nothing pending — wait for a nudge or the idle TTL. `Notify` holds a
-        // permit if `notify_one` raced ahead of this `notified()`, so no wakeup is
-        // lost between the take above and the wait here.
-        match timeout(WORKER_IDLE_TTL, mailbox.notify.notified()).await {
-            Ok(()) => continue, // nudged — loop back to take the pending task
+        // Nothing pending — wait for a nudge or the idle TTL. `Notify` holds a permit
+        // if `notify_one` raced ahead of this `notified()`, so no wakeup is lost
+        // between the take above and the wait here.
+        match timeout(WORKER_IDLE_TTL, mail.notified()).await {
+            Ok(()) => continue, // nudged — loop back and take it
             Err(_) => {
-                // Idle past the TTL. Decide to close, but yield to a follow-up that
-                // landed in the meantime — both resolved under the one lock.
-                let mut st = mailbox.state.lock().unwrap();
-                if let Some(task) = st.pending.take() {
-                    return Some(task);
-                }
-                st.closed = true;
-                return None;
+                // Idle past the TTL. Taking and closing are one act under one lock, so
+                // a follow-up that landed in the meantime still wins.
+                return registry::global()
+                    .take_pending_or_close(id)
+                    .map(|batch| render_inbox(&batch));
             }
         }
     }
 }
 
+/// A batch of inbox messages as the receiving session reads it.
+///
+/// Host-posted mail — a plain follow-up — is shown bare: tagging the next instruction
+/// with a return address reads as a second voice in the room, and there isn't one.
+/// Mail from another session keeps its address, because that id is how it is answered.
+fn render_inbox(batch: &[registry::Message]) -> String {
+    let mut out = String::new();
+    for m in batch {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        match m.from {
+            None => out.push_str(m.text.trim()),
+            Some(from) => {
+                let _ = write!(out, "(from session {from}) {}", m.text.trim());
+            }
+        }
+    }
+    out
+}
+
 /// Prompt the worker session with the task, streaming its output into the
-/// transcript, and return the full reply as the task's result. Questions are no
-/// longer parsed from the text — the worker raises them by calling the `ask`
-/// tool, which arrives on the loop's control channel out of band.
+/// transcript, and return the full reply as the task's result. Anything the worker
+/// wants to raise mid-flight it sends to its owner with the one verb, out of band.
 async fn run_worker(
     id: SessionId,
     task: &str,
@@ -813,6 +716,11 @@ async fn run_worker(
             Some(SessionUpdate::Text(text)) => {
                 full.push_str(&text);
                 transcript.lock().await.push_str(&text);
+                // The switchboard keeps a bounded tail of the same stream, so an owner
+                // can ask `session_messages` what this one has found without waiting
+                // for it to finish. Without this the tool answers "nothing yet" for
+                // the whole life of every session.
+                registry::global().record_output(id, &text);
                 // Mirror the live tail so the dashboard shows what the worker is
                 // doing right now.
                 observatory.worker_progress(scene, id, &full).await;

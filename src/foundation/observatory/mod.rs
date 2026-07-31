@@ -78,8 +78,6 @@ pub struct WorkerView {
     pub task: String,
     pub state: WorkerState,
     pub started_at: DateTime<Utc>,
-    /// Most recent `[[ask]]` the worker raised, if any (it kept going regardless).
-    pub last_question: Option<String>,
     /// A short tail of the worker's transcript, for an at-a-glance "what's it doing".
     pub transcript_tail: String,
 }
@@ -165,9 +163,6 @@ pub enum EventKind {
     /// again on the same session.
     WorkerResumed { id: u64, task: String },
     WorkerFinished { id: u64, state: WorkerState, summary_chars: usize },
-    WorkerQuestion { id: u64, question: String },
-    /// A worker handed something to the voice mid-work (the `surface` tool).
-    WorkerSurfaced { id: u64, message: String },
     AlarmScheduled { note: String, delay_s: u64 },
     AlarmFired { note: String },
 }
@@ -355,7 +350,6 @@ impl Observatory {
                     task: task.clone(),
                     state: WorkerState::Running,
                     started_at: now,
-                    last_question: None,
                     transcript_tail: String::new(),
                 });
             }
@@ -363,31 +357,19 @@ impl Observatory {
                 if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
                     w.state = WorkerState::Running;
                     w.task = task.clone();
-                    w.last_question = None;
                 } else {
                     view.workers.push(WorkerView {
                         id: *id,
                         task: task.clone(),
                         state: WorkerState::Running,
                         started_at: now,
-                        last_question: None,
-                        transcript_tail: String::new(),
+                            transcript_tail: String::new(),
                     });
                 }
             }
             EventKind::WorkerFinished { id, state, .. } => {
                 if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
                     w.state = *state;
-                }
-            }
-            EventKind::WorkerQuestion { id, question } => {
-                if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
-                    w.last_question = Some(question.clone());
-                }
-            }
-            EventKind::WorkerSurfaced { id, message } => {
-                if let Some(w) = view.workers.iter_mut().find(|w| w.id == *id) {
-                    w.last_question = Some(message.clone());
                 }
             }
             EventKind::AlarmScheduled { note, delay_s } => {
@@ -537,12 +519,10 @@ mod tests {
         let s = scene();
         obs.record(&s, EventKind::WorkerSpawned { id: 1, task: "research X".into() }).await;
         obs.worker_progress(&s, 1, "looking into it...").await;
-        obs.record(&s, EventKind::WorkerQuestion { id: 1, question: "which region?".into() }).await;
         let v = &obs.snapshot().await[0];
         assert_eq!(v.workers.len(), 1);
         assert_eq!(v.workers[0].state, WorkerState::Running);
         assert_eq!(v.workers[0].transcript_tail, "looking into it...");
-        assert_eq!(v.workers[0].last_question.as_deref(), Some("which region?"));
 
         obs.record(
             &s,

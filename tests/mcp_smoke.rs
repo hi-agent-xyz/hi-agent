@@ -115,11 +115,18 @@ async fn tools_list_is_role_gated() {
     .await
     .expect("json");
     let names = tool_names(&worker);
-    assert!(names.contains(&"ask".to_string()), "got {names:?}");
+    // One verb reaches another agent, and it is the only one.
+    assert!(names.contains(&"send_message".to_string()), "got {names:?}");
     assert!(names.contains(&"look".to_string()), "got {names:?}");
     assert!(names.contains(&"act".to_string()), "got {names:?}");
     assert!(!names.contains(&"say".to_string()), "worker must not see say");
-    assert!(!names.contains(&"delegate".to_string()), "worker must not see delegate");
+    // The retired channel, in all three of its names. A worker that can still reach
+    // the voice by a second route is a worker that will, and then two paths are live.
+    for gone in ["ask", "surface", "delegate"] {
+        assert!(!names.contains(&gone.to_string()), "`{gone}` is retired; got {names:?}");
+    }
+    // Only the sceneless rungs make workers.
+    assert!(!names.contains(&"create_worker".to_string()), "got {names:?}");
 }
 
 #[tokio::test]

@@ -76,6 +76,7 @@ use tokio::time::{Instant, sleep_until, timeout};
 use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::{AgentLayer, SessionRole};
 use crate::foundation::config;
+use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
 use crate::mind::memory::{Memory, snapshot};
 use crate::foundation::observatory::{EventKind, Observatory, SessionKind};
@@ -468,6 +469,10 @@ enum LoopInput {
     /// A host pulse firing — the recurring moment of self-attention. Carries
     /// bare situational facts; what to do with such a moment is core.md's job.
     Pulse { note: String },
+    /// Mail from another part of the agent, addressed to this scene. It drives a
+    /// turn on its own — that is what makes a message *reach* the person rather
+    /// than sit in a mailbox until they happen to say something next.
+    Mail(Vec<crate::foundation::registry::Message>),
 }
 
 /// One fired self-alarm, handed to the mind under "New signals".
@@ -1097,16 +1102,17 @@ impl Reactor {
 enum Woke {
     Inbound(Option<LoopInput>),
     Control(Option<SceneControl>),
+    /// Mail landed in this scene's Reaction inbox.
+    Mail,
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
 }
 
-/// Apply one tool control command. Delegate and alarm are side-effects that run
-/// without a turn (returns `None`); a worker `ask` becomes a question report the
-/// loop folds into its next turn (returns `Some`). Worker-registry and alarm
-/// state are the loop's own, so this is the only place off-loop tool calls touch
-/// them — through the control channel, no locking.
+/// Apply one tool control command. Both are side-effects that run without a turn.
+/// The live-worker map and the alarm list are the loop's own state, so this is the
+/// only place an off-loop tool call touches them — through the control channel, no
+/// locking.
 async fn apply_control(
     reactor: &Reactor,
     scene: &Scene,
@@ -1115,40 +1121,15 @@ async fn apply_control(
     ctl: SceneControl,
 ) -> Option<LoopInput> {
     match ctl {
-        SceneControl::Delegate { task, worker, owner } => {
-            let outcome = match worker {
-                // An explicit `delegate` is a plain task worker, never Deliberation —
-                // Deliberation is driven only through `deliberate`, which tags its reports.
-                Some(id) => workers.follow_up(reactor, id, task, false, owner).await,
-                None => workers.spawn(reactor, task, owner).await,
-            };
-            if let Err(err) = outcome {
-                tracing::warn!(scene = %scene, error = %err, "failed to delegate working session");
+        SceneControl::CreateWorker { task, owner } => {
+            if let Err(err) = workers.spawn(reactor, task, owner).await {
+                tracing::warn!(scene = %scene, error = %err, "failed to create a working session");
             }
             None
         }
         SceneControl::Alarm { delay, note } => {
             schedule_alarm(reactor, alarms, scene, &delay, &note).await;
             None
-        }
-        SceneControl::WorkerAsk { id, question } => {
-            reactor
-                .inner
-                .observatory
-                .record(scene, EventKind::WorkerQuestion { id, question: question.clone() })
-                .await;
-            Some(LoopInput::Worker(workers.question_report(id, question)))
-        }
-        SceneControl::WorkerSurface { id, message } => {
-            reactor
-                .inner
-                .observatory
-                .record(scene, EventKind::WorkerSurfaced { id, message: message.clone() })
-                .await;
-            // Return it as a turn-driving signal (like a worker question), so the loop
-            // breaks 'wait and runs a turn — the voice gets to say it even with no human
-            // input. This is the mechanism for deliberation-initiated speech.
-            Some(LoopInput::Worker(workers.surface_report(id, message)))
         }
     }
 }
@@ -1185,7 +1166,25 @@ async fn per_scene_loop(
     // wake — time passing — on top of an incoming signal; see the `select!` below.
     let mut alarms = Alarms::new();
 
-    tracing::info!(scene = %scene, "reactor per-scene loop up");
+    // The scene's address in the switchboard. **Registered once, here, for as long as
+    // this loop lives** — not per session open. A scene is one conversation and has one
+    // voice; the underlying session rotates beneath it (cold reopen, hot swap) and that
+    // is an implementation detail nothing outside should be able to observe. Registering
+    // at session-open minted a second Reaction for the same scene on every reopen, and
+    // `Address::Scene` then resolved to whichever the lookup happened to find first.
+    // Scope-bound: released on every way out of this loop, including the ones added
+    // after this line was written.
+    let voice = registry::register_scoped(
+        registry::mint(),
+        registry::Role::Reaction,
+        Some(scene.clone()),
+        None,
+        "the scene's voice".to_string(),
+    );
+    let voice_id = voice.id();
+    let voice_mail = voice.mail.clone();
+
+    tracing::info!(scene = %scene, voice = voice_id, "reactor per-scene loop up");
 
     // No warm-up: the reactor session opens lazily on its first turn (a subprocess
     // spawn + system-prompt prime would only stall that first turn behind it). The
@@ -1237,12 +1236,14 @@ async fn per_scene_loop(
                 Some(deadline) => tokio::select! {
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
+                    _ = voice_mail.notified() => Woke::Mail,
                     _ = sleep_until(deadline) => Woke::Timer,
                     _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
                 None => tokio::select! {
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
+                    _ = voice_mail.notified() => Woke::Mail,
                     _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
             };
@@ -1263,6 +1264,27 @@ async fn per_scene_loop(
                 Woke::Shutdown => {
                     tracing::info!(scene = %scene, "shutdown requested; exiting per-scene loop");
                     return;
+                }
+                // Mail for the scene's voice. It drives a turn like any other
+                // reason to speak — that is what makes `send_message(to: scene)`
+                // actually reach the person rather than wait for them to say
+                // something next. A spurious wake (the notify raced a take) finds
+                // an empty inbox and simply goes back to waiting.
+                Woke::Mail => {
+                    if let Some(mail) = registry::global().take_pending(voice_id) {
+                        enqueue(
+                            &reactor,
+                            &scene,
+                            &mut workers,
+                            &mut batch,
+                            LoopInput::Mail(mail),
+                        )
+                        .await;
+                        registry::global().finish_turn(voice_id);
+                        if !down {
+                            break 'wait;
+                        }
+                    }
                 }
                 // The keepalive sender means this is effectively unreachable; treat
                 // a closed control channel as "nothing to apply" and keep waiting.
@@ -1736,20 +1758,6 @@ async fn open_reactor_session(reactor: &Reactor, scene: &Scene) -> anyhow::Resul
             )
             .await?,
     );
-    // A scene's address resolves to its Reaction — register it so anything above can
-    // reach the conversation without knowing a session id.
-    {
-        use crate::foundation::registry;
-        let id = registry::mint();
-        registry::global().register(
-            id,
-            registry::Role::Reaction,
-            Some(scene.clone()),
-            None,
-            "the scene's voice".to_string(),
-        );
-    }
-
     reactor
         .inner
         .observatory
@@ -1945,8 +1953,38 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Pulse { note } => {
                 let _ = writeln!(s, "{}", render_pulse(note));
             }
+            LoopInput::Mail(mail) => {
+                let _ = writeln!(s, "{}", render_mail(mail));
+            }
         }
     }
+    s
+}
+
+/// Mail from elsewhere in the agent, as the voice sees it.
+///
+/// Each message names the session it came from, because that id **is** the reply
+/// address: `send_message` back to it and the answer lands where it was asked for.
+/// Framed as something the agent already knows rather than something someone told
+/// it — there is no colleague here, and the voice must never speak of one.
+fn render_mail(mail: &[crate::foundation::registry::Message]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    for m in mail {
+        match m.from {
+            Some(from) => {
+                let _ = writeln!(
+                    s,
+                    "(from your own background work, session {from}) {}",
+                    m.text.trim()
+                );
+            }
+            None => {
+                let _ = writeln!(s, "{}", m.text.trim());
+            }
+        }
+    }
+    s.truncate(s.trim_end().len());
     s
 }
 
@@ -1983,6 +2021,8 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
         // delivers. Same channel, different hand on it.
         LoopInput::Alarm(a) => Some((Channel::Clock, Origin::Reactor, render_alarm(a))),
         LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
+        // Mail crosses no wire, so this is its only chance to be written down.
+        LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, render_mail(mail))),
     }
 }
 

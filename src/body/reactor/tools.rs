@@ -18,39 +18,32 @@ use crate::types::{Geometry, Scene};
 
 use super::sequencer::Beat;
 
-/// One command the MCP tool server routes to a scene's reactor loop. Delegate and
-/// alarm are pure side-effects applied without a spoken turn; a worker `ask`
-/// becomes a question report the loop folds into its next turn (fix-forward — the
-/// worker never waits on an answer).
+/// One command the MCP tool server routes to a scene's reactor loop.
+///
+/// Once there were four: two for dispatching work and two for a worker to reach the
+/// voice. The reaching ones are gone — a worker addresses its owner with the one verb
+/// now, through the switchboard, which needs no per-scene channel because it is not
+/// per-scene. What is left here is what genuinely belongs to *this scene's loop*
+/// because the loop owns the state it touches.
 #[derive(Debug)]
 pub enum SceneControl {
-    /// Spawn a working session for `task` (the `delegate` tool). When `worker` is
-    /// set, the task is handed to that still-warm working session to continue —
-    /// resuming it with full context instead of starting a fresh one; an unknown
-    /// or already-closed id falls back to spawning a new worker.
-    /// `owner` is the session that asked. A worker answers to the session that
-    /// created it, not to the scene it happens to run in — `None` only for the
-    /// scene loop's own legacy dispatch.
-    Delegate { task: String, worker: Option<u64>, owner: Option<u64> },
+    /// Start a working session for `task` (the `create_worker` tool), owned by the
+    /// session that asked.
+    ///
+    /// Creating a worker is the caller's decision but the loop's bookkeeping — the
+    /// live-session map is the loop's own state, so this crosses on the control
+    /// channel like everything else that touches it. `owner` is who the finished work
+    /// answers to; a worker belongs to the session that created it, never to the scene
+    /// it happens to run in.
+    CreateWorker { task: String, owner: Option<u64> },
     /// Schedule a self-wake after `delay` (e.g. `30s`, `20m`, `1h`) carrying
     /// `note` (the `alarm` tool). The delay is parsed loop-side; an unparseable
     /// one is dropped.
     Alarm { delay: String, note: String },
-    /// A working session raised a non-blocking question (the `ask` tool); `id`
-    /// names the worker so the loop can attribute it to its task.
-    WorkerAsk { id: u64, question: String },
-    /// A working session handed something to the voice mid-work (the `surface`
-    /// tool) — an interim finding, a heads-up, or something it raised on its own
-    /// initiative. `id` names the worker so the loop can tell whether it's the
-    /// scene's cognition (whose surfaced word is must-relay) or a task worker.
-    /// Unlike a pure side-effect, this drives a turn: it folds into the loop as a
-    /// signal, so the voice gets a chance to say it even with no human input — this
-    /// is how cognition brings something up like a person, not only in reply.
-    WorkerSurface { id: u64, message: String },
 }
 
 /// Per-scene handle the MCP handler dispatches to. Cheap to clone. Carries two
-/// senders: `control` for loop-applied side-effects (delegate/alarm/ask), and
+/// senders: `control` for loop-applied side-effects (the alarm), and
 /// `beats` for output (say/show_view) that the scene's sequencer renders directly
 /// — output bypasses the turn loop so it streams while the prompt is still
 /// running.

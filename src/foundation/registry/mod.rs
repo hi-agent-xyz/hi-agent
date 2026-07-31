@@ -121,7 +121,11 @@ pub struct Status {
 /// and "answer whoever asked" is the whole of a worker's addressing rule.
 #[derive(Debug, Clone)]
 pub struct Message {
-    pub from: SessionId,
+    /// Who to answer — or `None` when the **host** put this here rather than another
+    /// agent. A follow-up the scene loop hands down is not a message from a colleague,
+    /// and rendering it with a return address would put a second voice in a room that
+    /// has only one.
+    pub from: Option<SessionId>,
     pub text: String,
 }
 
@@ -150,6 +154,46 @@ struct Entry {
     output: String,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
+}
+
+/// A registration that ends when it goes out of scope.
+///
+/// The scene loop leaves by several paths — inbound closed, closed mid-settle, shutdown
+/// — and a registration released at only some of them is how a scene ends up with more
+/// than one voice, `Address::Scene` resolving to an arbitrary dead one. Rather than
+/// remember every exit, hold this: the exits are then not something anyone has to get
+/// right again, including whoever adds the next one.
+pub struct Registration {
+    id: SessionId,
+    /// Woken when mail lands. Cloneable and outlives nothing — dropping the handle is
+    /// what closes the registration, not dropping this.
+    pub mail: std::sync::Arc<Notify>,
+}
+
+impl Registration {
+    pub fn id(&self) -> SessionId {
+        self.id
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        global().unregister(self.id);
+    }
+}
+
+/// Register a session in the process switchboard, releasing it when the returned handle
+/// is dropped. The scope-bound form of [`Registry::register`]; prefer it for anything
+/// whose lifetime is a scope rather than a task.
+pub fn register_scoped(
+    id: SessionId,
+    role: Role,
+    scene: Option<Scene>,
+    owner: Option<SessionId>,
+    task: String,
+) -> Registration {
+    let mail = global().register(id, role, scene, owner, task);
+    Registration { id, mail }
 }
 
 /// The switchboard. One per process.
@@ -239,7 +283,28 @@ impl Registry {
         if entry.inbox.closed {
             return Delivery::Unknown;
         }
-        entry.inbox.pending.push(Message { from, text: message });
+        entry.inbox.pending.push(Message { from: Some(from), text: message });
+        entry.notify.notify_one();
+        Delivery::Delivered
+    }
+
+    /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of
+    /// the addressing rules that govern one agent reaching another.
+    ///
+    /// The rules exist to stop an agent talking somewhere it has no business; the host
+    /// is not an agent and is the thing that enforces them. This is how a follow-up
+    /// reaches a warm session, and it answers the one question the caller actually has:
+    /// is that session still able to take work, or has it closed and does this need a
+    /// fresh one?
+    pub fn post(&self, id: SessionId, text: String) -> Delivery {
+        let mut map = self.sessions.lock().unwrap();
+        let Some(entry) = map.get_mut(&id) else {
+            return Delivery::Unknown;
+        };
+        if entry.inbox.closed {
+            return Delivery::Unknown;
+        }
+        entry.inbox.pending.push(Message { from: None, text });
         entry.notify.notify_one();
         Delivery::Delivered
     }
@@ -369,7 +434,7 @@ mod tests {
         let mail = r.take_pending(b).expect("delivered");
         assert_eq!(mail.len(), 1);
         assert_eq!(mail[0].text, "go");
-        assert_eq!(mail[0].from, a, "the return address rides with the message");
+        assert_eq!(mail[0].from, Some(a), "the return address rides with the message");
         assert!(r.take_pending(b).is_none(), "taking drains the inbox");
     }
 
@@ -420,6 +485,57 @@ mod tests {
             Delivery::Unknown,
             "a closed inbox reports Unknown so the sender starts something fresh"
         );
+    }
+
+    /// The host is not an agent: it may hand work to any live session, and what it
+    /// hands over carries no return address because there is nobody to answer.
+    #[test]
+    fn the_host_can_post_without_being_a_sender() {
+        let r = reg();
+        let (owner, w) = (mint(), mint());
+        r.register(owner, Role::Deliberation, None, None, String::new());
+        r.register(w, Role::Worker, None, Some(owner), String::new());
+
+        // A worker may not address itself as an agent — that is not its owner.
+        assert_eq!(r.send(w, &Address::Session(w), "self".into()), Delivery::NotPermitted);
+        // The host posting the same follow-up is fine, and arrives anonymous.
+        assert_eq!(r.post(w, "keep going".into()), Delivery::Delivered);
+        let mail = r.take_pending(w).expect("posted");
+        assert_eq!(mail[0].from, None);
+        assert_eq!(mail[0].text, "keep going");
+
+        r.unregister(w);
+        assert_eq!(r.post(w, "too late".into()), Delivery::Unknown);
+    }
+
+    /// The bug this exists to make impossible: a scene loop leaves by several paths, and
+    /// a registration released at only some of them leaves a second voice behind for the
+    /// same scene — after which `Address::Scene` resolves to whichever the map hands back
+    /// first, which may be the dead one.
+    #[test]
+    fn a_scoped_registration_ends_with_its_scope() {
+        let scene = Scene("boss".into());
+        let sender = mint();
+        global().register(sender, Role::Cognition, None, None, String::new());
+
+        let id = {
+            let voice =
+                register_scoped(mint(), Role::Reaction, Some(scene.clone()), None, String::new());
+            let id = voice.id();
+            assert_eq!(
+                global().send(sender, &Address::Scene(scene.clone()), "hi".into()),
+                Delivery::Delivered
+            );
+            id
+        };
+
+        assert!(global().status(id).is_none(), "leaving the scope closed the registration");
+        assert_eq!(
+            global().send(sender, &Address::Scene(scene), "hi again".into()),
+            Delivery::Unknown,
+            "no stale voice is left answering for the scene"
+        );
+        global().unregister(sender);
     }
 
     #[test]

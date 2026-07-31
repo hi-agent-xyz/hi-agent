@@ -141,33 +141,6 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("worker") => vec![
             send_message_tool(),
             tool(
-                "ask",
-                "Raise a non-blocking question for the agent about an ambiguity in your task. \
-                 You do NOT wait for an answer — note your best assumption and keep working; \
-                 the agent sees the question and may steer you next time it speaks.",
-                json!({
-                    "type": "object",
-                    "properties": { "question": { "type": "string", "description": "The question to surface." } },
-                    "required": ["question"],
-                }),
-            ),
-            tool(
-                "surface",
-                "Hand something to the voice to tell the person — now, mid-work, without waiting \
-                 to finish. Use it the moment you have something worth their hearing before your \
-                 whole task is done: an interim finding, progress they'd want, a heads-up, or \
-                 something you noticed on your own that they'd want raised. The voice decides how \
-                 and when to say it (it reads the room), so write the substance plainly, not a \
-                 script — what you'd want passed on in your own words. You do NOT wait or speak \
-                 yourself; you keep working. This is how you bring something up on your own \
-                 initiative rather than only answering.",
-                json!({
-                    "type": "object",
-                    "properties": { "message": { "type": "string", "description": "What to pass to the voice to tell the person, in plain words." } },
-                    "required": ["message"],
-                }),
-            ),
-            tool(
                 "look",
                 "See the user's screen right now — returns a screenshot of the main display, plus \
                  its pixel size and the frontmost app. Use it to find where things are before you \
@@ -364,25 +337,6 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         _ => vec![
             say_tool(),
             show_view_tool(),
-            tool(
-                "delegate",
-                "Hand a heavy or long-running task (research, multi-step tool use, writing and \
-                 running code) to a background working session, so you stay free to keep talking. \
-                 It runs with your tools and memory but no voice; it reports back when done or if \
-                 it gets stuck, and you'll see that as a new signal to fold into what you say next. \
-                 To refine or build on what a worker just did, pass its `worker` id to continue \
-                 the SAME session — it keeps all its context (the files it wrote, the data it \
-                 gathered) and you avoid two workers clobbering the same work. The id of each \
-                 running worker is shown in your 'Working sessions' status.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "task": { "type": "string", "description": "A self-contained description of the work, with everything the worker needs to start." },
-                        "worker": { "type": "integer", "description": "Optional: the id of an existing working session to continue (from your 'Working sessions' status). Omit to spawn a fresh worker; set it to follow up on or refine that worker's own work." },
-                    },
-                    "required": ["task"],
-                }),
-            ),
             tool(
                 "alarm",
                 "Set yourself to come back to something after a delay — a reminder you promised, \
@@ -650,6 +604,15 @@ async fn dispatch_tool(
                 }
             }
         }
+        "create_worker" => {
+            let task = arg_str("task");
+            if task.trim().is_empty() {
+                return tool_error("create_worker requires a non-empty `task`");
+            }
+            sink.send(SceneControl::CreateWorker { task, owner: session_id })
+                .await
+                .map(|()| "working session starting; watch for its report")
+        }
         "session_status" => {
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
                 return tool_error("session_status requires a numeric `id`");
@@ -710,36 +673,12 @@ async fn dispatch_tool(
             };
             sink.show_view(arg_opt("id"), op, source, geometry).await.map(|()| "shown")
         }
-        "delegate" => {
-            let task = arg_str("task");
-            if task.trim().is_empty() {
-                return tool_error("delegate requires a non-empty `task`");
-            }
-            let worker = args.get("worker").and_then(Value::as_u64);
-            sink.send(SceneControl::Delegate { task, worker, owner: session_id }).await.map(|()| "delegated to a working session")
-        }
         "alarm" => {
             let delay = arg_str("delay");
             if delay.trim().is_empty() {
                 return tool_error("alarm requires a `delay`");
             }
             sink.send(SceneControl::Alarm { delay, note: arg_str("note") }).await.map(|()| "alarm scheduled")
-        }
-        "ask" => {
-            let Some(id) = session_id else {
-                return tool_error("ask is only available to working sessions");
-            };
-            sink.send(SceneControl::WorkerAsk { id, question: arg_str("question") }).await.map(|()| "question noted")
-        }
-        "surface" => {
-            let Some(id) = session_id else {
-                return tool_error("surface is only available to working sessions");
-            };
-            let message = arg_str("message");
-            if message.trim().is_empty() {
-                return tool_error("surface requires a non-empty `message`");
-            }
-            sink.send(SceneControl::WorkerSurface { id, message }).await.map(|()| "handed to the voice")
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };

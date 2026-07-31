@@ -23,7 +23,6 @@ export interface WorkerView {
   task: string;
   state: WorkerState;
   started_at: string;
-  last_question: string | null;
   transcript_tail: string;
 }
 
