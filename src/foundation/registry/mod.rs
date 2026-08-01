@@ -70,10 +70,52 @@ pub enum Role {
 /// hold one — a task holds a scene. A **scene** names a conversation and is stable; it
 /// resolves to that scene's Reaction, because a scene is where a person is spoken to and
 /// Reaction is the only thing that speaks there.
+///
+/// A **rung** names one of the sceneless agents. It exists because the other two forms
+/// cannot reach one: a sceneless rung has no scene by definition, and its session id is
+/// minted fresh every boot, so nothing durable and nothing in a prompt can hold it. That
+/// left the design's own "Deliberation hands up to Cognition" describable and impossible.
+/// There is at most one live session per sceneless role, which is what makes the role a
+/// sufficient address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Address {
     Session(SessionId),
     Scene(Scene),
+    Rung(Role),
+}
+
+/// The one rung reachable by name today. See [`Address::parse`] for why the list is not
+/// simply "every sceneless role".
+const ADDRESSABLE_RUNGS: [(&str, Role); 1] = [("cognition", Role::Cognition)];
+
+impl Address {
+    /// Parse an agent-facing address string — what an agent typed into `send_message`.
+    ///
+    /// Lives here rather than at the tool surface because this is routing, and routing
+    /// lives in one place; the host also reaches the registry by paths that never touch
+    /// MCP, and they must resolve a name the same way.
+    ///
+    /// **Reflection is deliberately not addressable**, though it is registered sceneless
+    /// and would resolve. Its pass is one `prompt` then `wait`, so nothing drains its
+    /// inbox: a send would report `Delivered` and the message would die with the pass.
+    /// A verb that reports success and delivers nothing is the exact failure `9e6ae45`
+    /// was written to remove. It joins this list when it has a reader.
+    ///
+    /// The cost, stated: a scene literally named `cognition` cannot be addressed. Same
+    /// shape as [`crate::mind::memory::layout::SESSIONS_DIR`] — a reserved word in a
+    /// namespace people also use — and the same answer: name it, own it, move on.
+    pub fn parse(to: &str) -> Address {
+        let to = to.trim();
+        if let Ok(id) = to.parse::<SessionId>() {
+            return Address::Session(id);
+        }
+        for (name, role) in ADDRESSABLE_RUNGS {
+            if to.eq_ignore_ascii_case(name) {
+                return Address::Rung(role);
+            }
+        }
+        Address::Scene(Scene(to.to_string()))
+    }
 }
 
 /// What happened to a message — **delivery, never a response.** `send` does not wait for
@@ -286,6 +328,17 @@ impl Registry {
                 let found = map.iter().find(|(_, e)| {
                     e.role == Role::Reaction && e.scene.as_ref() == Some(scene)
                 });
+                match found {
+                    Some((id, _)) => *id,
+                    None => return (Delivery::Unknown, None),
+                }
+            }
+            // `scene.is_none()` is the whole discriminator, and it is not redundant with
+            // the role: a role alone would also match the per-scene rungs if one were
+            // ever added to the list. Sceneless is what makes there be exactly one.
+            Address::Rung(role) => {
+                let found =
+                    map.iter().find(|(_, e)| e.role == *role && e.scene.is_none());
                 match found {
                     Some((id, _)) => *id,
                     None => return (Delivery::Unknown, None),
@@ -623,6 +676,78 @@ mod tests {
         assert_eq!(r.send(cog, &Address::Scene(scene), "news".into()), Delivery::Delivered);
         assert_eq!(r.take_pending(rx).expect("delivered")[0].text, "news");
         assert!(r.take_pending(dl).is_none(), "the scene's address is its voice");
+    }
+
+    /// The gap that made "Deliberation hands up to Cognition" describable and impossible:
+    /// a sceneless rung has no scene, and its id is minted fresh each boot, so neither of
+    /// the other two address forms can reach it.
+    #[test]
+    fn a_rung_resolves_to_the_sceneless_session_of_that_role() {
+        let r = reg();
+        let (dl, cog) = (mint(), mint());
+        let scene = Scene("boss".into());
+        r.register(dl, Role::Deliberation, Some(scene), None, String::new());
+        r.register(cog, Role::Cognition, None, None, "thinking".into());
+
+        assert_eq!(
+            r.send(dl, &Address::Rung(Role::Cognition), "a real errand".into()),
+            Delivery::Delivered
+        );
+        assert_eq!(r.take_pending(cog).expect("delivered")[0].text, "a real errand");
+    }
+
+    /// Nothing live at that rung reads as `Unknown`, the same as an absent scene — the
+    /// sender is told, rather than the message vanishing into a name that looks routable.
+    #[test]
+    fn a_rung_with_no_live_session_is_unknown() {
+        let r = reg();
+        let a = mint();
+        r.register(a, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
+        assert_eq!(
+            r.send(a, &Address::Rung(Role::Cognition), "anyone?".into()),
+            Delivery::Unknown
+        );
+    }
+
+    /// A per-scene session must never answer a rung address, or "one sceneless brain"
+    /// would silently become "whichever Deliberation the map yielded first".
+    #[test]
+    fn a_scened_session_never_answers_a_rung_address() {
+        let r = reg();
+        let (a, scened) = (mint(), mint());
+        r.register(a, Role::Reaction, Some(Scene("boss".into())), None, String::new());
+        // Same role, but it has a scene — so it is not the sceneless one.
+        r.register(scened, Role::Cognition, Some(Scene("boss".into())), None, String::new());
+        assert_eq!(
+            r.send(a, &Address::Rung(Role::Cognition), "hi".into()),
+            Delivery::Unknown
+        );
+    }
+
+    #[test]
+    fn parse_reads_ids_rungs_and_scenes() {
+        assert_eq!(Address::parse("42"), Address::Session(42));
+        assert_eq!(Address::parse(" 42 "), Address::Session(42));
+        assert_eq!(Address::parse("cognition"), Address::Rung(Role::Cognition));
+        assert_eq!(Address::parse("Cognition"), Address::Rung(Role::Cognition));
+        assert_eq!(Address::parse("boss"), Address::Scene(Scene("boss".into())));
+        assert_eq!(
+            Address::parse("alice@phone"),
+            Address::Scene(Scene("alice@phone".into()))
+        );
+    }
+
+    /// Reflection is registered sceneless and *would* resolve — but its pass is one
+    /// `prompt` then `wait`, so nothing drains its inbox. Naming it would make
+    /// `send_message` answer "delivered" and drop the message, which is the write-only
+    /// verb `9e6ae45` removed. It becomes addressable when it has a reader, not before.
+    #[test]
+    fn reflection_is_not_addressable_while_nothing_drains_it() {
+        assert_eq!(
+            Address::parse("reflection"),
+            Address::Scene(Scene("reflection".into())),
+            "a scene by that name at worst; never a rung"
+        );
     }
 
     #[test]

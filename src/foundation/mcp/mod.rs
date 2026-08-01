@@ -77,13 +77,15 @@ fn send_message_tool() -> Value {
         "Send a message to another agent session. One direction — it does not wait for a \
          reply, and the return value only tells you whether it was delivered. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
-         message so it knows where to reach you. `to` is either a session id (a number you \
-         were given when you created it, or the sender of a message you received) or a scene \
-         name, which reaches that conversation's voice.",
+         message so it knows where to reach you. `to` is one of three things: a session id (a \
+         number you were given when you created it, or the sender of a message you received); \
+         a scene name, which reaches that conversation's voice; or `cognition`, the shared \
+         brain that owns what is owed and hands work out — send it anything that is a real \
+         task rather than a quick answer.",
         json!({
             "type": "object",
             "properties": {
-                "to": { "type": "string", "description": "A session id, or a scene name." },
+                "to": { "type": "string", "description": "A session id, a scene name, or `cognition`." },
                 "message": { "type": "string", "description": "What you want them to know, in plain words." },
             },
             "required": ["to", "message"],
@@ -591,11 +593,11 @@ async fn dispatch_tool(
             if to.trim().is_empty() || message.trim().is_empty() {
                 return tool_error("send_message requires `to` and a non-empty `message`");
             }
-            // A bare number is a session; anything else names a scene.
-            let addr = match to.trim().parse::<u64>() {
-                Ok(id) => registry::Address::Session(id),
-                Err(_) => registry::Address::Scene(Scene(to.trim().to_string())),
-            };
+            // What the string means is the switchboard's to say, not this layer's — the
+            // host reaches the registry by paths that never come through MCP, and a name
+            // that resolved differently depending on which door it entered by would be a
+            // routing table with two copies.
+            let addr = registry::Address::parse(&to);
             let (delivery, to_session) =
                 registry::global().send_traced(from, &addr, message.clone());
 
