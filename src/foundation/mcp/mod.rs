@@ -333,6 +333,23 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // text (not a `say` tool) and gets exactly one expression tool — `show_view` —
         // to put a view a worker already built on screen. Nothing else; the heavy work
         // is delegated to workers in code, not via a tool.
+        // The shared brain. It delegates rather than does, so its surface is the
+        // switchboard and nothing else: hand work out, ask after it, read what came back.
+        //
+        // The ledger it owns needs no tool — a task is a plain facet on disk, and it has
+        // the adapter's own Read/Write. That is why "sole writer of the ledger" is a
+        // matter of which rung is *told* to write it, and why that instruction moving out
+        // of `deliberation.md` and into `cognition.md` is the whole of the handover.
+        //
+        // No `say`, no `show_view`: it proposes, Reaction voices. Enforced three ways
+        // that agree — absent here, refused at dispatch above, and its sink carries no
+        // sequencer to express through.
+        Some("cognition") => vec![
+            send_message_tool(),
+            create_worker_tool(),
+            session_status_tool(),
+            session_messages_tool(),
+        ],
         Some("reactor") => vec![say_tool(), show_view_tool(), send_message_tool()],
         // Fallback for an unheadered/unknown role — the legacy agentic reactor's full
         // toolset. No live role maps here after the reactor/cognition split, but keep
@@ -1643,9 +1660,30 @@ mod surface_tests {
 
     /// One dispatcher. A scene rung that could create workers would be a second one,
     /// spawning against Cognition unseen.
+    /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
+    /// legacy fallback, which handed it `say` and `show_view` — refused at dispatch — and
+    /// **not** `create_worker`, the one tool it exists to use. A rung with no arm is not
+    /// a rung with defaults; it is a rung with someone else's.
+    #[test]
+    fn cognition_holds_the_switchboard_and_nothing_else() {
+        let mut got = names(Some("cognition"));
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "create_worker".to_string(),
+                "send_message".to_string(),
+                "session_messages".to_string(),
+                "session_status".to_string(),
+            ],
+            "it delegates rather than does, and it has no mouth"
+        );
+    }
+
     #[test]
     fn only_the_sceneless_rungs_create_workers() {
         assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
+        assert!(names(Some("cognition")).contains(&"create_worker".to_string()));
         for role in [Some("reactor"), Some("worker")] {
             assert!(
                 !names(role).contains(&"create_worker".to_string()),

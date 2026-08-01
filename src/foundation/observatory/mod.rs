@@ -47,6 +47,7 @@ pub enum SessionKind {
     Worker,
     Summarizer,
     Reflection,
+    Cognition,
 }
 
 /// Live state of one ACP session in the mirror.
@@ -314,8 +315,13 @@ impl Observatory {
                 }
                 // Worker open is mirrored by WorkerSpawned; the summarizer and
                 // reflection passes are throwaways we don't surface as standing
-                // sessions.
-                SessionKind::Worker | SessionKind::Summarizer | SessionKind::Reflection => {}
+                // sessions. Cognition never reaches here at all — it is sceneless, so
+                // its events carry no scene and stop before the mirror. It appears in
+                // the event log, which is where a sceneless thing honestly belongs.
+                SessionKind::Worker
+                | SessionKind::Summarizer
+                | SessionKind::Reflection
+                | SessionKind::Cognition => {}
             },
             EventKind::SessionClosed { .. } => {
                 // Reactor close is rare (only error teardown); workers are removed

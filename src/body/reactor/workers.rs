@@ -440,7 +440,11 @@ impl WorkerRegistry {
 
         let observatory = reactor.inner.observatory.clone();
         observatory
-            .record(Some(&self.scene), EventKind::WorkerSpawned { id, task: task.clone() })
+            // A pseudo-scene is a routing tag, never a mirror key: Cognition hosts its
+            // workers under `*cognition*`, and passing that through would put a room
+            // nobody is in on the dashboard's scene list. The event still records — it
+            // just describes no conversation, which is the truth about it.
+            .record(self.mirror_scene(), EventKind::WorkerSpawned { id, task: task.clone() })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));
@@ -522,7 +526,7 @@ impl WorkerRegistry {
                 reactor
                     .inner
                     .observatory
-                    .record(Some(&self.scene), EventKind::WorkerResumed { id, task })
+                    .record(self.mirror_scene(), EventKind::WorkerResumed { id, task })
                     .await;
                 tracing::info!(scene = %self.scene, worker = id, "merged follow-up into working session");
                 return Ok(id);
@@ -558,6 +562,16 @@ impl WorkerRegistry {
 
     /// Forget workers whose drive task has finished, so the map doesn't grow.
     /// Their result already rode back as a report; this just drops the handle.
+    /// This registry's scene as a *mirror* key — `None` when it is a pseudo-scene.
+    ///
+    /// A worker pool is hosted under a scene, and since Cognition that scene is sometimes
+    /// `*cognition*`: a value the `/mcp` dispatch routes by and the logs label with, but
+    /// which names no conversation. The observatory's mirror is keyed by scene and its
+    /// entry is created on sight, so handing it one is enough to invent a room.
+    fn mirror_scene(&self) -> Option<&Scene> {
+        Some(&self.scene).filter(|s| !s.is_pseudo())
+    }
+
     pub(super) fn reap(&mut self) {
         self.workers.retain(|id, w| {
             let alive = !w.drive.is_finished();
@@ -722,7 +736,10 @@ async fn drive_worker(
             WorkerReportKind::Failed(err) => (WorkerState::Failed, err.chars().count()),
         };
         observatory
-            .record(Some(&scene), EventKind::WorkerFinished { id, state, summary_chars })
+            .record(
+                Some(&scene).filter(|s| !s.is_pseudo()),
+                EventKind::WorkerFinished { id, state, summary_chars },
+            )
             .await;
         let report = WorkerReport { id, task: task.clone(), kind, is_deliberation, owner };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {

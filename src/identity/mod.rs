@@ -42,6 +42,7 @@ const APPEARANCE_BASE: &str = include_str!("appearance.md");
 const AESTHETIC_BASE: &str = include_str!("aesthetic.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
 const DELIBERATION_BASE: &str = include_str!("deliberation.md");
+const COGNITION_BASE: &str = include_str!("cognition.md");
 
 /// Separator that introduces the operator's override layer. Placed after the
 /// bundled base so its instructions take precedence — the model honors the
@@ -77,7 +78,8 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     std::fs::write(dir.join("aesthetic.md"), compose_prompt(AESTHETIC_BASE, &dir, "aesthetic.local.md"))?;
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
     std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
-    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, speaking.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md)");
+    std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
+    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, speaking.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md)");
     Ok(())
 }
 
@@ -101,6 +103,27 @@ pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -
     };
     let target = crate::mind::memory::layout::scene_prompt_path(data_dir, scene);
     base.replace("{scene_memory}", &target.display().to_string())
+}
+
+/// **Cognition**'s role layer — the sceneless brain that owns the task ledger, hands
+/// work out, and never speaks (`docs/arch/agents.md#cognition`).
+///
+/// A layer, like Deliberation's: the caller appends it under
+/// [`character_seed`], which is what makes the rung *the agent* rather than a generic
+/// assistant. It carries the ledger pen — the instruction that lived in
+/// `deliberation.md` marked "for now, yours" until Cognition existed to take it back.
+///
+/// Nothing is interpolated here, unlike Deliberation's `{scene_memory}`. What Cognition
+/// carries forward arrives in the **window** with the projected ledger
+/// ([`crate::mind::memory::snapshot::agent_window`]), not in this layer — the same
+/// content in both places would be one copy going stale against the other, and the window
+/// is the half that is rebuilt every turn.
+pub async fn cognition_prompt(data_dir: &Path) -> String {
+    let path = data_dir.join("prompts").join("cognition.md");
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => COGNITION_BASE.to_string(),
+    }
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -484,6 +507,44 @@ mod soul_tests {
         assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
         assert_eq!(read("reflection.md"), REFLECTION_BASE);
         assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
+        assert_eq!(read("cognition.md"), COGNITION_BASE);
+    }
+
+    /// The handover, pinned from both ends. "Sole writer of the ledger" is not enforced
+    /// by any rail — it is enforced by exactly one prompt carrying the instruction. So
+    /// the thing that can silently go wrong is the instruction existing in two places, or
+    /// in none: two writers means one is wrong with no way to tell which, and none means
+    /// every promise the agent makes dies at the next restart.
+    #[test]
+    fn exactly_one_rung_is_told_to_write_the_ledger() {
+        assert!(
+            COGNITION_BASE.contains("only writer of the task ledger"),
+            "Cognition must be told the pen is its"
+        );
+        assert!(
+            !DELIBERATION_BASE.contains("goes in the task ledger"),
+            "Deliberation must not still be opening tasks"
+        );
+        // And what replaced it has to be strictly stronger than what it removed —
+        // Deliberation used to record the duty itself, so "you may hand up" would be a
+        // regression dressed as a handover.
+        assert!(
+            DELIBERATION_BASE.contains("Hand it up")
+                && DELIBERATION_BASE.contains("cognition"),
+            "Deliberation must be told where what's owed now goes"
+        );
+    }
+
+    /// A rung with no mouth must not be handed the words for one. Cognition proposes and
+    /// Reaction voices; a role layer that said "tell them" would have it try to speak
+    /// through a sink that carries no sequencer, and blame the tool.
+    #[test]
+    fn cognition_is_not_told_to_speak() {
+        assert!(COGNITION_BASE.contains("You do not speak"));
+        assert!(
+            !COGNITION_BASE.contains("`say`") && !COGNITION_BASE.contains("show_view"),
+            "no expression tools in a prompt for a rung that holds none"
+        );
     }
 
     /// The one thing in this prompt that can silently be wrong: the path. A relative

@@ -50,7 +50,15 @@ pub enum SceneControl {
 #[derive(Clone)]
 pub struct ToolSink {
     pub(super) control: mpsc::Sender<SceneControl>,
-    pub(super) beats: mpsc::Sender<Beat>,
+    /// The output sequencer — **`None` for a rung with no mouth.**
+    ///
+    /// Only a scene has somewhere for speech to go. Cognition registers a sink so its
+    /// workers have a home, and it has no sequencer, no audio, no screen; expressing
+    /// there is not "blocked", it is undefined. Making that an `Option` states it once
+    /// in the type instead of leaving it to two guards elsewhere agreeing — the tool
+    /// list and the role check at dispatch — which is the kind of arrangement that
+    /// holds until someone adds a third caller.
+    pub(super) beats: Option<mpsc::Sender<Beat>>,
 }
 
 impl ToolSink {
@@ -67,6 +75,8 @@ impl ToolSink {
     /// which paces it to TTS. Acks immediately — never waits on synthesis.
     pub async fn say(&self, text: String) -> anyhow::Result<()> {
         self.beats
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("this rung has no voice; there is nowhere to say it"))?
             .send(Beat::Say(text))
             .await
             .map_err(|_| anyhow::anyhow!("scene sequencer gone; say dropped"))
@@ -84,6 +94,8 @@ impl ToolSink {
         geometry: Option<Geometry>,
     ) -> anyhow::Result<()> {
         self.beats
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?
             .send(Beat::Show { id, op, source, geometry })
             .await
             .map_err(|_| anyhow::anyhow!("scene sequencer gone; show_view dropped"))
@@ -126,18 +138,20 @@ impl ToolRegistry {
     /// Chosen deterministically (lowest scene name) rather than arbitrarily, so a run
     /// is reproducible and a log names the same host twice.
     ///
-    /// **TODO — hosting is leaking into provenance, and this should go with the map it
-    /// exists to reach.** The borrowed scene does not stay a hosting detail: it becomes
-    /// the worker's `X-HI-Scene` header (so `watch`/`see` resolve to a stranger's
-    /// camera), the `{scene}` in its system prompt, and the scene its report is
-    /// journaled under — which then feeds *that* scene's episodes. The doc comment above
-    /// says the scene is not told; it is told, three ways.
+    /// **TODO — this now serves Reflection alone, and hosting still leaks into
+    /// provenance for it.** The borrowed scene does not stay a hosting detail: it
+    /// becomes the worker's `X-HI-Scene` header (so `watch`/`see` resolve to a
+    /// stranger's camera) and the scene its report is journaled under, feeding *that*
+    /// scene's episodes. The doc comment above says the scene is not told; it is told.
     ///
-    /// Latent, not live: `create_worker` is offered only to the sceneless rungs, and
-    /// Cognition does not exist yet. It becomes real the moment it does. The fix is to
-    /// take the origin scene as an explicit argument (as the reflection tools already
-    /// do) and to stop needing a host at all — see the TODO on `WorkerRegistry` in
-    /// `workers.rs`, which is why there is nothing to borrow.
+    /// **Cognition no longer comes through here** — it registers its own sink under
+    /// `*cognition*`, so the `registry.get(scene)` above it succeeds and this is never
+    /// reached. That is the shape of the fix for Reflection too: a rung that dispatches
+    /// work hosts its own workers rather than borrowing somebody's conversation. It
+    /// needs an inbox reader first, which is the same thing blocking it from being
+    /// addressable at all (`registry::Address::parse`).
+    ///
+    /// Still latent: Reflection holds `create_worker` and cannot yet call it usefully.
     pub async fn any_host(&self) -> Option<(Scene, ToolSink)> {
         let map = self.inner.lock().await;
         let scene = map.keys().min().cloned()?;

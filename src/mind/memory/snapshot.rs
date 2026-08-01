@@ -86,6 +86,34 @@ pub async fn window(memory: &Memory, scene: &Scene) -> String {
     ])
 }
 
+/// The window for a **sceneless** agent — what it must know without going to look.
+///
+/// The scene-shaped [`window`] cannot serve one: four of its five sections are a
+/// conversation's (the scene's brief, its recent tail, the proactivity read that only a
+/// voice can act on). What survives the loss of a scene is what belongs to the whole
+/// agent — the open-task ledger, and whatever this agent has written down for itself.
+///
+/// **Projected, not retrieved**, which is the whole reason this exists rather than a
+/// prompt line saying "read the tasks folder". Cognition is the ledger's writer, so a
+/// version of it that goes looking is a version that can miss a duty and never know —
+/// and invariant 4 exists because a missed duty is a silently broken promise. Reaction
+/// is projected-to because it is tools-off; Cognition is projected-to because it is the
+/// one that must not be wrong about this.
+///
+/// `agent` is a code-supplied name ([`layout::agent_prompt_path`]), never a user string.
+pub async fn agent_window(memory: &Memory, agent: &str) -> String {
+    let data_dir = memory.data_dir();
+    let carried = carried_forward(&layout::agent_prompt_path(data_dir, agent)).await;
+    let owed = match tasks::projection(data_dir).await {
+        Ok(text) => text,
+        Err(err) => {
+            tracing::warn!(error = %err, "open tasks unreadable; window goes without them");
+            String::new()
+        }
+    };
+    join(&[carried.as_str(), owed.as_str()])
+}
+
 /// The learned read on speaking up unprompted (`proactivity.md`), projected rather
 /// than fetched.
 ///
@@ -442,5 +470,56 @@ mod window_tests {
         let text = window(&memory, &scene()).await;
         assert!(!text.contains("watch the ops group"), "{text}");
         assert!(!text.contains("standing commitments"), "{text}");
+    }
+
+    /// Invariant 4 for the rung that writes the ledger. Cognition going to *look* for
+    /// what is owed is a Cognition that can miss a duty and never know it missed one —
+    /// so the open tasks arrive whether or not it thought to ask.
+    #[tokio::test]
+    async fn the_sceneless_window_projects_the_ledger_and_what_was_carried() {
+        use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+
+        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        owed.subject = "flash-cards".into();
+        write_task(dir.path(), &owed).await.unwrap();
+
+        let carried = layout::agent_prompt_path(dir.path(), "cognition");
+        tokio::fs::create_dir_all(carried.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&carried, "The ops group restart needs sudo; ask first.")
+            .await
+            .unwrap();
+
+        let text = agent_window(&memory, "cognition").await;
+        assert!(text.contains("Ship the flash cards"), "{text}");
+        assert!(text.contains("needs sudo"), "{text}");
+    }
+
+    /// Nothing of a *conversation* may leak into a sceneless window. The scene-shaped
+    /// sections are four fifths of `window`, and each one would be answering a question
+    /// about a room Cognition is not in.
+    #[tokio::test]
+    async fn the_sceneless_window_carries_nothing_scene_shaped() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let scene = scene();
+        heard(&memory, &scene, "把周报发我").await;
+        write_scene_prompt(dir.path(), &scene, "He is mid-migration this week.").await;
+
+        let text = agent_window(&memory, "cognition").await;
+        assert!(!text.contains("把周报发我"), "no scene's log tail: {text}");
+        assert!(!text.contains("mid-migration"), "no scene's brief: {text}");
+    }
+
+    /// An agent that has written nothing down yet, and owes nothing yet, gets an empty
+    /// window rather than a header with nothing under it — the join drops empties, and a
+    /// section that is only a title reads as data that failed to load.
+    #[tokio::test]
+    async fn an_empty_sceneless_window_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        assert!(agent_window(&memory, "cognition").await.trim().is_empty());
     }
 }

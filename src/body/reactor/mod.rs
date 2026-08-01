@@ -51,6 +51,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+mod cognition;
 mod heartbeat;
 mod interleave;
 mod interrupts;
@@ -726,6 +727,26 @@ pub fn start(
         consolidated_reflection_loop(reflect_reactor).await;
     });
 
+    // Cognition: the sceneless brain every scene hands work up to.
+    //
+    // **Registered here, synchronously, before the task is spawned.** `tokio::spawn`
+    // makes no ordering promise, and registering inside the loop would leave a window at
+    // boot in which `send_message(to: "cognition")` — a thing the prompts now tell agents
+    // to do — resolves to nothing. `start` runs before any scene loop exists and scene
+    // loops are the only senders, so doing it on this line closes the window structurally
+    // rather than making it merely unlikely.
+    //
+    // The registration is the address and lives as long as the process; the ACP session
+    // behind it is opened per wake and dropped. See [`cognition`].
+    let cognition_reg = registry::register_scoped(
+        registry::mint(),
+        registry::Role::Cognition,
+        None,
+        None,
+        "the shared brain".to_string(),
+    );
+    cognition::spawn(reactor.clone(), cognition_reg);
+
     reactor
 }
 
@@ -1116,7 +1137,7 @@ impl Reactor {
             .tools
             .register(
                 scene.clone(),
-                ToolSink { control: control_tx.clone(), beats: beats_tx.clone() },
+                ToolSink { control: control_tx.clone(), beats: Some(beats_tx.clone()) },
             )
             .await;
 
