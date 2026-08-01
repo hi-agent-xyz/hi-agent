@@ -130,7 +130,7 @@ space), type the name, press return — then drive its real controls.\n\
 When your task is to file a file the user handed the agent — to keep it in the \
 agent's drive — the bytes are already saved verbatim under the data dir, which is \
 the parent of `$HI_AGENT_PROMPTS_DIR`. Files for this scene land under \
-`$HI_AGENT_PROMPTS_DIR/../memory/raw/{scene}/file/` (in dated subfolders); the most \
+`$HI_AGENT_PROMPTS_DIR/../memory/raw/{scene_dir}/file/` (in dated subfolders); the most \
 recently written file there is the one just handed over. Copy it into the drive at \
 `$HI_AGENT_PROMPTS_DIR/../drive/`. First look at how the drive is already laid \
 out — its folders are the filing scheme, and your file should join what's there \
@@ -195,7 +195,15 @@ one-off; a workshop you can't find anything in is no workshop.";
 /// `$HI_AGENT_BASE_URL`. Output side-effects (the `ask` tool) ride the MCP attach,
 /// which carries the scene/role/worker-id headers for the worker automatically.
 fn worker_system_prompt(scene: &Scene) -> String {
-    WORKER_SYSTEM_PROMPT.replace("{scene}", &scene.0)
+    WORKER_SYSTEM_PROMPT
+        // The **directory**, which is percent-encoded on disk — `alice@phone` lives at
+        // `alice%40phone`. This was substituted raw along with the headers, so for every
+        // `user@device` scene (which is most of them) the file-filing worker has always
+        // been sent to a path that does not exist. Two substitutions, not one token,
+        // because the same word means two different things in the two places.
+        .replace("{scene_dir}", &layout::encode_scene(scene))
+        // The **header value**, which is the scene id verbatim.
+        .replace("{scene}", &scene.0)
 }
 
 /// A report a worker posts back to the reactor's per-scene loop. It enters the
@@ -294,14 +302,12 @@ struct Worker {
 ///    which feeds that scene's episodes. Hosting is being used as provenance. The fix is
 ///    to pass the origin scene explicitly, the way the reflection tools already take the
 ///    scene they act on as an argument.
-/// 2. `create_worker` answers "brief it with `send_message`" *before* `register` runs
-///    (registration is after an `agent.session().await`, a subprocess spawn), so a model
-///    that follows the instruction immediately gets `Delivery::Unknown`. Mint, register,
-///    *then* spawn.
-/// 3. The `{scene}` in `WORKER_SYSTEM_PROMPT`'s `memory/raw/{scene}/file/` is
-///    interpolated raw, but the directory is [`layout::encode_scene`] — so for any scene
-///    with an `@` in it (every `user@device`) the file-filing worker has always been
-///    pointed at a path that does not exist.
+/// 2. ~~`create_worker` answers "brief it with `send_message`" before `register` runs.~~
+///    **Fixed** — registration now precedes the session open, with `unregister` on the
+///    spawn-failure path.
+/// 3. ~~The `{scene}` in `memory/raw/{scene}/file/` is interpolated raw where the
+///    directory is percent-encoded.~~ **Fixed** — `{scene_dir}` is a separate
+///    substitution, because the word meant two different things in the two places.
 pub(super) struct WorkerRegistry {
     scene: Scene,
     /// A clone of the scene's queue sender, handed to each worker's drive task so
@@ -389,23 +395,48 @@ impl WorkerRegistry {
             worker_system_prompt(&self.scene)
         };
 
-        let session = Arc::new(
-            reactor
-                .inner
-                .agent
-                .session(
-                    &self.scene,
-                    SessionRole::Worker,
-                    Some(id),
-                    SessionOpts {
-                        system_prompt: Some(system_prompt),
-                        // The worker's cwd is the agent's view workshop, so a
-                        // build sub-agent works in a real project dir (ls/write).
-                        cwd: Some(reactor.inner.views_dir.clone()), builtin_tools: None,
-                    },
-                )
-                .await?,
+        // Announce it to the switchboard **before opening the session**, not merely
+        // before the drive task starts. `create_worker` hands the id back and tells its
+        // caller to "brief it with send_message" — and opening the session is a
+        // subprocess spawn, so registering after it left a window, measured in seconds,
+        // where an obedient model did exactly as instructed and got `Delivery::Unknown`.
+        // The tool's own reply was walking callers into a race.
+        //
+        // The order was presumably the other way round to avoid leaking an entry when
+        // the spawn fails; that is handled below instead, which is the cheaper half of
+        // the trade.
+        let mail = registry::global().register(
+            id,
+            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
+            Some(self.scene.clone()),
+            owner,
+            task.clone(),
         );
+
+        let opened = reactor
+            .inner
+            .agent
+            .session(
+                &self.scene,
+                SessionRole::Worker,
+                Some(id),
+                SessionOpts {
+                    system_prompt: Some(system_prompt),
+                    // The worker's cwd is the agent's view workshop, so a
+                    // build sub-agent works in a real project dir (ls/write).
+                    cwd: Some(reactor.inner.views_dir.clone()), builtin_tools: None,
+                },
+            )
+            .await;
+        let session = match opened {
+            Ok(s) => Arc::new(s),
+            Err(err) => {
+                // Take the address back, or a failed spawn leaves a live-looking entry
+                // that accepts mail nothing will ever read.
+                registry::global().unregister(id);
+                return Err(err);
+            }
+        };
 
         let observatory = reactor.inner.observatory.clone();
         observatory
@@ -414,16 +445,6 @@ impl WorkerRegistry {
 
         let transcript = Arc::new(Mutex::new(String::new()));
         let busy = Arc::new(AtomicBool::new(true));
-        // Announce it to the switchboard *before* the drive task starts, so the inbox
-        // exists the instant anything can address it. The handle it returns is the
-        // worker's only mailbox.
-        let mail = registry::global().register(
-            id,
-            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
-            Some(self.scene.clone()),
-            owner,
-            task.clone(),
-        );
         let drive = tokio::spawn(drive_worker(
             id,
             task.clone(),
@@ -843,6 +864,31 @@ mod ownership_tests {
         assert_eq!(
             reg.deliver_to(4242, "the errand is done".into()),
             registry::Delivery::Unknown
+        );
+    }
+
+    /// The path a worker is given to find a handed-over file must be the path that
+    /// exists on disk. It was substituted with the same raw scene id as the two
+    /// `X-HI-Scene` headers, but the directory is percent-encoded — so for every scene
+    /// with an `@` in it, which is every `user@device`, the file-filing worker was sent
+    /// somewhere there was nothing to find, and had no way to know that was why.
+    #[test]
+    fn the_file_path_is_the_encoded_directory_and_the_header_is_not() {
+        let scene = Scene("alice@phone".into());
+        let p = worker_system_prompt(&scene);
+
+        assert!(
+            p.contains("memory/raw/alice%40phone/file/"),
+            "the file path must be the on-disk directory"
+        );
+        assert!(
+            p.contains("X-HI-Scene: alice@phone"),
+            "the header must stay the scene id verbatim"
+        );
+        assert!(!p.contains("{scene"), "every placeholder is substituted: {p}");
+        assert!(
+            !p.contains("memory/raw/alice@phone/"),
+            "the raw id must not survive as a path"
         );
     }
 
