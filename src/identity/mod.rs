@@ -527,11 +527,17 @@ mod soul_tests {
         );
         // And what replaced it has to be strictly stronger than what it removed —
         // Deliberation used to record the duty itself, so "you may hand up" would be a
-        // regression dressed as a handover.
+        // regression dressed as a handover. Asserted on the instruction and the verb
+        // rather than on a name: nobody is reachable by name any more, so a name in this
+        // prompt would be the stale thing, not the load-bearing one.
         assert!(
             DELIBERATION_BASE.contains("Hand it up")
-                && DELIBERATION_BASE.contains("cognition"),
-            "Deliberation must be told where what's owed now goes"
+                && DELIBERATION_BASE.contains("send_message"),
+            "Deliberation must be told to hand what's owed up, and with what"
+        );
+        assert!(
+            !DELIBERATION_BASE.contains("to `cognition`"),
+            "and not by a name, which is no longer an address"
         );
     }
 

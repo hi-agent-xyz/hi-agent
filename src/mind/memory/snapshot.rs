@@ -64,7 +64,11 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 /// nothing happened. The cost is one small read per section plus one directory scan
 /// of the task dimension — small, but genuinely per-turn now, which is why every read
 /// in here has to stay small.
-pub async fn window(memory: &Memory, scene: &Scene) -> String {
+pub async fn window(
+    memory: &Memory,
+    scene: &Scene,
+    id: crate::foundation::registry::SessionId,
+) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::scene_prompt_path(data_dir, scene)).await;
     let owed = match tasks::projection(data_dir).await {
@@ -76,12 +80,19 @@ pub async fn window(memory: &Memory, scene: &Scene) -> String {
     };
     let legacy = legacy_working_set(data_dir).await;
     let unprompted = speaking_up_unprompted(data_dir).await;
+    // Who this rung may reach, by id — see [`agent_window`]. For a scene rung that is
+    // the shared brain and nothing else: work goes up, and a scene is not somewhere
+    // another scene's work belongs.
+    let reach = crate::foundation::registry::render_reachable(
+        &crate::foundation::registry::global().reachable(id),
+    );
     let tail = recent_tail(memory, scene).await;
     join(&[
         carried.as_str(),
         owed.as_str(),
         legacy.as_str(),
         unprompted.as_str(),
+        reach.as_str(),
         tail.as_str(),
     ])
 }
@@ -101,7 +112,11 @@ pub async fn window(memory: &Memory, scene: &Scene) -> String {
 /// one that must not be wrong about this.
 ///
 /// `agent` is a code-supplied name ([`layout::agent_prompt_path`]), never a user string.
-pub async fn agent_window(memory: &Memory, agent: &str) -> String {
+pub async fn agent_window(
+    memory: &Memory,
+    agent: &str,
+    id: crate::foundation::registry::SessionId,
+) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::agent_prompt_path(data_dir, agent)).await;
     let owed = match tasks::projection(data_dir).await {
@@ -111,7 +126,14 @@ pub async fn agent_window(memory: &Memory, agent: &str) -> String {
             String::new()
         }
     };
-    join(&[carried.as_str(), owed.as_str()])
+    // Who it can reach, by id. This is projection for the same reason the ledger is:
+    // an address that has to be guessed is an address that can be wrong in a way the
+    // guesser cannot detect. A task's `report_to` is a durable scene name, and this is
+    // where that becomes a live session — or visibly does not, when the scene is cold.
+    let reach = crate::foundation::registry::render_reachable(
+        &crate::foundation::registry::global().reachable(id),
+    );
+    join(&[carried.as_str(), owed.as_str(), reach.as_str()])
 }
 
 /// The learned read on speaking up unprompted (`proactivity.md`), projected rather
@@ -358,7 +380,7 @@ mod window_tests {
         // Not merely absent as a file — absent as a whole tree.
         assert!(!layout::generated_prompts_dir(dir.path()).exists());
 
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert!(!text.trim().is_empty());
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
@@ -366,7 +388,7 @@ mod window_tests {
 
         // A blank file is the same as no file, not an empty section header.
         write_scene_prompt(dir.path(), &scene, "   \n\t\n").await;
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("把周报发我"), "{text}");
     }
@@ -377,7 +399,7 @@ mod window_tests {
     async fn an_empty_store_still_yields_a_window() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let text = window(&memory, &scene()).await;
+        let text = window(&memory, &scene(), 0).await;
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
         assert!(text.contains("(none)"), "{text}");
     }
@@ -392,7 +414,7 @@ mod window_tests {
 
         // Just under the cap: whole, and no notice.
         write_scene_prompt(dir.path(), &scene, &"a".repeat(CARRIED_FORWARD_CHARS)).await;
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert!(text.contains("## What I carry forward"), "{text}");
         assert!(!text.contains("Cut here by the host"), "{text}");
 
@@ -401,7 +423,7 @@ mod window_tests {
         // exactly what survived the cut.
         let long = format!("{}TAIL-THAT-MUST-NOT-SURVIVE", "q".repeat(CARRIED_FORWARD_CHARS));
         write_scene_prompt(dir.path(), &scene, &long).await;
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert!(!text.contains("TAIL-THAT-MUST-NOT-SURVIVE"), "the tail rode past the cap");
         assert!(text.contains("Cut here by the host"), "{text}");
         assert!(text.contains(&CARRIED_FORWARD_CHARS.to_string()), "{text}");
@@ -409,7 +431,7 @@ mod window_tests {
 
         // Characters, not bytes — a CJK prompt clips at the same visible length.
         write_scene_prompt(dir.path(), &scene, &"记".repeat(CARRIED_FORWARD_CHARS * 2)).await;
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert_eq!(text.matches('记').count(), CARRIED_FORWARD_CHARS);
         assert!(text.contains("Cut here by the host"), "{text}");
     }
@@ -431,7 +453,7 @@ mod window_tests {
         done.state = crate::mind::memory::tasks::TaskState::Done;
         write_task(dir.path(), &done).await.unwrap();
 
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         assert!(text.contains("# Open tasks"), "{text}");
         assert!(text.contains("- [wip] Ship the flash cards"), "{text}");
         // Closed ones are history, not window furniture.
@@ -451,7 +473,7 @@ mod window_tests {
         write_task(dir.path(), &owed).await.unwrap();
         heard(&memory, &scene, "还有多久").await;
 
-        let text = window(&memory, &scene).await;
+        let text = window(&memory, &scene, 0).await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
         assert!(at("## What I carry forward") < at("# Open tasks"));
         assert!(at("# Open tasks") < at("## Recent (last 30 minutes)"));
@@ -467,7 +489,7 @@ mod window_tests {
         tokio::fs::create_dir_all(commitments.parent().unwrap()).await.unwrap();
         tokio::fs::write(&commitments, "- watch the ops group\n").await.unwrap();
 
-        let text = window(&memory, &scene()).await;
+        let text = window(&memory, &scene(), 0).await;
         assert!(!text.contains("watch the ops group"), "{text}");
         assert!(!text.contains("standing commitments"), "{text}");
     }
@@ -492,7 +514,7 @@ mod window_tests {
             .await
             .unwrap();
 
-        let text = agent_window(&memory, "cognition").await;
+        let text = agent_window(&memory, "cognition", 0).await;
         assert!(text.contains("Ship the flash cards"), "{text}");
         assert!(text.contains("needs sudo"), "{text}");
     }
@@ -508,7 +530,7 @@ mod window_tests {
         heard(&memory, &scene, "把周报发我").await;
         write_scene_prompt(dir.path(), &scene, "He is mid-migration this week.").await;
 
-        let text = agent_window(&memory, "cognition").await;
+        let text = agent_window(&memory, "cognition", 0).await;
         assert!(!text.contains("把周报发我"), "no scene's log tail: {text}");
         assert!(!text.contains("mid-migration"), "no scene's brief: {text}");
     }
@@ -520,6 +542,6 @@ mod window_tests {
     async fn an_empty_sceneless_window_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        assert!(agent_window(&memory, "cognition").await.trim().is_empty());
+        assert!(agent_window(&memory, "cognition", 0).await.trim().is_empty());
     }
 }

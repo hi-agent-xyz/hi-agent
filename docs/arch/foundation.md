@@ -104,9 +104,21 @@ That is what makes "the switchboard is the host" a mechanism rather than an aspi
 **`from` is stamped by the registry, never passed by the caller.** The host knows who is
 calling; letting an agent name itself is letting it impersonate.
 
-**Addresses are session ids or scenes.** A session id names a live agent and dies with the
-process, so nothing durable may hold one — a task holds a scene. The registry resolves a
-scene to its Reaction.
+**An address is a session id. Nothing else.** One form, for every hop: a worker's id comes
+back from `CreateWorker`, and the ids of the standing rungs are **projected** into the
+window of whoever may reach them, the same way open tasks are.
+
+That last part is the point. The alternative — letting an agent name a *scene* and having
+the registry resolve it — is retrieval: the agent produces a string and hopes something is
+behind it. Retrieval can miss, and here a miss is indistinguishable from "nobody is there".
+Projecting live ids inverts it: an agent is told who is reachable this turn, so a rung that
+is cold is visible as cold *before* a message is sent at it, and the registry goes back to
+being a map lookup rather than a search.
+
+Session ids die with the process, so **nothing durable may hold one** — a task holds a
+scene, and the host resolves that to an id when it builds the window. The durable layer
+speaks scenes; the live layer speaks ids; the projection is the join between them, rebuilt
+every turn because that is the only rate at which it is true.
 
 One structural restriction, because it is routing rather than policy: **a worker may only
 address its owner.** Whether something is worth saying mid-task is a judgment and lives in

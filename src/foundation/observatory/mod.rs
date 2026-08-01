@@ -171,17 +171,15 @@ pub enum EventKind {
     /// carries on [`crate::foundation::registry::Message`], mirrored rather than
     /// reinterpreted.
     ///
-    /// `to` is the address as written (a session id or a scene name); `to_session` is
-    /// what it resolved to, which is the only way to correlate an edge addressed to a
-    /// *scene* with the session that actually received it.
+    /// `to` is a session id, which is now the only kind of address there is — so an edge
+    /// names both its ends without anything having to be resolved after the fact.
     ///
     /// The full `message` travels, like `TurnStarted { input }` and
     /// `TurnFinished { reply }`. An edge you can see the existence but not the content
     /// of does not answer the question you opened the inspector to ask.
     MessageSent {
         from: Option<u64>,
-        to: String,
-        to_session: Option<u64>,
+        to: u64,
         delivery: crate::foundation::registry::Delivery,
         message: String,
     },

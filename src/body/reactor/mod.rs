@@ -1237,7 +1237,7 @@ async fn per_scene_loop(
     // voice; the underlying session rotates beneath it (cold reopen, hot swap) and that
     // is an implementation detail nothing outside should be able to observe. Registering
     // at session-open minted a second Reaction for the same scene on every reopen, and
-    // `Address::Scene` then resolved to whichever the lookup happened to find first.
+    // a sender was then offered whichever the lookup happened to find first.
     // Scope-bound: released on every way out of this loop, including the ones added
     // after this line was written.
     let voice = registry::register_scoped(
@@ -1658,6 +1658,7 @@ async fn run_reactor_turn(
     let context = turn_context(
         &reactor.inner.memory,
         scene,
+        voice_id,
         &worker_status,
         &on_screen,
         &presence_note,
@@ -1740,13 +1741,14 @@ async fn run_reactor_turn(
 async fn turn_context(
     memory: &Memory,
     scene: &Scene,
+    voice_id: registry::SessionId,
     worker_status: &str,
     on_screen: &str,
     presence: &str,
     interrupted: &str,
     new_signals: &str,
 ) -> String {
-    let projected = snapshot::window(memory, scene).await;
+    let projected = snapshot::window(memory, scene, voice_id).await;
     join_sections(&[projected.as_str(), worker_status, on_screen, presence, interrupted, new_signals])
 }
 
@@ -1766,7 +1768,7 @@ mod turn_context_tests {
         let scene = Scene("boss".into());
 
         // Turn one, on a session opened just now: nothing written yet.
-        let first = turn_context(&memory, &scene, "", "", "", "", "## New signals\n>在吗").await;
+        let first = turn_context(&memory, &scene, 0, "", "", "", "", "## New signals\n>在吗").await;
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
@@ -1780,7 +1782,7 @@ mod turn_context_tests {
         write_task(dir.path(), &owed).await.unwrap();
 
         // Turn two, same session — no re-open, no rotation.
-        let second = turn_context(&memory, &scene, "", "", "", "", "## New signals\n>那卡片呢").await;
+        let second = turn_context(&memory, &scene, 0, "", "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [wip] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
@@ -1796,6 +1798,7 @@ mod turn_context_tests {
         let text = turn_context(
             &memory,
             &scene,
+            0,
             "## Workers\nbuilding a view",
             "",
             "## Presence\nhere",
@@ -2047,37 +2050,10 @@ fn render_batch(batch: &[LoopInput]) -> String {
                 let _ = writeln!(s, "{}", render_pulse(note));
             }
             LoopInput::Mail(mail) => {
-                let _ = writeln!(s, "{}", render_mail(mail));
+                let _ = writeln!(s, "{}", registry::render(mail));
             }
         }
     }
-    s
-}
-
-/// Mail from elsewhere in the agent, as the voice sees it.
-///
-/// Each message names the session it came from, because that id **is** the reply
-/// address: `send_message` back to it and the answer lands where it was asked for.
-/// Framed as something the agent already knows rather than something someone told
-/// it — there is no colleague here, and the voice must never speak of one.
-fn render_mail(mail: &[crate::foundation::registry::Message]) -> String {
-    use std::fmt::Write as _;
-    let mut s = String::new();
-    for m in mail {
-        match m.from {
-            Some(from) => {
-                let _ = writeln!(
-                    s,
-                    "(from your own background work, session {from}) {}",
-                    m.text.trim()
-                );
-            }
-            None => {
-                let _ = writeln!(s, "{}", m.text.trim());
-            }
-        }
-    }
-    s.truncate(s.trim_end().len());
     s
 }
 
@@ -2115,7 +2091,7 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
         LoopInput::Alarm(a) => Some((Channel::Clock, Origin::Reactor, render_alarm(a))),
         LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
         // Mail crosses no wire, so this is its only chance to be written down.
-        LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, render_mail(mail))),
+        LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, registry::render(mail))),
     }
 }
 
@@ -2157,13 +2133,7 @@ async fn enqueue(
             .observatory
             .record(
                 Some(scene).filter(|s| !s.is_pseudo()),
-                EventKind::MessageSent {
-                    from: None,
-                    to: owner.to_string(),
-                    to_session: Some(owner),
-                    delivery,
-                    message: text,
-                },
+                EventKind::MessageSent { from: None, to: owner, delivery, message: text },
             )
             .await;
         if matches!(delivery, registry::Delivery::Delivered) {

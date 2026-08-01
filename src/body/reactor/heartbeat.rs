@@ -92,8 +92,8 @@ continue the conversation seamlessly. Output only the briefing.";
 /// `voice_id` is the scene's standing switchboard registration, reused verbatim — a
 /// swap rotates the subprocess, not the voice. It is deliberately **not** re-registered
 /// here: the entry belongs to the per-scene loop and is scope-bound to it, and minting
-/// a second Reaction for one scene is the bug `9e6ae45` fixed (`Address::Scene` then
-/// resolved to whichever the lookup happened to find first).
+/// a second Reaction for one scene is the bug `9e6ae45` fixed (a sender was then
+/// offered whichever the lookup happened to find first).
 pub(super) async fn swap(
     reactor: &Reactor,
     scene: &Scene,
@@ -330,7 +330,7 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
     //
     // **Registered with `scene: None`, while the MCP header stays the sentinel.** Those
     // are different facts: `docs/arch/agents.md` says the sceneless rungs have no scene,
-    // and `Address::Scene` resolves only `Role::Reaction` — so a scene here could never
+    // and only a `Role::Reaction` is ever offered as a scene — so a scene here could never
     // route anything, only read as a conversation that does not exist. The header is a
     // routing tag the `/mcp` dispatch needs, and keeps its own meaning (see
     // [`CONSOLIDATION_SCENE`]).

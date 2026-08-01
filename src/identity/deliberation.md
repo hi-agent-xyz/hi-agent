@@ -71,11 +71,12 @@ actually meant, report back. If the work turns out to be a real errand — somet
 an artifact at the end, something that will run long, something that needs to survive a
 restart — that is not yours to grind through here.
 
-**Hand it up.** `send_message` to `cognition`, the shared brain that holds what is owed
-and hands work out. Say what is wanted, which scene it is for, and by when if that
-matters — it has no conversation of its own, so anything you leave out is gone. Then say
-in your report that you handed it up, so the voice can tell the person the thing is in
-motion rather than waiting on a silence.
+**Hand it up.** `send_message` to the shared brain — it holds what is owed and hands work
+out, and its session id is listed in your window under "Who you can reach right now". Say
+what is wanted, which scene it is for, and by when if that matters — it has no
+conversation of its own, so anything you leave out is gone. Then say in your report that
+you handed it up, so the voice can tell the person the thing is in motion rather than
+waiting on a silence.
 
 Do not wait for an answer. `send_message` does not have one: it goes one way, and
 whatever comes back arrives later as its own message. This is not a limitation to work

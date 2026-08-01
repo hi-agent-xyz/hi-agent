@@ -36,13 +36,13 @@ function summary(e: SessionEvent): ReactNode {
       // The edge. `from: null` is the host putting something in a mailbox on nobody's
       // behalf — a report handed up, a follow-up merged — which is a real crossing and
       // reads differently from one agent choosing to speak to another.
+      // Both ends are session ids now — an address *is* a session id, so there is
+      // nothing left to resolve after the fact.
       const from = n("from");
-      const resolved = n("to_session");
-      const to = s("to");
-      const shown = resolved !== null && to !== String(resolved) ? `${to} → #${resolved}` : `#${to}`;
+      const to = n("to");
       return (
         <span className={`edge ${s("delivery")}`}>
-          <b>{from === null ? "host" : `#${from}`}</b> → <b>{shown}</b>
+          <b>{from === null ? "host" : `#${from}`}</b> → <b>{`#${to}`}</b>
           <span className="muted"> {s("delivery")}</span>
           {" "}
           <span className="edge-msg">{clip(s("message"), 120)}</span>

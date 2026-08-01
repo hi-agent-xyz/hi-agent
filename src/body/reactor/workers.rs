@@ -514,8 +514,7 @@ impl WorkerRegistry {
                     Some(&self.scene).filter(|s| !s.is_pseudo()),
                     EventKind::MessageSent {
                         from: None,
-                        to: id.to_string(),
-                        to_session: Some(id),
+                        to: id,
                         delivery,
                         message: task.clone(),
                     },
@@ -771,7 +770,7 @@ async fn drive_worker(
 async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
     loop {
         if let Some(batch) = registry::global().take_pending(id) {
-            return Some(render_inbox(&batch));
+            return Some(registry::render(&batch));
         }
         // Nothing pending — wait for a nudge or the idle TTL. `Notify` holds a permit
         // if `notify_one` raced ahead of this `notified()`, so no wakeup is lost
@@ -783,32 +782,12 @@ async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
                 // a follow-up that landed in the meantime still wins.
                 return registry::global()
                     .take_pending_or_close(id)
-                    .map(|batch| render_inbox(&batch));
+                    .map(|batch| registry::render(&batch));
             }
         }
     }
 }
 
-/// A batch of inbox messages as the receiving session reads it.
-///
-/// Host-posted mail — a plain follow-up — is shown bare: tagging the next instruction
-/// with a return address reads as a second voice in the room, and there isn't one.
-/// Mail from another session keeps its address, because that id is how it is answered.
-fn render_inbox(batch: &[registry::Message]) -> String {
-    let mut out = String::new();
-    for m in batch {
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        match m.from {
-            None => out.push_str(m.text.trim()),
-            Some(from) => {
-                let _ = write!(out, "(from session {from}) {}", m.text.trim());
-            }
-        }
-    }
-    out
-}
 
 /// Prompt the worker session with the task, streaming its output into the
 /// transcript, and return the full reply as the task's result. Anything the worker

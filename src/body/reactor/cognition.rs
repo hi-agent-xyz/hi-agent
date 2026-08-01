@@ -9,8 +9,9 @@
 //! "a new role is a new prompt, not new machinery". This module is the four things a
 //! prompt cannot be:
 //!
-//! 1. **An address.** [`registry::Address::Rung`] resolves to the session with a role
-//!    and no scene; this is what registers one.
+//! 1. **An address.** An address is a session id, and its own is minted fresh each boot —
+//!    so it registers once, for the life of the process, and the host projects that id
+//!    into the window of everyone allowed to reach it ([`registry::Registry::reachable`]).
 //! 2. **A drain.** Every live agent is driven by something. Reaction has its scene loop,
 //!    workers have `drive_worker`, Reflection has a one-shot pass. A registered rung with
 //!    nothing reading its inbox is a mailbox that reports "delivered" and forgets.
@@ -169,12 +170,7 @@ async fn run(reactor: Reactor, registration: Registration) {
         // Drain whatever accumulated. A burst is merged by the switchboard into one
         // prompt, so no settle window is needed here.
         if let Some(batch) = registry::global().take_pending(id) {
-            for m in batch {
-                pending.push(match m.from {
-                    Some(from) => format!("(from session {from}) {}", m.text),
-                    None => m.text,
-                });
-            }
+            pending.push(registry::render(&batch));
         }
         if pending.is_empty() {
             continue;
@@ -255,7 +251,7 @@ async fn turn(
         )
         .await;
 
-    let window = snapshot::agent_window(&reactor.inner.memory, COGNITION_AGENT).await;
+    let window = snapshot::agent_window(&reactor.inner.memory, COGNITION_AGENT, id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")

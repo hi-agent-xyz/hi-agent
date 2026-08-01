@@ -64,60 +64,6 @@ pub enum Role {
     Worker,
 }
 
-/// Who a message is for.
-///
-/// A **session id** names a live agent and dies with the process, so nothing durable may
-/// hold one — a task holds a scene. A **scene** names a conversation and is stable; it
-/// resolves to that scene's Reaction, because a scene is where a person is spoken to and
-/// Reaction is the only thing that speaks there.
-///
-/// A **rung** names one of the sceneless agents. It exists because the other two forms
-/// cannot reach one: a sceneless rung has no scene by definition, and its session id is
-/// minted fresh every boot, so nothing durable and nothing in a prompt can hold it. That
-/// left the design's own "Deliberation hands up to Cognition" describable and impossible.
-/// There is at most one live session per sceneless role, which is what makes the role a
-/// sufficient address.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Address {
-    Session(SessionId),
-    Scene(Scene),
-    Rung(Role),
-}
-
-/// The one rung reachable by name today. See [`Address::parse`] for why the list is not
-/// simply "every sceneless role".
-const ADDRESSABLE_RUNGS: [(&str, Role); 1] = [("cognition", Role::Cognition)];
-
-impl Address {
-    /// Parse an agent-facing address string — what an agent typed into `send_message`.
-    ///
-    /// Lives here rather than at the tool surface because this is routing, and routing
-    /// lives in one place; the host also reaches the registry by paths that never touch
-    /// MCP, and they must resolve a name the same way.
-    ///
-    /// **Reflection is deliberately not addressable**, though it is registered sceneless
-    /// and would resolve. Its pass is one `prompt` then `wait`, so nothing drains its
-    /// inbox: a send would report `Delivered` and the message would die with the pass.
-    /// A verb that reports success and delivers nothing is the exact failure `9e6ae45`
-    /// was written to remove. It joins this list when it has a reader.
-    ///
-    /// The cost, stated: a scene literally named `cognition` cannot be addressed. Same
-    /// shape as [`crate::mind::memory::layout::SESSIONS_DIR`] — a reserved word in a
-    /// namespace people also use — and the same answer: name it, own it, move on.
-    pub fn parse(to: &str) -> Address {
-        let to = to.trim();
-        if let Ok(id) = to.parse::<SessionId>() {
-            return Address::Session(id);
-        }
-        for (name, role) in ADDRESSABLE_RUNGS {
-            if to.eq_ignore_ascii_case(name) {
-                return Address::Rung(role);
-            }
-        }
-        Address::Scene(Scene(to.to_string()))
-    }
-}
-
 /// What happened to a message — **delivery, never a response.** `send` does not wait for
 /// the target to read, act, or agree; it reports whether the message reached a mailbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -172,6 +118,45 @@ pub struct Message {
     pub text: String,
 }
 
+/// Render a batch of mail as the text that goes into the recipient's next prompt.
+///
+/// **One renderer, here, because there is one mailbox.** There were three — one per
+/// driver — and they had already drifted into three different strings, three different
+/// separators, and one that forgot to trim. Turning an inbox into a prompt is the
+/// switchboard's job, not something each rung reinvents; a rung decides what to *do* with
+/// its mail, never what it looks like.
+///
+/// A `from` is a return address, so it is shown: whoever reads this can answer. Host-posted
+/// mail (`from: None`) renders bare — the host is not a colleague, and giving it a return
+/// address would put a second voice in a room that has one.
+pub fn render(batch: &[Message]) -> String {
+    batch
+        .iter()
+        .map(|m| match m.from {
+            Some(from) => format!("(from session {from}) {}", m.text.trim()),
+            None => m.text.trim().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Render `reachable` as the block that goes into an agent's window.
+///
+/// Empty when there is nobody — an empty section is worse than none, because a heading
+/// with nothing under it reads as a load that failed rather than as an honest "no one".
+pub fn render_reachable(who: &[(String, SessionId)]) -> String {
+    if who.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from(
+        "## Who you can reach right now\nSend with `send_message`, using the number.\n",
+    );
+    for (label, id) in who {
+        s.push_str(&format!("- `{id}` — {label}\n"));
+    }
+    s
+}
+
 /// A session's inbox: messages merged rather than queued.
 ///
 /// Several landing while a session is mid-turn are picked up **together**, so it reads
@@ -203,7 +188,7 @@ struct Entry {
 ///
 /// The scene loop leaves by several paths — inbound closed, closed mid-settle, shutdown
 /// — and a registration released at only some of them is how a scene ends up with more
-/// than one voice, `Address::Scene` resolving to an arbitrary dead one. Rather than
+/// than one voice, `reachable` then offering an arbitrary dead one. Rather than
 /// remember every exit, hold this: the exits are then not something anyone has to get
 /// right again, including whoever adds the next one.
 pub struct Registration {
@@ -296,73 +281,89 @@ impl Registry {
     ///
     /// One direction, no reply. The return value says whether it reached a mailbox — a
     /// reply, if there is one, arrives later as its own `send` in the other direction.
-    pub fn send(&self, from: SessionId, to: &Address, message: String) -> Delivery {
-        self.send_traced(from, to, message).0
-    }
-
-    /// [`send`](Self::send), also reporting **which session** it resolved to.
+    /// **`to` is a session id, and that is the only address there is.**
     ///
-    /// For anything that wants to *observe* an edge rather than travel it. An
-    /// `Address::Scene` names a conversation, and resolving it to the session that
-    /// actually received the message happens under this lock — so a caller cannot ask
-    /// afterwards without racing, and cannot name the target from the address alone.
-    ///
-    /// The observatory could not simply be called from in here: `record` is async and
-    /// this holds a `std::sync::Mutex`. Handing the resolved id back instead keeps the
-    /// switchboard synchronous and free of any handle to a debug surface, which is
-    /// what lets it stay the one thing that "cannot be slow, confused, or dead".
-    ///
-    /// `None` accompanies every non-`Delivered` outcome, and also `NotPermitted` —
-    /// there was a target, but naming it would leak an address the sender may not have.
-    pub fn send_traced(
-        &self,
-        from: SessionId,
-        to: &Address,
-        message: String,
-    ) -> (Delivery, Option<SessionId>) {
+    /// A worker's id comes back from `CreateWorker`; a standing rung's is projected into
+    /// the window of whoever may reach it ([`Registry::reachable`]). What this replaced —
+    /// letting an agent name a *scene* and searching for the session behind it — was
+    /// retrieval, and a retrieval that misses is indistinguishable from nobody being
+    /// there. Being told who is live, every turn, is strictly more information than being
+    /// allowed to guess, and it turns this from a scan into a map lookup.
+    pub fn send(&self, from: SessionId, to: SessionId, message: String) -> Delivery {
         let mut map = self.sessions.lock().unwrap();
-
-        let target = match to {
-            Address::Session(id) => *id,
-            Address::Scene(scene) => {
-                let found = map.iter().find(|(_, e)| {
-                    e.role == Role::Reaction && e.scene.as_ref() == Some(scene)
-                });
-                match found {
-                    Some((id, _)) => *id,
-                    None => return (Delivery::Unknown, None),
-                }
-            }
-            // `scene.is_none()` is the whole discriminator, and it is not redundant with
-            // the role: a role alone would also match the per-scene rungs if one were
-            // ever added to the list. Sceneless is what makes there be exactly one.
-            Address::Rung(role) => {
-                let found =
-                    map.iter().find(|(_, e)| e.role == *role && e.scene.is_none());
-                match found {
-                    Some((id, _)) => *id,
-                    None => return (Delivery::Unknown, None),
-                }
-            }
-        };
 
         // A worker answers to whoever asked, and to nobody else.
         if let Some(sender) = map.get(&from)
             && sender.role == Role::Worker
-            && sender.owner != Some(target)
+            && sender.owner != Some(to)
         {
-            return (Delivery::NotPermitted, None);
+            return Delivery::NotPermitted;
         }
 
-        let Some(entry) = map.get_mut(&target) else {
-            return (Delivery::Unknown, None);
+        let Some(entry) = map.get_mut(&to) else {
+            return Delivery::Unknown;
         };
         if entry.inbox.closed {
-            return (Delivery::Unknown, None);
+            return Delivery::Unknown;
         }
         entry.inbox.pending.push(Message { from: Some(from), text: message });
         entry.notify.notify_one();
-        (Delivery::Delivered, Some(target))
+        Delivery::Delivered
+    }
+
+    /// Who `asker` may reach right now, as `(label, id)` — the projection that replaced
+    /// scene addressing.
+    ///
+    /// Deliberately narrow, and narrow **per asker**, because this is the whole of what an
+    /// agent knows about the rest of the agent: what it is offered here is what it can
+    /// do. A worker gets its owner and nothing else, which is also the only thing the
+    /// routing rule would let it send to; a scene rung gets the shared brain; Cognition
+    /// gets the live scenes, because a task's `report_to` is a scene name and this is
+    /// where that durable name becomes a live target.
+    ///
+    /// Rebuilt every turn by the caller. There is no cache and should not be: the answer
+    /// is only true for as long as those sessions are up, and a stale id is worse than no
+    /// id — it sends somewhere real.
+    pub fn reachable(&self, asker: SessionId) -> Vec<(String, SessionId)> {
+        let map = self.sessions.lock().unwrap();
+        let Some(me) = map.get(&asker) else { return Vec::new() };
+
+        let mut out: Vec<(String, SessionId)> = Vec::new();
+        match me.role {
+            // Its owner, which the routing rule already limits it to.
+            Role::Worker => {
+                if let Some(owner) = me.owner {
+                    out.push(("the session that asked for this work".to_string(), owner));
+                }
+            }
+            // The scene rungs hand work up, and that is all they address.
+            Role::Reaction | Role::Deliberation => {
+                if let Some((id, _)) =
+                    map.iter().find(|(_, e)| e.role == Role::Cognition && e.scene.is_none())
+                {
+                    out.push(("cognition — the shared brain".to_string(), *id));
+                }
+            }
+            // Every live conversation, so `report_to` resolves, plus whatever it has
+            // running. A scene that is cold simply is not here, which is the fact
+            // Cognition needs before it decides to hold a task rather than send at it.
+            Role::Cognition | Role::Reflection => {
+                for (id, e) in map.iter() {
+                    if e.role == Role::Reaction
+                        && let Some(scene) = &e.scene
+                    {
+                        out.push((format!("scene `{}`", scene.0), *id));
+                    }
+                }
+                for (id, e) in map.iter() {
+                    if e.owner == Some(asker) {
+                        out.push((format!("your worker: {}", e.task.trim()), *id));
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(_, id)| *id);
+        out
     }
 
     /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of
@@ -507,7 +508,7 @@ mod tests {
         r.register(a, Role::Cognition, None, None, "thinking".into());
         r.register(b, Role::Worker, None, Some(a), "the errand".into());
 
-        assert_eq!(r.send(a, &Address::Session(b), "go".into()), Delivery::Delivered);
+        assert_eq!(r.send(a, b, "go".into()), Delivery::Delivered);
         let mail = r.take_pending(b).expect("delivered");
         assert_eq!(mail.len(), 1);
         assert_eq!(mail[0].text, "go");
@@ -524,8 +525,8 @@ mod tests {
         r.register(a, Role::Cognition, None, None, String::new());
         r.register(b, Role::Worker, None, Some(a), String::new());
 
-        r.send(a, &Address::Session(b), "first".into());
-        r.send(a, &Address::Session(b), "second".into());
+        r.send(a, b, "first".into());
+        r.send(a, b, "second".into());
         let mail = r.take_pending(b).expect("both delivered");
         assert_eq!(
             mail.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
@@ -545,11 +546,11 @@ mod tests {
         r.register(b, Role::Worker, None, Some(a), String::new());
 
         // Mail present: it is taken, and the inbox stays open for more.
-        r.send(a, &Address::Session(b), "one more thing".into());
+        r.send(a, b, "one more thing".into());
         let mail = r.take_pending_or_close(b).expect("mail wins over the close");
         assert_eq!(mail[0].text, "one more thing");
         assert_eq!(
-            r.send(a, &Address::Session(b), "and another".into()),
+            r.send(a, b, "and another".into()),
             Delivery::Delivered,
             "taking mail must not close the mailbox"
         );
@@ -558,7 +559,7 @@ mod tests {
         r.take_pending(b);
         assert!(r.take_pending_or_close(b).is_none());
         assert_eq!(
-            r.send(a, &Address::Session(b), "too late".into()),
+            r.send(a, b, "too late".into()),
             Delivery::Unknown,
             "a closed inbox reports Unknown so the sender starts something fresh"
         );
@@ -574,7 +575,7 @@ mod tests {
         r.register(w, Role::Worker, None, Some(owner), String::new());
 
         // A worker may not address itself as an agent — that is not its owner.
-        assert_eq!(r.send(w, &Address::Session(w), "self".into()), Delivery::NotPermitted);
+        assert_eq!(r.send(w, w, "self".into()), Delivery::NotPermitted);
         // The host posting the same follow-up is fine, and arrives anonymous.
         assert_eq!(r.post(w, "keep going".into()), Delivery::Delivered);
         let mail = r.take_pending(w).expect("posted");
@@ -587,8 +588,7 @@ mod tests {
 
     /// The bug this exists to make impossible: a scene loop leaves by several paths, and
     /// a registration released at only some of them leaves a second voice behind for the
-    /// same scene — after which `Address::Scene` resolves to whichever the map hands back
-    /// first, which may be the dead one.
+    /// same scene — which `reachable` would then offer, and a sender would send at.
     #[test]
     fn a_scoped_registration_ends_with_its_scope() {
         let scene = Scene("boss".into());
@@ -600,7 +600,7 @@ mod tests {
                 register_scoped(mint(), Role::Reaction, Some(scene.clone()), None, String::new());
             let id = voice.id();
             assert_eq!(
-                global().send(sender, &Address::Scene(scene.clone()), "hi".into()),
+                global().send(sender, id, "hi".into()),
                 Delivery::Delivered
             );
             id
@@ -608,7 +608,7 @@ mod tests {
 
         assert!(global().status(id).is_none(), "leaving the scope closed the registration");
         assert_eq!(
-            global().send(sender, &Address::Scene(scene), "hi again".into()),
+            global().send(sender, id, "hi again".into()),
             Delivery::Unknown,
             "no stale voice is left answering for the scene"
         );
@@ -632,12 +632,12 @@ mod tests {
         let r = reg();
         let a = mint();
         r.register(a, Role::Cognition, None, None, String::new());
-        assert_eq!(r.send(a, &Address::Session(9_999), "hello".into()), Delivery::Unknown);
+        assert_eq!(r.send(a, 9_999, "hello".into()), Delivery::Unknown);
 
         let gone = mint();
         r.register(gone, Role::Worker, None, Some(a), String::new());
         r.unregister(gone);
-        assert_eq!(r.send(a, &Address::Session(gone), "hello".into()), Delivery::Unknown);
+        assert_eq!(r.send(a, gone, "hello".into()), Delivery::Unknown);
     }
 
     /// Routing, not policy: a worker answers whoever asked and cannot reach past them —
@@ -650,115 +650,91 @@ mod tests {
         r.register(other, Role::Reaction, Some(Scene("boss".into())), None, String::new());
         r.register(worker, Role::Worker, None, Some(owner), String::new());
 
-        assert_eq!(r.send(worker, &Address::Session(owner), "done".into()), Delivery::Delivered);
+        assert_eq!(r.send(worker, owner, "done".into()), Delivery::Delivered);
         assert_eq!(
-            r.send(worker, &Address::Session(other), "psst".into()),
+            r.send(worker, other, "psst".into()),
             Delivery::NotPermitted
         );
-        assert_eq!(
-            r.send(worker, &Address::Scene(Scene("boss".into())), "psst".into()),
-            Delivery::NotPermitted,
-            "a scene is where a person is spoken to; a worker has no business there"
-        );
     }
 
-    /// Everything above a worker may address a scene, and it lands on the one thing that
-    /// speaks there.
+    /// The projection that replaced scene addressing. A scene rung is offered the shared
+    /// brain and nothing else, because handing work up is the only edge it has.
     #[test]
-    fn a_scene_resolves_to_its_reaction() {
-        let r = reg();
-        let (cog, rx, dl) = (mint(), mint(), mint());
-        let scene = Scene("boss".into());
-        r.register(cog, Role::Cognition, None, None, String::new());
-        r.register(rx, Role::Reaction, Some(scene.clone()), None, String::new());
-        r.register(dl, Role::Deliberation, Some(scene.clone()), None, String::new());
-
-        assert_eq!(r.send(cog, &Address::Scene(scene), "news".into()), Delivery::Delivered);
-        assert_eq!(r.take_pending(rx).expect("delivered")[0].text, "news");
-        assert!(r.take_pending(dl).is_none(), "the scene's address is its voice");
-    }
-
-    /// The gap that made "Deliberation hands up to Cognition" describable and impossible:
-    /// a sceneless rung has no scene, and its id is minted fresh each boot, so neither of
-    /// the other two address forms can reach it.
-    #[test]
-    fn a_rung_resolves_to_the_sceneless_session_of_that_role() {
+    fn a_scene_rung_is_offered_the_shared_brain() {
         let r = reg();
         let (dl, cog) = (mint(), mint());
-        let scene = Scene("boss".into());
-        r.register(dl, Role::Deliberation, Some(scene), None, String::new());
+        r.register(dl, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
         r.register(cog, Role::Cognition, None, None, "thinking".into());
 
-        assert_eq!(
-            r.send(dl, &Address::Rung(Role::Cognition), "a real errand".into()),
-            Delivery::Delivered
-        );
+        let who = r.reachable(dl);
+        assert_eq!(who.len(), 1, "{who:?}");
+        assert_eq!(who[0].1, cog);
+        assert!(who[0].0.contains("shared brain"), "{who:?}");
+
+        // And the id it was handed is one it can actually send to.
+        assert_eq!(r.send(dl, who[0].1, "a real errand".into()), Delivery::Delivered);
         assert_eq!(r.take_pending(cog).expect("delivered")[0].text, "a real errand");
     }
 
-    /// Nothing live at that rung reads as `Unknown`, the same as an absent scene — the
-    /// sender is told, rather than the message vanishing into a name that looks routable.
+    /// A cold rung is simply absent from the list, which is the point: the asker learns
+    /// there is nobody there *before* sending, instead of guessing a name and being told
+    /// `Unknown` after the fact.
     #[test]
-    fn a_rung_with_no_live_session_is_unknown() {
+    fn a_rung_that_is_not_up_is_not_offered() {
         let r = reg();
-        let a = mint();
-        r.register(a, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
-        assert_eq!(
-            r.send(a, &Address::Rung(Role::Cognition), "anyone?".into()),
-            Delivery::Unknown
-        );
+        let dl = mint();
+        r.register(dl, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
+        assert!(r.reachable(dl).is_empty());
     }
 
-    /// A per-scene session must never answer a rung address, or "one sceneless brain"
-    /// would silently become "whichever Deliberation the map yielded first".
+    /// Cognition is offered the live scenes, because a task's `report_to` is a durable
+    /// scene name and this is where it becomes a live session id.
     #[test]
-    fn a_scened_session_never_answers_a_rung_address() {
+    fn cognition_is_offered_the_live_scenes_and_its_own_workers() {
         let r = reg();
-        let (a, scened) = (mint(), mint());
-        r.register(a, Role::Reaction, Some(Scene("boss".into())), None, String::new());
-        // Same role, but it has a scene — so it is not the sceneless one.
-        r.register(scened, Role::Cognition, Some(Scene("boss".into())), None, String::new());
-        assert_eq!(
-            r.send(a, &Address::Rung(Role::Cognition), "hi".into()),
-            Delivery::Unknown
-        );
+        let (cog, rx, dl, w) = (mint(), mint(), mint(), mint());
+        let scene = Scene("boss".into());
+        r.register(cog, Role::Cognition, None, None, "thinking".into());
+        r.register(rx, Role::Reaction, Some(scene.clone()), None, String::new());
+        r.register(dl, Role::Deliberation, Some(scene), None, String::new());
+        r.register(w, Role::Worker, None, Some(cog), "file the receipts".into());
+
+        let who = r.reachable(cog);
+        let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
+        assert!(ids.contains(&rx), "the scene's voice: {who:?}");
+        assert!(ids.contains(&w), "its own worker: {who:?}");
+        assert!(!ids.contains(&dl), "a scene is reached through its voice: {who:?}");
     }
 
+    /// A worker is offered its owner and nothing else — which is also the only thing the
+    /// routing rule would let it send to, so the list and the rule agree.
     #[test]
-    fn parse_reads_ids_rungs_and_scenes() {
-        assert_eq!(Address::parse("42"), Address::Session(42));
-        assert_eq!(Address::parse(" 42 "), Address::Session(42));
-        assert_eq!(Address::parse("cognition"), Address::Rung(Role::Cognition));
-        assert_eq!(Address::parse("Cognition"), Address::Rung(Role::Cognition));
-        assert_eq!(Address::parse("boss"), Address::Scene(Scene("boss".into())));
-        assert_eq!(
-            Address::parse("alice@phone"),
-            Address::Scene(Scene("alice@phone".into()))
-        );
-    }
-
-    /// Reflection is registered sceneless and *would* resolve — but its pass is one
-    /// `prompt` then `wait`, so nothing drains its inbox. Naming it would make
-    /// `send_message` answer "delivered" and drop the message, which is the write-only
-    /// verb `9e6ae45` removed. It becomes addressable when it has a reader, not before.
-    #[test]
-    fn reflection_is_not_addressable_while_nothing_drains_it() {
-        assert_eq!(
-            Address::parse("reflection"),
-            Address::Scene(Scene("reflection".into())),
-            "a scene by that name at worst; never a rung"
-        );
-    }
-
-    #[test]
-    fn an_unknown_scene_is_unknown_not_a_panic() {
+    fn a_worker_is_offered_only_its_owner() {
         let r = reg();
-        let a = mint();
-        r.register(a, Role::Cognition, None, None, String::new());
-        assert_eq!(
-            r.send(a, &Address::Scene(Scene("nobody-here".into())), "hi".into()),
-            Delivery::Unknown
-        );
+        let (owner, worker, other) = (mint(), mint(), mint());
+        r.register(owner, Role::Cognition, None, None, String::new());
+        r.register(other, Role::Reaction, Some(Scene("boss".into())), None, String::new());
+        r.register(worker, Role::Worker, None, Some(owner), String::new());
+
+        let who = r.reachable(worker);
+        assert_eq!(who.len(), 1, "{who:?}");
+        assert_eq!(who[0].1, owner);
+    }
+
+    #[test]
+    fn an_empty_reach_renders_as_nothing_at_all() {
+        assert_eq!(render_reachable(&[]), "", "a heading with nothing under it reads as a failure");
+    }
+
+    /// One renderer, because there is one mailbox. The three that preceded it had already
+    /// drifted — different strings, different separators, one missing a trim.
+    #[test]
+    fn mail_renders_with_a_return_address_and_host_posts_without_one() {
+        let batch = vec![
+            Message { from: Some(7), text: "  did you see this?  ".into() },
+            Message { from: None, text: "  a follow-up  ".into() },
+        ];
+        assert_eq!(render(&batch), "(from session 7) did you see this?\n\na follow-up");
     }
 
     /// The rule that keeps owners from being reaped out from under running work.
@@ -790,7 +766,7 @@ mod tests {
         assert_eq!(s.task, "file the receipts");
         assert!(!s.busy && !s.queued && s.turns == 0);
 
-        r.send(a, &Address::Session(b), "go".into());
+        r.send(a, b, "go".into());
         assert!(r.status(b).unwrap().queued);
 
         r.take_pending(b);

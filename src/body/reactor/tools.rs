@@ -149,7 +149,7 @@ impl ToolRegistry {
     /// reached. That is the shape of the fix for Reflection too: a rung that dispatches
     /// work hosts its own workers rather than borrowing somebody's conversation. It
     /// needs an inbox reader first, which is the same thing blocking it from being
-    /// addressable at all (`registry::Address::parse`).
+    /// addressable at all: nothing projects its id to anyone.
     ///
     /// Still latent: Reflection holds `create_worker` and cannot yet call it usefully.
     pub async fn any_host(&self) -> Option<(Scene, ToolSink)> {
