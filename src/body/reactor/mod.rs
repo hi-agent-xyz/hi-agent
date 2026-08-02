@@ -1640,9 +1640,10 @@ async fn run_reactor_turn(
 ) -> anyhow::Result<()> {
     let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
 
-    // This turn's delta: live worker status (so the voice can surface deliberation's
-    // progress), presence, any barge-in note, and the new signals. The projected state
-    // it all hangs off is assembled in [`turn_context`].
+    // This turn's delta: whether the scene's own thinking is still running (so the
+    // voice can say "still on it" rather than guess), presence, any barge-in note, and
+    // the new signals. The projected state it all hangs off is assembled in
+    // [`turn_context`].
     let worker_status = workers.render_status().await;
     let presence_note = format!("## Presence\n{}", reactor.inner.presence.render(scene));
     let interrupted = reactor

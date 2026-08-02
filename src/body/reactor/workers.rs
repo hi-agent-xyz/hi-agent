@@ -137,14 +137,11 @@ struct Worker {
     transcript: Arc<Mutex<String>>,
     /// Whether the drive loop is mid-prompt right now, vs. idle and resumable.
     busy: Arc<AtomicBool>,
-    /// The session that created this one, and to which its work reports.
-    ///
-    /// `None` means the scene loop itself spawned it — the legacy path, where a
-    /// report goes to the scene's queue. Once an agent session spawns a worker, the
-    /// worker answers to *that session*, never to a scene: a scene is somewhere a
-    /// person is spoken to, and only Reaction speaks. Work travels up the chain of
-    /// owners; it does not shortcut sideways into a conversation.
-    owner: Option<SessionId>,
+    // A copy of the owner used to live here, read by `render_status` to print
+    // "[under session {o}]" in the roster of other people's workers. That roster is
+    // gone, and the switchboard holds the authoritative owner (`registry::global()`),
+    // so a second copy could only ever disagree with it — which is the argument
+    // `WorkerRegistry`'s own TODO makes about this whole map.
     drive: JoinHandle<()>,
 }
 
@@ -369,7 +366,6 @@ impl WorkerRegistry {
                 task,
                 transcript,
                 busy,
-                owner,
                 drive,
             },
         );
@@ -506,45 +502,50 @@ impl WorkerRegistry {
         registry::global().post(id, text)
     }
 
-    /// A compact, stable-ordered view of every live worker — its id, task, whether
-    /// it's running now or idle-and-resumable, and a short tail of its transcript —
-    /// for injection into the reactor's prompt. The id tells the mind which worker
-    /// to continue via `delegate worker:<id>`. Empty string when nothing is live.
+    /// Whether this scene's own thinking is still running, for injection into
+    /// Reaction's turn. Empty string when there is nothing to say.
+    ///
+    /// **One line, about Deliberation, and nothing else.** The block used to list every
+    /// live session in the map under `## Working sessions (delegated)`, which was wrong
+    /// twice over. Reaction *owns none of them* — a worker belongs to the session that
+    /// created it, and Reaction creates none — so it was reading a roster of other
+    /// people's work it could neither steer nor report on. And the idle rows told it to
+    /// `delegate with worker:<id> to continue it`, naming a tool retired with the old
+    /// channel: the voice's own window was the last place still advertising it.
+    ///
+    /// What survives is the thing the block was actually for. Reaction hands the
+    /// question down to its Deliberation and keeps talking; the one fact it needs back
+    /// mid-conversation is *am I still looking into this* — so it can say "still on it"
+    /// with a straight face instead of guessing. Anything a worker produces reaches the
+    /// voice as a report, on the report path, which is where it belongs.
     pub(super) async fn render_status(&self) -> String {
-        if self.workers.is_empty() {
+        let Some(id) = self.deliberation else {
+            return String::new();
+        };
+        let Some(w) = self.workers.get(&id) else {
+            // Tracked but gone — it closed itself past the TTL. Nothing to say rather
+            // than a line about a session that is not there.
+            return String::new();
+        };
+        if !w.busy.load(Ordering::Relaxed) {
+            // Idle means it finished, and finishing posts a report the voice has
+            // already seen. A second mention here would read as work still in flight.
             return String::new();
         }
-        let mut ids: Vec<&SessionId> = self.workers.keys().collect();
-        ids.sort();
-
-        let mut s = String::from("## Working sessions (delegated)\n");
-        for id in ids {
-            let w = &self.workers[id];
-            let busy = w.busy.load(Ordering::Relaxed);
-            let queued = registry::global().status(*id).is_some_and(|st| st.queued);
-            let tail = {
-                let t = w.transcript.lock().await;
-                tail_chars(&t, 240)
-            };
-            let under = match w.owner {
-                Some(o) => format!(" [under session {o}]"),
-                None => String::new(),
-            };
-            if busy {
-                let suffix = if queued { "; follow-up queued" } else { "" };
-                let _ = write!(s, "- session {id}{under} (running{suffix}): \"{}\"", w.task);
-            } else {
-                let _ = write!(
-                    s,
-                    "- worker {id} (idle — resumable: delegate with worker:{id} to continue it): \"{}\"",
-                    w.task
-                );
-            }
-            if !tail.is_empty() {
-                let _ = write!(s, "\n    latest: {tail}");
-            }
-            s.push('\n');
+        let mut s = String::from("## Still looking into
+");
+        let _ = write!(s, "- \"{}\"", w.task);
+        if registry::global().status(id).is_some_and(|st| st.queued) {
+            s.push_str(" (with a follow-up queued behind it)");
         }
+        let tail = {
+            let t = w.transcript.lock().await;
+            tail_chars(&t, 240)
+        };
+        if !tail.is_empty() {
+            let _ = write!(s, "\n    latest: {tail}");
+        }
+        s.push('\n');
         s
     }
 }
