@@ -55,7 +55,7 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 /// **on every turn**.
 ///
 /// In order: what this scene carries forward (the generated prompt, capped), what the
-/// agent owes ([`tasks::projection`]), the legacy authored/digest files still in play,
+/// agent owes ([`tasks::projection`]), what it may reach,
 /// the learned read on speaking up unprompted, and the recent-signals tail — the tail
 /// last, so it sits against the turn's new signals and reads as one continuous thread.
 ///
@@ -78,7 +78,6 @@ pub async fn window(
             String::new()
         }
     };
-    let legacy = legacy_working_set(data_dir).await;
     let unprompted = speaking_up_unprompted(data_dir).await;
     // Who this rung may reach, by id — see [`agent_window`]. For a scene rung that is
     // the shared brain and nothing else: work goes up, and a scene is not somewhere
@@ -90,7 +89,6 @@ pub async fn window(
     join(&[
         carried.as_str(),
         owed.as_str(),
-        legacy.as_str(),
         unprompted.as_str(),
         reach.as_str(),
         tail.as_str(),
@@ -193,35 +191,26 @@ go without.]"
     s
 }
 
-/// The two files from the superseded always-loaded core that still have writers.
-///
-/// TODO(`docs/arch/data.md#memoryprompts`): both come out with the change that gives
-/// Deliberation the writer's job. `self.md` is the per-install authored identity —
-/// under the contract, who this install is is a *section* of a generated prompt, not
-/// a file. `hot.md` is a mechanical digest of recent gists, and a digest is not a
-/// working memory. Removing them before anything writes the generated prompts would
-/// strip the window down to the log tail, so they stay until there is something to
-/// replace them with. Standing duties left here already: they are [`tasks`] now, one
-/// ledger and no second one.
-async fn legacy_working_set(data_dir: &Path) -> String {
-    use std::fmt::Write as _;
+// `legacy_working_set` lived here: `self.md` under "Who I am to this person" and
+// `hot.md` under "Lately on my mind", read off disk and injected into every scene
+// window. **Both are gone**, which its own TODO said would happen with the change that
+// gave Deliberation the writer's job — and Deliberation now writes
+// `memory/prompts/scenes/<id>.md`, which is what [`carried_forward`] projects at the top
+// of this window.
+//
+// They were held back because removing them *before* anything wrote the generated
+// prompts would have stripped the window to the log tail. That condition is met, and the
+// two are the wrong shape besides: under `docs/arch/data.md#memoryprompts` who this
+// install is is a **section of a generated prompt**, not a file beside it, and `hot.md`
+// is a mechanical digest of recent gists — a digest is not a working memory, and it
+// competed with the brief a rung actually authored for itself.
+//
+// The writers are untouched: reflection still refreshes `hot.md`, and `self.md` is still
+// authored. What changed is that neither is injected into a window any more. If the scene
+// brief turns out to be thinner in practice than what these carried, that is a fix to
+// `deliberation.md` — the rung that writes it — and not a reason to re-add a second
+// source of the same thing.
 
-    let sources = [
-        ("Who I am to this person", crate::identity::self_path(data_dir)),
-        ("Lately on my mind", layout::hot_path(data_dir)),
-    ];
-    let mut s = String::new();
-    for (title, path) in sources {
-        if let Ok(body) = tokio::fs::read_to_string(&path).await {
-            let body = body.trim();
-            if !body.is_empty() {
-                let _ = write!(s, "## {title}\n{body}\n\n");
-            }
-        }
-    }
-    s.truncate(s.trim_end().len());
-    s
-}
 
 /// The floor: the scene's recent signals, straight off the log. Never empty — an
 /// unwritten window is uncurated, not blank — and never fatal: a log that cannot be
