@@ -138,12 +138,19 @@ async fn run(reactor: Reactor, registration: Registration) {
                         }
                         continue;
                     }
-                    // Alarms are the clock's, and the clock does not exist (N4). A rung
-                    // that cannot schedule one is not offered the tool, so this arm is
-                    // unreachable rather than merely unused — say so rather than let it
-                    // read as handled.
+                    // Alarms are the clock's, and **the clock is deferred, not merely
+                    // absent** — see `tasks::due_before` for what that costs and
+                    // `docs/arch/core.md#clock` for the shape it would take. A rung that
+                    // cannot schedule one is not offered the tool (the `alarm` declaration
+                    // sits in the dead `_` arm of `tools_for_role`, which no live role maps
+                    // to), so this arm is unreachable rather than merely unused — say so
+                    // rather than let it read as handled.
+                    //
+                    // This is also the seam the deferral is measured at: when Cognition
+                    // needs waking by anything other than mail, a timer arm on this
+                    // `select!` is the twenty-line answer, and it lands here.
                     Some(SceneControl::Alarm { note, .. }) => {
-                        tracing::warn!(note = %note, "cognition has no clock yet; alarm dropped");
+                        tracing::warn!(note = %note, "cognition has no clock (deferred); alarm dropped");
                         continue;
                     }
                     None => break,

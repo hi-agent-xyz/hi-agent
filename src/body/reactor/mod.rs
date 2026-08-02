@@ -486,6 +486,22 @@ struct AlarmFired {
 /// a new signal, or the soonest of these firing. Only the mind schedules them,
 /// by calling the `alarm` tool. A flat Vec is plenty: a scene has at most a
 /// handful pending at once.
+///
+/// **Unreachable today, and kept on purpose.** The `alarm` tool declaration sits
+/// in the dead `_` arm of `tools_for_role` — no live role maps there — so nothing
+/// calls `schedule_alarm` and nothing ever lands in `pending`. That is a
+/// consequence of the clock being **deferred** rather than half-built: these
+/// alarms are per-scene, live on the loop's stack, and **die with the process**,
+/// which is invariant 6 ("the clock holds no durable state; every timer is
+/// rebuilt from open tasks at startup") left unmet rather than met a different
+/// way. See `mind::memory::tasks::due_before` for what the deferral costs and
+/// `docs/arch/core.md#clock` for the module that would replace this.
+///
+/// Kept rather than deleted because it is the seed: a real clock arms per-target
+/// timers exactly like this, and the parsing/coalescing here is the part that was
+/// already right. If the clock is still unbuilt when this file is next opened for
+/// other reasons, deleting it and re-deriving from `due_before` is also fine —
+/// what is not fine is leaving it looking like a working scheduler.
 struct Alarms {
     pending: Vec<PendingAlarm>,
 }

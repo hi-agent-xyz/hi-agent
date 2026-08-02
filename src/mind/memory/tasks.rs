@@ -318,12 +318,31 @@ pub async fn open_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
 
 /// Open tasks carrying a due time at or before `cutoff`, soonest first.
 ///
-/// **This is what the clock is rebuilt from.** The clock keeps no durable state of
-/// its own: at startup it calls this once, arms a timer per row (the first row is
-/// the next one to fire), and re-reads after anything writes a task. Pass
-/// `DateTime::<Utc>::MAX_UTC` to sweep every future due date, or `Utc::now()` for
-/// just what is already overdue — a restart that slept through a deadline finds it
-/// here rather than losing it.
+/// **No caller. The clock is deferred, deliberately — see below.** This is the
+/// query a clock would be rebuilt from: at startup it would call this once, arm a
+/// timer per row (the first row is the next to fire), and re-read after anything
+/// writes a task. Pass `DateTime::<Utc>::MAX_UTC` to sweep every future due date,
+/// or `Utc::now()` for just what is already overdue — a restart that slept through
+/// a deadline would find it here rather than losing it.
+///
+/// **What being clock-less actually costs, stated plainly: a task's `due` is
+/// decorative.** Nothing fires on it. A duty recorded as "by Friday" is surfaced
+/// only when something *else* wakes a rung that reads the ledger — today that is
+/// the per-scene pulse (`DEFAULT_PULSE`, 30m, in `body::reactor`), whose prompt
+/// tells the mind to read down its open tasks. So overdue work is noticed at
+/// pulse cadence **in a
+/// scene**, and Cognition — the rung that owns the ledger — has no pulse at all,
+/// so it is woken only by mail. That is the hole. It is accepted for now.
+///
+/// If the hole needs closing before the full clock is worth building, the narrow
+/// fix is a **timer arm on Cognition's `select!`** carrying the same "read your
+/// open tasks" note the scene pulse carries — twenty lines, not a module. The
+/// module in [`docs/arch/core.md`](../../../docs/arch/core.md#clock) stays the
+/// goal: one owner for waking agents, coalescing, drop-don't-queue, and no
+/// durable state of its own.
+///
+/// Kept rather than deleted because it is correct, tested, and the thing any of
+/// the above would call first.
 ///
 /// Tasks with no `due` are absent by construction, and closed ones are filtered
 /// out, so a timer is never armed for something already delivered.

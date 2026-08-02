@@ -145,7 +145,15 @@ to [`data/`](data.md); it appears here because it sits on the hot path.
 
 ### Clock
 
-**Status: to be built as a module, not yet wired.**
+**Status: deferred — the design below stands, the module is not being built now.**
+Waking agents on a schedule is real and stays the goal; it is simply not what the
+next work is. Until it exists, two things carry the load and one thing is missing:
+the **pulse** paces each scene's self-attention from inside its own loop, the
+**reflection backoff** paces consolidation from inside its own, and **task due
+times fire nothing at all** — a duty is noticed when a pulse next prompts a rung to
+read the ledger, not when it comes due. Cognition, which owns the ledger, has no
+pulse and is woken only by mail. That gap is accepted deliberately, and the narrow
+fix short of this module is a timer arm on Cognition's loop, not a scheduler.
 
 One type, one owner, four rules.
 
