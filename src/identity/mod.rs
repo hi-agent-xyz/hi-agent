@@ -36,8 +36,6 @@ use std::path::{Path, PathBuf};
 /// set, so it is **inlined** as that session's system prompt (see [`reflection_prompt`])
 /// rather than Read. All ship in the binary and refresh on every build.
 const REACTION_BASE: &str = include_str!("reaction.md");
-const APPEARANCE_BASE: &str = include_str!("appearance.md");
-const AESTHETIC_BASE: &str = include_str!("aesthetic.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
 const DELIBERATION_BASE: &str = include_str!("deliberation.md");
 const COGNITION_BASE: &str = include_str!("cognition.md");
@@ -49,7 +47,6 @@ const COGNITION_BASE: &str = include_str!("cognition.md");
 /// different strings, so the shared half is shared. Each half keeps its own
 /// `.local.md`, so an operator can retune what every worker is told *or* just the one
 /// kind, without editing the other.
-const WORKER_COMMON_BASE: &str = include_str!("workers/common.md");
 const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
 const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
 const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
@@ -157,8 +154,6 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("reaction.md"), compose_prompt(REACTION_BASE, &dir, "reaction.local.md"))?;
-    std::fs::write(dir.join("appearance.md"), compose_prompt(APPEARANCE_BASE, &dir, "appearance.local.md"))?;
-    std::fs::write(dir.join("aesthetic.md"), compose_prompt(AESTHETIC_BASE, &dir, "aesthetic.local.md"))?;
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
     std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
     std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
@@ -166,13 +161,12 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     // The worker prompts get their own subdirectory, because there is one per type and
     // they would otherwise be the majority of a flat `prompts/`. `common.md` sits
     // alongside them rather than above them: it is the layer every type is composed
-    // with, and an operator retunes it the same way as any other.
+    // One file per type, and **no shared base**: a worker's prompt is whole, the same way
+    // a rung's is. `common.md` used to sit here as the layer every type composed with,
+    // which meant a decision-maker read how to drive a camera and a file-filer read how to
+    // review its own artwork. ~39 lines are now duplicated across five files instead.
     let workers = dir.join("workers");
     std::fs::create_dir_all(&workers)?;
-    std::fs::write(
-        workers.join("common.md"),
-        compose_prompt(WORKER_COMMON_BASE, &workers, "common.local.md"),
-    )?;
     for t in WorkerType::ALL {
         std::fs::write(
             workers.join(format!("{}.md", t.as_str())),
@@ -183,13 +177,12 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     tracing::info!(
         dir = %dir.display(),
         types = WorkerType::ALL.len(),
-        "installed bundled prompts (reaction.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md, workers/)"
+        "installed bundled prompts (reaction.md, deliberation.md, cognition.md, reflection.md, workers/)"
     );
     Ok(())
 }
 
-/// A working session's whole system prompt: `workers/common.md` — what every worker is
-/// — then `workers/<type>.md`, the layer for this kind of job.
+/// A working session's whole system prompt: `workers/<type>.md`, entire.
 ///
 /// Read off disk so an operator's `*.local.md` reaches a worker the same way it reaches
 /// every other rung, falling back to the embedded bases when a file is missing or
@@ -206,24 +199,9 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 ///   the filing worker at a directory that did not exist, for every scene with an `@`
 ///   in it.
 pub async fn worker_prompt(data_dir: &Path, scene: &crate::types::Scene, kind: WorkerType) -> String {
-    let dir = data_dir.join("prompts").join("workers");
-    let read = |name: String, fallback: &'static str| {
-        let path = dir.join(name);
-        async move {
-            match tokio::fs::read_to_string(&path).await {
-                Ok(s) if !s.trim().is_empty() => s,
-                _ => fallback.to_string(),
-            }
-        }
-    };
-    let common = read("common.md".to_string(), WORKER_COMMON_BASE).await;
-    let layer = read(format!("{}.md", kind.as_str()), kind.base()).await;
-
+    let text = rung_prompt(data_dir, &format!("workers/{}", kind.as_str()), kind.base()).await;
     let scene_dir = crate::mind::memory::layout::encode_scene(scene);
-    format!("{}\n\n{}", common.trim(), layer.trim())
-        .replace("{scene_dir}", &scene_dir)
-        // The header value, which is the scene id verbatim.
-        .replace("{scene}", &scene.0)
+    text.replace("{scene_dir}", &scene_dir).replace("{scene}", &scene.0)
 }
 
 
@@ -519,9 +497,7 @@ mod soul_tests {
         assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
         assert_eq!(read("cognition.md"), COGNITION_BASE);
         assert_eq!(read("reflection.md"), REFLECTION_BASE);
-        assert_eq!(read("appearance.md"), APPEARANCE_BASE);
-        assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
-        for gone in ["core.md", "meaning.md"] {
+        for gone in ["core.md", "meaning.md", "appearance.md", "aesthetic.md"] {
             assert!(!p.join(gone).exists(), "{gone} should be retired");
         }
     }
@@ -599,30 +575,40 @@ mod soul_tests {
     }
 
     /// The path a worker is given to find a handed-over file must be the path that
-    /// exists on disk. It was substituted with the same raw scene id as the two
-    /// `X-HI-Scene` headers, but the directory is percent-encoded — so for every scene
-    /// with an `@` in it, which is every `user@device`, the file-filing worker was sent
-    /// somewhere there was nothing to find, and had no way to know that was why.
+    /// exists on disk. It was substituted with the same raw scene id as the `X-HI-Scene`
+    /// header, but the directory is percent-encoded — so for every scene with an `@` in
+    /// it, which is every `user@device`, the filing worker was sent somewhere there was
+    /// nothing to find, and had no way to know that was why.
+    ///
+    /// The two facts now live in different files, which is the point of flattening: the
+    /// **filer** needs the on-disk directory, and only the **general** worker is told
+    /// about hi-agent's input channels and the header they want.
     #[tokio::test]
-    async fn the_file_path_is_the_encoded_directory_and_the_header_is_not() {
+    async fn the_scene_is_encoded_for_a_path_and_verbatim_for_a_header() {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
         let scene = crate::types::Scene("alice@phone".into());
-        let p = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
 
+        let filer = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
         assert!(
-            p.contains("memory/raw/alice%40phone/file/"),
+            filer.contains("memory/raw/alice%40phone/file/"),
             "the file path must be the on-disk directory"
         );
         assert!(
-            p.contains("X-HI-Scene: alice@phone"),
-            "the header must stay the scene id verbatim"
-        );
-        assert!(!p.contains("{scene"), "every placeholder is substituted: {p}");
-        assert!(
-            !p.contains("memory/raw/alice@phone/"),
+            !filer.contains("memory/raw/alice@phone/"),
             "the raw id must not survive as a path"
         );
+
+        let general = worker_prompt(dir.path(), &scene, WorkerType::General).await;
+        assert!(
+            general.contains("X-HI-Scene: alice@phone"),
+            "the header must stay the scene id verbatim"
+        );
+
+        for t in WorkerType::ALL {
+            let p = worker_prompt(dir.path(), &scene, *t).await;
+            assert!(!p.contains("{scene"), "unsubstituted placeholder in {}", t.as_str());
+        }
     }
 
     /// Every worker gets the common layer, and only its own specialism on top. The
@@ -674,15 +660,15 @@ mod soul_tests {
     /// waits for the answer.
     #[test]
     fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
-        for base in [WORKER_COMMON_BASE, WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
+        for base in [WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
                      WORKER_VIEW_REVIEWER_BASE, WORKER_DECISION_MAKER_BASE,
                      WORKER_FILE_FILER_BASE] {
             assert!(!base.contains("`ask`"));
             assert!(!base.contains("`delegate`"));
             assert!(!base.contains("`alarm`"));
         }
-        assert!(WORKER_COMMON_BASE.contains("`send_message`"));
-        assert!(WORKER_COMMON_BASE.contains("Never wait for an answer"));
+        assert!(WORKER_GENERAL_BASE.contains("`send_message`"));
+        assert!(WORKER_GENERAL_BASE.contains("Never wait for an answer"));
     }
 
     /// The two halves of the view loop both name the tool that makes them possible.
