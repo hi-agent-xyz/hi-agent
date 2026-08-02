@@ -311,7 +311,13 @@ impl WorkerRegistry {
             .agent
             .session(
                 &self.scene,
-                SessionRole::Worker,
+                // The role the session is *opened* as is what its `X-HI-Role` header
+                // says, which is what picks its tool surface. Deliberation was opened as
+                // `SessionRole::Worker` — so the registry called it Deliberation while
+                // the tool surface called it a worker, and it got `look`/`act`/`watch`
+                // it has no business with. `SessionRole::Deliberation` existed the whole
+                // time and was never constructed.
+                if is_deliberation { SessionRole::Deliberation } else { SessionRole::Worker },
                 Some(id),
                 SessionOpts {
                     system_prompt: Some(system_prompt),

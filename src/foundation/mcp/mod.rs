@@ -398,55 +398,43 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             session_status_tool(),
             session_messages_tool(),
         ],
+        // **Deliberation** — the scene's reading and thinking. One tool, which is the
+        // whole shape of the rung: it hands work *up*, and everything else it does it
+        // does with the adapter's own Read/Write/fetch (`docs/arch/foundation.md`:
+        // "SendMessage · reads · write **only** its scene's brief").
+        //
+        // No `session_status`/`session_messages`: those belong to owners, and
+        // Deliberation owns nothing — it creates no workers, and the hand-up to
+        // Cognition is one-way by design (invariant 3: a scene that waited on the one
+        // global session would serialize every other scene). The answer comes back as
+        // mail, not as something to poll for.
+        //
+        // No `look`/`act`/`watch` either, and that is the correction this arm exists
+        // for. Until now a deliberation session was **opened as `SessionRole::Worker`**,
+        // so it got the effector surface and its `X-HI-Role` said `worker` — a rung
+        // wearing another rung's clothes. Its built-ins stay on: `foundation.md` is
+        // explicit that only Reaction's surface is a rail, and this one is sized for
+        // context.
+        Some("deliberation") => vec![send_message_tool()],
         Some("reactor") => vec![say_tool(), show_view_tool(), send_message_tool()],
-        // Fallback for an unheadered/unknown role — the legacy agentic reactor's full
-        // toolset. No live role maps here after the reactor/cognition split, but keep
-        // it so an untagged session still degrades to something usable.
-        _ => vec![
-            say_tool(),
-            show_view_tool(),
-            tool(
-                "alarm",
-                "Set yourself to come back to something after a delay — a reminder you promised, \
-                 checking back if they've gone quiet, any time-based follow-up. When it fires you're \
-                 woken with the note as a new signal even if nothing else happened; decide then.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "delay": { "type": "string", "description": "How long to wait: seconds, or a number with an s/m/h suffix like 30s, 20m, 1h." },
-                        "note": { "type": "string", "description": "A short note to your future self about what to revisit." },
-                    },
-                    "required": ["delay", "note"],
-                }),
-            ),
-            tool(
-                "record_reflex",
-                "Teach a quick-action reflex the user can later fire instantly, with no model in \
-                 the loop. Use it when they ask you to remember filling a specific field with a \
-                 specific value — e.g. \"on this signup page my ID number is 11010119…\". It stores \
-                 the value and how to find the field, so a later invoke clicks that field and types \
-                 it straight in. `name` is a short handle (e.g. \"fill my ID\"). `value` is exactly \
-                 what to type. `label_contains` is text from the field's on-screen label (e.g. \"ID \
-                 number\", \"身份证\"). Optionally narrow the situation with `app` (frontmost app, e.g. \
-                 \"Safari\"), `title_contains` (a window-title substring), and `role` (the control's \
-                 accessibility role; defaults to AXTextField). Keep the label/app specific enough \
-                 that only the intended field can match — it fires only when exactly one field matches.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "name": { "type": "string", "description": "Short handle for the reflex, e.g. \"fill my ID\"." },
-                        "value": { "type": "string", "description": "Exactly the text to type into the field." },
-                        "label_contains": { "type": "string", "description": "A substring of the target field's on-screen label, e.g. \"ID number\" or \"身份证\"." },
-                        "app": { "type": "string", "description": "Optional: require this frontmost app (substring), e.g. \"Safari\"." },
-                        "title_contains": { "type": "string", "description": "Optional: require this substring in the frontmost window title." },
-                        "role": { "type": "string", "description": "Optional: the target control's accessibility role; defaults to AXTextField." },
-                    },
-                    "required": ["name", "value", "label_contains"],
-                }),
-            ),
-            see_tool(),
-            watch_tool(),
-        ],
+        // **Nothing.** Every role hi-agent opens is named above, so reaching here means
+        // an unheadered or unknown session, and handing one an arbitrary toolset is how
+        // the previous occupant of this arm survived: it held the legacy agentic
+        // reactor's kit — `say`, `show_view`, `alarm`, `record_reflex`, `see`, `watch` —
+        // long after no live role mapped to it, and read as a live surface in every
+        // review. It was also a live hazard, not just clutter: `SessionRole::Deliberation`
+        // stringifies to `deliberation`, which had no arm until the one above, so the
+        // moment anything constructed that role it would have landed *here* and been
+        // handed `say` (refused at dispatch) with no `send_message` at all.
+        //
+        // Two tools lose their only declaration with this, and both were already
+        // unreachable: `alarm`, whose clock is deferred (`docs/arch/core.md#clock`), and
+        // `record_reflex`, which still has **no live role** — the recognizer and the
+        // invoke route are real, so the reflex store can be read and fired but never
+        // written. That is an open decision, not an oversight: it needs a rung or it
+        // needs deleting, and it is now visibly nobody's rather than sitting in an arm
+        // that looked live.
+        _ => vec![],
     }
 }
 
@@ -1783,11 +1771,55 @@ mod surface_tests {
     /// The one verb has to be on every rung, or an agent is unreachable by design.
     #[test]
     fn every_role_can_send_a_message() {
-        for role in [Some("reactor"), Some("worker"), Some("reflection")] {
+        for role in [
+            Some("reactor"),
+            Some("worker"),
+            Some("deliberation"),
+            Some("cognition"),
+            Some("reflection"),
+        ] {
             assert!(
                 names(role).contains(&"send_message".to_string()),
                 "{role:?} must hold send_message"
             );
+        }
+    }
+
+    /// Deliberation's whole surface, pinned — and the reason it needed pinning: the
+    /// rung was **opened as `SessionRole::Worker`**, so its `X-HI-Role` said `worker`
+    /// and it was handed the effector kit (`look`, `act`, `watch`) that belongs to the
+    /// rung that does the job. It reads and it hands up; that is one tool.
+    ///
+    /// No `session_status`: status reads belong to owners, and Deliberation owns
+    /// nothing. The hand-up to Cognition is one-way on purpose (invariant 3), so the
+    /// answer arrives as mail rather than as something to poll for.
+    #[test]
+    fn deliberation_hands_up_and_holds_nothing_else() {
+        assert_eq!(names(Some("deliberation")), vec!["send_message".to_string()]);
+    }
+
+    /// An unknown role gets **nothing**, and that is the point.
+    ///
+    /// This arm used to hold the legacy agentic reactor's kit — `say`, `show_view`,
+    /// `alarm`, `record_reflex`, `see`, `watch` — with a comment saying no live role
+    /// mapped here. It was not merely dead: `SessionRole::Deliberation` stringifies to
+    /// `deliberation`, which had no arm, so the moment that role was constructed it
+    /// would have landed here and been handed `say` (refused at dispatch) and no
+    /// `send_message` at all. A fallback that hands out someone else's surface turns a
+    /// missing arm into a silently wrong one.
+    #[test]
+    fn an_unknown_role_gets_no_tools() {
+        assert!(names(None).is_empty());
+        assert!(names(Some("nonesuch")).is_empty());
+    }
+
+    /// Every role hi-agent actually opens has its own arm. The guard is the enum: if a
+    /// variant is added and its arm is not, this fails rather than the session silently
+    /// degrading to the empty fallback above.
+    #[test]
+    fn every_session_role_has_its_own_arm() {
+        for role in ["reactor", "worker", "deliberation", "cognition", "reflection"] {
+            assert!(!names(Some(role)).is_empty(), "`{role}` fell through to the empty fallback");
         }
     }
 
