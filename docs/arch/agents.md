@@ -205,20 +205,33 @@ Privacy across scenes is handled the way everything else is: soft guidance and j
 **Where the actual jobs get done.** Everything above mostly thinks — not because it is
 forbidden to act, but because a rung that does the job is a rung that stopped being fast.
 
+A worker's **type** is the `type` in [`CreateWorker(type)`](foundation.md#the-agent-session-registry),
+and it selects a prompt and nothing else — same session, same tools. Adding a kind is
+adding a `.md`.
+
 | Worker | Job |
 |---|---|
 | General | whatever the task is |
 | View Builder | builds a view |
 | View Reviewer | renders it, screenshots it, and **looks at it** before it ships |
 | Decision Maker | makes the call that lets work continue without the user — below |
+| File Filer | puts something the person handed over into `drive/`, filed where the drive is already going |
 
 Workers are **volatile**: they live in process memory and die with it. Nothing durable may
 live only inside one. Recovery is therefore **reconstruction from Tasks, never continuation**
 — we do not checkpoint execution state.
 
 They are **capability peers**, not children: a worker reaches the same memory, skills and
-tools, and may spawn further workers. The one asymmetry is channels — a worker cannot speak
-or show. It produces an intent; Reaction articulates it.
+tools. The one asymmetry is channels — a worker cannot speak or show. It produces an
+intent; Reaction articulates it.
+
+**A worker fans out with sub-agents, not with `CreateWorker`.** It may spin up as many
+sub-agents as the job wants, using its harness's own facility for that — and they are
+**invisible here**: no session id, no address, no registry entry, no report of their own.
+They live and die inside the one worker session, which stays the single thing that is
+accountable and the single thing that reports. So `CreateWorker` remains Cognition's and
+Reflection's, and "one dispatcher" survives intact: nothing another rung can see was
+created without it.
 
 There is **one verb** between agents, in both directions:
 `SendMessage(to, message)` — one way, no reply, queued and merged while the target is busy.
@@ -259,9 +272,15 @@ nobody can correct, and correction is how user preference actually grows.
 speech, no side effects. That is not a restriction placed on it, it is simply what being a
 worker means here: Reaction is the mouth, and whoever asked owns the act.
 
-**Reachable mid-errand, not only before work starts.** Cognition calls it, and so does a
-worker halfway through a job — because the moments that genuinely need a decision turn up in
-the middle of running work, not at its edges.
+**Reachable mid-errand, not only before work starts** — because the moments that genuinely
+need a decision turn up in the middle of running work, not at its edges.
+
+Reached **through the owner**, though, not directly: a worker holds no `CreateWorker`, so
+one that needs a call says so to whoever created it and keeps going on its stated
+assumption meanwhile. Since workers are created by Cognition and Reflection, the ask lands
+on one of the two rungs that already holds the surrounding context — which is the right
+place for it anyway. The cost is a hop; the thing it buys is that nothing stalls waiting,
+which is the whole point of this worker existing.
 
 Reversibility is what it weighs most heavily: the harder something is to walk back, the more
 it should prefer asking. That is [invariant 9](arch.md#invariants), applied here as judgment

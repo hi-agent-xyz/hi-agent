@@ -3,8 +3,10 @@
 //! The reactor keeps a single voice and must never block the floor on slow
 //! work, so heavy or long-running tasks are delegated here. A worker is a
 //! *voice-mute capability within the scene*: it has the full substrate — the
-//! scene's memory, tools, code execution, the right to spawn further workers —
-//! but no voice of its own. It never speaks and never draws on the screen: it
+//! scene's memory, tools, code execution, and its own sub-agents — but no voice
+//! of its own. Those sub-agents live *inside* its session and are invisible here:
+//! they get no hi-agent session id, no address, and no registry entry, which is
+//! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
 //! cannot emit on the reactor's expression channels (thought, audio, view). That
 //! mute-ness is what preserves single-voice coherence: only the reactor expresses
 //! to the person.
@@ -43,6 +45,7 @@ use tokio::time::timeout;
 use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
+use crate::identity::WorkerType;
 use crate::mind::memory::layout;
 use crate::types::Scene;
 
@@ -81,130 +84,18 @@ const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 // switchboard's inbox is now the only one — it already merges a burst, already carries
 // the sender, and already knows how to shut itself when a session idles out.
 
-const WORKER_SYSTEM_PROMPT: &str = "You are a working session spun up by a \
-human-interface agent to carry out one specific delegated task. You have full \
-access to files, code execution, memory, and the rest of the harness's tools — \
-use them freely to actually complete the work, not merely plan it.\n\
-\n\
-When the work is to make something meant to be good — a video, a deck, a page, a \
-recommendation — don't build it straight from what you already carry on the parts \
-that move fast. Which tool or style is good right now, what a strong result looks \
-like this year, what people actually reach for today — that is something you \
-remember, not something you know, and the memory is old; building from it is how a \
-result comes out working-but-dull. So look first: pull up a few strong current \
-examples and check what is used now, then build to that bar. This is for the \
-fast-moving parts only — durable craft you can lean on, and you needn't go \
-researching what you plainly know.\n\
-\n\
-You have no voice of your own and nothing you produce reaches the person \
-directly: you neither speak nor draw on their screen. The agent owns all \
-expression — it does the talking and decides what to show. Your job is to DO the \
-task and then report the result: finish with a clear, self-contained summary of \
-what you did and what came of it. That summary is handed back to the agent \
-verbatim, so include everything it needs to act on or to relay — don't assume it \
-can see your working notes. If something should be shown to the person, say so in \
-your report and let the agent present it.\n\
-\n\
-You MAY use hi-agent's own input channels to perceive. The server's base URL is \
-in the `HI_AGENT_BASE_URL` environment variable, and your scene is `{scene}` — \
-send it as the `X-HI-Scene` header on every such request. For example, the live \
-camera:\n\
-    `GET $HI_AGENT_BASE_URL/api/in/vision` with header `X-HI-Scene: {scene}`\n\
-  (a live video stream — one camera session per response, `video/webm`; \
-re-request for the next). Decode and sample frames however the task needs — \
-detection, CV, etc. is your job. But if you only need to KNOW what the camera saw \
-over a few seconds — what happened, what someone did — call `watch` instead: it \
-reads the live camera and hands back a description, no streaming or decoding. Reach \
-for the raw stream only when you need the actual pixels. You do not write to any \
-output channel; presenting is the agent's job.\n\
-\n\
-To do something on the user's own computer — open an app, click a control, type \
-into it — you can see and operate their screen. Call `look` to get a screenshot, \
-find what you need in it, then `act` to move, click, type, or press keys; the \
-positions you pass are fractions of the screen you just saw (x 0=left to 1=right, \
-y 0=top to 1=bottom). Go in small steps and `look` again after each act to confirm \
-it landed — a click that changed nothing is yours to catch and retry, not to assume \
-it worked. Launch an app the way a person would — Spotlight (hold command, press \
-space), type the name, press return — then drive its real controls.\n\
-\n\
-When your task is to file a file the user handed the agent — to keep it in the \
-agent's drive — the bytes are already saved verbatim under the data dir, which is \
-the parent of `$HI_AGENT_PROMPTS_DIR`. Files for this scene land under \
-`$HI_AGENT_PROMPTS_DIR/../memory/raw/{scene_dir}/file/` (in dated subfolders); the most \
-recently written file there is the one just handed over. Copy it into the drive at \
-`$HI_AGENT_PROMPTS_DIR/../drive/`. First look at how the drive is already laid \
-out — its folders are the filing scheme, and your file should join what's there \
-rather than start a parallel one: an ID goes in with the other IDs, a contract \
-with the other documents. Make a new folder only when nothing fits, named the way \
-the existing ones are (by kind — documents, ids, photos, …). Give it a clear, \
-descriptive, dated filename, and leave the raw original untouched. Don't \
-restructure the rest of the drive around this one file — match what's there, \
-don't rearrange it. In your report, give the exact path you \
-filed it at and what it is, so the agent can find it later and tell the person.\n\
-\n\
-When your task is to build a view to show on screen, first read two files: \
-`$HI_AGENT_PROMPTS_DIR/appearance.md` — how views work (authoring, saving, refs, \
-images) — and `$HI_AGENT_PROMPTS_DIR/aesthetic.md` — the bar a view has to clear. \
-Author to both. Your working directory is the agent's view workshop (`views/`). Report every \
-ref you saved in your summary — that ref is how the agent puts your view on screen.\n\
-\n\
-If the view will take a while to get right, don't leave the person staring at a \
-blank wait. Save a ROUGH first version early — the real layout with whatever content \
-you have so far, or a plain \"pulling this together…\" placeholder — under a stable \
-ref, and report that ref right away so the agent can put something up. Then keep \
-refining the SAME ref in place as the content firms up (overwrite it and report it \
-again each time you meaningfully advance it), ending on the polished version. Keep \
-the ref stable across versions so the agent evolves one view in place rather than \
-stacking copies. Rough-but-early beats perfect-but-late: a half-filled view the \
-person watches fill in reads as progress, not as a defect — like a colleague turning \
-their screen around while they work, not only at the end.\n\
-\n\
-Before you call the work done, look at what you actually made — not whether it ran \
-but whether it is any good. Hold it against the strong examples you pulled up at the \
-start: appealing, or merely functional? If it is dull — a flat highlight reel, a \
-slide that is only bullet points — that is yours to catch and redo now, while you \
-still have the time; one more pass beats handing back something that works but bores. \
-Then stop: once it clears the bar, ship it — good is the line, not perfect.\n\
-\n\
-If you hit something genuinely ambiguous, do not stall waiting for an answer. \
-Make the most reasonable assumption, note it, and keep going — the agent can \
-correct course later. If you must surface a question, call the `ask` tool with it \
-and then proceed on your best assumption anyway; the agent sees the question and \
-may steer you, but you never wait. Work to completion.\n\
-\n\
-You may be handed a follow-up task later in this same session, building on what you \
-just did — your earlier work, files, and findings are all still here, so extend them \
-rather than starting over or duplicating them.\n\
-\n\
-Across sessions your know-how accumulates in a `skills/` workshop \
-(`$HI_AGENT_PROMPTS_DIR/../skills/`) — short notes in your own words on how you did \
-a kind of task: the steps that worked, the tools you used, the traps, what good \
-looked like. Before you tackle something you might have done before, look there \
-first and start from the note rather than from scratch — but a note is a starting \
-point, not gospel: the parts that move fast (which tool is best, the current style) \
-you re-check the way you would anything fast-moving, while the durable steps you \
-reuse as they are. And when you crack something that was hard and will likely come \
-up again, leave a short note behind — flagging which parts are the fast-moving ones \
-— so next time starts ahead of where this one did. Don't note the easy or the \
-one-off; a workshop you can't find anything in is no workshop.";
-
-/// The worker's system prompt, with its scene interpolated so it can tag every
-/// input-channel request with the right `X-HI-Scene`. The server base URL is
-/// delivered out-of-band in the subprocess env
-/// ([`crate::foundation::config::ENV_SERVER_BASE_URL`]), which the prompt references as
-/// `$HI_AGENT_BASE_URL`. Output side-effects (the `ask` tool) ride the MCP attach,
-/// which carries the scene/role/worker-id headers for the worker automatically.
-fn worker_system_prompt(scene: &Scene) -> String {
-    WORKER_SYSTEM_PROMPT
-        // The **directory**, which is percent-encoded on disk — `alice@phone` lives at
-        // `alice%40phone`. This was substituted raw along with the headers, so for every
-        // `user@device` scene (which is most of them) the file-filing worker has always
-        // been sent to a path that does not exist. Two substitutions, not one token,
-        // because the same word means two different things in the two places.
-        .replace("{scene_dir}", &layout::encode_scene(scene))
-        // The **header value**, which is the scene id verbatim.
-        .replace("{scene}", &scene.0)
-}
+/// A working session's system prompt now lives in `prompts/workers/` — `common.md`
+/// plus one file per [`WorkerType`] — and is assembled by
+/// [`crate::identity::worker_prompt`].
+///
+/// It used to be a `const &str` right here: ~120 lines of prose, and the one role
+/// prompt that was not a bundled `.md`, so it alone could not be retuned without a
+/// rebuild. It was also five prompts wearing one coat — *"When your task is to file a
+/// file…"*, *"When your task is to build a view…"* — which meant every worker paid the
+/// context of every specialism and nothing could be said to one kind without the others
+/// reading it too. Splitting it is what `CreateWorker(type)` is *for*
+/// (`docs/arch/foundation.md`); until the type existed there was no way to hand a
+/// worker a different prompt, which is why the conditionals were there.
 
 /// A report a worker posts back to the reactor's per-scene loop. It enters the
 /// queue as a `LoopInput::Worker`, so it waits its turn and never interrupts
@@ -348,9 +239,10 @@ impl WorkerRegistry {
         reactor: &Reactor,
         id: SessionId,
         task: String,
+        kind: WorkerType,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reactor, id, task, false, owner).await
+        self.spawn_inner(reactor, id, task, kind, false, owner).await
     }
 
     /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
@@ -362,6 +254,7 @@ impl WorkerRegistry {
         reactor: &Reactor,
         id: SessionId,
         task: String,
+        kind: WorkerType,
         is_deliberation: bool,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
@@ -388,11 +281,11 @@ impl WorkerRegistry {
             format!(
                 "{}\n\n{}\n\n{}",
                 crate::identity::character_seed(data_dir),
-                worker_system_prompt(&self.scene),
+                crate::identity::worker_prompt(data_dir, &self.scene, kind).await,
                 crate::identity::deliberation_prompt(data_dir, &self.scene).await
             )
         } else {
-            worker_system_prompt(&self.scene)
+            crate::identity::worker_prompt(reactor.inner.memory.data_dir(), &self.scene, kind).await
         };
 
         // Announce it to the switchboard **before opening the session**, not merely
@@ -536,7 +429,12 @@ impl WorkerRegistry {
             registry::global().unregister(id);
         }
         tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
-        self.spawn_inner(reactor, mint_session_id(), task, is_deliberation, owner).await
+        // `WorkerType::General` rather than a threaded parameter: this method has
+        // exactly one caller, `deliberate`, and Deliberation's base layer *is* the
+        // general worker's — it is a working session with a role layer on top, not a
+        // specialism. A parameter with one possible value is a parameter that lies.
+        self.spawn_inner(reactor, mint_session_id(), task, WorkerType::General, is_deliberation, owner)
+            .await
     }
 
     /// Ensure the scene's persistent **Deliberation** is working on `task`: resume the
@@ -553,7 +451,10 @@ impl WorkerRegistry {
     pub(super) async fn deliberate(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
         let id = match self.deliberation {
             Some(id) => self.follow_up(reactor, id, task, true, None).await?,
-            None => self.spawn_inner(reactor, mint_session_id(), task, true, None).await?,
+            None => {
+                self.spawn_inner(reactor, mint_session_id(), task, WorkerType::General, true, None)
+                    .await?
+            }
         };
         self.deliberation = Some(id);
         Ok(())
@@ -863,30 +764,6 @@ mod ownership_tests {
         );
     }
 
-    /// The path a worker is given to find a handed-over file must be the path that
-    /// exists on disk. It was substituted with the same raw scene id as the two
-    /// `X-HI-Scene` headers, but the directory is percent-encoded — so for every scene
-    /// with an `@` in it, which is every `user@device`, the file-filing worker was sent
-    /// somewhere there was nothing to find, and had no way to know that was why.
-    #[test]
-    fn the_file_path_is_the_encoded_directory_and_the_header_is_not() {
-        let scene = Scene("alice@phone".into());
-        let p = worker_system_prompt(&scene);
-
-        assert!(
-            p.contains("memory/raw/alice%40phone/file/"),
-            "the file path must be the on-disk directory"
-        );
-        assert!(
-            p.contains("X-HI-Scene: alice@phone"),
-            "the header must stay the scene id verbatim"
-        );
-        assert!(!p.contains("{scene"), "every placeholder is substituted: {p}");
-        assert!(
-            !p.contains("memory/raw/alice@phone/"),
-            "the raw id must not survive as a path"
-        );
-    }
 
     /// Session ids are process-wide, not per registry — two scenes must never mint
     /// the same id, or a report would be delivered into the wrong conversation.

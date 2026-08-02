@@ -130,9 +130,9 @@ async fn run(reactor: Reactor, registration: Registration) {
             _ = mail.notified() => {}
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(SceneControl::CreateWorker { id: worker, task, owner }) => {
+                    Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
                         if let Err(err) =
-                            workers.spawn_with_id(&reactor, worker, task, owner).await
+                            workers.spawn_with_id(&reactor, worker, task, kind, owner).await
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
                         }

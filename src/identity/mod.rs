@@ -44,6 +44,81 @@ const REFLECTION_BASE: &str = include_str!("reflection.md");
 const DELIBERATION_BASE: &str = include_str!("deliberation.md");
 const COGNITION_BASE: &str = include_str!("cognition.md");
 
+/// The worker prompts, under `workers/`. `common.md` is what every working session is;
+/// the rest are one file per **type**, layered on top of it.
+///
+/// Two copies of "report to your owner" is how three mail renderers became three
+/// different strings, so the shared half is shared. Each half keeps its own
+/// `.local.md`, so an operator can retune what every worker is told *or* just the one
+/// kind, without editing the other.
+const WORKER_COMMON_BASE: &str = include_str!("workers/common.md");
+const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
+const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
+const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md");
+const WORKER_FILE_FILER_BASE: &str = include_str!("workers/file-filer.md");
+
+/// What kind of working session this is — the `type` in `CreateWorker(type)`
+/// (`docs/arch/foundation.md#the-agent-session-registry`).
+///
+/// **A type selects a prompt and nothing else.** Every worker runs the same session
+/// with the same tools; `docs/arch/agents.md` is explicit that a new role here is a new
+/// prompt, not new machinery. So this enum exists to name a file, and adding a kind
+/// means adding a `.md` and a variant — never a code path.
+///
+/// It exists at all because the alternative was what shipped until now: one monolithic
+/// prompt with conditional paragraphs (*"When your task is to file a file…"*, *"When
+/// your task is to build a view…"*), leaving the model to work out which of them it
+/// was. Every worker paid the context of every specialism, and nothing could be said to
+/// one kind that would not also be read by the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkerType {
+    /// Whatever the task is. The default, and the right answer for most work.
+    #[default]
+    General,
+    /// Builds a view for the person to look at.
+    ViewBuilder,
+    /// Makes a call so work can continue without the person
+    /// (`docs/arch/agents.md#decision-maker`).
+    DecisionMaker,
+    /// Files something the person handed over into `drive/`.
+    FileFiler,
+}
+
+impl WorkerType {
+    /// The wire name, which is also the prompt's filename stem.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::ViewBuilder => "view-builder",
+            Self::DecisionMaker => "decision-maker",
+            Self::FileFiler => "file-filer",
+        }
+    }
+
+    /// Every type, for the tool schema's `enum` and for install/test sweeps. One list,
+    /// so a new variant cannot be advertised in one place and forgotten in the other.
+    pub const ALL: &'static [Self] =
+        &[Self::General, Self::ViewBuilder, Self::DecisionMaker, Self::FileFiler];
+
+    /// Parse a wire name. `None` for anything unknown — the caller turns that into a
+    /// tool error naming the valid set, rather than silently handing back a general
+    /// worker: a mistyped `view-buidler` that quietly becomes a general session is a
+    /// worker that will not do the job it was made for, and nothing says so.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|t| t.as_str() == s.trim())
+    }
+
+    /// The embedded base for this type's layer.
+    fn base(self) -> &'static str {
+        match self {
+            Self::General => WORKER_GENERAL_BASE,
+            Self::ViewBuilder => WORKER_VIEW_BUILDER_BASE,
+            Self::DecisionMaker => WORKER_DECISION_MAKER_BASE,
+            Self::FileFiler => WORKER_FILE_FILER_BASE,
+        }
+    }
+}
+
 /// Separator that introduces the operator's override layer. Placed after the
 /// bundled base so its instructions take precedence — the model honors the
 /// later, more specific guidance where the two conflict.
@@ -79,8 +154,68 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
     std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
     std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
-    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, reaction.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md)");
+
+    // The worker prompts get their own subdirectory, because there is one per type and
+    // they would otherwise be the majority of a flat `prompts/`. `common.md` sits
+    // alongside them rather than above them: it is the layer every type is composed
+    // with, and an operator retunes it the same way as any other.
+    let workers = dir.join("workers");
+    std::fs::create_dir_all(&workers)?;
+    std::fs::write(
+        workers.join("common.md"),
+        compose_prompt(WORKER_COMMON_BASE, &workers, "common.local.md"),
+    )?;
+    for t in WorkerType::ALL {
+        std::fs::write(
+            workers.join(format!("{}.md", t.as_str())),
+            compose_prompt(t.base(), &workers, &format!("{}.local.md", t.as_str())),
+        )?;
+    }
+
+    tracing::info!(
+        dir = %dir.display(),
+        types = WorkerType::ALL.len(),
+        "installed bundled prompts (core.md, reaction.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md, workers/)"
+    );
     Ok(())
+}
+
+/// A working session's whole system prompt: `workers/common.md` — what every worker is
+/// — then `workers/<type>.md`, the layer for this kind of job.
+///
+/// Read off disk so an operator's `*.local.md` reaches a worker the same way it reaches
+/// every other rung, falling back to the embedded bases when a file is missing or
+/// empty. Read fresh per spawn, so an edit takes effect without a restart.
+///
+/// **This replaced a `const &str` in `reactor/workers.rs`** — the one role prompt that
+/// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
+///
+/// Two placeholders are interpolated, both because a worker reaches hi-agent's own
+/// surfaces over HTTP and has to name the right scene:
+/// - `{scene}` — the scene as the `X-HI-Scene` header wants it.
+/// - `{scene_dir}` — the same scene as it appears **on disk**, which is percent-encoded
+///   (`alice@phone` lives at `alice%40phone`). Substituting the raw form here pointed
+///   the filing worker at a directory that did not exist, for every scene with an `@`
+///   in it.
+pub async fn worker_prompt(data_dir: &Path, scene: &crate::types::Scene, kind: WorkerType) -> String {
+    let dir = data_dir.join("prompts").join("workers");
+    let read = |name: String, fallback: &'static str| {
+        let path = dir.join(name);
+        async move {
+            match tokio::fs::read_to_string(&path).await {
+                Ok(s) if !s.trim().is_empty() => s,
+                _ => fallback.to_string(),
+            }
+        }
+    };
+    let common = read("common.md".to_string(), WORKER_COMMON_BASE).await;
+    let layer = read(format!("{}.md", kind.as_str()), kind.base()).await;
+
+    let scene_dir = crate::mind::memory::layout::encode_scene(scene);
+    format!("{}\n\n{}", common.trim(), layer.trim())
+        .replace("{scene_dir}", &scene_dir)
+        // The header value, which is the scene id verbatim.
+        .replace("{scene}", &scene.0)
 }
 
 /// **Deliberation**'s role layer — what it is beyond being a working session, and the
@@ -465,6 +600,92 @@ mod soul_tests {
         assert!(prompt.starts_with(REACTION_BASE.trim()));
     }
 
+    /// The path a worker is given to find a handed-over file must be the path that
+    /// exists on disk. It was substituted with the same raw scene id as the two
+    /// `X-HI-Scene` headers, but the directory is percent-encoded — so for every scene
+    /// with an `@` in it, which is every `user@device`, the file-filing worker was sent
+    /// somewhere there was nothing to find, and had no way to know that was why.
+    #[tokio::test]
+    async fn the_file_path_is_the_encoded_directory_and_the_header_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let scene = crate::types::Scene("alice@phone".into());
+        let p = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
+
+        assert!(
+            p.contains("memory/raw/alice%40phone/file/"),
+            "the file path must be the on-disk directory"
+        );
+        assert!(
+            p.contains("X-HI-Scene: alice@phone"),
+            "the header must stay the scene id verbatim"
+        );
+        assert!(!p.contains("{scene"), "every placeholder is substituted: {p}");
+        assert!(
+            !p.contains("memory/raw/alice@phone/"),
+            "the raw id must not survive as a path"
+        );
+    }
+
+    /// Every worker gets the common layer, and only its own specialism on top. The
+    /// shape this replaced was one prompt with `When your task is to…` conditionals, so
+    /// the thing worth pinning is the *negative*: a view builder must not be carrying
+    /// the filing procedure, or the split bought nothing.
+    #[tokio::test]
+    async fn a_worker_gets_the_common_layer_and_only_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let scene = crate::types::Scene("boss".into());
+
+        for t in WorkerType::ALL {
+            let p = worker_prompt(dir.path(), &scene, *t).await;
+            assert!(p.contains("You are a working session"), "{}", t.as_str());
+            // The layer's opening heading, not the whole base: `{scene_dir}` and
+            // `{scene}` are substituted on the way through, so the composed prompt is
+            // deliberately not a superstring of the file on disk.
+            let heading = t.base().lines().next().unwrap();
+            assert!(heading.starts_with("# "), "{} has no opening heading", t.as_str());
+            assert!(p.contains(heading), "{}", t.as_str());
+        }
+
+        let builder = worker_prompt(dir.path(), &scene, WorkerType::ViewBuilder).await;
+        assert!(builder.contains("aesthetic.md"));
+        assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
+
+        let filer = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
+        assert!(!filer.contains("aesthetic.md"), "the view layer must not ride along");
+    }
+
+    /// A type is a prompt selector, so the wire name and the filename are one string —
+    /// and an unknown one is an error rather than a quiet downgrade to `general`, which
+    /// would hand back a session that cannot do the job it was asked for.
+    #[test]
+    fn worker_types_round_trip_and_reject_the_unknown() {
+        for t in WorkerType::ALL {
+            assert_eq!(WorkerType::parse(t.as_str()), Some(*t));
+        }
+        assert_eq!(WorkerType::parse(" view-builder "), Some(WorkerType::ViewBuilder));
+        assert_eq!(WorkerType::parse("view-buidler"), None);
+        assert_eq!(WorkerType::parse(""), None);
+        assert_eq!(WorkerType::default(), WorkerType::General);
+    }
+
+    /// The worker prompt no longer names a tool the worker does not hold. `ask` was
+    /// retired with the old channel; what a working session actually has is
+    /// `send_message` to its owner, and the instruction that matters is that it never
+    /// waits for the answer.
+    #[test]
+    fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
+        for base in [WORKER_COMMON_BASE, WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
+                     WORKER_DECISION_MAKER_BASE, WORKER_FILE_FILER_BASE] {
+            assert!(!base.contains("`ask`"));
+            assert!(!base.contains("`delegate`"));
+            assert!(!base.contains("`alarm`"));
+        }
+        assert!(WORKER_COMMON_BASE.contains("`send_message`"));
+        assert!(WORKER_COMMON_BASE.contains("Never wait for an answer"));
+    }
+
     #[test]
     fn the_voice_is_not_told_to_set_a_timer() {
         // Reaction has no `alarm` tool and there is no clock (`docs/arch/core.md#clock`
@@ -514,6 +735,13 @@ mod soul_tests {
         assert_eq!(read("reflection.md"), REFLECTION_BASE);
         assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
         assert_eq!(read("cognition.md"), COGNITION_BASE);
+        let w = |n: String| {
+            std::fs::read_to_string(dir.path().join("prompts").join("workers").join(n)).unwrap()
+        };
+        assert_eq!(w("common.md".into()), WORKER_COMMON_BASE);
+        for t in WorkerType::ALL {
+            assert_eq!(w(format!("{}.md", t.as_str())), t.base(), "{}", t.as_str());
+        }
     }
 
     /// The handover, pinned from both ends. "Sole writer of the ledger" is not enforced

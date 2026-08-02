@@ -27,6 +27,7 @@ use chrono::{DateTime, Utc};
 
 use crate::foundation::observatory::{EventKind, Observatory};
 use crate::foundation::registry;
+use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
 use crate::body::reactor::{SceneControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
@@ -103,6 +104,17 @@ fn create_worker_tool() -> Value {
             "type": "object",
             "properties": {
                 "task": { "type": "string", "description": "A self-contained description of the work." },
+                "type": {
+                    "type": "string",
+                    "enum": WorkerType::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+                    "default": WorkerType::default().as_str(),
+                    "description": "What kind of session to start. `general` for almost everything \
+                                    — reach for a specialist only when the job plainly is one: \
+                                    `view-builder` to make something to put on screen, \
+                                    `decision-maker` to get a call made so work can continue \
+                                    without the person, `file-filer` to put a handed-over file \
+                                    into the drive.",
+                },
             },
             "required": ["task"],
         }),
@@ -694,6 +706,24 @@ async fn dispatch_tool(
             if task.trim().is_empty() {
                 return tool_error("create_worker requires a non-empty `task`");
             }
+            // Absent means `general`, which is the right answer for most work. A name we
+            // do not know is an **error**, not a silent fall back to general: a mistyped
+            // `view-buidler` that quietly becomes a general session is a worker that will
+            // not do the job it was made for, and nothing anywhere says so. The schema
+            // constrains this too; this is the half that still holds when it doesn't.
+            let kind = match args.get("type").and_then(|v| v.as_str()) {
+                None => WorkerType::default(),
+                Some(name) => match WorkerType::parse(name) {
+                    Some(k) => k,
+                    None => {
+                        let valid: Vec<_> = WorkerType::ALL.iter().map(|t| t.as_str()).collect();
+                        return tool_error(&format!(
+                            "unknown worker type `{name}` — one of: {}",
+                            valid.join(", ")
+                        ));
+                    }
+                },
+            };
             // The id is minted **here**, before the session exists, and handed back in
             // this reply — the contract is `CreateWorker → a session id`, and a caller
             // that cannot name what it made cannot brief it, ask after it, or read it.
@@ -714,7 +744,7 @@ async fn dispatch_tool(
                 );
             };
             return match sink
-                .send(SceneControl::CreateWorker { id, task, owner: Some(owner) })
+                .send(SceneControl::CreateWorker { id, task, kind, owner: Some(owner) })
                 .await
             {
                 Ok(()) => tool_ok(&format!(

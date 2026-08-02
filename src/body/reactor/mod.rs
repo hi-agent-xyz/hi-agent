@@ -1203,8 +1203,8 @@ async fn apply_control(
     ctl: SceneControl,
 ) -> Option<LoopInput> {
     match ctl {
-        SceneControl::CreateWorker { id, task, owner } => {
-            if let Err(err) = workers.spawn_with_id(reactor, id, task, owner).await {
+        SceneControl::CreateWorker { id, task, kind, owner } => {
+            if let Err(err) = workers.spawn_with_id(reactor, id, task, kind, owner).await {
                 tracing::warn!(scene = %scene, error = %err, "failed to create a working session");
             }
             None

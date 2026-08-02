@@ -35,7 +35,7 @@ pub enum SceneControl {
     /// channel like everything else that touches it. `owner` is who the finished work
     /// answers to; a worker belongs to the session that created it, never to the scene
     /// it happens to run in.
-    CreateWorker { id: u64, task: String, owner: Option<u64> },
+    CreateWorker { id: u64, task: String, kind: crate::identity::WorkerType, owner: Option<u64> },
     /// Schedule a self-wake after `delay` (e.g. `30s`, `20m`, `1h`) carrying
     /// `note` (the `alarm` tool). The delay is parsed loop-side; an unparseable
     /// one is dropped.
