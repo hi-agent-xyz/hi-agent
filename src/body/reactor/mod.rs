@@ -53,6 +53,7 @@ use std::time::Duration;
 
 mod cognition;
 mod heartbeat;
+mod reflection;
 mod interleave;
 mod interrupts;
 pub mod outbound;
@@ -640,7 +641,7 @@ struct ReactorInner {
     scenes: Mutex<HashMap<Scene, SceneHandle>>,
     /// Wall-monotonic time of the most recent inbound human signal across **all**
     /// scenes — the global "fresh input" signal the single consolidated reflection
-    /// clock reads to decide base-vs-backoff cadence (see [`consolidated_reflection_loop`]).
+    /// clock reads to decide base-vs-backoff cadence (see [`reflection`]).
     /// Written in [`Reactor::deliver_to_scene`]; read each reflection tick.
     last_signal_at: std::sync::Mutex<Instant>,
     /// Wakes the consolidated reflection loop when fresh input lands, so a scene
@@ -738,10 +739,18 @@ pub fn start(
     // on a single global clock, replacing the old per-scene timers. A single mind
     // settles the whole day across contexts at once — so it can link across scenes
     // and one writer (not N racing) touches the shared facet/people stores.
-    let reflect_reactor = reactor.clone();
-    tokio::spawn(async move {
-        consolidated_reflection_loop(reflect_reactor).await;
-    });
+    // **Registered synchronously here**, like Cognition below and for the same reason:
+    // the address must exist before anything can be told to use it. Reflection used to
+    // register *inside* each pass, so between passes it resolved to nothing and during
+    // one its id was nobody's to know.
+    let reflection_reg = registry::register_scoped(
+        registry::mint(),
+        registry::Role::Reflection,
+        None,
+        None,
+        "tending the agent's own house".to_string(),
+    );
+    reflection::spawn(reactor.clone(), reflection_reg);
 
     // Cognition: the sceneless brain every scene hands work up to.
     //
@@ -764,79 +773,6 @@ pub fn start(
     cognition::spawn(reactor.clone(), cognition_reg);
 
     reactor
-}
-
-/// The single consolidated reflection loop: one "sleep" pass over all
-/// recently-active scenes, on one adaptive clock, never overlapping itself.
-///
-/// Anchored on the **last completed pass** (or loop start before the first), it
-/// fires `base` after the anchor while any scene saw fresh input since (the active
-/// cadence), else on a `backoff_gap` doubling toward `reflect_max` while the whole
-/// system is quiet — the same rule the old per-scene loops used, now global (see
-/// [`next_reflection_at`]). A fresh signal arriving mid-gap pokes [`reflect_wake`]
-/// so the loop re-derives its deadline immediately rather than waiting out a long
-/// backoff. Each tick consolidates only scenes with enough on their frontier; a
-/// tick with nothing ready is a cheap no-op. Returns (the task ends) only when
-/// reflection is disabled outright (`reflect=off` or `reflect_every=0`).
-async fn consolidated_reflection_loop(reactor: Reactor) {
-    let reflect_base = reflect_interval();
-    let reflect_max = reflect_max_interval();
-    if reflect_base.is_none() {
-        tracing::info!("consolidated reflection disabled");
-        return;
-    }
-    let loop_started = Instant::now();
-    let mut last_reflection: Option<Instant> = None;
-    let mut backoff_gap = reflect_base.unwrap_or(DEFAULT_REFLECT_EVERY);
-
-    loop {
-        let last_activity = *reactor.inner.last_signal_at.lock().unwrap();
-        let Some(at) =
-            next_reflection_at(loop_started, last_activity, last_reflection, reflect_base, backoff_gap)
-        else {
-            return;
-        };
-        let now = Instant::now();
-        if at > now {
-            // Sleep until due, but wake early if fresh input lands — then re-loop to
-            // recompute the deadline (which only actually fires once it's past).
-            // Shutdown ends the loop rather than starting a doomed "sleep" pass.
-            tokio::select! {
-                _ = tokio::time::sleep(at.saturating_duration_since(now)) => {}
-                _ = reactor.inner.reflect_wake.notified() => continue,
-                _ = reactor.inner.shutdown.cancelled() => {
-                    tracing::info!("shutdown requested; ending consolidated reflection loop");
-                    return;
-                }
-            }
-        }
-
-        // Shutdown may have arrived without the sleep above (deadline already past):
-        // don't open a reflection subprocess into a dying process group.
-        if reactor.inner.shutdown.is_triggered() {
-            tracing::info!("shutdown requested; ending consolidated reflection loop");
-            return;
-        }
-
-        // Due. Adapt the backoff against the *old* anchor before re-anchoring: fresh
-        // input since the last pass snaps the gap back to base; a quiet pass doubles
-        // it toward the cap. Re-anchor on `now` whether or not anything consolidates,
-        // so a no-op tick can't hot-spin the clock.
-        let now = Instant::now();
-        let last_activity = *reactor.inner.last_signal_at.lock().unwrap();
-        let anchor = last_reflection.unwrap_or(loop_started);
-        backoff_gap = if last_activity > anchor {
-            reflect_base.unwrap_or(DEFAULT_REFLECT_EVERY)
-        } else {
-            backoff_gap.checked_mul(2).unwrap_or(reflect_max).min(reflect_max)
-        };
-        last_reflection = Some(now);
-
-        // The scenes to consider — the same source that decides which loops exist, so
-        // we consolidate exactly the scenes that were reflecting under the old design.
-        let scenes = recent_scenes(reactor.inner.memory.data_dir(), REWARM_WINDOW);
-        heartbeat::consolidate(&reactor, &scenes).await;
-    }
 }
 
 /// Channels that do **not** count as a scene being alive. Exactly one: `clock`,

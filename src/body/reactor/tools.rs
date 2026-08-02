@@ -126,36 +126,18 @@ impl ToolRegistry {
         self.inner.lock().await.get(scene).cloned()
     }
 
-    /// Any live scene loop, for work that must *run* somewhere but belongs to nobody's
-    /// conversation.
-    ///
-    /// A worker belongs to the session that created it, and a sceneless rung —
-    /// Reflection now, Cognition next — creates workers with no conversation to put
-    /// them in. Its worker still needs a host: a loop to hold its handle and reap it.
-    /// So one is borrowed. This is **hosting, not ownership**: the report goes to the
-    /// owner, never into the borrowed scene, and the scene is not told.
-    ///
-    /// Chosen deterministically (lowest scene name) rather than arbitrarily, so a run
-    /// is reproducible and a log names the same host twice.
-    ///
-    /// **TODO — this now serves Reflection alone, and hosting still leaks into
-    /// provenance for it.** The borrowed scene does not stay a hosting detail: it
-    /// becomes the worker's `X-HI-Scene` header (so `watch`/`see` resolve to a
-    /// stranger's camera) and the scene its report is journaled under, feeding *that*
-    /// scene's episodes. The doc comment above says the scene is not told; it is told.
-    ///
-    /// **Cognition no longer comes through here** — it registers its own sink under
-    /// `*cognition*`, so the `registry.get(scene)` above it succeeds and this is never
-    /// reached. That is the shape of the fix for Reflection too: a rung that dispatches
-    /// work hosts its own workers rather than borrowing somebody's conversation. It
-    /// needs an inbox reader first, which is the same thing blocking it from being
-    /// addressable at all: nothing projects its id to anyone.
-    ///
-    /// Still latent: Reflection holds `create_worker` and cannot yet call it usefully.
-    pub async fn any_host(&self) -> Option<(Scene, ToolSink)> {
-        let map = self.inner.lock().await;
-        let scene = map.keys().min().cloned()?;
-        let sink = map.get(&scene).cloned()?;
-        Some((scene, sink))
-    }
+    // `any_host()` used to live here: "any live scene loop, for work that must run
+    // somewhere but belongs to nobody's conversation". It is **deleted**, not moved.
+    //
+    // It existed because a sceneless rung creating a worker had nowhere to run it, so it
+    // borrowed the lowest-named live scene. Borrowing was never only hosting: the lent
+    // scene became the worker's `X-HI-Scene` (so `watch`/`see` resolved to a stranger's
+    // camera), the `{scene}` in its prompt, and the scene its report was journaled under
+    // — which then fed *that* scene's episodes with work it never asked for. The doc
+    // comment claimed the scene was not told; it was told three ways.
+    //
+    // Both callers have their own sink now — Cognition under `*cognition*`, Reflection
+    // under `*consolidation*` — so `registry.get(scene)` succeeds for each and the
+    // fallback had no remaining caller. A rung that dispatches work hosts its own
+    // workers; that is the whole rule, and it needs no fallback.
 }

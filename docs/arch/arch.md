@@ -64,8 +64,8 @@ a generation is far too slow for what it handles.
 | **Reflex** | one scene | sub-second | taught quick-actions and barge-in — **no model in the loop** |
 | **Reaction** | one scene | one generation | speaks, holds the floor, manages the interaction |
 | **Deliberation** | one scene | seconds | works out what was actually asked — reads a little, checks a file, looks at the photo |
-| **Cognition** | sceneless | minutes+ | the shared brain: owns Tasks, dispatches workers, stays idle and responsive |
-| **Reflection** | sceneless | background | curates `data/` |
+| **Cognition** | sceneless | minutes+ | the outward brain: owns Tasks, dispatches workers, stays idle and responsive |
+| **Reflection** | sceneless | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
 
 Reflex is drawn on the ladder because it is a real tempo, but it is not an agent — it lives in
 the host, in [`core.md`](core.md#reflex).

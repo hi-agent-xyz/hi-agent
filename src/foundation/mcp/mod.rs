@@ -616,6 +616,11 @@ async fn dispatch_tool(
         "name_person" => return reflection_name_person(data_dir, args).await,
         "merge_people" => return reflection_merge_people(data_dir, args).await,
         "keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
+        // Reachable by name only — `record_reflex` is advertised to no role, because
+        // the reflex rung is **deferred** (see `body::reflex`). Kept dispatchable rather
+        // than deleted so the authoring half is one arm entry away when it gets a rung,
+        // and so a session that somehow names it gets the real behaviour instead of
+        // "unknown tool". Do not re-advertise it without taking that decision.
         "record_reflex" => return reflex_record(data_dir, args).await,
         "look" => return do_look().await,
         "act" => return do_act(args).await,
@@ -757,16 +762,19 @@ async fn dispatch_tool(
             // tool surface identifies its caller by a header, so an id has to exist
             // before the protocol assigns one.
             let id = registry::mint();
-            // A worker must *run* somewhere. Its owner may have no conversation — the
-            // sceneless rungs are precisely the ones that create workers — so borrow a
-            // host loop. Hosting is not ownership: the report goes to `owner`.
-            let host = match registry.get(scene).await {
-                Some(sink) => Some((scene.clone(), sink)),
-                None => registry.any_host().await,
-            };
-            let Some((host_scene, sink)) = host else {
+            // A worker must *run* somewhere: a loop to hold its handle and reap it. The
+            // caller's own header scene is that loop — both rungs allowed here register a
+            // sink under their sentinel (`*cognition*`, `*consolidation*`), so this is a
+            // plain lookup with no fallback.
+            //
+            // There used to be one: `any_host()`, which lent the lowest-named live scene
+            // when the lookup missed. It is gone, and its absence is the point — a
+            // borrowed scene leaked straight into the worker's provenance (its
+            // `X-HI-Scene`, its prompt, and the scene its report was journaled under).
+            let host_scene = scene.clone();
+            let Some(sink) = registry.get(scene).await else {
                 return tool_error(
-                    "no live scene loop to host a working session yet — nothing is running",
+                    "no loop registered for this session's scene, so there is nowhere to run a worker",
                 );
             };
             return match sink

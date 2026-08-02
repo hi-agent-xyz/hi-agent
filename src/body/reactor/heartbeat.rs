@@ -200,7 +200,7 @@ const SWEEP_DRY_RUN: bool = true;
 /// with a real scene id.
 const CONSOLIDATION_SCENE: &str = "*consolidation*";
 
-fn consolidation_scene() -> Scene {
+pub(super) fn consolidation_scene() -> Scene {
     let s = Scene(CONSOLIDATION_SCENE.to_string());
     debug_assert!(s.is_pseudo(), "the sentinel must be recognizable as one");
     s
@@ -223,12 +223,12 @@ struct SceneFrontier {
 /// opens **one** dedicated reflection session (its own subprocess; never a reactor
 /// live session) spanning all of them, and drives it to completion; the session
 /// writes derived memory through its tools, naming the scene on each call. Run from
-/// the global reflection clock (see [`super::consolidated_reflection_loop`]).
+/// the global reflection clock (see [`super::reflection`]).
 /// Best-effort: the per-scene cursors make it idempotent across runs and a crash
 /// just leaves each frontier for the next tick. A no-op when no scene has enough
 /// unconsolidated signal to be worth a session.
-pub(super) async fn consolidate(reactor: &Reactor, scenes: &[Scene]) {
-    if let Err(err) = run_consolidation(reactor, scenes).await {
+pub(super) async fn consolidate(reactor: &Reactor, scenes: &[Scene], id: registry::SessionId) {
+    if let Err(err) = run_consolidation(reactor, scenes, id).await {
         // A pass already in flight when shutdown began fails because its child took
         // the process group's signal — expected, not a fault. Keep it out of the
         // WARN stream so a real consolidation failure stays visible.
@@ -240,7 +240,11 @@ pub(super) async fn consolidate(reactor: &Reactor, scenes: &[Scene]) {
     }
 }
 
-async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Result<()> {
+async fn run_consolidation(
+    reactor: &Reactor,
+    scenes: &[Scene],
+    id: registry::SessionId,
+) -> anyhow::Result<()> {
     let data_dir = reactor.inner.memory.data_dir();
 
     // Gather each scene's frontier; keep only those with enough to be worth a pass.
@@ -320,40 +324,38 @@ async fn run_consolidation(reactor: &Reactor, scenes: &[Scene]) -> anyhow::Resul
     let current_proactivity = crate::mind::memory::proactivity::read(data_dir).await.ok().flatten();
 
     let prompt = build_consolidation_prompt(&groups, &subjects, current_proactivity.as_deref());
-    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
+    // The same two layers a Reflection *mail* turn opens with, and the same two Cognition
+    // gets: who it is, then what this rung is for. The pass used to carry the role layer
+    // alone, which made Reflection the one thinking rung with no character — a difference
+    // that was never decided, just inherited from when this was "the consolidation pass"
+    // rather than a rung. `character_seed` names every file by absolute path, so a session
+    // with no cwd still opens them.
+    let system_prompt = format!(
+        "{}\n\n{}",
+        crate::identity::character_seed(data_dir),
+        crate::identity::reflection_prompt(data_dir).await
+    );
 
     let sentinel = consolidation_scene();
 
-    // Reflection joins the switchboard for the length of this pass. Two things it did
-    // not have: an identity (so `create_worker`, which it alone is offered, rejected it
-    // for having none) and an address (so nothing could reach it).
+    // **The pass runs under Reflection's standing id**, handed in by the loop that owns
+    // it ([`super::reflection`]). It used to mint its own registration scoped to this
+    // function, which made the rung addressable only *during* a pass and, worse, meant a
+    // worker it dispatched outlived the session that asked — the report came back to an
+    // address that had already been dropped. The note that used to sit here said exactly
+    // that and pointed at a later item; this is that item.
     //
-    // **Registered with `scene: None`, while the MCP header stays the sentinel.** Those
-    // are different facts: `docs/arch/agents.md` says the sceneless rungs have no scene,
-    // and only a `Role::Reaction` is ever offered as a scene — so a scene here could never
-    // route anything, only read as a conversation that does not exist. The header is a
-    // routing tag the `/mcp` dispatch needs, and keeps its own meaning (see
+    // The MCP header stays the sentinel scene while the registration carries `scene:
+    // None`. Those are different facts: `docs/arch/agents.md` says the sceneless rungs
+    // have no scene, and the header is a routing tag `/mcp` needs (see
     // [`CONSOLIDATION_SCENE`]).
-    //
-    // **Known-incomplete, deliberately: nothing drains this inbox.** The pass is one
-    // `prompt` then `wait`, so Reflection can now create a worker and still cannot read
-    // its report — the worker outlives the session that asked. A sceneless rung that
-    // dispatches work needs a loop, and that loop is Cognition's shape; faking one here
-    // would be the wrong owner made permanent. **N3 takes this back.**
-    let reflection = registry::register_scoped(
-        registry::mint(),
-        registry::Role::Reflection,
-        None,
-        None,
-        "consolidating the day".to_string(),
-    );
     let session = reactor
         .inner
         .agent
         .session(
             &sentinel,
             SessionRole::Reflection,
-            Some(reflection.id()),
+            Some(id),
             SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
         )
         .await?;

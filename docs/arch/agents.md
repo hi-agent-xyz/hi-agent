@@ -157,23 +157,40 @@ decides the timing.
 
 ### Reflection — sceneless, background
 
-Curates `data/`. Never speaks — that belongs to Reaction, and a second mouth inside the
-consolidation loop is a second voice.
+**The inward brain, and the same kind of thing as Cognition.** Both are sceneless, both
+are as capable as the agent gets, both dispatch workers, neither speaks. What separates
+them is not intelligence and not machinery — it is **who the work is for**:
 
-It **does** dispatch. That is a correction: dispatching was once listed here alongside
-speaking as something Reflection must not do, on the reasoning that it would make a second
-dispatcher. The reasoning does not survive ownership — a worker belongs to the session that
-created it, so Reflection's workers are Reflection's, report to Reflection, and are visible
-to no scene. There is no contention to avoid. What must stay singular is the *mouth* and
-the *task ledger*, not the act of asking for help.
+| | Work arrives from | Answers to | Owns |
+|---|---|---|---|
+| **Cognition** | a person, through a scene | that scene | the task ledger |
+| **Reflection** | nobody — it notices | itself | `data/` |
 
-The earlier wording also conflated two things: the "workers" listed below are, today, jobs
-Reflection performs itself in prose. Being able to hand one to a real worker is what the
-correction buys.
+That asymmetry is the reason Reflection needs a rung of its own rather than being a job
+Cognition does when it is idle: **work nobody is waiting on never happens if it has to
+queue behind work someone is.** An agent that only ever did what was asked would never
+tidy its own memory, and would degrade in a way nothing in the conversation reveals.
 
-Reflection must be **global, not per scene**: it merges a person seen in two scenes,
-dedupes skills, and does drive housekeeping. It is the one agent that is legitimately not
-scene-partitioned.
+*This corrects an earlier framing.* Reflection was cast as a **curator** beside a
+**brain**, and the implementation followed the words: a one-shot pass that opened a
+session, prompted it once and dropped it. It could dispatch a worker and then not read
+the report, because the session that asked was already gone. The rung is Cognition's
+shape now — a process-lifetime address, a loop that drains its inbox, its own worker
+host, and a session per wake — and it wakes two ways: its own backoff clock for a
+settling pass, and mail for everything else.
+
+**Never speaks.** That belongs to Reaction, and a second mouth inside the consolidation
+loop is a second voice. What it wants said it sends to Cognition or to a scene, and
+Reaction chooses the moment.
+
+**It does dispatch**, and that too was once forbidden here on the reasoning that it would
+make a second dispatcher. The reasoning does not survive ownership: a worker belongs to
+the session that created it, so Reflection's workers are Reflection's, report to
+Reflection, and are visible to no scene. What must stay singular is the *mouth* and the
+*task ledger* — not the act of asking for help.
+
+**Global, not per scene**: it merges a person seen in two scenes, dedupes skills, does
+drive housekeeping. It is the one agent legitimately not scene-partitioned.
 
 Its workers come in two kinds:
 

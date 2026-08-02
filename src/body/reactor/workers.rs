@@ -178,18 +178,16 @@ struct Worker {
 /// So on-demand creation is fine: spawn, register, self-remove. What a spawn needs is
 /// *dependencies* (memory, agent layer, observatory, views dir), not a home.
 ///
-/// **What is a real bug and is NOT covered by deleting this** — all of it latent today,
-/// because `create_worker` is offered only to the sceneless rungs and Cognition does not
-/// exist yet, so nothing actually creates a worker this way. It bites the moment
-/// Cognition lands, which is where it belongs (see `docs/arch/agents.md`):
+/// **The three provenance bugs this used to list are all fixed**, and the way the first
+/// one went is worth keeping, because it is the pattern:
 ///
-/// 1. [`super::tools::ToolRegistry::any_host`] lends an **arbitrary** scene (lowest name)
-///    to host a sceneless-owned worker. That scene then goes into the worker's
-///    `X-HI-Scene` header — so `watch`/`see` resolve to a stranger's camera — into
-///    `{scene}` in its system prompt, and into the scene its report is journaled under,
-///    which feeds that scene's episodes. Hosting is being used as provenance. The fix is
-///    to pass the origin scene explicitly, the way the reflection tools already take the
-///    scene they act on as an argument.
+/// 1. ~~`any_host()` lends an **arbitrary** scene to host a sceneless-owned worker,~~
+///    which then became the worker's `X-HI-Scene` (so `watch`/`see` resolved to a
+///    stranger's camera), the `{scene}` in its prompt, and the scene its report was
+///    journaled under — hosting used as provenance. **Fixed by deletion.** Both rungs
+///    that dispatch now register a sink under their own sentinel scene, so the lookup
+///    succeeds and there is nothing to borrow. A rung that dispatches work hosts its own
+///    workers.
 /// 2. ~~`create_worker` answers "brief it with `send_message`" before `register` runs.~~
 ///    **Fixed** — registration now precedes the session open, with `unregister` on the
 ///    spawn-failure path.
