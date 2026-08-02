@@ -1650,11 +1650,27 @@ async fn run_reactor_turn(
             tracing::warn!(scene = %scene, error = %err, "reactor turn failed");
             // Drop the possibly-wedged session so the next turn re-opens cold.
             *reactor_session = None;
+            // The transition, not the failure, is what earns a word — and the word
+            // cannot be generated, because the thing that generates words is what just
+            // went away. So the host shows a **bundled view** whose copy already exists
+            // (`_builtin/vendor-outage`), rather than the hardcoded Chinese sentence
+            // that used to sit here. Same policy as before — once per transition,
+            // process-wide, never once per scene per retry.
+            //
+            // Known gap, stated rather than papered over: a person with no screen gets
+            // nothing here, where the old sentence would at least have been spoken.
+            // `docs/arch/surfaces.md` says every channel degrades rather than fails, so
+            // this owes a voice-only fallback — which needs pre-rendered audio or a
+            // localized string, i.e. the same localization work the view is waiting on.
             if reactor.inner.vendor.note_unreachable() {
+                let (source, geom) = crate::mind::views::builtin::vendor_outage_view();
                 let _ = beats
-                    .send(sequencer::Beat::Say(
-                        "我暂时连不上模型，先攒着你的消息，等恢复了一起处理。".to_string(),
-                    ))
+                    .send(sequencer::Beat::Show {
+                        id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
+                        op: "show".to_string(),
+                        source: source.to_string(),
+                        geometry: serde_json::from_str(geom).ok(),
+                    })
                     .await;
             }
             false
@@ -1668,7 +1684,21 @@ async fn run_reactor_turn(
     reactor.inner.interrupts.end_turn(scene, turn_id, &reply).await;
 
     if spoke {
-        let _ = reactor.inner.vendor.note_success();
+        // `note_success` returns whether this *ended* an outage. It used to be discarded
+        // with `let _`, so recovery was never announced and the outage view would have
+        // stayed on screen after the vendor came back — a notice that outlives its
+        // condition is worse than none. Taking it down is the announcement: the person
+        // sees the room return to normal, and the agent's next real reply is the rest.
+        if reactor.inner.vendor.note_success() {
+            let _ = beats
+                .send(sequencer::Beat::Show {
+                    id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
+                    op: "dismiss".to_string(),
+                    source: String::new(),
+                    geometry: None,
+                })
+                .await;
+        }
         // Hand the turn's human request to Deliberation — the scene's reader — so it works
         // off the floor while the voice moves on; its report rides back as a WorkerReport
         // the reactor voices on a later turn. Spawned once per scene, then followed up.
