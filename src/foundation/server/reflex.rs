@@ -1,5 +1,11 @@
 //! The reflex invoke route — fire a taught quick-action with no model in the loop.
 //!
+//! **The reflex rung is deferred** (`body::reflex` carries the full note). This route
+//! reads and fires a store that nothing can currently write, because `record_reflex` is
+//! advertised to no role — the recognizer abstains on an empty store, so the endpoint
+//! is live, honest and inert rather than broken. It stays wired so the whole path is
+//! exercised end to end the moment authoring gets a rung.
+//!
 //! `POST /api/reflex/invoke` is the v1 trigger (a later global hotkey/gesture would
 //! call the same path). It reads the current desktop context + accessibility tree,
 //! asks [`crate::body::reflex::recognize`] whether exactly one taught reflex applies, and

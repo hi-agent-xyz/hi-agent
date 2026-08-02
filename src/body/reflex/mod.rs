@@ -1,6 +1,26 @@
 //! Reflex fast-path — taught quick-actions the user fires instantly, with no
 //! model in the loop.
 //!
+//! **Status: deferred, and deliberately out of scope for the architecture refactor
+//! (2026-08-02).** The rung is real in the design — it is the bottom of the tempo
+//! ladder in `docs/arch/arch.md`, the one tempo with no model in it — and the design
+//! stands. What is deferred is *finishing* it.
+//!
+//! Concretely, the loop is open at the authoring end: **`record_reflex` is declared to
+//! no role.** It lived in `tools_for_role`'s `_` fallback, which no live session ever
+//! mapped to, and that arm was emptied in `0b8fde0` rather than left looking live. So
+//! the recognizer below and `POST /api/reflex/invoke` both work over a store that
+//! nothing can currently write — a reflex can be fired and never taught.
+//!
+//! That is a decision waiting, not a bug to fix in passing: giving `record_reflex` a
+//! rung means choosing one, and the plausible home (Reflection, as a new
+//! `episode → reflex` graduation beside `episode → skill`) is a change to
+//! `docs/arch/agents.md` rather than a change to code. Until it is taken, **do not
+//! quietly re-add the tool to an arm to make this file reachable** — that is how the
+//! `_` arm became a surface nobody could account for.
+//!
+//! Everything below is kept because it is correct, tested, and the half that is hard.
+//!
 //! A reflex is a single grooved move: "the field labelled `身份证号` on this page
 //! gets my ID `…`". The mind (the cortex) *authors* one via the `record_reflex`
 //! tool when the user teaches it; the fast path (the cerebellum) *runs* it on an
