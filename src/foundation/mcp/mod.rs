@@ -556,7 +556,7 @@ async fn dispatch_tool(
 
     // Expression tools belong to the reactor alone — it is the single
     // guideline-carrying voice, so everything the person sees or hears goes through
-    // its `speaking.md` generation. A worker or reflection session must never speak
+    // its `reaction.md` generation. A worker or reflection session must never speak
     // or take the screen even if its model emits the call (these aren't in its
     // advertised surface); enforce that structurally here, not just via the tool list.
     if matches!(name, "say" | "show_view") && role != Some("reactor") {

@@ -13,7 +13,7 @@
 //! pending note: which turn was cut, about how far in, and what the full reply
 //! had been. The next turn's prompt carries that note as plain fact; how to fold
 //! the unheard tail forward (drop, revise, mention) is the soul's judgment, not
-//! the mechanism's (see `speaking.md`). The same barge-in also marks the cut turn
+//! the mechanism's (see `reaction.md`). The same barge-in also marks the cut turn
 //! for flush ([`InterruptRegistry::should_skip`]) so the output sequencer stops
 //! speaking and typing its unheard tail rather than draining it over the human.
 //!

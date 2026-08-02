@@ -144,7 +144,7 @@ pub async fn agent_window(
 /// follow: this is the projection test (`docs/arch/data.md#what-earns-a-place`) coming
 /// out the other way from the tasks ledger. Written whole by the reflection pass
 /// ([`crate::mind::memory::proactivity`]); absent until the first reflection, which is
-/// ordinary — `speaking.md` says an unproven subject earns no licence anyway.
+/// ordinary — `reaction.md` says an unproven subject earns no licence anyway.
 async fn speaking_up_unprompted(data_dir: &Path) -> String {
     match crate::mind::memory::proactivity::read(data_dir).await {
         Ok(Some(body)) if !body.trim().is_empty() => {

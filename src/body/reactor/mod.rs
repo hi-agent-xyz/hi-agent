@@ -1614,7 +1614,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 
 
 /// A reactor turn: the single fast conversational voice. An ACP session
-/// ([`SessionRole::Reactor`]) on the small model, carrying `speaking.md` as its system
+/// ([`SessionRole::Reactor`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show_view` `/mcp` surface, with the agent's own built-in tools
 /// switched off at session open. A turn is a single quick generation: it speaks by
 /// calling `say`, and may call `show_view` to put a view a worker already built on
@@ -1659,7 +1659,7 @@ async fn run_reactor_turn(
     // real id instead of guessing from the transcript.
     let on_screen = render_on_screen(&reactor.inner.views.on_screen(scene).await);
 
-    // Open (or reuse) the persistent reactor session. `speaking.md` is prepended to its
+    // Open (or reuse) the persistent reactor session. `reaction.md` is prepended to its
     // first prompt; the session then remembers prior turns. Whether it is fresh no
     // longer changes what the turn carries — see [`turn_context`].
     let session = match reactor_session {
@@ -1830,7 +1830,7 @@ mod turn_context_tests {
     }
 }
 
-/// Open a fresh **reactor** session for `scene`, carrying `speaking.md` as its system
+/// Open a fresh **reactor** session for `scene`, carrying `reaction.md` as its system
 /// prompt (prepended to the first prompt). It speaks via plain message text and gets a
 /// minimal `show_view`-only `/mcp` surface, so a turn is a single quick generation that
 /// may also put one already-built view on screen.

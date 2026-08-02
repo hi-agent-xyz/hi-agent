@@ -21,7 +21,7 @@ const UPLOAD: &str = include_str!("builtin/upload.jsx");
 const PEOPLE_REVIEW: &str = include_str!("builtin/people-review.jsx");
 /// The first-hello a brand-new person meets — a first *impression*, not a tutorial.
 /// The agent puts it on screen (ref `_builtin/welcome`) the once, on a genuine first
-/// meeting (see [`crate::identity::reactor_system_prompt`] + `speaking.md`), while it speaks the
+/// meeting (see [`crate::identity::reactor_system_prompt`] + `reaction.md`), while it speaks the
 /// same idea in its own voice. Ships with a `.geom.json` sidecar so the host floats it
 /// over the living presence room.
 const WELCOME: &str = include_str!("builtin/welcome.jsx");

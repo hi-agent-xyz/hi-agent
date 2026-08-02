@@ -1,6 +1,6 @@
 // Built-in: the first-hello — a poster, not a page. Shown once, when a brand-new
 // person first reaches out (the seed flags the first meeting; see identity/mod.rs +
-// speaking.md). It carries the *feeling* — the real "hi" mark, one line of copy, a warm
+// reaction.md). It carries the *feeling* — the real "hi" mark, one line of copy, a warm
 // matte ground — while the agent's own voice carries the four ideas (you just talk & work
 // with it, it remembers you, it uses your tools, and — the point — it can be taught). No
 // wall of text, no tour. Seeded at `_builtin/welcome`; the agent may adapt it like any view.

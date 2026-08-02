@@ -50,7 +50,7 @@ data/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)
 
   prompts/           # the BUNDLED system prompts — installed from the binary each boot, disposable   (seed)
-    core.md speaking.md aesthetic.md appearance.md meaning.md reflection.md
+    core.md reaction.md aesthetic.md appearance.md meaning.md reflection.md
     world.md         #   (proposed) seeded world-priors: an "article from a trusted source" the agent digests into memory
 
   claude-config/     # the cognition RUNTIME — the ACP/claude subprocess's home (managed); transcripts are durable records
@@ -144,7 +144,7 @@ facet or a task like anything else they say, and what the agent carries forward 
 into `memory/prompts/`; the reasoning, and its cost, is in
 [`arch/data.md`](arch/data.md#prompts). Two flavors of seed:
 
-- **Behavior** — `core.md`, `speaking.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
+- **Behavior** — `core.md`, `reaction.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
   `reflection.md`: how to be. Read as guidance.
 - **World priors** — `world.md` *(proposed)*: "YOLO is good for X", "lark-cli does Y". The
   agent reads it like **an article from a kind-of-trusted source**, *digests it into memory*,

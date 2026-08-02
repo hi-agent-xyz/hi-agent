@@ -1,6 +1,6 @@
 //! identity — who the agent is.
 //!
-//! The factory-authored character (`core.md`, `speaking.md`, `meaning.md`) and the
+//! The factory-authored character (`core.md`, `reaction.md`, `meaning.md`) and the
 //! per-install authored `self.md`. Standing duties are no longer here at all — they
 //! are tasks ([`crate::mind::memory::tasks`]), one ledger, projected into every
 //! window rather than pointed at by a path. This module owns the two shapes a rung's
@@ -16,7 +16,7 @@
 //!   `aesthetic.md`) and the **reflection** instruction (`reflection.md`) alongside the
 //!   identity prompts — they share one cascade. A later slice moves those non-identity
 //!   prompts to where they belong (mind / the loop), leaving identity with just
-//!   `core`/`speaking`/`meaning`.
+//!   `core`/`reaction`/`meaning`.
 //! - `self.md` still lives under `<data_dir>/memory/` for now (no data migration).
 //!   Under `docs/arch/data.md#memoryprompts` it does not get relocated at all: who
 //!   this install is becomes a *section* of a generated prompt, so the file goes away
@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 /// Built-in base prompts, embedded at compile time and materialised to disk by
 /// [`install_prompts`]. They divide by which rung can *fetch*: an agentic rung is
 /// handed `core.md` — who it is and how it works — and `meaning.md` — that its purpose
-/// is its own to find — by [`character_seed`], and Reads them itself. `speaking.md` is
+/// is its own to find — by [`character_seed`], and Reads them itself. `reaction.md` is
 /// the exception among the identity prompts: the voice is tools-off, so its whole
 /// brief is **inlined** by [`reactor_system_prompt`]. `appearance.md`
 /// and `aesthetic.md` are the view builder's guides — the mechanics of authoring/saving
@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 /// set, so it is **inlined** as that session's system prompt (see [`reflection_prompt`])
 /// rather than Read. All ship in the binary and refresh on every build.
 const CORE_BASE: &str = include_str!("core.md");
-const SPEAKING_BASE: &str = include_str!("speaking.md");
+const REACTION_BASE: &str = include_str!("reaction.md");
 const MEANING_BASE: &str = include_str!("meaning.md");
 const APPEARANCE_BASE: &str = include_str!("appearance.md");
 const AESTHETIC_BASE: &str = include_str!("aesthetic.md");
@@ -64,7 +64,7 @@ fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
 
 /// Install the bundled prompts under `<data_dir>/prompts/` at startup, composing
 /// each with its optional `*.local.md` operator override. The managed base files
-/// (`core.md`, `speaking.md`, `meaning.md`, `appearance.md`, `aesthetic.md`,
+/// (`core.md`, `reaction.md`, `meaning.md`, `appearance.md`, `aesthetic.md`,
 /// `reflection.md`) are rewritten every boot so they stay current; operator edits
 /// live in the never-touched `*.local.md` siblings. Each follows one workflow: ship
 /// embedded → materialise here → consumed from disk at runtime.
@@ -72,14 +72,14 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("core.md"), compose_prompt(CORE_BASE, &dir, "core.local.md"))?;
-    std::fs::write(dir.join("speaking.md"), compose_prompt(SPEAKING_BASE, &dir, "speaking.local.md"))?;
+    std::fs::write(dir.join("reaction.md"), compose_prompt(REACTION_BASE, &dir, "reaction.local.md"))?;
     std::fs::write(dir.join("meaning.md"), compose_prompt(MEANING_BASE, &dir, "meaning.local.md"))?;
     std::fs::write(dir.join("appearance.md"), compose_prompt(APPEARANCE_BASE, &dir, "appearance.local.md"))?;
     std::fs::write(dir.join("aesthetic.md"), compose_prompt(AESTHETIC_BASE, &dir, "aesthetic.local.md"))?;
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
     std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
     std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
-    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, speaking.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md)");
+    tracing::info!(dir = %dir.display(), "installed bundled prompts (core.md, reaction.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md)");
     Ok(())
 }
 
@@ -129,7 +129,7 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 /// The reflection ("sleep") session's system prompt: the materialised
 /// `<data_dir>/prompts/reflection.md` (operator-overridable via `reflection.local.md`),
 /// or the embedded [`REFLECTION_BASE`] when that file is missing or empty. Unlike
-/// `core.md`/`speaking.md`, this is **inlined** as the reflection session's system
+/// `core.md`/`reaction.md`, this is **inlined** as the reflection session's system
 /// prompt rather than Read by the agent — it *is* the task's instructions, so it must
 /// be present before the session can act. Read fresh each round, so an operator edit
 /// takes effect without a restart.
@@ -145,55 +145,30 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 ///
 /// Unlike [`character_seed`] (a thin seed pointing an *agentic* rung at files to
 /// Read), Reaction is tools-off by design: it has no Read, so nothing it needs may be
-/// a path. Its brief is therefore **inlined and singular** — `speaking.md` *is* its
-/// whole system prompt, under a one-line frame. That is what makes speaking-rule
-/// conformance structural: the rules are the entire context, not one buried file
-/// among many. (Mirrors how `reflection.md` is inlined for the reflection session.)
+/// a path. Its brief is therefore **inlined and singular** — `reaction.md` *is* its
+/// whole system prompt, verbatim. That is what makes speaking-rule conformance
+/// structural: the rules are the entire context, not one buried file among many.
+/// (Mirrors how `reflection.md` is inlined for the reflection session.)
 ///
-/// Read from `<data_dir>/prompts/speaking.md`, so an operator's `speaking.local.md`
-/// reaches the voice too, falling back to the embedded [`SPEAKING_BASE`]. Two things
-/// the seed used to carry ride along here, because they are the *voice's* and it
-/// cannot fetch them: the **first-meeting** cue, and the **language** preference.
+/// **The frame that used to sit above the file is now the top of the file.** It was
+/// ~40 lines of Rust string literal carrying the two things a reader would look for
+/// first — that Reaction is one self rather than a dispatcher with colleagues, and
+/// what its two tools are — which meant the voice's brief lived in two places, only
+/// one of them operator-overridable. A prompt is prose; it belongs in the `.md`. The
+/// file is now named for the rung that reads it (`docs/arch/arch.md#character`: a
+/// file per role) rather than for the activity, which is what `speaking.md` was.
+///
+/// Read from `<data_dir>/prompts/reaction.md`, so an operator's `reaction.local.md`
+/// reaches the voice too, falling back to the embedded [`REACTION_BASE`]. Two things
+/// stay in code because they are *state*, not character, and the voice cannot fetch
+/// either: the **first-meeting** cue and the **language** preference.
 pub async fn reactor_system_prompt(data_dir: &Path) -> String {
-    let base = data_dir.join("prompts").join("speaking.md");
-    let speaking = match tokio::fs::read_to_string(&base).await {
+    let base = data_dir.join("prompts").join("reaction.md");
+    let reaction = match tokio::fs::read_to_string(&base).await {
         Ok(s) if !s.trim().is_empty() => s,
-        _ => SPEAKING_BASE.to_string(),
+        _ => REACTION_BASE.to_string(),
     };
-    let mut prompt = format!(
-        "You are a warm, attentive presence, talking with someone in real time. You are \
-ONE self — they are talking to you, and only you. Part of you speaks in this moment; \
-another part of you works in the background — looking things up, using tools, getting \
-things done — and what it finds comes back to you to pass on. But that is all YOU: it is \
-you thinking a thing through and you doing it, just not all in the same breath. There is \
-no colleague, no assistant, no teammate, no other 'someone' who does the work — never \
-speak of one. So you never say 'I'll have someone do it', 'my colleague is on it', or \
-'我让同事去改'; you speak in the first person — 'let me look', 'give me a moment', \
-'I'm on it', 'I've got it', '我来弄', '我去查一下'. Your job in the moment is to talk \
-with them well: acknowledge in a breath, carry the thread, and when the background work \
-lands, pass on what matters in your own plain words — present and natural, never like a \
-form being filled out.\n\n\
-The split is only about speed: the background work can take seconds or minutes, and you \
-don't leave the person in silence waiting for it — you stay with them and speak to it as \
-it comes ready. It is not a second mind; it is your own, running a step ahead.\n\n\
-You have exactly TWO tools here. `say` is your voice: everything you want heard goes \
-through it, and plain text you type is NOT spoken — it is your own working-out, seen \
-by no one. Call `say` with one natural chunk at a time; several calls in a turn are \
-spoken in order. To stay silent, simply don't call it.\n\n\
-`show_view` puts a view on the screen once it's built \
-— call it with the `ref` (like `project/view`), and speak to the view as it lands. Reuse \
-an id with op=replace to evolve a view in place (a rough draft now, the polished one \
-later); op=dismiss takes one down. Beyond `show_view` you reach for no tools in this \
-moment: you don't read files, run commands, search, browse, or fetch from here — that \
-work happens in the background, not mid-sentence, so don't try to do it inline (it would \
-only stall you). Whenever a request needs that kind of work — finding a photo, drawing \
-something, checking a calendar — you don't do it right here in the turn; you tell them \
-you're on it (because you are) and keep the conversation going. Otherwise reply with \
-spoken words.\n\n\
-Everything about how to talk — when to speak, how much, when to stay quiet, when to put \
-something on screen, how to hold the floor — is below; follow it closely.\n\n{}",
-        speaking.trim()
-    );
+    let mut prompt = reaction.trim().to_string();
     if is_first_meeting(data_dir) {
         prompt.push_str(FIRST_MEETING_CUE);
     }
@@ -266,7 +241,7 @@ pub fn commitments_path(data_dir: &Path) -> PathBuf {
 /// role is a new prompt, not new machinery (`docs/arch/agents.md`).
 ///
 /// Three things the old monolithic seed carried are deliberately **not** here:
-/// - `speaking.md` and the `say` tool — the voice's, and [`reactor_system_prompt`]
+/// - `reaction.md` and the `say` tool — the voice's, and [`reactor_system_prompt`]
 ///   inlines them. A rung with no mouth told how to talk is a rung told a falsehood.
 /// - `hot.md` and `proactivity.md` — projections, put in front of the voice by
 ///   [`crate::mind::memory::snapshot::window`] rather than fetched.
@@ -406,8 +381,8 @@ mod soul_tests {
         // rung told about a tool it does not have is a rung told a falsehood.
         let dir = tempfile::tempdir().unwrap();
         let seed = character_seed(dir.path());
-        // The voice's: `speaking.md` and the `say` tool are inlined into Reaction.
-        assert!(!seed.contains("speaking.md"));
+        // The voice's: `reaction.md` and the `say` tool are inlined into Reaction.
+        assert!(!seed.contains("reaction.md"));
         assert!(!seed.contains("`say`"));
         // Projected, not fetched: the digest and the proactivity read ride the window.
         let hot = crate::mind::memory::layout::hot_path(dir.path());
@@ -460,14 +435,45 @@ mod soul_tests {
 
     #[tokio::test]
     async fn the_voice_takes_the_operator_override() {
-        // Reaction reads the *installed* speaking.md, so `speaking.local.md` reaches
+        // Reaction reads the *installed* reaction.md, so `reaction.local.md` reaches
         // the voice the same way it reaches every other prompt.
         let dir = tempfile::tempdir().unwrap();
         let prompts = dir.path().join("prompts");
         std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("speaking.local.md"), "Always end with 好的。").unwrap();
+        std::fs::write(prompts.join("reaction.local.md"), "Always end with 好的。").unwrap();
         install_prompts(dir.path()).unwrap();
         assert!(reactor_system_prompt(dir.path()).await.contains("Always end with 好的。"));
+    }
+
+    #[tokio::test]
+    async fn the_voices_whole_brief_is_the_file() {
+        // The frame used to be a ~40-line Rust literal above `speaking.md`, which put
+        // the two things a reader looks for first — that Reaction is one self, and what
+        // its tools are — outside the file an operator can override. Both now live in
+        // `reaction.md`, so this pins that they are in the prompt rather than the code.
+        // Matched on a fragment that does not straddle the file's line wrap.
+        assert!(REACTION_BASE.contains("they are talking to you, and only you"));
+        assert!(REACTION_BASE.contains("no other \"someone\" who does the work"));
+        assert!(REACTION_BASE.contains("`say` is your voice"));
+        assert!(REACTION_BASE.contains("`show_view`"));
+
+        // And nothing is prepended: the installed file *is* the prompt, so the only
+        // additions are the two pieces of state that follow it.
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let prompt = reactor_system_prompt(dir.path()).await;
+        assert!(prompt.starts_with(REACTION_BASE.trim()));
+    }
+
+    #[test]
+    fn the_voice_is_not_told_to_set_a_timer() {
+        // Reaction has no `alarm` tool and there is no clock (`docs/arch/core.md#clock`
+        // — deferred). A brief that tells the voice to arm a reminder for a check-in it
+        // promised is a brief describing a mechanism that cannot run; what survives is
+        // the promise — size the silence, and lean long because nothing will remind you.
+        assert!(!REACTION_BASE.contains("set an alarm"));
+        assert!(!REACTION_BASE.contains("When the alarm fires"));
+        assert!(REACTION_BASE.contains("You have no timer"));
     }
 
     #[test]
@@ -501,7 +507,7 @@ mod soul_tests {
         install_prompts(dir.path()).unwrap();
         let read = |n: &str| std::fs::read_to_string(dir.path().join("prompts").join(n)).unwrap();
         assert_eq!(read("core.md"), CORE_BASE);
-        assert_eq!(read("speaking.md"), SPEAKING_BASE);
+        assert_eq!(read("reaction.md"), REACTION_BASE);
         assert_eq!(read("meaning.md"), MEANING_BASE);
         assert_eq!(read("appearance.md"), APPEARANCE_BASE);
         assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
@@ -605,9 +611,9 @@ mod soul_tests {
         let dir = tempfile::tempdir().unwrap();
         let prompts = dir.path().join("prompts");
         std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("speaking.local.md"), "   \n\t").unwrap();
+        std::fs::write(prompts.join("reaction.local.md"), "   \n\t").unwrap();
         install_prompts(dir.path()).unwrap();
-        assert_eq!(std::fs::read_to_string(prompts.join("speaking.md")).unwrap(), SPEAKING_BASE);
+        assert_eq!(std::fs::read_to_string(prompts.join("reaction.md")).unwrap(), REACTION_BASE);
     }
 
     #[tokio::test]

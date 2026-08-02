@@ -2,13 +2,13 @@
 //!
 //! The reactor (hi-agent's always-present conversational voice) does *not* run the
 //! agentic claude-CLI loop that the cognition session uses. It makes **one direct
-//! Messages call**: `system` is the whole reactor prompt (`speaking.md` + the turn's
+//! Messages call**: `system` is the whole reactor prompt (`reaction.md` + the turn's
 //! context), there are **no tools**, and the model is the small/fast slot. Two things
 //! fall out of that, and they are the whole reason this wire exists next to the ACP one:
 //!
 //! - **Fast.** No subprocess, no `node`→CLI→HTTPS double indirection, no per-turn
 //!   re-sent tool schema, no agentic tool loop — a single HTTPS request on a small model.
-//! - **Speaking-rule conformance.** `speaking.md` is the *real* `system` prompt, not
+//! - **Speaking-rule conformance.** `reaction.md` is the *real* `system` prompt, not
 //!   first-user-turn content sitting underneath the CLI's coding-agent persona. The ACP
 //!   path cannot achieve this: [`SessionOpts::system_prompt`](crate::foundation::acp)
 //!   is only *prepended* to the first prompt (ACP has no system-prompt slot), so the
@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 const DEFAULT_API_BASE: &str = "https://api.anthropic.com";
 /// Messages API version, sent as the `anthropic-version` header.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Output cap for a reactor turn — it speaks in a sentence or two (`speaking.md`), so a
+/// Output cap for a reactor turn — it speaks in a sentence or two (`reaction.md`), so a
 /// tight cap keeps a runaway generation from stalling the voice.
 const DEFAULT_MAX_TOKENS: u32 = 1024;
 /// Whole-call ceiling: the reactor's reply must be quick and the voice must never hang
@@ -145,7 +145,7 @@ fn build_request(cfg: &Config, system: &str, messages: &[Turn], max_tokens: u32)
 }
 
 /// One non-streaming Messages completion. `system` is the whole reactor prompt
-/// (`speaking.md` + the turn's context) — a real system prompt, unlike the ACP path
+/// (`reaction.md` + the turn's context) — a real system prompt, unlike the ACP path
 /// where it could only prefix the first user turn. `messages` is the conversation.
 /// Returns the assistant's concatenated text (the words to speak), or an error.
 pub async fn complete(cfg: &Config, system: &str, messages: &[Turn]) -> anyhow::Result<String> {
