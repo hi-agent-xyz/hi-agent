@@ -1423,10 +1423,17 @@ async fn per_scene_loop(
         )
         .await
         {
-            Ok(()) => {
+            Ok(added) => {
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
                 batch.clear();
+                // Feed the context budget. This is the writer that did not exist: the
+                // counter, the ceiling and the swap were all built, and nothing ever
+                // incremented it, so a scene's session grew without bound until a turn
+                // failed and it cold-reopened from the log — losing the conversation's
+                // fluency, which is exactly what the swap exists to preserve.
+                budget.add(added);
+                reactor.inner.observatory.set_budget(&scene, budget.chars()).await;
                 // A reply landed — stop the presence owed-reply clock (no-op if
                 // nothing was owed, e.g. a pulse turn).
                 reactor.inner.presence.note_delivered(&scene);
@@ -1573,7 +1580,7 @@ async fn run_reactor_turn(
     reactor_session: &mut Option<Arc<AcpSession>>,
     voice_id: registry::SessionId,
     beats: &mpsc::Sender<sequencer::Beat>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<usize> {
     let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
 
     // This turn's delta: whether the scene's own thinking is still running (so the
@@ -1620,7 +1627,10 @@ async fn run_reactor_turn(
     )
     .await;
 
-    tracing::info!(scene = %scene, ctx_chars = context.chars().count(), "reactor: prompting session");
+    // Captured before the prompt is handed over — it is moved into `drive_voice`, and
+    // this count is half of what the context budget is fed at the end of the turn.
+    let context_chars = context.chars().count();
+    tracing::info!(scene = %scene, ctx_chars = context_chars, "reactor: prompting session");
     let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
 
     let spoke = match drive_voice(&session, scene, context).await {
@@ -1670,7 +1680,15 @@ async fn run_reactor_turn(
             }
         }
     }
-    Ok(())
+    // What this turn added to the session's context: everything we sent plus everything
+    // it said back. A coarse proxy — we never see the model's token count — but it is the
+    // proxy `ContextBudget` was always written against, and **nothing was ever feeding
+    // it**, so `should_swap()` was permanently false and the swap has never run once.
+    //
+    // Under-counts on purpose rather than over-: the reply here is what was *spoken*, not
+    // the model's full output including its working-out. An under-count swaps late, and
+    // late is the survivable direction — the ceiling sits well below a real window.
+    Ok(context_chars + reply.chars().count())
 }
 
 /// One turn's whole prompt: the projected state, then this turn's delta.

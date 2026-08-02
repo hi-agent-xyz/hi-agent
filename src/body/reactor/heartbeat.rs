@@ -65,6 +65,22 @@ impl ContextBudget {
         }
     }
 
+    /// Add what a completed turn put into the session — the prompt we sent plus the
+    /// reply it gave back.
+    ///
+    /// **This is the writer that was missing.** `chars` was read by [`Self::should_swap`]
+    /// and zeroed by [`Self::reset`] and incremented by nothing, so the swap could not
+    /// fire and the observatory's budget readout sat at zero for every scene. Both were
+    /// reporting a mechanism that was not running.
+    pub(super) fn add(&mut self, chars: usize) {
+        self.chars = self.chars.saturating_add(chars);
+    }
+
+    /// What the session has accumulated — the observatory's numerator.
+    pub(super) fn chars(&self) -> usize {
+        self.chars
+    }
+
     pub(super) fn should_swap(&self) -> bool {
         self.chars >= self.limit
     }
@@ -72,6 +88,34 @@ impl ContextBudget {
     /// Reset after a swap (or after the session is discarded on error).
     pub(super) fn reset(&mut self) {
         self.chars = 0;
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// The swap has never once run, because the counter it reads had no writer: `chars`
+    /// was read by `should_swap` and zeroed by `reset` and incremented by nothing. This
+    /// pins the writer, so the mechanism cannot go back to being a thing that typechecks
+    /// and never fires.
+    #[test]
+    fn a_turn_moves_the_budget_and_eventually_trips_the_swap() {
+        let mut b = ContextBudget { chars: 0, limit: 100 };
+        assert!(!b.should_swap(), "a fresh session is nowhere near the ceiling");
+        assert_eq!(b.chars(), 0);
+
+        b.add(40);
+        b.add(40);
+        assert_eq!(b.chars(), 80, "turns accumulate; the observatory reads this");
+        assert!(!b.should_swap());
+
+        b.add(40);
+        assert!(b.should_swap(), "past the ceiling, the next gap between turns swaps");
+
+        b.reset();
+        assert_eq!(b.chars(), 0, "a swap starts the replacement's budget over");
+        assert!(!b.should_swap());
     }
 }
 
