@@ -266,11 +266,8 @@ async fn turn(
     use crate::mind::memory::snapshot;
 
     let data_dir = reactor.inner.memory.data_dir();
-    let system_prompt = format!(
-        "{}\n\n{}",
-        crate::identity::character_seed(data_dir),
-        crate::identity::reflection_prompt(data_dir).await
-    );
+    // One file, whole — see `cognition.rs` for why the seed went.
+    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
 
     let session = Arc::new(
         reactor

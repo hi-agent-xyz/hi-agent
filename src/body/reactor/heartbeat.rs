@@ -368,17 +368,10 @@ async fn run_consolidation(
     let current_proactivity = crate::mind::memory::proactivity::read(data_dir).await.ok().flatten();
 
     let prompt = build_consolidation_prompt(&groups, &subjects, current_proactivity.as_deref());
-    // The same two layers a Reflection *mail* turn opens with, and the same two Cognition
-    // gets: who it is, then what this rung is for. The pass used to carry the role layer
-    // alone, which made Reflection the one thinking rung with no character — a difference
-    // that was never decided, just inherited from when this was "the consolidation pass"
-    // rather than a rung. `character_seed` names every file by absolute path, so a session
-    // with no cwd still opens them.
-    let system_prompt = format!(
-        "{}\n\n{}",
-        crate::identity::character_seed(data_dir),
-        crate::identity::reflection_prompt(data_dir).await
-    );
+    // The same prompt a Reflection *mail* turn opens with — one self-contained file. It
+    // was the role layer alone until `cd008a6`, then seed-plus-layer; it is now neither,
+    // because `reflection.md` carries the whole thing.
+    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
 
     let sentinel = consolidation_scene();
 

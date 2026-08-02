@@ -210,11 +210,9 @@ async fn turn(
     pending: &[String],
 ) -> anyhow::Result<()> {
     let data_dir = reactor.inner.memory.data_dir();
-    let system_prompt = format!(
-        "{}\n\n{}",
-        crate::identity::character_seed(data_dir),
-        crate::identity::cognition_prompt(data_dir).await
-    );
+    // One file, whole. It used to be `character_seed` + this layer, with the rung Reading
+    // its own character off disk; `cognition.md` is now self-contained.
+    let system_prompt = crate::identity::cognition_prompt(data_dir).await;
 
     let session = Arc::new(
         reactor

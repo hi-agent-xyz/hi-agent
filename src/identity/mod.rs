@@ -35,9 +35,7 @@ use std::path::{Path, PathBuf};
 /// `reflection.md` is the exception: it is the consolidation session's whole instruction
 /// set, so it is **inlined** as that session's system prompt (see [`reflection_prompt`])
 /// rather than Read. All ship in the binary and refresh on every build.
-const CORE_BASE: &str = include_str!("core.md");
 const REACTION_BASE: &str = include_str!("reaction.md");
-const MEANING_BASE: &str = include_str!("meaning.md");
 const APPEARANCE_BASE: &str = include_str!("appearance.md");
 const AESTHETIC_BASE: &str = include_str!("aesthetic.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
@@ -158,9 +156,7 @@ fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
 pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("core.md"), compose_prompt(CORE_BASE, &dir, "core.local.md"))?;
     std::fs::write(dir.join("reaction.md"), compose_prompt(REACTION_BASE, &dir, "reaction.local.md"))?;
-    std::fs::write(dir.join("meaning.md"), compose_prompt(MEANING_BASE, &dir, "meaning.local.md"))?;
     std::fs::write(dir.join("appearance.md"), compose_prompt(APPEARANCE_BASE, &dir, "appearance.local.md"))?;
     std::fs::write(dir.join("aesthetic.md"), compose_prompt(AESTHETIC_BASE, &dir, "aesthetic.local.md"))?;
     std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
@@ -187,7 +183,7 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     tracing::info!(
         dir = %dir.display(),
         types = WorkerType::ALL.len(),
-        "installed bundled prompts (core.md, reaction.md, meaning.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md, workers/)"
+        "installed bundled prompts (reaction.md, appearance.md, aesthetic.md, reflection.md, deliberation.md, cognition.md, workers/)"
     );
     Ok(())
 }
@@ -230,6 +226,70 @@ pub async fn worker_prompt(data_dir: &Path, scene: &crate::types::Scene, kind: W
         .replace("{scene}", &scene.0)
 }
 
+
+/// Every bundled rung prompt, as `(installed filename stem, embedded text)`.
+///
+/// Exists so tests can sweep the whole corpus rather than naming files one at a time —
+/// the failure this guards is a *new* prompt quietly not being held to the rules the
+/// others are. Adding a rung means adding a line here, and the sweeps pick it up.
+#[cfg(test)]
+pub(crate) fn bundled_rung_prompts() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("reaction", REACTION_BASE),
+        ("deliberation", DELIBERATION_BASE),
+        ("cognition", COGNITION_BASE),
+        ("reflection", REFLECTION_BASE),
+    ]
+}
+
+/// Absolutize `data_dir`: every path a prompt hands an agent must be absolute, because a
+/// relative one resolves against the *session's* cwd, and those differ by rung on purpose.
+fn abs(data_dir: &Path) -> PathBuf {
+    if data_dir.is_absolute() {
+        data_dir.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(data_dir)
+    }
+}
+
+/// One rung's **whole** system prompt: the installed `<name>.md`, interpolated.
+///
+/// **This replaced the seed**, and the seed's shape is worth recording because it looked
+/// thrifty and was not. A rung got ~18 lines pointing at `core.md`, `meaning.md` and
+/// `self.md` — "read them all now, before you do anything else" — and fetched its own
+/// character. Three costs, one of them silent:
+///
+/// - **Conditional.** Nothing verified the rung obeyed. Whether an agentic rung actually
+///   Read its character was an open live-test item for weeks; now it cannot not have.
+/// - **Paid per wake.** Cognition and Reflection open a fresh session every wake, so the
+///   round trip was not once — it was every time, forever.
+/// - **One `core.md` served three rungs with three tool surfaces**, so each was handed
+///   large sections about jobs it could not do: Cognition read 56 lines on photos and
+///   file-filing, and all three read how to drive a screen none of them has `look` for.
+///
+/// Each file is now self-contained and carries only what its rung can act on. The cost is
+/// real: ~71 lines of shared character live in three copies, and drift between them is
+/// the live risk — which is what the prompt tests are for.
+///
+/// Two things are per-install and so cannot be baked in; they interpolate instead of
+/// being fetched: `{skills_dir}` and the language line.
+async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> String {
+    let base = abs(data_dir);
+    let path = base.join("prompts").join(format!("{name}.md"));
+    let text = match tokio::fs::read_to_string(&path).await {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => fallback.to_string(),
+    };
+    let mut out = text.replace(
+        "{skills_dir}",
+        &crate::mind::skills::skills_dir(&base).display().to_string(),
+    );
+    if let Some(lang) = language_line(&base) {
+        out.push_str(&lang);
+    }
+    out
+}
+
 /// **Deliberation**'s role layer — what it is beyond being a working session, and the
 /// job that makes it load-bearing: writing its scene's
 /// [generated prompt](../../docs/arch/data.md#memoryprompts), the brief Reaction reads
@@ -243,13 +303,9 @@ pub async fn worker_prompt(data_dir: &Path, scene: &crate::types::Scene, kind: W
 /// `{scene_memory}` is interpolated to the **absolute** path of the file it must write,
 /// because an agent-facing path that is relative is a path to the wrong file.
 pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -> String {
-    let path = data_dir.join("prompts").join("deliberation.md");
-    let base = match tokio::fs::read_to_string(&path).await {
-        Ok(s) if !s.trim().is_empty() => s,
-        _ => DELIBERATION_BASE.to_string(),
-    };
-    let target = crate::mind::memory::layout::scene_prompt_path(data_dir, scene);
-    base.replace("{scene_memory}", &target.display().to_string())
+    let text = rung_prompt(data_dir, "deliberation", DELIBERATION_BASE).await;
+    let target = crate::mind::memory::layout::scene_prompt_path(&abs(data_dir), scene);
+    text.replace("{scene_memory}", &target.display().to_string())
 }
 
 /// **Cognition**'s role layer — the sceneless brain that owns the task ledger, hands
@@ -266,11 +322,7 @@ pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -
 /// content in both places would be one copy going stale against the other, and the window
 /// is the half that is rebuilt every turn.
 pub async fn cognition_prompt(data_dir: &Path) -> String {
-    let path = data_dir.join("prompts").join("cognition.md");
-    match tokio::fs::read_to_string(&path).await {
-        Ok(s) if !s.trim().is_empty() => s,
-        _ => COGNITION_BASE.to_string(),
-    }
+    rung_prompt(data_dir, "cognition", COGNITION_BASE).await
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -281,11 +333,7 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 /// be present before the session can act. Read fresh each round, so an operator edit
 /// takes effect without a restart.
 pub async fn reflection_prompt(data_dir: &Path) -> String {
-    let path = data_dir.join("prompts").join("reflection.md");
-    match tokio::fs::read_to_string(&path).await {
-        Ok(s) if !s.trim().is_empty() => s,
-        _ => REFLECTION_BASE.to_string(),
-    }
+    rung_prompt(data_dir, "reflection", REFLECTION_BASE).await
 }
 
 /// **Reaction**'s system prompt — the scene's voice (`docs/arch/agents.md#reaction`).
@@ -356,12 +404,6 @@ write to you in another language — then follow their lead."
     ))
 }
 
-/// `<data_dir>/memory/self.md` — per-install authored identity (optional).
-/// Hand-written by the operator if at all; the agent only ever *reads* it, never
-/// writes it. (Still under `memory/` pending the identity-dir relocation.)
-pub fn self_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("memory").join("self.md")
-}
 
 /// `<data_dir>/memory/commitments.md` — the **superseded** duty ledger.
 ///
@@ -374,71 +416,6 @@ pub fn commitments_path(data_dir: &Path) -> PathBuf {
     data_dir.join("memory").join("commitments.md")
 }
 
-/// The character seed for an **agentic** rung: a short bundled personality plus the
-/// absolute paths of the files that hold the fuller self — the manual (`core.md`), what
-/// it is for (`meaning.md`), the per-install authored identity `self.md` (read-only,
-/// optional), and the skills workshop — with the instruction to Read them up front.
-///
-/// A seed rather than an inlined character, because a rung that can Read should fetch
-/// its own self: the character is ~30 KB and would otherwise ride every session open.
-/// The paths are absolutized here so Read resolves regardless of the session's cwd.
-///
-/// **This is the layer that makes a rung the agent rather than a generic assistant.**
-/// It goes under the capability guidance and the role layer, not instead of them: a new
-/// role is a new prompt, not new machinery (`docs/arch/agents.md`).
-///
-/// Three things the old monolithic seed carried are deliberately **not** here:
-/// - `reaction.md` and the `say` tool — the voice's, and [`reactor_system_prompt`]
-///   inlines them. A rung with no mouth told how to talk is a rung told a falsehood.
-/// - `hot.md` and `proactivity.md` — projections, put in front of the voice by
-///   [`crate::mind::memory::snapshot::window`] rather than fetched.
-/// - the **write** side of the task ledger — Cognition is its sole writer
-///   (`docs/arch/agents.md`), so the instruction to open and close a task belongs in
-///   Cognition's role layer, not in a seed every agentic rung shares. `core.md`
-///   describes how work owed is *held*; it does not hand out the pen.
-pub fn character_seed(data_dir: &Path) -> String {
-    let base = if data_dir.is_absolute() {
-        data_dir.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(data_dir)
-    };
-    let prompts = base.join("prompts");
-    let core = prompts.join("core.md");
-    let meaning = prompts.join("meaning.md");
-    let self_md = self_path(&base);
-    let mut seed = format!(
-        "You're warm, honest, and kind-hearted — easy company. You like being \
-useful, and when there's a hand to lend you're glad to lend it.\n\n\
-Your fuller self lives in files — open them with Read and read them all now, before \
-you do anything else:\n\n\
-- {} — who you are, and how you act.\n\
-- {} — what you're for, and that finding it is yours to do.\n\
-- {} — who this install asked you to be, in its own words. Read it if it's there; it \
-may be missing or empty, and that's fine. It's authored, not yours to edit.",
-        core.display(),
-        meaning.display(),
-        self_md.display(),
-    );
-    // The workshop. One line, because it is a place to look rather than something to
-    // load: procedures sediment there over time, and an agent can only start from a
-    // note it knows exists. Named by absolute path for the same reason as the files
-    // above. Seeded at boot by [`crate::mind::skills::install_builtin_skills`].
-    seed.push_str(&format!(
-        "\n\nYour know-how sediments in a workshop: {} — short notes in your own words \
-on how you did a kind of job, the steps that worked, the tools, the traps. Look there \
-before something you may have done before, and leave a note behind when you crack \
-something hard that will come up again. A note is a starting point, not gospel: the \
-fast-moving parts are marked, and you re-check those; the durable steps you reuse as \
-they are. Notes under `_builtin/` came with you rather than from experience — same \
-rules apply.",
-        crate::mind::skills::skills_dir(&base).display(),
-    ));
-
-    if let Some(lang) = language_line(&base) {
-        seed.push_str(&lang);
-    }
-    seed
-}
 
 /// Whether this looks like a genuine **first meeting** — a brand-new install where the
 /// agent has no history with the person yet. True when none of the accruing traces
@@ -498,74 +475,10 @@ mod soul_tests {
         assert!(!prompt.contains("this is a brand-new install"));
     }
 
-    #[test]
-    fn authored_self_md_is_not_history() {
-        // An operator may pre-author `self.md` on a fresh box; that says nothing about
-        // whether the person has been met, so it must not suppress the first hello.
-        let dir = tempfile::tempdir().unwrap();
-        let self_md = self_path(dir.path());
-        std::fs::create_dir_all(self_md.parent().unwrap()).unwrap();
-        std::fs::write(&self_md, "You are called Momo.").unwrap();
-        assert!(is_first_meeting(dir.path()));
-    }
 
-    #[test]
-    fn seed_references_the_character_files_by_absolute_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let seed = character_seed(dir.path());
-        let prompts = dir.path().join("prompts");
-        assert!(seed.contains(&prompts.join("core.md").display().to_string()));
-        assert!(seed.contains(&prompts.join("meaning.md").display().to_string()));
-        // The per-install authored identity is referenced as well (read-only).
-        assert!(seed.contains(&self_path(dir.path()).display().to_string()));
-        // And it says to read them up front.
-        assert!(seed.contains("read them all now"));
-    }
 
-    #[test]
-    fn seed_leaves_the_voice_and_the_projections_alone() {
-        // Three things the old monolithic seed carried belong elsewhere now, and a
-        // rung told about a tool it does not have is a rung told a falsehood.
-        let dir = tempfile::tempdir().unwrap();
-        let seed = character_seed(dir.path());
-        // The voice's: `reaction.md` and the `say` tool are inlined into Reaction.
-        assert!(!seed.contains("reaction.md"));
-        assert!(!seed.contains("`say`"));
-        // Projected, not fetched: the digest and the proactivity read ride the window.
-        let hot = crate::mind::memory::layout::hot_path(dir.path());
-        assert!(!seed.contains(&hot.display().to_string()));
-        let proactivity = crate::mind::memory::layout::proactivity_path(dir.path());
-        assert!(!seed.contains(&proactivity.display().to_string()));
-        // And the superseded second ledger is nowhere in it.
-        assert!(!seed.contains("commitments"));
-    }
 
-    #[test]
-    fn the_ledger_is_described_but_the_pen_is_not_handed_out() {
-        // Cognition is the sole writer of the task ledger (`docs/arch/agents.md`), so a
-        // seed every agentic rung shares must not tell its reader to open and close
-        // tasks. `core.md` describes how what's owed is held; it hands out no pen.
-        let dir = tempfile::tempdir().unwrap();
-        let seed = character_seed(dir.path());
-        let tasks = crate::mind::memory::layout::facets_dir(dir.path())
-            .join(crate::mind::memory::tasks::DIMENSION);
-        assert!(!seed.contains(&tasks.display().to_string()));
-        assert!(CORE_BASE.contains("the only ledger of what's owed"));
-    }
 
-    #[test]
-    fn seed_carries_a_language_line_only_when_a_real_language_is_chosen() {
-        use crate::foundation::credentials::set_setting;
-        let dir = tempfile::tempdir().unwrap();
-        // No setting → the agent follows the person; no language sentence.
-        assert!(!character_seed(dir.path()).contains("Speak with the person in"));
-        // `system` is explicit "follow the person" → still no sentence.
-        set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "system").unwrap();
-        assert!(!character_seed(dir.path()).contains("Speak with the person in"));
-        // A real language → one guidance sentence naming the endonym.
-        set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
-        assert!(character_seed(dir.path()).contains("Speak with the person in 简体中文"));
-    }
 
     #[tokio::test]
     async fn the_voice_gets_the_language_line_too() {
@@ -590,6 +503,79 @@ mod soul_tests {
         std::fs::write(prompts.join("reaction.local.md"), "Always end with 好的。").unwrap();
         install_prompts(dir.path()).unwrap();
         assert!(reactor_system_prompt(dir.path()).await.contains("Always end with 好的。"));
+    }
+
+
+    /// The managed bases all land, and `core.md`/`meaning.md` are **gone** — a rung's
+    /// prompt is one file now, so a leftover shared file would be a second source of
+    /// character with nothing reading it.
+    #[test]
+    fn install_writes_every_managed_base_and_no_retired_one() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let p = dir.path().join("prompts");
+        let read = |n: &str| std::fs::read_to_string(p.join(n)).unwrap();
+        assert_eq!(read("reaction.md"), REACTION_BASE);
+        assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
+        assert_eq!(read("cognition.md"), COGNITION_BASE);
+        assert_eq!(read("reflection.md"), REFLECTION_BASE);
+        assert_eq!(read("appearance.md"), APPEARANCE_BASE);
+        assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
+        for gone in ["core.md", "meaning.md"] {
+            assert!(!p.join(gone).exists(), "{gone} should be retired");
+        }
+    }
+
+    #[test]
+    fn install_layers_the_operator_override_into_the_managed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prompts");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("cognition.local.md"), "Prefer small workers.").unwrap();
+        install_prompts(dir.path()).unwrap();
+        let out = std::fs::read_to_string(p.join("cognition.md")).unwrap();
+        assert!(out.starts_with(COGNITION_BASE));
+        assert!(out.contains("Prefer small workers."));
+    }
+
+    /// Every thinking rung is self-contained: it opens with its own character rather than
+    /// a pointer to a file it must go and fetch. This is the property the seed did not
+    /// have — the seed's instruction to Read was *conditional*, and nothing checked it.
+    #[tokio::test]
+    async fn every_rung_carries_its_own_character() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        for (name, base) in bundled_rung_prompts() {
+            assert!(
+                !base.contains("read them all now"),
+                "{name} still bootstraps instead of carrying its character"
+            );
+            assert!(base.len() > 2_000, "{name} looks too thin to be self-contained");
+        }
+        // And the interpolations resolve rather than reaching the model raw.
+        let scene = crate::types::Scene("boss".into());
+        for text in [
+            deliberation_prompt(dir.path(), &scene).await,
+            cognition_prompt(dir.path()).await,
+            reflection_prompt(dir.path()).await,
+        ] {
+            assert!(!text.contains("{skills_dir}"), "an unresolved placeholder reached the rung");
+            assert!(!text.contains("{scene_memory}"));
+            let skills = crate::mind::skills::skills_dir(dir.path());
+            assert!(skills.is_absolute());
+            assert!(text.contains(&skills.display().to_string()));
+        }
+    }
+
+    /// One pen on the ledger. Cognition writes it; nobody else is told how.
+    #[test]
+    fn exactly_one_prompt_hands_out_the_ledger_pen() {
+        let carriers: Vec<&str> = bundled_rung_prompts()
+            .into_iter()
+            .filter(|(_, b)| b.contains("only writer of the task ledger"))
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(carriers, vec!["cognition"], "the pen must be held once");
     }
 
     #[tokio::test]
@@ -718,12 +704,6 @@ mod soul_tests {
     /// goes and looks) could not know it existed. `docs/arch/foundation.md` is explicit
     /// that the host "records the session stream verbatim and interprets none of it", so a
     /// code-level reader was never the answer; a path in the character was.
-    #[test]
-    fn the_agentic_self_is_told_where_its_own_sessions_are_kept() {
-        assert!(CORE_BASE.contains("memory/raw/sessions/"));
-        // And what it is *for* — a record to check against, not a thing to read routinely.
-        assert!(CORE_BASE.contains("what actually happened"));
-    }
 
     /// The filing worker copies rather than moves, and the reason has to travel with the
     /// instruction: `docs/arch/surfaces.md` forbids log-then-copy for streamed bulk, so a
@@ -747,52 +727,8 @@ mod soul_tests {
         assert!(REACTION_BASE.contains("You have no timer"));
     }
 
-    #[test]
-    fn seed_points_at_the_skill_workshop_by_absolute_path() {
-        // The workshop is discoverable or it may as well not exist. One pointer, not
-        // an inlined skill — the agent opens what it needs.
-        let dir = tempfile::tempdir().unwrap();
-        let seed = character_seed(dir.path());
-        let skills = crate::mind::skills::skills_dir(dir.path());
-        assert!(skills.is_absolute());
-        assert!(seed.contains(&skills.display().to_string()));
-        // And it says what shape a note takes, including the marked-perishable rule.
-        assert!(seed.contains("starting point, not gospel"));
-    }
 
-    #[test]
-    fn seed_is_a_thin_bootstrap_not_the_full_character() {
-        // Referencing the file instead of pasting it is the whole point: ~30 KB of
-        // character must not ride every session open.
-        let dir = tempfile::tempdir().unwrap();
-        let seed = character_seed(dir.path());
-        assert!(seed.len() < CORE_BASE.len() / 10);
-        // A heading that lives only in the full core.md, never in the seed:
-        assert!(CORE_BASE.contains("What you know vs. what you remember"));
-        assert!(!seed.contains("What you know vs. what you remember"));
-    }
 
-    #[test]
-    fn install_writes_all_managed_bases() {
-        let dir = tempfile::tempdir().unwrap();
-        install_prompts(dir.path()).unwrap();
-        let read = |n: &str| std::fs::read_to_string(dir.path().join("prompts").join(n)).unwrap();
-        assert_eq!(read("core.md"), CORE_BASE);
-        assert_eq!(read("reaction.md"), REACTION_BASE);
-        assert_eq!(read("meaning.md"), MEANING_BASE);
-        assert_eq!(read("appearance.md"), APPEARANCE_BASE);
-        assert_eq!(read("aesthetic.md"), AESTHETIC_BASE);
-        assert_eq!(read("reflection.md"), REFLECTION_BASE);
-        assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
-        assert_eq!(read("cognition.md"), COGNITION_BASE);
-        let w = |n: String| {
-            std::fs::read_to_string(dir.path().join("prompts").join("workers").join(n)).unwrap()
-        };
-        assert_eq!(w("common.md".into()), WORKER_COMMON_BASE);
-        for t in WorkerType::ALL {
-            assert_eq!(w(format!("{}.md", t.as_str())), t.base(), "{}", t.as_str());
-        }
-    }
 
     /// The handover, pinned from both ends. "Sole writer of the ledger" is not enforced
     /// by any rail — it is enforced by exactly one prompt carrying the instruction. So
@@ -870,19 +806,6 @@ mod soul_tests {
         assert!(prompt.contains("Keep the brief in French."));
     }
 
-    #[test]
-    fn install_layers_operator_override_into_the_managed_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let prompts = dir.path().join("prompts");
-        std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("core.local.md"), "Always answer in haiku.").unwrap();
-        install_prompts(dir.path()).unwrap();
-        let core = std::fs::read_to_string(prompts.join("core.md")).unwrap();
-        // The managed file is the base, then the operator delta under the header.
-        assert!(core.starts_with(CORE_BASE));
-        assert!(core.contains("# Operator overrides"));
-        assert!(core.ends_with("Always answer in haiku."));
-    }
 
     #[test]
     fn empty_override_leaves_the_base_verbatim() {
@@ -896,21 +819,18 @@ mod soul_tests {
 
     #[tokio::test]
     async fn reflection_prompt_falls_back_then_reads_installed_override() {
+        // Fallback no longer means "the embedded base, byte for byte" — every rung prompt
+        // is interpolated on the way out, so the invariant worth pinning is that the
+        // *content* is there and the placeholders are resolved, installed or not.
         let dir = tempfile::tempdir().unwrap();
-        // Nothing installed yet → the embedded base.
-        assert_eq!(reflection_prompt(dir.path()).await, REFLECTION_BASE);
-        // After install (no override) → the materialised file equals the base.
+        let bare = reflection_prompt(dir.path()).await;
+        assert!(bare.contains("tends your own house"), "the embedded base must still serve");
+        assert!(!bare.contains("{skills_dir}"), "even the fallback interpolates");
+
+        let prompts = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts).unwrap();
+        std::fs::write(prompts.join("reflection.local.md"), "Prune harder.").unwrap();
         install_prompts(dir.path()).unwrap();
-        assert_eq!(reflection_prompt(dir.path()).await, REFLECTION_BASE);
-        // An operator override is layered into what the reflection session loads.
-        std::fs::write(
-            dir.path().join("prompts").join("reflection.local.md"),
-            "Prefer fewer, larger episodes.",
-        )
-        .unwrap();
-        install_prompts(dir.path()).unwrap();
-        let loaded = reflection_prompt(dir.path()).await;
-        assert!(loaded.starts_with(REFLECTION_BASE));
-        assert!(loaded.contains("Prefer fewer, larger episodes."));
+        assert!(reflection_prompt(dir.path()).await.contains("Prune harder."));
     }
 }
