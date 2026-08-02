@@ -63,9 +63,29 @@ is exactly what the person wanted kept.
 
 ### Bulk
 
-Large payloads must **not flow through the log and then get copied** into drive — both trees
-are synced, so that is duplication with no durability gain. The log holds the event; the
-bytes are staged and moved.
+**Streamed** bulk — audio minutes, video, capture grids — must **not flow through the log
+and then get copied** into drive. Both trees are synced, so that is duplication with no
+durability gain. The log holds the event; the bytes are staged and moved.
+
+**A handed file is the deliberate exception, and it is not a violation of the above.** It
+lands in the log's media store like any other signal, and the filing worker **copies** it
+into [`drive/`](data.md#drive) rather than moving it. Two reasons, and the first is the
+one that matters:
+
+- **The two stores have different retention, which is the whole point of having both.**
+  The log's copy [fades](data.md#forgetting) once its day is consolidated and cold; the
+  drive's copy is permanent. So the second copy buys exactly the durability the general
+  rule says is absent — for the one class of object where the bytes, not the caption, are
+  what the person wanted kept.
+- **Moving it would dangle the log's own reference.** A journal entry records its media by
+  relative path and *the line is never rewritten*; the reader does a best-available lookup
+  (original → keepsake → caption alone). Move the bytes and that entry silently degrades
+  to a caption — for a passport or a contract, the worst possible thing to hold a caption
+  of.
+
+Stated at this length because the rule above reads as forbidding it, and someone
+reasonable will otherwise "fix" the filing worker to move rather than copy. The cost is a
+few megabytes duplicated; the alternative is a promise quietly broken.
 
 ## Carriers
 

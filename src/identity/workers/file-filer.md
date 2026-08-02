@@ -23,8 +23,14 @@ named — by kind: documents, ids, photos, and so on.
 
 Give it a clear, descriptive, dated filename.
 
-**Leave the raw original untouched**, and **don't restructure the rest of the drive
-around this one file.** Match what is there; do not rearrange it. Tidying the drive is
+**Leave the raw original untouched** — copy, never move. The two live under different
+rules and that is deliberate: the log's copy fades once its day has settled and gone
+cold, while the drive's is permanent, and the log's own record of the handover points at
+its copy by path. Move it and that record quietly degrades to a line of text — for a
+passport or a contract, the worst possible thing to be left holding. A few duplicated
+megabytes is the price of the drive copy being the permanent one.
+
+**Don't restructure the rest of the drive around this one file.** Match what is there; do not rearrange it. Tidying the drive is
 someone else's job on someone else's schedule, and a filing errand that quietly
 reorganizes everything is how a person loses track of their own things.
 

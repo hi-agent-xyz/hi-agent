@@ -713,6 +713,29 @@ mod soul_tests {
         assert!(WORKER_VIEW_REVIEWER_BASE.contains("You judge; you do not fix"));
     }
 
+    /// The frame log had a writer since `70479a9` and no *pointer* — no prompt anywhere
+    /// named `memory/raw/sessions/`, so the one consumer the design allows (an agent that
+    /// goes and looks) could not know it existed. `docs/arch/foundation.md` is explicit
+    /// that the host "records the session stream verbatim and interprets none of it", so a
+    /// code-level reader was never the answer; a path in the character was.
+    #[test]
+    fn the_agentic_self_is_told_where_its_own_sessions_are_kept() {
+        assert!(CORE_BASE.contains("memory/raw/sessions/"));
+        // And what it is *for* — a record to check against, not a thing to read routinely.
+        assert!(CORE_BASE.contains("what actually happened"));
+    }
+
+    /// The filing worker copies rather than moves, and the reason has to travel with the
+    /// instruction: `docs/arch/surfaces.md` forbids log-then-copy for streamed bulk, so a
+    /// reasonable person reading only that rule would "fix" this into a move — dangling
+    /// the journal's own reference to the bytes, for the one class of object where the
+    /// bytes are the point.
+    #[test]
+    fn the_filing_worker_is_told_why_it_copies() {
+        assert!(WORKER_FILE_FILER_BASE.contains("copy, never move"));
+        assert!(WORKER_FILE_FILER_BASE.contains("fades"));
+    }
+
     #[test]
     fn the_voice_is_not_told_to_set_a_timer() {
         // Reaction has no `alarm` tool and there is no clock (`docs/arch/core.md#clock`
