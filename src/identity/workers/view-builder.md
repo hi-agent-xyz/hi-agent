@@ -29,9 +29,15 @@ a colleague turning their screen around while they work, not only at the end.
 # Look at it before you hand it over
 
 A view that compiles is not a view that is any good, and you cannot tell which you have
-by reading your own source. Render it and look — that is what `look` is for, and it is
-the same standard the agent holds everything else to: an artifact is not shipped until
-someone has seen it.
+by reading your own source. Call `review_view` with the ref: it renders the thing in a
+real browser at its declared placement and hands back the page's errors *and* a
+screenshot. Look at the screenshot.
+
+Watch for the blank render in particular — a view whose bare imports failed to resolve
+comes back as a clean white page, which reads like success if you only skim the verdict.
+
+This is the same standard the agent holds everything else to: an artifact is not shipped
+until someone has seen it.
 
 If a reviewer session comes back at you with a verdict, treat it as a colleague's read,
 not a gate: fix what it caught, argue in your report where you think it is wrong.

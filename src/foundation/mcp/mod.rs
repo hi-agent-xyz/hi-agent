@@ -26,6 +26,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
 use crate::foundation::observatory::{EventKind, Observatory};
+use crate::body::capabilities::view_render;
 use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
@@ -111,6 +112,7 @@ fn create_worker_tool() -> Value {
                     "description": "What kind of session to start. `general` for almost everything \
                                     — reach for a specialist only when the job plainly is one: \
                                     `view-builder` to make something to put on screen, \
+                                    `view-reviewer` to render one and judge it before it ships, \
                                     `decision-maker` to get a call made so work can continue \
                                     without the person, `file-filer` to put a handed-over file \
                                     into the drive.",
@@ -150,10 +152,45 @@ fn session_messages_tool() -> Value {
     )
 }
 
+/// `review_view` — render a saved view in a real browser and hand back both the
+/// picture and the page's own account of what went wrong.
+///
+/// `docs/arch/foundation.md` is blunt about the rule this exists for: *"the command
+/// exited zero" is not "the thing worked"; an artifact is not shipped until it has been
+/// looked at.* The capability behind this has been built and browser-proven since
+/// `47b7f90` and had **zero callers** — a reviewer with no way to render, because
+/// rendering is not something a session can improvise: a compiled view keeps its bare
+/// imports unresolved on purpose, so it only runs inside the host page that carries our
+/// import map.
+///
+/// Deliberately returns the problems *and* the pixels. The commonest real defect is a
+/// view that "renders" as a blank white page because an import failed to resolve, and
+/// pixels alone report that as success.
+fn review_view_tool() -> Value {
+    tool(
+        "review_view",
+        "Render a saved view in a real browser and look at it. Returns a verdict, any \
+         errors the page reported, and a screenshot — so you can see what you actually \
+         made rather than trusting that it compiled. Use it on anything you are about to \
+         hand over as a view, and again after a fix.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
+                "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render under this theme. Omit for the default." },
+                "region": { "type": "string", "enum": ["center", "top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "fill"], "description": "Optional: review it under this placement instead of the one its `.geom.json` declares." },
+                "size": { "type": "string", "enum": ["compact", "auto", "wide", "fill"], "description": "Optional: review it at this size class instead of its declared one." },
+            },
+            "required": ["ref"],
+        }),
+    )
+}
+
 fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
             send_message_tool(),
+            review_view_tool(),
             tool(
                 "look",
                 "See the user's screen right now — returns a screenshot of the main display, plus \
@@ -596,6 +633,7 @@ async fn dispatch_tool(
         "act" => return do_act(args).await,
         "see" => return do_see(data_dir, scene, args).await,
         "watch" => return do_watch(scene, video_partial, args).await,
+        "review_view" => return do_review_view(data_dir, args).await,
         _ => {}
     }
 
@@ -836,6 +874,76 @@ async fn do_look() -> Value {
     json!({
         "content": [
             { "type": "text", "text": hint },
+            { "type": "image", "data": b64, "mimeType": "image/png" },
+        ],
+        "isError": false,
+    })
+}
+
+/// `review_view`: compile the saved view, render it in a real browser, and answer with
+/// the verdict, the page's problems, and the screenshot.
+///
+/// The three steps are the same ones the build path takes, in the same order, which is
+/// why this is a thin call rather than a second renderer: resolve the ref to source
+/// (the compiler's existing job), compile it to a served module URL, then hand that to
+/// [`view_render::render`], which owns the browser, the viewport policy and the blank
+/// detection.
+///
+/// **Placement comes from the view's own `.geom.json` unless the caller overrides it**,
+/// so a review renders the thing the way `show_view` would put it up. Reviewing a
+/// bottom-strip view in a centred square would fail it for a defect that only the
+/// review introduced.
+async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
+    let view_ref = args.get("ref").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+    if view_ref.is_empty() {
+        return tool_error("review_view requires a `ref`");
+    }
+    let (source, geometry) = match resolve_view_ref(data_dir, &view_ref).await {
+        Ok(v) => v,
+        Err(e) => return tool_error(&e),
+    };
+    // Published at startup. Absent means the process never stood the view path up —
+    // a condition to report, not to panic on, and one a unit test hits by construction.
+    let Some(ctx) = crate::mind::views::render_context() else {
+        return tool_error("the view renderer is not available in this process");
+    };
+    let module_url = match ctx.compiler.compile(&source).await {
+        Ok(u) => u,
+        Err(e) => return tool_error(&format!("the view did not compile: {e}")),
+    };
+
+    // Serde is the single source of truth for these spellings — the same strings the
+    // `/render/view` page reads and the tool schema advertises. Writing a second
+    // match here is how the two drift.
+    let as_str = |v: Value| v.as_str().map(str::to_owned);
+    let declared_region = geometry.as_ref().and_then(|g| serde_json::to_value(g.region).ok()).and_then(as_str);
+    let declared_size = geometry.as_ref().and_then(|g| serde_json::to_value(g.size).ok()).and_then(as_str);
+    let region = args.get("region").and_then(Value::as_str).map(str::to_owned).or(declared_region);
+    let size = args.get("size").and_then(Value::as_str).map(str::to_owned).or(declared_size);
+
+    let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
+        .with_geometry(region, size);
+    req.theme = args.get("theme").and_then(Value::as_str).map(str::to_owned);
+
+    let rendered = match view_render::render(&req).await {
+        Ok(r) => r,
+        Err(e) => return tool_error(&format!("could not render `{view_ref}`: {e}")),
+    };
+
+    // The verdict first, in words, because that is the answer. The picture follows so
+    // the reviewer can disagree with it — a view can render cleanly and still be bad,
+    // and that judgment is the whole reason a session is doing this rather than a
+    // pass/fail check in the build.
+    let summary = match rendered.verdict() {
+        view_render::Verdict::Rendered => format!(
+            "`{view_ref}` rendered. Nothing is broken — now judge whether it is any good."
+        ),
+        view_render::Verdict::Failed(why) => format!("`{view_ref}` did not render properly: {why}"),
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&rendered.png);
+    json!({
+        "content": [
+            { "type": "text", "text": summary },
             { "type": "image", "data": b64, "mimeType": "image/png" },
         ],
         "isError": false,

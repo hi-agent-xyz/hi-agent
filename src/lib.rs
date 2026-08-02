@@ -315,6 +315,13 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .await
         .context("resolving esbuild for the view compiler")?;
     let view_compiler = mind::views::ViewCompiler::new(esbuild_bin, &config.data_dir);
+    // The reviewing half needs the same compiler plus our own origin, and it runs from
+    // a *tool call* rather than from the reactor — so it cannot be handed either down
+    // the scene path. Published here, read by `review_view`.
+    mind::views::set_render_context(
+        view_compiler.clone(),
+        format!("http://127.0.0.1:{}", config.port),
+    );
     // The reactor's shutdown signal: triggered below the moment a signal / Quit is
     // observed, so its scene loops, reflection, and drive retries wind down instead
     // of restarting ACP sessions into a process group that's already terminating.

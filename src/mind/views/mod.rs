@@ -25,6 +25,42 @@ use tokio::process::Command;
 pub mod builtin;
 pub use builtin::install_builtin_views;
 
+/// What the **review** half of the view loop needs, set once at startup.
+///
+/// Building a view is a scene-side act — the reactor holds the compiler and hands
+/// source down. *Reviewing* one is a tool call from a working session, and
+/// `dispatch_tool` reaches neither the reactor nor the bound port: it is handed a
+/// scene registry, a data dir and the call's arguments, and rendering needs both a
+/// compiler and this server's own base URL. Rather than thread two more parameters
+/// through the whole tool surface for one call, the process publishes them here —
+/// the same shape `registry::global()` and `foundation::run` already use.
+///
+/// `None` until [`set_render_context`] runs, which is what a unit test sees; the tool
+/// answers with a plain error rather than panicking, because a review that cannot run
+/// is a fixable condition and not a bug in the caller.
+static RENDER: std::sync::OnceLock<RenderContext> = std::sync::OnceLock::new();
+
+/// The compiler and base URL a view review runs against.
+#[derive(Debug, Clone)]
+pub struct RenderContext {
+    pub compiler: ViewCompiler,
+    /// This server's own origin, e.g. `http://127.0.0.1:12358` — the host page
+    /// (`GET /render/view`) is served by us, and its import map has to be *ours* or the
+    /// view's bare imports resolve against a different React.
+    pub base_url: String,
+}
+
+/// Publish the render context. Called once from startup; later calls are ignored, so
+/// there is no way for a second one to swap the compiler under a running review.
+pub fn set_render_context(compiler: ViewCompiler, base_url: impl Into<String>) {
+    let _ = RENDER.set(RenderContext { compiler, base_url: base_url.into() });
+}
+
+/// The render context, or `None` before startup published it.
+pub fn render_context() -> Option<&'static RenderContext> {
+    RENDER.get()
+}
+
 /// Compiles agent view source to a served ESM module URL. Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct ViewCompiler {

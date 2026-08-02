@@ -54,6 +54,7 @@ const COGNITION_BASE: &str = include_str!("cognition.md");
 const WORKER_COMMON_BASE: &str = include_str!("workers/common.md");
 const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
 const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
+const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
 const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md");
 const WORKER_FILE_FILER_BASE: &str = include_str!("workers/file-filer.md");
 
@@ -77,6 +78,9 @@ pub enum WorkerType {
     General,
     /// Builds a view for the person to look at.
     ViewBuilder,
+    /// Renders a built view, looks at it, and says whether it ships
+    /// (`docs/arch/agents.md#workers`).
+    ViewReviewer,
     /// Makes a call so work can continue without the person
     /// (`docs/arch/agents.md#decision-maker`).
     DecisionMaker,
@@ -90,6 +94,7 @@ impl WorkerType {
         match self {
             Self::General => "general",
             Self::ViewBuilder => "view-builder",
+            Self::ViewReviewer => "view-reviewer",
             Self::DecisionMaker => "decision-maker",
             Self::FileFiler => "file-filer",
         }
@@ -98,7 +103,13 @@ impl WorkerType {
     /// Every type, for the tool schema's `enum` and for install/test sweeps. One list,
     /// so a new variant cannot be advertised in one place and forgotten in the other.
     pub const ALL: &'static [Self] =
-        &[Self::General, Self::ViewBuilder, Self::DecisionMaker, Self::FileFiler];
+        &[
+        Self::General,
+        Self::ViewBuilder,
+        Self::ViewReviewer,
+        Self::DecisionMaker,
+        Self::FileFiler,
+    ];
 
     /// Parse a wire name. `None` for anything unknown — the caller turns that into a
     /// tool error naming the valid set, rather than silently handing back a general
@@ -113,6 +124,7 @@ impl WorkerType {
         match self {
             Self::General => WORKER_GENERAL_BASE,
             Self::ViewBuilder => WORKER_VIEW_BUILDER_BASE,
+            Self::ViewReviewer => WORKER_VIEW_REVIEWER_BASE,
             Self::DecisionMaker => WORKER_DECISION_MAKER_BASE,
             Self::FileFiler => WORKER_FILE_FILER_BASE,
         }
@@ -677,13 +689,28 @@ mod soul_tests {
     #[test]
     fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
         for base in [WORKER_COMMON_BASE, WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
-                     WORKER_DECISION_MAKER_BASE, WORKER_FILE_FILER_BASE] {
+                     WORKER_VIEW_REVIEWER_BASE, WORKER_DECISION_MAKER_BASE,
+                     WORKER_FILE_FILER_BASE] {
             assert!(!base.contains("`ask`"));
             assert!(!base.contains("`delegate`"));
             assert!(!base.contains("`alarm`"));
         }
         assert!(WORKER_COMMON_BASE.contains("`send_message`"));
         assert!(WORKER_COMMON_BASE.contains("Never wait for an answer"));
+    }
+
+    /// The two halves of the view loop both name the tool that makes them possible.
+    /// Before `review_view` existed, the builder's prompt pointed at `look` — which
+    /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
+    /// at all because it had no way to render. A prompt naming a tool the session does
+    /// not hold is the failure this whole pass is cleaning up, so it is pinned.
+    #[test]
+    fn both_halves_of_the_view_loop_name_the_render_tool() {
+        assert!(WORKER_VIEW_REVIEWER_BASE.contains("`review_view`"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("`review_view`"));
+        // The reviewer judges; it does not edit. A reviewer that rewrites the view has
+        // destroyed the only independent read anyone was going to get.
+        assert!(WORKER_VIEW_REVIEWER_BASE.contains("You judge; you do not fix"));
     }
 
     #[test]
