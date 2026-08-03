@@ -22,6 +22,11 @@ pub async fn post_attention(
     State(state): State<Arc<AppState>>,
     SceneHeader(scene): SceneHeader,
 ) -> StatusCode {
-    state.presence.note_activation(&scene);
+    // The one signal that can mean "they came back" — see `Presence::returns`. Worth
+    // a line at info: it is the cause of a turn nobody typed, so a reader of
+    // `server.log` needs to be able to account for one.
+    if state.presence.note_activation(&scene) {
+        tracing::info!(scene = %scene, "attention: they're back after an absence");
+    }
     StatusCode::ACCEPTED
 }

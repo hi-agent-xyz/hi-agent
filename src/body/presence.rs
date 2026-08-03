@@ -23,10 +23,19 @@
 //!
 //! Everything here is **facts only** — a snapshot the mind reads. What to do about
 //! it (report more, hold, work ahead) is the next layer's job, not this one's.
+//!
+//! With one exception, and it is an *event*, not a fact: **coming back**. Reaction is
+//! told to hold an unprompted word for the person's return, which is only a promise
+//! it can keep if returning wakes it. Every other presence change is polled — read
+//! off the axes during a turn that was already happening — but a return happens
+//! precisely when no turn is happening, so nothing would observe it. See
+//! [`Presence::returns`].
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use tokio::sync::Notify;
 
 use crate::types::Scene;
 
@@ -119,6 +128,8 @@ pub struct Presence {
     mic: Arc<Mutex<HashMap<Scene, usize>>>,
     /// Expectation-axis bookkeeping.
     engagement: Arc<Mutex<HashMap<Scene, Engagement>>>,
+    /// Per-scene "they came back" notifiers — see [`Presence::returns`].
+    return_notifiers: Arc<Mutex<HashMap<Scene, Arc<Notify>>>>,
 }
 
 impl Presence {
@@ -162,20 +173,51 @@ impl Presence {
         }
     }
 
+    /// What can land on this scene right now. Public because the mouth needs it at
+    /// the moment of emission, not just at prompt-render time: the speaker is the
+    /// one surface where an unheard word is *spent* rather than kept.
+    pub fn reachable(&self, scene: &Scene) -> Reach {
+        self.reach(scene)
+    }
+
     // ---- Expectation: engagement pokes --------------------------------------
 
     /// The window was brought forward / became foreground — the strongest eager
     /// signal ("they keep checking"). Reported first-party by the web face's own
     /// visibility/focus events.
-    pub fn note_activation(&self, scene: &Scene) {
+    ///
+    /// Returns `true` when this activation is a **return**: the scene read
+    /// [`Expectation::Away`] until this instant, and nothing was owed. That is the
+    /// edge [`Presence::returns`] fires on.
+    pub fn note_activation(&self, scene: &Scene) -> bool {
         let now = Instant::now();
-        let mut map = self.engagement.lock().unwrap();
-        let e = map.entry(scene.clone()).or_default();
-        e.last_engaged = Some(now);
-        e.activations.push_back(now);
-        while e.activations.len() > MAX_ACTIVATIONS {
-            e.activations.pop_front();
+        let returned = {
+            let mut map = self.engagement.lock().unwrap();
+            let e = map.entry(scene.clone()).or_default();
+            // Classified against the state *before* this activation lands — after it,
+            // the scene reads Present by construction and the edge would be invisible.
+            let was_away = matches!(classify_at(e, now), Expectation::Away);
+            // A reply already owed means a turn is coming for that reason; waking a
+            // second time for "they're back" would double-answer the same arrival.
+            // (They typed, which pokes `note_activity`, and the page reports focus at
+            // about the same moment — a race with no fixed order.)
+            let idle = e.owed_since.is_none();
+            e.last_engaged = Some(now);
+            e.activations.push_back(now);
+            while e.activations.len() > MAX_ACTIVATIONS {
+                e.activations.pop_front();
+            }
+            was_away && idle
+        };
+        if returned {
+            // Fires at most once per absence, and needs no debounce state to do it:
+            // the line above sets `last_engaged`, so the scene cannot read Away again
+            // until another full `AWAY_AFTER` of silence. A page refresh — disconnect
+            // then immediate reconnect — is two activations seconds apart, and only
+            // the first can possibly be a return.
+            self.returns(scene).notify_waiters();
         }
+        returned
     }
 
     /// A human message arrived — refresh engagement and start the owed-reply
@@ -212,11 +254,31 @@ impl Presence {
         let Some(e) = map.get(scene) else {
             return Expectation::Present; // connected but nothing observed yet
         };
-        let engaged_ago = e.last_engaged.map(|t| now.saturating_duration_since(t));
-        let recent_activations =
-            e.activations.iter().filter(|t| now.saturating_duration_since(**t) < ACTIVATION_WINDOW).count();
-        let owed_age = e.owed_since.map(|t| now.saturating_duration_since(t));
-        classify(engaged_ago, recent_activations, owed_age)
+        classify_at(e, now)
+    }
+
+    /// A handle the scene's loop parks on, pulsed the moment this scene goes from
+    /// *away* to the person actually being back.
+    ///
+    /// **Only [`Presence::note_activation`] fires it**, and that is the whole care in
+    /// the design. A reconnecting out-channel looks like an arrival and is not one:
+    /// `/api/out/text` is a long-poll that re-opens continuously while a tab sits
+    /// forgotten in the background, so `connect` proves a browser exists, never that
+    /// a person is in front of it. The attention lane is first-party and reports
+    /// exactly one thing — this page just became visible or regained focus — which is
+    /// a human hand.
+    ///
+    /// **Drop, don't queue** ([`docs/arch/core.md`] clock rule 3): `notify_waiters`
+    /// stores no permit, so a return that fires while the loop is mid-turn is
+    /// discarded rather than delivered late. That is the wanted behaviour — a scene
+    /// taking a turn is a scene already talking to them.
+    pub fn returns(&self, scene: &Scene) -> Arc<Notify> {
+        self.return_notifiers
+            .lock()
+            .unwrap()
+            .entry(scene.clone())
+            .or_default()
+            .clone()
     }
 
     // ---- Read ----------------------------------------------------------------
@@ -237,6 +299,20 @@ impl Presence {
         let s = self.snapshot(scene);
         format!("{} {}", render_expectation(s.expectation), render_reach(s.reach))
     }
+}
+
+/// One scene's expectation at `now`, read off its raw engagement record. Split out
+/// so the return edge can classify the state *before* an activation is applied,
+/// against the same rule the prompt-render path uses.
+fn classify_at(e: &Engagement, now: Instant) -> Expectation {
+    let engaged_ago = e.last_engaged.map(|t| now.saturating_duration_since(t));
+    let recent_activations = e
+        .activations
+        .iter()
+        .filter(|t| now.saturating_duration_since(**t) < ACTIVATION_WINDOW)
+        .count();
+    let owed_age = e.owed_since.map(|t| now.saturating_duration_since(t));
+    classify(engaged_ago, recent_activations, owed_age)
 }
 
 /// Pure expectation policy, extracted so the fusion is unit-testable without a
@@ -457,5 +533,72 @@ mod tests {
         let _v = p.connect(&s, OutChannel::View);
         let out = p.render(&s);
         assert!(out.contains("screen"));
+    }
+
+    // ---- The return edge ----
+
+    /// Backdate a scene's last engagement past [`AWAY_AFTER`] so it reads Away
+    /// without a five-minute test. Reaches into the private map on purpose: the
+    /// alternative is a clock injection that only this handful of tests would use.
+    fn make_away(p: &Presence, s: &Scene) {
+        let stale = Instant::now()
+            .checked_sub(AWAY_AFTER + Duration::from_secs(1))
+            .expect("monotonic clock younger than AWAY_AFTER — machine booted seconds ago?");
+        p.engagement
+            .lock()
+            .unwrap()
+            .insert(s.clone(), Engagement { last_engaged: Some(stale), ..Default::default() });
+    }
+
+    #[test]
+    fn activation_after_an_absence_is_a_return() {
+        let p = Presence::new();
+        let s = scene("boss");
+        make_away(&p, &s);
+        assert_eq!(p.snapshot(&s).expectation, Expectation::Away);
+        assert!(p.note_activation(&s), "coming back to a cold scene is a return");
+        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+    }
+
+    #[test]
+    fn activation_while_they_are_already_here_is_not_a_return() {
+        let p = Presence::new();
+        let s = scene("boss");
+        p.note_activation(&s);
+        assert!(!p.note_activation(&s), "they never left");
+    }
+
+    #[test]
+    fn a_page_refresh_fires_the_edge_at_most_once() {
+        // Disconnect + immediate reconnect is two activations seconds apart. The
+        // first may be a genuine return; the second must not re-fire, or every
+        // reload would wake the scene.
+        let p = Presence::new();
+        let s = scene("boss");
+        make_away(&p, &s);
+        assert!(p.note_activation(&s));
+        assert!(!p.note_activation(&s), "the reload half must not fire again");
+    }
+
+    #[test]
+    fn an_owed_reply_suppresses_the_return() {
+        // They typed: `note_activity` starts the owed clock and the message drives a
+        // turn on its own. The page reporting focus at the same moment must not
+        // schedule a second one.
+        let p = Presence::new();
+        let s = scene("boss");
+        make_away(&p, &s);
+        p.note_activity(&s);
+        assert!(!p.note_activation(&s), "their message is already the reason to turn");
+    }
+
+    #[test]
+    fn a_scenes_return_handle_is_stable() {
+        // The loop parks on the handle it took at startup; a fresh Notify per call
+        // would mean firing into one nobody is waiting on.
+        let p = Presence::new();
+        let s = scene("boss");
+        assert!(Arc::ptr_eq(&p.returns(&s), &p.returns(&s)));
+        assert!(!Arc::ptr_eq(&p.returns(&s), &p.returns(&scene("other"))));
     }
 }

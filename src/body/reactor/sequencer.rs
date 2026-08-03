@@ -168,6 +168,18 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
 /// Open this turn's streaming TTS span: announce it on the outbound seam
 /// (`AudioBegin` carries the codec so the wire can set Content-Type first), then
 /// spawn the frame drain. No-op when TTS is unconfigured — the turn is silent.
+///
+/// **Also a no-op when no speaker is attached**, which is the presence gate at the
+/// only place it can bite. Words and views survive an empty room — the text bus
+/// buffers utterances for a reader that opens later, and the view bus retains scene
+/// state and replays it — so neither needs holding. Voice is the one channel with no
+/// second chance: synthesized frames go out on the wire as they are made, and a span
+/// nobody is listening to is spent rather than deferred. That is the failure
+/// `docs/arch/core.md#presence` names, and it is *only* about this span.
+///
+/// Note this is read per turn, not per scene lifetime: a person who unplugs
+/// headphones mid-conversation stops being spoken to on the next `say`, with no
+/// state to reconcile.
 async fn open_tts(
     reactor: &Reactor,
     scene: &Scene,
@@ -176,6 +188,10 @@ async fn open_tts(
     synth_handle: &mut Option<JoinHandle<()>>,
 ) {
     if !tts::available() {
+        return;
+    }
+    if !reactor.inner.presence.reachable(scene).speaker {
+        tracing::debug!(scene = %scene, turn, "no speaker attached; not synthesizing");
         return;
     }
     match tts::start().await {

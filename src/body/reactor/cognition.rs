@@ -109,10 +109,10 @@ async fn run(reactor: Reactor, registration: Registration) {
     reactor
         .inner
         .tools
-        // `beats: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
+        // `mouth: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
         // voices. That it *cannot* express is now a fact about the sink rather than an
         // agreement between the tool list and the role check at dispatch.
-        .register(scene.clone(), ToolSink { control: control_tx, beats: None })
+        .register(scene.clone(), ToolSink { control: control_tx, mouth: None })
         .await;
 
     let mut workers = workers::WorkerRegistry::new(scene.clone(), report_tx);

@@ -100,7 +100,7 @@ async fn run(reactor: Reactor, registration: Registration) {
     reactor
         .inner
         .tools
-        .register(scene.clone(), ToolSink { control: control_tx, beats: None })
+        .register(scene.clone(), ToolSink { control: control_tx, mouth: None })
         .await;
 
     let mut workers = workers::WorkerRegistry::new(scene.clone(), report_tx);

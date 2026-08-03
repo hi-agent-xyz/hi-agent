@@ -68,20 +68,50 @@ belonged to the agent making it.
   a room that may be empty.
 - **Social timing** — when to voice a worker's answer, when to let it wait.
 
-What the host keeps is what has no model in it: the queue behind `say`, and the fact that
-`say` **returns** so a held or failed utterance is answerable.
+What the host keeps is what has no model in it: the queue behind `say`; the fact that
+`say` **returns**, so a held or failed utterance is answerable; and the one call that is
+not a judgment at all — **not synthesizing speech for a speaker that isn't attached**,
+because that is a fact about the wire, not a read of the room.
 
 ### Presence
 
-Whether anyone is actually there. **Nobody sends it — it is derived**, a soft model fused
-from several weak signals, none of which is trustworthy alone: channel activity, OS idle and
-lock, a face seen, speech heard. Any single one lies (a person reading is idle; a face is a
-photo), so presence is a confidence, not a boolean, and it is rendered for exactly one
-reader — Reaction, which decides both whether it is talking to a room or to nobody, and
-whether an unprompted word should wait.
+Whether anyone is actually there. **Nobody sends it — it is derived**, and derived
+*only from what the app observes about its own surface and its own conversation*: which
+of its channels are open, and how recently the person engaged with it. Deliberately not
+from the system — no idle timer, no screen lock, no other-app probing. Those measure
+"away from the keyboard" when the question is "away from **hi-agent**", and someone
+heads-down in another app for an hour is, to us, away. A face on camera and a voice in
+the room are observed elsewhere and reach the agent as **journaled signals it weighs**,
+not as inputs to this model: a face is sometimes a photo, and evidence that soft belongs
+in judgment rather than in a gate.
 
-The failure it exists for: talking to an empty room. An utterance addressed to no one is
-worse than silence, because it is spent — the person comes back and never learns it happened.
+It is not one number and not a mode ladder, but three orthogonal axes that combine
+freely — **reach** (which of window, speaker and mic a message can land on right now),
+**expectation** (a decaying belief about how much output they're awaiting: eager,
+around, away), and **posture** (whether a voice exchange is live). It is rendered for
+exactly one reader — Reaction, which decides both whether it is talking to a room or to
+nobody, and whether an unprompted word should wait.
+
+**What the gate protects is narrower than it first looks, and that is the point.**
+Words and views survive an empty room without help: outbound text is buffered per scene
+and delivered to a reader that connects later, and the screen is retained state, folded
+and replayed to whoever attaches next. Neither is spent. **Voice is the exception** — it
+exists only in the moment it is heard, so a spoken line synthesized with no speaker
+attached is gone, and the person comes back and never learns it happened. So the host
+withholds exactly one thing, the speech synthesis, and reports what it did: `say`
+answers with where the words actually landed — aloud, on screen only, or waiting for
+them. Everything above that is Reaction's judgment, not a rail.
+
+**Coming back is an event, and the only one here.** Every other presence change is read
+off the axes during a turn that was already happening. A return is not: it happens
+precisely when nothing is happening, so without an edge nothing would observe it, and
+"hold it for their return" would mean "hold it until they type" — or until the pulse
+comes round, which is half an hour. So the scene's Reaction is woken when the person
+brings the window forward after an absence. **Only a first-party activation counts**: an
+out-channel reconnecting proves a browser exists, never that someone is in front of it,
+and a long-poll re-opens on its own while a tab sits forgotten in the background. The
+wake carries a fact and no instruction, and it is dropped rather than queued if it fires
+while the scene is mid-turn — a scene taking a turn is a scene already talking to them.
 
 ### Reflex
 
@@ -174,8 +204,13 @@ struct Wake {
 4. **No durable state.** Every timer is derived from open tasks at startup. Durability
    lives in [Tasks](data.md#tasks); the clock is a rebuildable projection of it.
 
-Intended registrations, kept deliberately small: a **pulse** (self-check and "you just came
-back"), the **reflection** backoff, and **task timers** derived from open tasks.
+Intended registrations, kept deliberately small: a **pulse** (self-check), the
+**reflection** backoff, and **task timers** derived from open tasks.
+
+Not among them: **"you just came back"**. That was listed here while the clock was
+still the only thing that could wake anyone, and it was the wrong home — a return is
+not due at a time, it is caused by the person, and a timer can only discover one by
+polling for it. It belongs to [presence](#presence), which observes it directly.
 
 Deliberately *not* clock clients: the social timeout, the speech clock that paces on-screen
 text against speech, and the session heartbeat. Each paces a loop inside its own subsystem

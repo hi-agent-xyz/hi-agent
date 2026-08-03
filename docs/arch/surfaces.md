@@ -94,12 +94,17 @@ covers every direction:
 
 > **Everything outbound is a tool call.** Looking, acting, showing — and speaking.
 
-**Speech was the last emission, and making it answerable is what gives the arbiter somewhere
-to stand.** `say` returns, so the arbiter can hold an utterance until the room is right,
-queue it behind another, or refuse it outright — and Reaction finds out which. Fire-and-forget
-has nowhere to put that decision, and the [presence gate](core.md#presence) is exactly the
-thing that needs one: an utterance that cannot be held is an utterance spoken into an empty
-room.
+**Speech was the last emission, and making it answerable is what gives the
+[presence gate](core.md#presence) somewhere to stand.** `say` returns, so the host can
+decline to voice an utterance the room cannot hear and **say so** — and Reaction finds
+out, in the same breath, where the words did land: aloud, on screen only, or waiting for
+them to come back. Fire-and-forget has nowhere to put that answer, which is the whole
+problem: an utterance you cannot be told the fate of is one you spend without knowing.
+
+Note what this does *not* mean: the host holds no queue of things to say later. Text and
+views keep on their own, so there is nothing to hold; voice does not keep, so there is
+nothing worth holding. What waits for a better moment waits in Reaction's judgment,
+which is where the decision lives.
 
 **Showing is a call for the same reason and one of its own.** Putting something on a screen
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.

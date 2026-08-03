@@ -60,7 +60,9 @@ fn say_tool() -> Value {
         "say",
         "Speak to the person. Everything you want said aloud goes through this tool — \
          plain text you write is NOT spoken. Call it with one natural chunk at a time; \
-         several calls in a turn are spoken in order. To stay silent, don't call it at all.",
+         several calls in a turn are spoken in order. To stay silent, don't call it at all. \
+         It tells you where the words actually landed — aloud, on screen only, or waiting \
+         for them to come back — so you can judge whether a spoken line was worth spending.",
         json!({
             "type": "object",
             "properties": { "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." } },
@@ -802,7 +804,10 @@ async fn dispatch_tool(
             if text.trim().is_empty() {
                 return tool_error("say requires non-empty `text`");
             }
-            sink.say(text).await.map(|()| "spoken")
+            // The ack is what actually happened on each channel, not a constant: the
+            // tool's whole justification is that speech is answerable, and an answer
+            // that always reads "spoken" answers nothing.
+            sink.say(text).await.map(crate::body::reactor::Spoken::ack)
         }
         "show_view" => {
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();

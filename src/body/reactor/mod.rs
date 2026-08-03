@@ -63,7 +63,7 @@ mod workers;
 
 pub use interrupts::InterruptRegistry;
 pub use outbound::OutboundSignal;
-pub use tools::{SceneControl, ToolRegistry, ToolSink};
+pub use tools::{SceneControl, Spoken, ToolRegistry, ToolSink};
 
 /// The heartbeat's soft context-budget ceiling, surfaced so the observatory can
 /// render each scene's budget as a fraction of where a hot-swap kicks in.
@@ -471,6 +471,15 @@ enum LoopInput {
     /// A host pulse firing — the recurring moment of self-attention. Carries
     /// bare situational facts; what to do with such a moment is core.md's job.
     Pulse { note: String },
+    /// The person came back — they brought the window forward after an absence.
+    ///
+    /// Kept distinct from [`LoopInput::Pulse`] rather than reusing it with a
+    /// different note, because the two mean opposite things to the voice. A pulse
+    /// is a quiet moment the prompt is explicit that almost nothing is worth
+    /// breaking; a return is the moment a held word was being held *for*. Rendering
+    /// this as `(pulse)` would tell Reaction to stay quiet at precisely the instant
+    /// it should speak.
+    Returned,
     /// Mail from another part of the agent, addressed to this scene. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
@@ -1089,7 +1098,14 @@ impl Reactor {
             .tools
             .register(
                 scene.clone(),
-                ToolSink { control: control_tx.clone(), beats: Some(beats_tx.clone()) },
+                ToolSink {
+                    control: control_tx.clone(),
+                    mouth: Some(tools::Mouth {
+                        beats: beats_tx.clone(),
+                        presence: self.inner.presence.clone(),
+                        scene: scene.clone(),
+                    }),
+                },
             )
             .await;
 
@@ -1122,6 +1138,8 @@ enum Woke {
     Control(Option<SceneControl>),
     /// Mail landed in this scene's Reaction inbox.
     Mail,
+    /// The person came back after an absence — see [`crate::body::presence::Presence::returns`].
+    Returned,
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
@@ -1201,6 +1219,10 @@ async fn per_scene_loop(
     );
     let voice_id = voice.id();
     let voice_mail = voice.mail.clone();
+    // Taken once, for the life of the loop: the handle must be the same one the
+    // attention lane fires, and `Presence::returns` keeps one per scene for exactly
+    // that reason.
+    let came_back = reactor.inner.presence.returns(&scene);
 
     tracing::info!(scene = %scene, voice = voice_id, "reactor per-scene loop up");
 
@@ -1255,6 +1277,7 @@ async fn per_scene_loop(
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
+                    _ = came_back.notified() => Woke::Returned,
                     _ = sleep_until(deadline) => Woke::Timer,
                     _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
@@ -1262,6 +1285,7 @@ async fn per_scene_loop(
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
+                    _ = came_back.notified() => Woke::Returned,
                     _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
             };
@@ -1282,6 +1306,27 @@ async fn per_scene_loop(
                 Woke::Shutdown => {
                     tracing::info!(scene = %scene, "shutdown requested; exiting per-scene loop");
                     return;
+                }
+                // They came back. This is the one wake the person causes without
+                // saying anything, and it exists so that "hold it for their return"
+                // is a promise the host can actually keep — otherwise a return is
+                // invisible until they type, or until the pulse comes round, which
+                // is half an hour by default.
+                //
+                // While the vendor is down it is dropped rather than held: a return
+                // is a *moment*, and delivering it after the outage clears would
+                // announce an arrival that already went stale. Mail is held because
+                // its content keeps; this does not.
+                Woke::Returned => {
+                    if down {
+                        continue 'wait;
+                    }
+                    tracing::info!(scene = %scene, "presence returned; waking the voice");
+                    // Their coming back is itself the activity — otherwise the pulse
+                    // that was already overdue fires straight after this turn.
+                    last_activity = Instant::now();
+                    enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Returned).await;
+                    break 'wait;
                 }
                 // Mail for the scene's voice. It drives a turn like any other
                 // reason to speak — that is what makes `send_message(to: scene)`
@@ -2050,6 +2095,9 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Pulse { note } => {
                 let _ = writeln!(s, "{}", render_pulse(note));
             }
+            LoopInput::Returned => {
+                let _ = writeln!(s, "{RETURNED_NOTE}");
+            }
             LoopInput::Mail(mail) => {
                 let _ = writeln!(s, "{}", registry::render(mail));
             }
@@ -2065,6 +2113,15 @@ fn render_alarm(a: &AlarmFired) -> String {
 fn render_pulse(note: &str) -> String {
     format!("(pulse) {note}")
 }
+
+/// What a return looks like in the turn's "New signals".
+///
+/// Deliberately a *fact*, not an instruction: the host reports that a window came
+/// forward after a quiet stretch and says nothing about whether that deserves a
+/// word. Whether to speak, and what a held thing was worth, is Reaction's — the
+/// host's job here was only to make the moment observable at all.
+const RETURNED_NOTE: &str =
+    "(they're back) They just brought the window forward after a stretch away.";
 
 /// How one turn-driving input is recorded in the durable log, or `None` when it
 /// needs no row of its own.
@@ -2091,6 +2148,13 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
         // delivers. Same channel, different hand on it.
         LoopInput::Alarm(a) => Some((Channel::Clock, Origin::Reactor, render_alarm(a))),
         LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
+        // A return is the person acting, but on no channel they typed into — so
+        // nothing upstream journaled it, and this is its only chance to be written
+        // down. `Channel::Clock` puts it in [`NON_ACTIVITY_CHANNELS`] on purpose:
+        // like a pulse and unlike a worker report, a return is *presence, not
+        // content*. It should not hold a scene warm by itself, and it should not
+        // push a scene over the frontier threshold into consolidating on nothing.
+        LoopInput::Returned => Some((Channel::Clock, Origin::Host, RETURNED_NOTE.to_owned())),
         // Mail crosses no wire, so this is its only chance to be written down.
         LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, registry::render(mail))),
     }
