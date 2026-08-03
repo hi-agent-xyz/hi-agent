@@ -10,7 +10,7 @@
 
 ---
 
-## 1 · 重启之后,常驻职责再也不会自己接上 🔴
+## 1 · 重启之后,常驻职责再也不会自己接上 · ✅ **已修 `b8ae22f`,复测通过**
 
 **症状。** 接下一件"长期盯着"的活、写进台账、重启主机——**没有任何东西会把它捡回来**。pulse 照常跳、turn 照常空跑,而那条职责静静躺在台账里,永远不会被读到。
 
@@ -31,9 +31,11 @@
 
 **涉及。** [05](05-news-and-watch.md)(重启不丢盯)· [02](02-feishu-sprint-backlog.md)(重启恢复)· [03](03-feishu-flash-cards.md)(断后自愈)· [25](25-resume-interrupted-work.md)(断点恢复)——**整个"长活"家族**。
 
+**复测 2026-08-03 · `b8ae22f` — 通过。** Cognition 的 `select!` 拿到了 timer 臂:开机 30 秒后一次 wake,之后按 pulse 节奏、只要台账非空就再来。全新 `--data-dir`、连续两次重启,两次都拿到 `cognition timer fired open=1 first_wake=true waking=true`,窗口里带着 `# Open tasks` 与 `(pulse) you've just come back up`。它不只是醒了——第一个 boot wake 就 `CronList` 查空、grep 自己的历史帧,发现上一轮"recurring check"说了 25 次却从没 `CronCreate`,判定"从来没跑起来过",然后真把它建起来。这正是 `agents.md` 一直写着的那段恢复序列,第一次真的跑了。**遗留:见 #15。**
+
 ---
 
-## 2 · 被问起时报假健康——而且跟自己的台账对不上 🔴
+## 2 · 被问起时报假健康——而且跟自己的台账对不上 · ✅ **台账层已修 `b8ae22f`;声音层仍有残留(见 #16)**
 
 **症状。** 老板问"那件事怎么样了",agent 自信地回"挂着呢,一直在盯",而**什么都没有在跑**。它没有去查,也没有读自己的记录。
 
@@ -53,6 +55,10 @@
 **为什么这条比 1 更疼。** 缺口 1 让常驻职责静静死掉;这一条**让人看不见它死了**。老板得到的是"一切正常"的确认,于是永远不会去查。两条叠加,是这轮测试里最坏的组合。
 
 **涉及。** [05](05-news-and-watch.md)(过问)· [02](02-feishu-sprint-backlog.md)(过问 / pulse 自检)· [03](03-feishu-flash-cards.md)(台账诚实)
+
+**复测 2026-08-03 · `b8ae22f` — 台账层通过,而且超出预期。** `Task::checked`(上次跑 `verify` 且**答案是活着**的时刻)现在进了投影,渲染成"last confirmed alive 3h ago" / "never checked" / "never checked, and no recorded way to",于是"存在"不再长得像"健康"。
+
+真正的判据是一次**没有任何提示的破坏**:测试中直接把 `data/.claude/scheduled_tasks.json` 里的 cron 表达式改坏(每 3 小时 → 每天一次),不告诉它。下一个 pulse 它自己发现 *"the schedule doesn't match what `verify:` claims"*,删掉重建,**并且把自己先前打的 `checked:` 戳清掉**——*"I can't confirm a live fetch has ever happened, so the `checked:` stamp is unreliable... it'll get stamped truthfully on the first fire that returns live prices."* 一个会**撤销自己**的健康标记的 rung,比这条缺口原本要求的更进一步。它还把结论写回 facet:*"a watch task is only running when `verify:` names something checkable (a cron id), not a narrated hand-off."*
 
 ---
 
@@ -82,6 +88,8 @@
 **为什么疼。** invariant 说未完成的职责永不裁剪,而时钟被 deferred(`due` 不触发任何东西),所以这份清单**只增不减**。重启后 agent 读开放职责,读到的是一份**假的欠账表**——它会重做已经做完的事,或者向人重复承诺已经交付的东西。这条同时把 [25](25-resume-interrupted-work.md) 的断点恢复变成"断点重做"。
 
 **涉及。** [01](01-badminton-top10.md) · [04](04-trending-feeds.md) · [05](05-news-and-watch.md) · [25](25-resume-interrupted-work.md)
+
+**部分好转 2026-08-03 · `b8ae22f`(顺带观察,非专门复测)。** **task facet 这一半现在会被回头改**:同一条 `oil-price-monitoring` 在三次 wake 里被连续订正——补 frontmatter、改 cron id、清掉不可信的 `checked:`、追加一段"为什么这条之前是死的"的历史说明。给 Cognition 一个会重复到来的 wake,顺带就把"只 append 不 reconcile"治了一半。**未复测的是另一半**:`facets/people/<who>` 的 *Open threads*——那是 reflection 写的,不是 Cognition 写的,本轮没有专门验。
 
 ---
 
@@ -202,6 +210,47 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 **证据(2026-08-03)。** 10 轮对话、4 件差事、约 14 分钟,把 Standard 档的**当日**额度打满,网关开始返回 402。
 
 **为什么记一笔。** 这不是代码缺陷,但它同时是**产品经济性**问题和**测试吞吐**问题:按这个速率,把 29 条 journey 完整跑一遍要好几天。定档时需要拿这个数字算。
+
+---
+
+## 15 · 长活的耐久机制不归 hi-agent 管,而且没人见它响过 🔴
+
+**症状。** "定期去查"这件事,最后落在 **ACP harness 自己的调度器**上,而不是 hi-agent 的任何机制。hi-agent 看不见它、管不了它,也不知道它有没有响过。
+
+**证据(2026-08-03,`b8ae22f` 复测)。** 盯油价这条职责最终武装成 `data/.claude/scheduled_tasks.json` 里的一条 cron:
+
+```json
+{ "id": "5e42f112", "cron": "37 */3 * * *", "recurring": true,
+  "createdBySessionId": "1b63da11-…", "createdByPid": 89072,
+  "createdByProcStart": "Mon Aug  3 08:26:27 2026" }
+```
+
+- 条目**确实持久化到磁盘**,`CronList` 重启后仍读得到——所以 agent 说的"survives restarts"这一点是**真的**(我先入为主以为是假的,查了才发现自己错)。
+- 但登记在案的 `createdByPid: 89072` **早已不存在**;Cognition 的 session 是**每次 wake 一个**,寿命以分钟计。
+- hi-agent 自己台账里的 `due` 依然**什么都不触发**(时钟仍 deferred,`At(_)` 未建)。
+- **迄今没有观测到这条 cron 触发过任何一次。**
+
+**这是 [#11](gaps.md) 的同族第三例**:先是 worker 把用户事实写进 harness 的 `MEMORY.md`,现在是常驻职责的心跳挂在 harness 的 scheduler 上。同一个形状——**hi-agent 的模型之外还并行着一套 harness 自带的机制,agent 顺手用了那套**,于是关键状态存在于一个 hi-agent 既不投影、也不备份、更不负责的地方。
+
+**为什么疼。** 缺口 1 和 2 修好之后,agent 现在**会**去查、**会**如实说没确认过。但它去查的那个东西,本身可能永远不会响——那样的话恢复回路就是:醒来 → 查 → 发现没响 → 重新武装 → 睡 → 永远不响。自愈得很漂亮,永远治不好。
+
+**未定。** 尝试把 cron 改到两分钟后抢测,结果同一时刻的 pulse 把作业删了重建,槽位一起没了——**probe 无效,既不能证明会响也不能证明不会**。下一次预定触发是 18:37;那一次是判据。
+
+**涉及。** [05](05-news-and-watch.md) · [02](02-feishu-sprint-backlog.md) · [03](03-feishu-flash-cards.md) · [25](25-resume-interrupted-work.md)
+
+---
+
+## 16 · 声音把"机制已武装"说成"一直在查" 🟡
+
+**症状。** 台账现在很克制,声音不克制。投影只支持"机制是活的",口播出去变成"一直在查,查了没事"。
+
+**证据(2026-08-03,`b8ae22f` 复测)。** 16:39 问"油价那边怎么样了" → *"还平静着——**监控一直挂着跑,到现在没触发过 3% 的波动**,所以价格基本还在上次那个基准附近。"* 当时:cron 定在 `37 */3 * * *`,首次触发未到,**一次价格抓取都没发生过**。台账那一刻的 `checked:` 只代表"CronList 里有这个 id"。同一个 Cognition 在两轮 pulse 之后自己判定那个戳不可信并清掉了它。
+
+**机制。** `reaction.md` 已经拿到配套的一半(说线上写的、别为没被告知活着的东西打包票)。但 `checked` 语义上是**"机制被确认活着"**,而人问的是**"事情有没有在做"**——两者之间那一步推断,声音每次都替它跨了。**agent 自己给出的判据比引导更准**:*"a watch task is only running when `verify:` names something checkable"*——而它选的 `verify` 恰恰是一个存在性检查(CronList 里有没有这个 id),于是"存在即健康"在低一层原样复现。
+
+**倾向。** 要么让 `verify` 必须是**结果性**的(最近一次抓取真的拿回了价格),要么在投影里把"机制活着"和"最近一次真的做了事"分成两个事实,别让声音去合并。
+
+**涉及。** [05](05-news-and-watch.md)(过问)· [02](02-feishu-sprint-backlog.md)(过问)
 
 ---
 
