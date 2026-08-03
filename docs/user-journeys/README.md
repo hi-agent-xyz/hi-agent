@@ -8,6 +8,11 @@ These are the source of truth for *intended* behavior — write the expected UX 
 first, then build/verify against it. When behavior and a journey disagree, that's a
 bug in one or the other; resolve it explicitly rather than silently.
 
+**Gaps found by running these against a live instance live in [gaps.md](gaps.md)** —
+one entry per problem, with the evidence that was verified *outside* the conversation.
+Each journey file keeps its own `实测` section for what one run looked like; `gaps.md`
+carries the cross-journey issue itself, so a problem is written down once.
+
 ## How to add a journey
 
 1. Copy the structure below into a new file: `NN-short-slug.md` (e.g. `01-first-launch.md`).

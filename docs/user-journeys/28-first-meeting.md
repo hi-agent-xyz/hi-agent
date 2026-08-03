@@ -34,4 +34,17 @@
 - 那几句 examples 到底留不留:illustration vs. hand-holding 的界,以实机第一印象定。
 - detection 用"空 history 推断"够不够稳,还是最终要一次性哨兵文件?(倾向先推断,观察到重复再加。)
 
-_机制:seed 里一次性"第一次见"提示(`identity/mod.rs` `is_first_meeting` + `load_soul`,随任意 history 自清)+ `speaking.md` 的"第一次问好"叙述(soft-guidance)+ 预置内置 view `_builtin/welcome`(打包成 seed,像 `_builtin/upload`)+ 已有的 `show_view`。可行性:可行。成熟度:**net-new,已写待实测**(fresh `--data-dir` 说 hi → 一句问好 + 摆 `_builtin/welcome` + 不走导览 + 只此一次)。_
+_机制:seed 里一次性"第一次见"提示(`identity/mod.rs` `is_first_meeting`,随任意 history 自清)+ 语音自己的那份 brief 里的"第一次问好"叙述(soft-guidance)+ 预置内置 view `_builtin/welcome`(打包成 seed,像 `_builtin/upload`)+ 已有的 `show_view`。可行性:可行。成熟度:**已实测通过**(见下)。_
+
+## 实测 2026-08-03 · origin/main 5bfd645(架构重构后首测;fresh `--data-dir`,boss 文字通道 + 挂屏)
+
+**这条 journey 基本达标——第一次真跑,四项预期里三项半成立。**
+
+- ✅ **一句问好 + 一句自我介绍,15 秒内到**:`hi` → 12:47:57 "Hey — good to meet you. I don't have a name yet, so if one comes to you, it's yours to give." → 12:48:03 落地"我是谁"的四条(你就跟我说话、我记得你、我能用你的工具、**给我看一次就会**)。名字那句顺嘴带过、不催,与预期一致。
+- ✅ **边说边摆 view**:`show_view` `_builtin/welcome` 在**问好之前** 6 秒就上屏(12:47:51,`center/wide`),画面先到、话随后,观感上是"边说边摆"而不是"说完再摆"。frame log 可证工具真被调用(`mcp__hi-agent__show_view` + ref `_builtin/welcome`)。
+- ✅ **不走导览**:没有 walkthrough、没有分步、没有功能清单,一个 beat 就收。
+- ✅ **只此一次**:同一 install 后续再打招呼("在吗",13:44)没有二次自我介绍——`is_first_meeting` 随 history 自清,按设计生效,`.hi-met` 哨兵文件不需要建。
+- ⚠️ **收尾冒了填充语**:末句 "So — what's on your mind?" 正是 core 明令禁止的那类("有什么可以帮你")。预期是"温暖一个 beat 然后让位",而不是把话筒**问**回去。同一轮测试里 4 次回复有 2 次出现此类尾巴(见 [01](01-badminton-top10.md) 实测),属概率性漂移。
+- 🔴 **欢迎 view 永不退场**:`_builtin/welcome` 从 12:47 一直挂到 16 分钟后、跨 3 个话题(羽毛球 → 石宇奇 → 天气)仍在屏上,后来的 view 全是叠在它上面。"收住、让位"只做到了**话**,没做到**屏**。换域时它会 dismiss 羽毛球的两块(见 01 实测),证明它**会**用 dismiss——只是从没想起要收掉开场那块。倾向:第一次让位时就该由 Reaction 主动 dismiss,或由 host 在该 scene 第一次 `show_view` 非 welcome 内容时自动收掉。
+
+**Open question 有答案了:** `center/wide` 实机成立(内容不抢屏、后续 view 可叠),暂不需要 `fill`。
