@@ -213,9 +213,13 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 ---
 
-## 15 · 长活的耐久机制不归 hi-agent 管,而且没人见它响过 🔴
+## 15 · 常驻职责的心跳是 Claude Code 的内置工具,不是 hi-agent 的任何东西 🔴
 
-**症状。** "定期去查"这件事,最后落在 **ACP harness 自己的调度器**上,而不是 hi-agent 的任何机制。hi-agent 看不见它、管不了它,也不知道它有没有响过。
+**症状。** "定期去查"这件事,最后落在 **Claude Code 内置的 `CronCreate`** 上。hi-agent 没有定义任何 cron 工具(`grep -rin "croncreate\|cronlist\|crondelete\|scheduled_task" src/` 零命中),`docs/arch/` 里也从没有这个东西。时钟被 deferred、`due` 不触发任何事之后,Cognition 需要一个循环定时器,而手边唯一够得着的那个是**别人家的**。
+
+**工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`say` / `send_message` / `create_worker` / `read_facet` / `update_facet` / `record_episode` / `session_status` / `show_view` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
+
+**这条依赖的是一个工具面的不对称:** `_meta` 把内置工具对 Reaction **关掉**(`say`,别无其他),而 Cognition 是**全开**的——它本来就需要 `Bash`/`Read` 才能干活。代价是:无场景的那几路可以悄悄把**承载状态的机制**换成厂商的东西,而没有任何一层会注意到。
 
 **证据(2026-08-03,`b8ae22f` 复测)。** 盯油价这条职责最终武装成 `data/.claude/scheduled_tasks.json` 里的一条 cron:
 
@@ -226,7 +230,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 ```
 
 - 条目**确实持久化到磁盘**,`CronList` 重启后仍读得到——所以 agent 说的"survives restarts"这一点是**真的**(我先入为主以为是假的,查了才发现自己错)。
-- 但登记在案的 `createdByPid: 89072` **早已不存在**;Cognition 的 session 是**每次 wake 一个**,寿命以分钟计。
+- 但登记在案的 `createdByPid: 89072` **早已不存在**;Cognition 的 session 是**每次 wake 一个**,寿命以分钟计。而 Claude Code 的 cron **只在那个 session 活着且处于查询间隙时才会触发**——per-wake 的 session 意味着到点时几乎**永远没有一个活着的 session 可供触发**。这是按语义推的,尚未直接观测到。
 - hi-agent 自己台账里的 `due` 依然**什么都不触发**(时钟仍 deferred,`At(_)` 未建)。
 - **迄今没有观测到这条 cron 触发过任何一次。**
 
