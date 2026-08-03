@@ -28,6 +28,12 @@
 //! will ever execute. Nothing here spawns, shells out, or parses them into
 //! actions — they exist so the next agent to look knows what "alive" means.
 //!
+//! **One exception, and it earns itself:** [`Task::checked`] — when the check was
+//! last run and came back alive — is a timestamp code reads, because [`projection`]
+//! has to render it. Everything else about liveness can wait to be read by whoever
+//! goes looking; *whether anyone has looked at all* cannot, since the rung that most
+//! needs to know is the one that cannot go and look.
+//!
 //! ## Why code touches this at all
 //!
 //! Two queries, and only two:
@@ -187,6 +193,11 @@ impl TaskState {
 /// two scenes cannot both relaunch it.
 ///
 /// This module never executes, resolves, or schedules any of it.
+///
+/// **When it was last actually run is [`Task::checked`]**, not a field here, because
+/// that one thing *is* machine-readable: the projection renders it, and rendering
+/// "never checked" is the only way the rung that cannot go and look can tell an
+/// unverified duty from a healthy one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Liveness {
     /// How to verify it is really alive — a count, not "something is running".
@@ -226,6 +237,18 @@ pub struct Task {
     /// ([`due_before`]).
     pub due: Option<DateTime<Utc>>,
     pub liveness: Liveness,
+    /// When [`Liveness::verify`] was last actually run, and the answer was *alive*.
+    ///
+    /// Written by whoever ran the check; `None` means nobody ever has. It is the one
+    /// liveness field code reads, because it is the one that answers a question the
+    /// projection must not get wrong — and getting it wrong is not hypothetical:
+    /// a `watch` that had never started once projected identically to a running one,
+    /// so the voice reported it as healthy and the person had no way to find out.
+    ///
+    /// Not "when it was last looked at": a check that came back **down** must not
+    /// stamp this, or the field records attention rather than health, which is the
+    /// same lie one level further in.
+    pub checked: Option<DateTime<Utc>>,
     /// The agent's own prose, below the frontmatter. Code never interprets it.
     pub body: String,
 }
@@ -243,6 +266,7 @@ impl Task {
             report_to: None,
             due: None,
             liveness: Liveness::default(),
+            checked: None,
             body: String::new(),
         }
     }
@@ -256,6 +280,16 @@ impl Task {
     /// Due at or before `now`.
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
         self.due.is_some_and(|d| d <= now)
+    }
+
+    /// Whether this is a task that is supposed to be **running between glances** —
+    /// something with a live thing behind it that can quietly die.
+    ///
+    /// The other three cannot: a `wip` is unfinished work, a `staged` job is waiting
+    /// on a person, and a `deadline` is a date. Asking whether any of them is "alive"
+    /// has no answer, so the projection does not ask.
+    fn is_standing(&self) -> bool {
+        matches!(self.kind, TaskKind::Serving | TaskKind::Watch)
     }
 }
 
@@ -325,21 +359,22 @@ pub async fn open_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
 /// or `Utc::now()` for just what is already overdue — a restart that slept through
 /// a deadline would find it here rather than losing it.
 ///
-/// **What being clock-less actually costs, stated plainly: a task's `due` is
+/// **What being clock-less still costs, stated plainly: a task's `due` is
 /// decorative.** Nothing fires on it. A duty recorded as "by Friday" is surfaced
-/// only when something *else* wakes a rung that reads the ledger — today that is
-/// the per-scene pulse (`DEFAULT_PULSE`, 30m, in `body::reactor`), whose prompt
-/// tells the mind to read down its open tasks. So overdue work is noticed at
-/// pulse cadence **in a
-/// scene**, and Cognition — the rung that owns the ledger — has no pulse at all,
-/// so it is woken only by mail. That is the hole. It is accepted for now.
+/// only when something *else* wakes a rung that reads the ledger — the per-scene
+/// pulse (`DEFAULT_PULSE`, 30m, in `body::reactor`), and now Cognition's own timer
+/// arm on the same cadence. So overdue work is noticed at **pulse cadence**, which
+/// is a bound rather than nothing; what it is not is *on time*.
 ///
-/// If the hole needs closing before the full clock is worth building, the narrow
-/// fix is a **timer arm on Cognition's `select!`** carrying the same "read your
-/// open tasks" note the scene pulse carries — twenty lines, not a module. The
-/// module in [`docs/arch/core.md`](../../../docs/arch/core.md#clock) stays the
-/// goal: one owner for waking agents, coalescing, drop-don't-queue, and no
-/// durable state of its own.
+/// The narrow fix this used to point forward to has landed: Cognition wakes once
+/// shortly after boot and then on the pulse cadence whenever anything is open, so
+/// the rung that owns the ledger is no longer reachable only by mail. Before that,
+/// a standing duty survived a restart **on disk and nowhere else** — the pulse woke
+/// the rungs that cannot read the ledger, and the rung that owns it had no pulse.
+///
+/// The module in [`docs/arch/core.md`](../../../docs/arch/core.md#clock) stays the
+/// goal, and what it still uniquely buys is `At(_)`: one owner for waking agents,
+/// coalescing, drop-don't-queue, and no durable state of its own.
 ///
 /// Kept rather than deleted because it is correct, tested, and the thing any of
 /// the above would call first.
@@ -390,6 +425,14 @@ fn render_projection(open: &[Task], now: DateTime<Utc>) -> String {
     );
     for t in &ordered[..shown] {
         s.push_str(&clip(&line(t, now), PROJECTED_LINE_CHARS));
+        // **Appended after the clip, deliberately.** The per-line bound exists to stop
+        // one long title blowing the window; it must not be able to eat the one token
+        // that says we have no evidence this is running. Same rule the summary below
+        // already applies to overdue: the bound may hide a task, it must never hide
+        // that a task is late — or that nobody has checked it.
+        if let Some(note) = liveness_note(t, now) {
+            let _ = write!(s, " · {note}");
+        }
         s.push('\n');
     }
 
@@ -403,11 +446,17 @@ fn render_projection(open: &[Task], now: DateTime<Utc>) -> String {
             }
         }
         let overdue = rest.iter().filter(|t| t.is_overdue(now)).count();
+        let unchecked = rest.iter().filter(|t| t.is_standing() && t.checked.is_none()).count();
         let _ = write!(s, "- … and {} more open ({})", rest.len(), parts.join(", "));
         if overdue > 0 {
             // Say it even though these lines were cut: the bound may hide a task,
             // it must never hide that a task is late.
             let _ = write!(s, ", {overdue} of them overdue");
+        }
+        if unchecked > 0 {
+            // And for the same reason it must never hide that something we are
+            // supposed to be *running* has never been confirmed to be running.
+            let _ = write!(s, ", {unchecked} never checked");
         }
         s.push_str(". The whole list is memory/facets/tasks/.\n");
     }
@@ -430,6 +479,52 @@ fn line(t: &Task, now: DateTime<Utc>) -> String {
     match &t.report_to {
         Some(scene) => format!("- [{head}] {title} → {}", scene.0),
         None => format!("- [{head}] {title}"),
+    }
+}
+
+/// What the projection says about whether a standing task is **actually running**.
+///
+/// `None` for the kinds that were never running to begin with ([`Task::is_standing`]).
+///
+/// For the two that are, this is never `None`, and that is the whole point.
+/// `docs/arch/data.md` says liveness is *a contract, not an existence check* — but
+/// until this existed the projection rendered only kind, due, title and `report_to`,
+/// so a watch that had never started, one that had silently died, and one running
+/// perfectly all produced the identical line. The projection is the entirety of what
+/// Reaction knows (it is tools-off and cannot go and look), so an identical line is a
+/// direct instruction that **existence means health** — which is how a watch that was
+/// never running came to be reported as "挂着呢，一直在盯". Silence has to render as
+/// silence.
+///
+/// The three answers are deliberately distinct, because the repair differs: run the
+/// check, write down a way to run it, or nothing.
+fn liveness_note(t: &Task, now: DateTime<Utc>) -> Option<String> {
+    if !t.is_standing() {
+        return None;
+    }
+    Some(match (t.checked, t.liveness.verify.is_some()) {
+        // What was last *confirmed*, not when it was last thought about.
+        (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
+        (None, true) => "never checked".to_owned(),
+        // The worst of the three and the easiest to miss: there is no recorded way to
+        // find out, so nobody can check it, now or later.
+        (None, false) => "never checked, and no recorded way to".to_owned(),
+    })
+}
+
+/// Compact elapsed time for a projected line: `12m ago`, `4h ago`, `3d ago`.
+///
+/// Coarse on purpose. This rides in every window on every turn, and to the question
+/// the reader is actually asking — *is this stale?* — `4h` and `4h12m` are the same
+/// answer at twice the characters. A `then` in the future (clock skew, a hand-edited
+/// record) clamps to `just now` rather than rendering a negative age.
+fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+    let mins = (now - then).num_minutes();
+    match mins {
+        m if m < 1 => "just now".to_owned(),
+        m if m < 60 => format!("{m}m ago"),
+        m if m < 60 * 24 => format!("{}h ago", m / 60),
+        m => format!("{}d ago", m / (60 * 24)),
     }
 }
 
@@ -502,6 +597,10 @@ fn parse(subject: &str, content: &str) -> Task {
             owner: field("owner"),
             start_key: field("start_key"),
         },
+        // Unparseable reads as `None` — i.e. "never checked". Keep-biased in the same
+        // direction as everything else here: the ambiguity resolves toward *we do not
+        // know that this is alive*, never toward health.
+        checked: field("checked").and_then(|v| parse_due(&v)),
         body: strip_frontmatter(content).trim().to_owned(),
     }
 }
@@ -545,6 +644,9 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     if let Some(due) = task.due {
         field("due", due.to_rfc3339().as_str())?;
     }
+    if let Some(checked) = task.checked {
+        field("checked", checked.to_rfc3339().as_str())?;
+    }
     for (key, value) in [
         ("verify", &task.liveness.verify),
         ("restart", &task.liveness.restart),
@@ -585,6 +687,7 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     /// A July-2026 instant, so `now()` sits between the "past" and "future" fixtures.
     fn at(day: u32, hour: u32) -> DateTime<Utc> {
@@ -762,7 +865,10 @@ mod tests {
                 "- [deadline, overdue since 2026-07-20 08:00Z] Renew the domain → boss",
                 "- [deadline, due 2026-07-31 08:00Z] Quarterly filing",
                 "- [wip] Finish the deck",
-                "- [watch] watch the build",
+                // The watch carries its liveness state and the other three do not —
+                // only a watch was ever supposed to be running. See
+                // `a_standing_task_says_whether_anyone_has_confirmed_it_is_alive`.
+                "- [watch] watch the build · never checked, and no recorded way to",
             ]
         );
     }
@@ -934,5 +1040,98 @@ mod tests {
         assert_eq!(parse_due("2026-08-01"), Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single());
         assert_eq!(parse_due("next tuesday"), None);
         assert_eq!(parse_due(""), None);
+    }
+
+    /// **The regression this exists for.** A watch that was never running once
+    /// projected identically to a healthy one, so the only rung that could answer
+    /// "how's it going" was told nothing but that the task existed — and answered
+    /// that it was being watched. The three states must be three different lines.
+    #[test]
+    fn a_standing_task_says_whether_anyone_has_confirmed_it_is_alive() {
+        let never = task("watch the oil price", TaskKind::Watch);
+        let text = render_projection(std::slice::from_ref(&never), now());
+        assert!(text.contains("never checked, and no recorded way to"), "{text}");
+
+        let mut no_check_run = never.clone();
+        no_check_run.liveness.verify = Some("count rows in drive/ledgers/oil.jsonl".into());
+        let text = render_projection(std::slice::from_ref(&no_check_run), now());
+        assert!(text.contains("· never checked"), "{text}");
+        assert!(!text.contains("no recorded way"), "{text}");
+
+        let mut confirmed = no_check_run.clone();
+        confirmed.checked = Some(now() - Duration::hours(3));
+        let text = render_projection(std::slice::from_ref(&confirmed), now());
+        assert!(text.contains("last confirmed alive 3h ago"), "{text}");
+        assert!(!text.contains("never checked"), "{text}");
+    }
+
+    /// Only the kinds that are *supposed* to be running get asked. A deadline is a
+    /// date and a wip is unfinished work — "never checked" on either is noise.
+    #[test]
+    fn liveness_is_not_asked_of_things_that_were_never_running() {
+        for kind in [TaskKind::Wip, TaskKind::Staged, TaskKind::Deadline] {
+            let t = task("something", kind);
+            let text = render_projection(std::slice::from_ref(&t), now());
+            assert!(!text.contains("checked"), "{kind:?}: {text}");
+        }
+    }
+
+    /// The per-line bound may hide a title; it must never hide that nothing has
+    /// confirmed a standing duty is alive — the same rule lateness already gets.
+    #[test]
+    fn the_line_bound_cannot_eat_the_liveness_note() {
+        let mut t = task("watch", TaskKind::Watch);
+        t.title = "x".repeat(1_000);
+        let text = render_projection(std::slice::from_ref(&t), now());
+        let line = text.lines().find(|l| l.starts_with("- ")).unwrap();
+        assert!(line.contains('…'), "the title should still clip: {line}");
+        assert!(line.ends_with("never checked, and no recorded way to"), "{line}");
+    }
+
+    /// And when the bound cuts the lines entirely, the count survives.
+    #[test]
+    fn summary_states_unchecked_standing_tasks_it_could_not_list() {
+        let mut tasks = Vec::new();
+        for i in 0..30 {
+            tasks.push(task(&format!("watch {i:02}"), TaskKind::Watch));
+        }
+        let text = render_projection(&tasks, now());
+        let summary = text.lines().find(|l| l.starts_with("- …")).expect("a summary line");
+        assert!(summary.contains("18 never checked"), "{summary}");
+    }
+
+    /// `checked` round-trips, and an unparseable one reads as *never* rather than as
+    /// now — keep-biased in the direction of "we do not know that this is alive".
+    #[tokio::test]
+    async fn checked_round_trips_and_garbage_reads_as_never() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = task("Serve the ops group", TaskKind::Serving);
+        t.checked = Some(at(28, 9));
+        write_task(dir.path(), &t).await.unwrap();
+        let got = read_task(dir.path(), "Serve the ops group").await.unwrap().unwrap();
+        assert_eq!(got.checked, Some(at(28, 9)));
+
+        facets::update_facet(
+            dir.path(),
+            DIMENSION,
+            "watch the queue",
+            "---\nkind: watch\nchecked: yesterday I think\n---\n\nWatching.\n",
+        )
+        .await
+        .unwrap();
+        let got = read_task(dir.path(), "watch the queue").await.unwrap().unwrap();
+        assert_eq!(got.checked, None);
+    }
+
+    #[test]
+    fn ago_is_coarse_and_never_negative() {
+        let n = now();
+        assert_eq!(ago(n, n), "just now");
+        assert_eq!(ago(n, n + Duration::hours(5)), "just now", "a future stamp clamps");
+        assert_eq!(ago(n, n - Duration::minutes(12)), "12m ago");
+        assert_eq!(ago(n, n - Duration::minutes(59)), "59m ago");
+        assert_eq!(ago(n, n - Duration::minutes(60)), "1h ago");
+        assert_eq!(ago(n, n - Duration::hours(47)), "1d ago");
+        assert_eq!(ago(n, n - Duration::days(9)), "9d ago");
     }
 }

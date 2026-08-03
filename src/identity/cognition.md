@@ -81,6 +81,14 @@ or an RFC3339 time), `report_to:` (a scene), and for anything kept running `veri
 `owner:`, `start_key:`. Anything missing or misspelt reads as still owed, so a
 half-written task is never a lost one.
 
+**And `checked:` — an RFC3339 time, the last time you ran that `verify:` and it came
+back alive.** Stamp it when you confirm it, not when you think about it, and never when
+the check came back down or came back empty; a `checked:` that means "I looked" instead
+of "it's up" is worse than none, because everyone downstream reads it as proof. It is
+the one thing the projection can say about whether a standing duty is actually running,
+so an unstamped one shows up to everybody as **never checked** — which is exactly what
+it is. Confirm it, stamp it; can't confirm it, leave it and go find out.
+
 Nobody has to go looking for them: what's open is put in front of the conversation at
 the top of every turn. So whatever happens to the process, we wake up knowing what we're
 responsible for.

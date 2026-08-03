@@ -177,13 +177,18 @@ to [`data/`](data.md); it appears here because it sits on the hot path.
 
 **Status: deferred — the design below stands, the module is not being built now.**
 Waking agents on a schedule is real and stays the goal; it is simply not what the
-next work is. Until it exists, two things carry the load and one thing is missing:
-the **pulse** paces each scene's self-attention from inside its own loop, the
-**reflection backoff** paces consolidation from inside its own, and **task due
-times fire nothing at all** — a duty is noticed when a pulse next prompts a rung to
-read the ledger, not when it comes due. Cognition, which owns the ledger, has no
-pulse and is woken only by mail. That gap is accepted deliberately, and the narrow
-fix short of this module is a timer arm on Cognition's loop, not a scheduler.
+next work is. Until it exists, three loops carry the load and one thing is
+missing: the **pulse** paces each scene's self-attention from inside its own loop,
+the **reflection backoff** paces consolidation from inside its own, and
+**Cognition now paces its own glance-up** the same way — a wake once shortly after
+the process starts, then on the pulse cadence whenever anything is owed. That last
+one is the narrow fix this entry used to point forward to: a timer arm on
+Cognition's loop, not a scheduler, and it is what makes the restart sequence in
+[`agents.md`](agents.md#cognition--sceneless-minutes-and-beyond) actually run.
+
+What is still missing is the part only a clock can do: **`At(_)`**. A task's `due`
+fires nothing, so a deadline is met at the next glance rather than when it comes
+due, and nothing wakes the voice when a promise is running late.
 
 One type, one owner, four rules.
 

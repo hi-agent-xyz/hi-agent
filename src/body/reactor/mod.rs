@@ -115,7 +115,11 @@ const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
 
 /// Resolve the pulse interval from the stored `pulse` tunable in alarm-delay grammar
 /// if set (`None` for `0`/`off` — pulses disabled), else [`DEFAULT_PULSE`].
-fn pulse_interval() -> Option<Duration> {
+/// Shared with [`cognition`], which paces its own glance-up on the same knob: one
+/// "how often does this agent look up from what it's doing" setting, not a scene one
+/// plus a brain one that can disagree. It also keeps journey testing honest — dropping
+/// `pulse` for a session speeds up every wake there is, rather than all but one.
+pub(super) fn pulse_interval() -> Option<Duration> {
     duration_tunable(config::tunables::get(config::KEY_PULSE), DEFAULT_PULSE)
 }
 
@@ -2110,7 +2114,10 @@ fn render_alarm(a: &AlarmFired) -> String {
     format!("(alarm) \"{}\"", a.note)
 }
 
-fn render_pulse(note: &str) -> String {
+/// Shared with [`cognition`] so both rungs' quiet moments arrive under the same
+/// `(pulse)` marker — the prompts already key on that word, and a brain-only variant
+/// would be a second vocabulary for one thing.
+pub(super) fn render_pulse(note: &str) -> String {
     format!("(pulse) {note}")
 }
 
