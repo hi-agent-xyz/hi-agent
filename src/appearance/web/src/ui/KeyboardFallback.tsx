@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("input, textarea, select")) return true;
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
 interface KeyboardFallbackProps {
   onSend: (text: string) => void;
   /** Whether the text channel is on (input line shown). Persisted by the hook. */
@@ -30,7 +36,13 @@ export function KeyboardFallback({ onSend, open, pastedText, onOpen, onClose }: 
     if (open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Someone else already owns the keystroke — a view's own input, say.
+      if (isEditableTarget(e.target)) return;
       if (e.key.length === 1 && /\S/.test(e.key)) {
+        // Swallow it. Opening the channel focuses the input inside this same
+        // keydown, so the browser's default insertion would land in the input
+        // we just seeded and type the character twice ("h" → "hh").
+        e.preventDefault();
         setText(e.key);
         onOpen();
       }

@@ -545,20 +545,43 @@ button {
   max-width: 100%;
 }
 
-/* --- Keyboard fallback ------------------------------------------------ */
+/* --- Keyboard fallback ------------------------------------------------
+   The input line is a fourth occupant of the bottom band, so it takes the same
+   zoning as the caption dock rather than lying across the corner widgets. It
+   sits one row *above* the control cluster — five 38px buttons plus the energy
+   hint leave no width for a line beside them at any window size we ship — and
+   steps clear of the camera pip when that holds the lower-left corner. */
 .hi-kbd {
   position: fixed;
-  left: 50%;
-  bottom: max(24px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  width: min(640px, 88vw);
+  /* Clears the 38px control row (bottom:20) with a gap above it. */
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 48px);
+  left: max(24px, env(safe-area-inset-left, 0px) + 24px);
+  right: max(24px, env(safe-area-inset-right, 0px) + 24px);
+  display: flex;
+  justify-content: center;
   /* Stays above the view stage like the other channel controls, so a typing
      user can still reach the input while a view leads. */
   z-index: 60;
 }
 
+/* Same step-past-the-pip the caption dock takes (the pip is
+   clamp(180px, 24vw, 520px) wide from the left margin). */
+.hi-root:has(.hi-selfview--pip) .hi-kbd {
+  left: clamp(220px, calc(24vw + 44px), 584px);
+}
+
+/* While the line holds its row, the words and the energy hint step up over it —
+   the band stacks instead of overlapping. */
+.hi-root:has(.hi-kbd) .hi-stage.hi-stage--captions {
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 122px);
+}
+
+.hi-root:has(.hi-kbd) .hi-oe {
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 106px);
+}
+
 .hi-kbd input {
-  width: 100%;
+  width: min(640px, 100%);
   padding: 12px 18px;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
