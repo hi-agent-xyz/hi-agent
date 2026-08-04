@@ -23,7 +23,7 @@
 **机制,一句话:pulse 唤醒的是看不见台账的那一路,而看得见台账的那一路没有 pulse。**
 - 台账按 invariant 4 只投影给它的**写者**——Cognition。Reaction 的窗口有意不带 scene 之外的东西。
 - Cognition **只被信件唤醒**,没有自己的时钟。
-- 时钟被 deferred 之后,`due` 不触发任何东西。
+- 当时时钟被 deferred,`due` 不触发任何东西(此后时钟被**彻底放弃**,见 `5429a97`——`due` 从此是"只读不触发",写进了 `docs/arch/data.md`)。
 
 这正是 `arch-refactor.md` 在 skip 掉 N4 时**自己写下的那个洞**(*"Cognition, which owns the ledger, has no pulse; it is woken only by mail. That is the hole"*)——现在它在真机上被 journey 撞到了。那份文件同时给了窄修法:**在 Cognition 的 `select!` 上加一条 timer 臂**,带上 scene pulse 用的同一句"读一遍你的开放职责",二十行,不是调度器。
 
@@ -85,7 +85,7 @@
 
 **机制。** consolidation 把"进行中"那条 episode 折成 facet,但后来那条"已交付"的 episode 到了之后**没有回头修正**同一条 facet。写入是单向的,只有 append 语义,没有 reconcile。
 
-**为什么疼。** invariant 说未完成的职责永不裁剪,而时钟被 deferred(`due` 不触发任何东西),所以这份清单**只增不减**。重启后 agent 读开放职责,读到的是一份**假的欠账表**——它会重做已经做完的事,或者向人重复承诺已经交付的东西。这条同时把 [25](25-resume-interrupted-work.md) 的断点恢复变成"断点重做"。
+**为什么疼。** invariant 说未完成的职责永不裁剪,而 `due` 不触发任何东西(设计如此),所以这份清单**只增不减**。重启后 agent 读开放职责,读到的是一份**假的欠账表**——它会重做已经做完的事,或者向人重复承诺已经交付的东西。这条同时把 [25](25-resume-interrupted-work.md) 的断点恢复变成"断点重做"。
 
 **涉及。** [01](01-badminton-top10.md) · [04](04-trending-feeds.md) · [05](05-news-and-watch.md) · [25](25-resume-interrupted-work.md)
 
@@ -215,7 +215,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 ## 15 · 常驻职责的心跳是 Claude Code 的内置工具,不是 hi-agent 的任何东西 🔴
 
-**症状。** "定期去查"这件事,最后落在 **Claude Code 内置的 `CronCreate`** 上。hi-agent 没有定义任何 cron 工具(`grep -rin "croncreate\|cronlist\|crondelete\|scheduled_task" src/` 零命中),`docs/arch/` 里也从没有这个东西。时钟被 deferred、`due` 不触发任何事之后,Cognition 需要一个循环定时器,而手边唯一够得着的那个是**别人家的**。
+**症状。** "定期去查"这件事,最后落在 **Claude Code 内置的 `CronCreate`** 上。hi-agent 没有定义任何 cron 工具(`grep -rin "croncreate\|cronlist\|crondelete\|scheduled_task" src/` 零命中),`docs/arch/` 里也从没有这个东西。时钟当时被 deferred、`due` 不触发任何事,Cognition 需要一个循环定时器,而手边唯一够得着的那个是**别人家的**。
 
 **工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`say` / `send_message` / `create_worker` / `read_facet` / `update_facet` / `record_episode` / `session_status` / `show_view` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
 
@@ -231,7 +231,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 - 条目**确实持久化到磁盘**,`CronList` 重启后仍读得到——所以 agent 说的"survives restarts"这一点是**真的**(我先入为主以为是假的,查了才发现自己错)。
 - 但登记在案的 `createdByPid: 89072` **早已不存在**;Cognition 的 session 是**每次 wake 一个**,寿命以分钟计。而 Claude Code 的 cron **只在那个 session 活着且处于查询间隙时才会触发**——per-wake 的 session 意味着到点时几乎**永远没有一个活着的 session 可供触发**。这是按语义推的,尚未直接观测到。
-- hi-agent 自己台账里的 `due` 依然**什么都不触发**(时钟仍 deferred,`At(_)` 未建)。
+- hi-agent 自己台账里的 `due` **不触发任何东西**,而且以后也不会——时钟已在 `5429a97` 被彻底放弃,`due` 明确定为"只读不触发"。
 - **迄今没有观测到这条 cron 触发过任何一次。**
 
 **这是 [#11](gaps.md) 的同族第三例**:先是 worker 把用户事实写进 harness 的 `MEMORY.md`,现在是常驻职责的心跳挂在 harness 的 scheduler 上。同一个形状——**hi-agent 的模型之外还并行着一套 harness 自带的机制,agent 顺手用了那套**,于是关键状态存在于一个 hi-agent 既不投影、也不备份、更不负责的地方。
@@ -262,7 +262,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:
 
-- Mac mini,fresh `--data-dir`,`pulse` 调到 120s(时钟被 deferred,pulse 是唯一的唤醒),测完复原。
+- Mac mini,fresh `--data-dir`,`pulse` 调到 120s(pulse 与 Cognition 的 glance-up 是仅有的唤醒),测完复原。
 - 两条长轮询挂着:`GET /api/out/text`(一次一句)和 `GET /api/out/view`(挂着 = 屏在场)。不挂 audio,于是顺带验了 presence 门。
 - Claude 扮演老板,**说人话、不剧透 journey 预期**;要测恢复就**造出那个局面**(杀进程 / 重启 / 种一个失败),而不是在提示里提它。
 - **每一条都从对话之外核实**:逐字帧日志(`memory/raw/sessions/<run>/<session>.jsonl`)、`server.log`、`GET /api/sessions`、磁盘上的产物。agent 说它做了什么,不算证据。
