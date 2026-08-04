@@ -471,24 +471,20 @@ async fn cluster_vitals(data_dir: &Path, subject: &str) -> anyhow::Result<Cluste
     Ok(ClusterVitals { subject: subject.to_string(), named, samples, occasions, last_seen })
 }
 
-/// The outcome of one forgetting sweep: what was (or, in a dry run, would be)
-/// forgotten, and how many clusters were examined.
+/// The outcome of one forgetting sweep: what was forgotten, and how many clusters
+/// were examined.
 #[derive(Debug, Default, Clone)]
 pub struct ForgetReport {
     /// Clusters examined (every subject directory in the people store).
     pub examined: usize,
-    /// The vitals of each cluster judged forgettable, for logging/inspection.
+    /// The vitals of each cluster forgotten, for logging/inspection.
     pub forgotten: Vec<ClusterVitals>,
-    /// Whether deletion actually happened. In a dry run `forgotten` is populated but
-    /// nothing was removed.
-    pub deleted: bool,
 }
 
 /// Walk the people store and forget every ambient, one-off cluster — unnamed, seen
 /// on fewer than [`KEEP_OCCASIONS`] occasions, quiet for [`FORGET_AFTER`] as of
-/// `now` (see [`ClusterVitals::forgettable`]). When `dry_run`, judges and reports
-/// but deletes nothing — so a sweep can be watched before it is trusted. Named and
-/// recurring clusters are left untouched; a missing people dir is not an error.
+/// `now` (see [`ClusterVitals::forgettable`]). Named and recurring clusters are left
+/// untouched; a missing people dir is not an error.
 ///
 /// Folds into the reflection pass ([`crate::body::reactor::heartbeat`]) beside the
 /// media [`super::decay`], on the same adaptive-backoff clock. Global, so it runs
@@ -496,7 +492,6 @@ pub struct ForgetReport {
 pub async fn sweep_forgettable(
     data_dir: &Path,
     now: chrono::DateTime<chrono::Utc>,
-    dry_run: bool,
 ) -> anyhow::Result<ForgetReport> {
     let dir = people_dir(data_dir);
     let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -505,7 +500,7 @@ pub async fn sweep_forgettable(
         Err(e) => return Err(e.into()),
     };
 
-    let mut report = ForgetReport { deleted: !dry_run, ..Default::default() };
+    let mut report = ForgetReport::default();
     // Collect subjects first, then act — don't mutate the dir while reading it.
     let mut subjects: Vec<String> = Vec::new();
     while let Some(ent) = rd.next_entry().await? {
@@ -527,9 +522,7 @@ pub async fn sweep_forgettable(
         if !vitals.forgettable(now) {
             continue;
         }
-        if !dry_run {
-            tokio::fs::remove_dir_all(dir.join(&subject)).await?;
-        }
+        tokio::fs::remove_dir_all(dir.join(&subject)).await?;
         report.forgotten.push(vitals);
     }
     Ok(report)
@@ -1433,8 +1426,7 @@ mod tests {
         assert!(!v.named);
         assert!(v.forgettable(now), "one-off past grace should be forgettable");
 
-        let report = sweep_forgettable(dir.path(), now, false).await.unwrap();
-        assert!(report.deleted);
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
         assert_eq!(report.forgotten.len(), 1);
         assert_eq!(report.forgotten[0].subject, "2xk04cyd");
         // The directory is gone.
@@ -1453,7 +1445,7 @@ mod tests {
         assert_eq!(v.occasions, 3);
         assert!(!v.forgettable(now));
 
-        let report = sweep_forgettable(dir.path(), now, false).await.unwrap();
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
         assert!(report.forgotten.is_empty());
         assert!(tokio::fs::try_exists(people_dir(dir.path()).join("ydeeeu6v")).await.unwrap());
     }
@@ -1467,7 +1459,7 @@ mod tests {
         let v = cluster_vitals(dir.path(), "sgstq9sb").await.unwrap();
         assert_eq!(v.occasions, 1);
         assert!(!v.forgettable(now), "within grace, keep it");
-        let report = sweep_forgettable(dir.path(), now, false).await.unwrap();
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
         assert!(report.forgotten.is_empty());
     }
 
@@ -1481,7 +1473,7 @@ mod tests {
         let v = cluster_vitals(dir.path(), "糯米").await.unwrap();
         assert!(v.named);
         assert!(!v.forgettable(now), "a name means keep");
-        let report = sweep_forgettable(dir.path(), now, false).await.unwrap();
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
         assert!(report.forgotten.is_empty());
         assert!(tokio::fs::try_exists(people_dir(dir.path()).join("糯米")).await.unwrap());
     }
@@ -1502,15 +1494,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_reports_but_deletes_nothing() {
+    async fn a_sweep_takes_the_strangers_and_leaves_everyone_else() {
         let dir = td();
         let now = t0();
+        // A mixed store, one cluster per keep-reason, so the blast radius is checked
+        // on a whole sweep and not only case by case.
         place_sample(dir.path(), "urwmpurn", Modality::Voice, now - chrono::Duration::days(40), 0.5).await;
-        let report = sweep_forgettable(dir.path(), now, true).await.unwrap();
-        assert!(!report.deleted);
-        assert_eq!(report.forgotten.len(), 1, "still reported as forgettable");
-        // ...but the cluster is untouched.
-        assert!(tokio::fs::try_exists(people_dir(dir.path()).join("urwmpurn")).await.unwrap());
+        place_sample(dir.path(), "recent00", Modality::Voice, now - chrono::Duration::days(5), 0.6).await;
+        for d in [40, 10] {
+            place_sample(dir.path(), "recurs00", Modality::Face, now - chrono::Duration::days(d), 0.7).await;
+        }
+        place_sample(dir.path(), "糯米", Modality::Voice, now - chrono::Duration::days(200), 0.8).await;
+        facets::update_facet(dir.path(), DIM, "糯米", "女儿").await.unwrap();
+
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
+        assert_eq!(report.examined, 4);
+        let taken: Vec<&str> = report.forgotten.iter().map(|v| v.subject.as_str()).collect();
+        assert_eq!(taken, ["urwmpurn"], "only the one-off stranger goes");
+
+        assert!(!tokio::fs::try_exists(people_dir(dir.path()).join("urwmpurn")).await.unwrap());
+        for kept in ["recent00", "recurs00", "糯米"] {
+            assert!(
+                tokio::fs::try_exists(people_dir(dir.path()).join(kept)).await.unwrap(),
+                "{kept} should have survived",
+            );
+        }
     }
 
     #[tokio::test]
@@ -1538,14 +1546,14 @@ mod tests {
         assert_eq!(v.occasions, 0);
         assert_eq!(v.last_seen, None);
         assert!(!v.forgettable(now));
-        let report = sweep_forgettable(dir.path(), now, false).await.unwrap();
+        let report = sweep_forgettable(dir.path(), now).await.unwrap();
         assert!(report.forgotten.is_empty());
     }
 
     #[tokio::test]
     async fn sweep_on_empty_store_is_noop() {
         let dir = td();
-        let report = sweep_forgettable(dir.path(), t0(), false).await.unwrap();
+        let report = sweep_forgettable(dir.path(), t0()).await.unwrap();
         assert_eq!(report.examined, 0);
         assert!(report.forgotten.is_empty());
     }

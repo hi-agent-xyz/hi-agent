@@ -78,13 +78,6 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
         .count()
 }
 
-/// Whether the identity-cluster forgetting sweep only *reports* what it would forget
-/// (`true`) instead of deleting. Starts as a dry run so the criteria in
-/// [`people_vectors::sweep_forgettable`] can be watched on real data — the log shows
-/// each cluster it would drop — before it is trusted to delete. Flip to `false` to
-/// arm it.
-const SWEEP_DRY_RUN: bool = true;
-
 /// The pseudo-scene the single consolidated reflection session is opened under. It
 /// carries the `X-HI-Scene` header (so the `/mcp` dispatch has a scene to route by)
 /// and labels the session in logs, but it is never a real data path: one session
@@ -183,23 +176,21 @@ async fn run_consolidation(
     // Forget ambient, one-off identity clusters — the video-night strangers and
     // passers-by that would otherwise bury the real people. The people store is
     // global, so this runs once per consolidation (not per scene), on the same
-    // reflection clock. Dry-run for now: it logs what it *would* forget so the
-    // strategy can be watched before it deletes anything (flip `SWEEP_DRY_RUN`).
-    match people_vectors::sweep_forgettable(data_dir, Utc::now(), SWEEP_DRY_RUN).await {
+    // reflection clock. The log names each cluster as it goes, since the deletion
+    // itself leaves nothing behind to inspect.
+    match people_vectors::sweep_forgettable(data_dir, Utc::now()).await {
         Ok(report) if !report.forgotten.is_empty() => {
             for v in &report.forgotten {
                 tracing::info!(
                     subject = %v.subject,
                     samples = v.samples,
                     occasions = v.occasions,
-                    dry_run = SWEEP_DRY_RUN,
                     "identity cluster forgotten (ambient, one-off, gone cold)",
                 );
             }
             tracing::info!(
                 examined = report.examined,
                 forgotten = report.forgotten.len(),
-                deleted = report.deleted,
                 "cluster forgetting sweep",
             );
         }

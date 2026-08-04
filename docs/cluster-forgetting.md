@@ -30,9 +30,10 @@ who has a name or who has been seen more than once.
 - **Runs inside reflection.** Folded into `heartbeat::run_consolidation`, once per
   consolidation (the people store is global, not per-scene), on the same
   adaptive-backoff reflection clock as the media `decay`.
-- **Ships as a dry run first.** `SWEEP_DRY_RUN = true` — it logs what it *would*
-  forget so the criteria can be watched on real data before it is trusted to
-  delete. Flip the constant to arm it.
+- **Armed, with no switch.** It shipped as a dry run so the criteria could be
+  watched on real data; a sweep over 100 clusters took 19 one-off strangers and
+  nothing else, so the flag is gone and the sweep deletes. The `INFO` line per
+  forgotten cluster stays — it is the only trace left after the delete.
 
 ## Criteria
 
@@ -60,9 +61,8 @@ don't age what we can't date.
 | `KEEP_OCCASIONS` | 2 | occasions at/above which a cluster is kept forever |
 | `OCCASION_GAP` | 30 min | gap that separates one occasion from the next |
 | `FORGET_AFTER` | 30 days | grace since last sighting before a one-off ages out |
-| `SWEEP_DRY_RUN` | true | report-only vs actually delete |
 
-All live in `people_vectors.rs` (criteria) and `heartbeat.rs` (`SWEEP_DRY_RUN`).
+All live in `people_vectors.rs`.
 
 ## Implementation
 
@@ -70,11 +70,9 @@ All live in `people_vectors.rs` (criteria) and `heartbeat.rs` (`SWEEP_DRY_RUN`).
   stems across `face/` + `voice/`, counts occasions, finds last-seen, checks for
   `facet.md`. Pure over disk state.
 - `ClusterVitals::forgettable(now)` — the rule above.
-- `people_vectors::sweep_forgettable(data_dir, now, dry_run) -> ForgetReport` —
-  walks the store, applies the rule, deletes (unless `dry_run`), returns what was
-  forgotten for logging.
-- Hooked in `heartbeat::run_consolidation` right after the "reflection fired"
-  log, gated by `SWEEP_DRY_RUN`.
+- `people_vectors::sweep_forgettable(data_dir, now) -> ForgetReport` — walks the
+  store, applies the rule, deletes, returns what was forgotten for logging.
+- Hooked in `heartbeat::run_consolidation` right after the "reflection fired" log.
 
 ## De-mixing a cluster that is actually several people
 
