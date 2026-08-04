@@ -111,7 +111,6 @@
 .wbadge.running { background: rgba(110,168,254,.18); color: var(--accent); }
 .wbadge.done { background: rgba(90,209,154,.16); color: var(--ok); }
 .wbadge.failed { background: rgba(232,115,106,.16); color: var(--bad); }
-.alarm { font-size: 13px; padding: 4px 0; }
 
 /* events */
 .acp-events h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 16px 0 8px; }

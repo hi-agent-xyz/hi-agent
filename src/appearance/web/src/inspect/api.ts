@@ -18,11 +18,6 @@ export interface SessionView {
   turns: number;
 }
 
-export interface AlarmView {
-  note: string;
-  fires_at: string;
-}
-
 export interface TurnView {
   turn: number;
   started_at: string;
@@ -42,7 +37,6 @@ export interface SceneView {
   swap_after_chars: number;
   swap_count: number;
   last_swap_at: string | null;
-  pending_alarms: AlarmView[];
   last_turn: TurnView | null;
   turns_total: number;
 }

@@ -18,7 +18,7 @@ thinking layers are slow, confused, or dead.
 | A vendor outage is decided process-wide, not per turn | Every scene shares one upstream; N scenes must not each rediscover it, or apologize for it |
 | The reflex path never reaches a model | Stopping when someone starts talking cannot wait a generation |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
-| The clock holds no durable state | A timer that dies with the process is worse than no timer |
+| The host opens the agent's eyes; the agent owns its own timers | A scheduler we build dies with the process; a crontab the agent writes does not |
 | Sessions are host-owned and disposable | Continuity lives in `data/`, not in a process |
 
 ## Components
@@ -173,53 +173,80 @@ lifetime — is authoritative for durability, recovery and cold start.
 single append-only log at [`memory/raw/`](data.md#memoryraw). It is mechanical, so it belongs
 to [`data/`](data.md); it appears here because it sits on the hot path.
 
-### Clock
+### Glancing up — and why there is no clock
 
-**Status: deferred — the design below stands, the module is not being built now.**
-Waking agents on a schedule is real and stays the goal; it is simply not what the
-next work is. Until it exists, three loops carry the load and one thing is
-missing: the **pulse** paces each scene's self-attention from inside its own loop,
-the **reflection backoff** paces consolidation from inside its own, and
-**Cognition now paces its own glance-up** the same way — a wake once shortly after
-the process starts, then on the pulse cadence whenever anything is owed. That last
-one is the narrow fix this entry used to point forward to: a timer arm on
-Cognition's loop, not a scheduler, and it is what makes the restart sequence in
-[`agents.md`](agents.md#cognition--sceneless-minutes-and-beyond) actually run.
+**There is no clock, and there will not be one.** A scheduler module was designed
+here, deferred once, and is now **declined**. What replaces it is not a smaller
+scheduler: it is the observation that scheduling was never the host's problem.
 
-What is still missing is the part only a clock can do: **`At(_)`**. A task's `due`
-fires nothing, so a deadline is met at the next glance rather than when it comes
-due, and nothing wakes the voice when a promise is running late.
+**The host owns one thing: opening the agent's eyes on a cadence.** Three loops do
+that, each pacing itself from inside its own subsystem — the **pulse** for each
+scene, the **reflection backoff** for consolidation, and **Cognition's glance-up**
+(one wake shortly after the process starts, then on the pulse cadence whenever
+anything is owed). That is the whole of the host's timing surface, and it is
+already built.
 
-One type, one owner, four rules.
+Everything else an agent needs from time, **the agent builds itself.** It has a
+shell and it can install a cron entry, a `launchd` job, a systemd timer, or park a
+worker that sleeps and messages home. Those are better at this than we would be:
+a crontab survives a reboot, and the module designed here explicitly would not
+(*"the clock holds no durable state"*). Declining to build it is not a gap left
+open — it is the same call this codebase already makes about capabilities
+generally. Nothing gets restricted to enforce this; the agent keeps every tool it
+has, and simply stops needing a host scheduler.
 
-```rust
-struct Wake {
-    at:     WakeAt,        // Every(Duration) | At(Instant) | Backoff { min, max }
-    target: WakeTarget,    // Cognition | Reflection
-    note:   String,        // plain language; becomes the prompt
-}
-```
+#### The two shapes, and what each needs from us
 
-1. **A wake produces a turn, never an utterance.** The clock cannot speak. Whatever the
-   woken agent wants said goes through Reaction and is gated on presence.
-2. **Coalesce.** Wakes due within one window collapse into a single turn carrying all
-   notes, so a pile-up of tasks never becomes a monologue.
-3. **Drop, don't queue.** A wake that fires while its target is busy is discarded —
-   fix-forward, consistent with everything else. Only `At(_)` deadlines re-arm.
-4. **No durable state.** Every timer is derived from open tasks at startup. Durability
-   lives in [Tasks](data.md#tasks); the clock is a rebuildable projection of it.
+| Shape | How it runs | What the host provides |
+|---|---|---|
+| **Cadence** — check this every N hours | Cognition's glance-up *is* the executor: it wakes, reads the ledger, and does what is due. Or an agent-installed timer does the work and leaves a durable trace. | Nothing new. The glance-up. |
+| **Precise moment** — be somewhere at 07:00 | A parked worker sleeps and `send_message`s its owner; the ledger re-arms it after a restart. | Nothing new. `create_worker` + the one verb. |
 
-Intended registrations, kept deliberately small: a **pulse** (self-check), the
-**reflection** backoff, and **task timers** derived from open tasks.
+The first covers the standing duties this system actually has. The second is rare
+and costs an idle subprocess, which is the right price for something rare.
 
-Not among them: **"you just came back"**. That was listed here while the clock was
-still the only thing that could wake anyone, and it was the wrong home — a return is
-not due at a time, it is caused by the person, and a timer can only discover one by
-polling for it. It belongs to [presence](#presence), which observes it directly.
+#### The rule that makes any of it safe: **`verify` is a result check**
 
-Deliberately *not* clock clients: the social timeout, the speech clock that paces on-screen
-text against speech, and the session heartbeat. Each paces a loop inside its own subsystem
-rather than waking an agent — and **waking agents is the only reason the clock exists.**
+An agent choosing its own mechanism is only sound if a mechanism that quietly dies
+is *caught*. That is entirely a property of what [`Liveness::verify`](data.md#tasks)
+names:
+
+- **"a cron job with this id exists"** — an existence check. It passes forever, including
+  when the job has never once fired. This failed in the field: a watch was armed,
+  reported healthy, and had never fetched a price.
+- **"`checked` was stamped within the last 3h by a run that returned real prices"** — a
+  result check. A cron that never fires, a `launchd` plist that never loaded, a parked
+  worker killed by a restart: **all of them fail this within one cadence**, and the
+  glance-up repairs them.
+
+So the mechanism is the agent's to choose, and the *contract* is ours to insist on.
+Whether it used our machinery or the harness's stops mattering, because a duty that
+is not actually running fails its own check either way. `checked` is the one liveness
+field code reads, for exactly this reason.
+
+#### `/api/in/text` is not a wake channel
+
+If an agent-installed timer ever needs to poke a running instance over HTTP, note
+that the inbound text route journals `Origin::Human` and calls
+`presence.note_activity()`. A timer firing into it would tell the agent **a person
+just spoke** — resetting the away timer, starting the owed-reply clock, and
+defeating the presence gate. Both shapes above avoid it by not needing a door at
+all. If a genuine need appears, the answer is a channel that says what it is
+(`Channel::Clock`, already in `NON_ACTIVITY_CHANNELS`), never this one.
+
+#### What this costs, stated plainly
+
+A deadline is met **at the next glance, not at its minute** — `due` is read by the
+projection and orders what is shown, and nothing in the host fires on it. At a
+30-minute pulse that is fine for a filing deadline and wrong for an alarm clock; an
+alarm clock is the agent's to build, per the table above. And **nothing wakes the
+voice when a promise is running late** — a return is observed by
+[presence](#presence), but lateness is not an event anyone observes.
+
+Two things that were listed here as clock clients and are not: **"you just came
+back"** belongs to [presence](#presence), which observes it directly rather than
+polling for it; and the social timeout, the speech clock, and the session heartbeat
+each pace a loop inside their own subsystem rather than waking an agent.
 
 ## Fix-forward
 
@@ -234,4 +261,4 @@ where fix-forward genuinely does not apply.
 ## See also
 
 [`agents.md`](agents.md) for what the core drives ·
-[`data.md`](data.md#tasks) for what the clock is rebuilt from.
+[`data.md`](data.md#tasks) for the ledger a glance-up reads, and the `verify` contract.

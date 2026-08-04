@@ -49,21 +49,21 @@ pub const KEY_EFFORT: &str = "effort";
 pub const KEY_PERMISSION_MODE: &str = "permission_mode";
 /// Reactor heartbeat hot-swap character ceiling. Blank / non-positive → default.
 pub const KEY_COMPACT: &str = "compact";
-/// Idle interval between host pulses. Alarm-delay grammar (`90s`/`30m`/`1h`);
+/// Idle interval between host pulses. Duration grammar (`90s`/`30m`/`1h`);
 /// `0`/`off` disables pulses; unset / unparseable → the built-in default.
 pub const KEY_PULSE: &str = "pulse";
 /// Master switch for the reflection ("sleep") pass; `off` disables it entirely.
 pub const KEY_REFLECT: &str = "reflect";
 /// Base reflection cadence — how often a scene with fresh input consolidates.
-/// Alarm-delay grammar; `0`/`off` disables; unset → the built-in default (1m).
+/// Duration grammar; `0`/`off` disables; unset → the built-in default (1m).
 pub const KEY_REFLECT_EVERY: &str = "reflect_every";
-/// Ceiling on the idle reflection backoff. Alarm-delay grammar; unset → default (8h).
+/// Ceiling on the idle reflection backoff. Duration grammar; unset → default (8h).
 pub const KEY_REFLECT_MAX: &str = "reflect_max";
 /// Consecutive terminal-turn failures before flipping to vendor-down ("mailbox")
 /// mode. Each terminal failure is already 3 failed model calls, so 2 (the default)
 /// = 6 failures across two turns. `0`/unparseable → default.
 pub const KEY_VENDOR_DOWN_AFTER: &str = "vendor_down_after";
-/// Recovery-probe cadence while in vendor-down mode. Alarm-delay grammar;
+/// Recovery-probe cadence while in vendor-down mode. Duration grammar;
 /// `off`/`0`/unset/unparseable → the 30s default.
 pub const KEY_VENDOR_PROBE: &str = "vendor_probe";
 

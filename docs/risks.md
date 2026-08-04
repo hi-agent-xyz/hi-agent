@@ -30,8 +30,7 @@ running axum app) through the ACP `mcp_servers` capability — `McpServer::Http`
 with scene/role/worker-id carried as `X-HI-Scene` / `X-HI-Role` /
 `X-HI-Worker-Id` headers, so one endpoint routes every session's calls. No
 subprocess, no socket. The reactor's whole expression + side-effect contract
-rides these tools: `say` / `show_view` (output), `delegate` / `alarm` (reactor
-side-effects), `ask` (worker).
+rides these tools: `say` / `show_view` (output), `send_message` (the one verb).
 
 The deployed adapter (`@agentclientprotocol/claude-agent-acp` 0.36.1) advertises
 `mcpCapabilities { http: true, sse: true }` and forwards http servers with

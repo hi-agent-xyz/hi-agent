@@ -2,13 +2,13 @@
 //!
 //! ACP sessions are otherwise invisible: a scene's persistent reactor session,
 //! ephemeral worker sessions (each on its own subprocess), in-flight prompts,
-//! heartbeat hot-swaps and self-alarms all live only as scattered `tracing`
+//! heartbeat hot-swaps all live only as scattered `tracing`
 //! lines. The observatory is an additive, cloneable handle (like [`Memory`] or
 //! [`TextBus`]) that the reactor, workers and heartbeat feed as
 //! those things happen. It keeps two things:
 //!
 //! - a **live mirror** — the current state per scene (reactor session, workers,
-//!   context budget, pending alarms, last turn), for `GET /api/sessions`;
+//!   context budget, last turn), for `GET /api/sessions`;
 //! - an **event history** — a bounded ring of lifecycle [`SessionEvent`]s plus a
 //!   live `broadcast`, streamed verbatim over SSE on `GET /api/sessions/events`,
 //!   and best-effort appended to `<data_dir>/sessions.jsonl` for durable replay.
@@ -70,13 +70,6 @@ pub enum WorkerState {
     Failed,
 }
 
-/// A pending self-alarm the mind scheduled, shown until it fires.
-#[derive(Debug, Clone, Serialize)]
-pub struct AlarmView {
-    pub note: String,
-    pub fires_at: DateTime<Utc>,
-}
-
 /// The most recent turn on a scene's reactor session.
 #[derive(Debug, Clone, Serialize)]
 pub struct TurnView {
@@ -105,7 +98,6 @@ pub struct SceneView {
     pub swap_after_chars: usize,
     pub swap_count: u64,
     pub last_swap_at: Option<DateTime<Utc>>,
-    pub pending_alarms: Vec<AlarmView>,
     pub last_turn: Option<TurnView>,
     pub turns_total: u64,
 }
@@ -119,7 +111,6 @@ impl SceneView {
             swap_after_chars,
             swap_count: 0,
             last_swap_at: None,
-            pending_alarms: Vec::new(),
             last_turn: None,
             turns_total: 0,
         }
@@ -149,7 +140,7 @@ pub enum EventKind {
     SessionOpened { kind: SessionKind, id: String },
     SessionClosed { kind: SessionKind, id: String },
     /// `input` is the human-readable incoming message(s) for this turn — the new
-    /// signals batch (human utterances, worker reports, fired alarms), not the
+    /// signals batch (human utterances, worker reports, pulses), not the
     /// full seeded prompt.
     TurnStarted { turn: u64, input: String },
     /// `reply` is the agent's spoken text for this turn (markers stripped).
@@ -160,8 +151,6 @@ pub enum EventKind {
     /// again on the same session.
     WorkerResumed { id: u64, task: String },
     WorkerFinished { id: u64, state: WorkerState, summary_chars: usize },
-    AlarmScheduled { note: String, delay_s: u64 },
-    AlarmFired { note: String },
     /// One agent-to-agent edge: the one verb crossing, and what became of it.
     ///
     /// Recorded for **both** directions of host mediation. `from: Some(id)` is one agent
@@ -381,18 +370,6 @@ impl Observatory {
             // that mistake — one slot fed by two different events, each overwriting
             // the other — and `docs/arch/foundation.md#debug-surfaces` forbids it.
             EventKind::MessageSent { .. } => {}
-            EventKind::AlarmScheduled { note, delay_s } => {
-                view.pending_alarms.push(AlarmView {
-                    note: note.clone(),
-                    fires_at: now + chrono::Duration::seconds(*delay_s as i64),
-                });
-            }
-            EventKind::AlarmFired { note } => {
-                // Drop the earliest pending alarm matching this note.
-                if let Some(idx) = view.pending_alarms.iter().position(|a| &a.note == note) {
-                    view.pending_alarms.remove(idx);
-                }
-            }
         }
     }
 
@@ -573,16 +550,5 @@ mod tests {
         .await;
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live event follows replay with no gap or dup");
-    }
-
-    #[tokio::test]
-    async fn alarms_scheduled_and_fired() {
-        let obs = Observatory::new(None, 48_000);
-        let s = scene();
-        obs.record(Some(&s), EventKind::AlarmScheduled { note: "wake them".into(), delay_s: 60 })
-            .await;
-        assert_eq!(obs.snapshot().await[0].pending_alarms.len(), 1);
-        obs.record(Some(&s), EventKind::AlarmFired { note: "wake them".into() }).await;
-        assert!(obs.snapshot().await[0].pending_alarms.is_empty());
     }
 }

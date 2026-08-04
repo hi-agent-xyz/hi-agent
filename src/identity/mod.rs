@@ -704,10 +704,12 @@ mod soul_tests {
 
     #[test]
     fn the_voice_is_not_told_to_set_a_timer() {
-        // Reaction has no `alarm` tool and there is no clock (`docs/arch/core.md#clock`
-        // — deferred). A brief that tells the voice to arm a reminder for a check-in it
-        // promised is a brief describing a mechanism that cannot run; what survives is
-        // the promise — size the silence, and lean long because nothing will remind you.
+        // There is no clock, and there will not be one — it was designed, deferred, and
+        // declined (`docs/arch/core.md#glancing-up--and-why-there-is-no-clock`). Reaction
+        // in particular is tools-off, so it cannot build one either. A brief that tells
+        // the voice to arm a reminder for a check-in it promised is a brief describing a
+        // mechanism that cannot run; what survives is the promise — size the silence, and
+        // lean long because nothing will remind you.
         assert!(!REACTION_BASE.contains("set an alarm"));
         assert!(!REACTION_BASE.contains("When the alarm fires"));
         assert!(REACTION_BASE.contains("You have no timer"));

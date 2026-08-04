@@ -36,13 +36,18 @@
 //!
 //! ## Why code touches this at all
 //!
-//! Two queries, and only two:
+//! One query:
 //!
-//! - [`due_before`] — the clock rebuilds every timer from this at startup, so it
-//!   holds no durable state of its own.
 //! - [`projection`] — a **code-bounded** rendering of what is open, for injection
 //!   into every agent's window. Projected is what Reaction must know without
 //!   reading; everything else is recall.
+//!
+//! There was a second, `due_before`, written for a clock to rebuild its timers
+//! from. That clock is **declined**, not deferred — see
+//! [`docs/arch/core.md`](../../../docs/arch/core.md#glancing-up--and-why-there-is-no-clock).
+//! Scheduling is the agent's own, built with the shell it already has, and the
+//! host's whole timing surface is the three loops that pace glancing up. So the
+//! query went with it rather than sitting here correct, tested and callerless.
 //!
 //! Everything else about tasks — writing one, closing one, reasoning about one —
 //! is the agent using the facet tools it already has.
@@ -87,8 +92,8 @@ pub const DIMENSION: &str = "tasks";
 /// at all, and an unread projection is worse than a short one, because it looks
 /// like it is doing its job. Twelve is about what a person can hold as "what I owe
 /// right now"; past it, a count that says *there are more, go look* is the honest
-/// rendering. Nothing is lost by the bound — the tail is still on disk, and
-/// [`due_before`] and the facet tools reach all of it.
+/// rendering. Nothing is lost by the bound — the tail is still on disk, and the
+/// facet tools reach all of it.
 pub const PROJECTED_TASKS: usize = 12;
 
 /// Per-line character cap in [`projection`], so one long title can't blow the
@@ -233,8 +238,12 @@ pub struct Task {
     /// Optional scene to report into. A task is global — created in one scene and
     /// delivered in another — so this is a preference, never a scope.
     pub report_to: Option<Scene>,
-    /// When it comes due, if it ever does. The clock rebuilds its timers from these
-    /// ([`due_before`]).
+    /// When it comes due, if it ever does.
+    ///
+    /// **Read, never fired.** It orders the projection and marks what is overdue;
+    /// nothing in the host wakes on it, so a deadline is met at the next glance
+    /// rather than at its minute. An alarm that must land on the minute is the
+    /// agent's to build — see the clock we declined in `docs/arch/core.md`.
     pub due: Option<DateTime<Utc>>,
     pub liveness: Liveness,
     /// When [`Liveness::verify`] was last actually run, and the answer was *alive*.
@@ -348,49 +357,6 @@ pub async fn open_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     let mut all = scan(data_dir).await?;
     all.retain(|t| t.state.is_open());
     Ok(all)
-}
-
-/// Open tasks carrying a due time at or before `cutoff`, soonest first.
-///
-/// **No caller. The clock is deferred, deliberately — see below.** This is the
-/// query a clock would be rebuilt from: at startup it would call this once, arm a
-/// timer per row (the first row is the next to fire), and re-read after anything
-/// writes a task. Pass `DateTime::<Utc>::MAX_UTC` to sweep every future due date,
-/// or `Utc::now()` for just what is already overdue — a restart that slept through
-/// a deadline would find it here rather than losing it.
-///
-/// **What being clock-less still costs, stated plainly: a task's `due` is
-/// decorative.** Nothing fires on it. A duty recorded as "by Friday" is surfaced
-/// only when something *else* wakes a rung that reads the ledger — the per-scene
-/// pulse (`DEFAULT_PULSE`, 30m, in `body::reactor`), and now Cognition's own timer
-/// arm on the same cadence. So overdue work is noticed at **pulse cadence**, which
-/// is a bound rather than nothing; what it is not is *on time*.
-///
-/// The narrow fix this used to point forward to has landed: Cognition wakes once
-/// shortly after boot and then on the pulse cadence whenever anything is open, so
-/// the rung that owns the ledger is no longer reachable only by mail. Before that,
-/// a standing duty survived a restart **on disk and nowhere else** — the pulse woke
-/// the rungs that cannot read the ledger, and the rung that owns it had no pulse.
-///
-/// The module in [`docs/arch/core.md`](../../../docs/arch/core.md#clock) stays the
-/// goal, and what it still uniquely buys is `At(_)`: one owner for waking agents,
-/// coalescing, drop-don't-queue, and no durable state of its own.
-///
-/// Kept rather than deleted because it is correct, tested, and the thing any of
-/// the above would call first.
-///
-/// Tasks with no `due` are absent by construction, and closed ones are filtered
-/// out, so a timer is never armed for something already delivered.
-pub async fn due_before(data_dir: &Path, cutoff: DateTime<Utc>) -> anyhow::Result<Vec<Task>> {
-    let mut out: Vec<Task> = open_tasks(data_dir)
-        .await?
-        .into_iter()
-        .filter(|t| t.due.is_some_and(|d| d <= cutoff))
-        .collect();
-    // Due first (both are Some here), subject as the tiebreak so the order is
-    // stable across runs and two tasks due at the same instant never swap.
-    out.sort_by(|a, b| a.due.cmp(&b.due).then_with(|| a.subject.cmp(&b.subject)));
-    Ok(out)
 }
 
 /// What is open, rendered for injection into an agent's window — bounded by
@@ -807,38 +773,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn due_before_is_open_only_and_sorted() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut soon = task("soon", TaskKind::Deadline);
-        soon.due = Some(at(29, 8));
-        let mut later = task("later", TaskKind::Deadline);
-        later.due = Some(at(31, 8));
-        let mut past = task("past", TaskKind::Deadline);
-        past.due = Some(at(20, 8));
-        let mut closed = task("closed", TaskKind::Deadline);
-        closed.due = Some(at(29, 9));
-        closed.state = TaskState::Done;
-        let undated = task("undated", TaskKind::Serving);
-        for t in [&soon, &later, &past, &closed, &undated] {
-            write_task(dir.path(), t).await.unwrap();
-        }
-
-        // The clock's startup sweep: everything still owed that has a time.
-        let all = due_before(dir.path(), DateTime::<Utc>::MAX_UTC).await.unwrap();
-        let subjects: Vec<&str> = all.iter().map(|t| t.subject.as_str()).collect();
-        assert_eq!(subjects, vec!["past", "soon", "later"]);
-
-        // A horizon: only what falls inside it.
-        let near = due_before(dir.path(), at(30, 0)).await.unwrap();
-        assert_eq!(near.len(), 2);
-
-        // Just what a restart slept through.
-        let overdue = due_before(dir.path(), now()).await.unwrap();
-        assert_eq!(overdue.len(), 1);
-        assert_eq!(overdue[0].subject, "past");
-    }
-
     #[test]
     fn projection_is_empty_when_nothing_is_open() {
         assert!(render_projection(&[], now()).is_empty());
@@ -1022,8 +956,6 @@ mod tests {
 
         for _ in 0..3 {
             open_tasks(dir.path()).await.unwrap();
-            due_before(dir.path(), DateTime::<Utc>::MAX_UTC).await.unwrap();
-            due_before(dir.path(), now()).await.unwrap();
             projection(dir.path()).await.unwrap();
             read_task(dir.path(), "deliver-the-report").await.unwrap();
             fresh_subject(dir.path(), "Deliver the report").await.unwrap();

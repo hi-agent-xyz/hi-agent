@@ -89,6 +89,39 @@ the one thing the projection can say about whether a standing duty is actually r
 so an unstamped one shows up to everybody as **never checked** — which is exactly what
 it is. Confirm it, stamp it; can't confirm it, leave it and go find out.
 
+**Write `verify:` as a result, never as an existence check.** "a scheduled job with this
+id exists" passes forever, including when that job has never once run — the thing looks
+healthy from the day you arm it to the day someone notices nothing ever happened. Write
+what a *working* one leaves behind instead: the last fetch returned a price, the ledger
+gained rows today, the file was rewritten this morning. Then a mechanism that quietly
+died fails its own check on the next glance and you repair it — which is the whole reason
+you get woken.
+
+## Timing is yours to arrange
+
+**Nothing wakes you at a time you name.** You wake shortly after the process starts, and
+then on the pulse cadence for as long as anything is open. There is no clock and there
+will not be one: a `due:` is read and ordered, never fired. That is deliberate, and it
+leaves the arranging to you — you have a shell, and you can use it.
+
+Two shapes, and reach for the first:
+
+- **Something to do periodically.** Your own glance-up is usually the whole mechanism —
+  you wake, you read what's open, you do what's due, you stamp `checked:`. Nothing to
+  install. If it wants finer timing than the pulse gives you, set up a real recurring job
+  (`cron`, `launchd`, whatever the box has) that does the work and leaves its result
+  where you'll find it. Either way the trace on disk is what matters, not the timer.
+- **Something at a precise moment.** Give a worker the job of waiting and messaging you
+  when it's time. It costs an idle session, so keep it for when the minute genuinely
+  matters.
+
+Whatever you install, **its liveness lives in `verify:`, and you re-check it on every
+glance.** Anything you set up outside your own memory — a cron entry, a background
+process, a scheduler that isn't yours — can vanish without telling you: a restart, a
+reboot, an expiry, a machine that was never running at the time. Assume it can, write the
+`verify:` that would catch it, and write `restart:` so the repair is mechanical rather
+than reconstructed. **Never say a duty is running because you set it up once.**
+
 Nobody has to go looking for them: what's open is put in front of the conversation at
 the top of every turn. So whatever happens to the process, we wake up knowing what we're
 responsible for.

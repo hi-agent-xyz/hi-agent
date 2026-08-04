@@ -65,7 +65,7 @@ Four properties, each earned:
    surviving. This is the claim the rest rests on — recovery reads the log, never a live
    process.
 2. **Both directions, everything that crossed.** In *and* out: what was said and what was
-   shown, not just what was sent to us, and clock-driven wakes and worker reports alongside
+   shown, not just what was sent to us, and pulse-driven wakes and worker reports alongside
    them. A restart that cannot reconstruct what the agent already said will say it again.
    **The honest gap today is outbound**, which is barely recorded — the concept is decided,
    the coverage is not there yet.
@@ -224,7 +224,22 @@ Four properties, each earned by a real failure:
 3. **Liveness is a contract, not an existence check** — a serving task carries how to verify
    it is really alive (a count, not "something is running"), how to restart it, and either
    an owner or an idempotent start so two scenes cannot both relaunch it.
+
+   This is the property that lets an agent pick **any** timing mechanism it likes — cron,
+   `launchd`, a parked worker — without the host knowing or caring, so it carries the weight
+   of [the clock we declined](core.md#glancing-up--and-why-there-is-no-clock). It only works
+   if `verify` names a **result**. *"a cron job with this id exists"* passes forever, including
+   when the job has never once fired — a watch shipped exactly that way, reported healthy, and
+   had never fetched a price. *"`checked` was stamped in the last 3h by a run that returned
+   real prices"* fails within one cadence for a job that never fires, a plist that never
+   loaded, or a worker a restart killed. **`checked` is the one liveness field code reads**,
+   and it is stamped only when the check came back *alive* — a probe that came back down must
+   never stamp it, or the field records attention rather than health.
 4. **Never pruned by reflection while open.**
+
+A task's `due` is **read, never fired**. It orders the projection and marks what is overdue;
+nothing in the host wakes on it, so a deadline is met at the next glance rather than at its
+minute. An alarm that must land on the minute is the agent's to build.
 
 A task is the **durable record**; a [worker](agents.md#workers) is a volatile execution of
 it. Conflating the two is what would turn recovery back into checkpointing.

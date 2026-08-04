@@ -2,7 +2,7 @@
 //! flowing between hi-agent and every session's ACP subprocess.
 //!
 //! The [`Observatory`](crate::foundation::observatory::Observatory) renders the *reactor's*
-//! view of a session (turns, context budget, hot-swaps, alarms). This is the
+//! view of a session (turns, context budget, hot-swaps). This is the
 //! opposite: the rawest possible window, knowing nothing about the reactor. It
 //! taps the one place every frame transits — the `with_debug` hook on the ACP
 //! connection (see [`crate::foundation::acp::process`]) — and records each line verbatim,

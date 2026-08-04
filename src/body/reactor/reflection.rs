@@ -164,15 +164,6 @@ async fn run(reactor: Reactor, registration: Registration) {
                         }
                         continue;
                     }
-                    // Same as Cognition's: alarms are the clock's, the clock is deferred
-                    // (`docs/arch/core.md#clock`), and no rung that could schedule one is
-                    // offered the tool — so this arm is unreachable rather than unused.
-                    // Reflection's *own* cadence is the backoff above, which is a loop
-                    // inside this subsystem and deliberately not a clock client.
-                    Some(SceneControl::Alarm { note, .. }) => {
-                        tracing::warn!(note = %note, "reflection has no clock (deferred); alarm dropped");
-                        continue;
-                    }
                     None => break,
                 }
             }

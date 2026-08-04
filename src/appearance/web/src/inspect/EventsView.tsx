@@ -63,10 +63,6 @@ function summary(e: SessionEvent): ReactNode {
       return `#${n("id")}: ${clip(s("task"), 120)}`;
     case "worker_finished":
       return `#${n("id")}: ${s("state")}, ${n("summary_chars")} chars`;
-    case "alarm_scheduled":
-      return `+${n("delay_s")}s: ${clip(s("note"), 120)}`;
-    case "alarm_fired":
-      return clip(s("note"), 120);
     default:
       return clip(JSON.stringify(payload(e)));
   }

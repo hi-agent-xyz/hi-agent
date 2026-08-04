@@ -422,20 +422,20 @@ fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
         // the previous occupant of this arm survived: it held the legacy agentic
-        // reactor's kit — `say`, `show_view`, `alarm`, `record_reflex`, `see`, `watch` —
+        // reactor's kit — `say`, `show_view`, `record_reflex`, `see`, `watch` —
         // long after no live role mapped to it, and read as a live surface in every
         // review. It was also a live hazard, not just clutter: `SessionRole::Deliberation`
         // stringifies to `deliberation`, which had no arm until the one above, so the
         // moment anything constructed that role it would have landed *here* and been
         // handed `say` (refused at dispatch) with no `send_message` at all.
         //
-        // Two tools lose their only declaration with this, and both were already
-        // unreachable: `alarm`, whose clock is deferred (`docs/arch/core.md#clock`), and
+        // One tool lost its only declaration with this and was already unreachable:
         // `record_reflex`, which still has **no live role** — the recognizer and the
         // invoke route are real, so the reflex store can be read and fired but never
         // written. That is an open decision, not an oversight: it needs a rung or it
         // needs deleting, and it is now visibly nobody's rather than sitting in an arm
-        // that looked live.
+        // that looked live. (`alarm` was the other, and it is gone outright — see
+        // `docs/arch/core.md` on the clock we declined.)
         _ => vec![],
     }
 }
@@ -832,13 +832,6 @@ async fn dispatch_tool(
                 (None, None) => None,
             };
             sink.show_view(arg_opt("id"), op, source, geometry).await.map(|()| "shown")
-        }
-        "alarm" => {
-            let delay = arg_str("delay");
-            if delay.trim().is_empty() {
-                return tool_error("alarm requires a `delay`");
-            }
-            sink.send(SceneControl::Alarm { delay, note: arg_str("note") }).await.map(|()| "alarm scheduled")
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
@@ -1814,7 +1807,7 @@ mod surface_tests {
     /// An unknown role gets **nothing**, and that is the point.
     ///
     /// This arm used to hold the legacy agentic reactor's kit — `say`, `show_view`,
-    /// `alarm`, `record_reflex`, `see`, `watch` — with a comment saying no live role
+    /// `record_reflex`, `see`, `watch` — with a comment saying no live role
     /// mapped here. It was not merely dead: `SessionRole::Deliberation` stringifies to
     /// `deliberation`, which had no arm, so the moment that role was constructed it
     /// would have landed here and been handed `say` (refused at dispatch) and no

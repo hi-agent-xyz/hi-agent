@@ -138,10 +138,12 @@ async fn run(reactor: Reactor, registration: Registration) {
     // Cognition's own wake. Until this existed the rung that **owns the ledger** was
     // woken only by mail, while the pulse woke the rungs that cannot read it — so a
     // standing duty survived a restart on disk and nothing ever picked it back up.
-    // `docs/arch/agents.md` has always specified the recovery sequence ("the clock
-    // fires → Cognition wakes → reads open tasks → …"); this is the half of it that
-    // was missing, and it is the narrow fix `tasks::due_before` names rather than the
-    // deferred clock module.
+    // `docs/arch/agents.md` has always specified the recovery sequence ("the glance-up
+    // fires → Cognition wakes → reads open tasks → …"); this is the half of it that was
+    // missing. It is **not** a scheduler and never becomes one: a clock module was
+    // designed, deferred, and then declined outright — scheduling past this cadence is
+    // the agent's own, built with the shell it already has
+    // (`docs/arch/core.md#glancing-up--and-why-there-is-no-clock`).
     //
     // Two wakes, deliberately different things: the **boot** one fires once because a
     // restart happened, and the **recurring** one fires into idleness because a duty
@@ -201,24 +203,6 @@ async fn run(reactor: Reactor, registration: Registration) {
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
                         }
-                        continue;
-                    }
-                    // Alarms are the clock's, and **the clock is still deferred** — see
-                    // `tasks::due_before` for what that costs and
-                    // `docs/arch/core.md#clock` for the shape it would take. A rung that
-                    // cannot schedule one is not offered the tool (the `alarm` declaration
-                    // sits in the dead `_` arm of `tools_for_role`, which no live role maps
-                    // to), so this arm is unreachable rather than merely unused — say so
-                    // rather than let it read as handled.
-                    //
-                    // The timer arm above is the "twenty-line answer" this comment used to
-                    // point forward to, and it is **not** the clock: it wakes this one rung
-                    // on a cadence, so a duty is noticed at pulse rate instead of never.
-                    // What still needs the clock is `At(_)` — a task due at a *specific*
-                    // time still fires nothing, so a deadline is met at the next glance
-                    // rather than when it comes due.
-                    Some(SceneControl::Alarm { note, .. }) => {
-                        tracing::warn!(note = %note, "cognition has no clock (deferred); alarm dropped");
                         continue;
                     }
                     None => break,

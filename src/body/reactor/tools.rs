@@ -6,8 +6,8 @@
 //! directly. Instead each scene registers a [`ToolSink`] — a control-channel
 //! sender — into a shared [`ToolRegistry`] keyed by scene. The MCP handler looks
 //! the sink up by the call's `X-HI-Scene` header and forwards a [`SceneControl`]
-//! the loop applies on its own turn, so worker-registry and alarm state stay
-//! owned by the loop with no locking.
+//! the loop applies on its own turn, so the worker registry stays owned by the
+//! loop with no locking.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,8 +23,9 @@ use super::sequencer::Beat;
 /// Once there were four: two for dispatching work and two for a worker to reach the
 /// voice. The reaching ones are gone — a worker addresses its owner with the one verb
 /// now, through the switchboard, which needs no per-scene channel because it is not
-/// per-scene. What is left here is what genuinely belongs to *this scene's loop*
-/// because the loop owns the state it touches.
+/// per-scene. `Alarm` went with [the clock we declined](../../../docs/arch/core.md);
+/// scheduling is the agent's own, built with the shell it already has. What is left
+/// is one variant, and it is here because the loop owns the state it touches.
 #[derive(Debug)]
 pub enum SceneControl {
     /// Start a working session for `task` (the `create_worker` tool), owned by the
@@ -36,14 +37,10 @@ pub enum SceneControl {
     /// answers to; a worker belongs to the session that created it, never to the scene
     /// it happens to run in.
     CreateWorker { id: u64, task: String, kind: crate::identity::WorkerType, owner: Option<u64> },
-    /// Schedule a self-wake after `delay` (e.g. `30s`, `20m`, `1h`) carrying
-    /// `note` (the `alarm` tool). The delay is parsed loop-side; an unparseable
-    /// one is dropped.
-    Alarm { delay: String, note: String },
 }
 
 /// Per-scene handle the MCP handler dispatches to. Cheap to clone. Carries two
-/// senders: `control` for loop-applied side-effects (the alarm), and
+/// senders: `control` for loop-applied side-effects (creating a worker), and
 /// `mouth` for output (say/show_view) that the scene's sequencer renders directly
 /// — output bypasses the turn loop so it streams while the prompt is still
 /// running.

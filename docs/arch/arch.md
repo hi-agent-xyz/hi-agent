@@ -80,7 +80,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
                out: say · show · act
   ─────────────────────────────────────────────────────────────────────────────
   CORE         wire · scene router · channel mux · arbiter · presence ·
-  (Rust)       sessions (+ heartbeat) · reflex · clock · vendor gate
+  (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
   AGENTS       per scene:  Reaction ⟷ Deliberation
                sceneless:  Cognition · Reflection
@@ -113,9 +113,12 @@ Each is a statement we can test, and each has a real failure behind it.
 4. **Open tasks are projected, not retrieved.** Retrieval can miss, and a missed duty is a
    silently broken promise. The general form — what earns a place in any window at all — is
    the [projection test](data.md#what-earns-a-place).
-5. **Clocks wake agents; they never speak.** An empty room holds the turn rather than
-   dropping it.
-6. **The clock holds no durable state.** Every timer is rebuilt from open tasks at startup.
+5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
+   through Reaction, and an empty room holds the turn rather than dropping it.
+6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
+   glancing up — the scene pulse, the reflection backoff, Cognition's glance-up. Scheduling
+   past that is the agent's to build with the shell it already has; see
+   [the clock we declined](core.md#glancing-up--and-why-there-is-no-clock).
 7. **Recovery is reconstruction, not continuation.** Workers are volatile, so anything
    valuable is written down before the crash.
 8. **A liveness probe that returns nothing means the thing is DOWN.** Count, don't check for
@@ -132,7 +135,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | Doc | Covers |
 |---|---|
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
-| [`core.md`](core.md) | the Rust host: scene routing, the arbiter, sessions, reflex, clock |
+| [`core.md`](core.md) | the Rust host: scene routing, the arbiter, sessions, reflex, glancing up |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |

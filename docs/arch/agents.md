@@ -141,10 +141,15 @@ deciding that is judgment, not bookkeeping a scene rung should do in passing.
 
 It has no scene, which is what makes it the right home for everything that has no scene:
 
-> **After a restart, before any user input:** the clock fires → Cognition wakes → reads open
-> tasks → checks what already landed so nothing is redone → creates workers for what is still
-> wanted → for the user-facing ones, messages the task's `report_to` scene, where its
-> Deliberation frames it and Reaction voices it when the room is right.
+> **After a restart, before any user input:** the glance-up fires → Cognition wakes → reads
+> open tasks → runs each one's `verify` and believes the answer → checks what already landed
+> so nothing is redone → does or re-arms what is still wanted → for the user-facing ones,
+> messages the task's `report_to` scene, where its Deliberation frames it and Reaction voices
+> it when the room is right.
+
+This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
+loop ([`core.md`](core.md#glancing-up--and-why-there-is-no-clock)) — one wake shortly after
+the process starts, then on the pulse cadence while anything is owed.
 
 Answers travel back the way they came: what a Deliberation handed up returns to that
 Deliberation. Cognition is sceneless, so its results arrive unframed — the scene rung is what
@@ -313,7 +318,7 @@ what does not belong to its tempo, and the rung below absorbs the silence.
 
 ## See also
 
-[`core.md`](core.md) for the switchboard and the clock ·
+[`core.md`](core.md) for the switchboard and glancing up ·
 [`data.md`](data.md) for what they read and write ·
 [`legacy/reactor-cognition-split.md`](legacy/reactor-cognition-split.md) for the three-tempo
 version this supersedes.

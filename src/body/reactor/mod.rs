@@ -113,7 +113,7 @@ const SWAP_TIMEOUT: Duration = Duration::from_secs(180);
 /// simply carries that fact.
 const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
 
-/// Resolve the pulse interval from the stored `pulse` tunable in alarm-delay grammar
+/// Resolve the pulse interval from the stored `pulse` tunable in duration grammar
 /// if set (`None` for `0`/`off` — pulses disabled), else [`DEFAULT_PULSE`].
 /// Shared with [`cognition`], which paces its own glance-up on the same knob: one
 /// "how often does this agent look up from what it's doing" setting, not a scene one
@@ -139,7 +139,7 @@ const DEFAULT_REFLECT_EVERY: Duration = Duration::from_secs(60);
 /// scene re-checks at most this often.
 const DEFAULT_REFLECT_MAX: Duration = Duration::from_secs(8 * 3600);
 
-/// Resolve a stored duration tunable in alarm-delay grammar (`90s`/`30m`/`1h`; bare
+/// Resolve a stored duration tunable in duration grammar (`90s`/`30m`/`1h`; bare
 /// integer = seconds): `None` for `off`/`0` (disabled), the parsed value, or
 /// `default` when unset / unparseable. (The value is already trimmed / non-empty by
 /// [`config::tunables::get`].)
@@ -184,7 +184,7 @@ const DEFAULT_VENDOR_DOWN_AFTER: u32 = 2;
 /// A transient-outage retry never waits longer than this — the 1h ceiling.
 const BACKOFF_CAP: Duration = Duration::from_secs(3600);
 
-/// The base transient-outage retry gap. `vendor_probe` in alarm-delay grammar;
+/// The base transient-outage retry gap. `vendor_probe` in duration grammar;
 /// `off`/`0`/unset/unparseable → default. (Kept under the historical config key.)
 fn backoff_base() -> Duration {
     duration_tunable(config::tunables::get(config::KEY_VENDOR_PROBE), DEFAULT_VENDOR_PROBE)
@@ -468,10 +468,6 @@ const SCENE_QUEUE_CAPACITY: usize = 64;
 enum LoopInput {
     Human(Signal),
     Worker(workers::WorkerReport),
-    /// A self-scheduled wake firing. The mind asked for it earlier with the
-    /// `alarm` tool; when its deadline passes the loop injects this so a
-    /// turn runs even though no new signal arrived.
-    Alarm(AlarmFired),
     /// A host pulse firing — the recurring moment of self-attention. Carries
     /// bare situational facts; what to do with such a moment is core.md's job.
     Pulse { note: String },
@@ -490,77 +486,13 @@ enum LoopInput {
     Mail(Vec<crate::foundation::registry::Message>),
 }
 
-/// One fired self-alarm, handed to the mind under "New signals".
-struct AlarmFired {
-    /// The note the mind left its future self ("check if they're still asleep").
-    note: String,
-}
-
-/// A scene loop's pending self-alarms. The scene wakes for one of two reasons —
-/// a new signal, or the soonest of these firing. Only the mind schedules them,
-/// by calling the `alarm` tool. A flat Vec is plenty: a scene has at most a
-/// handful pending at once.
+/// Parse a duration token: a bare integer is seconds, or an integer with an
+/// `s`/`m`/`h` suffix (`30s`, `20m`, `1h`). `None` for anything unparseable, so a
+/// malformed setting falls back to its default rather than taking a wrong value.
 ///
-/// **Unreachable today, and kept on purpose.** The `alarm` tool declaration sits
-/// in the dead `_` arm of `tools_for_role` — no live role maps there — so nothing
-/// calls `schedule_alarm` and nothing ever lands in `pending`. That is a
-/// consequence of the clock being **deferred** rather than half-built: these
-/// alarms are per-scene, live on the loop's stack, and **die with the process**,
-/// which is invariant 6 ("the clock holds no durable state; every timer is
-/// rebuilt from open tasks at startup") left unmet rather than met a different
-/// way. See `mind::memory::tasks::due_before` for what the deferral costs and
-/// `docs/arch/core.md#clock` for the module that would replace this.
-///
-/// Kept rather than deleted because it is the seed: a real clock arms per-target
-/// timers exactly like this, and the parsing/coalescing here is the part that was
-/// already right. If the clock is still unbuilt when this file is next opened for
-/// other reasons, deleting it and re-deriving from `due_before` is also fine —
-/// what is not fine is leaving it looking like a working scheduler.
-struct Alarms {
-    pending: Vec<PendingAlarm>,
-}
-
-struct PendingAlarm {
-    fire_at: Instant,
-    note: String,
-}
-
-impl Alarms {
-    fn new() -> Self {
-        Self { pending: Vec::new() }
-    }
-
-    /// Register a wake `delay` from `now` carrying `note`.
-    fn schedule(&mut self, delay: Duration, note: String, now: Instant) {
-        self.pending.push(PendingAlarm { fire_at: now + delay, note });
-    }
-
-    /// The soonest pending deadline, or `None` if nothing is scheduled — the
-    /// loop then blocks on the inbound queue with no timer arm at all.
-    fn next_deadline(&self) -> Option<Instant> {
-        self.pending.iter().map(|a| a.fire_at).min()
-    }
-
-    /// Remove and return every alarm whose deadline has passed by `now`.
-    fn take_due(&mut self, now: Instant) -> Vec<AlarmFired> {
-        let mut fired = Vec::new();
-        let mut i = 0;
-        while i < self.pending.len() {
-            if self.pending[i].fire_at <= now {
-                let a = self.pending.swap_remove(i);
-                fired.push(AlarmFired { note: a.note });
-            } else {
-                i += 1;
-            }
-        }
-        fired
-    }
-}
-
-/// Parse an alarm delay token: a bare integer is seconds, or an integer
-/// with an `s`/`m`/`h` suffix (`30s`, `20m`, `1h`). `None` for anything
-/// unparseable, so a malformed alarm is dropped rather than firing at a wrong
-/// time.
+/// Used only by [`duration_tunable`] now — this grammar outlived the `alarm` tool
+/// it was written for, because the config knobs (`pulse`, `reflect_every`,
+/// `reflect_max`, `vendor_probe`) are written by hand and want the same shorthand.
 fn parse_delay(tok: &str) -> Option<Duration> {
     let tok = tok.trim();
     let (digits, mult) = if let Some(n) = tok.strip_suffix(|c| c == 's' || c == 'S') {
@@ -574,29 +506,6 @@ fn parse_delay(tok: &str) -> Option<Duration> {
     };
     let n: u64 = digits.trim().parse().ok()?;
     Some(Duration::from_secs(n.saturating_mul(mult)))
-}
-
-/// Register a self-alarm from the `alarm` tool's `delay`/`note` arguments. A
-/// delay that won't parse is logged and dropped (fix-forward — the mind isn't
-/// blocked on it).
-async fn schedule_alarm(reactor: &Reactor, alarms: &mut Alarms, scene: &Scene, delay: &str, note: &str) {
-    match parse_delay(delay) {
-        Some(delay) => {
-            alarms.schedule(delay, note.to_owned(), Instant::now());
-            reactor
-                .inner
-                .observatory
-                .record(
-                    Some(scene),
-                    EventKind::AlarmScheduled { note: note.to_owned(), delay_s: delay.as_secs() },
-                )
-                .await;
-            tracing::info!(scene = %scene, delay_s = delay.as_secs(), note = %note, "alarm scheduled");
-        }
-        None => {
-            tracing::warn!(scene = %scene, token = %delay, "ignoring alarm with unparseable delay");
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -613,7 +522,7 @@ struct ReactorInner {
     /// has no knowledge of HTTP, `Content-Type`, or response framing.
     out: mpsc::Sender<OutboundSignal>,
     /// Structured visibility into the session lifecycle. Turn, session, swap,
-    /// worker and alarm events feed it; the HTTP front serves it.
+    /// worker events feed it; the HTTP front serves it.
     observatory: Observatory,
     /// Compiles agent-authored view source into an ESM module the browser
     /// imports. Invoked just-in-time when a view segment is released, so the
@@ -789,7 +698,7 @@ pub fn start(
 }
 
 /// Channels that do **not** count as a scene being alive. Exactly one: `clock`,
-/// where the host's own wakes are recorded — a pulse firing, an alarm coming due.
+/// where the host's own wakes are recorded — a pulse firing, a return observed.
 ///
 /// This is load-bearing. Pulses are journaled (a restart otherwise sees a turn with
 /// no cause), but a heartbeat is not a conversation, and anything that spends money
@@ -931,8 +840,8 @@ fn save_rewarm_state(data_dir: &std::path::Path, state: &HashMap<String, u64>) {
 ///      restarting the host repeatedly within a day doesn't re-warm a quiet scene
 ///      each time.
 ///
-/// "Input" here is raw-memory activity, which excludes the clock's own channel —
-/// pulses and alarms are journaled, but they are the host talking to itself and
+/// "Input" here is raw-memory activity, which excludes `Channel::Clock` —
+/// pulses are journaled, but they are the host talking to itself and
 /// must never look like input, or condition 1 would be satisfied by the very
 /// heartbeat re-warming produced (see [`NON_ACTIVITY_CHANNELS`]). Standing/scheduled
 /// work (cron, serving) does NOT rely on re-warming: it belongs to the global
@@ -1082,7 +991,7 @@ impl Reactor {
         drop(scenes);
 
         // The scene's tool control channel: the `/mcp` server forwards delegate/
-        // alarm/ask calls here, the loop applies them. Register the sink before the
+        // create_worker calls here, the loop applies them. Register the sink before the
         // loop's session opens so a tool call can never arrive with no route.
         let (control_tx, control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
 
@@ -1136,7 +1045,7 @@ impl Reactor {
 }
 
 /// Why the per-scene loop's wait resolved. Keeps the `select!` arms tiny so the
-/// borrow checker doesn't trip on mutating `workers`/`alarms` inside them.
+/// borrow checker doesn't trip on mutating `workers` inside them.
 enum Woke {
     Inbound(Option<LoopInput>),
     Control(Option<SceneControl>),
@@ -1150,14 +1059,13 @@ enum Woke {
 }
 
 /// Apply one tool control command. Both are side-effects that run without a turn.
-/// The live-worker map and the alarm list are the loop's own state, so this is the
+/// The live-worker map is the loop's own state, so this is the
 /// only place an off-loop tool call touches them — through the control channel, no
 /// locking.
 async fn apply_control(
     reactor: &Reactor,
     scene: &Scene,
     workers: &mut workers::WorkerRegistry,
-    alarms: &mut Alarms,
     ctl: SceneControl,
 ) -> Option<LoopInput> {
     match ctl {
@@ -1165,10 +1073,6 @@ async fn apply_control(
             if let Err(err) = workers.spawn_with_id(reactor, id, task, kind, owner).await {
                 tracing::warn!(scene = %scene, error = %err, "failed to create a working session");
             }
-            None
-        }
-        SceneControl::Alarm { delay, note } => {
-            schedule_alarm(reactor, alarms, scene, &delay, &note).await;
             None
         }
     }
@@ -1202,10 +1106,6 @@ async fn per_scene_loop(
     // delegates runs here; workers post progress and results back through
     // `worker_inbound` into this same loop.
     let mut workers = workers::WorkerRegistry::new(scene.clone(), worker_inbound);
-    // Self-alarms the mind has scheduled. They give the loop a second reason to
-    // wake — time passing — on top of an incoming signal; see the `select!` below.
-    let mut alarms = Alarms::new();
-
     // The scene's address in the switchboard. **Registered once, here, for as long as
     // this loop lives** — not per session open. A scene is one conversation and has one
     // voice; the underlying session rotates beneath it (cold reopen, hot swap) and that
@@ -1251,10 +1151,10 @@ async fn per_scene_loop(
     let mut batch: Vec<LoopInput> = Vec::new();
 
     loop {
-        // Wait for a turn-driving reason: a new signal, a fired alarm, a due host
-        // pulse, a worker question, or — while the vendor is down — a backoff retry
-        // (429/generic). Tool control commands (delegate/alarm) are pure side-effects
-        // applied without a turn; only a worker `ask` becomes a turn-driving item.
+        // Wait for a turn-driving reason: a new signal, a due host pulse, a worker
+        // report, a return, or — while the vendor is down — a backoff retry
+        // (429/generic). Tool control commands are pure side-effects applied without
+        // a turn.
         'wait: loop {
             let gate = reactor.inner.vendor.scene_gate();
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1272,7 +1172,7 @@ async fn per_scene_loop(
                 SceneGate::Go => None,
                 SceneGate::Retry { at } => Some(at),
             };
-            let deadline = [alarms.next_deadline(), pulse_at, recover_at]
+            let deadline = [pulse_at, recover_at]
                 .into_iter()
                 .flatten()
                 .min();
@@ -1358,30 +1258,19 @@ async fn per_scene_loop(
                 Woke::Control(None) => continue 'wait,
                 Woke::Control(Some(ctl)) => {
                     if let Some(input) =
-                        apply_control(&reactor, &scene, &mut workers, &mut alarms, ctl).await
+                        apply_control(&reactor, &scene, &mut workers, ctl).await
                     {
                         enqueue(&reactor, &scene, &mut workers, &mut batch, input).await;
                         if !down {
                             break 'wait;
                         }
                     }
-                    // A delegate/alarm side-effect was applied; keep waiting for a
+                    // A control side-effect was applied; keep waiting for a
                     // turn-driving reason rather than running an empty turn.
                 }
                 Woke::Timer => {
                     let now = Instant::now();
                     if down {
-                        // Alarms still fire and queue while down — the mind asked to
-                        // be woken, and the note isn't lost — but they don't alone
-                        // drive a turn; a backoff retry does.
-                        for fired in alarms.take_due(now) {
-                            reactor
-                                .inner
-                                .observatory
-                                .record(Some(&scene), EventKind::AlarmFired { note: fired.note.clone() })
-                                .await;
-                            enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
-                        }
                         // Only a transient backoff drives a model retry, and only with
                         // mail to deliver. Out of energy holds instead — the shared
                         // poller flips us back Up and the top of 'wait then drains the
@@ -1394,14 +1283,6 @@ async fn per_scene_loop(
                             break 'wait;
                         }
                         continue 'wait;
-                    }
-                    for fired in alarms.take_due(now) {
-                        reactor
-                            .inner
-                            .observatory
-                            .record(Some(&scene), EventKind::AlarmFired { note: fired.note.clone() })
-                            .await;
-                        enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Alarm(fired)).await;
                     }
                     if let Some(at) = pulse_at
                         && at <= now
@@ -1430,7 +1311,7 @@ async fn per_scene_loop(
 
         // A timer can resolve with nothing actually due; don't run an empty turn.
         // (While Down, the probe only breaks 'wait with non-empty mail, so this
-        // guard is for the Up path's pulse/alarm timers.)
+        // guard is for the Up path's pulse timer.)
         if batch.is_empty() {
             continue;
         }
@@ -1578,8 +1459,8 @@ async fn per_scene_loop(
         // instead of one redundant turn each. Without this, each nudge that landed
         // mid-turn ("好了吗?" → "准备好了吗?") pops alone on re-entry and re-answers.
         // Up only: while down, mail is held deliberately and the backoff path owns
-        // catch-up, so leave the queue for it. `try_recv` never surfaces pulses or
-        // alarms (those are generated inside `'wait`, not sent over `inbound`).
+        // catch-up, so leave the queue for it. `try_recv` never surfaces a pulse
+        // (those are generated inside `'wait`, not sent over `inbound`).
         if !reactor.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
                 enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await;
@@ -1588,7 +1469,7 @@ async fn per_scene_loop(
     }
 }
 
-/// Render just the human requests in a batch (skipping worker reports, alarms, and
+/// Render just the human requests in a batch (skipping worker reports and
 /// pulses) — the text handed to Deliberation as the turn's task. Skipping reports is
 /// what keeps it from re-ingesting its own prior output (a feedback loop).
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
@@ -1977,7 +1858,7 @@ async fn record_out(reactor: &Reactor, scene: &Scene, channel: Channel, body: St
 }
 
 /// Append one turn-driving signal that reached the mind without crossing a wire —
-/// a pulse, a fired alarm, a worker's report. Without these the log shows a turn's
+/// a pulse, a return, a worker's report. Without these the log shows a turn's
 /// output with nothing that could have caused it, and a restart cannot tell that
 /// the turn happened at all, let alone why.
 async fn record_in(
@@ -2093,9 +1974,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Worker(report) => {
                 let _ = writeln!(s, "{}", workers::render_report(report));
             }
-            LoopInput::Alarm(a) => {
-                let _ = writeln!(s, "{}", render_alarm(a));
-            }
             LoopInput::Pulse { note } => {
                 let _ = writeln!(s, "{}", render_pulse(note));
             }
@@ -2108,10 +1986,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
         }
     }
     s
-}
-
-fn render_alarm(a: &AlarmFired) -> String {
-    format!("(alarm) \"{}\"", a.note)
 }
 
 /// Shared with [`cognition`] so both rungs' quiet moments arrive under the same
@@ -2151,9 +2025,6 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             Origin::Worker,
             workers::render_report_plainly(report),
         )),
-        // An alarm is a wake the mind asked for; a pulse is one the host simply
-        // delivers. Same channel, different hand on it.
-        LoopInput::Alarm(a) => Some((Channel::Clock, Origin::Reactor, render_alarm(a))),
         LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
         // A return is the person acting, but on no channel they typed into — so
         // nothing upstream journaled it, and this is its only chance to be written
@@ -2348,10 +2219,9 @@ fn render_view_line(id: &str, op: ViewOp, module_url: Option<&str>) -> String {
 }
 
 #[cfg(test)]
-mod alarm_tests {
-    use super::{Alarms, parse_delay};
+mod duration_tests {
+    use super::parse_delay;
     use std::time::Duration;
-    use tokio::time::Instant;
 
     #[test]
     fn parse_delay_reads_units() {
@@ -2367,31 +2237,5 @@ mod alarm_tests {
         assert_eq!(parse_delay("soon"), None);
         assert_eq!(parse_delay(""), None);
         assert_eq!(parse_delay("m"), None);
-    }
-
-    #[test]
-    fn fires_in_deadline_order_and_keeps_the_rest() {
-        let t0 = Instant::now();
-        let mut alarms = Alarms::new();
-        assert_eq!(alarms.next_deadline(), None);
-
-        alarms.schedule(Duration::from_secs(60), "later".into(), t0);
-        alarms.schedule(Duration::from_secs(10), "sooner".into(), t0);
-        assert_eq!(alarms.next_deadline(), Some(t0 + Duration::from_secs(10)));
-
-        // Nothing due before the soonest deadline.
-        assert!(alarms.take_due(t0 + Duration::from_secs(5)).is_empty());
-
-        // At 10s only "sooner" fires; the 60s one stays pending.
-        let fired = alarms.take_due(t0 + Duration::from_secs(10));
-        assert_eq!(fired.len(), 1);
-        assert_eq!(fired[0].note, "sooner");
-        assert_eq!(alarms.next_deadline(), Some(t0 + Duration::from_secs(60)));
-
-        // Past the last deadline the remaining one fires and the queue empties.
-        let fired = alarms.take_due(t0 + Duration::from_secs(120));
-        assert_eq!(fired.len(), 1);
-        assert_eq!(fired[0].note, "later");
-        assert_eq!(alarms.next_deadline(), None);
     }
 }
