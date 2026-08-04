@@ -4,11 +4,16 @@ import { App } from "./App";
 import { Inspect } from "./inspect/Inspect";
 import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
+import { applyHostChrome } from "./lib/chrome";
 import "./ui/global.css";
 
 // If the login gate is on, a 401 (session expired) bounces the tab to sign-in.
 // No-op when auth is disabled.
 installAuthGate();
+
+// Native chrome the page has to keep clear of (the desktop window's titlebar).
+// Read before the first render so nothing paints in the strip and then jumps.
+applyHostChrome();
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {

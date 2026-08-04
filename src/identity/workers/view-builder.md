@@ -181,6 +181,18 @@ to place yourself — that fights the frame. For `fill` the host steps back to a
 full-screen layer and you own the background and layout. No sidecar at all is fine too
 — you just get the centered default card.
 
+**The screen has edges that aren't yours.** The face runs in a desktop window, and the
+window's own chrome floats over the top of the page: the three system buttons in the
+top-left corner and the title beside them. The host already holds every view clear of
+that strip — a `fill` layer is padded by `var(--hi-safe-top)`, the framed regions more —
+so you get it for free *unless you take it back*: pinning your own header with
+`position: absolute/fixed; top: 0` escapes the padding and lands it under the buttons.
+Pin to `var(--hi-safe-top)` instead (a background pinned at `top: 0` is fine and even
+wanted — it's readable content that must stay out). The bottom band is shared too: the
+caption pills sit bottom-centre and the mic/camera controls hold the bottom-right
+corner, both floating *over* your view — so leave those two zones quiet rather than
+running a line of text through them.
+
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
 leaving an ugly broken box. Instead **download the image into your project folder**
 with your own tools (find it via web/image search, then `curl`/fetch it to a file

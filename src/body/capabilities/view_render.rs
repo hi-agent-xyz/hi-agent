@@ -122,9 +122,15 @@ impl RenderRequest {
     }
 
     /// The `/render/view` URL this request loads.
+    ///
+    /// It always carries `chrome=titlebar`: the review stands in for the desktop
+    /// window, whose content spans a native titlebar, so the page has to reserve
+    /// that strip here too. A review rendered without it is a review that can't
+    /// catch a header sitting under the traffic lights — which is precisely the
+    /// kind of fault only a screenshot finds.
     pub fn page_url(&self) -> String {
         let mut url = format!(
-            "{}/render/view?module={}",
+            "{}/render/view?module={}&chrome=titlebar",
             self.base_url.trim_end_matches('/'),
             urlencode(&self.module_url)
         );
@@ -318,6 +324,7 @@ mod tests {
         assert!(url.contains("module=%2Fviews%2F_compiled%2Fab12.mjs"), "{url}");
         assert!(url.contains("&region=fill"), "{url}");
         assert!(url.contains("&size=wide"), "{url}");
+        assert!(url.contains("&chrome=titlebar"), "the review reserves the titlebar: {url}");
         assert!(!url.contains("theme="), "an unset theme is not sent: {url}");
     }
 

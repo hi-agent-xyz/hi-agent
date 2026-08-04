@@ -93,7 +93,8 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  *
  * Placement comes from the compositor's floor (`floorLayout`), passed in by the
  * host: a `region:"fill"` view gets the bare full-bleed layer (it owns its own
- * background and layout); any other region gets a framed, surfaced layer whose
+ * background and layout, less the titlebar strip the OS chrome floats in — see
+ * `.hi-view-fill`); any other region gets a framed, surfaced layer whose
  * `data-region`/`data-size` the CSS resolves to position + width — so a view that
  * lays out nothing of its own still lands placed and legible. A view the floor
  * didn't place falls back to the centered card.
@@ -112,7 +113,7 @@ export function ViewSlot({ placements }: { placements: Map<string, Placement> })
         );
         if (p?.region === "fill") {
           return (
-            <div key={v.id} style={{ position: "absolute", inset: 0 }}>
+            <div key={v.id} className="hi-view-fill">
               {mount}
             </div>
           );

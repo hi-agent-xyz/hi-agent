@@ -68,7 +68,9 @@ every time.
   the point? If the point is buried under chrome, that is the finding.
 - **Does it fit the frame it will appear in?** You are reviewing it at its declared
   placement. Clipped text, a scrollbar where there should not be one, content hugging
-  one corner of a wide strip — all real.
+  one corner of a wide strip — all real. The render reserves the same top strip the
+  desktop window's system buttons and title float in, so anything the view pinned into
+  that strip anyway shows up here — call it.
 - **Is anything empty that should not be?** A section rendered with no content, a
   placeholder that survived, a zero where a number was meant to land.
 - **Does it read at a glance in both themes?** If contrast is the doubt, review it

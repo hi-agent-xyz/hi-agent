@@ -22,6 +22,7 @@ import { createRoot } from "react-dom/client";
 import { SessionContext } from "../core/session";
 import type { AgentSession } from "../hooks/useAgentSession";
 import { ActivityMeter } from "../lib/activityMeter";
+import { applyHostChrome } from "../lib/chrome";
 import "../ui/global.css";
 
 /** What the driver reads back out of the page. */
@@ -82,6 +83,12 @@ const theme = params.get("theme");
 if (theme === "dark" || theme === "light") {
   document.documentElement.setAttribute("data-theme", theme);
 }
+// The review render stands in for the desktop window, so it reserves the same
+// titlebar strip the window's chrome floats in (the driver asks for it in the
+// URL). Without this a view lays out to the full height here and only collides
+// with the traffic lights once it's on the person's screen — the exact class of
+// defect a review is for.
+applyHostChrome(window.location.search);
 
 /** A fabricated session: plausible sample state, no devices, no network. */
 const stubSession: AgentSession = {
@@ -186,7 +193,7 @@ function Preview() {
   if (!Comp) return null;
   if (region === "fill") {
     return (
-      <div style={{ position: "absolute", inset: 0 }}>
+      <div className="hi-view-fill">
         <Comp />
       </div>
     );

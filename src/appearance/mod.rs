@@ -163,7 +163,7 @@ async fn asset(Path(path): Path<String>) -> Response {
     serve_embedded(&format!("assets/{path}"))
 }
 
-/// `GET /render/view?module=…&region=…&size=…&theme=…` — a host page carrying
+/// `GET /render/view?module=…&region=…&size=…&theme=…&chrome=…` — a host page carrying
 /// exactly one agent view, for the headless renderer to load and screenshot.
 ///
 /// **Why a route at all.** A compiled view keeps its bare imports (`react`,

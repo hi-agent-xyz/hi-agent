@@ -25,7 +25,11 @@
 //! the `WKWebView` fills the *whole* window, so the page's own background — paper plus the
 //! live state-glow — paints under the titlebar too. Bar and content are then literally the
 //! same pixels in every state; nothing to keep in sync. The traffic lights float on top as
-//! usual, and the page already reserves ~[`BAR_H`] at the top for them. Because the web view
+//! usual, and the page keeps its *content* out of that strip: this window (and only this
+//! window — not the popover, not a browser tab) loads the face with `?chrome=titlebar`, which
+//! the page turns into a [`BAR_H`]-tall top inset every occupant of the stage pads by, agent
+//! views included. Background still paints through it; nothing readable sits in it. Because
+//! the web view
 //! now covers the titlebar's drag region, a transparent [`DragView`] strip on top restores
 //! window dragging; the window background colour ([`apply_face_theme`]) survives only as the
 //! pre-paint / live-resize fallback, and the centered `NSTextField` title floats over the
@@ -431,8 +435,15 @@ pub fn install(mtm: MainThreadMarker, url: &str, data_dir: PathBuf) {
         // Element) — it's the app's own content, so leaving it on lets the UI be debugged.
         webview.setInspectable(true);
 
-        let Some(nsurl) = NSURL::URLWithString(&NSString::from_str(url)) else {
-            tracing::warn!(url, "window: bad URL; face window not installed");
+        // Tell the page it is being shown under a titlebar. The same URL is also the
+        // popover's and a browser tab's, and neither of those has one — so the flag
+        // rides on this load alone, and the page reserves the strip only here
+        // (`lib/chrome.ts` → `--hi-chrome-top`, matching [`BAR_H`]). Without it a
+        // full-bleed view lays out to the very top and its header sits under the
+        // traffic lights.
+        let page = format!("{url}?chrome=titlebar");
+        let Some(nsurl) = NSURL::URLWithString(&NSString::from_str(&page)) else {
+            tracing::warn!(url = %page, "window: bad URL; face window not installed");
             return;
         };
         let request = NSURLRequest::requestWithURL(&nsurl);
