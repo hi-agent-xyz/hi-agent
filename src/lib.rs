@@ -146,10 +146,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // Structured visibility into the ACP session lifecycle. The agent layer,
     // reactor, workers and heartbeat feed it; `GET /api/sessions` reads the live
     // mirror and `GET /api/sessions/events` streams the history over SSE.
-    let observatory = foundation::observatory::Observatory::new(
-        Some(config.data_dir.join("sessions.jsonl")),
-        body::reactor::swap_budget_chars(),
-    );
+    let observatory =
+        foundation::observatory::Observatory::new(Some(config.data_dir.join("sessions.jsonl")));
 
     // Raw ACP wire tap — every JSON-RPC frame, business-logic agnostic. The agent
     // layer hands it to each scene's subprocess; `GET /api/acp/frames/events`

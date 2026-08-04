@@ -2,7 +2,7 @@
 //!
 //! ACP sessions are otherwise invisible: a scene's persistent reactor session,
 //! ephemeral worker sessions (each on its own subprocess), in-flight prompts,
-//! heartbeat hot-swaps all live only as scattered `tracing`
+//! session lifecycle events all live only as scattered `tracing`
 //! lines. The observatory is an additive, cloneable handle (like [`Memory`] or
 //! [`TextBus`]) that the reactor, workers and heartbeat feed as
 //! those things happen. It keeps two things:
@@ -38,7 +38,7 @@ const HISTORY_CAP: usize = 1000;
 const BROADCAST_CAP: usize = 512;
 
 /// Which kind of ACP session this is — the reactor's persistent mind, an
-/// ephemeral worker, the throwaway summarizer a hot-swap briefs from, or the
+/// ephemeral worker or the
 /// reflection ("sleep") pass that consolidates raw into episodes/facets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,25 +92,21 @@ pub struct TurnView {
 pub struct SceneView {
     pub scene: Scene,
     pub reactor_session: Option<SessionView>,
-    /// Accumulated prompt+reply chars since the live session was last opened/swapped.
+    /// Accumulated prompt+reply chars since the live session was last opened. Reported
+    /// only — nothing thresholds on it. Bounding a session's context is the underlying
+    /// agent's job (see [`crate::body::reactor::heartbeat`]), so there is no ceiling here
+    /// to render it against.
     pub budget_chars: usize,
-    /// The soft ceiling at which the heartbeat hot-swaps (mirrors `SWAP_AFTER_CHARS`).
-    pub swap_after_chars: usize,
-    pub swap_count: u64,
-    pub last_swap_at: Option<DateTime<Utc>>,
     pub last_turn: Option<TurnView>,
     pub turns_total: u64,
 }
 
 impl SceneView {
-    fn new(scene: Scene, swap_after_chars: usize) -> Self {
+    fn new(scene: Scene) -> Self {
         Self {
             scene,
             reactor_session: None,
             budget_chars: 0,
-            swap_after_chars,
-            swap_count: 0,
-            last_swap_at: None,
             last_turn: None,
             turns_total: 0,
         }
@@ -145,7 +141,6 @@ pub enum EventKind {
     TurnStarted { turn: u64, input: String },
     /// `reply` is the agent's spoken text for this turn (markers stripped).
     TurnFinished { turn: u64, stop_reason: Option<String>, reply_chars: usize, reply: String },
-    HotSwap { old_id: String, new_id: String, briefing_chars: usize },
     WorkerSpawned { id: u64, task: String },
     /// A warm (finished-but-idle) worker was handed a follow-up task and is running
     /// again on the same session.
@@ -186,7 +181,6 @@ struct Inner {
     tx: broadcast::Sender<SessionEvent>,
     /// Where to append the durable event log, or `None` to skip persistence.
     jsonl: Option<PathBuf>,
-    swap_after_chars: usize,
 }
 
 struct History {
@@ -197,9 +191,7 @@ struct History {
 impl Observatory {
     /// Build an observatory. `jsonl` is where to append durable events (created
     /// lazily on first append); pass `None` to keep history in-memory only.
-    /// `swap_after_chars` is the heartbeat's swap ceiling, surfaced per scene so
-    /// the dashboard can render the budget as a fraction.
-    pub fn new(jsonl: Option<PathBuf>, swap_after_chars: usize) -> Self {
+    pub fn new(jsonl: Option<PathBuf>) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             inner: Arc::new(Inner {
@@ -207,7 +199,6 @@ impl Observatory {
                 history: Mutex::new(History { seq: 0, ring: VecDeque::new() }),
                 tx,
                 jsonl,
-                swap_after_chars,
             }),
         }
     }
@@ -271,7 +262,7 @@ impl Observatory {
     }
 
     fn fresh(&self, scene: &Scene) -> SceneView {
-        SceneView::new(scene.clone(), self.inner.swap_after_chars)
+        SceneView::new(scene.clone())
     }
 
     /// Fold an event into the live mirror. Pure state transition; no I/O.
@@ -287,7 +278,7 @@ impl Observatory {
         let mut scenes = self.inner.scenes.write().await;
         let view = scenes
             .entry(scene.clone())
-            .or_insert_with(|| SceneView::new(scene.clone(), self.inner.swap_after_chars));
+            .or_insert_with(|| SceneView::new(scene.clone()));
 
         match kind {
             EventKind::SessionOpened { kind, id } => match kind {
@@ -343,18 +334,6 @@ impl Observatory {
                     finished_at: Some(now),
                     stop_reason: stop_reason.clone(),
                     reply_chars: Some(*reply_chars),
-                });
-            }
-            EventKind::HotSwap { new_id, .. } => {
-                view.swap_count += 1;
-                view.last_swap_at = Some(now);
-                view.budget_chars = 0;
-                view.reactor_session = Some(SessionView {
-                    id: new_id.clone(),
-                    kind: SessionKind::Reactor,
-                    opened_at: now,
-                    in_flight: false,
-                    turns: 0,
                 });
             }
             // Worker lifecycle is history, not scene state — see [`SceneView`]. A
@@ -438,7 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn mirrors_reactor_session_and_turn() {
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         let s = scene();
         obs.record(
             Some(&s),
@@ -470,33 +449,12 @@ mod tests {
         assert_eq!(v.last_turn.as_ref().unwrap().reply_chars, Some(42));
     }
 
-    #[tokio::test]
-    async fn hot_swap_resets_budget_and_bumps_count() {
-        let obs = Observatory::new(None, 48_000);
-        let s = scene();
-        obs.record(
-            Some(&s),
-            EventKind::SessionOpened { kind: SessionKind::Reactor, id: "old".into() },
-        )
-        .await;
-        obs.set_budget(&s, 50_000).await;
-        obs.record(
-            Some(&s),
-            EventKind::HotSwap { old_id: "old".into(), new_id: "new".into(), briefing_chars: 800 },
-        )
-        .await;
-        let v = &obs.snapshot().await[0];
-        assert_eq!(v.swap_count, 1);
-        assert_eq!(v.budget_chars, 0);
-        assert_eq!(v.reactor_session.as_ref().unwrap().id, "new");
-    }
-
     /// Worker lifecycle is history, and *only* history. It used to fold into a
     /// per-scene `workers` vec — a list that could only ever hold the workers hosted
     /// in that scene, which after the pool moved process-wide meant none of them.
     #[tokio::test]
     async fn worker_lifecycle_is_history_not_scene_state() {
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         let s = scene();
         obs.record(Some(&s), EventKind::WorkerSpawned { id: 1, task: "research X".into() }).await;
         obs.record(
@@ -517,7 +475,7 @@ mod tests {
     /// row on the dashboard — no arm had to use it.
     #[tokio::test]
     async fn a_sceneless_event_is_recorded_and_mirrors_nothing() {
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         obs.record(
             None,
             EventKind::SessionOpened { kind: SessionKind::Reflection, id: "refl-1".into() },
@@ -532,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_replays_then_streams_live_without_dup() {
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         let s = scene();
         obs.record(
             Some(&s),

@@ -65,12 +65,6 @@ pub use interrupts::InterruptRegistry;
 pub use outbound::OutboundSignal;
 pub use tools::{SceneControl, Spoken, ToolRegistry, ToolSink};
 
-/// The heartbeat's soft context-budget ceiling, surfaced so the observatory can
-/// render each scene's budget as a fraction of where a hot-swap kicks in.
-pub fn swap_budget_chars() -> usize {
-    heartbeat::swap_after_chars()
-}
-
 use chrono::Utc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::{Instant, sleep_until, timeout};
@@ -94,15 +88,6 @@ use uuid::Uuid;
 /// *finalized* (and POSTed); this governs how long we wait to see if another one
 /// follows.
 const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
-
-/// Ceiling on a between-turns hot-swap. The swap prompts the *live* session for a
-/// self-briefing with unbounded awaits beneath it; if that session is wedged (a
-/// pathological turn can leave the subprocess unresponsive), an un-capped swap
-/// blocks the scene loop forever — signals keep queueing but no turn ever runs,
-/// and the scene goes deaf until a restart. On expiry the session is discarded:
-/// it ignored a prompt for this whole window, so the journal cold-open path is
-/// strictly better than waiting.
-const SWAP_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Default idle interval between host pulses — the scene's recurring moment of
 /// self-attention. A pulse is not a schedule of work: it injects bare situational
@@ -521,7 +506,7 @@ struct ReactorInner {
     /// (see [`outbound`]). A transport adapter binds these to a wire. The reactor
     /// has no knowledge of HTTP, `Content-Type`, or response framing.
     out: mpsc::Sender<OutboundSignal>,
-    /// Structured visibility into the session lifecycle. Turn, session, swap,
+    /// Structured visibility into the session lifecycle. Turn, session,
     /// worker events feed it; the HTTP front serves it.
     observatory: Observatory,
     /// Compiles agent-authored view source into an ESM module the browser
@@ -1095,20 +1080,21 @@ async fn per_scene_loop(
 ) {
     // The scene's persistent reactor session: opened lazily on the first turn,
     // then reused for every later turn as the scene's continuous mind. Only this
-    // loop touches it, so a plain local `Option` suffices; the heartbeat swap
-    // below replaces it in place, between turns.
+    // loop touches it, so a plain local `Option` suffices. It is replaced only when a
+    // turn fails: the `Err` arm below discards the possibly-wedged session and the next
+    // turn cold-opens. Size is not a reason to replace it — the underlying agent
+    // compacts its own context (see [`heartbeat`]).
     let mut reactor_session: Option<Arc<AcpSession>> = None;
-    // Retained for the observatory's budget readout; the reactor turn no longer
-    // feeds it, so the hot-swap it gated never fires (the reactor re-opens cold on
-    // failure instead). Left in place until the hot-swap path is fully retired.
-    let mut budget = heartbeat::ContextBudget::new();
+    // What the live session has accumulated, for the observatory readout only. Reset
+    // when the session is replaced, so the number always describes the session on air.
+    let mut session_chars: usize = 0;
     // The scene's live working sessions. Heavy/tool-using work the reactor
     // delegates runs here; workers post progress and results back through
     // `worker_inbound` into this same loop.
     let mut workers = workers::WorkerRegistry::new(scene.clone(), worker_inbound);
     // The scene's address in the switchboard. **Registered once, here, for as long as
     // this loop lives** — not per session open. A scene is one conversation and has one
-    // voice; the underlying session rotates beneath it (cold reopen, hot swap) and that
+    // voice; the underlying session may rotate beneath it (a cold reopen after a failure) and that
     // is an implementation detail nothing outside should be able to observe. Registering
     // at session-open minted a second Reaction for the same scene on every reopen, and
     // a sender was then offered whichever the lookup happened to find first.
@@ -1357,66 +1343,22 @@ async fn per_scene_loop(
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
                 batch.clear();
-                // Feed the context budget. This is the writer that did not exist: the
-                // counter, the ceiling and the swap were all built, and nothing ever
-                // incremented it, so a scene's session grew without bound until a turn
-                // failed and it cold-reopened from the log — losing the conversation's
-                // fluency, which is exactly what the swap exists to preserve.
-                budget.add(added);
-                reactor.inner.observatory.set_budget(&scene, budget.chars()).await;
                 // A reply landed — stop the presence owed-reply clock (no-op if
                 // nothing was owed, e.g. a pulse turn).
                 reactor.inner.presence.note_delivered(&scene);
-                // Between turns: if the live session has grown past budget, hot-swap
-                // it now. The human is consuming the reply just delivered, so the
-                // summarize-and-reopen happens in that natural gap — invisible, never
-                // a cold restart. A swap failure leaves the warm session in place.
-                // (Reflection is no longer kicked off here — it runs on its own
-                // periodic clock in the wait loop above, decoupled from compaction.)
-                if budget.should_swap() {
-                    if let Some(current) = reactor_session.clone() {
-                        match timeout(
-                            SWAP_TIMEOUT,
-                            heartbeat::swap(&reactor, &scene, &current, voice_id),
-                        )
-                        .await
-                        {
-                            Ok(Ok(fresh)) => {
-                                reactor_session = Some(fresh);
-                                budget.reset();
-                                tracing::info!(scene = %scene, "reactor session hot-swapped");
-                            }
-                            Ok(Err(err)) => {
-                                tracing::warn!(scene = %scene, error = %err, "hot-swap failed; keeping warm session");
-                            }
-                            Err(_) => {
-                                // The live session ignored the summarize prompt for the
-                                // whole window — treat it as wedged and discard it, the
-                                // same as a failed turn; the next turn cold-opens a fresh
-                                // session from the journal snapshot.
-                                tracing::warn!(scene = %scene, "hot-swap timed out; discarding unresponsive session");
-                                if let Some(dead) = reactor_session.take() {
-                                    reactor
-                                        .inner
-                                        .observatory
-                                        .record(
-                                            Some(&scene),
-                                            EventKind::SessionClosed {
-                                                kind: SessionKind::Reactor,
-                                                id: dead.id().0.to_string(),
-                                            },
-                                        )
-                                        .await;
-                                }
-                                budget.reset();
-                                reactor.inner.observatory.set_budget(&scene, 0).await;
-                            }
-                        }
-                    }
-                }
+                // Report what the session has accumulated, for the dashboard only.
+                // **Nothing thresholds on this.** Bounding a session's context is the
+                // underlying agent's job — it compacts in place, near its real window,
+                // with numbers we cannot see from out here. See `heartbeat`'s module doc
+                // for why the character-counting hot-swap that used to live here was
+                // deleted rather than retuned.
+                session_chars = session_chars.saturating_add(added);
+                reactor.inner.observatory.set_budget(&scene, session_chars).await;
             }
             Err(err) => {
                 tracing::warn!(scene = %scene, error = %err, "turn failed");
+                session_chars = 0;
+                reactor.inner.observatory.set_budget(&scene, 0).await;
                 // Discard the possibly-wedged session; the next turn cold-opens a
                 // fresh one and rebuilds context from the journal snapshot.
                 if let Some(dead) = reactor_session.take() {
@@ -1434,8 +1376,6 @@ async fn per_scene_loop(
                 }
                 // Dropping the session means the next turn cold-opens and its
                 // fresh-session branch re-ingests the journal snapshot.
-                budget.reset();
-                reactor.inner.observatory.set_budget(&scene, 0).await;
                 // Key on the vendor state the turn just wrote, not the pre-turn one:
                 // a turn that flipped the vendor down holds the mail — a backoff drives
                 // it at the next retry deadline. Only a still-reachable blip (already
@@ -1557,8 +1497,7 @@ async fn run_reactor_turn(
     )
     .await;
 
-    // Captured before the prompt is handed over — it is moved into `drive_voice`, and
-    // this count is half of what the context budget is fed at the end of the turn.
+    // Captured before the prompt is handed over — it is moved into `drive_voice`.
     let context_chars = context.chars().count();
     tracing::info!(scene = %scene, ctx_chars = context_chars, "reactor: prompting session");
     let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
@@ -1641,13 +1580,9 @@ async fn run_reactor_turn(
         }
     }
     // What this turn added to the session's context: everything we sent plus everything
-    // it said back. A coarse proxy — we never see the model's token count — but it is the
-    // proxy `ContextBudget` was always written against, and **nothing was ever feeding
-    // it**, so `should_swap()` was permanently false and the swap has never run once.
-    //
-    // Under-counts on purpose rather than over-: the reply here is what was *spoken*, not
-    // the model's full output including its working-out. An under-count swaps late, and
-    // late is the survivable direction — the ceiling sits well below a real window.
+    // it said back. Nothing thresholds on it any more — the underlying agent bounds its
+    // own context — but the turn still reports it, because it is the one honest measure
+    // of what a turn costs and the observatory renders it.
     Ok(context_chars + reply.chars().count())
 }
 
@@ -1664,9 +1599,10 @@ async fn run_reactor_turn(
 /// state and injects it on every turn instead.
 ///
 /// The costs are real and accepted. The block rides in every user message, so the
-/// session's history accumulates one copy per turn until the next hot-swap rotates it
-/// — which is why the bound in [`crate::mind::memory::snapshot::CARRIED_FORWARD_CHARS`]
-/// belongs to code. And the reads (the generated prompt, the task dimension, the log
+/// session's history accumulates one copy per turn — which is why the bound in
+/// [`crate::mind::memory::snapshot::CARRIED_FORWARD_CHARS`] belongs to code. Keeping
+/// that block small is now the only lever we hold on context growth, since bounding the
+/// session itself is the underlying agent's job (see [`heartbeat`]). And the reads (the generated prompt, the task dimension, the log
 /// tail) now happen per turn rather than per session; each is small, none can fail the
 /// turn, and the alternative is an agent that answers from a stale window.
 async fn turn_context(
@@ -1751,7 +1687,7 @@ mod turn_context_tests {
 /// may also put one already-built view on screen.
 ///
 /// `voice_id` is the loop's own switchboard registration — the *same* id across every
-/// reopen and every hot-swap, because the scene has one voice however many subprocesses
+/// reopen, because the scene has one voice however many subprocesses
 /// have hosted it. Passing it is what puts `X-HI-Session-Id` on the session's MCP
 /// attach; without it the voice held a mailbox it had no identity to send from, and
 /// `send_message` answered "this session has none" to the one rung that talks most.

@@ -21,28 +21,37 @@
 //!    this, a sceneless rung borrows an arbitrary scene and quietly files its work under
 //!    a stranger's conversation.
 //!
-//! ## The registration outlives the session, deliberately
+//! ## One long-lived session; the agent bounds its own context
 //!
-//! The address is registered **once, for the life of the process**, and the ACP session
-//! is opened **per wake** and dropped when the turn ends. Two different lifetimes for two
-//! different things: an address must be stable (nothing durable may hold a session id,
-//! and a prompt certainly cannot), while a session is disposable — `docs/arch/core.md`:
-//! *"Sessions are host-owned and disposable. Continuity lives in `data/`, not in a
-//! process."*
+//! The address is registered **once, for the life of the process**; the ACP session is
+//! opened once and **held across wakes**, replaced only when it breaks. Two different lifetimes for two different things: an address
+//! must be stable (nothing durable may hold a session id, and a prompt certainly cannot),
+//! while a session is *replaceable* — `docs/arch/core.md`: *"No session is a source of
+//! truth — continuity lives in `data/`."*
 //!
-//! This is not a style preference. A long-lived session that dies mid-turn — subprocess
-//! crash, vendor outage, transport reset — leaves a handle that fails every subsequent
-//! prompt, and Cognition has nothing above it to notice. `drive_worker` has exactly this
-//! shape and gets away with it because a worker's TTL closes it; the process-lifetime
-//! singleton would just wedge, accepting mail and failing silently. Per-wake makes that
-//! state unrepresentable. It also means context rot has nowhere to accumulate, so the
-//! unbuilt session-swap (N5) is not a dependency, and it forces continuity through the
-//! ledger and `cognition.md` — where the design says continuity lives — rather than
-//! hiding it in a conversation nobody can read back.
+//! **This reverses the per-wake session this rung shipped with, and the reason is a
+//! failure that was observed rather than predicted.** Reopening every wake meant Cognition
+//! could not remember that it had already done something, and the ledger cannot hand that
+//! back: the ledger records what is **owed**, not what has been arranged, tried, or ruled
+//! out. Live, it armed a recurring check, forgot it had, woke to its own ledger entry
+//! warning that the check was fragile, and deleted it as redundant — every step correct
+//! given what it could see. Continuity of *work* is not a fact projection can supply, so
+//! the session has to carry it.
 //!
-//! The cost, stated: a subprocess spawn per wake, and no memory of the last wake except
-//! what was written down. At "minutes and beyond" the spawn is noise, and the second half
-//! is the point rather than the price.
+//! The original objection stands and is answered rather than dismissed: a long-lived
+//! session that dies mid-turn leaves a handle failing every later prompt with nothing
+//! above it to notice. So a failed turn **drops the session** (see the turn's error arm),
+//! and a wedged one cannot outlive a single turn. Wedged-and-silent stays unrepresentable;
+//! the difference is that recovery costs one cold open instead of being the steady state.
+//!
+//! **Nothing here bounds the session by size**, and that is deliberate: the underlying
+//! agent compacts its own context in place. See [`super::heartbeat`]'s module doc for why
+//! the character-counting swap that briefly lived here was deleted rather than retuned —
+//! in short, it could not see most of the context it claimed to measure, and it threw away
+//! exactly the working thread this rung is long-lived in order to keep.
+//!
+//! The cost, stated: a resident subprocess. What it buys is a rung that knows what it was
+//! in the middle of.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,7 +59,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use crate::foundation::acp::{SessionOpts, SessionUpdate};
+use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, SessionKind};
 use crate::foundation::registry::{self, Registration};
@@ -153,6 +162,17 @@ async fn run(reactor: Reactor, registration: Registration) {
     let mut last_turn = started;
     let mut woke_at_boot = false;
 
+    // **One session, held across wakes** (`docs/arch/agents.md#session-lifetime-per-rung`).
+    // It used to be opened per wake and dropped, which made this rung unable to remember
+    // that it had already done something — and the ledger cannot hand that back, because
+    // the ledger records what is *owed*, not what has been arranged, tried, or ruled out.
+    // The observed failure: it armed a timer, forgot it had, woke to a ledger entry saying
+    // that timer was fragile, and deleted it as redundant.
+    //
+    // `None` means "open one on the next turn": the cold-open path is the same one a
+    // failed turn falls back to, so there is exactly one way in.
+    let mut session: Option<Arc<AcpSession>> = None;
+
     tracing::info!(cognition = id, "cognition up");
 
     loop {
@@ -237,15 +257,24 @@ async fn run(reactor: Reactor, registration: Registration) {
 
         workers.reap();
 
-        match turn(&reactor, id, &scene, &pending).await {
+        match turn(&reactor, id, &scene, &pending, &mut session).await {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed. The recurring wake above is
                 // now what carries it: a failed turn used to wait for the next message
                 // to arrive, which for a sceneless rung could be never.
-                tracing::warn!(cognition = id, error = %err, "cognition turn failed; mail held");
+                //
+                // **Drop the session too.** A handle that failed once will usually fail
+                // every later prompt, and nothing above would notice a rung that has gone
+                // quietly deaf — the exact failure mode the per-wake session used to make
+                // unrepresentable. Dropping it means the retry cold-opens, which costs one
+                // subprocess and loses only the working thread; the ledger and the carried
+                // notes are re-projected either way.
+                session = None;
+                tracing::warn!(cognition = id, error = %err, "cognition turn failed; session dropped, mail held");
             }
         }
+
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         last_turn = Instant::now();
@@ -332,64 +361,81 @@ mod tests {
     }
 }
 
-/// One wake: open a session, prompt it once, drop it.
+/// One wake: prompt the held session, opening one first if there isn't one.
 ///
-/// The window goes in as part of the prompt rather than the system prompt because the
-/// session is per-wake — there is no long-lived context for it to go stale in, and
-/// building it fresh each time is what makes "projected, not retrieved" true rather than
-/// true-at-open.
+/// The window goes in as part of **every** prompt rather than the system prompt, and now
+/// that the session is long-lived that is load-bearing rather than incidental: a task
+/// opened, a duty closed, or a note written since this session started is exactly what it
+/// cannot have remembered, because it did not exist yet. Injecting per turn is what makes
+/// "projected, not retrieved" true rather than true-at-open — the same correction the
+/// scene loop's prompt builder carries.
 async fn turn(
     reactor: &Reactor,
     id: registry::SessionId,
     scene: &Scene,
     pending: &[String],
+    held: &mut Option<Arc<AcpSession>>,
 ) -> anyhow::Result<()> {
     let data_dir = reactor.inner.memory.data_dir();
-    // One file, whole. It used to be `character_seed` + this layer, with the rung Reading
-    // its own character off disk; `cognition.md` is now self-contained.
-    let system_prompt = crate::identity::cognition_prompt(data_dir).await;
 
-    let session = Arc::new(
-        reactor
-            .inner
-            .agent
-            .session(
-                scene,
-                SessionRole::Cognition,
-                Some(id),
-                SessionOpts {
-                    system_prompt: Some(system_prompt),
-                    // The data dir: the ledger it writes lives under it, and it has no
-                    // view workshop to work in — it delegates the making of things.
-                    cwd: Some(data_dir.to_path_buf()),
-                    // Left at the adapter's defaults so it can read and write the ledger,
-                    // which is a plain facet on disk and needs no tool of its own.
-                    //
-                    // Worth naming rather than leaving to read as considered-and-fine:
-                    // this also hands it a shell, and the whole point of the rung is that
-                    // it delegates rather than does. That is guidance in `cognition.md`,
-                    // not a rail — `docs/arch/foundation.md` is explicit that tool
-                    // surfaces are sized for context, not to fence anyone out.
-                    builtin_tools: None,
-                },
-            )
-            .await?,
-    );
+    // Reuse the held session; open one only when there isn't one — first turn after
+    // start, or after a failure/wedge dropped it.
+    let session = if let Some(existing) = held.as_ref() {
+        existing.clone()
+    } else {
+        {
+            // One file, whole. It used to be `character_seed` + this layer, with the rung
+            // Reading its own character off disk; `cognition.md` is now self-contained.
+            let system_prompt = crate::identity::cognition_prompt(data_dir).await;
+            let opened = Arc::new(
+                reactor
+                    .inner
+                    .agent
+                    .session(
+                        scene,
+                        SessionRole::Cognition,
+                        Some(id),
+                        SessionOpts {
+                            system_prompt: Some(system_prompt),
+                            // The data dir: the ledger it writes lives under it, and it has
+                            // no view workshop to work in — it delegates the making of
+                            // things.
+                            cwd: Some(data_dir.to_path_buf()),
+                            // Left at the adapter's defaults so it can read and write the
+                            // ledger, which is a plain facet on disk and needs no tool of
+                            // its own.
+                            //
+                            // Worth naming rather than leaving to read as
+                            // considered-and-fine: this also hands it a shell, and the whole
+                            // point of the rung is that it delegates rather than does. That
+                            // is guidance in `cognition.md`, not a rail —
+                            // `docs/arch/foundation.md` is explicit that tool surfaces are
+                            // sized for context, not to fence anyone out.
+                            builtin_tools: None,
+                        },
+                    )
+                    .await?,
+            );
 
-    reactor
-        .inner
-        .observatory
-        .record(
-            // Sceneless: `*cognition*` is a routing tag, not a conversation, and the
-            // mirror keys on scene. Passing it would put a room nobody is in on the
-            // dashboard.
-            None,
-            EventKind::SessionOpened {
-                kind: SessionKind::Cognition,
-                id: session.id().0.to_string(),
-            },
-        )
-        .await;
+            reactor
+                .inner
+                .observatory
+                .record(
+                    // Sceneless: `*cognition*` is a routing tag, not a conversation, and the
+                    // mirror keys on scene. Passing it would put a room nobody is in on the
+                    // dashboard.
+                    None,
+                    EventKind::SessionOpened {
+                        kind: SessionKind::Cognition,
+                        id: opened.id().0.to_string(),
+                    },
+                )
+                .await;
+
+            *held = Some(opened.clone());
+            opened
+        }
+    };
 
     let window = snapshot::agent_window(&reactor.inner.memory, COGNITION_AGENT, id).await;
     let messages = pending.join("\n\n");

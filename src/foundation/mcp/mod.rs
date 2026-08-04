@@ -1882,7 +1882,7 @@ mod surface_tests {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reactor::ToolRegistry::new();
         let partial = Mutex::new(HashMap::new());
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         let scene = Scene("boss".to_string());
 
         for role in [Some("reactor"), Some("worker"), Some("deliberation"), None] {
@@ -1917,7 +1917,7 @@ mod surface_tests {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reactor::ToolRegistry::new();
         let partial = Mutex::new(HashMap::new());
-        let obs = Observatory::new(None, 48_000);
+        let obs = Observatory::new(None);
         let scene = Scene("boss".to_string());
 
         let got = dispatch_tool(

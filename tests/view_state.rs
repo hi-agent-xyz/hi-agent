@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
     let memory = Memory::open(dir).await.expect("memory");
     let observatory =
-        hi_agent::foundation::observatory::Observatory::new(None, hi_agent::body::reactor::swap_budget_chars());
+        hi_agent::foundation::observatory::Observatory::new(None);
     let (router, seams) = server::build(
         memory,
         dir.to_path_buf(),

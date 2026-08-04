@@ -47,7 +47,7 @@ so an upgrade replaces one and never the other.
 
 ### Observatory
 
-A **live operational mirror**: turns, sessions, swaps, workers — what the machine is
+A **live operational mirror**: turns, sessions, workers — what the machine is
 doing *right now*, structured enough to answer "why is it quiet" without trawling output.
 
 **It is deliberately not [the log](data.md#memoryraw), and those two must not be merged** —

@@ -27,6 +27,12 @@
 //! 1. **An address that lasts.** The registration was created *inside* the pass and
 //!    dropped with it, so between passes Reflection was unreachable and during one its id
 //!    was nobody's to know. It now registers once, for the life of the process.
+//!
+//!    **That its id is not projected to anyone is correct, not a gap.** Nothing addresses
+//!    Reflection: no prompt names it as a recipient, and it wakes on its own backoff clock,
+//!    not on mail. The registration exists so that a rung *has* a stable identity — it is
+//!    not a promise that someone will write to it. This keeps being re-filed as "Reflection
+//!    is unreachable"; it is unreachable the way a room with no door is under-furnished.
 //! 2. **A drain.** Nothing read its inbox — the note this replaces said so outright. A
 //!    registered rung nobody reads is a mailbox that answers "delivered" and forgets.
 //! 3. **A host for its workers.** Without a sink of its own, `create_worker` fell through

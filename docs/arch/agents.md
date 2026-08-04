@@ -181,8 +181,9 @@ tidy its own memory, and would degrade in a way nothing in the conversation reve
 session, prompted it once and dropped it. It could dispatch a worker and then not read
 the report, because the session that asked was already gone. The rung is Cognition's
 shape now — a process-lifetime address, a loop that drains its inbox, its own worker
-host, and a session per wake — and it wakes two ways: its own backoff clock for a
-settling pass, and mail for everything else.
+host — and it wakes two ways: its own backoff clock for a settling pass, and mail for
+everything else. It keeps the **session per pass** that Cognition has since given up, and
+that divergence is deliberate: see [Session lifetime](#session-lifetime-per-rung).
 
 **Never speaks.** That belongs to Reaction, and a second mouth inside the consolidation
 loop is a second voice. What it wants said it sends to Cognition or to a scene, and
@@ -210,6 +211,48 @@ Both kinds are **prose in `reflection.md`**. Adding one is not a code change.
 
 One red line: reflection may **archive verbatim and write pointers, never paraphrase stored
 bytes**.
+
+### Session lifetime, per rung
+
+Specified here because it was previously specified nowhere, and two documents drifted apart in
+the gap: `core.md` described how a long-lived session is kept bounded, while Cognition
+was built to reopen per wake. Both were defensible readings. This is the decision.
+
+| Rung | Session | Replaced when |
+|---|---|---|
+| **Reaction** | one per scene, long-lived | a turn fails |
+| **Deliberation** | one per scene, long-lived | a turn fails, or it sits idle past a TTL |
+| **Cognition** | one, process-wide, long-lived | a turn fails |
+| **Reflection** | **one per pass** | never — the pass ends |
+| Workers | one per errand | the errand ends, or an idle TTL |
+
+**Nothing in this column is about size.** Context growth is bounded by the underlying agent,
+which compacts in place; see [`core.md`](core.md#session-layer) for why that is not ours to
+do. A session is replaced here only because it **broke**.
+
+Deliberation keeps the idle TTL it inherited from the worker machinery it shares: a scene
+quiet for long enough drops it, and the next turn opens a fresh one. That is a **resource**
+bound — it exists so a long-dead conversation does not hold a subprocess forever, which is the
+one cost a resident rung carries. Retiring it wants its own evidence about how many scenes a
+real install keeps alive.
+
+**The three thinking rungs are long-lived from creation.** A rung that reopens each time cannot
+remember what it was in the middle of — and that is not something the ledger can hand back,
+because the ledger records what is **owed**, not what has already been tried, ruled out, or
+half-arranged. The failure this prevents is specific and was observed: a rung that arranged a
+mechanism, forgot it had, woke to a ledger entry warning that the mechanism was fragile, and
+deleted it as redundant. The ledger was correct at every step; the rung had no memory of its own
+authorship.
+
+**Reflection is the deliberate exception.** Its pass is self-contained — it sweeps, writes, and
+is done — and its backoff can reach hours, so a resident session would only rot between passes.
+Per-pass is not a lesser version of long-lived here; it is the right shape for work that has no
+thread to keep.
+
+**Losing a long-lived session is always survivable**, and that is what makes this safe rather
+than a new dependency: every rung's state is *re-projected into every turn* — what is owed, what
+it carries forward, who it can reach. A session that wedges is discarded and reopened cold; it
+loses the thread, never the truth. This is why a session may break loudly and the system is fine.
 
 ## Cross-scene knowledge
 

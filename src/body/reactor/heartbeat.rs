@@ -1,213 +1,62 @@
-//! Heartbeat hot-swap — bound the persistent reactor session's growth without
-//! the conversation ever seeing a cold restart.
+//! The reflection ("sleep") pass — consolidate each scene's raw frontier into
+//! episodes and facets, cluster faces and voices, and fade what has gone cold.
 //!
-//! A persistent session is a warm, continuous mind, but it also grows without
-//! bound: every turn appends to its context. Left alone it eventually rots
-//! (early context crowded out) or overflows the model's window. The heartbeat
-//! keeps it bounded *invisibly*: once a session has accumulated enough, the
-//! next gap between turns is used to (1) ask the live session for a compact
-//! self-briefing, (2) open a replacement seeded with that briefing plus the
-//! recent journal tail, and (3) hand it back so the loop swaps it in. The
-//! conversation experiences continuity, never a cold restart; the journal stays
-//! the durable backstop if a swap fails.
+//! ## There is no session-swap here, on purpose — the agent compacts itself
+//!
+//! This module used to also own a **hot-swap**: count a session's accumulated
+//! prompt+reply characters, and once past a ceiling ask it for a self-briefing and
+//! reopen a replacement seeded with that briefing. It is **deleted**, and nothing
+//! replaced it, because **the underlying agent already compacts its own context in
+//! place** — automatically, near its real window, with far better information than we
+//! have out here.
+//!
+//! We were never in a position to do this well:
+//!
+//! - **We cannot see the context.** `ContextBudget` counted characters *we* sent and
+//!   received. It could not see the harness's own system prompt and tool schemas —
+//!   the large majority of every request — so the number it thresholded on was a
+//!   small, drifting fraction of the truth.
+//! - **We cannot compact in place.** The ACP surface is `session/new`,
+//!   `session/prompt`, `session/cancel`, `session/update`; there is no compaction
+//!   method. Summarize-and-reopen was not the chosen design, it was the only move
+//!   available from outside the boundary — and it is strictly lossier than what the
+//!   agent does internally.
+//! - **The ceiling was wrong by more than an order of magnitude.** 48,000 chars is
+//!   roughly 3% of a 1M-token window. In practice a scene crossed it within one
+//!   sitting, so an ordinary conversation was being summarized and restarted
+//!   repeatedly, for nothing.
+//! - **It fought the rungs being long-lived.** Cognition is long-lived so it can
+//!   remember what it already arranged (`docs/arch/agents.md#session-lifetime-per-rung`).
+//!   Swapping at 3% of the window threw that thread away and handed back a paragraph —
+//!   the same forgetting the long-lived session exists to prevent, just slower.
+//!
+//! **So: context bounding is the underlying agent's job, and we do not duplicate it.**
+//! If a future wire genuinely has no auto-compaction, the honest fix is to bound it in
+//! that adapter where the real numbers are visible — not to re-add a character counter
+//! up here that cannot see what it is counting.
+//!
+//! What still bounds a session from out here is failure, not size: a turn that errors
+//! discards the session and the next one cold-opens (see the `Err` arms in
+//! [`super::scene_loop`] and [`super::cognition`]). The [log](super) remains the durable
+//! backstop either way.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::foundation::acp::{AcpSession, SessionOpts};
+use crate::foundation::acp::SessionOpts;
 use crate::foundation::agent::SessionRole;
 use crate::body::capabilities::{face, voiceprint};
 use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
-use crate::mind::memory::{Snapshot, build_for_scene, decay, episodes, facets, layout, people_vectors, refresh_hot};
+use crate::mind::memory::{decay, episodes, facets, layout, people_vectors, refresh_hot};
 use crate::foundation::observatory::EventKind;
 use crate::foundation::registry;
 use crate::types::{Channel, JournalEntry, Scene};
 use crate::foundation::vendors::ffmpeg_frame;
 
 use super::Reactor;
-
-/// Default soft ceiling on a session's accumulated prompt+reply characters
-/// before the heartbeat swaps it. A coarse proxy for context pressure — we
-/// don't see the model's token count, and an over-estimate just swaps a little
-/// early, which is harmless (the replacement is seeded). Kept well below a
-/// typical model window so the briefing-plus-tail seed always fits with room to
-/// grow. Overridable via the stored `compact` tunable — see [`swap_after_chars`].
-pub(crate) const DEFAULT_SWAP_AFTER_CHARS: usize = 48_000;
-
-/// Resolve the hot-swap ceiling: the stored `compact` tunable if it parses to a
-/// positive integer, else [`DEFAULT_SWAP_AFTER_CHARS`]. Read from the startup
-/// snapshot so the observatory denominator and a budget opened mid-run agree.
-pub(crate) fn swap_after_chars() -> usize {
-    crate::foundation::config::tunables::get(crate::foundation::config::KEY_COMPACT)
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_SWAP_AFTER_CHARS)
-}
-
-/// Tracks how much the live session has accumulated since it was opened, so the
-/// per-scene loop can decide when to hot-swap. Cheap; lives in that loop.
-pub(super) struct ContextBudget {
-    chars: usize,
-    /// Ceiling this budget swaps at — captured from [`swap_after_chars`] when
-    /// the budget is opened so it stays stable across the session's turns.
-    limit: usize,
-}
-
-impl ContextBudget {
-    pub(super) fn new() -> Self {
-        Self {
-            chars: 0,
-            limit: swap_after_chars(),
-        }
-    }
-
-    /// Add what a completed turn put into the session — the prompt we sent plus the
-    /// reply it gave back.
-    ///
-    /// **This is the writer that was missing.** `chars` was read by [`Self::should_swap`]
-    /// and zeroed by [`Self::reset`] and incremented by nothing, so the swap could not
-    /// fire and the observatory's budget readout sat at zero for every scene. Both were
-    /// reporting a mechanism that was not running.
-    pub(super) fn add(&mut self, chars: usize) {
-        self.chars = self.chars.saturating_add(chars);
-    }
-
-    /// What the session has accumulated — the observatory's numerator.
-    pub(super) fn chars(&self) -> usize {
-        self.chars
-    }
-
-    pub(super) fn should_swap(&self) -> bool {
-        self.chars >= self.limit
-    }
-
-    /// Reset after a swap (or after the session is discarded on error).
-    pub(super) fn reset(&mut self) {
-        self.chars = 0;
-    }
-}
-
-#[cfg(test)]
-mod budget_tests {
-    use super::*;
-
-    /// The swap has never once run, because the counter it reads had no writer: `chars`
-    /// was read by `should_swap` and zeroed by `reset` and incremented by nothing. This
-    /// pins the writer, so the mechanism cannot go back to being a thing that typechecks
-    /// and never fires.
-    #[test]
-    fn a_turn_moves_the_budget_and_eventually_trips_the_swap() {
-        let mut b = ContextBudget { chars: 0, limit: 100 };
-        assert!(!b.should_swap(), "a fresh session is nowhere near the ceiling");
-        assert_eq!(b.chars(), 0);
-
-        b.add(40);
-        b.add(40);
-        assert_eq!(b.chars(), 80, "turns accumulate; the observatory reads this");
-        assert!(!b.should_swap());
-
-        b.add(40);
-        assert!(b.should_swap(), "past the ceiling, the next gap between turns swaps");
-
-        b.reset();
-        assert_eq!(b.chars(), 0, "a swap starts the replacement's budget over");
-        assert!(!b.should_swap());
-    }
-}
-
-/// Instruction the live session answers to brief its successor. Framed as an
-/// internal request so the model produces a dense briefing, not a spoken reply.
-const SUMMARIZE_PROMPT: &str = "[internal request — this is not from the person you're talking \
-with, and you are not speaking to anyone; produce no spoken reply] Write a compact briefing of our \
-conversation so far for your future self: who you're talking with, what they are working on, \
-decisions and facts established, anything still open or promised, and where the current \
-thread stands. Be terse and information-dense — this seeds a fresh session that must \
-continue the conversation seamlessly. Output only the briefing.";
-
-/// Summarize the live session and open a fresh replacement for `scene`, seeded
-/// with that briefing plus the recent journal tail. Runs between turns, so the
-/// session is free to take the summarize prompt. On any failure the caller
-/// keeps the existing warm session — the swap is best-effort.
-///
-/// `voice_id` is the scene's standing switchboard registration, reused verbatim — a
-/// swap rotates the subprocess, not the voice. It is deliberately **not** re-registered
-/// here: the entry belongs to the per-scene loop and is scope-bound to it, and minting
-/// a second Reaction for one scene is the bug `9e6ae45` fixed (a sender was then
-/// offered whichever the lookup happened to find first).
-pub(super) async fn swap(
-    reactor: &Reactor,
-    scene: &Scene,
-    current: &Arc<AcpSession>,
-    voice_id: registry::SessionId,
-) -> anyhow::Result<Arc<AcpSession>> {
-    // Ask the live session to brief its successor. The reply is captured here and
-    // never emitted or spoken — it seeds the new session so the conversation
-    // continues across the swap without a visible seam. (Episodes/facets are NOT
-    // written here: consolidation reads the raw log, not this lossy self-summary —
-    // see [`reflect`], which runs on its own periodic clock, not at this swap.)
-    let briefing = {
-        let run = current.prompt(SUMMARIZE_PROMPT.to_string()).await?;
-        run.wait().await?.text
-    };
-    let briefing_chars = briefing.chars().count();
-
-    // The verbatim recent tail — the immediate thread the briefing might compress
-    // away.
-    let tail = build_for_scene(&reactor.inner.memory, scene)
-        .await
-        .ok()
-        .as_ref()
-        .map(Snapshot::render_for_prompt)
-        .unwrap_or_default();
-
-    // Seed the replacement with the same brief a fresh Reaction opens with, plus the
-    // briefing and recent tail, so it continues without a visible seam. Everything
-    // else the voice knows — what the scene carries forward, what's owed, the
-    // proactivity read — rides in on every turn anyway now, not on the open.
-    let seeded_system_prompt = format!(
-        "{}\n\n## Briefing from your earlier conversation\n{}\n\n{}",
-        crate::identity::reactor_system_prompt(reactor.inner.memory.data_dir()).await,
-        briefing.trim(),
-        tail.trim(),
-    );
-
-    let fresh = reactor
-        .inner
-        .agent
-        .session(
-            scene,
-            crate::foundation::agent::SessionRole::Reactor,
-            Some(voice_id),
-            SessionOpts {
-                system_prompt: Some(seeded_system_prompt),
-                cwd: None,
-                // Same hard limit as a fresh Reaction: a swap that handed the built-ins
-                // back would make "cannot wait on anything" true only until the first
-                // rotation.
-                builtin_tools: Some(Vec::new()),
-            },
-        )
-        .await?;
-
-    reactor
-        .inner
-        .observatory
-        .record(
-            Some(scene),
-            EventKind::HotSwap {
-                old_id: current.id().0.to_string(),
-                new_id: fresh.id().0.to_string(),
-                briefing_chars,
-            },
-        )
-        .await;
-
-    Ok(Arc::new(fresh))
-}
 
 /// Below this many unconsolidated signals, a reflection round is skipped — not
 /// worth a whole session (and its subprocess spawn) to file a handful of lines;

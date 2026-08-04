@@ -47,8 +47,6 @@ pub const LLM_WIRES: &[(&str, &str)] = &[("claude", "Claude Code")];
 pub const KEY_EFFORT: &str = "effort";
 /// Adapter `permissions.defaultMode` in settings.json (e.g. acceptEdits).
 pub const KEY_PERMISSION_MODE: &str = "permission_mode";
-/// Reactor heartbeat hot-swap character ceiling. Blank / non-positive → default.
-pub const KEY_COMPACT: &str = "compact";
 /// Idle interval between host pulses. Duration grammar (`90s`/`30m`/`1h`);
 /// `0`/`off` disables pulses; unset / unparseable → the built-in default.
 pub const KEY_PULSE: &str = "pulse";

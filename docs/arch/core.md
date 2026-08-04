@@ -19,7 +19,7 @@ thinking layers are slow, confused, or dead.
 | The reflex path never reaches a model | Stopping when someone starts talking cannot wait a generation |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
 | The host opens the agent's eyes; the agent owns its own timers | A scheduler we build dies with the process; a crontab the agent writes does not |
-| Sessions are host-owned and disposable | Continuity lives in `data/`, not in a process |
+| Sessions are host-owned and **replaceable** | No session is a source of truth — continuity lives in `data/`. Replaceable is not the same as short-lived: every thinking rung keeps **one long-lived session**, so it can remember what it was doing — while nothing downstream depends on it surviving. It is replaced when it breaks, not when it grows; growth is the underlying agent's to compact |
 
 ## Components
 
@@ -137,15 +137,37 @@ Exposes each ACP session as an independent handle — prompt it, read its update
 close. One subprocess per session, so one session's crash cannot touch another. A warm pool
 absorbs spawn latency for the sessions that are created per delegation.
 
-Long-lived sessions rot — every turn appends, until early context is crowded out or the
-window overflows. The **heartbeat** bounds that invisibly: it is itself a session kind, whose
-job is to ask the rotting session for a compact self-briefing, open a replacement seeded with
-that briefing plus the recent log tail, and hand it back to be swapped in **between**
-turns. The conversation never sees a cold restart.
+**Every thinking rung holds one long-lived session, from the moment it is created.** Reaction,
+Deliberation and Cognition each keep a single session across turns rather than opening one per
+piece of work: a rung that reopens every time cannot remember what it was in the middle of, and
+"what I was in the middle of" is not a fact the ledger holds — the ledger holds what is *owed*,
+not what has already been tried, ruled out, or half-arranged. A rung that forgets that re-derives
+it every wake, and re-deriving it from a ledger that reads "still owed" is how a duty gets redone
+or, worse, undone.
 
-Two things make the summarizer safe to get wrong: it runs in the gap between turns, so a slow
-one costs nothing; and the [log](#the-log) — not the briefing — is what durability rests
-on, so a bad summary loses fluency, never facts.
+Long-lived sessions rot — every turn appends, until early context is crowded out or the
+window overflows. **Bounding that is the underlying agent's job, not ours.** The agent behind a
+session compacts its own context in place, automatically, near its real window. We do not
+duplicate it, and there is no ceiling, counter, or swap in this codebase.
+
+That is a correction, not an omission. A host-side hot-swap existed: it counted the characters
+*we* sent and received and, past a ceiling, asked the session to brief its own replacement. It
+was wrong on both halves. **We cannot see the context** — the agent's own system prompt and tool
+schemas are the bulk of every request and are invisible from out here, so the counter thresholded
+on a small, drifting fraction of the truth. And **we cannot compact in place**: a session is
+`new`, `prompt`, `cancel`, `update` and nothing else, so summarize-and-reopen was the only move
+available from outside, and it is strictly lossier than what the agent does inside. It also
+fought the rungs being long-lived — swapping threw away exactly the working thread a long-lived
+rung exists to keep.
+
+If a wire ever genuinely lacks auto-compaction, bound it **in that adapter**, where the real
+numbers are visible. Do not re-introduce a character counter at this layer.
+
+What still replaces a session from out here is **failure, not size**: a turn that errors discards
+the possibly-wedged session and the next one cold-opens. That is always survivable, because
+**the state a rung needs is re-projected into every turn** — what is owed, what it carries
+forward, who it can reach — and the [log](#the-log) is the durable backstop. A cold open loses
+the thread, never the truth. The session carries the thread; `data/` carries the truth.
 
 ### Vendor gate
 

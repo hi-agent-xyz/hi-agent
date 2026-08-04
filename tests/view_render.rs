@@ -66,10 +66,7 @@ struct Harness {
 async fn harness(esbuild: PathBuf) -> Harness {
     let dir = tempdir().expect("tempdir");
     let memory = Memory::open(dir.path()).await.expect("memory");
-    let observatory = hi_agent::foundation::observatory::Observatory::new(
-        None,
-        hi_agent::body::reactor::swap_budget_chars(),
-    );
+    let observatory = hi_agent::foundation::observatory::Observatory::new(None);
     let (router, seams) = server::build(
         memory,
         dir.path().to_path_buf(),
@@ -225,10 +222,7 @@ async fn the_render_page_is_served_with_the_host_import_map() {
     }
     let dir = tempdir().expect("tempdir");
     let memory = Memory::open(dir.path()).await.expect("memory");
-    let observatory = hi_agent::foundation::observatory::Observatory::new(
-        None,
-        hi_agent::body::reactor::swap_budget_chars(),
-    );
+    let observatory = hi_agent::foundation::observatory::Observatory::new(None);
     let (router, _seams) = server::build(
         memory,
         dir.path().to_path_buf(),

@@ -146,7 +146,7 @@ struct Worker {
 }
 
 /// The scene's live working sessions. Owned by the per-scene loop, so a plain
-/// map suffices — no locking. Survives reactor-session hot-swaps: workers are
+/// map suffices — no locking. Survives a reactor-session cold reopen: workers are
 /// independent of the mind's own lifecycle within a scene.
 ///
 /// **TODO — this map is an optimization that currently optimizes nothing, and the
@@ -617,6 +617,10 @@ async fn drive_worker(
     owner: Option<SessionId>,
 ) {
     let mut task = initial_task;
+    // Deliberation is long-lived per scene; a worker made by `create_worker` runs its
+    // errand and ends. Neither is bounded by size from here — the underlying agent
+    // compacts its own context (see [`crate::body::reactor::heartbeat`]).
+    let session = session;
     loop {
         busy.store(true, Ordering::Relaxed);
         let kind = match run_worker(id, &task, &session, &transcript).await {
@@ -642,6 +646,7 @@ async fn drive_worker(
             tracing::warn!(worker = id, "worker report dropped; scene loop gone");
             return;
         }
+
 
         // Stay warm for a follow-up; pick up everything that accumulated in the
         // inbox as one prompt. Close (return, dropping the session) once idle past
