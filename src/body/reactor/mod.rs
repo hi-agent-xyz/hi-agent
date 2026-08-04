@@ -185,6 +185,63 @@ fn vendor_down_after() -> u32 {
         .unwrap_or(DEFAULT_VENDOR_DOWN_AFTER)
 }
 
+/// What a failed turn means for what to do next — the whole of this layer's error
+/// handling, deliberately coarse.
+///
+/// **Three outcomes, not a taxonomy.** The question here is only *"should I keep
+/// hammering?"* — not why the upstream said no, nor when it will relent, nor what the
+/// person should do about it. Those are upper-layer concerns: for managed accounts the
+/// broker already polls the balance every 60s and clears the out-of-energy state on
+/// refill ([`crate::foundation::broker::spawn_refresh_loop`]), which is the mechanism
+/// that resumes us. Modelling reset times or user actions down here would duplicate it
+/// and drift from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Disposition {
+    /// Transient: the upstream blipped. Back off and try again.
+    Retry,
+    /// **This session** is bad — the vendor is fine. Discard it and cold-open on the
+    /// next turn, and **do not touch the process-wide vendor gate**: one crashed
+    /// subprocess must not make every other scene believe the model is unreachable.
+    Restart,
+    /// Stop trying. Out of quota, out of credit, refused credentials — retrying cannot
+    /// help, and hammering costs a subprocess spawn per attempt (487 of them, once).
+    /// Resuming is not this layer's call.
+    Pause,
+}
+
+/// Classify a terminal turn failure. Defaults to [`Disposition::Retry`], so an error
+/// nobody has seen before behaves exactly as everything did before this existed.
+///
+/// Matching on message text is crude and is the honest option: these arrive as
+/// `-32603 Internal error` with the upstream's own words inside, so there is no
+/// structured code to switch on at this boundary.
+fn disposition(err: &str) -> Disposition {
+    let e = err.to_ascii_lowercase();
+    // Quota / credit / credentials. Observed live: `402 budget exceeded` (487 times in
+    // one night, every one of them futile) and `403 预扣费额度失败 … authentication_failed`.
+    if e.contains("402")
+        || e.contains("budget exceeded")
+        || e.contains("insufficient")
+        || e.contains("quota")
+        || e.contains("额度")
+        || e.contains("authentication_failed")
+        || e.contains("invalid api key")
+        || e.contains("invalid_api_key")
+    {
+        return Disposition::Pause;
+    }
+    // The session, not the vendor: the subprocess died or the wire went away.
+    if e.contains("session not found")
+        || e.contains("connection closed")
+        || e.contains("broken pipe")
+        || e.contains("unexpected eof")
+        || e.contains("channel closed")
+    {
+        return Disposition::Restart;
+    }
+    Disposition::Retry
+}
+
 /// How a scene loop should treat the vendor right now — the read side of [`Vendor`].
 #[derive(Clone, Copy, Debug)]
 enum SceneGate {
@@ -193,6 +250,9 @@ enum SceneGate {
     /// Transient outage (429 / generic): hold mail, and drive a catch-up turn once
     /// `at` (the current backoff deadline) passes. A failed retry grows the gap.
     Retry { at: Instant },
+    /// Paused: hold mail and drive **nothing**. Cleared by whoever owns the reason —
+    /// for managed accounts, the broker's energy poll on refill.
+    Hold,
 }
 
 /// The vendor's reachability and, when down, how to recover from it.
@@ -203,6 +263,9 @@ enum VendorState {
     /// `attempt` grows the gap toward [`BACKOFF_CAP`]; `silent` suppresses the user
     /// notice for a pure rate-limit (429), which the user needn't hear about.
     Backoff { try_at: Instant, attempt: u32, silent: bool },
+    /// Stopped, with no deadline of our own. Nothing here retries; something upstream
+    /// clears it — see [`Disposition::Pause`].
+    Paused,
 }
 
 /// Shared, process-wide view of the upstream LLM vendor and how to recover from an
@@ -250,6 +313,30 @@ impl Vendor {
         match *self.state.lock().unwrap() {
             VendorState::Up => SceneGate::Go,
             VendorState::Backoff { try_at, .. } => SceneGate::Retry { at: try_at },
+            VendorState::Paused => SceneGate::Hold,
+        }
+    }
+
+    /// Stop. Returns `true` on the transition into it, so the notice is shown once.
+    /// Idempotent while already paused, and it overrides a backoff: learning that the
+    /// balance is gone is strictly better information than a retry deadline.
+    fn note_paused(&self) -> bool {
+        let mut st = self.state.lock().unwrap();
+        let was = matches!(*st, VendorState::Paused);
+        *st = VendorState::Paused;
+        !was
+    }
+
+    /// Clear a pause because whoever owned the reason says it is over. No-op unless
+    /// paused, so a recovering balance cannot stomp an unrelated backoff.
+    fn resume_if_paused(&self) -> bool {
+        let mut st = self.state.lock().unwrap();
+        if matches!(*st, VendorState::Paused) {
+            *st = VendorState::Up;
+            self.generic_failures.store(0, Ordering::Relaxed);
+            true
+        } else {
+            false
         }
     }
 
@@ -274,6 +361,9 @@ impl Vendor {
                     false
                 }
             }
+            // Already stopped for a reason a retry cannot fix. A generic failure on top
+            // of that tells us nothing new and must not downgrade it into a backoff.
+            VendorState::Paused => false,
         }
     }
 
@@ -327,6 +417,70 @@ mod vendor_tests {
         assert!(v.is_down());
         assert!(matches!(v.scene_gate(), SceneGate::Retry { .. }));
         assert!(!v.note_unreachable(), "a failed retry grows the backoff without re-announcing");
+    }
+
+    /// The three real errors this layer has actually seen, and the default.
+    ///
+    /// The two `Pause` cases are the ones that cost something: `402 budget exceeded`
+    /// was retried 487 times in one night, and the `403` below is a dead balance that
+    /// no amount of retrying can fix.
+    #[test]
+    fn dispositions_cover_what_was_observed_live() {
+        assert_eq!(
+            disposition("Internal error: API Error: 402 budget exceeded"),
+            Disposition::Pause
+        );
+        assert_eq!(
+            disposition("Failed to authenticate. API Error: 403 预扣费额度失败, 用户剩余额度: $0.12"),
+            Disposition::Pause,
+            "a dead balance arrives as an auth failure, and must not read as transient"
+        );
+        assert_eq!(
+            disposition("API Error: 524 origin_response_timeout"),
+            Disposition::Retry,
+            "cloudflare timing out is exactly what backoff is for"
+        );
+        assert_eq!(
+            disposition("session/prompt failed: connection closed"),
+            Disposition::Restart,
+            "the subprocess died; the vendor is fine and must not be marked down"
+        );
+        assert_eq!(
+            disposition("something nobody has seen before"),
+            Disposition::Retry,
+            "an unknown error behaves exactly as everything did before this existed"
+        );
+    }
+
+    /// A pause is not a backoff: nothing here schedules its end.
+    #[test]
+    fn pause_holds_until_something_else_clears_it() {
+        let v = fresh();
+        assert!(v.note_paused(), "the transition warrants one notice");
+        assert!(!v.note_paused(), "and only one");
+        assert!(v.is_down());
+        assert!(matches!(v.scene_gate(), SceneGate::Hold), "a hold never offers a retry deadline");
+        assert!(v.resume_if_paused());
+        assert!(!v.is_down());
+        assert!(!v.resume_if_paused(), "already up");
+    }
+
+    /// Learning the balance is gone is better information than a retry deadline, so it
+    /// overrides one — but recovery must not stomp an unrelated backoff.
+    #[test]
+    fn pause_overrides_a_backoff_but_resume_does_not_stomp_one() {
+        let v = fresh();
+        v.note_unreachable();
+        v.note_unreachable();
+        assert!(matches!(v.scene_gate(), SceneGate::Retry { .. }));
+        v.note_paused();
+        assert!(matches!(v.scene_gate(), SceneGate::Hold));
+
+        let w = fresh();
+        w.note_unreachable();
+        w.note_unreachable();
+        assert!(!w.resume_if_paused(), "not paused; a balance refill is not its business");
+        assert!(matches!(w.scene_gate(), SceneGate::Retry { .. }), "backoff survives");
     }
 
     #[test]
@@ -1157,6 +1311,9 @@ async fn per_scene_loop(
             let recover_at = match gate {
                 SceneGate::Go => None,
                 SceneGate::Retry { at } => Some(at),
+                // No deadline of our own: a pause ends when the reason ends. The loop
+                // still wakes on the pulse, which is when the resume check above runs.
+                SceneGate::Hold => None,
             };
             let deadline = [pulse_at, recover_at]
                 .into_iter()
@@ -1257,10 +1414,22 @@ async fn per_scene_loop(
                 Woke::Timer => {
                     let now = Instant::now();
                     if down {
+                        // A pause is released by whoever owned the reason, never by a
+                        // deadline here. In managed mode that is the broker's 60s energy
+                        // poll: once the balance is no longer empty, clear the gate and
+                        // let the top of 'wait drain the held mail. Anything else — BYOK
+                        // with a dead key, refused credentials — stays paused, because
+                        // there is nothing here that could make it true again, and a
+                        // retry loop against it is exactly what this replaced.
+                        if matches!(gate, SceneGate::Hold)
+                            && !crate::foundation::energy_state::is_out()
+                            && reactor.inner.vendor.resume_if_paused()
+                        {
+                            tracing::info!(scene = %scene, "resumed: the balance came back");
+                            break 'wait;
+                        }
                         // Only a transient backoff drives a model retry, and only with
-                        // mail to deliver. Out of energy holds instead — the shared
-                        // poller flips us back Up and the top of 'wait then drains the
-                        // mail without a doomed model call.
+                        // mail to deliver.
                         if let SceneGate::Retry { at } = gate
                             && at <= now
                             && !batch.is_empty()
@@ -1517,21 +1686,46 @@ async fn run_reactor_turn(
         }
         Err(err) => {
             tracing::warn!(scene = %scene, error = %err, "reactor turn failed");
-            // Drop the possibly-wedged session so the next turn re-opens cold.
+            let err_text = err.to_string();
+            // Drop the possibly-wedged session so the next turn re-opens cold. True for
+            // every disposition: whatever went wrong, this handle is not worth trusting.
             *reactor_session = None;
-            // The transition, not the failure, is what earns a word — and the word
-            // cannot be generated, because the thing that generates words is what just
-            // went away. So the host shows a **bundled view** whose copy already exists
-            // (`_builtin/vendor-outage`), rather than the hardcoded Chinese sentence
-            // that used to sit here. Same policy as before — once per transition,
-            // process-wide, never once per scene per retry.
+
+            // What the failure means for whether to keep trying — three outcomes, no
+            // taxonomy. The notice, where one is owed, is a **bundled view** whose copy
+            // already exists (`_builtin/vendor-outage`): the thing that generates words
+            // is what just went away, so the word cannot be generated. Once per
+            // transition, process-wide, never once per scene per retry.
             //
             // Known gap, stated rather than papered over: a person with no screen gets
-            // nothing here, where the old sentence would at least have been spoken.
-            // `docs/arch/surfaces.md` says every channel degrades rather than fails, so
-            // this owes a voice-only fallback — which needs pre-rendered audio or a
-            // localized string, i.e. the same localization work the view is waiting on.
-            if reactor.inner.vendor.note_unreachable() {
+            // nothing here. `docs/arch/surfaces.md` says every channel degrades rather
+            // than fails, so this owes a voice-only fallback — which needs pre-rendered
+            // audio or a localized string.
+            let announce = match disposition(&err_text) {
+                // The session was the problem, not the vendor. Say nothing to the
+                // process-wide gate: one crashed subprocess must not make every other
+                // scene believe the model is unreachable.
+                Disposition::Restart => {
+                    tracing::warn!(scene = %scene, "session fault; reopening cold (vendor untouched)");
+                    false
+                }
+                // Out of quota, credit, or credentials. Retrying cannot help, so stop.
+                // Whoever owns the reason brings us back: in managed mode the broker
+                // polls the balance every 60s, `note_402` raises the user-visible flag,
+                // and the wait loop resumes on refill.
+                Disposition::Pause => {
+                    crate::foundation::energy_state::note_402(reactor.inner.memory.data_dir());
+                    let first = reactor.inner.vendor.note_paused();
+                    if first {
+                        tracing::warn!(scene = %scene, error = %err_text, "paused: retrying cannot help");
+                    }
+                    first
+                }
+                // A blip. Absorb one, then back off — unchanged behaviour, and the
+                // default for any error nobody has classified.
+                Disposition::Retry => reactor.inner.vendor.note_unreachable(),
+            };
+            if announce {
                 let (source, geom) = crate::mind::views::builtin::vendor_outage_view();
                 let _ = beats
                     .send(sequencer::Beat::Show {
