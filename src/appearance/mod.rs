@@ -116,6 +116,37 @@ where
         .route("/assets/{*path}", get(asset))
 }
 
+/// The language the person picked, captured once at startup.
+///
+/// It reaches the page as the `lang` attribute on `<html>`, which is where a bundled
+/// view reads it from — the review surfaces ship English and Chinese copy and select
+/// between them per render. It is published here rather than read per request because
+/// [`router`] is generic over its state (`Router<S>`), so `index` has no `AppState` to
+/// pull a `data_dir` out of; and because the setting already "applies on restart" (see
+/// [`crate::foundation::config::KEY_LANGUAGE`]), a value captured at boot is not stale.
+///
+/// Stored verbatim — `system`, `en`, `zh-Hans`. Resolving `system` against the actual
+/// machine is the browser's job (`navigator.language`), not ours.
+static LANGUAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Publish the language for [`index`] to stamp onto the page. Called once from startup;
+/// later calls are ignored.
+pub fn set_language(value: impl Into<String>) {
+    let _ = LANGUAGE.set(value.into());
+}
+
+/// Rewrite `<html lang="…">` to the person's setting. A no-op when nothing was
+/// published or the document has no `lang` attribute to replace — in which case the
+/// built `index.html` keeps its `lang="en"`, which is the right default anyway.
+fn inject_lang(html: String) -> String {
+    let Some(lang) = LANGUAGE.get() else { return html };
+    if lang.is_empty() || !html.contains("<html lang=\"") {
+        return html;
+    }
+    // Only the first occurrence, and only the opening tag Vite emits.
+    html.replacen("<html lang=\"en\"", &format!("<html lang=\"{lang}\""), 1)
+}
+
 /// `GET /` — serve index.html with OG tags injected before `</head>`.
 ///
 /// If the embedded `index.html` is missing (debug builds before the SPA is
@@ -148,6 +179,8 @@ async fn index() -> Response {
             // module resolve `react` / `@hi/core` / `motion/react` to the same
             // shared chunks the host loaded (see web/vite.config.ts).
             let injected = inject_importmap(injected);
+            // Last, so the `lang` swap sees the final opening tag.
+            let injected = inject_lang(injected);
 
             html_response(injected, StatusCode::OK)
         }

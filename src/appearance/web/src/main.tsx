@@ -5,6 +5,7 @@ import { Inspect } from "./inspect/Inspect";
 import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
 import { applyHostChrome } from "./lib/chrome";
+import { applyLanguage } from "./lib/language";
 import "./ui/global.css";
 
 // If the login gate is on, a 401 (session expired) bounces the tab to sign-in.
@@ -14,6 +15,11 @@ installAuthGate();
 // Native chrome the page has to keep clear of (the desktop window's titlebar).
 // Read before the first render so nothing paints in the strip and then jumps.
 applyHostChrome();
+
+// `<html lang>` for the bundled views' copy. The server already stamps this when it
+// serves the page in prod; this only covers the dev seam, where Vite serves index.html
+// and the Rust injection never runs. Fire-and-forget — nothing below waits on it.
+void applyLanguage();
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {

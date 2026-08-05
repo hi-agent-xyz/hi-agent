@@ -80,6 +80,12 @@ const moduleUrl = params.get("module") ?? "";
 const region = params.get("region") ?? "center";
 const size = params.get("size") ?? "auto";
 const theme = params.get("theme");
+const lang = params.get("lang");
+// The bundled system views read `<html lang>` to pick which of their copies to show —
+// the same attribute the served page carries in the real app.
+if (lang) {
+  document.documentElement.setAttribute("lang", lang);
+}
 if (theme === "dark" || theme === "light") {
   document.documentElement.setAttribute("data-theme", theme);
 }

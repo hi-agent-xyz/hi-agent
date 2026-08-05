@@ -22,6 +22,58 @@ const api = {
 const J = { "Content-Type": "application/json" };
 const clipUrl = (subject, modality, stem) => `/api/people/${encodeURIComponent(subject)}/${modality}/${stem}`;
 
+// ── words ─────────────────────────────────────────────────────────────────────
+// English is the default and the fallback. This view is about people, not about this
+// system's own vocabulary, so everything here is said in the reader's language.
+// The two `lead` sentences return JSX because the named one bolds the person.
+//
+// TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
+// runtime — the agent reads the surface and writes the variant — rather than shipped
+// here. Until that exists, an unsupported language lands on English.
+const T = {
+  en: {
+    title: "People",
+    unnamed: "Unnamed", namePh: "Add a name…",
+    mergeHint: (n) => `If there's already a "${n}", saving merges the two together`,
+    sec: { face: "Faces", voice: "Voices" },
+    noun: { face: "face", voice: "voice" },
+    regroup: "Regroup automatically ⟳",
+    oneOnly: "Looks like just one person — no need to split.", ok: "OK",
+    notThisPerson: "Not this person",
+    leadNamed: (name, noun) => <> Some of <b>{name}</b>'s {noun} clips look like someone else. The bigger pile stays {name}; take a look at the other one and tell me who it is.</>,
+    leadUnnamed: (noun, n) => <>These {noun} clips look like more than one person, so I split them into {n} piles.</>,
+    groupN: (i) => `Group ${i}`, keep: "Kept", countN: (n) => `${n} clips`,
+    later: "Leave it", apply: "Split them",
+  },
+  zh: {
+    title: "认识的人",
+    unnamed: "未命名", namePh: "加个名字…",
+    mergeHint: (n) => `已经有「${n}」的话，保存会合并到一起`,
+    sec: { face: "人脸", voice: "声音" },
+    noun: { face: "脸", voice: "声音" },
+    regroup: "自动重新分组 ⟳",
+    oneOnly: "看起来就是一个人，没必要分。", ok: "好",
+    notThisPerson: "不是这个人",
+    leadNamed: (name, noun) => <> <b>{name}</b>的{noun}里像是混进了别人。大的一份还是 {name}，另一份挑出来你再认。</>,
+    leadUnnamed: (noun, n) => <>这些{noun}像是不止一个人，我分成了 {n} 份。</>,
+    groupN: (i) => `第 ${i} 组`, keep: "保留", countN: (n) => `${n} 个`,
+    later: "先不动", apply: "就这样分",
+  },
+};
+
+// App setting first — the host puts it on `<html lang>` — then the system locale when
+// that setting says to follow the person, then English.
+function words() {
+  const app = document.documentElement.lang || "";
+  const chain = !app || /^system$/i.test(app) ? [navigator.language] : [app, navigator.language];
+  for (const tag of chain) {
+    if (/^zh\b/i.test(tag || "")) return T.zh;
+    if (/^en\b/i.test(tag || "")) return T.en;
+  }
+  return T.en;
+}
+const L = words();
+
 export default function PeopleReview() {
   const [people, setPeople] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -76,12 +128,12 @@ export default function PeopleReview() {
     return () => document.removeEventListener("pointerdown", onDown);
   }, [openId]);
 
-  if (people === null) return <div style={S.page}><div style={S.h1}>认识的人</div></div>;
+  if (people === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
 
   return (
     <div style={S.page}>
       <style>{"@keyframes eqpulse{0%,100%{height:10px}50%{height:26px}}"}</style>
-      <div style={S.h1}>认识的人</div>
+      <div style={S.h1}>{L.title}</div>
       <div style={S.grid} ref={gridRef}>
         {ordered.map((p) =>
           p.subject === openId ? (
@@ -106,7 +158,7 @@ function Card({ person, onOpen }) {
       ) : (
         <div style={{ ...S.poster, ...S.voicePoster }}><Eq /></div>
       )}
-      <div style={person.named ? S.name : S.nameNone}>{person.named ? person.subject : "未命名"}</div>
+      <div style={person.named ? S.name : S.nameNone}>{person.named ? person.subject : L.unnamed}</div>
     </div>
   );
 }
@@ -135,13 +187,13 @@ function Review({ person, onClose, onChanged }) {
           <input
             style={S.nameInput}
             value={name}
-            placeholder="加个名字…"
+            placeholder={L.namePh}
             onChange={(e) => setName(e.target.value)}
             onInput={(e) => setMerge(e.target.value.trim())}
             onBlur={save}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           />
-          <div style={S.mergeHint}>{merge && merge !== person.subject ? `已经有「${merge}」的话，保存会合并到一起` : ""}</div>
+          <div style={S.mergeHint}>{merge && merge !== person.subject ? L.mergeHint(merge) : ""}</div>
         </div>
         <button style={S.close} onClick={onClose}>✕</button>
       </div>
@@ -166,8 +218,8 @@ function ModSection({ person, modality, onChanged, first }) {
   return (
     <div style={{ ...S.modsec, ...(first ? {} : S.modsecTop) }}>
       <div style={S.secttl}>
-        <span>{modality === "face" ? "人脸" : "声音"} <span style={S.cnt}>{stems.length}</span></span>
-        {messy && <span style={S.regroup} onClick={regroup}>自动重新分组 ⟳</span>}
+        <span>{L.sec[modality]} <span style={S.cnt}>{stems.length}</span></span>
+        {messy && <span style={S.regroup} onClick={regroup}>{L.regroup}</span>}
       </div>
       <div style={S.clips}>
         {stems.map((stem) => (
@@ -177,7 +229,7 @@ function ModSection({ person, modality, onChanged, first }) {
       {proposal && !proposal.none && (
         <Proposal person={person} modality={modality} proposal={proposal} onClose={() => setProposal(null)} onChanged={onChanged} />
       )}
-      {proposal && proposal.none && <div style={S.plead}>看起来就是一个人，没必要分。<a style={S.link} onClick={() => setProposal(null)}>好</a></div>}
+      {proposal && proposal.none && <div style={S.plead}>{L.oneOnly}<a style={S.link} onClick={() => setProposal(null)}>{L.ok}</a></div>}
     </div>
   );
 }
@@ -210,7 +262,7 @@ function Clip({ subject, modality, stem, onChanged }) {
   return (
     <div style={{ ...base, ...(gone ? S.clipGone : {}), ...(playing ? S.clipPlaying : {}) }} onClick={play}>
       {modality === "voice" && <Eq small live={playing} />}
-      <button style={S.eject} title="不是这个人" onClick={eject}>✕</button>
+      <button style={S.eject} title={L.notThisPerson} onClick={eject}>✕</button>
       <div style={S.clipPlay}>▶</div>
     </div>
   );
@@ -229,15 +281,15 @@ function Proposal({ person, modality, proposal, onClose, onChanged }) {
     <div style={S.proposal}>
       <div style={S.plead}>
         {person.named
-          ? <> <b>{person.subject}</b>的{modality === "face" ? "脸" : "声音"}里像是混进了别人。大的一份还是 {person.subject}，另一份挑出来你再认。</>
-          : <>这些{modality === "face" ? "脸" : "声音"}像是不止一个人，我分成了 {groups.length} 份。</>}
+          ? L.leadNamed(person.subject, L.noun[modality])
+          : L.leadUnnamed(L.noun[modality], groups.length)}
       </div>
       <div style={S.piles}>
         {groups.map((g, i) => (
           <div key={i} style={{ ...S.pile, ...(i === keepIdx ? S.pileKeep : {}) }}>
             <div style={S.pileHead}>
-              <span>{i === keepIdx && person.named ? person.subject : `第 ${i + 1} 组`}</span>
-              {i === keepIdx && <span style={S.keepTag}>保留</span>}
+              <span>{i === keepIdx && person.named ? person.subject : L.groupN(i + 1)}</span>
+              {i === keepIdx && <span style={S.keepTag}>{L.keep}</span>}
             </div>
             <div style={S.pileThumbs}>
               {g.stems.slice(0, 4).map((stem) =>
@@ -246,13 +298,13 @@ function Proposal({ person, modality, proposal, onClose, onChanged }) {
                   : <div key={stem} style={{ ...S.pt, ...S.voiceClip, fontSize: 13 }}>♪</div>,
               )}
             </div>
-            <div style={S.pileCnt}>{g.stems.length} 个</div>
+            <div style={S.pileCnt}>{L.countN(g.stems.length)}</div>
           </div>
         ))}
       </div>
       <div style={S.pbtns}>
-        <button style={S.btnGhost} onClick={onClose}>先不动</button>
-        <button style={S.btnPrimary} onClick={apply}>就这样分</button>
+        <button style={S.btnGhost} onClick={onClose}>{L.later}</button>
+        <button style={S.btnPrimary} onClick={apply}>{L.apply}</button>
       </div>
     </div>
   );
@@ -267,7 +319,7 @@ function Eq({ big, small, live }) {
       {Array.from({ length: n }).map((_, i) => (
         <i key={i} style={{
           width: w, height: h, borderRadius: w, display: "inline-block",
-          background: live ? "#ff574d" : "var(--eqbar)", opacity: live ? 0.9 : 0.5,
+          background: live ? "var(--accent)" : "var(--fg-mute)", opacity: live ? 0.9 : 0.5,
           animation: live ? `eqpulse 1s ease-in-out ${i * 0.1}s infinite` : "none",
         }} />
       ))}
@@ -294,68 +346,92 @@ function columnsOf(gridEl) {
 }
 function lift(el, on) {
   el.style.transform = on ? "translateY(-3px)" : "none";
-  el.style.boxShadow = on ? "var(--shadow-lift)" : "var(--shadow)";
+  el.style.boxShadow = on ? "var(--ppl-shadow-lift)" : "var(--ppl-shadow)";
 }
 
-// Inline styles keyed off host CSS vars so the view rides light/dark automatically.
+// Inline styles keyed off the host's theme tokens, so the view rides light/dark with
+// the person's Theme setting. The vocabulary is what `ui/global.css` actually defines:
+//
+//   text      --fg · --fg-dim · --fg-mute
+//   surfaces  --surface · --surface-strong   (cards/panels over the paper)
+//   lines     --line · --line-strong         (borders, and neutral placeholder fills)
+//   accent    --accent · --accent-soft · --accent-line · --accent-wash
+//   shadow    --shadow · --shadow-strong     (COLOURS, not box-shadow lists)
+//   type      --font-display
+//
+// Two traps this file used to fall into, both worth keeping in mind when copying it:
+//   1. Don't invent token names. `--card` / `--page` / `--bg` / `--eqbar` were never
+//      defined anywhere, so `var(--card,#fff)` silently pinned the card to white while
+//      `--fg` went on flipping — which is how named people turned invisible in dark.
+//   2. Don't shadow a host token. This block used to define its own `--shadow`, which
+//      is a host colour token; the local names are prefixed now.
 const S = {
-  page: { "--eqbar": "#a1a1a6", "--shadow": "0 1px 2px rgba(0,0,0,.04),0 8px 22px rgba(0,0,0,.05)",
-    "--shadow-lift": "0 4px 10px rgba(0,0,0,.07),0 22px 55px rgba(0,0,0,.13)",
-    padding: "8px 4px 40px", color: "var(--fg)" },
+  page: { "--ppl-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
+    "--ppl-shadow-lift": "0 4px 10px var(--shadow),0 22px 55px var(--shadow-strong)",
+    padding: "8px 4px 40px", color: "var(--fg)", fontFamily: "var(--font-display)" },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: "-.03em", marginBottom: 26 },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(168px,1fr))", gap: 18, alignItems: "start" },
-  card: { background: "var(--card,#fff)", borderRadius: 22, boxShadow: "var(--shadow)", overflow: "hidden",
+  card: { background: "var(--surface-strong)", borderRadius: 22, boxShadow: "var(--ppl-shadow)", overflow: "hidden",
     cursor: "pointer", transition: "transform .2s cubic-bezier(.32,.72,0,1),box-shadow .2s" },
-  poster: { aspectRatio: "1/1", backgroundSize: "cover", backgroundPosition: "center", background: "#e8e8ed" },
+  // `backgroundColor`, never the `background` shorthand: the shorthand resets
+  // background-size/position, which left every face crop tiling at natural size.
+  poster: { aspectRatio: "1/1", backgroundSize: "cover", backgroundPosition: "center",
+    backgroundRepeat: "no-repeat", backgroundColor: "var(--line-strong)" },
   voicePoster: { display: "flex", alignItems: "center", justifyContent: "center",
-    background: "linear-gradient(150deg,#e9e9ee,#dadae1)" },
+    backgroundImage: "linear-gradient(150deg,var(--line),var(--line-strong))" },
   name: { padding: "13px 15px 15px", fontSize: 15, fontWeight: 700, letterSpacing: "-.02em" },
-  nameNone: { padding: "13px 15px 15px", fontSize: 15, fontWeight: 500, color: "#a1a1a6" },
+  nameNone: { padding: "13px 15px 15px", fontSize: 15, fontWeight: 500, color: "var(--fg-mute)" },
 
-  review: { gridColumn: "1 / -1", background: "var(--card,#fff)", borderRadius: 28,
-    boxShadow: "var(--shadow-lift)", overflow: "hidden" },
-  revHead: { display: "flex", gap: 22, padding: "26px 28px 22px", alignItems: "center", borderBottom: "1px solid var(--line,#e8e8ed)" },
-  revPoster: { width: 108, height: 108, borderRadius: 24, backgroundSize: "cover", backgroundPosition: "center", flex: "none", background: "#e8e8ed" },
+  review: { gridColumn: "1 / -1", background: "var(--surface-strong)", borderRadius: 28,
+    boxShadow: "var(--ppl-shadow-lift)", overflow: "hidden" },
+  revHead: { display: "flex", gap: 22, padding: "26px 28px 22px", alignItems: "center", borderBottom: "1px solid var(--line)" },
+  revPoster: { width: 108, height: 108, borderRadius: 24, backgroundSize: "cover", backgroundPosition: "center",
+    backgroundRepeat: "no-repeat", flex: "none", backgroundColor: "var(--line-strong)" },
   revMeta: { flex: 1, minWidth: 0 },
   nameInput: { font: "inherit", fontSize: 27, fontWeight: 800, letterSpacing: "-.03em", color: "var(--fg)",
     background: "transparent", border: "none", outline: "none", width: "100%", padding: "2px 0", borderBottom: "2px solid transparent" },
-  mergeHint: { fontSize: 13, color: "#0a84ff", marginTop: 8, minHeight: 17, fontWeight: 500 },
-  close: { flex: "none", width: 34, height: 34, borderRadius: "50%", border: "none", background: "var(--line,#eee)",
+  mergeHint: { fontSize: 13, color: "var(--accent)", marginTop: 8, minHeight: 17, fontWeight: 500 },
+  close: { flex: "none", width: 34, height: 34, borderRadius: "50%", border: "none", background: "var(--line)",
     color: "var(--fg)", fontSize: 16, cursor: "pointer", alignSelf: "flex-start" },
   revBody: { padding: "4px 28px 28px" },
   modsec: { paddingTop: 18 },
-  modsecTop: { borderTop: "1px solid var(--line,#e8e8ed)", marginTop: 8 },
+  modsecTop: { borderTop: "1px solid var(--line)", marginTop: 8 },
   secttl: { fontSize: 14, fontWeight: 700, margin: "14px 0", display: "flex", alignItems: "center", justifyContent: "space-between" },
-  cnt: { color: "#a1a1a6", fontWeight: 500, marginLeft: 6 },
-  regroup: { fontSize: 12.5, fontWeight: 600, color: "#a1a1a6", cursor: "pointer", padding: "6px 12px", borderRadius: 999 },
+  cnt: { color: "var(--fg-mute)", fontWeight: 500, marginLeft: 6 },
+  regroup: { fontSize: 12.5, fontWeight: 600, color: "var(--fg-dim)", cursor: "pointer", padding: "6px 12px", borderRadius: 999 },
   clips: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(86px,1fr))", gap: 10 },
-  clip: { position: "relative", borderRadius: 13, overflow: "hidden", background: "#e8e8ed", aspectRatio: "1/1",
+  clip: { position: "relative", borderRadius: 13, overflow: "hidden", backgroundColor: "var(--line-strong)", aspectRatio: "1/1",
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
     transition: "transform .18s,opacity .3s" },
-  voiceClip: { background: "linear-gradient(150deg,#e9e9ee,#dadae1)" },
+  voiceClip: { backgroundImage: "linear-gradient(150deg,var(--line),var(--line-strong))" },
   clipGone: { opacity: 0, transform: "scale(.6)" },
-  clipPlaying: { boxShadow: "0 0 0 2px #ff574d inset" },
+  clipPlaying: { boxShadow: "0 0 0 2px var(--accent) inset" },
   clipPlay: { position: "absolute", right: 6, bottom: 5, fontSize: 12, color: "#fff",
     textShadow: "0 1px 3px rgba(0,0,0,.6)", opacity: 0.9, pointerEvents: "none" },
+  // Literal dark scrim + white glyph: these sit on top of a photo, not on the surface,
+  // so they take the same always-legible treatment the host gives caption pills.
   eject: { position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", border: "none",
     background: "rgba(0,0,0,.5)", color: "#fff", fontSize: 11, cursor: "pointer", display: "flex",
     alignItems: "center", justifyContent: "center", zIndex: 2 },
 
-  proposal: { marginTop: 14, background: "var(--page,#f5f5f7)", borderRadius: 20, padding: "20px 22px" },
+  proposal: { marginTop: 14, background: "var(--accent-wash)", borderRadius: 20, padding: "20px 22px" },
   plead: { fontSize: 14, color: "var(--fg)", opacity: 0.75, marginBottom: 16, lineHeight: 1.5 },
-  link: { color: "#0a84ff", cursor: "pointer", marginLeft: 6, fontWeight: 600 },
+  link: { color: "var(--accent)", cursor: "pointer", marginLeft: 6, fontWeight: 600 },
   piles: { display: "flex", gap: 14, flexWrap: "wrap" },
-  pile: { flex: 1, minWidth: 170, background: "var(--card,#fff)", borderRadius: 16, padding: 15, boxShadow: "var(--shadow)" },
-  pileKeep: { outline: "2px solid #ff574d" },
+  pile: { flex: 1, minWidth: 170, background: "var(--surface-strong)", borderRadius: 16, padding: 15, boxShadow: "var(--ppl-shadow)" },
+  pileKeep: { outline: "2px solid var(--accent)" },
   pileHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 11, fontSize: 14, fontWeight: 700 },
-  keepTag: { fontSize: 11, fontWeight: 700, color: "#ff574d" },
+  keepTag: { fontSize: 11, fontWeight: 700, color: "var(--accent)" },
   pileThumbs: { display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 },
   pt: { width: 38, height: 38, borderRadius: 9, backgroundSize: "cover", backgroundPosition: "center",
-    background: "#e8e8ed", display: "flex", alignItems: "center", justifyContent: "center", color: "#a1a1a6" },
-  pileCnt: { fontSize: 12, color: "#a1a1a6" },
+    backgroundRepeat: "no-repeat", backgroundColor: "var(--line-strong)",
+    display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg-mute)" },
+  pileCnt: { fontSize: 12, color: "var(--fg-mute)" },
   pbtns: { display: "flex", gap: 11, marginTop: 18 },
   btnGhost: { padding: "11px 20px", borderRadius: 13, fontWeight: 700, fontSize: 14, cursor: "pointer", border: "none",
-    background: "var(--card,#fff)", color: "var(--fg)" },
+    background: "var(--surface-strong)", color: "var(--fg)" },
+  // Label takes the page ground, not a literal white: on the dark theme's amber accent
+  // white lands at 2.4:1, while the ground colour gives 6.8:1.
   btnPrimary: { padding: "11px 20px", borderRadius: 13, fontWeight: 700, fontSize: 14, cursor: "pointer", border: "none",
-    background: "#ff574d", color: "#fff" },
+    background: "var(--accent)", color: "var(--bg-0)" },
 };

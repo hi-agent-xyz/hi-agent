@@ -7,11 +7,38 @@
 import { motion } from "motion/react";
 
 const CORAL = "#fd605e";
+const INK = "#3a352c"; // the house ink, pinned — see `tagline` below
 const EASE = [0.22, 0.7, 0.2, 1];
 
 // The real, sealed mark (red h + blue i, white die-cut, soft shadow), seeded beside this
 // file and served from the views tree — never re-typed in a system font, never hotlinked.
 const MARK = "/views/_builtin/hi-mark.svg";
+
+// ── words ─────────────────────────────────────────────────────────────────────
+// English is the default and the fallback. The tagline is three separate segments on
+// purpose — the middle one is painted CORAL — so each one is its own key and the JSX
+// composes them; a single sentence per language would lose the coloured beat.
+//
+// TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
+// runtime — the agent reads the surface and writes the variant — rather than shipped
+// here. Until that exists, an unsupported language lands on English.
+const T = {
+  en: { talk: "talk to me.", teach: "teach me.", remember: "I remember." },
+  zh: { talk: "跟我说话。", teach: "教我。", remember: "我记得。" },
+};
+
+// App setting first — the host puts it on `<html lang>` — then the system locale when
+// that setting says to follow the person, then English.
+function words() {
+  const app = document.documentElement.lang || "";
+  const chain = !app || /^system$/i.test(app) ? [navigator.language] : [app, navigator.language];
+  for (const tag of chain) {
+    if (/^zh\b/i.test(tag || "")) return T.zh;
+    if (/^en\b/i.test(tag || "")) return T.en;
+  }
+  return T.en;
+}
+const L = words();
 
 export default function Welcome() {
   return (
@@ -44,7 +71,7 @@ export default function Welcome() {
         transition={{ duration: 0.6, ease: EASE, delay: 0.42 }}
         style={S.tagline}
       >
-        talk to me.&nbsp; <span style={{ color: CORAL }}>teach me.</span>&nbsp; I remember.
+        {L.talk}&nbsp; <span style={{ color: CORAL }}>{L.teach}</span>&nbsp; {L.remember}
       </motion.div>
     </motion.div>
   );
@@ -101,7 +128,11 @@ const S = {
     fontSize: 21,
     fontWeight: 600,
     letterSpacing: "-0.01em",
-    color: "var(--fg)",
+    // Fixed ink, not `var(--fg)`. This poster paints its own fixed warm ground, so a
+    // token that flips with the theme lands cream-on-cream in dark mode — the rule is
+    // that a fixed ground takes fixed ink. (Same reason CORAL above is literal: it is
+    // the mark's red, not a UI accent.)
+    color: INK,
     textAlign: "center",
   },
 };

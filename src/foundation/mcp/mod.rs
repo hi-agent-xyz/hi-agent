@@ -172,14 +172,17 @@ fn review_view_tool() -> Value {
     tool(
         "review_view",
         "Render a saved view in a real browser and look at it. Returns a verdict, any \
-         errors the page reported, and a screenshot — so you can see what you actually \
-         made rather than trusting that it compiled. Use it on anything you are about to \
-         hand over as a view, and again after a fix.",
+         errors the page reported, and a screenshot of each theme — so you can see what \
+         you actually made rather than trusting that it compiled. Use it on anything you \
+         are about to hand over as a view, and again after a fix. Compare the light and \
+         dark frames: anything that vanishes or turns unreadable in one of them is a \
+         colour that only works in the other.",
         json!({
             "type": "object",
             "properties": {
                 "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
-                "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render under this theme. Omit for the default." },
+                "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render only this theme. Omit to get both, which is what you want unless you are re-checking one." },
+                "lang": { "type": "string", "description": "Optional: render as if the person's language were this (e.g. `en`, `zh-Hans`). Only matters for a view that ships copy in more than one language." },
                 "region": { "type": "string", "enum": ["center", "top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "fill"], "description": "Optional: review it under this placement instead of the one its `.geom.json` declares." },
                 "size": { "type": "string", "enum": ["compact", "auto", "wide", "fill"], "description": "Optional: review it at this size class instead of its declared one." },
             },
@@ -188,7 +191,7 @@ fn review_view_tool() -> Value {
     )
 }
 
-fn tools_for_role(role: Option<&str>) -> Vec<Value> {
+pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
             send_message_tool(),
@@ -917,31 +920,69 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
 
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
         .with_geometry(region, size);
-    req.theme = args.get("theme").and_then(Value::as_str).map(str::to_owned);
 
-    let rendered = match view_render::render(&req).await {
-        Ok(r) => r,
-        Err(e) => return tool_error(&format!("could not render `{view_ref}`: {e}")),
+    // **Both skins, unless the caller pinned one.** Theme is a live setting the person
+    // controls (Settings ▸ General ▸ Theme), so "it rendered" is only true once it has
+    // rendered the way they may actually be looking at it. A single-theme review cannot
+    // see the defect this is here to catch: a colour that resolves in one skin and not
+    // the other — a hardcoded ground under a `var(--fg)` that flips, or a token name
+    // that was never defined, so its one-theme fallback always wins. Both bundled-view
+    // contrast failures we shipped were invisible in a light-only render.
+    // Language is opt-in, unlike the theme sweep: only the bundled system views carry
+    // more than one language, so forcing a second render of every agent-authored view
+    // would double the cost for nothing.
+    req.lang = args.get("lang").and_then(Value::as_str).map(str::to_owned);
+
+    let pinned = args.get("theme").and_then(Value::as_str).map(str::to_owned);
+    let themes: Vec<String> = match pinned {
+        Some(t) => vec![t],
+        None => vec!["light".to_string(), "dark".to_string()],
     };
 
-    // The verdict first, in words, because that is the answer. The picture follows so
+    let mut shots: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+    for theme in &themes {
+        req.theme = Some(theme.clone());
+        let rendered = match view_render::render(&req).await {
+            Ok(r) => r,
+            Err(e) => return tool_error(&format!("could not render `{view_ref}` ({theme}): {e}")),
+        };
+        if let view_render::Verdict::Failed(why) = rendered.verdict() {
+            failures.push(format!("{theme}: {why}"));
+        }
+        shots.push((theme.clone(), rendered.png));
+    }
+
+    // The verdict first, in words, because that is the answer. The pictures follow so
     // the reviewer can disagree with it — a view can render cleanly and still be bad,
     // and that judgment is the whole reason a session is doing this rather than a
-    // pass/fail check in the build.
-    let summary = match rendered.verdict() {
-        view_render::Verdict::Rendered => format!(
-            "`{view_ref}` rendered. Nothing is broken — now judge whether it is any good."
-        ),
-        view_render::Verdict::Failed(why) => format!("`{view_ref}` did not render properly: {why}"),
+    // pass/fail check in the build. Contrast is deliberately *not* scored here for the
+    // same reason: the eye that catches "the names went invisible" is the one looking
+    // at both frames, not a threshold.
+    let summary = if !failures.is_empty() {
+        format!("`{view_ref}` did not render properly — {}", failures.join("; "))
+    } else if shots.len() > 1 {
+        format!(
+            "`{view_ref}` rendered in both skins. Nothing is broken — now judge whether it is \
+             any good, and compare the two frames: anything that fades out, disappears or \
+             turns unreadable in one of them is a colour that only works in the other."
+        )
+    } else {
+        format!("`{view_ref}` rendered. Nothing is broken — now judge whether it is any good.")
     };
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&rendered.png);
-    json!({
-        "content": [
-            { "type": "text", "text": summary },
-            { "type": "image", "data": b64, "mimeType": "image/png" },
-        ],
-        "isError": false,
-    })
+
+    let mut content = vec![json!({ "type": "text", "text": summary })];
+    for (theme, png) in &shots {
+        if shots.len() > 1 {
+            content.push(json!({ "type": "text", "text": format!("— {theme} —") }));
+        }
+        content.push(json!({
+            "type": "image",
+            "data": base64::engine::general_purpose::STANDARD.encode(png),
+            "mimeType": "image/png",
+        }));
+    }
+    json!({ "content": content, "isError": false })
 }
 
 /// `act`: synthesize one input action on the host. Coordinates arrive as normalized

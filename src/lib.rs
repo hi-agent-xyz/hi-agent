@@ -319,6 +319,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         view_compiler.clone(),
         format!("http://127.0.0.1:{}", config.port),
     );
+    // The person's language, stamped onto `<html lang>` so a bundled view can pick which
+    // of its copies to show. Captured once here for the same reason the setting says it
+    // applies on restart. Unset reads as `system`, which the page resolves against the
+    // machine — English if that matches nothing we ship.
+    appearance::set_language(
+        foundation::credentials::get_setting(&config.data_dir, foundation::config::KEY_LANGUAGE)
+            .unwrap_or_else(|| "system".to_string()),
+    );
     // The reactor's shutdown signal: triggered below the moment a signal / Quit is
     // observed, so its scene loops, reflection, and drive retries wind down instead
     // of restarting ACP sessions into a process group that's already terminating.

@@ -7,6 +7,39 @@
 //! `show_view` like any other view — and can still adapt them, since they land as
 //! ordinary `.jsx` in the (disposable, re-seeded) tree. They live under
 //! `_builtin/` so they never collide with the agent's own `<project>/` work.
+//!
+//! # Three rules every view in here follows
+//!
+//! These hold for the *system* surfaces only. An agent-authored content view is
+//! deliberately free of all three — `aesthetic.md` says its look comes from its subject
+//! and there is no house style on purpose.
+//!
+//! **1. Colour comes from the host's theme tokens, or from nothing.** The vocabulary is
+//! whatever `ui/global.css` actually defines: `--fg` / `--fg-dim` / `--fg-mute`,
+//! `--surface` / `--surface-strong`, `--line` / `--line-strong`, `--accent` (+ `-soft` /
+//! `-line` / `-wash`), `--shadow` / `--shadow-strong` (which are *colours*, not shadow
+//! lists), `--bg-0` / `--bg-1`, `--font-display`. Do not invent a name: `var(--card,#fff)`
+//! reads like a token and is really a hardcoded white, which is how named people once went
+//! invisible in dark mode. Mixing the two halves is the trap — a *fixed* palette is fine
+//! and often right for a poster, but then the text colour must be fixed too, or it flips
+//! against a ground that doesn't. Renderer-side, `review_view` shows both skins by default
+//! so this is caught by looking rather than by review.
+//!
+//! **2. Copy ships in English and Chinese, English by default.** Each view carries its own
+//! `T = { en, zh }` table and resolves at module scope off `<html lang>` — the app language
+//! setting, published there by the web face (`lib/language.ts`) and forced by the render
+//! page's `lang=` param. The chain is: app setting, then the system locale when that
+//! setting says `system` (the default), then English; a language we have no strings for
+//! also lands on English. Further languages are meant to be *authored at runtime* rather
+//! than shipped here — see the `TODO(i18n)` in each view.
+//!
+//! **3. This system's own vocabulary is not translated.** Tools, Skills, Memory, Workers
+//! keep those words in both languages, because they name parts of this architecture rather
+//! than ordinary objects. Plain words do translate: Task is 任务, Drive is 文件.
+//!
+//! And one that is about honesty rather than style: a surface carries only the verbs its
+//! endpoint can actually honour. Workers is read-only because the registry has no stop —
+//! a button that reported a kill that never happened would be worse than no button.
 
 use std::io;
 use std::path::Path;
@@ -41,6 +74,24 @@ const WELCOME_MARK: &str = include_str!("builtin/hi-mark.svg");
 const VENDOR_OUTAGE: &str = include_str!("builtin/vendor-outage.jsx");
 const VENDOR_OUTAGE_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
+/// The review surfaces: one per kind of thing the agent accumulates, each paired with a
+/// `.geom.json` that puts it up `center/wide` because every one of them is a list.
+///
+/// They are siblings of `people-review`, and they exist for the same reason it does — the
+/// agent's own state was only inspectable by reading files over its shoulder, so nothing
+/// could be corrected. Each surface carries only the verbs its endpoint can honestly
+/// honour: tasks close and drop, a skill deletes, a facet is rewritten; workers, tools and
+/// drive are read-only, the first because the registry has no stop, the last two because
+/// there is nothing there a person could fix.
+const REVIEW_VIEWS: &[(&str, &str, &str)] = &[
+    ("tasks", include_str!("builtin/tasks.jsx"), include_str!("builtin/tasks.geom.json")),
+    ("skills", include_str!("builtin/skills.jsx"), include_str!("builtin/skills.geom.json")),
+    ("memories", include_str!("builtin/memories.jsx"), include_str!("builtin/memories.geom.json")),
+    ("workers", include_str!("builtin/workers.jsx"), include_str!("builtin/workers.geom.json")),
+    ("tools", include_str!("builtin/tools.jsx"), include_str!("builtin/tools.geom.json")),
+    ("drive", include_str!("builtin/drive.jsx"), include_str!("builtin/drive.geom.json")),
+];
+
 /// The ref and the sequencer id the host shows it under. One id, reused, so the
 /// `dismiss` on recovery takes down exactly the thing the outage put up — and a second
 /// outage replaces rather than stacks.
@@ -69,6 +120,10 @@ pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
     std::fs::write(dir.join("vendor-outage.jsx"), VENDOR_OUTAGE)?;
     std::fs::write(dir.join("vendor-outage.geom.json"), VENDOR_OUTAGE_GEOM)?;
+    for (name, source, geom) in REVIEW_VIEWS {
+        std::fs::write(dir.join(format!("{name}.jsx")), source)?;
+        std::fs::write(dir.join(format!("{name}.geom.json")), geom)?;
+    }
     Ok(())
 }
 
@@ -111,5 +166,45 @@ mod tests {
         // Reseeding is idempotent (overwrite, not append) — a second boot is clean.
         install_builtin_views(dir.path()).unwrap();
         assert_eq!(std::fs::read_to_string(builtin.join("welcome.jsx")).unwrap(), WELCOME);
+    }
+
+    /// Every review surface lands with its placement, and every one of them declares a
+    /// placement that parses — a `show_view` on a ref whose sidecar is malformed puts up
+    /// a view the host cannot position.
+    #[test]
+    fn seeds_every_review_surface_with_a_valid_placement() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        for (name, source, _) in REVIEW_VIEWS {
+            let jsx = builtin.join(format!("{name}.jsx"));
+            let geom = builtin.join(format!("{name}.geom.json"));
+            assert!(jsx.is_file(), "{name}.jsx was not seeded");
+            assert_eq!(&std::fs::read_to_string(&jsx).unwrap(), source);
+            let raw = std::fs::read_to_string(&geom).unwrap();
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&raw).is_ok(),
+                "{name}.geom.json must parse"
+            );
+        }
+    }
+
+    /// The two that carry a correction verb have to keep reaching for it. If the endpoint
+    /// behind one of these is ever renamed, this is what notices — a review surface whose
+    /// write silently 404s still *looks* like it worked.
+    #[test]
+    fn the_correcting_surfaces_still_call_their_write_endpoints() {
+        let by_name = |n: &str| REVIEW_VIEWS.iter().find(|(name, ..)| *name == n).unwrap().1;
+        assert!(by_name("tasks").contains("/api/tasks/"), "tasks must PATCH a task");
+        assert!(by_name("tasks").contains("PATCH"));
+        assert!(by_name("memories").contains("/api/facets/"), "memories must PUT a facet");
+        assert!(by_name("memories").contains("PUT"));
+        assert!(by_name("skills").contains("DELETE"), "skills must be able to drop a stale note");
+        // And the read-only ones must not have grown a verb they cannot honour: the
+        // registry has no stop, so a stop button here would report a kill that never
+        // happened. Checked as an absence on purpose.
+        assert!(!by_name("workers").contains("method: \"POST\""));
+        assert!(!by_name("tools").contains("method:"));
+        assert!(!by_name("drive").contains("method:"));
     }
 }

@@ -132,10 +132,16 @@ a colleague turning their screen around while they work, not only at the end.
 A view that compiles is not a view that is any good, and you cannot tell which you have
 by reading your own source. Call `review_view` with the ref: it renders the thing in a
 real browser at its declared placement and hands back the page's errors *and* a
-screenshot. Look at the screenshot.
+screenshot of each theme. Look at the screenshots.
 
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
+
+**Compare the light and dark frames.** The person picks their theme in Settings, so both
+are real. Anything that fades out, disappears, or turns unreadable in one of them is a
+colour that only works in the other — the usual cause is a fixed background under text
+that follows the theme, or a `var(--…)` name that isn't actually defined, so its
+fallback quietly wins in every theme.
 
 This is the same standard the agent holds everything else to: an artifact is not shipped
 until someone has seen it.
@@ -155,6 +161,19 @@ what you need as bare modules:
   with these.
 - `motion/react` — Motion, when (and only when) a moment earns movement.
 - `react` itself.
+
+**Colour that follows the person's theme.** The host defines these, and only these:
+`--fg` / `--fg-dim` / `--fg-mute` (text), `--surface` / `--surface-strong` (panels over
+the paper), `--line` / `--line-strong` (borders, and neutral placeholder fills),
+`--accent` / `--accent-soft` / `--accent-line` / `--accent-wash`, `--shadow` /
+`--shadow-strong` (colours, not shadow lists), `--bg-0` / `--bg-1` (the page ground) and
+`--font-display`. Reach for one when you want a colour that tracks light/dark. Two
+things to get right: don't invent a name — `var(--card,#fff)` looks like a token and is
+really just a hardcoded white, because `--card` doesn't exist — and don't half-do it: a
+fixed background under `var(--fg)` text is the exact recipe for a view that is legible
+in one theme and blank in the other. Choosing a *fixed* palette is fine and often right
+for a poster; then fix the text colour too, and let nothing in that composition follow
+the theme.
 
 A minimal view:
 

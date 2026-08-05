@@ -79,6 +79,12 @@ pub struct RenderRequest {
     pub size: Option<String>,
     /// Force the light or dark skin; `None` uses the page default (light).
     pub theme: Option<String>,
+    /// Force the language a bundled view selects its copy with (`en`, `zh-Hans`, …),
+    /// stamped onto `<html lang>` by the render page. `None` leaves the page default,
+    /// which is English. Only the system views ship more than one language; an
+    /// agent-authored view is written in whatever language it was asked for, so this is
+    /// deliberately opt-in rather than swept like the theme.
+    pub lang: Option<String>,
     pub viewport: Viewport,
 }
 
@@ -106,6 +112,7 @@ impl RenderRequest {
             region: None,
             size: None,
             theme: None,
+            lang: None,
             viewport: Viewport::default(),
         }
     }
@@ -138,6 +145,7 @@ impl RenderRequest {
             ("region", self.region.as_deref()),
             ("size", self.size.as_deref()),
             ("theme", self.theme.as_deref()),
+            ("lang", self.lang.as_deref()),
         ] {
             if let Some(v) = value {
                 url.push_str(&format!("&{key}={}", urlencode(v)));

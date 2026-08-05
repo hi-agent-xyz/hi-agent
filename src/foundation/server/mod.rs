@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, mpsc};
@@ -26,6 +26,8 @@ pub mod attention;
 pub mod audio;
 pub mod binder;
 pub mod channels;
+pub mod drive;
+pub mod facets;
 pub mod files;
 pub mod generated;
 pub mod headers;
@@ -35,12 +37,16 @@ pub mod people;
 pub mod reflex;
 pub mod sessions;
 pub mod settings;
+pub mod skills;
 pub mod stubs;
+pub mod tasks;
 pub mod text;
 pub mod text_bus;
+pub mod tools;
 pub mod view;
 pub mod view_bus;
 pub mod vision;
+pub mod workers;
 
 pub use text_bus::TextBus;
 pub use view_bus::ViewBus;
@@ -530,6 +536,23 @@ pub fn build(
         .route("/api/people/split/preview", post(people::post_split_preview))
         .route("/api/people/split/apply", post(people::post_split_apply))
         .route("/api/people/{subject}/{modality}/{stem}", get(people::get_clip))
+        // The rest of the review surfaces, same shape as "认识的人": show what the agent
+        // has accumulated, and give the person the verb that ends or corrects it. Each is
+        // read plus exactly the writes it can honestly honour — no stop verb for workers,
+        // no edits at all for tools or drive, because neither is accumulated state a
+        // person can fix from a screen.
+        .route("/api/tasks", get(tasks::get_tasks))
+        .route("/api/tasks/{subject}", patch(tasks::patch_task))
+        .route("/api/skills", get(skills::get_skills))
+        .route("/api/skills/{*path}", get(skills::get_skill).delete(skills::delete_skill))
+        .route("/api/facets", get(facets::get_facets))
+        .route("/api/facets/{dimension}/{subject}", get(facets::get_facet).put(facets::put_facet))
+        .route("/api/episodes", get(facets::get_episodes))
+        .route("/api/workers", get(workers::get_workers))
+        .route("/api/workers/{id}", get(workers::get_worker))
+        .route("/api/tools", get(tools::get_tools))
+        .route("/api/drive", get(drive::get_drive))
+        .route("/api/drive/file/{*path}", get(drive::get_drive_file))
         // The device account's energy standing + a signed-in upgrade link. Public,
         // like every route here; the out-of-energy card calls both.
         .route("/api/account/energy", get(account::get_energy))
