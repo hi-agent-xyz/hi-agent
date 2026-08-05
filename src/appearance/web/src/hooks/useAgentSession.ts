@@ -207,6 +207,26 @@ export function useAgentSession(): AgentSession {
   // null when no utterance is in flight. Server-broadcast on /in/text, so every
   // client in the scene shows the same live line.
   const [interim, setInterim] = useState<string | null>(null);
+  // Is anyone actually looking at this window right now?
+  //
+  // This is the client half of the presence model: the backend derives `reach`
+  // from which out-channels are *open* (`presence.rs`), so an out-channel that
+  // stays subscribed behind another window reports a person who isn't there. The
+  // gate then passes, `say` answers "spoken", and the words are drained from the
+  // server's buffer and rolled off the caption band unseen — delivered by every
+  // measure the host has, and received by nobody.
+  //
+  // So attendance is a first-class client fact, and holding an out-channel open is
+  // the claim "someone is reading this". Three ways it goes false, all of them the
+  // page's own window and never a probe of anything else:
+  //   • `visibilitychange` — the tab is hidden, the app hidden (⌘H), the window
+  //     miniaturized, or (on the desktop build) closed.
+  //   • the native `background` lifecycle beat — the macOS window is reused across
+  //     close/open, so the React tree never unmounts and this is the only signal.
+  //   • occlusion — the window is fully covered by another app's. Nothing in the
+  //     web platform reports this; it arrives as a native lifecycle beat too (see
+  //     `windowDidChangeOcclusionState:` in `macos_window.rs`).
+  const [attended, setAttended] = useState(() => document.visibilityState === "visible");
 
   const busRef = useRef<AudioBus | null>(null);
   const micRef = useRef<AudioStreamer | null>(null);
@@ -314,8 +334,16 @@ export function useAgentSession(): AgentSession {
   }, [clearAgentQueue]);
 
   // ---- GET /out/text subscription loop (after wake) ----------------------
+  // Held open only while the window is attended. Dropping it when nobody is
+  // looking is what makes the backend's `reach.window` honest — and because the
+  // server's text bus buffers per scene and only removes an utterance once a
+  // reader has drained it to completion, the words wait there instead of being
+  // handed to a window nobody is watching. That is the difference between the
+  // reply being deferred and being half-spent: previously the band kept scrolling
+  // behind another app, so a reply longer than AGENT_REPLY_WINDOW arrived, rolled,
+  // and was already truncated by the time it was looked at.
   useEffect(() => {
-    if (!woken) return;
+    if (!woken || !attended) return;
     const ctrl = new AbortController();
     let cancelled = false;
     const buffer = new SentenceBuffer();
@@ -356,7 +384,7 @@ export function useAgentSession(): AgentSession {
       ctrl.abort();
       clearAgentQueue();
     };
-  }, [woken, scene, enqueueAgent, clearAgentQueue]);
+  }, [woken, attended, scene, enqueueAgent, clearAgentQueue]);
 
   // ---- Attention reporter (window came forward) --------------------------
   // Tell the backend when our own window becomes visible or regains focus — the
@@ -364,6 +392,11 @@ export function useAgentSession(): AgentSession {
   // our window's own visibility, never anything about other apps. Report once on
   // mount (the page being up is itself an activation) and on each visible/focus
   // transition, coalesced so a rapid focus+visible pair sends one beat.
+  //
+  // The same transitions drive `attended`, which gates the out-channels below.
+  // Note the asymmetry, and that it is deliberate: an activation is an *edge* the
+  // backend uses to notice a return, so it is only ever reported on the way in;
+  // attendance is a *state*, so it has to fall as well as rise.
   useEffect(() => {
     const ctrl = new AbortController();
     let last = 0;
@@ -376,7 +409,9 @@ export function useAgentSession(): AgentSession {
     };
     beat(); // mount = an activation
     const onVisible = () => {
-      if (document.visibilityState === "visible") beat();
+      const visible = document.visibilityState === "visible";
+      setAttended(visible);
+      if (visible) beat();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", beat);
@@ -392,8 +427,17 @@ export function useAgentSession(): AgentSession {
   // straight into the player as it arrives — no clip queue. The mind only puts
   // speech on the wire once it has committed to it, so there's nothing to gate
   // here.
+  //
+  // Subscribed only while the window is attended *and* the user has voice output
+  // on. Holding this open is the claim "there is a speaker in the room", and it is
+  // the one thing the host's presence gate reads before synthesizing
+  // (`sequencer.rs`, `open_tts`). Muting used to be a local flag on the player
+  // while the subscription stayed up, so the gate saw a speaker, TTS was
+  // synthesized and billed, `say` answered "spoken aloud" — and it was streamed
+  // into a muted sink. A voice nobody can hear is spent, which is the single
+  // failure this gate exists to prevent, so the mute has to reach the wire.
   useEffect(() => {
-    if (!woken) return;
+    if (!woken || !attended || !audioOutput) return;
     const ctrl = new AbortController();
     let cancelled = false;
     void (async () => {
@@ -425,8 +469,11 @@ export function useAgentSession(): AgentSession {
     return () => {
       cancelled = true;
       ctrl.abort();
+      // Cut anything mid-flight: the subscription is going away because nobody can
+      // hear it, so the tail of the current utterance must not keep playing.
+      voiceRef.current?.stop();
     };
-  }, [woken, scene]);
+  }, [woken, attended, audioOutput, scene]);
 
   // Reflexive duck: recognized speech (a rolling partial on the observe
   // stream) lands while the agent's voice is playing → cut playback right
@@ -639,6 +686,11 @@ export function useAgentSession(): AgentSession {
   // ---- voice output channel: mute/unmute the agent's TTS -----------------
   // Independent of everything else — silencing the voice leaves the agent's
   // words flowing as text on /out/text.
+  //
+  // `audioOutput` gates the /out/audio subscription (above), so turning it off
+  // drops the channel and the host stops synthesizing rather than synthesizing
+  // into silence. `setMuted` still fires for the instant cut: the effect teardown
+  // is a render away, and a spoken tail must stop on the click, not after it.
   const toggleAudioOutput = useCallback(() => {
     setAudioOutput((on) => {
       const next = !on;
@@ -726,30 +778,35 @@ export function useAgentSession(): AgentSession {
     startSession();
   }, [startSession]);
 
-  // Native desktop lifecycle: pause on background (window closed), restore on
-  // foreground (window reopened). The macOS WKWebView is reused across close/open,
-  // so the React tree never unmounts and the unmount cleanup below never runs —
-  // without this a closed window would keep the mic/camera live and keep the agent
-  // talking out loud to an empty room. Handling per channel:
+  // Native desktop lifecycle: pause on background (window closed, or fully covered
+  // by another app's window), restore on foreground. The macOS WKWebView is reused
+  // across close/open, so the React tree never unmounts and the unmount cleanup
+  // below never runs — without this a closed window would keep the mic/camera live
+  // and keep the agent talking to an empty room. Handling per channel:
   //   • input (mic/camera): released on background so the OS indicators actually go
   //     off; re-acquired on foreground per the honest, permission-gated startup
   //     restore. Preferences untouched — a hand-muted mic stays muted across cycles.
-  //   • voice output: silenced on background (and any utterance cut mid-flight) so
-  //     nothing is spoken to a closed window; restored to the user's output
-  //     preference on foreground.
-  //   • text output: deliberately left flowing — it's the persistent, observable
-  //     record, already there in the timeline when the window reopens.
-  // Note this only silences audible voice; the agent still *produces* its turns
-  // server-side while backgrounded (they arrive as text). Truly holding the floor
-  // until the user returns is a server-side, presence-aware turn-taking change, not
-  // this view's to make. Inert in a browser tab (no native lifecycle events there).
+  //   • output (voice *and* text): `attended` goes false, which drops both
+  //     out-channel subscriptions. That is the whole point rather than an
+  //     optimization: an open out-channel is how the backend concludes someone is
+  //     there, so leaving them up behind a closed window is what let the agent
+  //     speak into it and count the words delivered.
+  // Text output was previously left flowing on the reasoning that it is "the
+  // persistent, observable record, already there in the timeline when the window
+  // reopens". It wasn't: the band evicts past AGENT_REPLY_WINDOW as it reveals,
+  // and it reveals on a timer that doesn't know whether anyone is watching, so a
+  // long reply was already truncated by the time the window came back. The words
+  // wait in the server's per-scene buffer now, whole, and arrive when there is
+  // someone to read them. Inert in a browser tab (no native lifecycle events).
   useEffect(() => {
     return onNativeLifecycle((phase) => {
       if (phase === "background") {
+        setAttended(false);
         disableAudio();
         disableVision();
         voiceRef.current?.setMuted(true);
       } else {
+        setAttended(true);
         void restoreInputChannels();
         voiceRef.current?.setMuted(!prefsRef.current.audioOutput);
       }

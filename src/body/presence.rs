@@ -293,11 +293,23 @@ impl Presence {
         }
     }
 
-    /// The scene's presence as human-model facts for the mind's prompt — the
-    /// expectation, then what can reach them. Facts only.
+    /// The scene's presence as human-model facts for the mind's prompt — **the
+    /// expectation, and only the expectation**. Facts only.
+    ///
+    /// Reach deliberately does not appear here. It is binary and per-channel, so a
+    /// tool call can *answer* it: `say` reports where the words actually landed, read
+    /// at the instant of emission rather than off a snapshot taken when the turn
+    /// began. A projected reach is a second, staler copy of the same fact, and the
+    /// two disagree exactly when it matters — a turn can outlive the window that
+    /// started it. So nothing above the host asks whether it can be heard; it speaks
+    /// and reads the answer.
+    ///
+    /// Expectation cannot be learned that way and stays. It is graded rather than
+    /// binary (eager / around / away) and it is true even when every channel is
+    /// open, because it shapes *how much* to say rather than *whether* — a failed
+    /// send can never teach it, since there was no failure to read.
     pub fn render(&self, scene: &Scene) -> String {
-        let s = self.snapshot(scene);
-        format!("{} {}", render_expectation(s.expectation), render_reach(s.reach))
+        render_expectation(self.expectation(scene, Instant::now())).to_owned()
     }
 }
 
@@ -344,26 +356,6 @@ fn render_expectation(e: Expectation) -> &'static str {
             "No sign of them for a while — they've stepped away from hi-agent (no messages, \
              no checking in)."
         }
-    }
-}
-
-fn render_reach(r: Reach) -> String {
-    let mut lands = Vec::new();
-    if r.window {
-        lands.push("a window (words and views reach them on screen)");
-    }
-    if r.speaker {
-        lands.push("the speaker (you can be heard aloud)");
-    }
-    if r.mic {
-        lands.push("the mic (you're in a voice exchange)");
-    }
-    if lands.is_empty() {
-        "Nothing is connected right now — neither words, voice, nor a view reaches them until \
-         a window is up."
-            .to_owned()
-    } else {
-        format!("Open to them: {}.", lands.join("; "))
     }
 }
 
@@ -526,13 +518,20 @@ mod tests {
         assert_eq!(p.snapshot(&s).expectation, Expectation::Eager);
     }
 
+    /// The projection carries the expectation and *not* the reach: reach is what a
+    /// `say` call answers, and a second copy in the window would be the staler of
+    /// the two. An open channel must not put anything about channels in the prompt.
     #[test]
-    fn render_states_expectation_and_reach() {
+    fn render_states_expectation_only() {
         let p = Presence::new();
         let s = scene("boss");
         let _v = p.connect(&s, OutChannel::View);
+        let _a = p.connect(&s, OutChannel::Audio);
         let out = p.render(&s);
-        assert!(out.contains("screen"));
+        assert_eq!(out, render_expectation(Expectation::Present));
+        for leaked in ["screen", "window", "speaker", "mic", "Open to them"] {
+            assert!(!out.contains(leaked), "reach leaked into the projection: {leaked:?}");
+        }
     }
 
     // ---- The return edge ----

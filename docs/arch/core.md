@@ -88,9 +88,25 @@ in judgment rather than in a gate.
 It is not one number and not a mode ladder, but three orthogonal axes that combine
 freely — **reach** (which of window, speaker and mic a message can land on right now),
 **expectation** (a decaying belief about how much output they're awaiting: eager,
-around, away), and **posture** (whether a voice exchange is live). It is rendered for
-exactly one reader — Reaction, which decides both whether it is talking to a room or to
-nobody, and whether an unprompted word should wait.
+around, away), and **posture** (whether a voice exchange is live).
+
+**An open channel is a claim that someone is reading it, and the client owes us the
+truth of that claim.** Reach is derived from which out-channels are subscribed, so a
+subscription held behind another window is not a stale reading — it is a false one, and
+everything downstream reasons correctly from it to the wrong answer. The face therefore
+drops its out-channels the moment nobody is looking: hidden, miniaturized, closed, or
+**fully occluded by another window** — the last of which no web API reports, so it
+arrives from the shell (`windowDidChangeOcclusionState:`). A channel that stays up
+because a long-poll re-opens on its own is exactly the hazard this axis has to exclude.
+
+**Reach is answered, not projected. Expectation is projected.** Only one of the two can
+be learned by trying, and it should be: the host tells `say` where the words landed, read
+at the instant of emission, so nothing above the host has to ask whether it can be heard
+before speaking. A projected copy of the same fact is the staler of the two, and they
+disagree precisely when it matters, because a turn can outlive the window that started
+it. Expectation cannot be learned this way — it is graded rather than binary and true
+even when every channel is open, since it shapes *how much* to say rather than *whether*
+— so it, alone, is rendered into the window. One reader either way: Reaction.
 
 **What the gate protects is narrower than it first looks, and that is the point.**
 Words and views survive an empty room without help: outbound text is buffered per scene
@@ -101,6 +117,18 @@ attached is gone, and the person comes back and never learns it happened. So the
 withholds exactly one thing, the speech synthesis, and reports what it did: `say`
 answers with where the words actually landed — aloud, on screen only, or waiting for
 them. Everything above that is Reaction's judgment, not a rail.
+
+**That narrowing is only sound while the buffer is honest, and it is the buffer's reader
+that decides.** Text is deferred rather than spent because it waits for a reader that
+connects later — but the bus is drain-and-delete, not a cursor, so it defers only until
+*a* reader takes it, and an unattended reader takes it and shows it to nobody. The
+mechanism that was supposed to protect the words is then the one that spends them, and
+the outcome is worse than either honest end: the person gets a fragment that reads as a
+whole message rather than a message they can tell they missed. **Half-spent is the
+failure to design against here** — voice is spent by physics, text by attention, and the
+gate can only see the first. Which is why an out-channel must be held open only while
+someone is reading it: with that true, "only voice is spent" is true, and without it the
+sentence is aspirational.
 
 **Coming back is an event, and the only one here.** Every other presence change is read
 off the axes during a turn that was already happening. A return is not: it happens

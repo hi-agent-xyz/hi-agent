@@ -59,7 +59,7 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent, NSEventType,
     NSWindowCollectionBehavior, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowDelegate,
-    NSWindowStyleMask, NSWindowTitleVisibility,
+    NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest,
@@ -334,6 +334,38 @@ define_class!(
         fn window_will_close(&self, _notification: &NSNotification) {
             crate::foundation::window_state::set_open(false);
             self.emit_lifecycle("background");
+        }
+
+        /// A window fully covered by another app's window is not being read, and this is
+        /// the **only** signal that says so. The web platform does not report it: an
+        /// occluded `WKWebView` keeps `document.visibilityState === "visible"`, fires no
+        /// `visibilitychange`, and keeps its timers and long-polls running. `hidden` covers
+        /// a miniaturized, app-hidden or closed window and nothing else.
+        ///
+        /// That gap was load-bearing. The face holds an out-channel open per output, and
+        /// the backend derives presence from which of them are open — so a window sitting
+        /// behind a full-screen editor reported a person who was not looking, the presence
+        /// gate passed, and the agent spoke and streamed text into it. The words were
+        /// drained from the server's buffer and rolled off the caption band unseen: not
+        /// withheld and not delivered, but half-spent, which reads to the person as an
+        /// agent that started a list at "two".
+        ///
+        /// Reported as the same foreground/background beat as close/open, so the face has
+        /// one notion of "is anyone reading this" rather than two that can disagree.
+        /// Fires on every transition including the ones AppKit generates during a normal
+        /// open, so it must stay idempotent on the web side — it is: `setAttended` with the
+        /// value it already holds is a no-op, and the channel effects are keyed on it.
+        #[unsafe(method(windowDidChangeOcclusionState:))]
+        fn window_did_change_occlusion_state(&self, _notification: &NSNotification) {
+            // `NSWindowOcclusionState` is a bitmask whose only defined bit is `Visible`;
+            // absent means fully occluded by another window.
+            let window: &KeyWindow = &self.ivars().window;
+            let visible = window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::Visible);
+            // Deliberately *not* touching `window_state::set_open` — that tracks whether
+            // the window exists for the energy poll, and an occluded window is still open.
+            self.emit_lifecycle(if visible { "foreground" } else { "background" });
         }
     }
 );
