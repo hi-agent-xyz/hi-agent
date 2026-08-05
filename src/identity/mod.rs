@@ -669,6 +669,46 @@ mod soul_tests {
         assert!(!filer.contains(VIEW_LAYER), "the view layer must not ride along");
     }
 
+    /// Durability across a restart is **behaviour, not machinery**: nothing persists a
+    /// worker, so a kill mid-job loses whatever lived only in its context. The answer is
+    /// the prompt telling it to write as it goes — and telling it *where*, because a note
+    /// in `/tmp` is written and unfindable, which is the same as lost (gaps.md #3, #11).
+    ///
+    /// Pinned on the two rungs that can lose real time (the general worker and the view
+    /// builder) plus the decision-maker, whose whole output *is* its report. The reviewer
+    /// and the filer are left out on purpose — one returns a verdict, the other's work is
+    /// the files it has already written.
+    #[tokio::test]
+    async fn the_long_running_workers_are_told_to_write_as_they_go() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let scene = crate::types::Scene("boss".into());
+
+        for t in [WorkerType::General, WorkerType::ViewBuilder, WorkerType::DecisionMaker] {
+            let p = worker_prompt(dir.path(), &scene, t).await;
+            assert!(p.contains("only copy of the work"), "{} loses its work", t.as_str());
+            // The location is the load-bearing half, and it has to arrive absolute: a
+            // relative `memory/facets/...` resolves against a cwd that differs per rung.
+            let tasks = crate::mind::memory::layout::facets_dir(&abs(dir.path())).join("tasks");
+            assert!(
+                p.contains(&tasks.display().to_string()),
+                "{} is not told where to write",
+                t.as_str()
+            );
+            assert!(!p.contains("{data_dir}"), "unsubstituted placeholder in {}", t.as_str());
+        }
+
+        // Redoing lost work is fine; redoing something a person already saw is not. Only
+        // the general worker acts on the outside world, so only it carries the ordering
+        // rule — the others build, judge, or file.
+        let general = worker_prompt(dir.path(), &scene, WorkerType::General).await;
+        assert!(general.contains("outside world can already see"));
+        for t in [WorkerType::ViewReviewer, WorkerType::FileFiler] {
+            let p = worker_prompt(dir.path(), &scene, t).await;
+            assert!(!p.contains("only copy of the work"), "{} rode along", t.as_str());
+        }
+    }
+
     /// A type is a prompt selector, so the wire name and the filename are one string —
     /// and an unknown one is an error rather than a quiet downgrade to `general`, which
     /// would hand back a session that cannot do the job it was asked for.
