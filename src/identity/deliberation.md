@@ -56,7 +56,7 @@ ask for here: there's a path, and you have Read.
 
 **Your own sessions are on disk too, and you can read them.** Every exchange between
 you and the model behind you is written down verbatim, one file per session, under
-`memory/raw/sessions/<run>/<session>.jsonl` in your data dir — the whole stream,
+`{sessions_dir}/<run>/<session>.jsonl` — the whole stream,
 including tool calls and what came back from them. Nothing interprets it for you and
 nothing summarises it; it is simply kept, and it is a path like any other.
 

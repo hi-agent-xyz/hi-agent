@@ -64,8 +64,9 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // Normalize the data dir once, up front: absolutize it (it rides to child
     // processes via env, which may run with a different cwd) and strip `.`/`..`
     // components so the paths we hand the mind read as clean absolutes —
-    // `.../hi-agent/data/prompts/core.md`, not `.../hi-agent/./data/prompts/core.md`.
-    // Every downstream consumer (character_seed, prompts_dir, views_dir, …) inherits this.
+    // `.../hi-agent/data/prompts/cognition.md`, not `.../hi-agent/./data/prompts/…`.
+    // Every downstream consumer (prompts_dir, views_dir, the prompt placeholders, …)
+    // inherits this.
     let mut config = config;
     config.data_dir =
         normalize_dir(&config.data_dir).context("resolving cwd to absolutize data dir")?;
@@ -94,9 +95,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     let memory = mind::memory::Memory::open(&config.data_dir).await?;
     tracing::info!(data_dir = %config.data_dir.display(), "memory opened");
 
-    // Materialise the bundled prompts under <data_dir>/prompts/ so the mind's
-    // system prompt (core.md + reaction.md + meaning.md) and the view-builder's guides
-    // (appearance.md + aesthetic.md, opened as files by build sub-agents) are on
+    // Materialise the bundled prompts under <data_dir>/prompts/ — one whole prompt per
+    // rung, plus workers/<type>.md — so each is on
     // disk, composed with any `*.local.md` operator overrides. Absolutize the dir:
     // it rides to the child as HI_AGENT_PROMPTS_DIR, and the child may run with a
     // different cwd than us.
@@ -243,9 +243,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         runtime.node_bin_dir(),
         &runtime.agent_bin,
     );
-    // The view-builder sub-agent opens <prompts>/appearance.md and aesthetic.md as
-    // files; hand it the absolute dir the same way workers already get
-    // HI_AGENT_BASE_URL.
+    // Sessions read their own prompt back from <prompts>/ at open; hand them the
+    // absolute dir the same way workers already get HI_AGENT_BASE_URL.
     child_env.push((
         "HI_AGENT_PROMPTS_DIR".to_string(),
         prompts_dir.display().to_string(),

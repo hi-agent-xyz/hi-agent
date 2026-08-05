@@ -1,40 +1,42 @@
 //! identity — who the agent is.
 //!
-//! The factory-authored character (`core.md`, `reaction.md`, `meaning.md`) and the
-//! per-install authored `self.md`. Standing duties are no longer here at all — they
-//! are tasks ([`crate::mind::memory::tasks`]), one ledger, projected into every
-//! window rather than pointed at by a path. This module owns the two shapes a rung's
-//! self can take — the **seed** an agentic rung Reads its character from
-//! ([`character_seed`]) and the **inlined** brief the voice gets because it cannot read
-//! ([`reactor_system_prompt`]) — and the **prompt cascade** that materialises the
-//! bundled prompts under `<data_dir>/prompts/`, composing each managed base with an
-//! optional operator `*.local.md` override ([`install_prompts`]). That cascade is
-//! the base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
+//! The factory-authored character, as **one whole prompt per role**: four rungs
+//! (`reaction`, `deliberation`, `cognition`, `reflection`) and five worker types under
+//! `workers/`. Standing duties are not here at all — they are tasks
+//! ([`crate::mind::memory::tasks`]), one ledger, projected into every window rather
+//! than pointed at by a path.
 //!
-//! Scope notes for the in-flight refactor:
-//! - `install_prompts` still materialises the **view-builder guides** (`appearance.md`,
-//!   `aesthetic.md`) and the **reflection** instruction (`reflection.md`) alongside the
-//!   identity prompts — they share one cascade. A later slice moves those non-identity
-//!   prompts to where they belong (mind / the loop), leaving identity with just
-//!   `core`/`reaction`/`meaning`.
-//! - `self.md` still lives under `<data_dir>/memory/` for now (no data migration).
-//!   Under `docs/arch/data.md#memoryprompts` it does not get relocated at all: who
-//!   this install is becomes a *section* of a generated prompt, so the file goes away
-//!   with the change that gives Deliberation the writer's job.
+//! This module owns the **prompt cascade**: the bundled bases are materialised under
+//! `<data_dir>/prompts/` at boot, each composed with an optional operator `*.local.md`
+//! override ([`install_prompts`]), then read back whole at session open
+//! ([`rung_prompt`], [`worker_prompt`], [`reactor_system_prompt`]). That cascade is the
+//! base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
+//!
+//! **There is no seed.** A rung used to be handed ~18 lines pointing at `core.md`,
+//! `meaning.md` and `self.md` and told to go read them; that shape and why it was
+//! retired are recorded on [`rung_prompt`]. `core.md`, `meaning.md`, `appearance.md`
+//! and `aesthetic.md` no longer exist, and [`install_prompts`]'s tests assert they stay
+//! gone.
+//!
+//! `self.md` still lives under `<data_dir>/memory/` (no data migration). Under
+//! `docs/arch/data.md#memoryprompts` it does not get relocated at all: who this install
+//! is becomes a *section* of a generated prompt, so the file goes away with the change
+//! that gives Deliberation the writer's job.
 
 use std::path::{Path, PathBuf};
 
 /// Built-in base prompts, embedded at compile time and materialised to disk by
-/// [`install_prompts`]. They divide by which rung can *fetch*: an agentic rung is
-/// handed `core.md` — who it is and how it works — and `meaning.md` — that its purpose
-/// is its own to find — by [`character_seed`], and Reads them itself. `reaction.md` is
-/// the exception among the identity prompts: the voice is tools-off, so its whole
-/// brief is **inlined** by [`reactor_system_prompt`]. `appearance.md`
-/// and `aesthetic.md` are the view builder's guides — the mechanics of authoring/saving
-/// a view, and the taste it has to clear — read off disk by a build sub-agent.
-/// `reflection.md` is the exception: it is the consolidation session's whole instruction
-/// set, so it is **inlined** as that session's system prompt (see [`reflection_prompt`])
-/// rather than Read. All ship in the binary and refresh on every build.
+/// [`install_prompts`].
+///
+/// **One file per rung, and each is that rung's whole system prompt** — nothing points
+/// at anything else and nothing is fetched. They divide only by which entry point reads
+/// them back: [`reactor_system_prompt`] for the tools-off voice, [`reflection_prompt`]
+/// for the consolidation pass, [`cognition_prompt`] and [`deliberation_prompt`] for the
+/// thinking rungs. All ship in the binary and refresh on every build.
+///
+/// The cost of "whole" is that ~2,000 words of shared character live in three copies,
+/// and drift between them is the live risk — which is what the prompt tests below are
+/// for.
 const REACTION_BASE: &str = include_str!("reaction.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
 const DELIBERATION_BASE: &str = include_str!("deliberation.md");
@@ -145,11 +147,11 @@ fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
 }
 
 /// Install the bundled prompts under `<data_dir>/prompts/` at startup, composing
-/// each with its optional `*.local.md` operator override. The managed base files
-/// (`core.md`, `reaction.md`, `meaning.md`, `appearance.md`, `aesthetic.md`,
-/// `reflection.md`) are rewritten every boot so they stay current; operator edits
-/// live in the never-touched `*.local.md` siblings. Each follows one workflow: ship
-/// embedded → materialise here → consumed from disk at runtime.
+/// each with its optional `*.local.md` operator override. The managed base files —
+/// the four rungs (`reaction.md`, `deliberation.md`, `cognition.md`, `reflection.md`)
+/// and `workers/<type>.md` — are rewritten every boot so they stay current; operator
+/// edits live in the never-touched `*.local.md` siblings. Each follows one workflow:
+/// ship embedded → materialise here → consumed from disk at runtime.
 pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
     std::fs::create_dir_all(&dir)?;
@@ -159,12 +161,18 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
 
     // The worker prompts get their own subdirectory, because there is one per type and
-    // they would otherwise be the majority of a flat `prompts/`. `common.md` sits
-    // alongside them rather than above them: it is the layer every type is composed
+    // they would otherwise be the majority of a flat `prompts/`.
+    //
     // One file per type, and **no shared base**: a worker's prompt is whole, the same way
-    // a rung's is. `common.md` used to sit here as the layer every type composed with,
-    // which meant a decision-maker read how to drive a camera and a file-filer read how to
-    // review its own artwork. ~39 lines are now duplicated across five files instead.
+    // a rung's is. `common.md` used to sit above them as the layer every type composed
+    // with, which meant a decision-maker read how to drive a camera and a file-filer read
+    // how to review its own artwork. The price is duplication: a 35-line preamble
+    // identical in all five, plus ~36 further lines shared by two or three of them. Drift
+    // between the copies is the risk, and the prompt tests below are what hold it.
+    //
+    // It was roughly five times that until the reviewer stopped carrying the builder's
+    // taste section verbatim — the same 74 lines, in the builder's voice, telling a rung
+    // whose whole job is *not* to edit the view to "fix what doesn't before you save".
     let workers = dir.join("workers");
     std::fs::create_dir_all(&workers)?;
     for t in WorkerType::ALL {
@@ -191,8 +199,9 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 /// **This replaced a `const &str` in `reactor/workers.rs`** — the one role prompt that
 /// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
 ///
-/// Two placeholders are interpolated, both because a worker reaches hi-agent's own
-/// surfaces over HTTP and has to name the right scene:
+/// Two scene placeholders are interpolated here, on top of the directory ones
+/// [`rung_prompt`] already expands, because a worker reaches hi-agent's own surfaces
+/// over HTTP and has to name the right scene:
 /// - `{scene}` — the scene as the `X-HI-Scene` header wants it.
 /// - `{scene_dir}` — the same scene as it appears **on disk**, which is percent-encoded
 ///   (`alice@phone` lives at `alice%40phone`). Substituting the raw form here pointed
@@ -249,8 +258,13 @@ fn abs(data_dir: &Path) -> PathBuf {
 /// real: ~71 lines of shared character live in three copies, and drift between them is
 /// the live risk — which is what the prompt tests are for.
 ///
-/// Two things are per-install and so cannot be baked in; they interpolate instead of
-/// being fetched: `{skills_dir}` and the language line.
+/// What is per-install cannot be baked in, so it interpolates instead of being fetched:
+/// the five directory placeholders below, and the language line.
+///
+/// **Every one of them expands to an absolute path**, which is the whole point of
+/// [`abs`]: a prompt that says `memory/raw/sessions/` or `$PROMPTS/../drive/` resolves
+/// against the *session's* cwd, and those differ by rung. The agent then reads a
+/// directory that does not exist and reports the thing missing rather than empty.
 async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> String {
     let base = abs(data_dir);
     let path = base.join("prompts").join(format!("{name}.md"));
@@ -258,10 +272,16 @@ async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> Str
         Ok(s) if !s.trim().is_empty() => s,
         _ => fallback.to_string(),
     };
-    let mut out = text.replace(
-        "{skills_dir}",
-        &crate::mind::skills::skills_dir(&base).display().to_string(),
-    );
+    let dir = |p: PathBuf| p.display().to_string();
+    let mut out = text
+        .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
+        .replace(
+            "{sessions_dir}",
+            &dir(crate::mind::memory::layout::raw_root(&base).join("sessions")),
+        )
+        .replace("{drive_dir}", &dir(base.join("drive")))
+        .replace("{views_dir}", &dir(base.join("views")))
+        .replace("{data_dir}", &dir(base.clone()));
     if let Some(lang) = language_line(&base) {
         out.push_str(&lang);
     }
@@ -289,8 +309,8 @@ pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -
 /// **Cognition**'s role layer — the sceneless brain that owns the task ledger, hands
 /// work out, and never speaks (`docs/arch/agents.md#cognition`).
 ///
-/// A layer, like Deliberation's: the caller appends it under
-/// [`character_seed`], which is what makes the rung *the agent* rather than a generic
+/// Cognition's **whole** prompt, like every other rung's: the character and the role
+/// arrive together, which is what makes the rung *the agent* rather than a generic
 /// assistant. It carries the ledger pen — the instruction that lived in
 /// `deliberation.md` marked "for now, yours" until Cognition existed to take it back.
 ///
@@ -305,31 +325,34 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 
 /// The reflection ("sleep") session's system prompt: the materialised
 /// `<data_dir>/prompts/reflection.md` (operator-overridable via `reflection.local.md`),
-/// or the embedded [`REFLECTION_BASE`] when that file is missing or empty. Unlike
-/// `core.md`/`reaction.md`, this is **inlined** as the reflection session's system
-/// prompt rather than Read by the agent — it *is* the task's instructions, so it must
-/// be present before the session can act. Read fresh each round, so an operator edit
-/// takes effect without a restart.
+/// or the embedded [`REFLECTION_BASE`] when that file is missing or empty. It is
+/// **inlined** as the reflection session's system prompt rather than Read by the agent
+/// — it *is* the task's instructions, so it must be present before the session can act.
+/// Read fresh each round, so an operator edit takes effect without a restart.
 pub async fn reflection_prompt(data_dir: &Path) -> String {
     rung_prompt(data_dir, "reflection", REFLECTION_BASE).await
 }
 
 /// **Reaction**'s system prompt — the scene's voice (`docs/arch/agents.md#reaction`).
 ///
-/// Unlike [`character_seed`] (a thin seed pointing an *agentic* rung at files to
-/// Read), Reaction is tools-off by design: it has no Read, so nothing it needs may be
-/// a path. Its brief is therefore **inlined and singular** — `reaction.md` *is* its
-/// whole system prompt, verbatim. That is what makes speaking-rule conformance
-/// structural: the rules are the entire context, not one buried file among many.
-/// (Mirrors how `reflection.md` is inlined for the reflection session.)
+/// Reaction is tools-off by design: it has no Read, so nothing it needs may be a path.
+/// Its brief is therefore **inlined and singular** — `reaction.md` *is* its whole system
+/// prompt, verbatim. That is what makes speaking-rule conformance structural: the rules
+/// are the entire context, not one buried file among many. (Mirrors how `reflection.md`
+/// is inlined for the reflection session.)
 ///
 /// **The frame that used to sit above the file is now the top of the file.** It was
 /// ~40 lines of Rust string literal carrying the two things a reader would look for
-/// first — that Reaction is one self rather than a dispatcher with colleagues, and
-/// what its two tools are — which meant the voice's brief lived in two places, only
-/// one of them operator-overridable. A prompt is prose; it belongs in the `.md`. The
-/// file is now named for the rung that reads it (`docs/arch/arch.md#character`: a
-/// file per role) rather than for the activity, which is what `speaking.md` was.
+/// first — that Reaction is one self rather than a dispatcher with colleagues, and what
+/// its tools are — which meant the voice's brief lived in two places, only one of them
+/// operator-overridable. A prompt is prose; it belongs in the `.md`. The file is now
+/// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
+/// rather than for the activity, which is what `speaking.md` was.
+///
+/// Its surface is `say` · `show_view` · `send_message`
+/// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
+/// three: the file once said "you have exactly two", then told the voice to "hand it
+/// onward" without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, so an operator's `reaction.local.md`
 /// reaches the voice too, falling back to the embedded [`REACTION_BASE`]. Two things
@@ -632,12 +655,18 @@ mod soul_tests {
             assert!(p.contains(heading), "{}", t.as_str());
         }
 
+        // The sentinel is a phrase from the view layer itself. It used to be
+        // `"aesthetic.md"` — a *filename*, which kept passing after that file was
+        // retired and the builder was left ordered to Read something that no longer
+        // existed. Pin prose the layer actually carries, so deleting the layer fails
+        // the test and deleting a file it merely mentions does not.
+        const VIEW_LAYER: &str = "review_view";
         let builder = worker_prompt(dir.path(), &scene, WorkerType::ViewBuilder).await;
-        assert!(builder.contains("aesthetic.md"));
+        assert!(builder.contains(VIEW_LAYER));
         assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
 
         let filer = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
-        assert!(!filer.contains("aesthetic.md"), "the view layer must not ride along");
+        assert!(!filer.contains(VIEW_LAYER), "the view layer must not ride along");
     }
 
     /// A type is a prompt selector, so the wire name and the filename are one string —
