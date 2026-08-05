@@ -257,7 +257,42 @@ async fn run(reactor: Reactor, registration: Registration) {
 
         workers.reap();
 
-        match turn(&reactor, id, &scene, &pending, &mut session).await {
+        // **Keep serving `control_rx` while the turn runs.** `create_worker` is the one
+        // control message that is always sent from *inside* a turn — the model calls the
+        // tool mid-prompt — and the loop that has to honour it is this one. Awaiting the
+        // turn without polling the channel meant the request could not be granted until
+        // the turn that made it had finished: the tool reported `starting`, the buffered
+        // send succeeded, and the subprocess appeared only once the caller stopped
+        // working. Delegation therefore failed exactly when it was worth most — a long
+        // turn — and `session_status` truthfully answered "no live session" the whole
+        // time, which reads as a dead worker rather than an undelivered one.
+        //
+        // Only the control arm belongs here. Serving the wake or mail arms would start a
+        // second turn on top of this one; those stay outside, where a turn boundary
+        // separates them. Worker *reports* stay outside too — they need `&mut pending`,
+        // which this turn has borrowed, and they are next-turn input by design.
+        let result = {
+            let mut turn_fut = std::pin::pin!(turn(&reactor, id, &scene, &pending, &mut session));
+            loop {
+                tokio::select! {
+                    done = &mut turn_fut => break done,
+                    ctl = control_rx.recv() => match ctl {
+                        Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
+                            if let Err(err) =
+                                workers.spawn_with_id(&reactor, worker, task, kind, owner).await
+                            {
+                                tracing::warn!(error = %err, "cognition failed to create a worker");
+                            }
+                        }
+                        // The sender is gone; the turn still deserves to finish. A closed
+                        // channel resolves immediately forever, so stop selecting on it.
+                        None => break (&mut turn_fut).await,
+                    },
+                }
+            }
+        };
+
+        match result {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed. The recurring wake above is
