@@ -124,6 +124,12 @@ Then keep refining the SAME ref in place: overwrite it and report it again each 
 you meaningfully advance it, ending on the polished version. Keep the ref stable across
 versions so the agent evolves one view rather than stacking copies.
 
+**A slot you can't fill gets your best reading, not a hole.** An undefined term, a
+figure nobody gave — write what the surrounding material most plausibly means, mark it
+so a reader can see it was your reading, and say which ones you marked in your report.
+A page that goes out with a gap filled and flagged is correctable in a sentence; a page
+that goes out blank waiting on an answer is neither finished nor reviewable.
+
 A half-filled view the person watches fill in reads as progress, not as a defect — like
 a colleague turning their screen around while they work, not only at the end.
 

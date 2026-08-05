@@ -24,6 +24,7 @@ prompt, not new machinery.
 | **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
 | A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
 | Cognition is the sole writer of the ledger | Two writers to one ledger means one of them is wrong and no way to tell which |
+| **A gap in the request is work, not a question** | Every rung, not just the Decision Maker. Waiting on the user is the worst outcome available, so an unknown gets the most defensible reading, stated out loud; asking is the fallback for when no reading is defensible *and* the gap gates the work |
 
 ### Ownership and addressing
 
@@ -54,6 +55,16 @@ Two things follow, and both are load-bearing:
 Below the bottom of this ladder sits one more tempo that is *not* an agent: **reflex**, the
 sub-second path with no model in the loop — barge-in and taught quick-actions. It lives in
 the host, in [`core.md`](core.md#reflex), which is why it has no section here.
+
+**One rule runs the length of the ladder: a gap in the request is work, not a question.**
+[Invariant 9](arch.md#invariants) says irreversible or outward-facing → ask, and that is the
+*whole* list. Not knowing something is not on it. An undefined term, a figure nobody gave, a
+section with nothing behind it — every rung takes the most defensible reading, says which
+reading it took, and keeps going; a stated assumption costs a word to correct, where a
+question costs however long the person is away. Asking is the fallback for when no reading is
+defensible *and* the gap gates the work. Nothing the agent produces arrives empty because an
+answer never came. The [Decision Maker](#decision-maker) is the escalation of this rule, not
+the only place it applies.
 
 ### Reaction — per scene, one generation
 
