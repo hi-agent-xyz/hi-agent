@@ -480,6 +480,11 @@ async fn turn(
         format!("{}\n\n## New messages\n{messages}", window.trim())
     };
 
+    // Paired with "cognition turn done". Cognition is sceneless, so it never reaches
+    // the observatory mirror and the log is the only place it is visible at all; with
+    // only a done line, "thinking" and "parked with nothing to do" read the same.
+    tracing::info!(cognition = id, prompt_chars = prompt.chars().count(), "cognition turn start");
+
     let mut run = session.prompt(prompt).await?;
     let mut full = String::new();
     while let Some(update) = run.next_update().await {

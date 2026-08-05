@@ -623,6 +623,16 @@ async fn drive_worker(
     let session = session;
     loop {
         busy.store(true, Ordering::Relaxed);
+        // Paired with the "turn done" line below. Without both, a reader of the log
+        // cannot tell a working session that is still building from one that finished
+        // and went quiet — the two look identical, which is exactly the ambiguity the
+        // completion event exists to remove.
+        tracing::info!(
+            scene = %scene,
+            worker = id,
+            task_chars = task.chars().count(),
+            "working session turn start"
+        );
         let kind = match run_worker(id, &task, &session, &transcript).await {
             Ok(answer) => WorkerReportKind::Done(answer),
             Err(err) => WorkerReportKind::Failed(err.to_string()),
@@ -641,6 +651,13 @@ async fn drive_worker(
                 EventKind::WorkerFinished { id, state, summary_chars },
             )
             .await;
+        tracing::info!(
+            scene = %scene,
+            worker = id,
+            state = ?state,
+            summary_chars,
+            "working session turn done"
+        );
         let report = WorkerReport { id, task: task.clone(), kind, is_deliberation, owner };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
             tracing::warn!(worker = id, "worker report dropped; scene loop gone");
