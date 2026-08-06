@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (target.closest("input, textarea, select")) return true;
-  return target instanceof HTMLElement && target.isContentEditable;
-}
+import { isEditableTarget } from "../lib/handoff";
 
 interface KeyboardFallbackProps {
   onSend: (text: string) => void;
@@ -74,6 +70,7 @@ export function KeyboardFallback({ onSend, open, pastedText, onOpen, onClose }: 
     <div className="hi-kbd">
       <input
         ref={inputRef}
+        data-hi-base-text-input
         value={text}
         spellCheck={false}
         onChange={(e) => setText(e.target.value)}

@@ -30,7 +30,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::mind::memory::layout::MediaSlot;
@@ -48,6 +48,32 @@ const HANDOFF_TTL: Duration = Duration::from_secs(600);
 pub struct Handoff {
     pub scene: Scene,
     pub expires: Instant,
+}
+
+#[derive(Debug, Serialize)]
+struct UploadFailure {
+    index: usize,
+    name: String,
+    error: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct UploadResult {
+    attempted: usize,
+    received: usize,
+    failed: Vec<UploadFailure>,
+}
+
+impl UploadResult {
+    fn status(&self) -> StatusCode {
+        if self.attempted == 0 {
+            StatusCode::BAD_REQUEST
+        } else if self.failed.is_empty() {
+            StatusCode::OK
+        } else {
+            StatusCode::MULTI_STATUS
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -130,14 +156,14 @@ pub(crate) async fn receive_screenshot(
     ingest_file(state, scene, &name, "image/png", bytes, body).await
 }
 
-/// Drain a multipart body, storing every file part. Returns how many landed, or
-/// an HTTP error if the body was malformed.
+/// Drain a multipart body, storing every file part. A failed file does not hide
+/// siblings that already landed or prevent later parts from being attempted.
 async fn drain_multipart(
     state: &AppState,
     scene: &Scene,
     mut mp: Multipart,
-) -> Result<usize, (StatusCode, String)> {
-    let mut n = 0usize;
+) -> Result<UploadResult, (StatusCode, String)> {
+    let mut result = UploadResult::default();
     loop {
         match mp.next_field().await {
             Ok(Some(field)) => {
@@ -152,14 +178,16 @@ async fn drain_multipart(
                     let _ = field.bytes().await;
                     continue;
                 };
+                let index = result.attempted;
+                result.attempted += 1;
                 match field.bytes().await {
-                    Ok(bytes) if !bytes.is_empty() => {
-                        receive_file(state, scene, &name, &mime, &bytes)
-                            .await
-                            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-                        n += 1;
+                    Ok(bytes) => match receive_file(state, scene, &name, &mime, &bytes).await {
+                        Ok(()) => result.received += 1,
+                        Err(error) => {
+                            tracing::error!(scene = %scene, file = %name, %error, "file upload failed");
+                            result.failed.push(UploadFailure { index, name, error });
+                        }
                     }
-                    Ok(_) => {} // empty part — ignore
                     Err(e) => return Err((StatusCode::BAD_REQUEST, format!("reading upload: {e}"))),
                 }
             }
@@ -167,7 +195,7 @@ async fn drain_multipart(
             Err(e) => return Err((StatusCode::BAD_REQUEST, format!("malformed multipart: {e}"))),
         }
     }
-    Ok(n)
+    Ok(result)
 }
 
 // -----------------------------------------------------------------------------
@@ -183,8 +211,7 @@ pub async fn post_file(
 ) -> Response {
     tracing::info!(scene = %scene, "POST /api/in/file");
     match drain_multipart(&state, &scene, mp).await {
-        Ok(0) => (StatusCode::BAD_REQUEST, "no file in upload\n").into_response(),
-        Ok(n) => (StatusCode::OK, Json(serde_json::json!({ "received": n }))).into_response(),
+        Ok(result) => (result.status(), Json(result)).into_response(),
         Err((code, msg)) => (code, msg).into_response(),
     }
 }
@@ -233,8 +260,29 @@ pub async fn post_up(
     };
     tracing::info!(scene = %scene, "POST /api/up/<token>");
     match drain_multipart(&state, &scene, mp).await {
-        Ok(0) => (StatusCode::BAD_REQUEST, Html(result_page("没有选择文件", false))).into_response(),
-        Ok(n) => (StatusCode::OK, Html(result_page(&format!("已发送 {n} 个文件给 agent，可以关掉本页了。"), true))).into_response(),
+        Ok(result) if result.attempted == 0 => {
+            (StatusCode::BAD_REQUEST, Html(result_page("没有选择文件", false))).into_response()
+        }
+        Ok(result) if result.failed.is_empty() => (
+            StatusCode::OK,
+            Html(result_page(
+                &format!("已发送 {} 个文件给 agent，可以关掉本页了。", result.received),
+                true,
+            )),
+        )
+            .into_response(),
+        Ok(result) => (
+            StatusCode::MULTI_STATUS,
+            Html(result_page(
+                &format!(
+                    "已发送 {} 个文件，{} 个失败。回到 agent 可以重试。",
+                    result.received,
+                    result.failed.len()
+                ),
+                false,
+            )),
+        )
+            .into_response(),
         Err((code, msg)) => (code, Html(result_page(&msg, false))).into_response(),
     }
 }

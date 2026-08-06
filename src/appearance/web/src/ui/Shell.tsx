@@ -1,15 +1,8 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-} from "react";
+import { useCallback, useRef, useState } from "react";
 import { usePresence, useSpeech, useChannels, useSendText, useScene } from "../core";
 import { useViews } from "../core/views";
 import { floorLayout, CAPTIONS_ID, CAMERA_ID, type Participant } from "../core/layout";
-import { postInFiles } from "../channels/in/file";
+import { useHandoff } from "../hooks/useHandoff";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
 import { SpeechText } from "./SpeechText";
@@ -18,34 +11,7 @@ import { KeyboardFallback } from "./KeyboardFallback";
 import { ChannelControls } from "./ChannelControls";
 import { OutOfEnergyHint } from "./OutOfEnergyHint";
 import { CameraPreview } from "./CameraPreview";
-
-type HandoffState = "idle" | "hover" | "sending" | "sent" | "error";
-type HandoffKind = "files" | "text";
-
-function fileCountLabel(count: number): string {
-  return count === 1 ? "1 file" : `${count} files`;
-}
-
-function hasFiles(e: DragEvent<HTMLElement>): boolean {
-  const dt = e.dataTransfer;
-  if (!dt) return false;
-  if (Array.from(dt.types).includes("Files")) return true;
-  return Array.from(dt.items).some((item) => item.kind === "file");
-}
-
-function clipboardFiles(data: DataTransfer): File[] {
-  const files = Array.from(data.items)
-    .filter((item) => item.kind === "file")
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => file !== null);
-  return files.length > 0 ? files : Array.from(data.files);
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (target.closest("input, textarea")) return true;
-  return target instanceof HTMLElement && target.isContentEditable;
-}
+import { HandoffOverlay } from "./HandoffOverlay";
 
 /**
  * The host chrome — a calm, breathing room — reading the session through
@@ -71,150 +37,19 @@ export function Shell() {
   const ch = useChannels();
   const sendText = useSendText();
   const { views, meta, clear } = useViews();
-  const [handoffState, setHandoffState] = useState<HandoffState>("idle");
-  const [handoffKind, setHandoffKind] = useState<HandoffKind>("files");
-  const [handoffCount, setHandoffCount] = useState(0);
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
-  const dragDepthRef = useRef(0);
   const pasteIdRef = useRef(0);
-  const handoffStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearHandoffStatusTimer = useCallback(() => {
-    if (handoffStatusTimerRef.current !== null) {
-      clearTimeout(handoffStatusTimerRef.current);
-      handoffStatusTimerRef.current = null;
-    }
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pasteIntoTextInput = useCallback((text: string) => {
+    pasteIdRef.current += 1;
+    setPastedInputText({ id: pasteIdRef.current, text });
   }, []);
-
-  useEffect(() => {
-    return clearHandoffStatusTimer;
-  }, [clearHandoffStatusTimer]);
-
-  const settleHandoff = useCallback(
-    (state: Extract<HandoffState, "sent" | "error">) => {
-      setHandoffState(state);
-      clearHandoffStatusTimer();
-      handoffStatusTimerRef.current = setTimeout(() => {
-        setHandoffState("idle");
-        setHandoffCount(0);
-      }, 1800);
-    },
-    [clearHandoffStatusTimer],
-  );
-
-  const sendFiles = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-      clearHandoffStatusTimer();
-      setHandoffKind("files");
-      setHandoffCount(files.length);
-      setHandoffState("sending");
-      try {
-        await postInFiles({ scene, files });
-        settleHandoff("sent");
-      } catch {
-        settleHandoff("error");
-      }
-    },
-    [clearHandoffStatusTimer, scene, settleHandoff],
-  );
-
-  const onFileDragEnter = useCallback((e: DragEvent<HTMLDivElement>) => {
-    if (!hasFiles(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-    dragDepthRef.current += 1;
-    clearHandoffStatusTimer();
-    setHandoffKind("files");
-    setHandoffState("hover");
-  }, [clearHandoffStatusTimer]);
-
-  const onFileDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    if (!hasFiles(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
-
-  const onFileDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
-    if (dragDepthRef.current === 0 && !hasFiles(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) {
-      setHandoffState("idle");
-    }
-  }, []);
-
-  const onFileDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      if (!hasFiles(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      dragDepthRef.current = 0;
-      const files = Array.from(e.dataTransfer.files);
-      if (files.length === 0) {
-        setHandoffState("idle");
-        setHandoffCount(0);
-        return;
-      }
-      void sendFiles(files);
-    },
-    [sendFiles],
-  );
-
-  const onClipboardPaste = useCallback(
-    (e: ClipboardEvent) => {
-      const data = e.clipboardData;
-      if (e.defaultPrevented || data === null) return;
-      const files = clipboardFiles(data);
-      if (files.length > 0) {
-        e.preventDefault();
-        e.stopPropagation();
-        void sendFiles(files);
-        return;
-      }
-
-      if (isEditableTarget(e.target)) return;
-
-      const rawText = data.getData("text/plain");
-      const text = rawText.trim();
-      if (!text) return;
-      if (ch.textInput) {
-        e.preventDefault();
-        e.stopPropagation();
-        pasteIdRef.current += 1;
-        setPastedInputText({ id: pasteIdRef.current, text: rawText });
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      clearHandoffStatusTimer();
-      setHandoffKind("text");
-      setHandoffCount(1);
-      sendText(text);
-      settleHandoff("sent");
-    },
-    [ch.textInput, clearHandoffStatusTimer, sendFiles, sendText, settleHandoff],
-  );
-
-  useEffect(() => {
-    document.addEventListener("paste", onClipboardPaste);
-    return () => document.removeEventListener("paste", onClipboardPaste);
-  }, [onClipboardPaste]);
-
-  const handoffText = useMemo(() => {
-    if (handoffKind === "text") {
-      if (handoffState === "sent") return "Sent clipboard text";
-      if (handoffState === "error") return "Clipboard send failed";
-      return "Sending clipboard text";
-    }
-    if (handoffState === "sending") return `Sending ${fileCountLabel(handoffCount)}`;
-    if (handoffState === "sent") return `Sent ${fileCountLabel(handoffCount)}`;
-    if (handoffState === "error") return "File send failed";
-    return "Drop to send";
-  }, [handoffCount, handoffKind, handoffState]);
+  const handoff = useHandoff({
+    scene,
+    textInputOpen: ch.textInput,
+    sendText,
+    pasteIntoTextInput,
+  });
 
   // Everything on screen is a participant. Views carry their declared geometry
   // (wire-authoritative; a module-self-declared fallback fills in for inline
@@ -238,11 +73,11 @@ export function Shell() {
   return (
     <div
       className="hi-root"
-      data-file-drop={handoffState === "idle" ? undefined : handoffState}
-      onDragEnter={onFileDragEnter}
-      onDragOver={onFileDragOver}
-      onDragLeave={onFileDragLeave}
-      onDrop={onFileDrop}
+      data-file-drop={handoff.feedback?.state}
+      onDragEnterCapture={handoff.onFileDragEnter}
+      onDragOverCapture={handoff.onFileDragOver}
+      onDragLeaveCapture={handoff.onFileDragLeave}
+      onDropCapture={handoff.onFileDrop}
     >
       <Atmosphere />
       <Presence state={presence.state} demote={demote} />
@@ -289,7 +124,20 @@ export function Shell() {
         onToggleText={() => ch.setTextChannel(!ch.textInput)}
         voiceOn={ch.audioOutput}
         onToggleVoice={ch.toggleAudioOutput}
+        onPickFiles={() => fileInputRef.current?.click()}
+        fileSending={handoff.isSending}
         onCloseViews={clear}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = event.target.files;
+          if (files?.length) void handoff.sendFiles(Array.from(files));
+          event.target.value = "";
+        }}
       />
       <KeyboardFallback
         onSend={sendText}
@@ -298,16 +146,11 @@ export function Shell() {
         onOpen={() => ch.setTextChannel(true)}
         onClose={() => ch.setTextChannel(false)}
       />
-      {handoffState !== "idle" && (
-        <div className="hi-file-drop" data-state={handoffState} role="status" aria-live="polite">
-          <div className="hi-file-drop-box">
-            <span className="hi-file-drop-icon" aria-hidden>
-              {handoffState === "sent" ? "✓" : handoffState === "error" ? "!" : handoffKind === "text" ? "T" : "↓"}
-            </span>
-            <span className="hi-file-drop-text">{handoffText}</span>
-          </div>
-        </div>
-      )}
+      <HandoffOverlay
+        feedback={handoff.feedback}
+        onRetry={handoff.retry}
+        onDismiss={handoff.dismiss}
+      />
     </div>
   );
 }

@@ -402,8 +402,8 @@ impl AppState {
     }
 }
 
-/// Max body for a handed-file upload. Generous enough for photos/scans/PDFs;
-/// the rest of the channels keep axum's small default.
+/// Max total multipart body for one handed-file request. Generous enough for a
+/// batch of photos/scans/PDFs; the rest of the channels keep axum's small default.
 const MAX_UPLOAD: usize = 50 * 1024 * 1024;
 
 pub fn build(

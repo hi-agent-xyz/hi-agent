@@ -76,6 +76,25 @@ fn walk_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+fn multipart(files: &[(&str, &str, &[u8])]) -> (String, Vec<u8>) {
+    let boundary = "hi-agent-http-smoke-boundary";
+    let mut body = Vec::new();
+    for (name, mime, bytes) in files {
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\
+                 Content-Type: {mime}\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
 #[tokio::test]
 async fn post_thought_accepts_and_journals() {
     let (base, dir, _seams) = spawn_server().await;
@@ -124,6 +143,81 @@ async fn post_thought_without_scene_header_is_anonymous() {
         JournalEntry::SignalIn { scene, .. } => assert_eq!(scene.0, "anonymous"),
         other => panic!("expected SignalIn, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
+    let (base, dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+    let files = [
+        ("notes.txt", "text/plain", b"hello".as_slice()),
+        ("scan.pdf", "application/pdf", b"%PDF".as_slice()),
+    ];
+    let (content_type, body) = multipart(&files);
+
+    let resp = client
+        .post(format!("{base}/api/in/file"))
+        .header("X-HI-Scene", "alice@phone")
+        .header("Content-Type", content_type)
+        .body(body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let result: serde_json::Value = resp.json().await.expect("json result");
+    assert_eq!(result["attempted"], 2);
+    assert_eq!(result["received"], 2);
+    assert_eq!(result["failed"], serde_json::json!([]));
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let entries = read_journal(dir.path());
+    assert_eq!(entries.len(), 2, "each uploaded file should be journaled");
+    let mut bodies = entries
+        .iter()
+        .map(|entry| match entry {
+            JournalEntry::SignalIn { channel, scene, body, media, .. } => {
+                assert_eq!(*channel, Channel::File);
+                assert_eq!(scene.0, "alice@phone");
+                assert!(media.is_some(), "file handoff carries its stored blob");
+                body.as_str()
+            }
+            other => panic!("expected SignalIn, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    bodies.sort_unstable();
+    assert!(bodies[0].contains("notes.txt"));
+    assert!(bodies[1].contains("scan.pdf"));
+}
+
+#[tokio::test]
+async fn post_files_reports_each_failed_part_when_the_inbound_lane_is_closed() {
+    let (base, _dir, seams) = spawn_server().await;
+    drop(seams);
+    let client = reqwest::Client::new();
+    let files = [
+        ("a.txt", "text/plain", b"a".as_slice()),
+        ("b.txt", "text/plain", b"b".as_slice()),
+    ];
+    let (content_type, body) = multipart(&files);
+
+    let resp = client
+        .post(format!("{base}/api/in/file"))
+        .header("X-HI-Scene", "alice@phone")
+        .header("Content-Type", content_type)
+        .body(body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::MULTI_STATUS);
+    let result: serde_json::Value = resp.json().await.expect("json result");
+    assert_eq!(result["attempted"], 2);
+    assert_eq!(result["received"], 0);
+    let failed = result["failed"].as_array().expect("failed array");
+    assert_eq!(failed.len(), 2);
+    assert_eq!(failed[0]["index"], 0);
+    assert_eq!(failed[0]["name"], "a.txt");
+    assert_eq!(failed[1]["index"], 1);
+    assert_eq!(failed[1]["name"], "b.txt");
 }
 
 #[tokio::test]

@@ -19,6 +19,10 @@ interface ChannelControlsProps {
   voiceOn: boolean;
   /** Mute/unmute the agent's voice. */
   onToggleVoice: () => void;
+  /** Open the system file picker as the keyboard/touch alternative to dropping. */
+  onPickFiles: () => void;
+  /** A file batch is currently being uploaded. */
+  fileSending: boolean;
   /** Reset the screen — close all views, back to the default empty room. */
   onCloseViews: () => void;
 }
@@ -29,7 +33,7 @@ interface ChannelControlsProps {
  * on or off at any time, and they don't conflict. Every control is always
  * present (no state-gated chrome) so a user who can't (or won't) use a given
  * channel still has a clear way in or out; the trailing reset clears any views
- * back to the calm room. Order: mic · speaker · keyboard · camera · reset.
+ * back to the calm room. Order: mic · speaker · keyboard · attach · camera · reset.
  */
 export function ChannelControls({
   audioOn,
@@ -42,6 +46,8 @@ export function ChannelControls({
   onToggleText,
   voiceOn,
   onToggleVoice,
+  onPickFiles,
+  fileSending,
   onCloseViews,
 }: ChannelControlsProps) {
   return (
@@ -77,6 +83,17 @@ export function ChannelControls({
         aria-label={textOn ? "hide the text input" : "show the text input"}
       >
         <KeyboardGlyph />
+      </button>
+
+      <button
+        type="button"
+        className="hi-channel"
+        onClick={onPickFiles}
+        disabled={fileSending}
+        title={fileSending ? "sending files" : "attach files"}
+        aria-label={fileSending ? "files are uploading" : "attach files"}
+      >
+        <AttachGlyph />
       </button>
 
       <button
@@ -164,6 +181,20 @@ function KeyboardGlyph() {
         stroke="currentColor"
         strokeWidth="1.6"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function AttachGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path
+        d="m9 12 5.8-5.8a3 3 0 1 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1L12 3.2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
