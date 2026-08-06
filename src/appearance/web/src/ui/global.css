@@ -422,6 +422,54 @@ button {
   animation: hi-sentence-in 700ms var(--ease);
 }
 
+.hi-speech-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  min-height: 44px;
+  max-width: 100%;
+  margin-inline: 0.12em;
+  padding: 0.08em 0.5em;
+  border: 1px solid var(--accent-line);
+  border-radius: 6px;
+  color: var(--fg);
+  background: var(--surface-strong);
+  box-shadow: 0 1px 4px var(--shadow);
+  font-size: clamp(16px, 0.72em, 30px);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-decoration: none;
+  text-shadow: none;
+  vertical-align: middle;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: text;
+  transition:
+    border-color 160ms var(--ease),
+    background 160ms var(--ease);
+}
+
+.hi-speech-link-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hi-speech-link:hover {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.hi-speech-link:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 3px;
+  border-color: var(--accent);
+}
+
 .hi-sentence--prev {
   opacity: 0.4;
   color: var(--fg-dim);

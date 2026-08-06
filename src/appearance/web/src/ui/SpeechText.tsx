@@ -1,3 +1,5 @@
+import { splitSpeechLinks } from "../lib/links";
+
 export interface SpeechItem {
   id: number;
   text: string;
@@ -33,7 +35,24 @@ export function SpeechText({ items }: SpeechTextProps) {
           .join(" ");
         return (
           <p key={it.id} className={cls}>
-            {it.text}
+            {splitSpeechLinks(it.text).map((part, partIndex) =>
+              part.kind === "link" ? (
+                <a
+                  key={`${part.href}-${partIndex}`}
+                  className="hi-speech-link"
+                  href={part.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={part.href}
+                  aria-label={`Open ${part.label}`}
+                >
+                  <span className="hi-speech-link-label">{part.label}</span>
+                  <span aria-hidden>↗</span>
+                </a>
+              ) : (
+                part.text
+              ),
+            )}
           </p>
         );
       })}

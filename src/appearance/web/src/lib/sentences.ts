@@ -11,6 +11,8 @@
 //     don't break "3.14" or "U.S." mid-token. The trailing partial stays
 //     buffered until the next chunk brings the space, or until flush().
 
+import { splitSpeechLinks } from "./links";
+
 function boundaryRe(): RegExp {
   // 1) CJK terminator (+ optional CJK closers)
   // 2) Latin terminator (+ optional closers) followed by whitespace (lookahead)
@@ -68,6 +70,21 @@ function weight(s: string): number {
 // split upstream in SentenceBuffer.
 const CLAUSE_BREAK = /[,、，;；:：]+["'”’」』）】》)\]]*|——|……|…|—/g;
 
+function breakTextAtClauses(text: string): string[] {
+  const segments: string[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const re = new RegExp(CLAUSE_BREAK.source, "g");
+  while ((m = re.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    segments.push(text.slice(last, end));
+    last = end;
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  if (last < text.length) segments.push(text.slice(last));
+  return segments.filter(Boolean);
+}
+
 /**
  * Break one (possibly long) sentence into breath-group chunks that each fit the
  * `budget` (in weight units — ~36 CJK glyphs / ~72 Latin chars by default), so a
@@ -80,19 +97,11 @@ const CLAUSE_BREAK = /[,、，;；:：]+["'”’」』）】》)\]]*|——|…
 export function breakLongSentence(sentence: string, budget = 72): string[] {
   if (weight(sentence) <= budget) return [sentence];
 
-  // Cut into clause segments at soft punctuation, keeping the punctuation on the
-  // left segment (so "…修了:" stays together, not orphaned onto the next line).
-  const segments: string[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  const re = new RegExp(CLAUSE_BREAK.source, "g");
-  while ((m = re.exec(sentence)) !== null) {
-    const end = m.index + m[0].length;
-    segments.push(sentence.slice(last, end));
-    last = end;
-    if (re.lastIndex === m.index) re.lastIndex++; // guard against zero-width
-  }
-  if (last < sentence.length) segments.push(sentence.slice(last));
+  // Cut prose at clause punctuation, but keep each URL atomic. In particular,
+  // the colon in `https:` is syntax, not a breath boundary.
+  const segments = splitSpeechLinks(sentence).flatMap((part) =>
+    part.kind === "link" ? [part.text] : breakTextAtClauses(part.text),
+  );
 
   // Greedily pack segments into chunks within budget.
   const chunks: string[] = [];

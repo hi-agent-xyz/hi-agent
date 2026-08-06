@@ -75,4 +75,15 @@ describe("breakLongSentence", () => {
     const token = "verylongunbrokenslugwithnosoftbreakwhatsoeverkeepsgoingandgoing";
     expect(breakLongSentence(token, 20)).toEqual([token]);
   });
+
+  it("keeps a long URL atomic instead of splitting at the protocol colon", () => {
+    const url =
+      "https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=abc&user_code=4PJV-MY7T";
+    const sentence = `链接来了，打开它就行：${url} 页面上会显示配对码。`;
+    const chunks = breakLongSentence(sentence, 36);
+
+    expect(chunks).toContain(url);
+    expect(chunks).not.toContain("https:");
+    expect(chunks.some((chunk) => chunk.startsWith("//accounts."))).toBe(false);
+  });
 });
