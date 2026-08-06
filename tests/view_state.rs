@@ -181,3 +181,37 @@ async fn appearance_survives_restart() {
         .expect("GET after restart");
     assert_eq!(after, before);
 }
+
+/// A vendor outage is a live host condition, not durable presentation. Restarting
+/// the process must clear that stale surface before a client can render it, while
+/// preserving ordinary views from the same scene.
+#[tokio::test]
+async fn restart_clears_stale_vendor_outage_only() {
+    let dir = tempdir().expect("tempdir");
+
+    {
+        let (_base, seams) = spawn_server_at(dir.path()).await;
+        emit_view(
+            &seams,
+            "web@local",
+            "keep",
+            ViewOp::Show,
+            Some("/m/keep.mjs"),
+        )
+        .await;
+        emit_view(
+            &seams,
+            "web@local",
+            hi_agent::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID,
+            ViewOp::Show,
+            Some("/m/vendor-outage.mjs"),
+        )
+        .await;
+    }
+
+    let (base, _seams) = spawn_server_at(dir.path()).await;
+    let after = get_state(&base, "web@local", None, Duration::from_millis(500))
+        .await
+        .expect("GET after restart");
+    assert_eq!(ids(&after), vec!["keep"]);
+}

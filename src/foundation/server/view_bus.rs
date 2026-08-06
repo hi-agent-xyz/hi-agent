@@ -18,14 +18,19 @@
 //! A view persists until the agent dismisses or replaces it: there is no
 //! auto-expiry, lifetime is the reactor's decision.
 //!
-//! The state also survives restarts: every mutation appends a whole-state
-//! snapshot to the memory store at
+//! Durable appearance state also survives restarts: every mutation appends a
+//! whole-state snapshot to the memory store at
 //! `raw/<scene>/appearance/<date>/appearance-<HHMMSSZ>.json`, and
 //! [`ViewBus::load`] restores each scene from its newest snapshot on boot. The
 //! snapshots double as the scene's appearance history (the screen as
 //! expression, for later reflection). Module URLs stay valid across restarts
 //! because compiled views are content-addressed on disk and never collected
 //! (see [`crate::mind::views`]).
+//!
+//! Host-owned condition views are different: `vendor-outage` describes a live
+//! process condition and must not be restored into a new process before that
+//! process has observed an outage of its own. Startup drops that transient view
+//! while preserving every durable view around it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -111,7 +116,21 @@ impl ViewBus {
         if let Ok(scenes) = std::fs::read_dir(&raw) {
             for scene_ent in scenes.flatten() {
                 let app_dir = scene_ent.path().join("appearance");
-                if let Some(snap) = newest_snapshot(&app_dir) {
+                if let Some(mut snap) = newest_snapshot(&app_dir) {
+                    let before = snap.views.len();
+                    snap.views.retain(|view| {
+                        view.id != crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID
+                    });
+                    if snap.views.len() != before {
+                        // The visible state changed during restoration. Advance the
+                        // version so a client reconnecting with the pre-restart version
+                        // receives the cleaned state instead of parking indefinitely.
+                        snap.version = snap.version.saturating_add(1);
+                        tracing::info!(
+                            scene = %snap.scene,
+                            "discarded stale vendor-outage view during restart"
+                        );
+                    }
                     map.insert(
                         snap.scene,
                         SceneAppearance {
@@ -494,6 +513,30 @@ mod tests {
         assert_eq!(state.version, version);
         assert_eq!(ids(&state), vec!["a", "b"]);
         assert_eq!(state.views[1].module_url, "/m/b.mjs");
+    }
+
+    #[tokio::test]
+    async fn restart_drops_vendor_outage_but_keeps_durable_views() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = scene();
+        let version = {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(&s, show("keep", "/m/keep.mjs")).await;
+            bus.apply(
+                &s,
+                show(
+                    crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID,
+                    "/m/vendor-outage.mjs",
+                ),
+            )
+            .await;
+            bus.wait_state(&s, None).await.version
+        };
+
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(state.version, version + 1);
+        assert_eq!(ids(&state), vec!["keep"]);
     }
 
     #[tokio::test]
