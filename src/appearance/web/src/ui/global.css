@@ -795,7 +795,7 @@ button {
 
 /* --- Combined status --------------------------------------------------
    One read-only control at the start of the lower cluster. The paper never
-   changes with status; only this glyph carries activity and availability. */
+   changes with status; only this glyph carries current activity. */
 .hi-status-button {
   position: relative;
   flex: none;
@@ -820,10 +820,6 @@ button {
 
 .hi-status-button--listening {
   color: var(--accent-2);
-}
-
-.hi-status-button--out_of_energy {
-  color: var(--danger);
 }
 
 .hi-status-glyph {
@@ -876,15 +872,6 @@ button {
   background: currentColor;
   content: "";
   animation: hi-status-type 850ms step-end infinite;
-}
-
-.hi-status-glyph--energy {
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1;
 }
 
 .hi-status-wave {

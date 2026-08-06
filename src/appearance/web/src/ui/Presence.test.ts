@@ -3,17 +3,13 @@ import { combineStatus, type ActivityState } from "./Presence";
 
 describe("combineStatus", () => {
   it.each<ActivityState>(["waking", "listening", "thinking", "typing", "speaking"])(
-    "keeps active %s activity ahead of availability",
+    "keeps active %s activity",
     (activity) => {
-      expect(combineStatus(activity, "out_of_energy")).toBe(activity);
+      expect(combineStatus(activity)).toBe(activity);
     },
   );
 
-  it("shows out of energy while idle", () => {
-    expect(combineStatus("idle", "out_of_energy")).toBe("out_of_energy");
-  });
-
-  it("shows rest while idle and available", () => {
-    expect(combineStatus("idle", "available")).toBe("rest");
+  it("shows rest while idle", () => {
+    expect(combineStatus("idle")).toBe("rest");
   });
 });

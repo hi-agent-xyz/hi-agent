@@ -1,1 +1,1 @@
-{ "region": "center", "size": "compact" }
+{ "region": "fill", "size": "fill", "owns_captions": true }

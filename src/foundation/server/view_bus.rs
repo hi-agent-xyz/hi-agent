@@ -170,6 +170,64 @@ impl ViewBus {
         persist(&self.data_dir, scene, entry).await;
     }
 
+    /// Reconcile a host-owned view against the desired level without producing
+    /// redundant versions or snapshots. Unlike [`apply`](Self::apply), a dismiss
+    /// of an absent id and a show/replace that already has identical content are
+    /// no-ops. This is the right write path for process conditions whose current
+    /// level is repeatedly re-applied at startup, after lag, and while polling.
+    pub async fn reconcile(&self, scene: &Scene, envelope: ViewEnvelope) {
+        let mut map = self.inner.lock().await;
+        let entry = map.entry(scene.clone()).or_default();
+
+        let changed = match envelope.op {
+            ViewOp::Dismiss => {
+                let before = entry.views.len();
+                entry.views.retain(|v| v.id != envelope.id);
+                entry.views.len() != before
+            }
+            ViewOp::Show | ViewOp::Replace => {
+                let Some(module_url) = envelope.module_url else {
+                    tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
+                    return;
+                };
+                let view = RetainedView {
+                    id: envelope.id.clone(),
+                    module_url,
+                    geometry: envelope.geometry,
+                };
+                let existing = entry.views.iter().position(|v| v.id == view.id);
+                if existing.is_some_and(|i| {
+                    let current = &entry.views[i];
+                    i + 1 == entry.views.len()
+                        && current.module_url == view.module_url
+                        && current.geometry == view.geometry
+                }) {
+                    false
+                } else {
+                    entry.views.retain(|v| v.id != view.id);
+                    entry.views.push(view);
+                    while entry.views.len() > MAX_ACTIVE_VIEWS_PER_SCENE {
+                        entry.views.remove(0);
+                    }
+                    true
+                }
+            }
+        };
+        if !changed {
+            return;
+        }
+        entry.version += 1;
+        entry.notify.notify_waiters();
+        persist(&self.data_dir, scene, entry).await;
+    }
+
+    /// Scene ids already known to the retained appearance store. Used by
+    /// process-level condition gates to reconcile restored scenes before the HTTP
+    /// listener starts and every known scene on later condition edges.
+    pub async fn scenes(&self) -> Vec<Scene> {
+        self.inner.lock().await.keys().cloned().collect()
+    }
+
     /// Clear the scene's appearance — remove all views, back to the default
     /// empty room. A user control: the screen is the agent's presentation, but
     /// the user can reclaim it. Bumps the version and persists the empty
@@ -562,5 +620,73 @@ mod tests {
         let state = bus.wait_state(&s, None).await;
         assert_eq!(state.version, version);
         assert_eq!(state.views[0].geometry, Some(geo));
+    }
+
+    #[tokio::test]
+    async fn reconcile_is_level_driven_and_does_not_churn_versions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        let energy = show("vendor-outage", "/m/energy.mjs");
+
+        bus.reconcile(&s, energy.clone()).await;
+        let shown = bus.wait_state(&s, None).await;
+        assert_eq!(shown.version, 1);
+        assert_eq!(ids(&shown), vec!["vendor-outage"]);
+
+        bus.reconcile(&s, energy).await;
+        assert_eq!(
+            bus.wait_state(&s, None).await.version,
+            shown.version,
+            "re-applying the same condition must be a no-op"
+        );
+
+        bus.apply(&s, show("later", "/m/later.mjs")).await;
+        let before_raise = bus.wait_state(&s, None).await.version;
+        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+            .await;
+        let raised = bus.wait_state(&s, None).await;
+        assert_eq!(raised.version, before_raise + 1);
+        assert_eq!(ids(&raised), vec!["later", "vendor-outage"]);
+
+        let dismiss = ViewEnvelope {
+            id: "vendor-outage".into(),
+            op: ViewOp::Dismiss,
+            module_url: None,
+            geometry: None,
+        };
+        bus.reconcile(&s, dismiss.clone()).await;
+        let hidden = bus.wait_state(&s, None).await;
+        assert_eq!(hidden.version, raised.version + 1);
+        assert_eq!(ids(&hidden), vec!["later"]);
+
+        bus.reconcile(&s, dismiss).await;
+        assert_eq!(
+            bus.wait_state(&s, None).await.version,
+            hidden.version,
+            "dismissing an absent condition must be a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_reconciliation_removes_only_the_energy_view() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.apply(&s, show("keep", "/m/keep.mjs")).await;
+        bus.apply(&s, show("vendor-outage", "/m/energy.mjs")).await;
+
+        bus.reconcile(
+            &s,
+            ViewEnvelope {
+                id: "vendor-outage".into(),
+                op: ViewOp::Dismiss,
+                module_url: None,
+                geometry: None,
+            },
+        )
+        .await;
+
+        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["keep"]);
     }
 }

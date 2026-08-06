@@ -3,17 +3,18 @@
 //! In xiaoyuanzhu (managed) mode the whole account draws on one shared budget, so
 //! **any** 402 means the same thing — the LLM (songguo), STT/TTS, or vision all
 //! signal "out of energy" — and a later positive balance is the recovery signal.
-//! This flag collects those signals so the web app can raise the out-of-energy hint
-//! the instant we notice, from whichever source noticed first. It also broadcasts the
-//! two lifecycle edges to the live agent loops:
+//! This flag collects those signals so the vendor gate can raise the out-of-energy
+//! view the instant we notice, from whichever source noticed first. It also broadcasts
+//! the two lifecycle edges to that gate:
 //!   - [`EnergyEvent::Pause`] — an observed managed 402.
 //!   - [`EnergyEvent::Resume`] — a fetched balance with energy again.
 //! A zero balance never preflights or suppresses a call: providers run normally until
 //! one actually returns 402. This matters when the serving layer has an override or the
 //! balance cache lags reality.
 //! In BYOK a 402 is the user's own vendor account, not our energy — so [`note_402`]
-//! is a no-op there. The `/api/account/energy` handler reads [`is_out`]. One process,
-//! one account, one event bus — a global keeps the wiring trivial.
+//! is a no-op there. The observed managed pause is persisted so a restart cannot forget
+//! the condition while restoring its retained view. One process, one account, one event
+//! bus — a global keeps the live wiring trivial.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +24,7 @@ use crate::foundation::credentials::{Credentials, Mode};
 use tokio::sync::broadcast;
 
 static OUT_OF_ENERGY: AtomicBool = AtomicBool::new(false);
+const KEY_OBSERVED_PAUSE: &str = "managed_energy_observed_pause";
 
 /// The only cross-loop messages in the energy lifecycle. Agents do not ask for the
 /// balance before a model call. A failed call raises `Pause`; a later positive balance
@@ -51,6 +53,20 @@ fn set(out: bool) {
     }
 }
 
+fn persist(data_dir: &Path, out: bool) {
+    if let Err(err) = crate::foundation::credentials::set_setting(
+        data_dir,
+        KEY_OBSERVED_PAUSE,
+        if out { "true" } else { "" },
+    ) {
+        tracing::warn!(
+            error = %err,
+            out_of_energy = out,
+            "failed to persist managed energy state"
+        );
+    }
+}
+
 /// Whether the managed account is currently out of energy (turns are held, not
 /// dropped, and the paid capabilities will 402).
 pub fn is_out() -> bool {
@@ -62,13 +78,28 @@ pub fn subscribe() -> broadcast::Receiver<EnergyEvent> {
     events().subscribe()
 }
 
+/// Restore the last observed managed 402 before the startup broker refresh. A
+/// successful positive refresh immediately clears it through [`reconcile`]; if the
+/// broker is unreachable, the process keeps holding work and showing the retained
+/// view instead of guessing that a restart fixed the account.
+pub fn restore(data_dir: &Path) {
+    let managed = matches!(Credentials::load(data_dir).mode, Mode::Xiaoyuanzhu);
+    let observed = crate::foundation::credentials::get_setting(data_dir, KEY_OBSERVED_PAUSE)
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on"));
+    if !managed && observed {
+        persist(data_dir, false);
+    }
+    set(managed && observed);
+}
+
 /// A 402 from any managed capability (LLM / STT / TTS / vision …) → out of energy,
 /// but only in xiaoyuanzhu mode; a BYOK 402 is the user's own vendor account. Raises
-/// the flag immediately so the hint doesn't wait for the next balance poll. `data_dir`
-/// is read to check the mode.
+/// the flag immediately so the gate doesn't wait for the next balance poll. `data_dir`
+/// is read to check the mode and persist the observed condition across restarts.
 pub fn note_402(data_dir: &Path) -> bool {
     if matches!(Credentials::load(data_dir).mode, Mode::Xiaoyuanzhu) {
         let was = is_out();
+        persist(data_dir, true);
         set(true);
         return !was;
     }
@@ -80,8 +111,9 @@ pub fn note_402(data_dir: &Path) -> bool {
 /// This path is deliberately recovery-only: empty or unknown balances do nothing.
 /// Agents do not use account data as a preflight; only an actual managed 402 raises
 /// `Pause`. Once a refresh reports positive energy, this emits `Resume`.
-pub fn reconcile(remaining: i64, total: i64) -> Option<EnergyEvent> {
+pub fn reconcile(data_dir: &Path, remaining: i64, total: i64) -> Option<EnergyEvent> {
     if is_out() && total > 0 && remaining > 0 {
+        persist(data_dir, false);
         set(false);
         return Some(EnergyEvent::Resume);
     }
@@ -107,7 +139,7 @@ pub(crate) fn is_402_text(text: &str) -> bool {
 }
 
 /// Raise the managed pause when a provider boundary reports 402. Returns `true` only
-/// on the transition into the paused state, so a UI/view notice can be announced once.
+/// on the transition into the paused state.
 pub fn note_402_error(data_dir: &Path, err: &anyhow::Error) -> bool {
     if is_402_error(err) {
         note_402(data_dir)
@@ -119,6 +151,9 @@ pub fn note_402_error(data_dir: &Path, err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static TEST_STATE: Mutex<()> = Mutex::new(());
 
     #[test]
     fn only_a_standalone_402_is_an_energy_edge() {
@@ -130,14 +165,63 @@ mod tests {
 
     #[test]
     fn balance_is_recovery_only() {
+        let _guard = TEST_STATE.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
         set(false);
-        assert_eq!(reconcile(0, 100), None, "zero balance must not preflight calls");
+        assert_eq!(
+            reconcile(dir.path(), 0, 100),
+            None,
+            "zero balance must not preflight calls"
+        );
         assert!(!is_out());
 
         set(true);
-        assert_eq!(reconcile(0, 100), None, "empty balance keeps an observed 402 paused");
+        assert_eq!(
+            reconcile(dir.path(), 0, 100),
+            None,
+            "empty balance keeps an observed 402 paused"
+        );
         assert!(is_out());
-        assert_eq!(reconcile(1, 100), Some(EnergyEvent::Resume));
+        assert_eq!(
+            reconcile(dir.path(), 1, 100),
+            Some(EnergyEvent::Resume)
+        );
         assert!(!is_out());
+    }
+
+    #[test]
+    fn observed_pause_survives_a_process_restart() {
+        let _guard = TEST_STATE.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        set(false);
+        assert!(note_402(dir.path()));
+        assert!(is_out());
+
+        // Simulate a fresh process: the atomic is gone, the config DB remains.
+        set(false);
+        assert!(!is_out());
+        restore(dir.path());
+        assert!(is_out());
+
+        set(false);
+        persist(dir.path(), false);
+    }
+
+    #[test]
+    fn positive_balance_clears_the_durable_pause() {
+        let _guard = TEST_STATE.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        set(false);
+        assert!(note_402(dir.path()));
+        assert_eq!(
+            reconcile(dir.path(), 5, 100),
+            Some(EnergyEvent::Resume)
+        );
+        assert!(!is_out());
+
+        restore(dir.path());
+        assert!(!is_out(), "the cleared pause must not return after restart");
     }
 }

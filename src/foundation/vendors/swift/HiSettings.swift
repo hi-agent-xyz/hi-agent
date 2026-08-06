@@ -97,7 +97,7 @@ struct SettingsAPI {
 
     /// Fetch a signed-in "manage account" URL (falls back to the plain account page).
     func subscribeURL() async -> URL {
-        let fallback = URL(string: "https://hi.xiaoyuanzhu.com/account")!
+        let fallback = URL(string: "https://hi-agent.xyz/account")!
         struct Sub: Decodable { let url: String }
         guard let sub: Sub = try? await request("/api/account/subscribe", method: "GET", body: Optional<Empty>.none),
               let u = URL(string: sub.url) else { return fallback }

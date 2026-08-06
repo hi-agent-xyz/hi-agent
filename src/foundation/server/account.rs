@@ -1,7 +1,7 @@
-//! `/api/account/*` — the device account's energy status and a signed-in upgrade
-//! link. Small, public (no gate; see [`super::build`]) endpoints the out-of-energy
-//! hint calls: one to know whether to show (and the reset time), one to open the
-//! account page already signed in as this account.
+//! `/api/account/*` — the device account's energy status and a signed-in
+//! subscription link. Small, public endpoints: the host reads the status for
+//! diagnostics, and the out-of-energy view opens the account page already signed
+//! in as this account.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,19 +20,16 @@ const KEY_LINK_NONCE: &str = "link_nonce";
 
 #[derive(serde::Deserialize, Default)]
 pub struct EnergyQuery {
-    /// While the outage card is visible, ask the broker for the real balance rather
-    /// than merely reading the cached process flag. A positive result is what emits
-    /// the internal Resume broadcast to every held agent session.
+    /// Backward-compatible explicit refresh for older clients. The process-wide vendor
+    /// gate now owns timely recovery polling, so the current web face never needs this.
     #[serde(default)]
     refresh: bool,
 }
 
 /// `GET /api/account/energy` — whether the account is currently out of energy, plus
-/// the reset time, for the out-of-energy hint. `out_of_energy` is the live vendor
-/// flag ([`crate::foundation::energy_state`]) — raised the instant a 402 flips us,
-/// dropped the instant the balance refills — so the web app can poll it to show/hide
-/// the hint. `resets_in` is the humanized wait ("约 42 分钟后") from the cached
-/// balance the broker keeps fresh.
+/// the reset time. `out_of_energy` is the live managed-energy level
+/// ([`crate::foundation::energy_state`]); presentation is owned by the vendor gate,
+/// not this endpoint.
 pub async fn get_energy(
     State(state): State<Arc<AppState>>,
     Query(query): Query<EnergyQuery>,
@@ -51,9 +48,9 @@ pub async fn get_energy(
 
 /// `GET /api/account/subscribe` — mint a one-time web-handoff ticket and return the
 /// browser URL that lands the user on the **account** page **already signed in as this
-/// device account** (the same handoff the tray's Subscribe uses). The hint's 升级
-/// button opens the returned `url` in a new tab. On failure it degrades to the plain
-/// (not-signed-in) account page so the button is never a dead end.
+/// device account** (the same handoff the tray's Subscribe uses). The full-screen
+/// energy view opens the returned `url` in a new tab. On failure it degrades to the
+/// plain (not-signed-in) account page so the button is never a dead end.
 pub async fn get_subscribe(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match crate::foundation::broker::subscribe_url(&state.data_dir, Some("/account")).await {
         Ok(url) => (StatusCode::OK, axum::Json(serde_json::json!({ "url": url, "signed_in": true }))),
@@ -62,7 +59,7 @@ pub async fn get_subscribe(State(state): State<Arc<AppState>>) -> impl IntoRespo
             (
                 StatusCode::OK,
                 axum::Json(serde_json::json!({
-                    "url": "https://hi.xiaoyuanzhu.com/account",
+                    "url": format!("{}/account", broker::public_base_url()),
                     "signed_in": false,
                 })),
             )
@@ -95,7 +92,8 @@ pub async fn get_link_start(State(state): State<Arc<AppState>>) -> impl IntoResp
         // Port unknown (shouldn't happen once the server has started) — degrade to
         // the plain account page rather than a dead end.
         tracing::warn!("account link: server port unknown; opening the plain account page");
-        return Redirect::to("https://hi.xiaoyuanzhu.com/account");
+        let account = format!("{}/account", broker::public_base_url());
+        return Redirect::to(&account);
     };
     // The callback is loopback (127.0.0.1) so the browser connects over the loop and
     // the callback's peer check passes; the site validates it's a loopback target

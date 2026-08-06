@@ -77,6 +77,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // reactor's argless helpers read. Once, before anything reads them.
     foundation::config::tunables::init(&config.data_dir);
 
+    // Restore an observed managed 402 before asking the broker for fresh account
+    // state. A positive refresh clears it; an unreachable broker leaves the gate
+    // paused instead of letting a restart erase the condition.
+    foundation::energy_state::restore(&config.data_dir);
+
     // Xiaoyuanzhu: refresh the managed credential bundle from the broker, then
     // re-resolve the LLM credential from the (possibly updated) store —
     // `build_config` resolved it before this point, and BYOK mode is a no-op so
@@ -345,7 +350,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         seams.state.views.clone(),
         views_dir,
         reactor_shutdown.clone(),
-    );
+    )
+    .await?;
     tracing::info!("reactor started");
 
     // Arm the "come and see this" gesture: a double-tap of Command hands the agent

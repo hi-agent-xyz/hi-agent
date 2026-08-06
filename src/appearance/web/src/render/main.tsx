@@ -99,7 +99,6 @@ applyHostChrome(window.location.search);
 /** A fabricated session: plausible sample state, no devices, no network. */
 const stubSession: AgentSession = {
   state: "speaking",
-  outOfEnergy: false,
   reactive: false,
   bus: null,
   activity: new ActivityMeter(),

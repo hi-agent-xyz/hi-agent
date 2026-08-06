@@ -21,6 +21,10 @@ use crate::foundation::credentials::{Credentials, Energy, Identity, LlmCredentia
 /// Env override for the broker base URL (default [`DEFAULT_BROKER_URL`]).
 const ENV_BROKER_URL: &str = "HI_AGENT_BROKER_URL";
 const DEFAULT_BROKER_URL: &str = "https://hi.xiaoyuanzhu.com";
+/// Public account site. Kept separate from the broker API origin so account links
+/// can move without redirecting credential and energy traffic.
+const ENV_PUBLIC_URL: &str = "HI_AGENT_PUBLIC_URL";
+const DEFAULT_PUBLIC_URL: &str = "https://hi-agent.xyz";
 
 /// `app_settings` keys recording the outcome of the last broker sync, so the
 /// Settings page can show a real state (connecting / connected / problem) instead
@@ -38,10 +42,13 @@ fn base_url() -> String {
         .unwrap_or_else(|| DEFAULT_BROKER_URL.to_string())
 }
 
-/// The broker base URL (env override or default) — public so the account-link
-/// handler can build the site URL it sends the browser to.
+/// The public site URL used for account and subscription links.
 pub fn public_base_url() -> String {
-    base_url()
+    std::env::var(ENV_PUBLIC_URL)
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_PUBLIC_URL.to_string())
 }
 
 /// Bounded HTTP client so a slow/unreachable broker can't hang the boot path.
@@ -332,8 +339,8 @@ struct WebTicketDto {
 
 /// Mint a one-time web-handoff ticket and return the browser URL that lands the
 /// user on the site **already signed in as this device account**
-/// (`<broker><path>?ticket=…`). The tray's "Subscribe" opens this (default landing
-/// page); the out-of-energy hint passes `prefer_path = Some("/account")`. Xiaoyuanzhu
+/// (`<site><path>?ticket=…`). The tray's "Subscribe" and the out-of-energy view
+/// pass `prefer_path = Some("/account")`. Xiaoyuanzhu
 /// mode only — it needs the bootstrapped access token; errors if bootstrap hasn't
 /// produced one yet (the caller surfaces that, e.g. "try again in a moment"). The
 /// ticket is a URL-safe JWT (base64url + dots), so no query-encoding is needed.
@@ -362,13 +369,18 @@ pub async fn subscribe_url(data_dir: &Path, prefer_path: Option<&str>) -> anyhow
     if dto.ticket.trim().is_empty() {
         anyhow::bail!("broker returned an empty web ticket");
     }
-    // The caller's preferred landing page wins (the hint wants `/account`); else the
+    // The caller's preferred landing page wins (the energy view wants `/account`); else the
     // broker's suggested path, else the account page. The ticket is a login handoff,
     // valid for any page on the domain, so overriding the path is safe.
     let prefer = prefer_path.map(|p| p.trim()).filter(|p| !p.is_empty());
     let broker_path = dto.path.trim();
     let path = prefer.unwrap_or(if broker_path.is_empty() { "/account" } else { broker_path });
-    Ok(format!("{}{}?ticket={}", base_url(), path, dto.ticket.trim()))
+    Ok(format!(
+        "{}{}?ticket={}",
+        public_base_url(),
+        path,
+        dto.ticket.trim()
+    ))
 }
 
 /// Get a usable access token: refresh if we hold a refresh token, else bootstrap.
@@ -556,7 +568,7 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
             tracing::info!(tier = %en.tier, remaining = en.remaining, total = en.total, "energy refreshed");
             // Balance is recovery-only. Calls run until a managed provider actually
             // returns 402; a later positive balance emits Resume.
-            crate::foundation::energy_state::reconcile(en.remaining, en.total);
+            crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
             store.energy = Some(en);
         }
         Err(e) => tracing::warn!(error = %e, "energy fetch failed; keeping cached"),
@@ -588,7 +600,7 @@ pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
         Ok(en) => {
             // The periodic poll and the UI's explicit refresh both look only for
             // recovery; a positive balance emits Resume after an observed 402.
-            crate::foundation::energy_state::reconcile(en.remaining, en.total);
+            crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
             store.energy = Some(en.clone());
             if let Err(e) = store.save(data_dir) {
                 tracing::debug!(error = %e, "failed to persist energy poll");

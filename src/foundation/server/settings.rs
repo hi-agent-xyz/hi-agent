@@ -414,7 +414,9 @@ fn set_appearance(data_dir: &Path, patch: &AppearancePatch) -> anyhow::Result<Ap
 fn set_mode(data_dir: &Path, mode: Mode) -> anyhow::Result<()> {
     let mut creds = Credentials::load(data_dir);
     creds.mode = mode;
-    creds.save(data_dir)
+    creds.save(data_dir)?;
+    crate::foundation::energy_state::restore(data_dir);
+    Ok(())
 }
 
 fn set_feature(

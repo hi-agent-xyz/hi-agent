@@ -41,7 +41,6 @@ export function usePresence() {
   const s = useSession();
   return {
     state: s.state,
-    availability: s.outOfEnergy ? "out_of_energy" as const : "available" as const,
     reactive: s.reactive,
     activity: s.activity,
     bus: s.bus,

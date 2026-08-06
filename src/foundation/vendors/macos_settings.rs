@@ -290,7 +290,7 @@ define_class!(
                 Some(port) => open_url(&format!("http://127.0.0.1:{port}/account/link/start")),
                 None => {
                     tracing::warn!("settings: server port unknown; opening the web account page");
-                    open_url("https://hi.xiaoyuanzhu.com/account");
+                    open_url("https://hi-agent.xyz/account");
                 }
             }
         }
@@ -372,6 +372,8 @@ impl Host {
         creds.mode = mode;
         if let Err(e) = creds.save(data_dir) {
             tracing::error!(error = %e, ?mode, "settings: failed to switch mode");
+        } else {
+            crate::foundation::energy_state::restore(data_dir);
         }
         self.sync_account();
     }

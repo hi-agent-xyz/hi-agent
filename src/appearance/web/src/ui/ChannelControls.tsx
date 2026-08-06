@@ -1,11 +1,9 @@
-import type { ActivityState, AvailabilityState } from "./Presence";
+import type { ActivityState } from "./Presence";
 import { StatusButton } from "./StatusButton";
 
 interface ChannelControlsProps {
   /** The agent's current short-lived activity. */
   activity: ActivityState;
-  /** Whether account energy is currently available. */
-  availability: AvailabilityState;
   /** Whether the mic (audio input) channel is live. */
   audioOn: boolean;
   /** Flip the audio channel on/off. */
@@ -44,7 +42,6 @@ interface ChannelControlsProps {
  */
 export function ChannelControls({
   activity,
-  availability,
   audioOn,
   onToggleAudio,
   audioError,
@@ -61,7 +58,7 @@ export function ChannelControls({
 }: ChannelControlsProps) {
   return (
     <div className="hi-channels" role="group" aria-label="agent status and channels">
-      <StatusButton activity={activity} availability={availability} />
+      <StatusButton activity={activity} />
       <span className="hi-channel-separator" aria-hidden="true" />
 
       <button

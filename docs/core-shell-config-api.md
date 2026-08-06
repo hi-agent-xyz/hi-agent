@@ -6,7 +6,7 @@
 
 Give the SwiftUI Settings window (and the web face) **one local HTTP API** to read and write every setting the current native Settings window touches, so the UI becomes a thin client of the engine and the engine stays the sole authority over `config.db`. This is the boundary the Phase-1 Settings migration is built against — define it cleanly first, then build the client.
 
-The engine already is the authority; today the *native window mutates the store in-process*. The tray refactor removed the old HTTP config routes on purpose (`server/mod.rs:339-341`). Phase 1 reintroduces them — but as a proper, gated, secret-safe surface that both front-ends share (the web face's `OutOfEnergyHint` already consumes `/api/account/energy` + `/api/account/subscribe`; this generalizes that to all of Settings).
+The engine already is the authority; today the *native window mutates the store in-process*. The tray refactor removed the old HTTP config routes on purpose (`server/mod.rs:339-341`). Phase 1 reintroduces them — but as a proper, gated, secret-safe surface that both front-ends share (the host-owned out-of-energy view already consumes `/api/account/subscribe`; this generalizes the same account surface to all of Settings).
 
 ## Decisions
 
@@ -95,4 +95,3 @@ New handlers live alongside `server/account.rs` (e.g. `server/settings.rs`), reg
 2. Add the loopback-gated `GET /api/settings` + the three writes + `POST /api/account/energy/refresh`; unit-test against a temp `--data-dir`.
 3. Build the **native SwiftUI** Settings window as a client of this API (`swift/HiSettings.swift`), compiled + linked by `build.rs` on macOS, opened from the tray via the `hi_settings_open` FFI entry. Settings goes straight to native — the point of the native-presentational decision — not through a web page.
 4. Retire the objc2 preferences window once the SwiftUI one is at parity (keep `apply_app_theme`; the SwiftUI window applies theme live via `NSApp.appearance` too).
-

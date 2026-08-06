@@ -12,7 +12,6 @@ import { VoicePlayer } from "../lib/voicePlayer";
 import { SentenceBuffer, breakLongSentence } from "../lib/sentences";
 import { getScene } from "../lib/scene";
 import { onNativeLifecycle } from "../lib/nativeBridge";
-import { useEnergyStatus } from "./useEnergyStatus";
 import type { PresenceState } from "../ui/Presence";
 import type { SpeechItem } from "../ui/SpeechText";
 
@@ -124,7 +123,6 @@ function loadPrefs(): ChannelPrefs {
 
 export interface AgentSession {
   state: PresenceState;
-  outOfEnergy: boolean;
   reactive: boolean;
   bus: AudioBus | null;
   /** Live cognition cadence (streamed-chunk pulses) the field reacts to. */
@@ -238,7 +236,6 @@ export function useAgentSession(): AgentSession {
     document.visibilityState === "visible" ? "active" : "background",
   );
   const attended = windowState === "active";
-  const outOfEnergy = useEnergyStatus();
 
   const busRef = useRef<AudioBus | null>(null);
   const micRef = useRef<AudioStreamer | null>(null);
@@ -886,7 +883,6 @@ export function useAgentSession(): AgentSession {
 
   return {
     state,
-    outOfEnergy,
     reactive,
     bus,
     activity: activityRef.current,

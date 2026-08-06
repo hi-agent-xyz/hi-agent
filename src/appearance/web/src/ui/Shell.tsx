@@ -104,12 +104,11 @@ export function Shell() {
 
       <ViewSlot placements={placements} />
 
-      {/* The lower cluster starts with one combined agent-status control, then
-          keeps every channel available. Activity takes priority over account
-          availability; idle resolves to out-of-energy or rest. */}
+      {/* The lower cluster starts with the activity status, then keeps every
+          channel available. Managed energy is represented only by the
+          gate-owned full-screen view. */}
       <ChannelControls
         activity={presence.state}
-        availability={presence.availability}
         audioOn={ch.audioInput}
         onToggleAudio={ch.toggleAudio}
         audioError={ch.audioError}

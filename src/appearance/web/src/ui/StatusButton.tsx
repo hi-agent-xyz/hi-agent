@@ -2,17 +2,15 @@ import {
   combineStatus,
   statusLabel,
   type ActivityState,
-  type AvailabilityState,
   type CombinedState,
 } from "./Presence";
 
 interface StatusButtonProps {
   activity: ActivityState;
-  availability: AvailabilityState;
 }
 
-export function StatusButton({ activity, availability }: StatusButtonProps) {
-  const state = combineStatus(activity, availability);
+export function StatusButton({ activity }: StatusButtonProps) {
+  const state = combineStatus(activity);
   const label = statusLabel(state);
 
   return (
@@ -28,14 +26,6 @@ export function StatusButton({ activity, availability }: StatusButtonProps) {
 }
 
 function StatusGlyph({ state }: { state: CombinedState }) {
-  if (state === "out_of_energy") {
-    return (
-      <span className="hi-status-glyph hi-status-glyph--energy" aria-hidden="true">
-        !
-      </span>
-    );
-  }
-
   if (state === "rest") {
     return <span className="hi-status-glyph hi-status-glyph--rest" aria-hidden="true" />;
   }

@@ -1,139 +1,196 @@
-// Built-in: the model is unreachable. Shown by the HOST, not by the agent — which is the
-// whole reason it is a bundled view rather than a sentence the agent writes. When the
-// upstream vendor is down there is no generation available to phrase anything, so the
-// copy has to already exist. `docs/arch/core.md` puts this in the host on purpose: one
-// apology per transition, process-wide, never one per scene per retry.
-//
-// It says two things and stops: your messages are being kept, and you do not have to do
-// anything. An outage the person can't act on doesn't want a troubleshooting panel.
-//
-// LOCALIZATION — English and Chinese now both ship in this file, picked off the same
-// language setting the rest of the app follows (`config::KEY_LANGUAGE`, what
-// `reaction.md` follows), surfaced to the view on `<html lang>`; English stays the
-// default and the fallback. Both variants are written down here for the same reason the
-// view is bundled at all: during an outage there is no generation available, so every
-// word the person might read has to already exist before the model goes away. That is
-// also the limit — a language nobody hand-wrote here lands on English. Further languages
-// are the runtime-authored step: the agent reads this surface and writes the variant
-// while the model *is* reachable, so the words are on disk before they are needed.
+// Built-in: the managed account has observed a 402. This is host-owned condition
+// state, not model output. The process-wide vendor gate shows and hides it directly
+// from the durable energy level and polls recovery while it is visible.
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 
+const FALLBACK_URL = "https://hi-agent.xyz/account";
 const EASE = [0.22, 0.7, 0.2, 1];
 
-// ── words ─────────────────────────────────────────────────────────────────────
-// TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
-// runtime — the agent reads the surface and writes the variant — rather than shipped
-// here. Until that exists, an unsupported language lands on English.
 const T = {
   en: {
-    title: "I can't reach my model right now",
-    body: "I'm keeping everything you send. Nothing is lost — I'll pick it all up together the moment I'm back.",
+    eyebrow: "ENERGY PAUSED",
+    title: "Your energy is used up",
+    body: "Your messages are saved. I’ll continue with them as soon as energy returns.",
+    action: "Subscribe on hi-agent.xyz",
+    note: "A subscription restores access without losing this conversation.",
   },
   zh: {
-    title: "我现在连不上我的模型",
-    body: "你发的我都留着，一条都不会丢 —— 等我回来一起看。",
+    eyebrow: "能量已暂停",
+    title: "能量已经用完了",
+    body: "消息都已保留。能量恢复后，我会继续处理这些消息。",
+    action: "前往 hi-agent.xyz 订阅",
+    note: "订阅后即可恢复使用，当前对话不会丢失。",
   },
 };
 
-// App setting first — the host puts it on `<html lang>` — then the system locale when
-// that setting says to follow the person, then English.
 function words() {
   const app = document.documentElement.lang || "";
-  const chain = !app || /^system$/i.test(app) ? [navigator.language] : [app, navigator.language];
+  const chain = !app || /^system$/i.test(app)
+    ? [navigator.language]
+    : [app, navigator.language];
   for (const tag of chain) {
     if (/^zh\b/i.test(tag || "")) return T.zh;
     if (/^en\b/i.test(tag || "")) return T.en;
   }
   return T.en;
 }
-const L = words();
 
-export default function VendorOutage() {
+export default function OutOfEnergy() {
+  const [href, setHref] = useState(FALLBACK_URL);
+  const L = words();
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/account/subscribe")
+      .then((response) => response.json())
+      .then((data) => {
+        if (alive && typeof data?.url === "string" && data.url) {
+          setHref(data.url);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.99 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, ease: EASE }}
-      style={S.card}
+    <motion.main
+      className="out-of-energy"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: EASE }}
+      role="alert"
+      aria-live="polite"
     >
-      <div style={{ ...S.bloom }} aria-hidden />
-
-      {/* A slow breath rather than a spinner: this is a wait, not a task in progress. */}
-      <motion.div
-        animate={{ opacity: [0.35, 0.85, 0.35] }}
-        transition={{ duration: 3.2, ease: "easeInOut", repeat: Infinity }}
-        style={S.dot}
-        aria-hidden
-      />
-
-      <motion.h1
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: EASE, delay: 0.12 }}
-        style={S.title}
-      >
-        {L.title}
-      </motion.h1>
-
-      <motion.p
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: EASE, delay: 0.22 }}
-        style={S.body}
-      >
-        {L.body}
-      </motion.p>
-    </motion.div>
+      <style>{`
+        .out-of-energy {
+          box-sizing: border-box;
+          width: 100%;
+          height: 100%;
+          min-height: 100%;
+          display: grid;
+          place-items: center;
+          padding: max(32px, var(--hi-safe-top)) max(24px, var(--hi-safe-right)) max(32px, var(--hi-safe-bottom)) max(24px, var(--hi-safe-left));
+          color: var(--fg);
+          background: var(--bg-0);
+          font-family: var(--font-display);
+          text-align: center;
+        }
+        .out-of-energy__content {
+          width: min(560px, 100%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        .out-of-energy__mark {
+          width: 72px;
+          height: 72px;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--accent-line);
+          border-radius: 50%;
+          color: var(--accent);
+          background: var(--surface-strong);
+          font-size: 30px;
+          font-weight: 700;
+          line-height: 1;
+        }
+        .out-of-energy__eyebrow {
+          margin: 24px 0 10px;
+          color: var(--accent);
+          font-family: var(--font-mono);
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0;
+        }
+        .out-of-energy__title {
+          margin: 0;
+          max-width: 18ch;
+          font-size: clamp(28px, 5vh, 44px);
+          font-weight: 680;
+          line-height: 1.1;
+          letter-spacing: 0;
+        }
+        .out-of-energy__body {
+          margin: 18px 0 0;
+          max-width: 46ch;
+          color: var(--fg-dim);
+          font-size: 17px;
+          line-height: 1.6;
+          letter-spacing: 0;
+        }
+        .out-of-energy__action {
+          min-height: 46px;
+          margin-top: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
+          padding: 0 22px;
+          border: 1px solid #fd605e;
+          border-radius: 8px;
+          color: #fff;
+          background: #fd605e;
+          font-size: 15px;
+          font-weight: 700;
+          letter-spacing: 0;
+          text-decoration: none;
+          transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .out-of-energy__action:hover {
+          border-color: #e74d4b;
+          background: #e74d4b;
+        }
+        .out-of-energy__action:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px var(--bg-0), 0 0 0 5px #fd605e;
+        }
+        .out-of-energy__note {
+          margin: 14px 0 0;
+          max-width: 48ch;
+          color: var(--fg-mute);
+          font-size: 13px;
+          line-height: 1.5;
+          letter-spacing: 0;
+        }
+        @media (max-width: 520px) {
+          .out-of-energy {
+            place-items: start center;
+            padding-top: max(72px, var(--hi-safe-top));
+          }
+          .out-of-energy__mark {
+            width: 60px;
+            height: 60px;
+            font-size: 26px;
+          }
+          .out-of-energy__title {
+            font-size: 30px;
+          }
+          .out-of-energy__body {
+            font-size: 16px;
+          }
+          .out-of-energy__action {
+            width: 100%;
+          }
+        }
+      `}</style>
+      <div className="out-of-energy__content">
+        <div className="out-of-energy__mark" aria-hidden>0</div>
+        <p className="out-of-energy__eyebrow">{L.eyebrow}</p>
+        <h1 className="out-of-energy__title">{L.title}</h1>
+        <p className="out-of-energy__body">{L.body}</p>
+        <a
+          className="out-of-energy__action"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {L.action}
+        </a>
+        <p className="out-of-energy__note">{L.note}</p>
+      </div>
+    </motion.main>
   );
 }
-
-const S = {
-  card: {
-    position: "relative",
-    overflow: "hidden",
-    width: "100%",
-    height: "100%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "14px",
-    padding: "48px 56px",
-    boxSizing: "border-box",
-    // No ground of its own: the host already paints the themed view surface behind
-    // us, so painting over it is how this used to end up dark-on-dark in light mode.
-    color: "var(--fg)",
-    textAlign: "center",
-  },
-  // Matte, recessive, no shine — the ambient register, not an alert banner.
-  bloom: {
-    position: "absolute",
-    inset: "-30%",
-    background:
-      "radial-gradient(42% 42% at 50% 40%, var(--accent-soft), transparent 70%)",
-    filter: "blur(30px)",
-    pointerEvents: "none",
-  },
-  dot: {
-    width: "10px",
-    height: "10px",
-    borderRadius: "50%",
-    background: "var(--accent)",
-  },
-  title: {
-    position: "relative",
-    margin: 0,
-    fontSize: "clamp(20px, 3.4vw, 30px)",
-    fontWeight: 620,
-    letterSpacing: "-0.015em",
-    lineHeight: 1.25,
-  },
-  body: {
-    position: "relative",
-    margin: 0,
-    maxWidth: "42ch",
-    fontSize: "clamp(14px, 1.8vw, 17px)",
-    lineHeight: 1.55,
-    opacity: 0.72,
-  },
-};

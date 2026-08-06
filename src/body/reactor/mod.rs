@@ -51,6 +51,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+use anyhow::Context;
 mod cognition;
 mod heartbeat;
 mod reflection;
@@ -169,6 +170,10 @@ const DEFAULT_VENDOR_PROBE: Duration = Duration::from_secs(30);
 const DEFAULT_VENDOR_DOWN_AFTER: u32 = 2;
 /// A transient-outage retry never waits longer than this — the 1h ceiling.
 const BACKOFF_CAP: Duration = Duration::from_secs(3600);
+/// Once a managed 402 is observed, the process-wide vendor gate checks the
+/// broker frequently enough that a subscription or refill clears the view and
+/// wakes held work without waiting for the normal account cadence.
+const ENERGY_RECOVERY_POLL: Duration = Duration::from_secs(5);
 
 /// The base transient-outage retry gap. `vendor_probe` in duration grammar;
 /// `off`/`0`/unset/unparseable → default. (Kept under the historical config key.)
@@ -264,9 +269,10 @@ enum VendorState {
     /// `attempt` grows the gap toward [`BACKOFF_CAP`]; `silent` suppresses the user
     /// notice for a pure rate-limit (429), which the user needn't hear about.
     Backoff { try_at: Instant, attempt: u32, silent: bool },
-    /// Stopped, with no deadline of our own. Nothing here retries; something upstream
-    /// clears it — see [`Disposition::Pause`].
-    Paused,
+    /// Stopped, with no deadline of our own. Managed energy and unrelated permanent
+    /// failures are tracked independently so a balance refill cannot clear an invalid
+    /// key or another condition it does not own.
+    Paused { energy: bool, permanent: bool },
 }
 
 /// Shared, process-wide view of the upstream LLM vendor and how to recover from an
@@ -314,31 +320,62 @@ impl Vendor {
         match *self.state.lock().unwrap() {
             VendorState::Up => SceneGate::Go,
             VendorState::Backoff { try_at, .. } => SceneGate::Retry { at: try_at },
-            VendorState::Paused => SceneGate::Hold,
+            VendorState::Paused { .. } => SceneGate::Hold,
         }
     }
 
-    /// Stop. Returns `true` on the transition into it, so the notice is shown once.
-    /// Idempotent while already paused, and it overrides a backoff: learning that the
-    /// balance is gone is strictly better information than a retry deadline.
-    fn note_paused(&self) -> bool {
+    /// Apply the managed-energy pause. It overrides a backoff because an observed 402
+    /// is better information than a generic retry deadline, while preserving any
+    /// unrelated permanent pause already present.
+    fn note_energy_paused(&self) -> bool {
         let mut st = self.state.lock().unwrap();
-        let was = matches!(*st, VendorState::Paused);
-        *st = VendorState::Paused;
+        let (was, permanent) = match *st {
+            VendorState::Paused { energy, permanent } => (energy, permanent),
+            _ => (false, false),
+        };
+        *st = VendorState::Paused {
+            energy: true,
+            permanent,
+        };
         !was
     }
 
-    /// Clear a pause because whoever owned the reason says it is over. No-op unless
-    /// paused, so a recovering balance cannot stomp an unrelated backoff.
-    fn resume_if_paused(&self) -> bool {
+    /// Clear only the managed-energy reason. An unrelated permanent pause survives.
+    fn resume_energy(&self) -> bool {
         let mut st = self.state.lock().unwrap();
-        if matches!(*st, VendorState::Paused) {
-            *st = VendorState::Up;
-            self.generic_failures.store(0, Ordering::Relaxed);
-            true
-        } else {
-            false
+        match *st {
+            VendorState::Paused {
+                energy: true,
+                permanent,
+            } => {
+                *st = if permanent {
+                    VendorState::Paused {
+                        energy: false,
+                        permanent: true,
+                    }
+                } else {
+                    self.generic_failures.store(0, Ordering::Relaxed);
+                    VendorState::Up
+                };
+                true
+            }
+            _ => false,
         }
+    }
+
+    /// Stop for a permanent non-energy reason. No account refresh is allowed to
+    /// clear this condition.
+    fn note_permanent_paused(&self) -> bool {
+        let mut st = self.state.lock().unwrap();
+        let (energy, was) = match *st {
+            VendorState::Paused { energy, permanent } => (energy, permanent),
+            _ => (false, false),
+        };
+        *st = VendorState::Paused {
+            energy,
+            permanent: true,
+        };
+        !was
     }
 
     /// Terminal generic outage. Absorb one blip via `down_after`, then flip to an
@@ -364,7 +401,7 @@ impl Vendor {
             }
             // Already stopped for a reason a retry cannot fix. A generic failure on top
             // of that tells us nothing new and must not downgrade it into a backoff.
-            VendorState::Paused => false,
+            VendorState::Paused { .. } => false,
         }
     }
 
@@ -380,7 +417,7 @@ impl Vendor {
             }
             // A successful in-flight turn must not clear a process-wide 402 pause.
             // The balance transition owns that recovery edge.
-            VendorState::Paused | VendorState::Up => false,
+            VendorState::Paused { .. } | VendorState::Up => false,
         }
     }
 }
@@ -463,15 +500,15 @@ mod vendor_tests {
     #[test]
     fn pause_holds_until_something_else_clears_it() {
         let v = fresh();
-        assert!(v.note_paused(), "the transition warrants one notice");
-        assert!(!v.note_paused(), "and only one");
+        assert!(v.note_energy_paused(), "the transition is new");
+        assert!(!v.note_energy_paused(), "and idempotent");
         assert!(v.is_down());
         assert!(matches!(v.scene_gate(), SceneGate::Hold), "a hold never offers a retry deadline");
         assert!(!v.note_success(), "an unrelated in-flight success cannot clear a 402 pause");
         assert!(matches!(v.scene_gate(), SceneGate::Hold));
-        assert!(v.resume_if_paused());
+        assert!(v.resume_energy());
         assert!(!v.is_down());
-        assert!(!v.resume_if_paused(), "already up");
+        assert!(!v.resume_energy(), "already up");
     }
 
     /// Learning the balance is gone is better information than a retry deadline, so it
@@ -482,14 +519,24 @@ mod vendor_tests {
         v.note_unreachable();
         v.note_unreachable();
         assert!(matches!(v.scene_gate(), SceneGate::Retry { .. }));
-        v.note_paused();
+        v.note_energy_paused();
         assert!(matches!(v.scene_gate(), SceneGate::Hold));
 
         let w = fresh();
         w.note_unreachable();
         w.note_unreachable();
-        assert!(!w.resume_if_paused(), "not paused; a balance refill is not its business");
+        assert!(!w.resume_energy(), "not energy-paused; a balance refill is not its business");
         assert!(matches!(w.scene_gate(), SceneGate::Retry { .. }), "backoff survives");
+    }
+
+    #[test]
+    fn energy_recovery_preserves_an_unrelated_permanent_pause() {
+        let v = fresh();
+        v.note_permanent_paused();
+        v.note_energy_paused();
+        assert!(v.resume_energy());
+        assert!(matches!(v.scene_gate(), SceneGate::Hold));
+        assert!(v.is_down());
     }
 
     #[test]
@@ -686,8 +733,12 @@ struct ReactorInner {
     interrupts: InterruptRegistry,
     /// Shared, process-wide LLM-vendor reachability + recovery policy. Read by every
     /// scene loop (via [`Vendor::scene_gate`]) to decide whether and when to drive a
-    /// turn; written by `run_turn`'s terminal-failure / success paths. See [`Vendor`].
+    /// turn; managed energy is written by the global vendor gate, while turn failures
+    /// write only their own retry/permanent reasons. See [`Vendor`].
     vendor: Arc<Vendor>,
+    /// Wakes every parked scene loop after the process-wide gate changes level. The
+    /// level itself lives in [`Vendor`], so missed notifications are harmless.
+    vendor_wake: tokio::sync::Notify,
     /// Scene→live-subscriber counts, shared with the HTTP front. Rendered into
     /// each turn as one human-model presence sentence, so the mind knows which
     /// channels actually reach the person right now.
@@ -696,9 +747,13 @@ struct ReactorInner {
     /// HTTP front's view bus. Read into each turn as `## On screen now` so the agent
     /// can see what it has shown — the screen is its own presentation surface, and
     /// without this it dismisses/re-shows views by guessing ids from the transcript.
-    /// Read-only here: views are still *emitted* via `show_view` → the binder →
-    /// `ViewBus::apply`; this is purely the reactor observing that authoritative state.
+    /// Agent-authored views are emitted via `show_view` → binder → `ViewBus::apply`.
+    /// The vendor gate writes its one host-owned condition view directly through the
+    /// idempotent `ViewBus::reconcile` path.
     views: crate::foundation::server::ViewBus,
+    /// Precompiled full-screen managed-energy view. The stable id deliberately
+    /// remains `vendor-outage` so old retained snapshots can be reconciled away.
+    energy_view: ViewEnvelope,
     /// Absolute path to the agent's view workshop (`<data_dir>/views`).
     /// Handed to every worker session as its `cwd`, so a build sub-agent works in a
     /// real project dir — `ls`-ing existing projects, writing source — like a human
@@ -731,7 +786,7 @@ struct SceneHandle {
     inbound: mpsc::Sender<LoopInput>,
 }
 
-pub fn start(
+pub async fn start(
     memory: Memory,
     agent: AgentLayer,
     mut inbound_rx: mpsc::Receiver<Signal>,
@@ -745,13 +800,23 @@ pub fn start(
     views: crate::foundation::server::ViewBus,
     views_dir: PathBuf,
     shutdown: Shutdown,
-) -> Reactor {
+) -> anyhow::Result<Reactor> {
+    let (source, geom) = crate::mind::views::builtin::out_of_energy_view();
+    let energy_view = ViewEnvelope {
+        id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
+        op: ViewOp::Show,
+        module_url: Some(
+            view_compiler
+                .compile(source)
+                .await
+                .context("compiling the built-in out-of-energy view")?,
+        ),
+        geometry: Some(
+            serde_json::from_str(geom)
+                .context("parsing the built-in out-of-energy geometry")?,
+        ),
+    };
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
-    // A managed capability may have observed 402 before the reactor was built. Seed
-    // from that process-local edge only; cached/empty balances never preflight calls.
-    if crate::foundation::energy_state::is_out() {
-        vendor.note_paused();
-    }
     let reactor = Reactor {
         inner: Arc::new(ReactorInner {
             memory,
@@ -763,38 +828,52 @@ pub fn start(
             interrupts,
             presence,
             views,
+            energy_view,
             views_dir,
             turn_seq: AtomicU64::new(0),
             scenes: Mutex::new(HashMap::new()),
             vendor,
+            vendor_wake: tokio::sync::Notify::new(),
             last_signal_at: std::sync::Mutex::new(Instant::now()),
             reflect_wake: tokio::sync::Notify::new(),
             shutdown,
         }),
     };
 
-    // Keep the process-wide scene gate aligned even when the 402 originated in a
-    // sceneless rung. Subscribe before spawning so no transition can land in the
-    // scheduling gap; scene loops also apply the same idempotent edge when waking.
+    // Reconcile both sides of the restored level before the HTTP listener starts:
+    // observed pause => the view is present; available => a retained stale copy is
+    // removed while every unrelated view remains.
     let mut gate_energy = crate::foundation::energy_state::subscribe();
+    reactor.reconcile_energy_level().await;
+
+    // One process-wide gate owns the managed-energy lifecycle end to end. It applies
+    // Pause/Resume to the vendor scheduler, owns the retained view, wakes held scene
+    // loops, and polls the broker only while an observed 402 remains active.
     let gate_reactor = reactor.clone();
     tokio::spawn(async move {
         loop {
-            match gate_energy.recv().await {
-                Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
-                    gate_reactor.inner.vendor.note_paused();
-                }
-                Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
-                    gate_reactor.inner.vendor.resume_if_paused();
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    if crate::foundation::energy_state::is_out() {
-                        gate_reactor.inner.vendor.note_paused();
-                    } else {
-                        gate_reactor.inner.vendor.resume_if_paused();
+            gate_reactor.reconcile_energy_level().await;
+            let wait = if crate::foundation::energy_state::is_out() {
+                tokio::select! {
+                    event = gate_energy.recv() => Some(event),
+                    _ = tokio::time::sleep(ENERGY_RECOVERY_POLL) => {
+                        let data_dir = gate_reactor.inner.memory.data_dir().to_path_buf();
+                        let _ = crate::foundation::broker::poll_energy_now(&data_dir).await;
+                        None
                     }
+                    _ = gate_reactor.inner.shutdown.cancelled() => break,
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            } else {
+                tokio::select! {
+                    event = gate_energy.recv() => Some(event),
+                    _ = gate_reactor.inner.shutdown.cancelled() => break,
+                }
+            };
+            if matches!(
+                wait,
+                Some(Err(tokio::sync::broadcast::error::RecvError::Closed))
+            ) {
+                break;
             }
         }
     });
@@ -874,7 +953,7 @@ pub fn start(
     );
     cognition::spawn(reactor.clone(), cognition_reg);
 
-    reactor
+    Ok(reactor)
 }
 
 /// Channels that do **not** count as a scene being alive. Exactly one: `clock`,
@@ -1135,6 +1214,38 @@ mod rewarm_tests {
 }
 
 impl Reactor {
+    async fn reconcile_energy_view_for_scene(&self, scene: &Scene, out: bool) {
+        let envelope = if out {
+            self.inner.energy_view.clone()
+        } else {
+            ViewEnvelope {
+                id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
+                op: ViewOp::Dismiss,
+                module_url: None,
+                geometry: None,
+            }
+        };
+        self.inner.views.reconcile(scene, envelope).await;
+    }
+
+    /// Re-apply the current managed-energy level to every owner: scheduler, retained
+    /// view, and parked scene loops. This is used for startup, live edges, lag
+    /// recovery, and every fast poll while paused.
+    async fn reconcile_energy_level(&self) {
+        let out = crate::foundation::energy_state::is_out();
+        let changed = if out {
+            self.inner.vendor.note_energy_paused()
+        } else {
+            self.inner.vendor.resume_energy()
+        };
+        for scene in self.inner.views.scenes().await {
+            self.reconcile_energy_view_for_scene(&scene, out).await;
+        }
+        if changed {
+            self.inner.vendor_wake.notify_waiters();
+        }
+    }
+
     async fn deliver_to_scene(&self, scene: Scene, signal: Signal) {
         // Mark global activity and poke the consolidated reflection clock, so a scene
         // going active after a long quiet gets its first pass without waiting out the
@@ -1169,6 +1280,15 @@ impl Reactor {
         let (tx, rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
         scenes.insert(scene.clone(), SceneHandle { inbound: tx.clone() });
         drop(scenes);
+
+        // A late/new scene did not exist when the last process-wide edge was applied.
+        // Reconcile it from the current level before its loop or first client state
+        // can treat the retained condition as optional history.
+        self.reconcile_energy_view_for_scene(
+            &scene,
+            crate::foundation::energy_state::is_out(),
+        )
+        .await;
 
         // The scene's tool control channel: the `/mcp` server forwards delegate/
         // create_worker calls here, the loop applies them. Register the sink before the
@@ -1233,10 +1353,9 @@ enum Woke {
     Mail,
     /// The person came back after an absence — see [`crate::body::presence::Presence::returns`].
     Returned,
-    /// Process-wide managed-energy edge. `Pause` holds pending work; `Resume` is
-    /// the only thing that releases it. This is a message, not a balance preflight
-    /// before every model call.
-    Energy(Option<crate::foundation::energy_state::EnergyEvent>),
+    /// The process-wide vendor gate changed level. Re-read [`Vendor::scene_gate`];
+    /// the notification carries no state and therefore cannot go stale.
+    Vendor,
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
@@ -1328,24 +1447,6 @@ async fn per_scene_loop(
     let mut last_activity = Instant::now();
     let mut pulsed_once = false;
 
-    // Reactive energy strategy:
-    //
-    // 1. Model calls run normally. There is no account-balance request before a call.
-    // 2. A managed 402 is raised once by the shared ACP wait boundary. Every live loop
-    //    receives `Pause`, keeps its pending work, and stops starting new turns.
-    // 3. The app/broker refreshes the balance. A positive balance broadcasts `Resume`;
-    //    every live loop wakes and continues its held work.
-    //
-    // The normal path therefore has no energy bookkeeping. Only the two state-change
-    // messages touch this loop.
-    let mut energy_rx = crate::foundation::energy_state::subscribe();
-    if crate::foundation::energy_state::is_out() {
-        // A scene created after startup missed the original Pause broadcast; the
-        // cached state still requires the same host-owned outage surface.
-        reactor.inner.vendor.note_paused();
-        let _ = show_vendor_outage(&beats).await;
-    }
-
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
     // drop the mail it was attempting to deliver. Cleared on a successful turn (the
@@ -1354,8 +1455,8 @@ async fn per_scene_loop(
     let mut batch: Vec<LoopInput> = Vec::new();
 
     loop {
-        // Wait for a turn-driving reason. Energy recovery is not a timer: it arrives
-        // as the internal `Resume` message below.
+        // Wait for a turn-driving reason. The process-wide gate wakes this loop when
+        // managed energy changes; the loop always re-reads the current vendor level.
         'wait: loop {
             let gate = reactor.inner.vendor.scene_gate();
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1372,7 +1473,7 @@ async fn per_scene_loop(
             let recover_at = match gate {
                 SceneGate::Go => None,
                 SceneGate::Retry { at } => Some(at),
-                // No deadline: only the internal Resume message ends a 402 pause.
+                // No scene-local deadline: the process-wide gate owns recovery.
                 SceneGate::Hold => None,
             };
             let deadline = [pulse_at, recover_at]
@@ -1382,7 +1483,7 @@ async fn per_scene_loop(
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
-                    event = energy_rx.recv() => Woke::Energy(event.ok()),
+                    _ = reactor.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
@@ -1392,7 +1493,7 @@ async fn per_scene_loop(
                 },
                 None => tokio::select! {
                     biased;
-                    event = energy_rx.recv() => Woke::Energy(event.ok()),
+                    _ = reactor.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
@@ -1475,40 +1576,7 @@ async fn per_scene_loop(
                     // A control side-effect was applied; keep waiting for a
                     // turn-driving reason rather than running an empty turn.
                 }
-                Woke::Energy(Some(crate::foundation::energy_state::EnergyEvent::Pause)) => {
-                    reactor.inner.vendor.note_paused();
-                    // The id is stable, so duplicate Pause delivery replaces rather than
-                    // stacks. Every live scene therefore gets the outage surface even
-                    // when the 402 originated in Cognition, Reflection, or a worker.
-                    let _ = show_vendor_outage(&beats).await;
-                    continue 'wait;
-                }
-                Woke::Energy(Some(crate::foundation::energy_state::EnergyEvent::Resume)) => {
-                    let _ = reactor.inner.vendor.resume_if_paused();
-                    // Every scene receives Resume and dismisses its own copy. Reusing the
-                    // id makes this harmless when the scene never showed the view.
-                    let _ = dismiss_vendor_outage(&beats).await;
-                    if !batch.is_empty() {
-                        break 'wait;
-                    }
-                    continue 'wait;
-                }
-                Woke::Energy(None) => {
-                    // A lagged receiver missed an edge; reconcile from the cached
-                    // process state. The sender itself is process-static, so Closed is
-                    // not expected during a live app.
-                    if crate::foundation::energy_state::is_out() {
-                        reactor.inner.vendor.note_paused();
-                        let _ = show_vendor_outage(&beats).await;
-                    } else {
-                        let _ = reactor.inner.vendor.resume_if_paused();
-                        let _ = dismiss_vendor_outage(&beats).await;
-                        if !batch.is_empty() {
-                            break 'wait;
-                        }
-                    }
-                    continue 'wait;
-                }
+                Woke::Vendor => continue 'wait,
                 Woke::Timer => {
                     let now = Instant::now();
                     if down {
@@ -1680,34 +1748,6 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
-async fn show_vendor_outage(
-    beats: &mpsc::Sender<sequencer::Beat>,
-) -> Result<(), mpsc::error::SendError<sequencer::Beat>> {
-    let (source, geom) = crate::mind::views::builtin::vendor_outage_view();
-    beats
-        .send(sequencer::Beat::Show {
-            id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
-            op: "show".to_string(),
-            source: source.to_string(),
-            geometry: serde_json::from_str(geom).ok(),
-        })
-        .await
-}
-
-async fn dismiss_vendor_outage(
-    beats: &mpsc::Sender<sequencer::Beat>,
-) -> Result<(), mpsc::error::SendError<sequencer::Beat>> {
-    beats
-        .send(sequencer::Beat::Show {
-            id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
-            op: "dismiss".to_string(),
-            source: String::new(),
-            geometry: None,
-        })
-        .await
-}
-
-
 /// A reactor turn: the single fast conversational voice. An ACP session
 /// ([`SessionRole::Reactor`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show_view` `/mcp` surface, with the agent's own built-in tools
@@ -1805,31 +1845,30 @@ async fn run_reactor_turn(
                 && crate::foundation::energy_state::is_out();
             let disposition = disposition(&err_text);
 
-            // What the failure means for whether to keep trying — three outcomes, no
-            // taxonomy. The notice, where one is owed, is a **bundled view** whose copy
-            // already exists (`_builtin/vendor-outage`): the thing that generates words
-            // is what just went away, so the word cannot be generated. Once per
-            // transition, process-wide, never once per scene per retry.
-            //
-            // Known gap, stated rather than papered over: a person with no screen gets
-            // nothing here. `docs/arch/surfaces.md` says every channel degrades rather
-            // than fails, so this owes a voice-only fallback — which needs pre-rendered
-            // audio or a localized string.
-            let announce = match disposition {
+            // What the failure means for whether to keep trying. Presentation is not
+            // part of this classifier: only the process-wide managed-energy gate owns
+            // the out-of-energy view, and generic model/network/key failures must never
+            // borrow that explanation.
+            match disposition {
                 // The session was the problem, not the vendor. Say nothing to the
                 // process-wide gate: one crashed subprocess must not make every other
                 // scene believe the model is unreachable.
                 Disposition::Restart => {
                     tracing::warn!(scene = %scene, "session fault; reopening cold (vendor untouched)");
-                    false
                 }
                 // Out of quota, credit, or credentials. A managed 402 has already
-                // broadcast Pause from the common ACP boundary; the balance refresh
-                // later broadcasts Resume. Other permanent failures keep their existing
-                // pause semantics but do not participate in managed-energy recovery.
+                // raised the durable energy level from the common ACP boundary. Apply
+                // its scheduling hold synchronously so this failed turn cannot drop its
+                // mail before the global gate task receives the edge. Other permanent
+                // failures retain their own pause reason and have no energy UI.
                 Disposition::Pause => {
-                    let first = reactor.inner.vendor.note_paused();
+                    let first = if managed_402 {
+                        reactor.inner.vendor.note_energy_paused()
+                    } else {
+                        reactor.inner.vendor.note_permanent_paused()
+                    };
                     if first {
+                        reactor.inner.vendor_wake.notify_waiters();
                         tracing::warn!(
                             scene = %scene,
                             error = %err_text,
@@ -1837,14 +1876,12 @@ async fn run_reactor_turn(
                             "paused: retrying cannot help"
                         );
                     }
-                    first
                 }
                 // A blip. Absorb one, then back off — unchanged behaviour, and the
                 // default for any error nobody has classified.
-                Disposition::Retry => reactor.inner.vendor.note_unreachable(),
-            };
-            if announce {
-                let _ = show_vendor_outage(beats).await;
+                Disposition::Retry => {
+                    let _ = reactor.inner.vendor.note_unreachable();
+                }
             }
             turn_error = Some(err);
             false
@@ -1858,14 +1895,9 @@ async fn run_reactor_turn(
     reactor.inner.interrupts.end_turn(scene, turn_id, &reply).await;
 
     if spoke {
-        // `note_success` returns whether this *ended* an outage. It used to be discarded
-        // with `let _`, so recovery was never announced and the outage view would have
-        // stayed on screen after the vendor came back — a notice that outlives its
-        // condition is worse than none. Taking it down is the announcement: the person
-        // sees the room return to normal, and the agent's next real reply is the rest.
-        if reactor.inner.vendor.note_success() {
-            let _ = dismiss_vendor_outage(beats).await;
-        }
+        // Success clears only transient generic backoff. Managed energy and its
+        // retained view are owned by the broker-backed vendor gate.
+        let _ = reactor.inner.vendor.note_success();
         // Hand the turn's human request to Deliberation — the scene's reader — so it works
         // off the floor while the voice moves on; its report rides back as a WorkerReport
         // the reactor voices on a later turn. Spawned once per scene, then followed up.
