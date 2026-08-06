@@ -332,7 +332,6 @@ define_class!(
         /// on the next open, where the face restores whatever the user last had on.
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
-            crate::foundation::window_state::set_open(false);
             // `closed`, not `background`: the person shut it, and that is a decision
             // rather than a window drifting behind another. Presence reads the two
             // differently — see `WindowState`.
@@ -366,8 +365,6 @@ define_class!(
             let visible = window
                 .occlusionState()
                 .contains(NSWindowOcclusionState::Visible);
-            // Deliberately *not* touching `window_state::set_open` — that tracks whether
-            // the window exists for the energy poll, and an occluded window is still open.
             self.emit_lifecycle(if visible { "foreground" } else { "background" });
         }
     }
@@ -404,9 +401,6 @@ impl Host {
         // when the window was last closed. Best-effort and idempotent — on the very first
         // open the page is still loading and no one is listening yet, which is fine (the
         // face does its own honest restore at startup); it matters on every reopen after.
-        // The window is on screen now: tighten the out-of-energy balance poll to seconds
-        // and wake it if it's mid-wait (the user may have just paid while it was hidden).
-        crate::foundation::window_state::set_open(true);
         self.emit_lifecycle("foreground");
     }
 

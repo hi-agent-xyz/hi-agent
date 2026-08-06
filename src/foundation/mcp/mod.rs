@@ -630,7 +630,7 @@ async fn dispatch_tool(
         "look" => return do_look().await,
         "act" => return do_act(args).await,
         "see" => return do_see(data_dir, scene, args).await,
-        "watch" => return do_watch(scene, video_partial, args).await,
+        "watch" => return do_watch(data_dir, scene, video_partial, args).await,
         "review_view" => return do_review_view(data_dir, args).await,
         _ => {}
     }
@@ -1349,7 +1349,7 @@ async fn do_see(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
         Ok(b) => Bytes::from(b),
         Err(e) => return tool_error(&format!("see: reading {reff} failed: {e}")),
     };
-    perceive_still(bytes, &mime, prompt).await
+    perceive_still(data_dir, bytes, &mime, prompt).await
 }
 
 /// `watch`: understand a short span of the live camera. Reads the in-progress
@@ -1358,6 +1358,7 @@ async fn do_see(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
 /// [`perceive_clip`]. Errors plainly when no camera is streaming, so the model can
 /// ask the person to turn it on.
 async fn do_watch(
+    data_dir: &Path,
     scene: &Scene,
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
     args: &Value,
@@ -1378,13 +1379,13 @@ async fn do_watch(
         Some(secs) => trim_tail(&bytes, &mime, secs).await.unwrap_or(bytes),
         None => bytes,
     };
-    perceive_clip(clip, &mime, prompt).await
+    perceive_clip(data_dir, clip, &mime, prompt).await
 }
 
 /// Understand a still per the current [`bundle`](crate::body::capabilities::bundle):
 /// a native-vision model gets the raw image as a tool-result block to reason over; a
 /// text-only model gets the vision capability's description as text.
-async fn perceive_still(bytes: Bytes, mime: &str, prompt: &str) -> Value {
+async fn perceive_still(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str) -> Value {
     use crate::body::capabilities::bundle::{self, Handling, Modality};
     match bundle::current().handling(Modality::Image) {
         Handling::Native => {
@@ -1410,7 +1411,10 @@ async fn perceive_still(bytes: Bytes, mime: &str, prompt: &str) -> Value {
             let q = if prompt.trim().is_empty() { "Describe what you see." } else { prompt };
             match vision_cap::understand(VisualMedia::image_bytes(bytes, mime.to_string()), q).await {
                 Ok(text) => tool_ok(&text),
-                Err(e) => tool_error(&format!("vision understanding failed: {e}")),
+                Err(e) => {
+                    crate::foundation::energy_state::note_402_error(data_dir, &e);
+                    tool_error(&format!("vision understanding failed: {e}"))
+                }
             }
         }
     }
@@ -1419,7 +1423,7 @@ async fn perceive_still(bytes: Bytes, mime: &str, prompt: &str) -> Value {
 /// Understand a short video clip. Always polyfilled — no model reached through the
 /// adapter takes video — so the clip goes to the vision capability and the answer
 /// comes back as text.
-async fn perceive_clip(bytes: Bytes, mime: &str, prompt: &str) -> Value {
+async fn perceive_clip(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str) -> Value {
     use crate::body::capabilities::bundle::{self, Modality};
     use crate::body::capabilities::vision::{self as vision_cap, VisualMedia};
     // The bundle always polyfills video today — no adapter path carries video to the
@@ -1432,7 +1436,10 @@ async fn perceive_clip(bytes: Bytes, mime: &str, prompt: &str) -> Value {
     let q = if prompt.trim().is_empty() { "Describe what happens in this clip." } else { prompt };
     match vision_cap::understand(VisualMedia::video_bytes(bytes, mime.to_string()), q).await {
         Ok(text) => tool_ok(&text),
-        Err(e) => tool_error(&format!("video understanding failed: {e}")),
+        Err(e) => {
+            crate::foundation::energy_state::note_402_error(data_dir, &e);
+            tool_error(&format!("video understanding failed: {e}"))
+        }
     }
 }
 

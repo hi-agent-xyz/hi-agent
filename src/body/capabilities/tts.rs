@@ -11,6 +11,7 @@
 //! [`available`] reports whether a provider is configured, and [`start`]
 //! dispatches to it. The config never appears in a signature.
 
+use std::path::Path;
 use std::sync::OnceLock;
 
 use bytes::Bytes;
@@ -71,9 +72,9 @@ pub fn available() -> bool {
 
 /// Open a streaming synthesis session. Returns once the session is ready to
 /// accept text; synthesis is driven by pushing text and draining frames.
-pub async fn start() -> anyhow::Result<TtsStream> {
+pub async fn start(data_dir: &Path) -> anyhow::Result<TtsStream> {
     match BACKEND.get() {
-        Some(Backend::Volcengine(cfg)) => volcengine_tts::start(cfg).await,
+        Some(Backend::Volcengine(cfg)) => volcengine_tts::start(cfg, data_dir).await,
         _ => anyhow::bail!("TTS not configured (set a TTS key in Settings)"),
     }
 }

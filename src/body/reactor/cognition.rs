@@ -172,10 +172,38 @@ async fn run(reactor: Reactor, registration: Registration) {
     // `None` means "open one on the next turn": the cold-open path is the same one a
     // failed turn falls back to, so there is exactly one way in.
     let mut session: Option<Arc<AcpSession>> = None;
+    let mut energy = crate::foundation::energy_state::subscribe();
+    let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(cognition = id, "cognition up");
 
     loop {
+        // The rung never polls the account and never predicts whether a call can run.
+        // It only reacts to the process-wide 402 edge, then waits for the broker/app's
+        // explicit Resume message. Pending mail and the live ACP session stay in place.
+        if energy_paused {
+            tokio::select! {
+                event = energy.recv() => {
+                    match event {
+                        Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
+                            energy_paused = false;
+                            tracing::info!(cognition = id, "cognition resumed after energy refill");
+                        }
+                        Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            energy_paused = crate::foundation::energy_state::is_out();
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = reactor.inner.shutdown.cancelled() => {
+                    tracing::info!(cognition = id, "cognition shutting down");
+                    break;
+                }
+            }
+            continue;
+        }
+
         // Resolved per iteration so a mid-session change to the `pulse` tunable takes
         // effect at the next wake, the way it does for a scene.
         //
@@ -191,6 +219,22 @@ async fn run(reactor: Reactor, registration: Registration) {
         };
 
         tokio::select! {
+            biased;
+            event = energy.recv() => {
+                match event {
+                    Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
+                        energy_paused = true;
+                    }
+                    Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
+                        energy_paused = false;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        energy_paused = crate::foundation::energy_state::is_out();
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+                continue;
+            }
             _ = mail.notified() => {}
             _ = sleep_until_opt(wake_at) => {
                 let first = !woke_at_boot;
@@ -305,8 +349,21 @@ async fn run(reactor: Reactor, registration: Registration) {
                 // unrepresentable. Dropping it means the retry cold-opens, which costs one
                 // subprocess and loses only the working thread; the ledger and the carried
                 // notes are re-projected either way.
-                session = None;
-                tracing::warn!(cognition = id, error = %err, "cognition turn failed; session dropped, mail held");
+                if crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out()
+                {
+                    // The prompt receiver was restored by `SessionRun::wait`; keep the
+                    // session and retry this same pending batch after Resume.
+                    energy_paused = true;
+                } else {
+                    session = None;
+                }
+                tracing::warn!(
+                    cognition = id,
+                    error = %err,
+                    held = energy_paused,
+                    "cognition turn failed; mail held"
+                );
             }
         }
 

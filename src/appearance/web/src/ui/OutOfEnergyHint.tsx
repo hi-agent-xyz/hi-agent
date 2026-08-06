@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 
-import { onNativeLifecycle } from "../lib/nativeBridge";
-
 interface EnergyStatus {
   out_of_energy: boolean;
   resets_in?: string;
@@ -32,27 +30,32 @@ export function OutOfEnergyHint() {
   const [resetsIn, setResetsIn] = useState("");
   const [href, setHref] = useState(FALLBACK_URL);
 
-  // Poll the account's energy standing every 5s — but only while the face window is on
-  // screen. The native shell dispatches foreground/background as the window opens and
-  // closes, and the WebView keeps running while hidden, so a naive interval would keep
-  // polling behind a shut window (the native poller already covers that, rarely). A
-  // foreground transition re-polls at once: the user may have just returned from paying.
-  // Sequential (poll → wait 5s), so a slow fetch never overlaps the next tick.
+  // Poll sequentially (fetch → wait 5s), so a slow request never overlaps the next
+  // tick. While paused the endpoint refreshes the real broker balance; a positive
+  // result emits Resume in the host. This remains alive with the app window hidden,
+  // because recovery belongs to the running app, not to a foreground gesture.
   useEffect(() => {
     let alive = true;
-    let visible = true;
+    let knownOut = false;
     let timer: number | undefined;
     const schedule = () => {
-      if (alive && visible) timer = window.setTimeout(run, 5000);
+      if (alive) timer = window.setTimeout(run, 5000);
     };
     const run = async () => {
       timer = undefined;
       try {
-        const r = await fetch("/api/account/energy");
+        // Normal reads are cheap. Once a 402 has raised the card, each poll
+        // refreshes the real broker balance; the first positive balance broadcasts
+        // Resume inside the host and wakes every held agent session.
+        const url = knownOut
+          ? "/api/account/energy?refresh=true"
+          : "/api/account/energy";
+        const r = await fetch(url);
         if (r.ok) {
           const d: EnergyStatus = await r.json();
           if (alive) {
-            setOut(!!d.out_of_energy);
+            knownOut = !!d.out_of_energy;
+            setOut(knownOut);
             setResetsIn(d.resets_in ?? "");
           }
         }
@@ -62,21 +65,9 @@ export function OutOfEnergyHint() {
       schedule();
     };
     run();
-    const off = onNativeLifecycle((phase) => {
-      const nowVisible = phase === "foreground";
-      if (nowVisible === visible) return;
-      visible = nowVisible;
-      if (visible) {
-        if (timer === undefined) run(); // came back to the front — re-check immediately
-      } else if (timer !== undefined) {
-        window.clearTimeout(timer); // hidden — stop until we're foregrounded again
-        timer = undefined;
-      }
-    });
     return () => {
       alive = false;
       if (timer !== undefined) window.clearTimeout(timer);
-      off();
     };
   }, []);
 
@@ -119,8 +110,15 @@ export function OutOfEnergyHint() {
         可以<b>继续输入，消息不会丢</b>——等能量恢复我就接着处理。
       </div>
       <div className="hi-oe-foot">
-        <span className="hi-oe-reset">{resetsIn ? `${resetsIn}恢复` : "很快恢复"}</span>
-        <a className="hi-oe-btn" href={href} target="_blank" rel="noopener noreferrer">
+        <span className="hi-oe-reset">
+          {resetsIn ? `${resetsIn}恢复` : "很快恢复"}
+        </span>
+        <a
+          className="hi-oe-btn"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           升级
         </a>
       </div>

@@ -128,10 +128,38 @@ async fn run(reactor: Reactor, registration: Registration) {
     let loop_started = Instant::now();
     let mut last_reflection: Option<Instant> = None;
     let mut backoff_gap = reflect_base.unwrap_or(super::DEFAULT_REFLECT_EVERY);
+    let mut energy = crate::foundation::energy_state::subscribe();
+    let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(reflection = id, "reflection up");
 
     loop {
+        // Reflection does not preflight the account. A managed 402 from any ACP
+        // session flips the shared state; this rung simply parks until the positive
+        // balance sends Resume, keeping its pending mail intact.
+        if energy_paused {
+            tokio::select! {
+                event = energy.recv() => {
+                    match event {
+                        Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
+                            energy_paused = false;
+                            tracing::info!(reflection = id, "reflection resumed after energy refill");
+                        }
+                        Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            energy_paused = crate::foundation::energy_state::is_out();
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = reactor.inner.shutdown.cancelled() => {
+                    tracing::info!(reflection = id, "reflection shutting down");
+                    break;
+                }
+            }
+            continue;
+        }
+
         // When the clock is off, park the timer arm forever rather than branching the
         // whole `select!` — a never-completing sleep is the cheapest "this arm is not in
         // play" there is.
@@ -155,6 +183,22 @@ async fn run(reactor: Reactor, registration: Registration) {
             .unwrap_or(std::time::Duration::from_secs(3600));
 
         let wake = tokio::select! {
+            biased;
+            event = energy.recv() => {
+                match event {
+                    Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
+                        energy_paused = true;
+                    }
+                    Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
+                        energy_paused = false;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        energy_paused = crate::foundation::energy_state::is_out();
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+                continue;
+            }
             _ = tokio::time::sleep(sleep_for) => Wake::Consolidate,
             // Fresh input landed: re-derive the deadline rather than sit out a long
             // backoff. Not a wake in itself.
@@ -236,6 +280,11 @@ async fn run(reactor: Reactor, registration: Registration) {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
+                if crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out()
+                {
+                    energy_paused = true;
+                }
                 tracing::warn!(reflection = id, error = %err, "reflection turn failed; mail held");
             }
         }

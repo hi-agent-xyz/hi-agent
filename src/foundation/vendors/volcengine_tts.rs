@@ -47,6 +47,7 @@
 //! the session ends. The audio is thus one continuous stream for the whole
 //! turn, never a sequence of per-sentence clips.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -138,7 +139,7 @@ impl Config {
     }
 }
 
-pub async fn start(cfg: &Config) -> anyhow::Result<TtsStream> {
+pub async fn start(cfg: &Config, data_dir: &Path) -> anyhow::Result<TtsStream> {
     let connect_id = Uuid::now_v7().to_string();
     let session_id = Uuid::now_v7().to_string();
 
@@ -209,6 +210,7 @@ pub async fn start(cfg: &Config) -> anyhow::Result<TtsStream> {
         audio_params,
         text_rx,
         frame_tx,
+        data_dir.to_path_buf(),
     ));
 
     Ok(TtsStream {
@@ -236,6 +238,7 @@ async fn drive_session<Tx, Rx>(
     audio_params: serde_json::Value,
     mut text_rx: mpsc::Receiver<String>,
     frame_tx: mpsc::Sender<Bytes>,
+    data_dir: PathBuf,
 ) where
     Tx: SinkExt<Message> + Unpin,
     Rx: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
@@ -249,7 +252,7 @@ async fn drive_session<Tx, Rx>(
         let guard_idle = text_done;
         let step = async {
             tokio::select! {
-                maybe_msg = rx.next() => handle_server_msg(maybe_msg, &frame_tx).await,
+                maybe_msg = rx.next() => handle_server_msg(maybe_msg, &frame_tx, &data_dir).await,
                 text = text_rx.recv(), if !text_done => {
                     match text {
                         Some(t) => {
@@ -324,6 +327,7 @@ async fn drive_session<Tx, Rx>(
 async fn handle_server_msg(
     maybe_msg: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
     frame_tx: &mpsc::Sender<Bytes>,
+    data_dir: &Path,
 ) -> Flow {
     let bytes = match maybe_msg {
         Some(Ok(Message::Binary(b))) => b,
@@ -348,8 +352,12 @@ async fn handle_server_msg(
         MSG_TYPE_FULL_SERVER => match parsed.event {
             Some(EV_TTS_ENDED) | Some(EV_SESSION_FINISHED) => Flow::Break,
             Some(EV_CONNECTION_FAILED) | Some(EV_SESSION_FAILED) => {
+                let payload = String::from_utf8_lossy(parsed.payload);
+                if crate::foundation::energy_state::is_402_text(&payload) {
+                    crate::foundation::energy_state::note_402(data_dir);
+                }
                 tracing::warn!(
-                    payload = %String::from_utf8_lossy(parsed.payload),
+                    payload = %payload,
                     "volcengine TTS session failed"
                 );
                 Flow::Break
@@ -357,8 +365,12 @@ async fn handle_server_msg(
             _ => Flow::Continue,
         },
         MSG_TYPE_ERROR => {
+            let payload = String::from_utf8_lossy(parsed.payload);
+            if crate::foundation::energy_state::is_402_text(&payload) {
+                crate::foundation::energy_state::note_402(data_dir);
+            }
             tracing::warn!(
-                payload = %String::from_utf8_lossy(parsed.payload),
+                payload = %payload,
                 "volcengine TTS server error"
             );
             Flow::Break

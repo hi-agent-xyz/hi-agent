@@ -280,6 +280,7 @@ pub async fn post_audio(
     let transcript = match stt::transcribe(body, &mime).await {
         Ok(t) => t,
         Err(err) => {
+            crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
             tracing::warn!(error = %err, media_path = %media_path, "STT transcribe failed");
             return (
                 StatusCode::BAD_GATEWAY,
@@ -626,10 +627,7 @@ pub async fn ingest_pcm_stream(
             // A 402 here means the managed account is out of energy (STT draws the
             // same budget) — raise the out-of-energy hint now, without waiting for the
             // next balance poll. No-op in BYOK / for non-402 STT failures.
-            let text = err.to_string();
-            if text.contains("402") {
-                crate::foundation::energy_state::note_402(&state.data_dir);
-            }
+            crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
             tracing::warn!(scene = %scene, error = %err, "audio ingest STT ended");
         }
         Err(_) => tracing::warn!(scene = %scene, "audio ingest STT did not finalize in time"),

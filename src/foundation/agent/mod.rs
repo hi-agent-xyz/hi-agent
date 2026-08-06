@@ -187,7 +187,13 @@ impl AgentLayer {
             .open_session(SessionOpts { system_prompt: None, cwd, builtin_tools }, mcp_servers)
             .await?;
 
-        Ok(AcpSession::new(id, process, rx, system_prompt))
+        Ok(AcpSession::new(
+            id,
+            process,
+            rx,
+            system_prompt,
+            self.inner.data_dir.clone(),
+        ))
     }
 
     /// Reap every live ACP subprocess this layer has spawned (reactor, worker and

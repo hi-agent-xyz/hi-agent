@@ -617,11 +617,19 @@ async fn drive_worker(
     owner: Option<SessionId>,
 ) {
     let mut task = initial_task;
+    let mut energy = crate::foundation::energy_state::subscribe();
+    let mut energy_paused = crate::foundation::energy_state::is_out();
     // Deliberation is long-lived per scene; a worker made by `create_worker` runs its
     // errand and ends. Neither is bounded by size from here — the underlying agent
     // compacts its own context (see [`crate::body::reactor::heartbeat`]).
     let session = session;
     loop {
+        // Workers follow the same reactive contract as every other rung: no balance
+        // preflight, hold the current task after a managed 402, then rerun that exact
+        // task when the balance broadcasts Resume. The ACP session stays alive.
+        if !wait_for_energy_resume(&mut energy, &mut energy_paused).await {
+            return;
+        }
         busy.store(true, Ordering::Relaxed);
         // Paired with the "turn done" line below. Without both, a reader of the log
         // cannot tell a working session that is still building from one that finished
@@ -635,6 +643,18 @@ async fn drive_worker(
         );
         let kind = match run_worker(id, &task, &session, &transcript).await {
             Ok(answer) => WorkerReportKind::Done(answer),
+            Err(err)
+                if crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out() =>
+            {
+                tracing::warn!(
+                    scene = %scene,
+                    worker = id,
+                    "working session paused on 402; task and session held"
+                );
+                energy_paused = true;
+                continue;
+            }
             Err(err) => WorkerReportKind::Failed(err.to_string()),
         };
         busy.store(false, Ordering::Relaxed);
@@ -676,6 +696,37 @@ async fn drive_worker(
             }
         }
     }
+}
+
+async fn wait_for_energy_resume(
+    energy: &mut tokio::sync::broadcast::Receiver<crate::foundation::energy_state::EnergyEvent>,
+    paused: &mut bool,
+) -> bool {
+    // Apply lifecycle messages already queued for this session before starting work.
+    // This is event consumption, not an account/state preflight before the provider
+    // call. The process flag is consulted only if this receiver actually lagged.
+    loop {
+        match energy.try_recv() {
+            Ok(crate::foundation::energy_state::EnergyEvent::Pause) => *paused = true,
+            Ok(crate::foundation::energy_state::EnergyEvent::Resume) => *paused = false,
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
+                *paused = crate::foundation::energy_state::is_out();
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return false,
+        }
+    }
+    while *paused {
+        match energy.recv().await {
+            Ok(crate::foundation::energy_state::EnergyEvent::Resume) => *paused = false,
+            Ok(crate::foundation::energy_state::EnergyEvent::Pause) => *paused = true,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                *paused = crate::foundation::energy_state::is_out();
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+        }
+    }
+    true
 }
 
 /// Block until this session has mail to act on, returning it as one prompt — or

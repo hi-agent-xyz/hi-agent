@@ -554,8 +554,8 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
     match fetch_energy(&tokens.access_token).await {
         Ok(en) => {
             tracing::info!(tier = %en.tier, remaining = en.remaining, total = en.total, "energy refreshed");
-            // Ground truth: raise / clear the out-of-energy hint from the balance. At
-            // startup this catches an account that's already empty before any 402.
+            // Balance is recovery-only. Calls run until a managed provider actually
+            // returns 402; a later positive balance emits Resume.
             crate::foundation::energy_state::reconcile(en.remaining, en.total);
             store.energy = Some(en);
         }
@@ -576,8 +576,8 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
 /// Lightweight energy poll that hands back the fresh balance: re-fetch with the
 /// cached access token, persist it, and return it. `None` in BYOK, when no token
 /// is cached yet, or when the fetch fails (the last cached value is left in
-/// place). The reactor's out-of-energy poller uses the returned `remaining` to
-/// detect a refill and resume, so this must return the value, not just store it.
+/// place). The account endpoint uses this to refresh the ground-truth balance; the
+/// reconciliation inside this function emits Resume when energy returns.
 pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
     let mut store = Credentials::load(data_dir);
     if store.mode == Mode::Byok {
@@ -586,8 +586,8 @@ pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
     let tokens = store.tokens.clone()?;
     match fetch_energy(&tokens.access_token).await {
         Ok(en) => {
-            // Ground truth: raise the hint when empty, clear it on refill. This is the
-            // 60s periodic poll and the out-of-energy poller's own recovery check.
+            // The periodic poll and the UI's explicit refresh both look only for
+            // recovery; a positive balance emits Resume after an observed 402.
             crate::foundation::energy_state::reconcile(en.remaining, en.total);
             store.energy = Some(en.clone());
             if let Err(e) = store.save(data_dir) {

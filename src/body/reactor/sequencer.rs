@@ -127,13 +127,18 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
             Beat::Show { id, op, source, geometry } => {
-                if !armed {
-                    continue;
-                }
-                if reactor.inner.interrupts.should_skip(&scene, turn).await {
-                    continue;
-                }
                 let (id, op) = resolve_view(id, &op);
+                // The outage surface is host-owned state, not model output. It must be
+                // able to appear before a scene's first conversational turn when the
+                // process was already paused; every other pre-turn view is still dropped
+                // so warm-up cannot leak presentation to the person.
+                let is_outage = id == crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID;
+                if !armed && !is_outage {
+                    continue;
+                }
+                if !is_outage && reactor.inner.interrupts.should_skip(&scene, turn).await {
+                    continue;
+                }
                 for emit in interleave::view_emits(&mut splitter, id, op, source, geometry) {
                     super::perform(emit, &synth_tx, &reactor, &scene).await;
                 }
@@ -194,7 +199,7 @@ async fn open_tts(
         tracing::debug!(scene = %scene, turn, "no speaker attached; not synthesizing");
         return;
     }
-    match tts::start().await {
+    match tts::start(reactor.inner.memory.data_dir()).await {
         Ok(TtsStream { mime, text, frames }) => {
             let out = reactor.inner.out.clone();
             let codec = mime.clone();
@@ -220,6 +225,10 @@ async fn open_tts(
             *synth_handle = Some(handle);
         }
         Err(err) => {
+            crate::foundation::energy_state::note_402_error(
+                reactor.inner.memory.data_dir(),
+                &err,
+            );
             tracing::warn!(scene = %scene, error = %err, "TTS session start failed; turn is silent");
         }
     }

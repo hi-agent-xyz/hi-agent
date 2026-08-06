@@ -1,5 +1,6 @@
 //! Session-level wrappers around an ACP `session/*` lifecycle.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol as acp;
@@ -31,6 +32,7 @@ pub struct AcpSession {
     /// dedicated system-prompt slot on `session/new` — we sneak it into the
     /// initial `PromptRequest` as a leading text block.
     pending_system_prompt: Arc<Mutex<Option<String>>>,
+    data_dir: PathBuf,
 }
 
 /// One streaming variant we surface to callers. `from_acp` collapses the
@@ -117,6 +119,10 @@ pub struct SessionRun {
     rx_slot: Arc<Mutex<Option<mpsc::UnboundedReceiver<SessionUpdate>>>>,
     rx: Option<mpsc::UnboundedReceiver<SessionUpdate>>,
     pending: Option<JoinHandle<anyhow::Result<PromptResponse>>>,
+    /// The managed-account state lives outside this ACP session. Keeping the data dir
+    /// here lets the common wait boundary raise a single process-wide Pause for every
+    /// LLM role, instead of relying on each rung to classify 402 independently.
+    data_dir: PathBuf,
     /// Cached response once `pending` resolves. Held so `wait()` can return
     /// it after `next_update()` has drained the stream.
     response: Option<PromptResponse>,
@@ -233,10 +239,12 @@ impl SessionRun {
         let response = match self.response.take() {
             Some(r) => r,
             None => {
-                return Err(self
+                let err = self
                     .error
                     .take()
-                    .unwrap_or_else(|| anyhow!("prompt finished without a response")));
+                    .unwrap_or_else(|| anyhow!("prompt finished without a response"));
+                crate::foundation::energy_state::note_402_error(&self.data_dir, &err);
+                return Err(err);
             }
         };
 
@@ -253,12 +261,14 @@ impl AcpSession {
         process: AcpProcess,
         rx: mpsc::UnboundedReceiver<SessionUpdate>,
         system_prompt: Option<String>,
+        data_dir: PathBuf,
     ) -> Self {
         Self {
             id,
             process,
             rx: Arc::new(Mutex::new(Some(rx))),
             pending_system_prompt: Arc::new(Mutex::new(system_prompt)),
+            data_dir,
         }
     }
 
@@ -319,6 +329,7 @@ impl AcpSession {
             rx_slot: self.rx.clone(),
             rx: Some(rx),
             pending: Some(pending),
+            data_dir: self.data_dir.clone(),
             response: None,
             error: None,
             text_buf: String::new(),

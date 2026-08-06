@@ -18,13 +18,28 @@ use crate::foundation::server::AppState;
 /// callback. Minted at `/account/link/start`, checked (and cleared) at the callback.
 const KEY_LINK_NONCE: &str = "link_nonce";
 
+#[derive(serde::Deserialize, Default)]
+pub struct EnergyQuery {
+    /// While the outage card is visible, ask the broker for the real balance rather
+    /// than merely reading the cached process flag. A positive result is what emits
+    /// the internal Resume broadcast to every held agent session.
+    #[serde(default)]
+    refresh: bool,
+}
+
 /// `GET /api/account/energy` — whether the account is currently out of energy, plus
 /// the reset time, for the out-of-energy hint. `out_of_energy` is the live vendor
 /// flag ([`crate::foundation::energy_state`]) — raised the instant a 402 flips us,
 /// dropped the instant the balance refills — so the web app can poll it to show/hide
 /// the hint. `resets_in` is the humanized wait ("约 42 分钟后") from the cached
 /// balance the broker keeps fresh.
-pub async fn get_energy(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn get_energy(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<EnergyQuery>,
+) -> impl IntoResponse {
+    if query.refresh {
+        let _ = crate::foundation::broker::poll_energy_now(&state.data_dir).await;
+    }
     let energy = Credentials::load(&state.data_dir).energy.unwrap_or_default();
     axum::Json(serde_json::json!({
         "out_of_energy": crate::foundation::energy_state::is_out(),
@@ -165,4 +180,3 @@ fn link_page(title: &str, body: &str) -> String {
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
-

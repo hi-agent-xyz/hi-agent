@@ -164,7 +164,8 @@ fn reflect_max_interval() -> Duration {
 const DEFAULT_VENDOR_PROBE: Duration = Duration::from_secs(30);
 /// Default consecutive *generic* terminal failures before flipping to an informed
 /// backoff. Each terminal failure is already up to 3 model calls, so 2 = a real
-/// outage, not a one-off blip. (402/429 bypass this — they flip immediately.)
+/// outage, not a one-off blip. A managed 402 pauses immediately; everything else
+/// follows the classifier below.
 const DEFAULT_VENDOR_DOWN_AFTER: u32 = 2;
 /// A transient-outage retry never waits longer than this — the 1h ceiling.
 const BACKOFF_CAP: Duration = Duration::from_secs(3600);
@@ -219,7 +220,7 @@ fn disposition(err: &str) -> Disposition {
     let e = err.to_ascii_lowercase();
     // Quota / credit / credentials. Observed live: `402 budget exceeded` (487 times in
     // one night, every one of them futile) and `403 预扣费额度失败 … authentication_failed`.
-    if e.contains("402")
+    if crate::foundation::energy_state::is_402_text(&e)
         || e.contains("budget exceeded")
         || e.contains("insufficient")
         || e.contains("quota")
@@ -372,9 +373,15 @@ impl Vendor {
     fn note_success(&self) -> bool {
         let mut st = self.state.lock().unwrap();
         self.generic_failures.store(0, Ordering::Relaxed);
-        let was_down = !matches!(*st, VendorState::Up);
-        *st = VendorState::Up;
-        was_down
+        match *st {
+            VendorState::Backoff { .. } => {
+                *st = VendorState::Up;
+                true
+            }
+            // A successful in-flight turn must not clear a process-wide 402 pause.
+            // The balance transition owns that recovery edge.
+            VendorState::Paused | VendorState::Up => false,
+        }
     }
 }
 
@@ -460,6 +467,8 @@ mod vendor_tests {
         assert!(!v.note_paused(), "and only one");
         assert!(v.is_down());
         assert!(matches!(v.scene_gate(), SceneGate::Hold), "a hold never offers a retry deadline");
+        assert!(!v.note_success(), "an unrelated in-flight success cannot clear a 402 pause");
+        assert!(matches!(v.scene_gate(), SceneGate::Hold));
         assert!(v.resume_if_paused());
         assert!(!v.is_down());
         assert!(!v.resume_if_paused(), "already up");
@@ -737,6 +746,12 @@ pub fn start(
     views_dir: PathBuf,
     shutdown: Shutdown,
 ) -> Reactor {
+    let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
+    // A managed capability may have observed 402 before the reactor was built. Seed
+    // from that process-local edge only; cached/empty balances never preflight calls.
+    if crate::foundation::energy_state::is_out() {
+        vendor.note_paused();
+    }
     let reactor = Reactor {
         inner: Arc::new(ReactorInner {
             memory,
@@ -751,12 +766,38 @@ pub fn start(
             views_dir,
             turn_seq: AtomicU64::new(0),
             scenes: Mutex::new(HashMap::new()),
-            vendor: Arc::new(Vendor::new(vendor_down_after(), backoff_base())),
+            vendor,
             last_signal_at: std::sync::Mutex::new(Instant::now()),
             reflect_wake: tokio::sync::Notify::new(),
             shutdown,
         }),
     };
+
+    // Keep the process-wide scene gate aligned even when the 402 originated in a
+    // sceneless rung. Subscribe before spawning so no transition can land in the
+    // scheduling gap; scene loops also apply the same idempotent edge when waking.
+    let mut gate_energy = crate::foundation::energy_state::subscribe();
+    let gate_reactor = reactor.clone();
+    tokio::spawn(async move {
+        loop {
+            match gate_energy.recv().await {
+                Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
+                    gate_reactor.inner.vendor.note_paused();
+                }
+                Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
+                    gate_reactor.inner.vendor.resume_if_paused();
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    if crate::foundation::energy_state::is_out() {
+                        gate_reactor.inner.vendor.note_paused();
+                    } else {
+                        gate_reactor.inner.vendor.resume_if_paused();
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
     let dispatch_reactor = reactor.clone();
 
     tokio::spawn(async move {
@@ -1192,6 +1233,10 @@ enum Woke {
     Mail,
     /// The person came back after an absence — see [`crate::body::presence::Presence::returns`].
     Returned,
+    /// Process-wide managed-energy edge. `Pause` holds pending work; `Resume` is
+    /// the only thing that releases it. This is a message, not a balance preflight
+    /// before every model call.
+    Energy(Option<crate::foundation::energy_state::EnergyEvent>),
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
@@ -1283,6 +1328,24 @@ async fn per_scene_loop(
     let mut last_activity = Instant::now();
     let mut pulsed_once = false;
 
+    // Reactive energy strategy:
+    //
+    // 1. Model calls run normally. There is no account-balance request before a call.
+    // 2. A managed 402 is raised once by the shared ACP wait boundary. Every live loop
+    //    receives `Pause`, keeps its pending work, and stops starting new turns.
+    // 3. The app/broker refreshes the balance. A positive balance broadcasts `Resume`;
+    //    every live loop wakes and continues its held work.
+    //
+    // The normal path therefore has no energy bookkeeping. Only the two state-change
+    // messages touch this loop.
+    let mut energy_rx = crate::foundation::energy_state::subscribe();
+    if crate::foundation::energy_state::is_out() {
+        // A scene created after startup missed the original Pause broadcast; the
+        // cached state still requires the same host-owned outage surface.
+        reactor.inner.vendor.note_paused();
+        let _ = show_vendor_outage(&beats).await;
+    }
+
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
     // drop the mail it was attempting to deliver. Cleared on a successful turn (the
@@ -1291,10 +1354,8 @@ async fn per_scene_loop(
     let mut batch: Vec<LoopInput> = Vec::new();
 
     loop {
-        // Wait for a turn-driving reason: a new signal, a due host pulse, a worker
-        // report, a return, or — while the vendor is down — a backoff retry
-        // (429/generic). Tool control commands are pure side-effects applied without
-        // a turn.
+        // Wait for a turn-driving reason. Energy recovery is not a timer: it arrives
+        // as the internal `Resume` message below.
         'wait: loop {
             let gate = reactor.inner.vendor.scene_gate();
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1311,8 +1372,7 @@ async fn per_scene_loop(
             let recover_at = match gate {
                 SceneGate::Go => None,
                 SceneGate::Retry { at } => Some(at),
-                // No deadline of our own: a pause ends when the reason ends. The loop
-                // still wakes on the pulse, which is when the resume check above runs.
+                // No deadline: only the internal Resume message ends a 402 pause.
                 SceneGate::Hold => None,
             };
             let deadline = [pulse_at, recover_at]
@@ -1321,6 +1381,8 @@ async fn per_scene_loop(
                 .min();
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
+                    biased;
+                    event = energy_rx.recv() => Woke::Energy(event.ok()),
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
@@ -1329,6 +1391,8 @@ async fn per_scene_loop(
                     _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
                 None => tokio::select! {
+                    biased;
+                    event = energy_rx.recv() => Woke::Energy(event.ok()),
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
@@ -1411,23 +1475,43 @@ async fn per_scene_loop(
                     // A control side-effect was applied; keep waiting for a
                     // turn-driving reason rather than running an empty turn.
                 }
+                Woke::Energy(Some(crate::foundation::energy_state::EnergyEvent::Pause)) => {
+                    reactor.inner.vendor.note_paused();
+                    // The id is stable, so duplicate Pause delivery replaces rather than
+                    // stacks. Every live scene therefore gets the outage surface even
+                    // when the 402 originated in Cognition, Reflection, or a worker.
+                    let _ = show_vendor_outage(&beats).await;
+                    continue 'wait;
+                }
+                Woke::Energy(Some(crate::foundation::energy_state::EnergyEvent::Resume)) => {
+                    let _ = reactor.inner.vendor.resume_if_paused();
+                    // Every scene receives Resume and dismisses its own copy. Reusing the
+                    // id makes this harmless when the scene never showed the view.
+                    let _ = dismiss_vendor_outage(&beats).await;
+                    if !batch.is_empty() {
+                        break 'wait;
+                    }
+                    continue 'wait;
+                }
+                Woke::Energy(None) => {
+                    // A lagged receiver missed an edge; reconcile from the cached
+                    // process state. The sender itself is process-static, so Closed is
+                    // not expected during a live app.
+                    if crate::foundation::energy_state::is_out() {
+                        reactor.inner.vendor.note_paused();
+                        let _ = show_vendor_outage(&beats).await;
+                    } else {
+                        let _ = reactor.inner.vendor.resume_if_paused();
+                        let _ = dismiss_vendor_outage(&beats).await;
+                        if !batch.is_empty() {
+                            break 'wait;
+                        }
+                    }
+                    continue 'wait;
+                }
                 Woke::Timer => {
                     let now = Instant::now();
                     if down {
-                        // A pause is released by whoever owned the reason, never by a
-                        // deadline here. In managed mode that is the broker's 60s energy
-                        // poll: once the balance is no longer empty, clear the gate and
-                        // let the top of 'wait drain the held mail. Anything else — BYOK
-                        // with a dead key, refused credentials — stays paused, because
-                        // there is nothing here that could make it true again, and a
-                        // retry loop against it is exactly what this replaced.
-                        if matches!(gate, SceneGate::Hold)
-                            && !crate::foundation::energy_state::is_out()
-                            && reactor.inner.vendor.resume_if_paused()
-                        {
-                            tracing::info!(scene = %scene, "resumed: the balance came back");
-                            break 'wait;
-                        }
                         // Only a transient backoff drives a model retry, and only with
                         // mail to deliver.
                         if let SceneGate::Retry { at } = gate
@@ -1526,25 +1610,27 @@ async fn per_scene_loop(
             }
             Err(err) => {
                 tracing::warn!(scene = %scene, error = %err, "turn failed");
-                session_chars = 0;
-                reactor.inner.observatory.set_budget(&scene, 0).await;
-                // Discard the possibly-wedged session; the next turn cold-opens a
-                // fresh one and rebuilds context from the journal snapshot.
-                if let Some(dead) = reactor_session.take() {
-                    reactor
-                        .inner
-                        .observatory
-                        .record(
-                            Some(&scene),
-                            EventKind::SessionClosed {
-                                kind: SessionKind::Reactor,
-                                id: dead.id().0.to_string(),
-                            },
-                        )
-                        .await;
+                let managed_402 = crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out();
+                if !managed_402 {
+                    session_chars = 0;
+                    reactor.inner.observatory.set_budget(&scene, 0).await;
+                    // Non-402 failures cold-open on the next attempt. A managed 402
+                    // keeps the live session and its observatory identity in place.
+                    if let Some(dead) = reactor_session.take() {
+                        reactor
+                            .inner
+                            .observatory
+                            .record(
+                                Some(&scene),
+                                EventKind::SessionClosed {
+                                    kind: SessionKind::Reactor,
+                                    id: dead.id().0.to_string(),
+                                },
+                            )
+                            .await;
+                    }
                 }
-                // Dropping the session means the next turn cold-opens and its
-                // fresh-session branch re-ingests the journal snapshot.
                 // Key on the vendor state the turn just wrote, not the pre-turn one:
                 // a turn that flipped the vendor down holds the mail — a backoff drives
                 // it at the next retry deadline. Only a still-reachable blip (already
@@ -1592,6 +1678,33 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
         }
     }
     s
+}
+
+async fn show_vendor_outage(
+    beats: &mpsc::Sender<sequencer::Beat>,
+) -> Result<(), mpsc::error::SendError<sequencer::Beat>> {
+    let (source, geom) = crate::mind::views::builtin::vendor_outage_view();
+    beats
+        .send(sequencer::Beat::Show {
+            id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
+            op: "show".to_string(),
+            source: source.to_string(),
+            geometry: serde_json::from_str(geom).ok(),
+        })
+        .await
+}
+
+async fn dismiss_vendor_outage(
+    beats: &mpsc::Sender<sequencer::Beat>,
+) -> Result<(), mpsc::error::SendError<sequencer::Beat>> {
+    beats
+        .send(sequencer::Beat::Show {
+            id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
+            op: "dismiss".to_string(),
+            source: String::new(),
+            geometry: None,
+        })
+        .await
 }
 
 
@@ -1671,6 +1784,7 @@ async fn run_reactor_turn(
     tracing::info!(scene = %scene, ctx_chars = context_chars, "reactor: prompting session");
     let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
 
+    let mut turn_error = None;
     let spoke = match drive_voice(&session, scene, context).await {
         Ok(text) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
@@ -1687,9 +1801,9 @@ async fn run_reactor_turn(
         Err(err) => {
             tracing::warn!(scene = %scene, error = %err, "reactor turn failed");
             let err_text = err.to_string();
-            // Drop the possibly-wedged session so the next turn re-opens cold. True for
-            // every disposition: whatever went wrong, this handle is not worth trusting.
-            *reactor_session = None;
+            let managed_402 = crate::foundation::energy_state::is_402_error(&err)
+                && crate::foundation::energy_state::is_out();
+            let disposition = disposition(&err_text);
 
             // What the failure means for whether to keep trying — three outcomes, no
             // taxonomy. The notice, where one is owed, is a **bundled view** whose copy
@@ -1701,7 +1815,7 @@ async fn run_reactor_turn(
             // nothing here. `docs/arch/surfaces.md` says every channel degrades rather
             // than fails, so this owes a voice-only fallback — which needs pre-rendered
             // audio or a localized string.
-            let announce = match disposition(&err_text) {
+            let announce = match disposition {
                 // The session was the problem, not the vendor. Say nothing to the
                 // process-wide gate: one crashed subprocess must not make every other
                 // scene believe the model is unreachable.
@@ -1709,15 +1823,19 @@ async fn run_reactor_turn(
                     tracing::warn!(scene = %scene, "session fault; reopening cold (vendor untouched)");
                     false
                 }
-                // Out of quota, credit, or credentials. Retrying cannot help, so stop.
-                // Whoever owns the reason brings us back: in managed mode the broker
-                // polls the balance every 60s, `note_402` raises the user-visible flag,
-                // and the wait loop resumes on refill.
+                // Out of quota, credit, or credentials. A managed 402 has already
+                // broadcast Pause from the common ACP boundary; the balance refresh
+                // later broadcasts Resume. Other permanent failures keep their existing
+                // pause semantics but do not participate in managed-energy recovery.
                 Disposition::Pause => {
-                    crate::foundation::energy_state::note_402(reactor.inner.memory.data_dir());
                     let first = reactor.inner.vendor.note_paused();
                     if first {
-                        tracing::warn!(scene = %scene, error = %err_text, "paused: retrying cannot help");
+                        tracing::warn!(
+                            scene = %scene,
+                            error = %err_text,
+                            managed_energy = managed_402,
+                            "paused: retrying cannot help"
+                        );
                     }
                     first
                 }
@@ -1726,16 +1844,9 @@ async fn run_reactor_turn(
                 Disposition::Retry => reactor.inner.vendor.note_unreachable(),
             };
             if announce {
-                let (source, geom) = crate::mind::views::builtin::vendor_outage_view();
-                let _ = beats
-                    .send(sequencer::Beat::Show {
-                        id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
-                        op: "show".to_string(),
-                        source: source.to_string(),
-                        geometry: serde_json::from_str(geom).ok(),
-                    })
-                    .await;
+                let _ = show_vendor_outage(beats).await;
             }
+            turn_error = Some(err);
             false
         }
     };
@@ -1753,14 +1864,7 @@ async fn run_reactor_turn(
         // condition is worse than none. Taking it down is the announcement: the person
         // sees the room return to normal, and the agent's next real reply is the rest.
         if reactor.inner.vendor.note_success() {
-            let _ = beats
-                .send(sequencer::Beat::Show {
-                    id: Some(crate::mind::views::builtin::VENDOR_OUTAGE_VIEW_ID.to_string()),
-                    op: "dismiss".to_string(),
-                    source: String::new(),
-                    geometry: None,
-                })
-                .await;
+            let _ = dismiss_vendor_outage(beats).await;
         }
         // Hand the turn's human request to Deliberation — the scene's reader — so it works
         // off the floor while the voice moves on; its report rides back as a WorkerReport
@@ -1772,6 +1876,9 @@ async fn run_reactor_turn(
                 tracing::warn!(scene = %scene, error = %e, "deliberation spawn/follow-up failed");
             }
         }
+    }
+    if let Some(err) = turn_error {
+        return Err(err);
     }
     // What this turn added to the session's context: everything we sent plus everything
     // it said back. Nothing thresholds on it any more — the underlying agent bounds its
