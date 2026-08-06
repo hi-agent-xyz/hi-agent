@@ -99,6 +99,21 @@ drops its out-channels the moment nobody is looking: hidden, miniaturized, close
 arrives from the shell (`windowDidChangeOcclusionState:`). A channel that stays up
 because a long-poll re-opens on its own is exactly the hazard this axis has to exclude.
 
+**The window has three states, and they are the one presence fact the client reports
+rather than the host deriving.** Active, background, closed. Dropping the channels makes
+the last two identical on the wire — which is correct for reach, since nothing lands
+either way — but they are not the same situation, and nothing except the client can tell
+them apart. **Background is ambient; closed is an act.** A window behind an editor may be
+glanced at in seconds; a window the person shut is one they decided they were done with.
+
+So the three feed **expectation**, not a fourth axis: closed reads away at once, because
+the decay exists to *infer* absence from silence and closing states it outright, while
+background gets no shortcut — someone reading in the window in front of ours has not
+left, and treating "not looking right now" as "gone" would make the agent go quiet on a
+person sitting right there. Neither is projected and neither appears in `say`'s answer:
+nothing above the host learns a new vocabulary, the states just move the expectation the
+mind already reads.
+
 **Reach is answered, not projected. Expectation is projected.** Only one of the two can
 be learned by trying, and it should be: the host tells `say` where the words landed, read
 at the instant of emission, so nothing above the host has to ask whether it can be heard

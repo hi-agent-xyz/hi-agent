@@ -103,6 +103,35 @@ pub struct Snapshot {
     pub voice_posture: bool,
 }
 
+/// What the person's window is doing — the one thing they'd describe in these
+/// words, and the only presence fact the client *reports* rather than the host
+/// deriving it.
+///
+/// Three states because two of them are invisible from anywhere else. Reach can
+/// only say whether a channel is open, and the face drops its channels for
+/// `Background` and `Closed` alike, so from the wire they are the same nothing.
+/// They are not the same situation: **background is ambient and closed is an
+/// act.** A window behind an editor may be glanced at in seconds; a window the
+/// person shut is one they decided they were done with. That difference is worth
+/// exactly one thing — how fast the scene reads Away — which is why this feeds
+/// [`Expectation`] instead of becoming a fourth axis.
+///
+/// Deliberately *not* projected and deliberately not in `say`'s answer: nothing
+/// above the host learns a new vocabulary for this. It moves the expectation the
+/// mind already reads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum WindowState {
+    /// Up and being looked at.
+    #[default]
+    Active,
+    /// Open, but not being read — hidden, miniaturized, or covered by another
+    /// window. They're still at the machine.
+    Background,
+    /// Shut. A deliberate act, so it reads Away at once rather than after
+    /// [`AWAY_AFTER`] of a silence that already happened.
+    Closed,
+}
+
 /// Per-scene engagement bookkeeping for the expectation axis. All timestamps are
 /// monotonic `Instant`s; a scene with no entry has simply never engaged.
 #[derive(Default)]
@@ -115,6 +144,10 @@ struct Engagement {
     /// Set when a human message arrives with no reply yet delivered; the age of
     /// this is the "owed reply" clock. Cleared on delivery.
     owed_since: Option<Instant>,
+    /// Last reported window state. Defaults to [`WindowState::Active`] for a
+    /// scene that has never reported: a client that says nothing is treated as
+    /// present, the same keep-biased default the rest of this module takes.
+    window: WindowState,
 }
 
 /// Shared presence state for every scene. Cloneable handle over shared maps:
@@ -190,13 +223,34 @@ impl Presence {
     /// [`Expectation::Away`] until this instant, and nothing was owed. That is the
     /// edge [`Presence::returns`] fires on.
     pub fn note_activation(&self, scene: &Scene) -> bool {
+        self.note_window(scene, WindowState::Active)
+    }
+
+    /// The face reports what its window is doing. [`WindowState::Active`] is an
+    /// activation — the existing "they're checking on you" edge, and the only one
+    /// that can be a return. The other two are the window going away, told apart
+    /// because *how* it went away is the whole information: `Closed` is a decision
+    /// and reads Away at once; `Background` is ambient and lets the ordinary
+    /// [`AWAY_AFTER`] decay do its work, because someone reading in the next window
+    /// over has not gone anywhere.
+    ///
+    /// Returns `true` only for a return (see [`Presence::note_activation`]).
+    pub fn note_window(&self, scene: &Scene, state: WindowState) -> bool {
+        if state != WindowState::Active {
+            let mut map = self.engagement.lock().unwrap();
+            map.entry(scene.clone()).or_default().window = state;
+            return false;
+        }
         let now = Instant::now();
         let returned = {
             let mut map = self.engagement.lock().unwrap();
             let e = map.entry(scene.clone()).or_default();
             // Classified against the state *before* this activation lands — after it,
             // the scene reads Present by construction and the edge would be invisible.
+            // That includes the window state: coming back from `Closed` is *the* return
+            // to catch, and clearing it first would be the edge erasing its own cause.
             let was_away = matches!(classify_at(e, now), Expectation::Away);
+            e.window = WindowState::Active;
             // A reply already owed means a turn is coming for that reason; waking a
             // second time for "they're back" would double-answer the same arrival.
             // (They typed, which pokes `note_activity`, and the page reports focus at
@@ -324,16 +378,28 @@ fn classify_at(e: &Engagement, now: Instant) -> Expectation {
         .filter(|t| now.saturating_duration_since(**t) < ACTIVATION_WINDOW)
         .count();
     let owed_age = e.owed_since.map(|t| now.saturating_duration_since(t));
-    classify(engaged_ago, recent_activations, owed_age)
+    classify(engaged_ago, recent_activations, owed_age, e.window)
 }
 
 /// Pure expectation policy, extracted so the fusion is unit-testable without a
 /// clock. Away wins over a stale owed-reply (asked, then gone = away, not eager).
+///
+/// A shut window is Away immediately and outranks everything, owed reply included.
+/// Waiting out [`AWAY_AFTER`] for it would be answering a question they already
+/// answered: the decay exists to *infer* absence from silence, and closing the
+/// window states it. `Background` gets no such shortcut and is deliberately absent
+/// from this function — someone reading in the window in front of ours has not
+/// left, and treating "not looking right now" as "gone" is the over-eager read
+/// that would make the agent go quiet on a person sitting right there.
 fn classify(
     engaged_ago: Option<Duration>,
     recent_activations: usize,
     owed_age: Option<Duration>,
+    window: WindowState,
 ) -> Expectation {
+    if window == WindowState::Closed {
+        return Expectation::Away;
+    }
     if engaged_ago.is_some_and(|d| d >= AWAY_AFTER) {
         return Expectation::Away;
     }
@@ -454,38 +520,101 @@ mod tests {
     #[test]
     fn never_engaged_reads_present_not_away() {
         // A bare connection with nothing observed yet is neutral, not gone.
-        assert_eq!(classify(None, 0, None), Expectation::Present);
+        assert_eq!(classify(None, 0, None, WindowState::Active), Expectation::Present);
     }
 
     #[test]
     fn stale_engagement_is_away() {
-        assert_eq!(classify(Some(AWAY_AFTER), 0, None), Expectation::Away);
-        assert_eq!(classify(Some(Duration::from_secs(600)), 0, None), Expectation::Away);
+        assert_eq!(classify(Some(AWAY_AFTER), 0, None, WindowState::Active), Expectation::Away);
+        assert_eq!(classify(Some(Duration::from_secs(600)), 0, None, WindowState::Active), Expectation::Away);
     }
 
     #[test]
     fn repeated_activation_is_eager() {
-        assert_eq!(classify(Some(Duration::from_secs(2)), 2, None), Expectation::Eager);
+        assert_eq!(classify(Some(Duration::from_secs(2)), 2, None, WindowState::Active), Expectation::Eager);
     }
 
     #[test]
     fn overdue_owed_reply_is_eager() {
-        assert_eq!(classify(Some(Duration::from_secs(1)), 0, Some(OWED_EAGER)), Expectation::Eager);
+        assert_eq!(classify(Some(Duration::from_secs(1)), 0, Some(OWED_EAGER), WindowState::Active), Expectation::Eager);
     }
 
     #[test]
     fn owed_but_fresh_is_present_not_eager() {
         // A reply owed for only a moment isn't yet "waiting".
-        assert_eq!(classify(Some(Duration::from_secs(1)), 0, Some(Duration::from_secs(5))), Expectation::Present);
+        assert_eq!(classify(Some(Duration::from_secs(1)), 0, Some(Duration::from_secs(5)), WindowState::Active), Expectation::Present);
     }
 
     #[test]
     fn away_overrides_a_long_owed_reply() {
         // Asked, then vanished: staleness wins over the (huge) owed age.
         assert_eq!(
-            classify(Some(Duration::from_secs(3600)), 0, Some(Duration::from_secs(3600))),
+            classify(Some(Duration::from_secs(3600)), 0, Some(Duration::from_secs(3600)), WindowState::Active),
             Expectation::Away
         );
+    }
+
+    // ---- The three window states ----
+
+    /// Shutting the window states the absence the decay exists to infer, so it
+    /// takes effect at once — even a second after they last typed, and even with a
+    /// reply owed. It outranks both, which is the whole reason it is worth
+    /// reporting separately from `Background`.
+    #[test]
+    fn a_closed_window_reads_away_immediately() {
+        assert_eq!(
+            classify(Some(Duration::from_secs(1)), 0, None, WindowState::Closed),
+            Expectation::Away
+        );
+        assert_eq!(
+            classify(Some(Duration::from_secs(1)), 2, Some(OWED_EAGER), WindowState::Closed),
+            Expectation::Away,
+            "shutting the window outranks both the eager signals — they left mid-wait"
+        );
+    }
+
+    /// Backgrounding is ambient — reading in the window in front of ours is not
+    /// leaving — so it must NOT shortcut to Away. Getting this wrong makes the
+    /// agent go quiet on someone sitting right there.
+    #[test]
+    fn a_backgrounded_window_still_reads_present() {
+        assert_eq!(
+            classify(Some(Duration::from_secs(1)), 0, None, WindowState::Background),
+            Expectation::Present
+        );
+    }
+
+    /// The two non-active states are the same to reach and different to
+    /// expectation. That asymmetry is the point of having three.
+    #[test]
+    fn background_and_closed_diverge_only_on_expectation() {
+        let p = Presence::new();
+        let s = scene("boss");
+        p.note_activity(&s); // just spoke — nothing stale
+        p.note_delivered(&s);
+
+        p.note_window(&s, WindowState::Background);
+        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+
+        p.note_window(&s, WindowState::Closed);
+        assert_eq!(p.snapshot(&s).expectation, Expectation::Away);
+
+        // Neither touched reach: the channels are what say whether anything lands,
+        // and nothing here opened or closed one.
+        assert!(!p.reachable(&s).window);
+    }
+
+    /// Opening a shut window is the return edge, and it must survive the state
+    /// being cleared on the way in — the arrival cannot erase its own cause.
+    #[test]
+    fn reopening_a_closed_window_is_a_return() {
+        let p = Presence::new();
+        let s = scene("boss");
+        p.note_activity(&s);
+        p.note_delivered(&s);
+        p.note_window(&s, WindowState::Closed);
+        assert!(p.note_window(&s, WindowState::Active), "reopening is a return");
+        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
     }
 
     // ---- Expectation through the store ----

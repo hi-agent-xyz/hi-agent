@@ -333,7 +333,10 @@ define_class!(
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             crate::foundation::window_state::set_open(false);
-            self.emit_lifecycle("background");
+            // `closed`, not `background`: the person shut it, and that is a decision
+            // rather than a window drifting behind another. Presence reads the two
+            // differently — see `WindowState`.
+            self.emit_lifecycle("closed");
         }
 
         /// A window fully covered by another app's window is not being read, and this is

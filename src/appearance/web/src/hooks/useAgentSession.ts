@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { subscribeOutText } from "../channels/out/text";
 import { subscribeAudioTurns } from "../channels/out/audio";
 import { postInText, subscribeInText } from "../channels/in/text";
-import { reportAttention } from "../channels/in/attention";
+import { reportAttention, type WindowState } from "../channels/in/attention";
 import { AudioBus } from "../lib/audioBus";
 import { ActivityMeter } from "../lib/activityMeter";
 import { AudioStreamer } from "../lib/audioStreamer";
@@ -217,16 +217,26 @@ export function useAgentSession(): AgentSession {
   // measure the host has, and received by nobody.
   //
   // So attendance is a first-class client fact, and holding an out-channel open is
-  // the claim "someone is reading this". Three ways it goes false, all of them the
-  // page's own window and never a probe of anything else:
-  //   • `visibilitychange` — the tab is hidden, the app hidden (⌘H), the window
-  //     miniaturized, or (on the desktop build) closed.
-  //   • the native `background` lifecycle beat — the macOS window is reused across
-  //     close/open, so the React tree never unmounts and this is the only signal.
-  //   • occlusion — the window is fully covered by another app's. Nothing in the
-  //     web platform reports this; it arrives as a native lifecycle beat too (see
-  //     `windowDidChangeOcclusionState:` in `macos_window.rs`).
-  const [attended, setAttended] = useState(() => document.visibilityState === "visible");
+  // the claim "someone is reading this". Three states, all of them about the page's
+  // own window and never a probe of anything else:
+  //   • `active` — up and being looked at.
+  //   • `background` — open but not read: tab hidden, app hidden (⌘H), miniaturized,
+  //     or fully covered by another window. That last one no web API reports — an
+  //     occluded WKWebView keeps `visibilityState === "visible"` — so it arrives as
+  //     a native beat (`windowDidChangeOcclusionState:` in `macos_window.rs`).
+  //   • `closed` — shut, via the native `closed` beat. The WKWebView is reused
+  //     across close/open, so the React tree never unmounts and this is the only
+  //     signal that it happened.
+  //
+  // The face treats `background` and `closed` identically — both drop the
+  // out-channels, because neither is being read. They are reported separately
+  // because *presence* reads them differently: closing is a decision and means away
+  // at once, backgrounding is ambient and lets the ordinary decay do its work.
+  // Nothing but this client can tell them apart, which is why it is asked.
+  const [windowState, setWindowState] = useState<WindowState>(() =>
+    document.visibilityState === "visible" ? "active" : "background",
+  );
+  const attended = windowState === "active";
 
   const busRef = useRef<AudioBus | null>(null);
   const micRef = useRef<AudioStreamer | null>(null);
@@ -254,6 +264,11 @@ export function useAgentSession(): AgentSession {
   // Live cognition cadence: bumped per streamed chunk, decays between them, so
   // the Presence pulses with the agent's real output rate (not a canned loop).
   const activityRef = useRef(new ActivityMeter());
+  // Last window state pushed to the backend, for burst coalescing, and the setter
+  // itself so the native lifecycle handler below can reuse it (it lives in another
+  // effect and must not duplicate the reporting rule).
+  const lastReportRef = useRef<{ state: WindowState; at: number } | null>(null);
+  const enterWindowRef = useRef<((next: WindowState) => void) | null>(null);
 
   const clearInterim = useCallback(() => {
     if (interimTimerRef.current !== null) {
@@ -387,38 +402,38 @@ export function useAgentSession(): AgentSession {
   }, [woken, attended, scene, enqueueAgent, clearAgentQueue]);
 
   // ---- Attention reporter (window came forward) --------------------------
-  // Tell the backend when our own window becomes visible or regains focus — the
-  // "they're checking on you" signal for presence. First-party only: we report
-  // our window's own visibility, never anything about other apps. Report once on
-  // mount (the page being up is itself an activation) and on each visible/focus
-  // transition, coalesced so a rapid focus+visible pair sends one beat.
+  // Tell the backend what our own window is doing. First-party only: our window,
+  // never anything about other apps.
   //
-  // The same transitions drive `attended`, which gates the out-channels below.
-  // Note the asymmetry, and that it is deliberate: an activation is an *edge* the
-  // backend uses to notice a return, so it is only ever reported on the way in;
-  // attendance is a *state*, so it has to fall as well as rise.
+  // Repeated `active` is not noise — it is the "they keep checking" edge the eager
+  // read counts, so it is reported again every time rather than deduped away. What
+  // is deduped is the burst: `focus` and `visibilitychange` fire together on one
+  // bring-to-front, and that is one arrival, not two.
   useEffect(() => {
-    const ctrl = new AbortController();
-    let last = 0;
-    const beat = () => {
-      if (document.visibilityState !== "visible") return;
+    const enter = (next: WindowState) => {
+      setWindowState(next);
       const now = Date.now();
-      if (now - last < 1000) return; // coalesce focus+visibilitychange bursts
-      last = now;
-      void reportAttention({ scene, signal: ctrl.signal });
+      const prev = lastReportRef.current;
+      if (prev && prev.state === next && now - prev.at < 1000) return;
+      lastReportRef.current = { state: next, at: now };
+      void reportAttention({ scene, state: next });
     };
-    beat(); // mount = an activation
-    const onVisible = () => {
-      const visible = document.visibilityState === "visible";
-      setAttended(visible);
-      if (visible) beat();
+    enterWindowRef.current = enter;
+    // Mount is an arrival: the page being up at all is someone opening it.
+    const fromVisibility = (): WindowState =>
+      document.visibilityState === "visible" ? "active" : "background";
+    enter(fromVisibility());
+    const onVisible = () => enter(fromVisibility());
+    // Focus without a visibility change — clicking back from another app while the
+    // window stayed on screen. Still an arrival; not a state change.
+    const onFocus = () => {
+      if (document.visibilityState === "visible") enter("active");
     };
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", beat);
+    window.addEventListener("focus", onFocus);
     return () => {
-      ctrl.abort();
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", beat);
+      window.removeEventListener("focus", onFocus);
     };
   }, [scene]);
 
@@ -800,13 +815,15 @@ export function useAgentSession(): AgentSession {
   // someone to read them. Inert in a browser tab (no native lifecycle events).
   useEffect(() => {
     return onNativeLifecycle((phase) => {
-      if (phase === "background") {
-        setAttended(false);
+      if (phase === "background" || phase === "closed") {
+        // Same handling either way — neither is being read — but reported apart,
+        // because closing is a decision and presence reads it as away at once.
+        enterWindowRef.current?.(phase);
         disableAudio();
         disableVision();
         voiceRef.current?.setMuted(true);
       } else {
-        setAttended(true);
+        enterWindowRef.current?.("active");
         void restoreInputChannels();
         voiceRef.current?.setMuted(!prefsRef.current.audioOutput);
       }

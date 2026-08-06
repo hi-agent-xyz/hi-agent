@@ -13,8 +13,16 @@
 // In a plain browser tab nobody emits these events, so every subscriber here is
 // simply inert and the tab's own unmount handles teardown as before.
 
-/** Which way the desktop app just moved relative to the screen. */
-export type LifecyclePhase = "foreground" | "background";
+/**
+ * What the desktop window just did.
+ *
+ * `background` and `closed` are both "nobody is reading this", and the face
+ * treats them identically for its channels — but they are not the same thing to
+ * presence, so the shell keeps them apart on the way in. Backgrounding is ambient
+ * (covered, hidden, miniaturized); closing is a decision, and reads as away at
+ * once rather than after five minutes of inferring it from silence.
+ */
+export type LifecyclePhase = "foreground" | "background" | "closed";
 
 /** The DOM event the native shell dispatches for a lifecycle transition. */
 const LIFECYCLE_EVENT = "hi:lifecycle";
@@ -29,7 +37,9 @@ export function onNativeLifecycle(
 ): () => void {
   const listener = (e: Event) => {
     const phase = (e as CustomEvent<{ phase?: LifecyclePhase }>).detail?.phase;
-    if (phase === "foreground" || phase === "background") handler(phase);
+    if (phase === "foreground" || phase === "background" || phase === "closed") {
+      handler(phase);
+    }
   };
   window.addEventListener(LIFECYCLE_EVENT, listener);
   return () => window.removeEventListener(LIFECYCLE_EVENT, listener);
