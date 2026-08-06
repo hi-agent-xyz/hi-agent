@@ -600,8 +600,6 @@ async fn turn(
     pending: &[String],
     held: &mut Option<Arc<AcpSession>>,
 ) -> anyhow::Result<()> {
-    let data_dir = reactor.inner.memory.data_dir();
-
     // Reuse the held session; open one only when there isn't one — first turn after
     // start, or after a failure/wedge dropped it.
     let session = if let Some(existing) = held.as_ref() {
