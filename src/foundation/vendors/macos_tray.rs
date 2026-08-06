@@ -500,11 +500,15 @@ fn install_main_menu(
     let app_menu = NSMenu::new(mtm);
     app_menu.setTitle(&NSString::from_str("Hi Agent"));
     let settings = command_item(mtm, "Settings…", sel!(openSettings:), ",", command);
-    settings.setTarget(Some(target));
     app_menu.addItem(&settings);
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
     let quit = command_item(mtm, "Quit Hi Agent", sel!(quit:), "q", command);
-    quit.setTarget(Some(target));
+    // SAFETY: `target` is retained by `run` for the entire AppKit event loop, so it
+    // outlives both menu items despite `NSMenuItem.target` being an unretained reference.
+    unsafe {
+        settings.setTarget(Some(target));
+        quit.setTarget(Some(target));
+    }
     app_menu.addItem(&quit);
     app_root.setSubmenu(Some(&app_menu));
     main_menu.addItem(&app_root);
