@@ -4,9 +4,11 @@
 //! AppKit (`NSApplication`, `NSStatusItem`, `NSMenu`) **must run on the process
 //! main thread**, which must own the AppKit event loop — so [`run`] takes a
 //! [`MainThreadMarker`] and blocks on `NSApplication::run` for the process life.
-//! The activation policy is set to *Accessory*, so there is no Dock icon and no app
-//! menu — just the menu-bar item (the programmatic equivalent of `LSUIElement`, so
-//! no `.app`/Info.plist is needed).
+//! The activation policy is set to *Accessory*, so there is no Dock icon or visible
+//! app menu — just the menu-bar item (the programmatic equivalent of `LSUIElement`, so
+//! no `.app`/Info.plist is needed). We still install an `NSApplication.mainMenu` with
+//! the standard Edit commands: AppKit uses its key equivalents to route ⌘V/⌘C/⌘X and
+//! friends into the key window's first responder, including the face's `WKWebView`.
 //!
 //! Unlike the cocoa-rs FFI the other macOS vendors use, the tray needs an
 //! Objective-C action target for the menu clicks; this uses the `objc2` family,
@@ -46,7 +48,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::anyhow;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
 use objc2::{define_class, msg_send, sel, AnyThread, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSCellImagePosition, NSEventModifierFlags,
@@ -451,6 +453,91 @@ impl TrayClick {
     }
 }
 
+fn menu_item(
+    mtm: MainThreadMarker,
+    title: &str,
+    action: Option<Sel>,
+    key: &str,
+) -> Retained<NSMenuItem> {
+    // SAFETY: every selector passed here is a standard AppKit responder action or
+    // one implemented by `TrayTarget`; all menu construction runs on the main thread.
+    unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str(title),
+            action,
+            &NSString::from_str(key),
+        )
+    }
+}
+
+fn command_item(
+    mtm: MainThreadMarker,
+    title: &str,
+    action: Sel,
+    key: &str,
+    modifiers: NSEventModifierFlags,
+) -> Retained<NSMenuItem> {
+    let item = menu_item(mtm, title, Some(action), key);
+    item.setKeyEquivalentModifierMask(modifiers);
+    item
+}
+
+/// Install the responder-chain command menu that a nib-less AppKit application
+/// does not get automatically. The app remains an Accessory (no Dock icon or
+/// visible menu bar), but `NSApplication` can now resolve standard editing key
+/// equivalents against the key window's first responder. This is what lets a
+/// focused `WKWebView` turn ⌘V into a DOM paste event instead of the system beep.
+fn install_main_menu(
+    app: &NSApplication,
+    mtm: MainThreadMarker,
+    target: &Retained<TrayTarget>,
+) {
+    let command = NSEventModifierFlags::Command;
+    let main_menu = NSMenu::new(mtm);
+
+    let app_root = menu_item(mtm, "Hi Agent", None, "");
+    let app_menu = NSMenu::new(mtm);
+    app_menu.setTitle(&NSString::from_str("Hi Agent"));
+    let settings = command_item(mtm, "Settings…", sel!(openSettings:), ",", command);
+    settings.setTarget(Some(target));
+    app_menu.addItem(&settings);
+    app_menu.addItem(&NSMenuItem::separatorItem(mtm));
+    let quit = command_item(mtm, "Quit Hi Agent", sel!(quit:), "q", command);
+    quit.setTarget(Some(target));
+    app_menu.addItem(&quit);
+    app_root.setSubmenu(Some(&app_menu));
+    main_menu.addItem(&app_root);
+
+    let edit_root = menu_item(mtm, "Edit", None, "");
+    let edit_menu = NSMenu::new(mtm);
+    edit_menu.setTitle(&NSString::from_str("Edit"));
+    edit_menu.addItem(&command_item(mtm, "Undo", sel!(undo:), "z", command));
+    edit_menu.addItem(&command_item(
+        mtm,
+        "Redo",
+        sel!(redo:),
+        "z",
+        command | NSEventModifierFlags::Shift,
+    ));
+    edit_menu.addItem(&NSMenuItem::separatorItem(mtm));
+    edit_menu.addItem(&command_item(mtm, "Cut", sel!(cut:), "x", command));
+    edit_menu.addItem(&command_item(mtm, "Copy", sel!(copy:), "c", command));
+    edit_menu.addItem(&command_item(mtm, "Paste", sel!(paste:), "v", command));
+    edit_menu.addItem(&NSMenuItem::separatorItem(mtm));
+    edit_menu.addItem(&command_item(
+        mtm,
+        "Select All",
+        sel!(selectAll:),
+        "a",
+        command,
+    ));
+    edit_root.setSubmenu(Some(&edit_menu));
+    main_menu.addItem(&edit_root);
+
+    app.setMainMenu(Some(&main_menu));
+}
+
 /// Build the status item + menu and run the AppKit loop on the current (main)
 /// thread. **Blocks for the process lifetime.** Errors only if we are not on the
 /// main thread; a missing window-server session surfaces as the item simply not
@@ -460,7 +547,7 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
         .ok_or_else(|| anyhow!("the menu bar must be set up on the main thread"))?;
 
     let app = NSApplication::sharedApplication(mtm);
-    // Accessory: live in the menu bar only — no Dock icon, no app menu.
+    // Accessory: live in the menu bar only — no Dock icon or visible app menu.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
     // Force the app-wide appearance from the stored theme before any window installs, so
@@ -473,6 +560,7 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
     let window_url = url;
 
     let target = TrayTarget::new(mtm, shutdown);
+    install_main_menu(&app, mtm, &target);
 
     // SAFETY: all of these are standard AppKit setup calls made on the main thread
     // (guaranteed by `mtm`); the objects are kept alive by the locals below, which
