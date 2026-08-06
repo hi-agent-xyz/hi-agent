@@ -435,6 +435,17 @@ impl Registry {
         }
     }
 
+    /// Replace the human-readable task attached to a live session.
+    ///
+    /// Deliberation is registered and warmed before it receives its first real task,
+    /// so the switchboard entry must move from its startup placeholder to the work the
+    /// scene actually handed down.
+    pub fn set_task(&self, id: SessionId, task: String) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+            e.task = task;
+        }
+    }
+
     /// Append to a session's visible output, keeping only the recent tail.
     pub fn record_output(&self, id: SessionId, chunk: &str) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
@@ -775,6 +786,26 @@ mod tests {
 
         r.finish_turn(b);
         assert!(!r.status(b).unwrap().busy);
+    }
+
+    #[test]
+    fn a_prewarmed_session_can_replace_its_placeholder_task() {
+        let r = reg();
+        let id = mint();
+        r.register(
+            id,
+            Role::Deliberation,
+            Some(Scene("boss".into())),
+            None,
+            "waiting for the first question".into(),
+        );
+
+        r.set_task(id, "review the restart behavior".into());
+
+        assert_eq!(
+            r.status(id).expect("registered").task,
+            "review the restart behavior"
+        );
     }
 
     #[test]

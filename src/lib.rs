@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 pub mod appearance;
 pub mod body;
@@ -336,6 +336,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // observed, so its scene loops, reflection, and drive retries wind down instead
     // of restarting ACP sessions into a process group that's already terminating.
     let reactor_shutdown = foundation::shutdown::Shutdown::new();
+    // Eager sessions attach to `/mcp` during `session/new`. The reactor starts before
+    // the listener below, so retain one readiness edge that every startup warm-up can
+    // await without racing the HTTP server.
+    let (server_ready_tx, server_ready_rx) = watch::channel(false);
     let _reactor = body::reactor::start(
         memory,
         agent,
@@ -350,6 +354,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         seams.state.views.clone(),
         views_dir,
         reactor_shutdown.clone(),
+        server_ready_rx,
     )
     .await?;
     tracing::info!("reactor started");
@@ -399,6 +404,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .with_graceful_shutdown(shutdown_requested(server_shutdown))
         .await
     });
+    let _ = server_ready_tx.send(true);
 
     tokio::select! {
         joined = &mut server => match joined {

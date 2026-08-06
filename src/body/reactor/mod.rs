@@ -1,9 +1,9 @@
 //! Reactor — the *mind*. Per-scene queues + one persistent session per scene.
 //!
 //! One mpsc per scene, one task per scene; turns run serially against a single
-//! ACP session that is opened on the scene's first turn and reused forever as
-//! the scene's continuous mind. Deliberation is delegated to that session; the
-//! reactor never blocks on it.
+//! Reaction ACP session that is opened and primed when the scene stands up, then
+//! reused as the scene's continuous voice. Deliberation has its own prewarmed
+//! session and runs off the floor; Reaction never blocks on it.
 //!
 //! ## Turn-taking lives here, not in the client
 //!
@@ -67,7 +67,7 @@ pub use outbound::OutboundSignal;
 pub use tools::{SceneControl, Spoken, ToolRegistry, ToolSink};
 
 use chrono::Utc;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until, timeout};
 
 use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
@@ -780,6 +780,10 @@ struct ReactorInner {
     /// restart an ACP session — the children just received the same signal, and a
     /// respawn here would race the subprocess reap and could orphan a child.
     shutdown: Shutdown,
+    /// Becomes true after the HTTP server has been spawned on its bound listener.
+    /// Eager ACP sessions attach to our `/mcp` endpoint during `session/new`, so
+    /// startup warming waits on this structural edge instead of racing the server.
+    server_ready: watch::Receiver<bool>,
 }
 
 struct SceneHandle {
@@ -800,6 +804,7 @@ pub async fn start(
     views: crate::foundation::server::ViewBus,
     views_dir: PathBuf,
     shutdown: Shutdown,
+    server_ready: watch::Receiver<bool>,
 ) -> anyhow::Result<Reactor> {
     let (source, geom) = crate::mind::views::builtin::out_of_energy_view();
     let energy_view = ViewEnvelope {
@@ -837,6 +842,7 @@ pub async fn start(
             last_signal_at: std::sync::Mutex::new(Instant::now()),
             reflect_wake: tokio::sync::Notify::new(),
             shutdown,
+            server_ready,
         }),
     };
 
@@ -899,19 +905,29 @@ pub async fn start(
         tracing::warn!("reactor warm channel closed; warm-up loop exiting");
     });
 
-    // Re-warm scenes with a genuinely fresh, still-live conversation, so their loop
-    // (and pulse) is up without waiting for a client to reconnect. Deliberately
-    // conservative — see [`scenes_to_rewarm`]: each warm spawns a subprocess and an
-    // LLM call, so warming a crowd at boot hurts startup UX and competes for our own
-    // LLM rate limit right when the user wants to interact. Boot is not a special
-    // case: this merely stands the loops up, and each one's first pulse carries the
-    // "host process started Xm ago" fact like any other. Standing/scheduled work
-    // (cron, serving) does not depend on this — it lives on the heartbeat, so a scene
-    // going cold never drops a duty.
+    // Re-warm scenes with a genuinely fresh, still-live conversation, plus every
+    // scene an open task explicitly reports to. The activity gate remains deliberately
+    // conservative for ordinary conversations; an owed delivery is different — its
+    // destination must exist before Cognition's restart-recovery turn decides where
+    // the result can go.
+    //
+    // Each warm spawns a subprocess and an LLM call, so deduplicate before starting.
+    // Cognition repeats the task-scene ensure at its boot wake as the correctness
+    // backstop; this earlier pass is the latency optimization.
     let rewarm_reactor = reactor.clone();
     tokio::spawn(async move {
-        for scene in scenes_to_rewarm(rewarm_reactor.inner.memory.data_dir()) {
-            tracing::info!(scene = %scene, "re-warming recently-active scene");
+        let mut scenes = scenes_to_rewarm(rewarm_reactor.inner.memory.data_dir());
+        if let Ok(open) =
+            crate::mind::memory::tasks::open_tasks(rewarm_reactor.inner.memory.data_dir()).await
+        {
+            scenes.extend(task_report_scenes(&open));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for scene in scenes {
+            if !seen.insert(scene.0.clone()) {
+                continue;
+            }
+            tracing::info!(scene = %scene, "re-warming scene");
             rewarm_reactor.ensure_scene(scene).await;
         }
     });
@@ -942,8 +958,8 @@ pub async fn start(
     // loops are the only senders, so doing it on this line closes the window structurally
     // rather than making it merely unlikely.
     //
-    // The registration is the address and lives as long as the process; the ACP session
-    // behind it is opened per wake and dropped. See [`cognition`].
+    // The registration is the address and lives as long as the process; Cognition opens
+    // and primes its long-lived ACP session as soon as the HTTP/MCP server is ready.
     let cognition_reg = registry::register_scoped(
         registry::mint(),
         registry::Role::Cognition,
@@ -1129,9 +1145,24 @@ fn scenes_to_rewarm(data_dir: &std::path::Path) -> Vec<Scene> {
     warm
 }
 
+/// Unique user-facing destinations named by open tasks, in ledger order.
+///
+/// A task's `report_to` is the durable half of delivery routing. Startup uses this
+/// projection to stand those scene voices up; Cognition uses the same projection
+/// before its restart-recovery turn so the routing fact cannot drift between paths.
+fn task_report_scenes(tasks: &[crate::mind::memory::tasks::Task]) -> Vec<Scene> {
+    let mut seen = std::collections::HashSet::new();
+    tasks
+        .iter()
+        .filter_map(|task| task.report_to.clone())
+        .filter(|scene| seen.insert(scene.0.clone()))
+        .collect()
+}
+
 #[cfg(test)]
 mod rewarm_tests {
     use super::*;
+    use crate::mind::memory::tasks::{Task, TaskKind};
 
     /// Lay down `<data_dir>/memory/raw/<scene>/<channel>/<day>/<channel>.jsonl`,
     /// the shape [`crate::mind::memory::layout`] writes.
@@ -1211,6 +1242,22 @@ mod rewarm_tests {
         seed_channel(dir.path(), "talking", "clock");
         assert!(scenes_to_rewarm(dir.path()).is_empty());
     }
+
+    #[test]
+    fn task_report_scenes_are_unique_and_keep_ledger_order() {
+        let mut first = Task::new("first", TaskKind::Wip);
+        first.report_to = Some(Scene("boss".into()));
+        let mut duplicate = Task::new("duplicate", TaskKind::Wip);
+        duplicate.report_to = Some(Scene("boss".into()));
+        let mut second = Task::new("second", TaskKind::Wip);
+        second.report_to = Some(Scene("phone".into()));
+        let internal = Task::new("internal", TaskKind::Wip);
+
+        assert_eq!(
+            task_report_scenes(&[first, duplicate, second, internal]),
+            vec![Scene("boss".into()), Scene("phone".into())]
+        );
+    }
 }
 
 impl Reactor {
@@ -1246,6 +1293,28 @@ impl Reactor {
         }
     }
 
+    /// Wait until eager ACP sessions can attach to the live `/mcp` endpoint.
+    ///
+    /// A watch channel is used because every startup scene waits independently and all
+    /// of them must observe the same retained edge. Shutdown wins so a failed startup
+    /// cannot leave warm-up tasks parked forever.
+    pub(super) async fn wait_for_server_ready(&self) -> bool {
+        let mut ready = self.inner.server_ready.clone();
+        loop {
+            if *ready.borrow() {
+                return true;
+            }
+            tokio::select! {
+                changed = ready.changed() => {
+                    if changed.is_err() {
+                        return false;
+                    }
+                }
+                _ = self.inner.shutdown.cancelled() => return false,
+            }
+        }
+    }
+
     async fn deliver_to_scene(&self, scene: Scene, signal: Signal) {
         // Mark global activity and poke the consolidated reflection clock, so a scene
         // going active after a long quiet gets its first pass without waiting out the
@@ -1276,6 +1345,18 @@ impl Reactor {
         if let Some(handle) = scenes.get(&scene) {
             return handle.inbound.clone();
         }
+
+        // Register the scene's stable voice address before any asynchronous startup
+        // work. Cognition's boot recovery may need to deliver into this scene while
+        // the ACP subprocess is still opening/warming; the mailbox can safely queue
+        // that message until the loop reaches its wait.
+        let voice = registry::register_scoped(
+            registry::mint(),
+            registry::Role::Reaction,
+            Some(scene.clone()),
+            None,
+            "the scene's voice".to_string(),
+        );
 
         let (tx, rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
         scenes.insert(scene.clone(), SceneHandle { inbound: tx.clone() });
@@ -1336,6 +1417,7 @@ impl Reactor {
                 control_rx,
                 control_tx,
                 beats_tx,
+                voice,
             )
             .await;
         });
@@ -1395,9 +1477,13 @@ async fn per_scene_loop(
     // TurnEnd brackets here; the `/mcp` handler sends the say/show_view beats
     // between them. The same sender is the keepalive for the sequencer task.
     beats: mpsc::Sender<sequencer::Beat>,
+    // Registered synchronously by `get_or_create_scene`, before this task is spawned,
+    // so recovery can already address the scene while its warm-up runs. Held here so
+    // every loop exit unregisters it by scope.
+    voice: registry::Registration,
 ) {
-    // The scene's persistent reactor session: opened lazily on the first turn,
-    // then reused for every later turn as the scene's continuous mind. Only this
+    // The scene's persistent reactor session: opened and primed during startup when
+    // possible, then reused for every turn as the scene's continuous mind. Only this
     // loop touches it, so a plain local `Option` suffices. It is replaced only when a
     // turn fails: the `Err` arm below discards the possibly-wedged session and the next
     // turn cold-opens. Size is not a reason to replace it — the underlying agent
@@ -1410,21 +1496,6 @@ async fn per_scene_loop(
     // delegates runs here; workers post progress and results back through
     // `worker_inbound` into this same loop.
     let mut workers = workers::WorkerRegistry::new(scene.clone(), worker_inbound);
-    // The scene's address in the switchboard. **Registered once, here, for as long as
-    // this loop lives** — not per session open. A scene is one conversation and has one
-    // voice; the underlying session may rotate beneath it (a cold reopen after a failure) and that
-    // is an implementation detail nothing outside should be able to observe. Registering
-    // at session-open minted a second Reaction for the same scene on every reopen, and
-    // a sender was then offered whichever the lookup happened to find first.
-    // Scope-bound: released on every way out of this loop, including the ones added
-    // after this line was written.
-    let voice = registry::register_scoped(
-        registry::mint(),
-        registry::Role::Reaction,
-        Some(scene.clone()),
-        None,
-        "the scene's voice".to_string(),
-    );
     let voice_id = voice.id();
     let voice_mail = voice.mail.clone();
     // Taken once, for the life of the loop: the handle must be the same one the
@@ -1434,9 +1505,21 @@ async fn per_scene_loop(
 
     tracing::info!(scene = %scene, voice = voice_id, "reactor per-scene loop up");
 
-    // No warm-up: the reactor session opens lazily on its first turn (a subprocess
-    // spawn + system-prompt prime would only stall that first turn behind it). The
-    // journal snapshot is delivered by that first turn's fresh-session branch.
+    // Pull both scene rungs' cold starts ahead of the person's first message. Reaction
+    // and Deliberation each open a subprocess, initialize ACP/MCP, and pre-send their
+    // system prompt. Input and recovery mail queue while the two independent warm-ups
+    // run in parallel.
+    let mut startup_warm_pending = false;
+    if reactor.wait_for_server_ready().await {
+        startup_warm_pending = warm_scene_sessions(
+            &reactor,
+            &scene,
+            voice_id,
+            &mut reactor_session,
+            &mut workers,
+        )
+        .await;
+    }
 
     // Pulse bookkeeping: the host's recurring self-attention timer. `last_activity`
     // resets on every turn, so pulses only fire into genuine quiet; the first pulse
@@ -1459,6 +1542,17 @@ async fn per_scene_loop(
         // managed energy changes; the loop always re-reads the current vendor level.
         'wait: loop {
             let gate = reactor.inner.vendor.scene_gate();
+            if startup_warm_pending && matches!(gate, SceneGate::Go) {
+                startup_warm_pending = warm_scene_sessions(
+                    &reactor,
+                    &scene,
+                    voice_id,
+                    &mut reactor_session,
+                    &mut workers,
+                )
+                .await;
+                continue 'wait;
+            }
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
             // needs no fresh signal to act on — drive it now while reachable. While
             // down, fall through to the timer logic.
@@ -1686,17 +1780,7 @@ async fn per_scene_loop(
                     // Non-402 failures cold-open on the next attempt. A managed 402
                     // keeps the live session and its observatory identity in place.
                     if let Some(dead) = reactor_session.take() {
-                        reactor
-                            .inner
-                            .observatory
-                            .record(
-                                Some(&scene),
-                                EventKind::SessionClosed {
-                                    kind: SessionKind::Reactor,
-                                    id: dead.id().0.to_string(),
-                                },
-                            )
-                            .await;
+                        record_reactor_session_closed(&reactor, &scene, &dead).await;
                     }
                 }
                 // Key on the vendor state the turn just wrote, not the pre-turn one:
@@ -2012,6 +2096,111 @@ mod turn_context_tests {
         assert!(at("## Presence") < at("## New signals"));
         assert!(text.trim_end().ends_with("好了没"), "{text}");
     }
+}
+
+/// Open and prime the scene's Reaction and Deliberation sessions together.
+///
+/// Both operations are idempotent, so the managed-energy Resume edge can call this
+/// again after a startup pause without replacing sessions that are already live.
+async fn warm_scene_sessions(
+    reactor: &Reactor,
+    scene: &Scene,
+    voice_id: registry::SessionId,
+    reactor_session: &mut Option<Arc<AcpSession>>,
+    workers: &mut workers::WorkerRegistry,
+) -> bool {
+    let blocked_before = crate::foundation::energy_state::is_out();
+    let (_, deliberation) = tokio::join!(
+        warm_reactor_session(reactor, scene, voice_id, reactor_session),
+        workers.warm_deliberation(reactor),
+    );
+    if let Err(err) = deliberation {
+        tracing::warn!(
+            scene = %scene,
+            error = %err,
+            "deliberation warm-up failed; first task will cold-start"
+        );
+    }
+    let blocked_after = crate::foundation::energy_state::is_out();
+    if blocked_after {
+        // `SessionRun::wait` records the durable 402 edge. Apply its scheduler level
+        // synchronously so queued input cannot race the global gate task.
+        reactor.reconcile_energy_level().await;
+    }
+    blocked_before || blocked_after
+}
+
+/// Open and prime the scene's Reaction session before its first real turn.
+///
+/// The prompt contains only the system layer. The sequencer is deliberately unarmed
+/// until `TurnStart`, so any accidental `say`/`show_view` output from this prompt is
+/// dropped. The first real turn still receives the fresh every-turn window and signals.
+///
+/// Best-effort: a failed warm closes this session and leaves the slot empty, so the
+/// first real turn cold-opens normally.
+async fn warm_reactor_session(
+    reactor: &Reactor,
+    scene: &Scene,
+    voice_id: registry::SessionId,
+    held: &mut Option<Arc<AcpSession>>,
+) {
+    if held.is_some() {
+        return;
+    }
+    if crate::foundation::energy_state::is_out() {
+        tracing::info!(scene = %scene, "reaction warm-up held while out of energy");
+        return;
+    }
+
+    let session = match open_reactor_session(reactor, scene, voice_id).await {
+        Ok(session) => session,
+        Err(err) => {
+            tracing::warn!(
+                scene = %scene,
+                error = %err,
+                "reaction warm-up could not open a session; first turn will cold-start"
+            );
+            return;
+        }
+    };
+
+    let warmed = match session.warm().await {
+        Ok(Some(run)) => run.wait().await.map(|_| ()),
+        Ok(None) => Ok(()),
+        Err(err) => Err(err),
+    };
+    match warmed {
+        Ok(()) => {
+            tracing::info!(scene = %scene, "reaction session warmed");
+            *held = Some(session);
+        }
+        Err(err) => {
+            tracing::warn!(
+                scene = %scene,
+                error = %err,
+                "reaction warm-up failed; first turn will cold-start"
+            );
+            record_reactor_session_closed(reactor, scene, &session).await;
+        }
+    }
+}
+
+async fn record_reactor_session_closed(
+    reactor: &Reactor,
+    scene: &Scene,
+    session: &AcpSession,
+) {
+    reactor
+        .inner
+        .observatory
+        .record(
+            Some(scene),
+            EventKind::SessionClosed {
+                kind: SessionKind::Reactor,
+                id: session.id().0.to_string(),
+            },
+        )
+        .await;
 }
 
 /// Open a fresh **reactor** session for `scene`, carrying `reaction.md` as its system

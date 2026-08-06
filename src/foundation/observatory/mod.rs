@@ -301,10 +301,16 @@ impl Observatory {
                 | SessionKind::Reflection
                 | SessionKind::Cognition => {}
             },
-            EventKind::SessionClosed { .. } => {
-                // Reactor close is rare (only error teardown); workers are removed
-                // on WorkerFinished. Nothing to do for the summarizer.
+            EventKind::SessionClosed { kind: SessionKind::Reactor, id } => {
+                if view.reactor_session.as_ref().map(|session| session.id.as_str())
+                    == Some(id.as_str())
+                {
+                    view.reactor_session = None;
+                }
             }
+            // Worker open/close is history-only; summarizer, Reflection, and
+            // Cognition sessions are not represented as standing scene state.
+            EventKind::SessionClosed { .. } => {}
             EventKind::TurnStarted { turn, .. } => {
                 if let Some(s) = view.reactor_session.as_mut() {
                     s.in_flight = true;
@@ -447,6 +453,36 @@ mod tests {
         assert!(!v.reactor_session.as_ref().unwrap().in_flight);
         assert_eq!(v.turns_total, 1);
         assert_eq!(v.last_turn.as_ref().unwrap().reply_chars, Some(42));
+    }
+
+    #[tokio::test]
+    async fn closing_a_reactor_session_clears_only_that_live_session() {
+        let obs = Observatory::new(None);
+        let s = scene();
+        obs.record(
+            Some(&s),
+            EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
+        )
+        .await;
+
+        obs.record(
+            Some(&s),
+            EventKind::SessionClosed { kind: SessionKind::Reactor, id: "older".into() },
+        )
+        .await;
+        let snapshot = obs.snapshot().await;
+        assert_eq!(
+            snapshot[0].reactor_session.as_ref().map(|session| session.id.as_str()),
+            Some("sess-1")
+        );
+
+        obs.record(
+            Some(&s),
+            EventKind::SessionClosed { kind: SessionKind::Reactor, id: "sess-1".into() },
+        )
+        .await;
+        let snapshot = obs.snapshot().await;
+        assert!(snapshot[0].reactor_session.is_none());
     }
 
     /// Worker lifecycle is history, and *only* history. It used to fold into a

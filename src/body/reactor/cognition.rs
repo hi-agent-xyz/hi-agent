@@ -95,15 +95,13 @@ fn cognition_scene() -> Scene {
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
 
-/// How long after the process starts Cognition takes its restart-recovery wake.
+/// Cognition's restart-recovery wake is immediate once the reactor exists.
 ///
-/// **Not zero, and not a scheduling preference.** At `t=0` the runtime may still be
-/// provisioning, scenes are still warming, and no ACP session has been opened yet —
-/// a recovery pass that races boot reads a half-stood-up process and concludes
-/// things are down that are merely not up yet, which is the same false reading as
-/// gap 2 with the sign flipped. Half a minute is long enough for boot to settle and
-/// far short of anything a person would notice.
-const BOOT_WAKE_AFTER: Duration = Duration::from_secs(30);
+/// Runtime provisioning and broker refresh finish before `reactor::start`, and
+/// [`glance_note`] explicitly stands every task-owned report scene up before the
+/// recovery prompt is built. Readiness is therefore structural rather than a
+/// sleep-and-hope delay.
+const BOOT_WAKE_AFTER: Duration = Duration::ZERO;
 
 /// Stand Cognition up. Called once from [`super::start`], which creates the
 /// `Registration` **synchronously** before spawning this — `tokio::spawn` ordering is not
@@ -169,13 +167,16 @@ async fn run(reactor: Reactor, registration: Registration) {
     // The observed failure: it armed a timer, forgot it had, woke to a ledger entry saying
     // that timer was fragile, and deleted it as redundant.
     //
-    // `None` means "open one on the next turn": the cold-open path is the same one a
-    // failed turn falls back to, so there is exactly one way in.
+    // Startup opens and primes this eagerly once `/mcp` is live. `None` remains the
+    // cold-open fallback when warming failed or a later turn discarded the session.
     let mut session: Option<Arc<AcpSession>> = None;
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(cognition = id, "cognition up");
+    if reactor.wait_for_server_ready().await {
+        warm_session(&reactor, id, &scene, &mut session).await;
+    }
 
     loop {
         // The rung never polls the account and never predicts whether a call can run.
@@ -188,6 +189,13 @@ async fn run(reactor: Reactor, registration: Registration) {
                         Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
                             energy_paused = false;
                             tracing::info!(cognition = id, "cognition resumed after energy refill");
+                            warm_session(&reactor, id, &scene, &mut session).await;
+                            // A failed turn may already be waiting in `pending`. Retain a
+                            // notify permit so the next loop iteration drives it now rather
+                            // than waiting for the recurring pulse or fresh mail.
+                            if !pending.is_empty() {
+                                mail.notify_one();
+                            }
                         }
                         Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -241,8 +249,8 @@ async fn run(reactor: Reactor, registration: Registration) {
                 woke_at_boot = true;
                 // The boot wake reports **uptime** and the recurring one reports
                 // **idleness**. Usually the same span, but not always: mail can drive a
-                // turn inside the first thirty seconds, and then "you've just come back
-                // up (0m ago)" would be wrong about the only fact the note carries.
+                // turn before the boot timer arm wins, and then the next timer wake still
+                // needs startup uptime rather than time since that intervening turn.
                 let span = if first { started.elapsed() } else { last_turn.elapsed() };
                 last_turn = Instant::now();
                 match glance_note(&reactor, first, span).await {
@@ -393,7 +401,7 @@ async fn sleep_until_opt(at: Option<Instant>) {
 async fn glance_note(reactor: &Reactor, first: bool, span: Duration) -> Option<String> {
     let data_dir = reactor.inner.memory.data_dir();
     let open = match crate::mind::memory::tasks::open_tasks(data_dir).await {
-        Ok(open) => open.len(),
+        Ok(open) => open,
         // **Unreadable is not empty.** A ledger that cannot be read is a reason to wake
         // the one rung that can do something about it, not a reason to stay quiet — the
         // opposite reading is the whole failure this arm exists to fix, one level up.
@@ -404,8 +412,26 @@ async fn glance_note(reactor: &Reactor, first: bool, span: Duration) -> Option<S
             ));
         }
     };
-    let note = note_for(open, first, span);
-    tracing::info!(open, first_wake = first, waking = note.is_some(), "cognition timer fired");
+
+    if first {
+        // A task's `report_to` is durable, but Cognition can send only to live session
+        // ids. Stand those scenes up before building this turn's window so every owed
+        // user-facing delivery has a reachable voice after restart. `ensure_scene`
+        // registers the voice synchronously; its ACP warm-up may continue while mail
+        // safely queues behind it.
+        for scene in super::task_report_scenes(&open) {
+            reactor.ensure_scene(scene).await;
+        }
+    }
+
+    let count = open.len();
+    let note = note_for(count, first, span);
+    tracing::info!(
+        open = count,
+        first_wake = first,
+        waking = note.is_some(),
+        "cognition timer fired"
+    );
     note
 }
 
@@ -453,6 +479,112 @@ mod tests {
     }
 }
 
+/// Open and prime Cognition's one process-lifetime session at startup.
+///
+/// The warm prompt contains only `cognition.md`; the first recovery/mail turn adds the
+/// current projected ledger and its real messages. Failure is best-effort: the normal
+/// turn path cold-opens later.
+async fn warm_session(
+    reactor: &Reactor,
+    id: registry::SessionId,
+    scene: &Scene,
+    held: &mut Option<Arc<AcpSession>>,
+) {
+    if held.is_some() {
+        return;
+    }
+    if crate::foundation::energy_state::is_out() {
+        tracing::info!(cognition = id, "cognition warm-up held while out of energy");
+        return;
+    }
+
+    let session = match open_session(reactor, id, scene).await {
+        Ok(session) => session,
+        Err(err) => {
+            tracing::warn!(
+                cognition = id,
+                error = %err,
+                "cognition warm-up could not open a session; first turn will cold-start"
+            );
+            return;
+        }
+    };
+
+    let warmed = match session.warm().await {
+        Ok(Some(run)) => run.wait().await.map(|_| ()),
+        Ok(None) => Ok(()),
+        Err(err) => Err(err),
+    };
+    match warmed {
+        Ok(()) => {
+            tracing::info!(cognition = id, "cognition session warmed");
+            *held = Some(session);
+        }
+        Err(err) => {
+            tracing::warn!(
+                cognition = id,
+                error = %err,
+                "cognition warm-up failed; first turn will cold-start"
+            );
+            reactor
+                .inner
+                .observatory
+                .record(
+                    None,
+                    EventKind::SessionClosed {
+                        kind: SessionKind::Cognition,
+                        id: session.id().0.to_string(),
+                    },
+                )
+                .await;
+        }
+    }
+}
+
+async fn open_session(
+    reactor: &Reactor,
+    id: registry::SessionId,
+    scene: &Scene,
+) -> anyhow::Result<Arc<AcpSession>> {
+    let data_dir = reactor.inner.memory.data_dir();
+    let system_prompt = crate::identity::cognition_prompt(data_dir).await;
+    let opened = Arc::new(
+        reactor
+            .inner
+            .agent
+            .session(
+                scene,
+                SessionRole::Cognition,
+                Some(id),
+                SessionOpts {
+                    system_prompt: Some(system_prompt),
+                    // The data dir: the ledger it writes lives under it, and it has no
+                    // view workshop to work in — it delegates the making of things.
+                    cwd: Some(data_dir.to_path_buf()),
+                    // Left at the adapter's defaults so Cognition can read and write its
+                    // ledger. Delegation remains prompt guidance rather than a tool rail.
+                    builtin_tools: None,
+                },
+            )
+            .await?,
+    );
+
+    reactor
+        .inner
+        .observatory
+        .record(
+            // Sceneless: `*cognition*` is a routing tag, not a conversation.
+            None,
+            EventKind::SessionOpened {
+                kind: SessionKind::Cognition,
+                id: opened.id().0.to_string(),
+            },
+        )
+        .await;
+
+    Ok(opened)
+}
+
 /// One wake: prompt the held session, opening one first if there isn't one.
 ///
 /// The window goes in as part of **every** prompt rather than the system prompt, and now
@@ -475,58 +607,9 @@ async fn turn(
     let session = if let Some(existing) = held.as_ref() {
         existing.clone()
     } else {
-        {
-            // One file, whole. It used to be `character_seed` + this layer, with the rung
-            // Reading its own character off disk; `cognition.md` is now self-contained.
-            let system_prompt = crate::identity::cognition_prompt(data_dir).await;
-            let opened = Arc::new(
-                reactor
-                    .inner
-                    .agent
-                    .session(
-                        scene,
-                        SessionRole::Cognition,
-                        Some(id),
-                        SessionOpts {
-                            system_prompt: Some(system_prompt),
-                            // The data dir: the ledger it writes lives under it, and it has
-                            // no view workshop to work in — it delegates the making of
-                            // things.
-                            cwd: Some(data_dir.to_path_buf()),
-                            // Left at the adapter's defaults so it can read and write the
-                            // ledger, which is a plain facet on disk and needs no tool of
-                            // its own.
-                            //
-                            // Worth naming rather than leaving to read as
-                            // considered-and-fine: this also hands it a shell, and the whole
-                            // point of the rung is that it delegates rather than does. That
-                            // is guidance in `cognition.md`, not a rail —
-                            // `docs/arch/foundation.md` is explicit that tool surfaces are
-                            // sized for context, not to fence anyone out.
-                            builtin_tools: None,
-                        },
-                    )
-                    .await?,
-            );
-
-            reactor
-                .inner
-                .observatory
-                .record(
-                    // Sceneless: `*cognition*` is a routing tag, not a conversation, and the
-                    // mirror keys on scene. Passing it would put a room nobody is in on the
-                    // dashboard.
-                    None,
-                    EventKind::SessionOpened {
-                        kind: SessionKind::Cognition,
-                        id: opened.id().0.to_string(),
-                    },
-                )
-                .await;
-
-            *held = Some(opened.clone());
-            opened
-        }
+        let opened = open_session(reactor, id, scene).await?;
+        *held = Some(opened.clone());
+        opened
     };
 
     let window = snapshot::agent_window(&reactor.inner.memory, COGNITION_AGENT, id).await;

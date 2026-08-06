@@ -200,11 +200,12 @@ pub(super) struct WorkerRegistry {
     /// its reports land back in the same loop.
     inbound: mpsc::Sender<LoopInput>,
     workers: HashMap<SessionId, Worker>,
-    /// The scene's persistent **Deliberation**, if spawned — the rung that reads a
+    /// The scene's persistent **Deliberation**, if warmed — the rung that reads a
     /// little, checks the file, looks at the photo, and works out what was actually
     /// asked, per scene, so no scene ever waits on another. Reaction follows up with it
     /// every turn; followed up rather than respawned, so it keeps full context.
-    /// `None` until the first turn that needs it. See [`WorkerRegistry::deliberate`].
+    /// Startup normally fills this before the first turn. `None` is the best-effort
+    /// fallback when warm-up failed. See [`WorkerRegistry::deliberate`].
     deliberation: Option<SessionId>,
 }
 
@@ -216,6 +217,84 @@ impl WorkerRegistry {
             workers: HashMap::new(),
             deliberation: None,
         }
+    }
+
+    /// Open, address, and prime this scene's Deliberation before it has a task.
+    ///
+    /// The drive task starts idle on the same mailbox normal follow-ups use. The first
+    /// human request therefore resumes this already-initialized session instead of
+    /// creating a subprocess on the turn's tail.
+    pub(super) async fn warm_deliberation(&mut self, reactor: &Reactor) -> anyhow::Result<()> {
+        if self.deliberation.is_some() {
+            return Ok(());
+        }
+        if crate::foundation::energy_state::is_out() {
+            tracing::info!(scene = %self.scene, "deliberation warm-up held while out of energy");
+            return Ok(());
+        }
+
+        let id = mint_session_id();
+        let placeholder = "waiting for the scene's first question";
+        let (session, mail) = self
+            .open_working_session(
+                reactor,
+                id,
+                placeholder,
+                WorkerType::General,
+                true,
+                None,
+            )
+            .await?;
+
+        let warmed = match session.warm().await {
+            Ok(Some(run)) => run.wait().await.map(|_| ()),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = warmed {
+            registry::global().unregister(id);
+            return Err(err);
+        }
+
+        reactor
+            .inner
+            .observatory
+            .record(
+                self.mirror_scene(),
+                EventKind::WorkerSpawned {
+                    id,
+                    task: placeholder.to_string(),
+                },
+            )
+            .await;
+
+        let transcript = Arc::new(Mutex::new(String::new()));
+        let busy = Arc::new(AtomicBool::new(false));
+        let drive = tokio::spawn(drive_worker(
+            id,
+            None,
+            session,
+            transcript.clone(),
+            self.inbound.clone(),
+            reactor.inner.observatory.clone(),
+            self.scene.clone(),
+            mail,
+            busy.clone(),
+            true,
+            None,
+        ));
+        self.workers.insert(
+            id,
+            Worker {
+                task: placeholder.to_string(),
+                transcript,
+                busy,
+                drive,
+            },
+        );
+        self.deliberation = Some(id);
+        tracing::info!(scene = %self.scene, session = id, "deliberation session warmed");
+        Ok(())
     }
 
     /// Start a channel-mute working session for `task`, under an id the **caller
@@ -253,75 +332,9 @@ impl WorkerRegistry {
         is_deliberation: bool,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
-
-        // Deliberation gets **one file**, like every other rung. It used to be three
-        // layers — the seed it Read its character from, the worker capability guidance,
-        // then its role — which is why it kept coming out shaped like a worker with a
-        // flag. `deliberation.md` is self-contained now and carries only what this rung
-        // can actually do: it has `send_message` and its built-ins, no `look`, no `act`,
-        // no `create_worker`.
-        let system_prompt = if is_deliberation {
-            let data_dir = reactor.inner.memory.data_dir();
-            // The agent is told to create this itself, but a directory that already
-            // exists is one less thing between it and the write.
-            if let Some(parent) = layout::scene_prompt_path(data_dir, &self.scene).parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    tracing::warn!(scene = %self.scene, error = %e, "could not pre-create the scene prompt dir");
-                }
-            }
-            crate::identity::deliberation_prompt(data_dir, &self.scene).await
-        } else {
-            crate::identity::worker_prompt(reactor.inner.memory.data_dir(), &self.scene, kind).await
-        };
-
-        // Announce it to the switchboard **before opening the session**, not merely
-        // before the drive task starts. `create_worker` hands the id back and tells its
-        // caller to "brief it with send_message" — and opening the session is a
-        // subprocess spawn, so registering after it left a window, measured in seconds,
-        // where an obedient model did exactly as instructed and got `Delivery::Unknown`.
-        // The tool's own reply was walking callers into a race.
-        //
-        // The order was presumably the other way round to avoid leaking an entry when
-        // the spawn fails; that is handled below instead, which is the cheaper half of
-        // the trade.
-        let mail = registry::global().register(
-            id,
-            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
-            Some(self.scene.clone()),
-            owner,
-            task.clone(),
-        );
-
-        let opened = reactor
-            .inner
-            .agent
-            .session(
-                &self.scene,
-                // The role the session is *opened* as is what its `X-HI-Role` header
-                // says, which is what picks its tool surface. Deliberation was opened as
-                // `SessionRole::Worker` — so the registry called it Deliberation while
-                // the tool surface called it a worker, and it got `look`/`act`/`watch`
-                // it has no business with. `SessionRole::Deliberation` existed the whole
-                // time and was never constructed.
-                if is_deliberation { SessionRole::Deliberation } else { SessionRole::Worker },
-                Some(id),
-                SessionOpts {
-                    system_prompt: Some(system_prompt),
-                    // The worker's cwd is the agent's view workshop, so a
-                    // build sub-agent works in a real project dir (ls/write).
-                    cwd: Some(reactor.inner.views_dir.clone()), builtin_tools: None,
-                },
-            )
-            .await;
-        let session = match opened {
-            Ok(s) => Arc::new(s),
-            Err(err) => {
-                // Take the address back, or a failed spawn leaves a live-looking entry
-                // that accepts mail nothing will ever read.
-                registry::global().unregister(id);
-                return Err(err);
-            }
-        };
+        let (session, mail) = self
+            .open_working_session(reactor, id, &task, kind, is_deliberation, owner)
+            .await?;
 
         let observatory = reactor.inner.observatory.clone();
         observatory
@@ -336,7 +349,7 @@ impl WorkerRegistry {
         let busy = Arc::new(AtomicBool::new(true));
         let drive = tokio::spawn(drive_worker(
             id,
-            task.clone(),
+            Some(task.clone()),
             session,
             transcript.clone(),
             self.inbound.clone(),
@@ -365,6 +378,62 @@ impl WorkerRegistry {
             "spawned working session"
         );
         Ok(id)
+    }
+
+    async fn open_working_session(
+        &self,
+        reactor: &Reactor,
+        id: SessionId,
+        task: &str,
+        kind: WorkerType,
+        is_deliberation: bool,
+        owner: Option<SessionId>,
+    ) -> anyhow::Result<(Arc<AcpSession>, Arc<Notify>)> {
+        // Deliberation gets one self-contained role prompt; ordinary workers get the
+        // prompt for their requested specialism.
+        let system_prompt = if is_deliberation {
+            let data_dir = reactor.inner.memory.data_dir();
+            if let Some(parent) = layout::scene_prompt_path(data_dir, &self.scene).parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    tracing::warn!(scene = %self.scene, error = %e, "could not pre-create the scene prompt dir");
+                }
+            }
+            crate::identity::deliberation_prompt(data_dir, &self.scene).await
+        } else {
+            crate::identity::worker_prompt(reactor.inner.memory.data_dir(), &self.scene, kind).await
+        };
+
+        // The address exists before subprocess startup so mail can queue during both
+        // eager warm-up and an ordinary create_worker spawn.
+        let mail = registry::global().register(
+            id,
+            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
+            Some(self.scene.clone()),
+            owner,
+            task.to_string(),
+        );
+
+        let opened = reactor
+            .inner
+            .agent
+            .session(
+                &self.scene,
+                if is_deliberation { SessionRole::Deliberation } else { SessionRole::Worker },
+                Some(id),
+                SessionOpts {
+                    system_prompt: Some(system_prompt),
+                    cwd: Some(reactor.inner.views_dir.clone()),
+                    builtin_tools: None,
+                },
+            )
+            .await;
+        match opened {
+            Ok(session) => Ok((Arc::new(session), mail)),
+            Err(err) => {
+                registry::global().unregister(id);
+                Err(err)
+            }
+        }
     }
 
     /// Resume an existing warm worker with a follow-up `task`, so a refinement
@@ -406,6 +475,10 @@ impl WorkerRegistry {
                 .await;
             if matches!(delivery, registry::Delivery::Delivered) {
                 w.task = task.clone();
+                // The follow-up is now accepted work even if the drive task has not
+                // yet won its wake and flipped the flag itself.
+                w.busy.store(true, Ordering::Relaxed);
+                registry::global().set_task(id, task.clone());
                 reactor
                     .inner
                     .observatory
@@ -539,6 +612,17 @@ impl WorkerRegistry {
     }
 }
 
+impl Drop for WorkerRegistry {
+    fn drop(&mut self) {
+        // JoinHandle::drop detaches. A registry owns these tasks, so leaving its scope
+        // must instead stop them and remove their switchboard addresses.
+        for (id, worker) in self.workers.drain() {
+            worker.drive.abort();
+            registry::global().unregister(id);
+        }
+    }
+}
+
 /// Render one report for the `## New signals` section the reactor sees.
 ///
 /// A **Deliberation** report is the scene's own thinking coming back — the answer to
@@ -605,7 +689,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 /// (this returns) once the worker sits idle past [`WORKER_IDLE_TTL`].
 async fn drive_worker(
     id: SessionId,
-    initial_task: String,
+    initial_task: Option<String>,
     session: Arc<AcpSession>,
     transcript: Arc<Mutex<String>>,
     inbound: mpsc::Sender<LoopInput>,
@@ -616,7 +700,7 @@ async fn drive_worker(
     is_deliberation: bool,
     owner: Option<SessionId>,
 ) {
-    let mut task = initial_task;
+    let mut next_task = initial_task;
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
     // Deliberation is long-lived per scene; a worker made by `create_worker` runs its
@@ -624,6 +708,17 @@ async fn drive_worker(
     // compacts its own context (see [`crate::body::reactor::heartbeat`]).
     let session = session;
     loop {
+        let task = match next_task.take() {
+            Some(task) => task,
+            None => match wait_for_mail(id, &mail).await {
+                Some(task) => task,
+                None => {
+                    tracing::info!(scene = %scene, worker = id, "working session idle past ttl; closing");
+                    return;
+                }
+            },
+        };
+
         // Workers follow the same reactive contract as every other rung: no balance
         // preflight, hold the current task after a managed 402, then rerun that exact
         // task when the balance broadcasts Resume. The ACP session stays alive.
@@ -653,6 +748,7 @@ async fn drive_worker(
                     "working session paused on 402; task and session held"
                 );
                 energy_paused = true;
+                next_task = Some(task);
                 continue;
             }
             Err(err) => WorkerReportKind::Failed(err.to_string()),
@@ -688,13 +784,7 @@ async fn drive_worker(
         // Stay warm for a follow-up; pick up everything that accumulated in the
         // inbox as one prompt. Close (return, dropping the session) once idle past
         // the TTL.
-        match wait_for_mail(id, &mail).await {
-            Some(next) => task = next,
-            None => {
-                tracing::info!(scene = %scene, worker = id, "working session idle past ttl; closing");
-                return;
-            }
-        }
+        next_task = None;
     }
 }
 
