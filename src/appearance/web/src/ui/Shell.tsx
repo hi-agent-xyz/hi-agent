@@ -9,7 +9,6 @@ import { SpeechText } from "./SpeechText";
 import { ViewSlot } from "./ViewSlot";
 import { KeyboardFallback } from "./KeyboardFallback";
 import { ChannelControls } from "./ChannelControls";
-import { OutOfEnergyHint } from "./OutOfEnergyHint";
 import { CameraPreview } from "./CameraPreview";
 import { HandoffOverlay } from "./HandoffOverlay";
 
@@ -105,15 +104,12 @@ export function Shell() {
 
       <ViewSlot placements={placements} />
 
-      {/* A quiet card just above the controls while the account is out of energy —
-          keep-typing reassurance + a signed-in 升级 link. Self-polling; renders
-          nothing when energy is flowing. */}
-      <OutOfEnergyHint />
-
-      {/* Channel controls are always present — the session auto-starts, so there
-          is no gate. Each control honestly reflects its channel's live state;
-          one that couldn't be restored shows off, and a click enables it. */}
+      {/* The lower cluster starts with one combined agent-status control, then
+          keeps every channel available. Activity takes priority over account
+          availability; idle resolves to out-of-energy or rest. */}
       <ChannelControls
+        activity={presence.state}
+        availability={presence.availability}
         audioOn={ch.audioInput}
         onToggleAudio={ch.toggleAudio}
         audioError={ch.audioError}

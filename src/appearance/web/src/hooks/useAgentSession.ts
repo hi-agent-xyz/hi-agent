@@ -12,6 +12,7 @@ import { VoicePlayer } from "../lib/voicePlayer";
 import { SentenceBuffer, breakLongSentence } from "../lib/sentences";
 import { getScene } from "../lib/scene";
 import { onNativeLifecycle } from "../lib/nativeBridge";
+import { useEnergyStatus } from "./useEnergyStatus";
 import type { PresenceState } from "../ui/Presence";
 import type { SpeechItem } from "../ui/SpeechText";
 
@@ -123,6 +124,7 @@ function loadPrefs(): ChannelPrefs {
 
 export interface AgentSession {
   state: PresenceState;
+  outOfEnergy: boolean;
   reactive: boolean;
   bus: AudioBus | null;
   /** Live cognition cadence (streamed-chunk pulses) the field reacts to. */
@@ -202,7 +204,6 @@ export function useAgentSession(): AgentSession {
   const [agentStreaming, setAgentStreaming] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [offline, setOffline] = useState(false);
   // The user's speech as it's being recognized (cumulative rolling text), or
   // null when no utterance is in flight. Server-broadcast on /in/text, so every
   // client in the scene shows the same live line.
@@ -237,6 +238,7 @@ export function useAgentSession(): AgentSession {
     document.visibilityState === "visible" ? "active" : "background",
   );
   const attended = windowState === "active";
+  const outOfEnergy = useEnergyStatus();
 
   const busRef = useRef<AudioBus | null>(null);
   const micRef = useRef<AudioStreamer | null>(null);
@@ -372,7 +374,6 @@ export function useAgentSession(): AgentSession {
           // floor), so there are no superseded drafts to untangle here.
           for await (const chunk of subscribeOutText({ scene, signal: ctrl.signal })) {
             if (cancelled) break;
-            setOffline(false);
             if (!gotChunk) {
               gotChunk = true;
               setAwaiting(false);
@@ -388,7 +389,6 @@ export function useAgentSession(): AgentSession {
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
           setAgentStreaming(false);
-          setOffline(true);
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
@@ -519,7 +519,6 @@ export function useAgentSession(): AgentSession {
         try {
           for await (const ev of subscribeInText({ scene, signal: ctrl.signal })) {
             if (cancelled) break;
-            setOffline(false);
             if (ev.text.trim().length === 0) continue;
             if (!ev.final) {
               duck();
@@ -862,13 +861,15 @@ export function useAgentSession(): AgentSession {
 
   const state: PresenceState = !woken
     ? "waking"
-    : offline
-      ? "offline"
-      : agentStreaming || ttsPlaying
-        ? "speaking"
-        : awaiting
-          ? "thinking"
-          : "idle";
+    : ttsPlaying
+      ? "speaking"
+      : agentStreaming
+        ? "typing"
+        : interim !== null
+          ? "listening"
+          : awaiting
+            ? "thinking"
+            : "idle";
 
   // Dots track the agent's voice while it plays.
   const reactive = state === "speaking" && ttsPlaying;
@@ -885,6 +886,7 @@ export function useAgentSession(): AgentSession {
 
   return {
     state,
+    outOfEnergy,
     reactive,
     bus,
     activity: activityRef.current,

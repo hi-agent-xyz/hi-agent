@@ -1,4 +1,11 @@
+import type { ActivityState, AvailabilityState } from "./Presence";
+import { StatusButton } from "./StatusButton";
+
 interface ChannelControlsProps {
+  /** The agent's current short-lived activity. */
+  activity: ActivityState;
+  /** Whether account energy is currently available. */
+  availability: AvailabilityState;
   /** Whether the mic (audio input) channel is live. */
   audioOn: boolean;
   /** Flip the audio channel on/off. */
@@ -33,9 +40,11 @@ interface ChannelControlsProps {
  * on or off at any time, and they don't conflict. Every control is always
  * present (no state-gated chrome) so a user who can't (or won't) use a given
  * channel still has a clear way in or out; the trailing reset clears any views
- * back to the calm room. Order: mic · speaker · keyboard · attach · camera · reset.
+ * back to the calm room. Order: status · mic · speaker · keyboard · attach · camera · reset.
  */
 export function ChannelControls({
+  activity,
+  availability,
   audioOn,
   onToggleAudio,
   audioError,
@@ -51,7 +60,10 @@ export function ChannelControls({
   onCloseViews,
 }: ChannelControlsProps) {
   return (
-    <div className="hi-channels" role="group" aria-label="channels">
+    <div className="hi-channels" role="group" aria-label="agent status and channels">
+      <StatusButton activity={activity} availability={availability} />
+      <span className="hi-channel-separator" aria-hidden="true" />
+
       <button
         type="button"
         className={`hi-channel${audioOn ? " is-on" : ""}`}

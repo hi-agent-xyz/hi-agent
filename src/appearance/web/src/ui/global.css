@@ -67,7 +67,6 @@
   --glow-listening: rgba(122, 140, 106, 0.5); /* sage — human has the floor */
   --glow-thinking: rgba(201, 144, 63, 0.5);   /* amber — cognition */
   --glow-speaking: rgba(192, 106, 63, 0.55);  /* terracotta — agent voice */
-  --glow-offline: rgba(154, 146, 132, 0.35);
   --glow-waking: rgba(192, 106, 63, 0.3);
 
   --font-display:
@@ -155,7 +154,6 @@
     --glow-listening: rgba(160, 178, 150, 0.16);
     --glow-thinking: rgba(224, 180, 120, 0.16);
     --glow-speaking: rgba(224, 151, 90, 0.2);
-    --glow-offline: rgba(125, 115, 97, 0.14);
     --glow-waking: rgba(224, 151, 90, 0.12);
   }
 }
@@ -194,7 +192,6 @@
   --glow-listening: rgba(160, 178, 150, 0.16);
   --glow-thinking: rgba(224, 180, 120, 0.16);
   --glow-speaking: rgba(224, 151, 90, 0.2);
-  --glow-offline: rgba(125, 115, 97, 0.14);
   --glow-waking: rgba(224, 151, 90, 0.12);
 }
 
@@ -552,10 +549,10 @@ button {
 .hi-stage.hi-stage--captions {
   top: auto;
   bottom: calc(var(--hi-safe-bottom) + 74px);
-  /* Centre band between the two bottom-corner zones: controls (~250px) on the
+  /* Centre band between the two bottom-corner zones: controls (~350px) on the
      right, always; the camera pip on the left only when it's up (see below). */
-  left: max(272px, var(--hi-safe-left) + 24px);
-  right: max(272px, var(--hi-safe-right) + 24px);
+  left: max(372px, var(--hi-safe-left) + 24px);
+  right: max(372px, var(--hi-safe-right) + 24px);
   width: auto;
   transform: none;
   text-align: center;
@@ -694,8 +691,8 @@ button {
 /* --- Keyboard fallback ------------------------------------------------
    The input line is a fourth occupant of the bottom band, so it takes the same
    zoning as the caption dock rather than lying across the corner widgets. It
-   sits one row *above* the control cluster — five 38px buttons plus the energy
-   hint leave no width for a line beside them at any window size we ship — and
+   sits one row *above* the control cluster — the status and six channel
+   controls leave no width for a line beside them at any window size we ship — and
    steps clear of the camera pip when that holds the lower-left corner. */
 .hi-kbd {
   position: fixed;
@@ -716,14 +713,9 @@ button {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
 
-/* While the line holds its row, the words and the energy hint step up over it —
-   the band stacks instead of overlapping. */
+/* While the line holds its row, the words step up over it. */
 .hi-root:has(.hi-kbd) .hi-stage.hi-stage--captions {
   bottom: calc(max(20px, var(--hi-safe-bottom)) + 122px);
-}
-
-.hi-root:has(.hi-kbd) .hi-oe {
-  bottom: calc(max(20px, var(--hi-safe-bottom)) + 106px);
 }
 
 .hi-kbd input {
@@ -761,6 +753,7 @@ button {
      in/out stays reachable even while a view or the camera leads. */
   z-index: 60;
   display: flex;
+  align-items: center;
   gap: 10px;
 }
 
@@ -789,130 +782,177 @@ button {
   opacity: 0.48;
 }
 
+.hi-channel:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 3px;
+}
+
 .hi-channel.is-on {
   color: var(--accent);
   border-color: var(--accent-line);
   box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 22px var(--shadow);
 }
 
-/* --- Out-of-energy hint ----------------------------------------------
-   A quiet card pinned just above the channel controls (same right offset +
-   ~cluster width, so it reads as centered over them) while the account is out
-   of energy. Reassurance (keep typing, nothing lost) + a signed-in 升级 button.
-   Built from the surface tokens so it fits both themes; the button uses the
-   site's subscribe colour (--primary / logo red). Rendered by OutOfEnergyHint;
-   present only while out of energy. */
-.hi-oe {
-  position: fixed;
-  right: max(20px, var(--hi-safe-right));
-  /* clears the 38px control row (bottom:20) with a small gap above it */
-  bottom: calc(max(20px, var(--hi-safe-bottom)) + 50px);
-  z-index: 61;
-  width: 248px;
-  padding: 13px 14px 12px;
-  border-radius: 16px;
-  border: 1px solid var(--surface-border);
-  background: var(--surface-strong);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 16px 40px -18px var(--shadow-strong), 0 2px 8px var(--shadow);
-  color: var(--fg);
-  font-family: var(--font-display);
-  animation: hi-oe-in 260ms var(--ease);
-}
-
-@keyframes hi-oe-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-
-.hi-oe-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.hi-oe-spark {
+/* --- Combined status --------------------------------------------------
+   One read-only control at the start of the lower cluster. The paper never
+   changes with status; only this glyph carries activity and availability. */
+.hi-status-button {
+  position: relative;
   flex: none;
+  width: 44px;
+  height: 44px;
+}
+
+.hi-channel-separator {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+.hi-status-button--waking,
+.hi-status-button--thinking,
+.hi-status-button--typing,
+.hi-status-button--speaking {
+  color: var(--accent);
+}
+
+.hi-status-button--listening {
+  color: var(--accent-2);
+}
+
+.hi-status-button--out_of_energy {
+  color: var(--danger);
+}
+
+.hi-status-glyph {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 9px;
-  background: rgba(253, 96, 94, 0.12);
+  width: 20px;
+  height: 20px;
 }
 
-.hi-oe-title {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--fg);
+.hi-status-glyph--rest::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
 }
 
-.hi-oe-body {
-  margin: 8px 0 11px;
+.hi-status-glyph--waking::before,
+.hi-status-glyph--listening::before {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  content: "";
+}
+
+.hi-status-glyph--waking::before {
+  animation: hi-status-wake 1.2s var(--ease) infinite;
+}
+
+.hi-status-glyph--listening::before {
+  animation: hi-status-listen 1.2s ease-in-out infinite;
+}
+
+.hi-status-glyph--thinking::before {
+  width: 14px;
+  height: 14px;
+  border: 1.7px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: hi-status-think 900ms linear infinite;
+}
+
+.hi-status-glyph--typing::before {
+  width: 2px;
+  height: 15px;
+  border-radius: 1px;
+  background: currentColor;
+  content: "";
+  animation: hi-status-type 850ms step-end infinite;
+}
+
+.hi-status-glyph--energy {
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-family: var(--font-display);
   font-size: 12px;
-  line-height: 1.55;
-  font-weight: 500;
-  color: var(--fg-dim);
+  font-weight: 750;
+  line-height: 1;
 }
 
-.hi-oe-body b {
-  color: var(--fg);
-  font-weight: 700;
-}
-
-.hi-oe-foot {
+.hi-status-wave {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 2px;
+  height: 18px;
 }
 
-.hi-oe-reset {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-mute);
+.hi-status-wave i {
+  display: block;
+  width: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: hi-status-speak 720ms ease-in-out infinite alternate;
 }
 
-/* Same colour as the hi.xiaoyuanzhu.com subscribe buttons: solid logo red,
-   white text, a soft shadow, hover to ~primary/90. No gradient. It's an <a>
-   (opens the signed-in link in the same click), so kill the underline. */
-.hi-oe-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  padding: 7px 18px;
-  border-radius: 999px;
-  border: none;
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: #fff;
-  text-decoration: none;
-  background: #fd605e;
-  box-shadow: 0 1px 2px var(--shadow);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 160ms var(--ease), transform 160ms var(--ease);
+.hi-status-wave i:first-child {
+  height: 8px;
 }
 
-.hi-oe-btn:hover {
-  background: #f0514f;
-  transform: scale(1.03);
+.hi-status-wave i:nth-child(2) {
+  height: 15px;
+  animation-delay: 120ms;
 }
 
-.hi-oe-btn:active {
-  transform: scale(0.97);
+.hi-status-wave i:nth-child(3) {
+  height: 10px;
+  animation-delay: 220ms;
+}
+
+@keyframes hi-status-wake {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.88);
+    box-shadow: 0 0 0 3px transparent;
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+}
+
+@keyframes hi-status-listen {
+  0%, 100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 6%, transparent);
+  }
+}
+
+@keyframes hi-status-think {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hi-status-type {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
+}
+
+@keyframes hi-status-speak {
+  from { transform: scaleY(0.58); }
+  to { transform: scaleY(1.08); }
 }
 
 @media (max-width: 640px) {
-  .hi-oe {
-    right: max(12px, var(--hi-safe-right));
-    bottom: calc(max(12px, var(--hi-safe-bottom)) + 44px);
-    width: min(248px, calc(100vw - 24px));
-  }
   /* Too narrow for a three-zone bar: the caption becomes a near-full-width strip
      sitting just above the control row instead of between the corner widgets. */
   .hi-stage.hi-stage--captions,
@@ -1105,5 +1145,9 @@ button {
   .hi-channel {
     width: 32px;
     height: 32px;
+  }
+  .hi-status-button {
+    width: 44px;
+    height: 44px;
   }
 }

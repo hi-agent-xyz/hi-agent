@@ -1,10 +1,29 @@
-export type PresenceState =
+export type ActivityState =
   | "waking"
   | "idle"
   | "listening"
   | "thinking"
-  | "speaking"
-  | "offline";
+  | "typing"
+  | "speaking";
+
+export type AvailabilityState = "available" | "out_of_energy";
+export type CombinedState = Exclude<ActivityState, "idle"> | "out_of_energy" | "rest";
+
+export function combineStatus(
+  activity: ActivityState,
+  availability: AvailabilityState,
+): CombinedState {
+  if (activity.endsWith("ing")) return activity as Exclude<ActivityState, "idle">;
+  if (availability === "out_of_energy") return "out_of_energy";
+  return "rest";
+}
+
+export function statusLabel(state: CombinedState): string {
+  if (state === "out_of_energy") return "Out of energy";
+  return state.charAt(0).toUpperCase() + state.slice(1);
+}
+
+export type PresenceState = ActivityState;
 
 interface PresenceProps {
   state: PresenceState;
