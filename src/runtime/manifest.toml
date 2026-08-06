@@ -3,15 +3,17 @@
 # URL is derived from node_version in src/runtime/mod.rs; the adapter/claude tree
 # is pinned by the committed package.json + package-lock.json alongside this file.
 #
-# The managed install lives at a fixed path (not version-keyed), so bumping a pin
-# does not auto-reinstall — delete the runtime dir to force a fresh install.
+# The install dir is keyed by `runtime_fingerprint()` (node_version + the
+# lockfile), so bumping a pin lands in a fresh dir, reinstalls on next run, and
+# sweeps the previous pin's dir away — no manual cleanup needed.
 node_version    = "22.14.0"
-adapter_version = "0.58.1"
+adapter_version = "0.65.0"
 # Headless browser for the view render pipeline (see src/runtime/browser.rs). A
 # Chrome-for-Testing `chrome-headless-shell` build, downloaded per-host from
 # storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/. Only
 # used when the host has no system Chrome/Chromium/Edge.
 chrome_version  = "151.0.7922.47"
 # claude_version is resolved by `npm ci` from the lockfile; recorded here for
-# the `--version` stamp only.
-claude_version  = "unknown"
+# the `--version` stamp only. Keep it in step with adapter_version — the bundled
+# CLI is what actually runs, and it is not the `claude` on PATH.
+claude_version  = "2.1.220"
