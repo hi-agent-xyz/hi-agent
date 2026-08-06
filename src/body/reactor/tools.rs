@@ -18,6 +18,11 @@ use crate::types::{Geometry, Scene};
 
 use super::sequencer::Beat;
 
+/// Loose guard against turning one `say` call into a paragraph-sized delivery.
+/// Reaction normally speaks in much smaller natural chunks; this only catches
+/// accidental dumps and leaves room for a few ordinary sentences.
+pub(super) const SAY_MAX_CHARS: usize = 240;
+
 /// One command the MCP tool server routes to a scene's reactor loop.
 ///
 /// Once there were four: two for dispatching work and two for a worker to reach the
@@ -73,13 +78,16 @@ pub(super) struct Mouth {
 
 /// What became of an utterance — the answer `say` hands back to Reaction.
 ///
-/// The three cases are not degrees of success; they are different fates, and only
-/// one of them is lossy. Text is buffered per scene and delivered to a reader that
-/// opens later, so words keep. **Voice does not**: a TTS span synthesized with no
-/// speaker attached is spent, and the person never learns it happened — the failure
-/// `docs/arch/core.md#presence` exists to prevent.
+/// The accepted cases are not degrees of success; they are different fates, and
+/// only one of them is lossy. Text is buffered per scene and delivered to a reader
+/// that opens later, so words keep. **Voice does not**: a TTS span synthesized with
+/// no speaker attached is spent, and the person never learns it happened — the
+/// failure `docs/arch/core.md#presence` exists to prevent. `TooLong` is rejected
+/// before it reaches any output channel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Spoken {
+    /// The call was rejected because it exceeded the loose per-call limit.
+    TooLong,
     /// Heard aloud and on screen: a speaker is attached.
     Voiced,
     /// On screen only — no speaker, so nothing was synthesized. Not a failure: the
@@ -95,6 +103,7 @@ impl Spoken {
     /// because it is read by a model deciding what to do next — not a status code.
     pub fn ack(self) -> &'static str {
         match self {
+            Spoken::TooLong => "too_long — split this into shorter say calls",
             Spoken::Voiced => "said aloud, and on their screen",
             Spoken::TextOnly => {
                 "on their screen — not said aloud, because no speaker is attached right now"
@@ -129,6 +138,9 @@ impl ToolSink {
             .mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no voice; there is nowhere to say it"))?;
+        if text.chars().count() > SAY_MAX_CHARS {
+            return Ok(Spoken::TooLong);
+        }
         let reach = mouth.presence.reachable(&mouth.scene);
         mouth
             .beats
@@ -251,6 +263,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_overlong_say_is_rejected_without_emission() {
+        let p = Presence::new();
+        let s = Scene("boss".to_owned());
+        let (sink, mut rx) = mouth(&p, &s);
+        let text = "x".repeat(SAY_MAX_CHARS + 1);
+
+        assert_eq!(sink.say(text).await.unwrap(), Spoken::TooLong);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn the_words_are_emitted_whatever_the_room() {
         // The gate is about voice, never about dropping the utterance: text is
         // buffered per scene and keeps, so the beat goes out even to nobody.
@@ -271,12 +294,16 @@ mod tests {
     #[test]
     fn every_outcome_says_what_happened() {
         // The ack is read by a model, so it must be a sentence about the world —
-        // and the three must not read alike, or the answer carries no information.
-        let acks =
-            [Spoken::Voiced.ack(), Spoken::TextOnly.ack(), Spoken::Held.ack()];
+        // and the outcomes must not read alike, or the answer carries no information.
+        let acks = [
+            Spoken::TooLong.ack(),
+            Spoken::Voiced.ack(),
+            Spoken::TextOnly.ack(),
+            Spoken::Held.ack(),
+        ];
         for a in acks {
             assert!(a.len() > 10, "an ack must state what happened: {a:?}");
         }
-        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 4);
     }
 }

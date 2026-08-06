@@ -59,10 +59,12 @@ fn say_tool() -> Value {
     tool(
         "say",
         "Speak to the person. Everything you want said aloud goes through this tool — \
-         plain text you write is NOT spoken. Call it with one natural chunk at a time; \
-         several calls in a turn are spoken in order. To stay silent, don't call it at all. \
-         It tells you where the words actually landed — aloud, on screen only, or waiting \
-         for them to come back — so you can judge whether a spoken line was worth spending.",
+         plain text you write is NOT spoken. Call it with one natural chunk at a time, \
+         keeping each call under about 240 characters; an overlong call returns too_long \
+         and is not sent. Several accepted calls in a turn are spoken in order. To stay \
+         silent, don't call it at all. It tells you where the words actually landed — \
+         aloud, on screen only, or waiting for them to come back — so you can judge \
+         whether a spoken line was worth spending.",
         json!({
             "type": "object",
             "properties": { "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." } },
