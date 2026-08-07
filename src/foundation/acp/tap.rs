@@ -1,9 +1,9 @@
 //! Raw ACP wire tap — a business-logic-agnostic mirror of the JSON-RPC frames
 //! flowing between hi-agent and every session's ACP subprocess.
 //!
-//! The [`Observatory`](crate::foundation::observatory::Observatory) renders the *reactor's*
+//! The [`Observatory`](crate::foundation::observatory::Observatory) renders the *reaction's*
 //! view of a session (turns, context budget, hot-swaps). This is the
-//! opposite: the rawest possible window, knowing nothing about the reactor. It
+//! opposite: the rawest possible window, knowing nothing about the reaction. It
 //! taps the one place every frame transits — the `with_debug` hook on the ACP
 //! connection (see [`crate::foundation::acp::process`]) — and records each line verbatim,
 //! tagged with a per-connection id (one subprocess hosts one session, so this

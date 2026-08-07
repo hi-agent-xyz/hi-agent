@@ -67,7 +67,7 @@
 > "挂着呢,一直在盯——Brent 和 WTI 两个都看着。这段时间没触发大波动,所以它按约定没出声,这是正常的。"
 
 同一时刻的地面真相:
-- `GET /api/sessions`:只有一个 reactor session,**没有任何 worker**。
+- `GET /api/sessions`:只有一个 reaction session,**没有任何 worker**。
 - `server.log`:重启(05:56)到这一问(06:05)之间**零 worker 被拉起**;唯一那个 06:06:31 的 worker 是**被这句问话本身**触发的。
 - 它自己的台账 `oil-price-watch/facet.md` 当时写着 **"Status: being set up (registered, script still landing)"**——连台账都没说它在跑。
 
@@ -209,7 +209,7 @@
 
 **两个独立的问题:**
 - **只走 view。** 代码注释已诚实标注这是已知缺口(*"a person with no screen gets nothing here"*),但实测显示更窄:**即使文字通道挂着**也什么都没有——这条路只认屏,不认字。`docs/arch/surfaces.md` 说每条通道应降级而非失败。
-- **迟到约 2 分钟。** `reactor/mod.rs:178` 的注释写着 *"402/429 bypass this — they flip immediately"*,**这句话是假的**:代码里没有任何地方对 402/429 分类,`note_unreachable()` 是唯一的写入者,所以 402 走的是通用路径,要连续 2 次终止失败才翻转。
+- **迟到约 2 分钟。** `reaction/mod.rs:178` 的注释写着 *"402/429 bypass this — they flip immediately"*,**这句话是假的**:代码里没有任何地方对 402/429 分类,`note_unreachable()` 是唯一的写入者,所以 402 走的是通用路径,要连续 2 次终止失败才翻转。
 
 **好的一半:** 出故障摆 view、恢复收 view 两端都**第一次在真机上验证通过**(`8461cde` 此前从未跑过)。
 
@@ -322,7 +322,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 **为什么记一笔。** 这是 N2 修过的那类形状(*"session_status reported every session idle with 0 turns"*)的残留:读者接上了,**这个计数器仍然没有写者**。只影响可观测性,不影响行为——但排障时会骗人。
 
-**复测 2026-08-05 · `a05b734` — 原样存在。** `{"scene":"boss",...,"turns":0,"last_turn":null,"turns_total":0}`,而同一响应里 `budget_chars` 已经涨到 22729,同一时刻 reactor session 正在服务第 12 轮对话。
+**复测 2026-08-05 · `a05b734` — 原样存在。** `{"scene":"boss",...,"turns":0,"last_turn":null,"turns_total":0}`,而同一响应里 `budget_chars` 已经涨到 22729,同一时刻 reaction session 正在服务第 12 轮对话。
 
 **本轮它有了实际代价,不再只是"排障时骗人"。** agent 自己写的 `skills/dispatching-workers.md` 把 turn 数认定为**唯一可信的存活信号**:*"`N turn(s) so far` —— 这是唯一可信的「有没有真的干活」信号。`idle, with mail waiting` + **0 turns** = ……**这是坏的。**"* 它是对的——但它依赖的这个计数器在 `/api/sessions` 这一侧根本没有写者。**一个没有写者的计数器,正在被当作健康判据使用。**
 
@@ -388,7 +388,7 @@ run-b 测完**没有关掉**,通宵挂着,台账里留着**一条**没关闭的 
 |---|---|
 | **cognition** | **554**(`cognition timer fired` 538 次,其中 `waking=true` **538**、`open=0` 跳过仅 2 次)|
 | reflection | **7** |
-| reactor | 8 · worker 6 · deliberation 2 |
+| reaction | 8 · worker 6 · deliberation 2 |
 
 - 全运行 182 个**完成的** turn,合计 **25.6 M** token;其中 cognition 那个 slot 占 **13.3 M(52%)**——**但这些几乎全部花在 8 月 3 日白天的真实测试上**,不是夜里。
 - 单个**完成的** cognition turn 均值:总量 **15–33 万** token、**cache write 6.5–9 万**。
@@ -439,7 +439,7 @@ cognition spawns:  17→0   18→0   19→0   20→0   21→0   22→0   23→0 
 
 **症状。** "定期去查"这件事,最后落在 **Claude Code 内置的 `CronCreate`** 上。hi-agent 没有定义任何 cron 工具(`grep -rin "croncreate\|cronlist\|crondelete\|scheduled_task" src/` 零命中),`docs/arch/` 里也从没有这个东西。时钟当时被 deferred、`due` 不触发任何事,Cognition 需要一个循环定时器,而手边唯一够得着的那个是**别人家的**。
 
-**工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`say` / `send_message` / `create_worker` / `read_facet` / `update_facet` / `record_episode` / `session_status` / `show_view` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
+**工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`say` / `send_message` / `create_worker` / `read_facet` / `update_facet` / `record_episode` / `session_status` / `show` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
 
 **这条依赖的是一个工具面的不对称:** `_meta` 把内置工具对 Reaction **关掉**(`say`,别无其他),而 Cognition 是**全开**的——它本来就需要 `Bash`/`Read` 才能干活。代价是:无场景的那几路可以悄悄把**承载状态的机制**换成厂商的东西,而没有任何一层会注意到。
 
@@ -484,7 +484,7 @@ run-b 通宵挂着没关,第二天直接读它的磁盘:
 
 - `data/.claude/` **整个目录不存在**,全盘 `find` 不到任何 `scheduled_tasks.json`。
 - 帧日志显示 Cognition 那个 session 用的是 **`ScheduleWakeup`**(#15 原文点名的"第二个 harness 定时器");另一个 cwd 在 `data/views` 的 session 试过 **`CronCreate`**,结果只在 `data/views/.claude/` 留下一个 **`scheduled_tasks.lock`——一个锁文件,旁边没有任务文件**。重启后连这个锁也没了。
-- `mcp__hi-agent__*` 的完整工具面(本轮实测:`say / send_message / create_worker / read_facet / update_facet / record_episode / session_status / session_messages / show_view / review_view`)里**依然没有任何一个和时间/调度有关**。#15 的核心论断在 `4063c78` 上原样成立。
+- `mcp__hi-agent__*` 的完整工具面(本轮实测:`say / send_message / create_worker / read_facet / update_facet / record_episode / session_status / session_messages / show / review_view`)里**依然没有任何一个和时间/调度有关**。#15 的核心论断在 `4063c78` 上原样成立。
 
 **同一个形状换了三种壳(CronCreate → ScheduleWakeup → 什么都没有),因为洞没变:hi-agent 自己没有钟,`due` 只读不触发,而 Cognition 需要一个会重复到来的时刻。** 只要这个洞在,agent 每次都会伸手去够手边最近的那个别人家的定时器,而且每次够到的都不一样。
 
@@ -700,12 +700,12 @@ tokio::select! {
     _ = sleep_until_opt(wake_at) => { ... }
     ctl = control_rx.recv() => {            // ← 孵化 worker 的就是这条臂
         Some(SceneControl::CreateWorker { .. }) =>
-            workers.spawn_with_id(&reactor, worker, task, kind, owner).await
+            workers.spawn_with_id(&reaction, worker, task, kind, owner).await
     }
     ...
 }
 // …select! 之外…
-match turn(&reactor, id, &scene, &pending, &mut session).await { ... }
+match turn(&reaction, id, &scene, &pending, &mut session).await { ... }
 ```
 
 `turn()` 在 `select!` **外面** await。**turn 进行期间没有任何东西在 poll `control_rx`。** 而 Cognition 恰恰是**在自己的 turn 里**调 `create_worker` 的——于是:请求这个 worker 的那次 turn,正是唯一能孵化它的那段代码所等待的东西。**它要到自己结束之后才能满足自己发出的请求。**
@@ -737,7 +737,7 @@ match turn(&reactor, id, &scene, &pending, &mut session).await { ... }
 **修法(已实施)。** 把 turn 的 future pin 住,在等它的同时**继续服务 `control_rx`**——只服务这一条臂:
 
 ```rust
-let mut turn_fut = std::pin::pin!(turn(&reactor, id, &scene, &pending, &mut session));
+let mut turn_fut = std::pin::pin!(turn(&reaction, id, &scene, &pending, &mut session));
 loop {
     tokio::select! {
         done = &mut turn_fut => break done,
@@ -750,7 +750,7 @@ loop {
 
 **只服务控制臂是有意的。** 把唤醒臂/邮件臂也放进来会**在一个 turn 之上再起一个 turn**。worker 的**回报**也留在外面:它需要 `&mut pending`,而当前 turn 正借着它——借用检查器在这里恰好把设计逼对了(*"what comes back arrives later, as a message of its own"*)。
 
-**只需要改 Cognition 一处。**`per_scene_loop` 形状相同,但**没有同一个病**:scene loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `create_worker` 时 scene loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reactor_turn` 本身就借着 `&mut workers`。)
+**只需要改 Cognition 一处。**`per_scene_loop` 形状相同,但**没有同一个病**:scene loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `create_worker` 时 scene loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reaction_turn` 本身就借着 `&mut workers`。)
 
 **现场复测 2026-08-05 12:29(打了补丁的 release,同一个 data-dir)。** 给它一件必须现查 + 出图的活("今年国内新能源车的销量,做个图放屏幕上"),读 Cognition 的逐字帧与 `server.log` 对时间:
 
@@ -763,7 +763,7 @@ loop {
 
 **worker 比它所在的那个 turn 早 81 秒出生。**修复前这在结构上不可能。端到端也对上了:12:29:57 接话说"两三分钟",**12:32:18 交付(141 秒)**——上一轮同样形状的活是 29 分钟。
 
-`cargo check` 干净(借用如预期不冲突),`cargo test --lib` **500 passed / 0 failed**。**没有加单元测试**:这条性质要在 loop 层面构造 Reactor + 假 ACP session 才测得到,现有的 `#[cfg(test)]` 只覆盖 `note_for` 这类纯函数,为它硬造一套 harness 比这个修复本身还大。上面那次现场复测是它目前唯一的回归证据。
+`cargo check` 干净(借用如预期不冲突),`cargo test --lib` **500 passed / 0 failed**。**没有加单元测试**:这条性质要在 loop 层面构造 Reaction + 假 ACP session 才测得到,现有的 `#[cfg(test)]` 只覆盖 `note_for` 这类纯函数,为它硬造一套 harness 比这个修复本身还大。上面那次现场复测是它目前唯一的回归证据。
 
 **涉及。** [03](03-feishu-flash-cards.md)(长活不占线、完工要交差)· [02](02-feishu-sprint-backlog.md) · [01](01-badminton-top10.md) · [05](05-news-and-watch.md) · 任何"派工优先"的 journey。
 
@@ -908,7 +908,7 @@ loop {
 
 一个挂着不管的实例不是免费的:台账里有一条没关闭的 open 任务,就足以让 Cognition 按 pulse 节奏整夜不停地醒(#14)。**跑完就 `kill`,数据目录保留即可。**
 
-⚠️ **`pulse` 是全局的,不只加速 scene。** `pulse_interval()` 被 scene 与 Cognition 的 glance-up **共用**(`reactor/mod.rs` 的注释明说这是有意的:"one 'how often does this agent look up' setting")。把它调到 120s 做测试,等于同时把 Cognition 的空转频率放大 15 倍。**分析空转成本时务必按 `DEFAULT_PULSE = 1800s` 折算**,否则会把测试配置当成出厂行为——本轮初稿就踩了这个坑。
+⚠️ **`pulse` 是全局的,不只加速 scene。** `pulse_interval()` 被 scene 与 Cognition 的 glance-up **共用**(`reaction/mod.rs` 的注释明说这是有意的:"one 'how often does this agent look up' setting")。把它调到 120s 做测试,等于同时把 Cognition 的空转频率放大 15 倍。**分析空转成本时务必按 `DEFAULT_PULSE = 1800s` 折算**,否则会把测试配置当成出厂行为——本轮初稿就踩了这个坑。
 
 ### 别拿 `energy` 端点推因果
 

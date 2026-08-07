@@ -9,7 +9,7 @@
 //! This module owns the **prompt cascade**: the bundled bases are materialised under
 //! `<data_dir>/prompts/` at boot, each composed with an optional operator `*.local.md`
 //! override ([`install_prompts`]), then read back whole at session open
-//! ([`rung_prompt`], [`worker_prompt`], [`reactor_system_prompt`]). That cascade is the
+//! ([`rung_prompt`], [`worker_prompt`], [`reaction_system_prompt`]). That cascade is the
 //! base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
 //!
 //! **There is no seed.** A rung used to be handed ~18 lines pointing at `core.md`,
@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 ///
 /// **One file per rung, and each is that rung's whole system prompt** — nothing points
 /// at anything else and nothing is fetched. They divide only by which entry point reads
-/// them back: [`reactor_system_prompt`] for the tools-off voice, [`reflection_prompt`]
+/// them back: [`reaction_system_prompt`] for the tools-off voice, [`reflection_prompt`]
 /// for the consolidation pass, [`cognition_prompt`] and [`deliberation_prompt`] for the
 /// thinking rungs. All ship in the binary and refresh on every build.
 ///
@@ -196,7 +196,7 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 /// every other rung, falling back to the embedded bases when a file is missing or
 /// empty. Read fresh per spawn, so an edit takes effect without a restart.
 ///
-/// **This replaced a `const &str` in `reactor/workers.rs`** — the one role prompt that
+/// **This replaced a `const &str` in `reaction/workers.rs`** — the one role prompt that
 /// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
 ///
 /// Two scene placeholders are interpolated here, on top of the directory ones
@@ -349,7 +349,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
 /// rather than for the activity, which is what `speaking.md` was.
 ///
-/// Its surface is `say` · `show_view` · `send_message`
+/// Its surface is `say` · `show` · `send_message`
 /// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
 /// three: the file once said "you have exactly two", then told the voice to "hand it
 /// onward" without naming the verb that does it.
@@ -358,7 +358,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// reaches the voice too, falling back to the embedded [`REACTION_BASE`]. Two things
 /// stay in code because they are *state*, not character, and the voice cannot fetch
 /// either: the **first-meeting** cue and the **language** preference.
-pub async fn reactor_system_prompt(data_dir: &Path) -> String {
+pub async fn reaction_system_prompt(data_dir: &Path) -> String {
     let base = data_dir.join("prompts").join("reaction.md");
     let reaction = match tokio::fs::read_to_string(&base).await {
         Ok(s) if !s.trim().is_empty() => s,
@@ -382,7 +382,7 @@ pub async fn reactor_system_prompt(data_dir: &Path) -> String {
 const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
-put the built-in welcome on screen while you speak it (`show_view` with ref \
+put the built-in welcome on screen while you speak it (`show` with ref \
 `_builtin/welcome`), then hand over the floor. One warm beat that lands who you are — \
 not a tour, not a walkthrough, and nothing to teach them; you'll show them by doing, \
 from here on.";
@@ -458,7 +458,7 @@ mod soul_tests {
         // voice's to give and it cannot go and read anything.
         let dir = tempfile::tempdir().unwrap();
         assert!(is_first_meeting(dir.path()));
-        let prompt = reactor_system_prompt(dir.path()).await;
+        let prompt = reaction_system_prompt(dir.path()).await;
         assert!(prompt.contains("first meeting"));
         assert!(prompt.contains("_builtin/welcome"));
     }
@@ -472,7 +472,7 @@ mod soul_tests {
         std::fs::create_dir_all(hot.parent().unwrap()).unwrap();
         std::fs::write(&hot, "lately on my mind…").unwrap();
         assert!(!is_first_meeting(dir.path()));
-        let prompt = reactor_system_prompt(dir.path()).await;
+        let prompt = reaction_system_prompt(dir.path()).await;
         assert!(!prompt.contains("this is a brand-new install"));
     }
 
@@ -487,10 +487,10 @@ mod soul_tests {
         // cannot read a file to find it.
         use crate::foundation::credentials::set_setting;
         let dir = tempfile::tempdir().unwrap();
-        assert!(!reactor_system_prompt(dir.path()).await.contains("Speak with the person in"));
+        assert!(!reaction_system_prompt(dir.path()).await.contains("Speak with the person in"));
         set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
         assert!(
-            reactor_system_prompt(dir.path()).await.contains("Speak with the person in 简体中文")
+            reaction_system_prompt(dir.path()).await.contains("Speak with the person in 简体中文")
         );
     }
 
@@ -503,7 +503,7 @@ mod soul_tests {
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("reaction.local.md"), "Always end with 好的。").unwrap();
         install_prompts(dir.path()).unwrap();
-        assert!(reactor_system_prompt(dir.path()).await.contains("Always end with 好的。"));
+        assert!(reaction_system_prompt(dir.path()).await.contains("Always end with 好的。"));
     }
 
 
@@ -587,13 +587,13 @@ mod soul_tests {
         assert!(REACTION_BASE.contains("they are talking to you, and only you"));
         assert!(REACTION_BASE.contains("no other \"someone\" who does the work"));
         assert!(REACTION_BASE.contains("`say` is your voice"));
-        assert!(REACTION_BASE.contains("`show_view`"));
+        assert!(REACTION_BASE.contains("`show`"));
 
         // And nothing is prepended: the installed file *is* the prompt, so the only
         // additions are the two pieces of state that follow it.
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
-        let prompt = reactor_system_prompt(dir.path()).await;
+        let prompt = reaction_system_prompt(dir.path()).await;
         assert!(prompt.starts_with(REACTION_BASE.trim()));
     }
 
@@ -825,7 +825,7 @@ mod soul_tests {
     fn cognition_is_not_told_to_speak() {
         assert!(COGNITION_BASE.contains("You do not speak"));
         assert!(
-            !COGNITION_BASE.contains("`say`") && !COGNITION_BASE.contains("show_view"),
+            !COGNITION_BASE.contains("`say`") && !COGNITION_BASE.contains("`show`"),
             "no expression tools in a prompt for a rung that holds none"
         );
     }

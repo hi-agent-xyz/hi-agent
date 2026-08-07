@@ -1,26 +1,26 @@
-//! The transport adapter — binds the reactor's transport-free outbound
+//! The transport adapter — binds the reaction's transport-free outbound
 //! vocabulary to the HTTP wire.
 //!
-//! The reactor is the mind; it emits [`OutboundSignal`]s in human-channel terms
+//! The reaction is the mind; it emits [`OutboundSignal`]s in human-channel terms
 //! ("said this text", "this span of speech", "show this view") and knows
 //! nothing about HTTP. Everything HTTP-shaped lives on this side of the seam:
 //! the utterance→response framing of /out/text, the `Content-Type` and turn
 //! binding of /out/audio, the broadcast of /out/view. This binder is the one place
 //! that translates between the two, so swapping HTTP for another wire touches
-//! only this file — the reactor and its vocabulary are untouched.
+//! only this file — the reaction and its vocabulary are untouched.
 //!
-//! It runs as a single task draining the reactor's outbound channel in order,
+//! It runs as a single task draining the reaction's outbound channel in order,
 //! which keeps each scene's signals serialized exactly as the mind produced them.
 
 use chrono::Utc;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::body::reactor::OutboundSignal;
+use crate::body::reaction::OutboundSignal;
 use crate::foundation::server::{AudioEvent, OutputEcho, TextBus, ViewBus, ViewEvent};
 use crate::types::Channel;
 
-/// Drain the reactor's outbound seam and bind each signal to its HTTP carrier.
-/// Owns the producing halves of the wire-side broadcasts; runs until the reactor
+/// Drain the reaction's outbound seam and bind each signal to its HTTP carrier.
+/// Owns the producing halves of the wire-side broadcasts; runs until the reaction
 /// drops `out_tx` (process teardown).
 pub(crate) async fn bind_outbound(
     mut rx: mpsc::Receiver<OutboundSignal>,
@@ -93,5 +93,5 @@ pub(crate) async fn bind_outbound(
             }
         }
     }
-    tracing::info!("outbound binder: reactor seam closed; exiting");
+    tracing::info!("outbound binder: reaction seam closed; exiting");
 }

@@ -1,23 +1,23 @@
-//! Working sessions — the reactor's hands.
+//! Working sessions — the reaction's hands.
 //!
-//! The reactor keeps a single voice and must never block the floor on slow
+//! The reaction keeps a single voice and must never block the floor on slow
 //! work, so heavy or long-running tasks are delegated here. A worker is a
 //! *voice-mute capability within the scene*: it has the full substrate — the
 //! scene's memory, tools, code execution, and its own sub-agents — but no voice
 //! of its own. Those sub-agents live *inside* its session and are invisible here:
 //! they get no hi-agent session id, no address, and no registry entry, which is
 //! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
-//! cannot emit on the reactor's expression channels (thought, audio, view). That
-//! mute-ness is what preserves single-voice coherence: only the reactor expresses
+//! cannot emit on the reaction's expression channels (thought, audio, view). That
+//! mute-ness is what preserves single-voice coherence: only the reaction expresses
 //! to the person.
 //!
 //! It is *not*, however, channel-blind. Over hi-agent's own HTTP surface
 //! (`HI_AGENT_BASE_URL` in its env) a worker may **perceive input channels**
 //! (e.g. `GET /api/in/vision` for live frames) — running detection, CV, whatever
 //! the task needs on the raw bytes, all *outside* the turn loop so it never
-//! contends with the reactor's serialized speech. It does not write to any output
-//! channel: expression (speech and views alike) stays the reactor's, so a worker
-//! reports what it found and the reactor decides what to show.
+//! contends with the reaction's serialized speech. It does not write to any output
+//! channel: expression (speech and views alike) stays the reaction's, so a worker
+//! reports what it found and the reaction decides what to show.
 //!
 //! The collaboration bus is asynchronous: a worker runs to completion, then posts a
 //! [`WorkerReport`] to whoever asked for the work. It never interrupts live speech —
@@ -28,7 +28,7 @@
 //!
 //! Progress-checking is emergent rather than wired: each worker streams its
 //! output into an inspectable transcript, and [`WorkerRegistry::render_status`]
-//! surfaces a live tail of every running worker into the reactor's prompt, so
+//! surfaces a live tail of every running worker into the reaction's prompt, so
 //! the mind can decide on its own social timing whether to wait, nudge, or
 //! speak to what it sees.
 
@@ -49,7 +49,7 @@ use crate::identity::WorkerType;
 use crate::mind::memory::layout;
 use crate::types::Scene;
 
-use super::{LoopInput, Reactor};
+use super::{LoopInput, Reaction};
 
 /// Handle for one **agent session**, unique process-wide.
 ///
@@ -97,7 +97,7 @@ const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 /// (`docs/arch/foundation.md`); until the type existed there was no way to hand a
 /// worker a different prompt, which is why the conditionals were there.
 
-/// A report a worker posts back to the reactor's per-scene loop. It enters the
+/// A report a worker posts back to the reaction's per-scene loop. It enters the
 /// queue as a `LoopInput::Worker`, so it waits its turn and never interrupts
 /// live speech.
 pub(super) struct WorkerReport {
@@ -146,7 +146,7 @@ struct Worker {
 }
 
 /// The scene's live working sessions. Owned by the per-scene loop, so a plain
-/// map suffices — no locking. Survives a reactor-session cold reopen: workers are
+/// map suffices — no locking. Survives a reaction-session cold reopen: workers are
 /// independent of the mind's own lifecycle within a scene.
 ///
 /// **TODO — this map is an optimization that currently optimizes nothing, and the
@@ -224,7 +224,7 @@ impl WorkerRegistry {
     /// The drive task starts idle on the same mailbox normal follow-ups use. The first
     /// human request therefore resumes this already-initialized session instead of
     /// creating a subprocess on the turn's tail.
-    pub(super) async fn warm_deliberation(&mut self, reactor: &Reactor) -> anyhow::Result<()> {
+    pub(super) async fn warm_deliberation(&mut self, reaction: &Reaction) -> anyhow::Result<()> {
         if self.deliberation.is_some() {
             return Ok(());
         }
@@ -237,7 +237,7 @@ impl WorkerRegistry {
         let placeholder = "waiting for the scene's first question";
         let (session, mail) = self
             .open_working_session(
-                reactor,
+                reaction,
                 id,
                 placeholder,
                 WorkerType::General,
@@ -256,7 +256,7 @@ impl WorkerRegistry {
             return Err(err);
         }
 
-        reactor
+        reaction
             .inner
             .observatory
             .record(
@@ -276,7 +276,7 @@ impl WorkerRegistry {
             session,
             transcript.clone(),
             self.inbound.clone(),
-            reactor.inner.observatory.clone(),
+            reaction.inner.observatory.clone(),
             self.scene.clone(),
             mail,
             busy.clone(),
@@ -310,13 +310,13 @@ impl WorkerRegistry {
     /// in the background and its report goes to `owner`.
     pub(super) async fn spawn_with_id(
         &mut self,
-        reactor: &Reactor,
+        reaction: &Reaction,
         id: SessionId,
         task: String,
         kind: WorkerType,
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reactor, id, task, kind, false, owner).await
+        self.spawn_inner(reaction, id, task, kind, false, owner).await
     }
 
     /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
@@ -325,7 +325,7 @@ impl WorkerRegistry {
     /// everything else through [`spawn`](Self::spawn) with the flag false.
     async fn spawn_inner(
         &mut self,
-        reactor: &Reactor,
+        reaction: &Reaction,
         id: SessionId,
         task: String,
         kind: WorkerType,
@@ -333,10 +333,10 @@ impl WorkerRegistry {
         owner: Option<SessionId>,
     ) -> anyhow::Result<SessionId> {
         let (session, mail) = self
-            .open_working_session(reactor, id, &task, kind, is_deliberation, owner)
+            .open_working_session(reaction, id, &task, kind, is_deliberation, owner)
             .await?;
 
-        let observatory = reactor.inner.observatory.clone();
+        let observatory = reaction.inner.observatory.clone();
         observatory
             // A pseudo-scene is a routing tag, never a mirror key: Cognition hosts its
             // workers under `*cognition*`, and passing that through would put a room
@@ -382,7 +382,7 @@ impl WorkerRegistry {
 
     async fn open_working_session(
         &self,
-        reactor: &Reactor,
+        reaction: &Reaction,
         id: SessionId,
         task: &str,
         kind: WorkerType,
@@ -392,7 +392,7 @@ impl WorkerRegistry {
         // Deliberation gets one self-contained role prompt; ordinary workers get the
         // prompt for their requested specialism.
         let system_prompt = if is_deliberation {
-            let data_dir = reactor.inner.memory.data_dir();
+            let data_dir = reaction.inner.memory.data_dir();
             if let Some(parent) = layout::scene_prompt_path(data_dir, &self.scene).parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
                     tracing::warn!(scene = %self.scene, error = %e, "could not pre-create the scene prompt dir");
@@ -400,7 +400,7 @@ impl WorkerRegistry {
             }
             crate::identity::deliberation_prompt(data_dir, &self.scene).await
         } else {
-            crate::identity::worker_prompt(reactor.inner.memory.data_dir(), &self.scene, kind).await
+            crate::identity::worker_prompt(reaction.inner.memory.data_dir(), &self.scene, kind).await
         };
 
         // The address exists before subprocess startup so mail can queue during both
@@ -413,7 +413,7 @@ impl WorkerRegistry {
             task.to_string(),
         );
 
-        let opened = reactor
+        let opened = reaction
             .inner
             .agent
             .session(
@@ -422,7 +422,7 @@ impl WorkerRegistry {
                 Some(id),
                 SessionOpts {
                     system_prompt: Some(system_prompt),
-                    cwd: Some(reactor.inner.views_dir.clone()),
+                    cwd: Some(reaction.inner.views_dir.clone()),
                     builtin_tools: None,
                 },
             )
@@ -446,7 +446,7 @@ impl WorkerRegistry {
     /// worker so the request is never silently lost.
     pub(super) async fn follow_up(
         &mut self,
-        reactor: &Reactor,
+        reaction: &Reaction,
         id: SessionId,
         task: String,
         is_deliberation: bool,
@@ -460,7 +460,7 @@ impl WorkerRegistry {
             // A host-posted edge: `from: None`, because the host is not an agent. Same
             // event as `send_message`, so the inspector shows every crossing on one
             // timeline rather than only the ones an agent initiated.
-            reactor
+            reaction
                 .inner
                 .observatory
                 .record(
@@ -479,7 +479,7 @@ impl WorkerRegistry {
                 // yet won its wake and flipped the flag itself.
                 w.busy.store(true, Ordering::Relaxed);
                 registry::global().set_task(id, task.clone());
-                reactor
+                reaction
                     .inner
                     .observatory
                     .record(self.mirror_scene(), EventKind::WorkerResumed { id, task })
@@ -497,7 +497,7 @@ impl WorkerRegistry {
         // exactly one caller, `deliberate`, and Deliberation's base layer *is* the
         // general worker's — it is a working session with a role layer on top, not a
         // specialism. A parameter with one possible value is a parameter that lies.
-        self.spawn_inner(reactor, mint_session_id(), task, WorkerType::General, is_deliberation, owner)
+        self.spawn_inner(reaction, mint_session_id(), task, WorkerType::General, is_deliberation, owner)
             .await
     }
 
@@ -512,11 +512,11 @@ impl WorkerRegistry {
     /// Anything heavy — a real task, a standing duty, a long errand — belongs *up* at
     /// Cognition rather than here. Deliberation stays light on purpose: it exists so a
     /// scene can think without leaving the scene.
-    pub(super) async fn deliberate(&mut self, reactor: &Reactor, task: String) -> anyhow::Result<()> {
+    pub(super) async fn deliberate(&mut self, reaction: &Reaction, task: String) -> anyhow::Result<()> {
         let id = match self.deliberation {
-            Some(id) => self.follow_up(reactor, id, task, true, None).await?,
+            Some(id) => self.follow_up(reaction, id, task, true, None).await?,
             None => {
-                self.spawn_inner(reactor, mint_session_id(), task, WorkerType::General, true, None)
+                self.spawn_inner(reaction, mint_session_id(), task, WorkerType::General, true, None)
                     .await?
             }
         };
@@ -623,17 +623,17 @@ impl Drop for WorkerRegistry {
     }
 }
 
-/// Render one report for the `## New signals` section the reactor sees.
+/// Render one report for the `## New signals` section the reaction sees.
 ///
 /// A **Deliberation** report is the scene's own thinking coming back — the answer to
 /// something it told the person it would look into — so it is framed as a *must-relay
 /// instruction*, not a passive "a worker finished" line the voice might note in passing
 /// and drop. This is the fix for that substance never reaching the person: the
 /// result was structurally optional, one signal among many a mute-by-default voice
-/// discarded. A plain **task worker** report stays an observation the reactor voices on
+/// discarded. A plain **task worker** report stays an observation the reaction voices on
 /// its own social timing (it may already have spoken to it, or choose to show a view
-/// instead of narrating). Both still pass through the reactor's judgment — must-relay
-/// means "this is a reply you owe them," not "dump it verbatim": the reactor still says
+/// instead of narrating). Both still pass through the reaction's judgment — must-relay
+/// means "this is a reply you owe them," not "dump it verbatim": the reaction still says
 /// it in its own plain words, reconciling with what it already said.
 pub(super) fn render_report(report: &WorkerReport) -> String {
     match &report.kind {
@@ -685,7 +685,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 
 /// Drive one worker across one or more tasks, posting a terminal report after each
 /// and staying warm in between so a follow-up can resume the same session with full
-/// context. Runs as its own task so the reactor stays free; the session is closed
+/// context. Runs as its own task so the reaction stays free; the session is closed
 /// (this returns) once the worker sits idle past [`WORKER_IDLE_TTL`].
 async fn drive_worker(
     id: SessionId,
@@ -705,7 +705,7 @@ async fn drive_worker(
     let mut energy_paused = crate::foundation::energy_state::is_out();
     // Deliberation is long-lived per scene; a worker made by `create_worker` runs its
     // errand and ends. Neither is bounded by size from here — the underlying agent
-    // compacts its own context (see [`crate::body::reactor::heartbeat`]).
+    // compacts its own context (see [`crate::body::reaction::heartbeat`]).
     let session = session;
     loop {
         let task = match next_task.take() {

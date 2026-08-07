@@ -1,6 +1,6 @@
 //! Session visibility endpoints — the operator's window into ACP sessions.
 //!
-//! - `GET /api/sessions` — JSON live snapshot of every scene (process, reactor
+//! - `GET /api/sessions` — JSON live snapshot of every scene (process, reaction
 //!   session, workers, context budget, last turn).
 //! - `GET /api/sessions/events` — Server-Sent Events carrying two frame types:
 //!   `session` lifecycle events (replayed from the ring on connect, then live)

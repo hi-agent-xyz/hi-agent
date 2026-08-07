@@ -125,7 +125,7 @@ interface Group {
 // Fold the flat frame stream into per-connection groups, preserving first-seen
 // order. Every frame of one subprocess shares its `conn`, so the handshake frames
 // group with their session; the sessionId is adopted as soon as a frame reveals
-// it. Knows nothing about the reactor — pure ACP.
+// it. Knows nothing about the reaction — pure ACP.
 function group(frames: RawFrame[]): Group[] {
   const map = new Map<number, Group>();
   for (const f of frames) {
@@ -180,7 +180,7 @@ export function SessionsView() {
                 className={g.key === selected ? "sel" : ""}
                 onClick={() => navigate(`${BASE}/${encodeURIComponent(g.key)}`)}
               >
-                <span className={`skind ${g.sessionId ? "reactor" : "worker"}`}>{g.sessionId ? "id" : "··"}</span>
+                <span className={`skind ${g.sessionId ? "reaction" : "worker"}`}>{g.sessionId ? "id" : "··"}</span>
                 <span className="nm">{g.sessionId ? g.sessionId.slice(0, 20) : "opening…"}</span>
                 <span className="badges">
                   <span className="mini">{g.scene}</span>

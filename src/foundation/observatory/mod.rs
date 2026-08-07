@@ -1,13 +1,13 @@
 //! Observatory — structured visibility into the ACP session lifecycle.
 //!
-//! ACP sessions are otherwise invisible: a scene's persistent reactor session,
+//! ACP sessions are otherwise invisible: a scene's persistent reaction session,
 //! ephemeral worker sessions (each on its own subprocess), in-flight prompts,
 //! session lifecycle events all live only as scattered `tracing`
 //! lines. The observatory is an additive, cloneable handle (like [`Memory`] or
-//! [`TextBus`]) that the reactor, workers and heartbeat feed as
+//! [`TextBus`]) that the reaction, workers and heartbeat feed as
 //! those things happen. It keeps two things:
 //!
-//! - a **live mirror** — the current state per scene (reactor session, workers,
+//! - a **live mirror** — the current state per scene (reaction session, workers,
 //!   context budget, last turn), for `GET /api/sessions`;
 //! - an **event history** — a bounded ring of lifecycle [`SessionEvent`]s plus a
 //!   live `broadcast`, streamed verbatim over SSE on `GET /api/sessions/events`,
@@ -37,13 +37,13 @@ const HISTORY_CAP: usize = 1000;
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
 
-/// Which kind of ACP session this is — the reactor's persistent mind, an
+/// Which kind of ACP session this is — the reaction's persistent mind, an
 /// ephemeral worker or the
 /// reflection ("sleep") pass that consolidates raw into episodes/facets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
-    Reactor,
+    Reaction,
     Worker,
     Summarizer,
     Reflection,
@@ -70,7 +70,7 @@ pub enum WorkerState {
     Failed,
 }
 
-/// The most recent turn on a scene's reactor session.
+/// The most recent turn on a scene's reaction session.
 #[derive(Debug, Clone, Serialize)]
 pub struct TurnView {
     pub turn: u64,
@@ -91,10 +91,10 @@ pub struct TurnView {
 #[derive(Debug, Clone, Serialize)]
 pub struct SceneView {
     pub scene: Scene,
-    pub reactor_session: Option<SessionView>,
+    pub reaction_session: Option<SessionView>,
     /// Accumulated prompt+reply chars since the live session was last opened. Reported
     /// only — nothing thresholds on it. Bounding a session's context is the underlying
-    /// agent's job (see [`crate::body::reactor::heartbeat`]), so there is no ceiling here
+    /// agent's job (see [`crate::body::reaction::heartbeat`]), so there is no ceiling here
     /// to render it against.
     pub budget_chars: usize,
     pub last_turn: Option<TurnView>,
@@ -105,7 +105,7 @@ impl SceneView {
     fn new(scene: Scene) -> Self {
         Self {
             scene,
-            reactor_session: None,
+            reaction_session: None,
             budget_chars: 0,
             last_turn: None,
             turns_total: 0,
@@ -282,10 +282,10 @@ impl Observatory {
 
         match kind {
             EventKind::SessionOpened { kind, id } => match kind {
-                SessionKind::Reactor => {
-                    view.reactor_session = Some(SessionView {
+                SessionKind::Reaction => {
+                    view.reaction_session = Some(SessionView {
                         id: id.clone(),
-                        kind: SessionKind::Reactor,
+                        kind: SessionKind::Reaction,
                         opened_at: now,
                         in_flight: false,
                         turns: 0,
@@ -301,18 +301,18 @@ impl Observatory {
                 | SessionKind::Reflection
                 | SessionKind::Cognition => {}
             },
-            EventKind::SessionClosed { kind: SessionKind::Reactor, id } => {
-                if view.reactor_session.as_ref().map(|session| session.id.as_str())
+            EventKind::SessionClosed { kind: SessionKind::Reaction, id } => {
+                if view.reaction_session.as_ref().map(|session| session.id.as_str())
                     == Some(id.as_str())
                 {
-                    view.reactor_session = None;
+                    view.reaction_session = None;
                 }
             }
             // Worker open/close is history-only; summarizer, Reflection, and
             // Cognition sessions are not represented as standing scene state.
             EventKind::SessionClosed { .. } => {}
             EventKind::TurnStarted { turn, .. } => {
-                if let Some(s) = view.reactor_session.as_mut() {
+                if let Some(s) = view.reaction_session.as_mut() {
                     s.in_flight = true;
                 }
                 view.last_turn = Some(TurnView {
@@ -324,7 +324,7 @@ impl Observatory {
                 });
             }
             EventKind::TurnFinished { turn, stop_reason, reply_chars, .. } => {
-                if let Some(s) = view.reactor_session.as_mut() {
+                if let Some(s) = view.reaction_session.as_mut() {
                     s.in_flight = false;
                     s.turns += 1;
                 }
@@ -422,12 +422,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mirrors_reactor_session_and_turn() {
+    async fn mirrors_reaction_session_and_turn() {
         let obs = Observatory::new(None);
         let s = scene();
         obs.record(
             Some(&s),
-            EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
+            EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() },
         )
         .await;
         obs.record(Some(&s), EventKind::TurnStarted { turn: 0, input: "hi".into() }).await;
@@ -435,7 +435,7 @@ mod tests {
         let snap = obs.snapshot().await;
         assert_eq!(snap.len(), 1);
         let v = &snap[0];
-        let rs = v.reactor_session.as_ref().unwrap();
+        let rs = v.reaction_session.as_ref().unwrap();
         assert_eq!(rs.id, "sess-1");
         assert!(rs.in_flight, "turn in flight");
 
@@ -450,39 +450,39 @@ mod tests {
         )
         .await;
         let v = &obs.snapshot().await[0];
-        assert!(!v.reactor_session.as_ref().unwrap().in_flight);
+        assert!(!v.reaction_session.as_ref().unwrap().in_flight);
         assert_eq!(v.turns_total, 1);
         assert_eq!(v.last_turn.as_ref().unwrap().reply_chars, Some(42));
     }
 
     #[tokio::test]
-    async fn closing_a_reactor_session_clears_only_that_live_session() {
+    async fn closing_a_reaction_session_clears_only_that_live_session() {
         let obs = Observatory::new(None);
         let s = scene();
         obs.record(
             Some(&s),
-            EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
+            EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() },
         )
         .await;
 
         obs.record(
             Some(&s),
-            EventKind::SessionClosed { kind: SessionKind::Reactor, id: "older".into() },
+            EventKind::SessionClosed { kind: SessionKind::Reaction, id: "older".into() },
         )
         .await;
         let snapshot = obs.snapshot().await;
         assert_eq!(
-            snapshot[0].reactor_session.as_ref().map(|session| session.id.as_str()),
+            snapshot[0].reaction_session.as_ref().map(|session| session.id.as_str()),
             Some("sess-1")
         );
 
         obs.record(
             Some(&s),
-            EventKind::SessionClosed { kind: SessionKind::Reactor, id: "sess-1".into() },
+            EventKind::SessionClosed { kind: SessionKind::Reaction, id: "sess-1".into() },
         )
         .await;
         let snapshot = obs.snapshot().await;
-        assert!(snapshot[0].reactor_session.is_none());
+        assert!(snapshot[0].reaction_session.is_none());
     }
 
     /// Worker lifecycle is history, and *only* history. It used to fold into a
@@ -530,7 +530,7 @@ mod tests {
         let s = scene();
         obs.record(
             Some(&s),
-            EventKind::SessionOpened { kind: SessionKind::Reactor, id: "sess-1".into() },
+            EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() },
         )
         .await;
         let (replay, mut rx) = obs.subscribe().await;
@@ -539,7 +539,7 @@ mod tests {
 
         obs.record(
             Some(&s),
-            EventKind::SessionClosed { kind: SessionKind::Reactor, id: "sess-1".into() },
+            EventKind::SessionClosed { kind: SessionKind::Reaction, id: "sess-1".into() },
         )
         .await;
         let live = rx.recv().await.unwrap();

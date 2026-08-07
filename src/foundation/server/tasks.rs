@@ -9,7 +9,7 @@
 //! so the ledger accumulates.
 //!
 //! That accumulation is not inert. Cognition's glance-up timer is gated on the open
-//! count — `body::reactor::cognition::note_for` returns `None` at zero and wakes the
+//! count — `body::reaction::cognition::note_for` returns `None` at zero and wakes the
 //! rung at anything above it — so one never-closed task keeps the timer firing
 //! forever, and every one of them rides in every agent's window through
 //! [`crate::mind::memory::tasks::projection`]. Closing a task is therefore the

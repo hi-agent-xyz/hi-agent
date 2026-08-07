@@ -5,7 +5,7 @@
 //! views currently mounted, in z-order. The previous design broadcast each
 //! envelope over a `tokio::broadcast`, so a view shown before a client's GET
 //! opened — or while a page was refreshing, or before a second device joined —
-//! was simply never seen. This bus folds the reactor's show/replace/dismiss
+//! was simply never seen. This bus folds the reaction's show/replace/dismiss
 //! envelopes into an ordered map per scene and serves the whole state to any
 //! subscriber, so every client in a scene converges on the same screen no
 //! matter when it connects.
@@ -16,7 +16,7 @@
 //! so resending it whole kills the missed-delta bug class outright.
 //!
 //! A view persists until the agent dismisses or replaces it: there is no
-//! auto-expiry, lifetime is the reactor's decision.
+//! auto-expiry, lifetime is the reaction's decision.
 //!
 //! The state also survives restarts: every mutation appends a whole-state
 //! snapshot to the memory store at
@@ -129,7 +129,7 @@ impl ViewBus {
         }
     }
 
-    /// Fold one reactor-emitted envelope into the scene's appearance: `show`
+    /// Fold one reaction-emitted envelope into the scene's appearance: `show`
     /// upserts and raises to the top of the z-order, `replace` swaps in place
     /// (falling back to show for an unknown id), `dismiss` removes. Bumps the
     /// version, appends a snapshot, and wakes parked readers.
@@ -247,7 +247,7 @@ impl ViewBus {
     }
 
     /// The ids currently on screen for a scene, in z-order (last = top-most). The
-    /// reactor reads this into each turn so the agent can *see* its own presentation
+    /// reaction reads this into each turn so the agent can *see* its own presentation
     /// surface — what it has shown — instead of guessing ids from the transcript. This
     /// is the read side of the same authoritative state [`apply`](Self::apply) writes,
     /// so a view dismissed last turn is gone from this list the next, giving the agent

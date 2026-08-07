@@ -1,8 +1,8 @@
-//! Direct Anthropic Messages call — the **reactor**'s fast, controlled LLM wire.
+//! Direct Anthropic Messages call — the **reaction**'s fast, controlled LLM wire.
 //!
-//! The reactor (hi-agent's always-present conversational voice) does *not* run the
+//! The reaction (hi-agent's always-present conversational voice) does *not* run the
 //! agentic claude-CLI loop that the cognition session uses. It makes **one direct
-//! Messages call**: `system` is the whole reactor prompt (`reaction.md` + the turn's
+//! Messages call**: `system` is the whole reaction prompt (`reaction.md` + the turn's
 //! context), there are **no tools**, and the model is the small/fast slot. Two things
 //! fall out of that, and they are the whole reason this wire exists next to the ACP one:
 //!
@@ -21,7 +21,7 @@
 //! configured base **host root** (songguo in managed mode — a transparent proxy that
 //! fronts the Anthropic wire at its native `/v1/messages` path — or `api.anthropic.com`).
 //!
-//! Non-streaming today: a reactor turn is a sentence or two, so a single round-trip on a
+//! Non-streaming today: a reaction turn is a sentence or two, so a single round-trip on a
 //! small model is already far below the agentic path. Token-streaming (fast first word
 //! into the sequencer) is the planned follow-up; the seam is [`complete`].
 
@@ -37,10 +37,10 @@ use serde_json::{Value, json};
 const DEFAULT_API_BASE: &str = "https://api.anthropic.com";
 /// Messages API version, sent as the `anthropic-version` header.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Output cap for a reactor turn — it speaks in a sentence or two (`reaction.md`), so a
+/// Output cap for a reaction turn — it speaks in a sentence or two (`reaction.md`), so a
 /// tight cap keeps a runaway generation from stalling the voice.
 const DEFAULT_MAX_TOKENS: u32 = 1024;
-/// Whole-call ceiling: the reactor's reply must be quick and the voice must never hang
+/// Whole-call ceiling: the reaction's reply must be quick and the voice must never hang
 /// on a wedged upstream. Deliberately far tighter than the agentic path's open budget.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -78,7 +78,7 @@ impl Turn {
     }
 }
 
-/// Resolved config for the reactor's Messages wire. Stateless free-function vendor,
+/// Resolved config for the reaction's Messages wire. Stateless free-function vendor,
 /// like the rest of `foundation::vendors`: build a `Config`, then call [`complete`].
 pub struct Config {
     client: reqwest::Client,
@@ -97,18 +97,18 @@ impl Config {
     pub fn new(token: &str, base_url: Option<&str>, model: &str) -> anyhow::Result<Self> {
         let bearer_token = token.trim().to_string();
         if bearer_token.is_empty() {
-            anyhow::bail!("reactor Messages call requires a bearer token");
+            anyhow::bail!("reaction Messages call requires a bearer token");
         }
         let model = model.trim().to_string();
         if model.is_empty() {
-            anyhow::bail!("reactor Messages call requires a model");
+            anyhow::bail!("reaction Messages call requires a model");
         }
         let base = base_url.map(str::trim).filter(|b| !b.is_empty()).unwrap_or(DEFAULT_API_BASE);
         let endpoint = messages_endpoint(base);
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .context("building reactor Messages HTTP client")?;
+            .context("building reaction Messages HTTP client")?;
         Ok(Self { client, bearer_token, endpoint, model })
     }
 }
@@ -144,7 +144,7 @@ fn build_request(cfg: &Config, system: &str, messages: &[Turn], max_tokens: u32)
     })
 }
 
-/// One non-streaming Messages completion. `system` is the whole reactor prompt
+/// One non-streaming Messages completion. `system` is the whole reaction prompt
 /// (`reaction.md` + the turn's context) — a real system prompt, unlike the ACP path
 /// where it could only prefix the first user turn. `messages` is the conversation.
 /// Returns the assistant's concatenated text (the words to speak), or an error.
@@ -159,22 +159,22 @@ pub async fn complete(cfg: &Config, system: &str, messages: &[Turn]) -> anyhow::
         .json(&body)
         .send()
         .await
-        .context("reactor Messages request failed")?;
+        .context("reaction Messages request failed")?;
 
     let status = resp.status();
-    let text = resp.text().await.context("reading reactor Messages response")?;
+    let text = resp.text().await.context("reading reaction Messages response")?;
     if !status.is_success() {
-        anyhow::bail!("reactor Messages HTTP {status}: {text}");
+        anyhow::bail!("reaction Messages HTTP {status}: {text}");
     }
 
     let parsed: MessagesReply = serde_json::from_str(&text)
-        .with_context(|| format!("parsing reactor Messages response: {text}"))?;
+        .with_context(|| format!("parsing reaction Messages response: {text}"))?;
     parsed
         .text()
-        .ok_or_else(|| anyhow::anyhow!("reactor Messages returned no text content"))
+        .ok_or_else(|| anyhow::anyhow!("reaction Messages returned no text content"))
 }
 
-/// Minimal view of the Messages reply — the reactor needs only the assistant text,
+/// Minimal view of the Messages reply — the reaction needs only the assistant text,
 /// which arrives in `content[]` as `text` blocks. With no tools registered no
 /// `tool_use` blocks come back; any non-text block (e.g. `thinking`) is skipped.
 #[derive(Debug, Deserialize)]

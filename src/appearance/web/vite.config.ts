@@ -101,7 +101,7 @@ const proxy: Record<string, ProxyOptions> = Object.fromEntries(
   // so the browser completes the sign-in round-trip against the backend in dev exactly
   // as it does same-origin in prod. The browser fetches these by URL, so dev
   // must reach the backend the same way prod (same-origin embed) does, or every
-  // `show_view` 404s and sign-in dead-ends.
+  // `show` 404s and sign-in dead-ends.
   ["/api", "/views", "/auth"].map((path) => [
     path,
     {

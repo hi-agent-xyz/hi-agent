@@ -42,7 +42,7 @@ pub async fn get_energy(
         "out_of_energy": crate::foundation::energy_state::is_out(),
         "tier": energy.tier,
         "resets_at": energy.resets_at,
-        "resets_in": crate::body::reactor::humanize_until_reset(&energy.resets_at),
+        "resets_in": crate::body::reaction::humanize_until_reset(&energy.resets_at),
     }))
 }
 

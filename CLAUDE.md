@@ -4,6 +4,10 @@
 
 Bias to action. Make the engineering calls you can make yourself and start building in the same turn the approach is agreed — don't stack up confirmation questions or re-ask "go?". Just decide: sensible defaults, anything already implied by stated preferences or memory, and choices that are cheap to reverse. Reserve questions for forks that are genuinely consequential, hard to undo, or a matter of the user's preference — and batch those into a single ask. Never invent an option the user wouldn't want and then ask them to rule it out.
 
+**During the architecture refactor, this has a sharper form.** `docs/arch/` is the goal state and the implementation is a long way from it *by design* — hundreds of mismatches are known and expected. **A place where the code doesn't match the design is the work, not a finding: align it and move on.** Do not write a paragraph explaining that the code does X while the design says Y; go change the code. Surface only three things: a conflict *inside* the design, something the design never specifies that the code must decide, or a change to the design itself (state it, then make it — in `docs/arch/`, not by diverging quietly). The untracked `arch-refactor.md` at the repo root carries the full agreement and the current worklist; read it before starting arch work.
+
+**Be specific, not literary.** Name the function, the file, and the failing condition — "nothing calls `take_pending(id)`, so messages sit in the inbox forever", not "it needs a drain". Metaphor is fine after the mechanism, never instead of it. And keep "the design says X" clearly separate from "the code currently does X".
+
 ## Making changes: always in a worktree
 
 Do all work for a task in its own fresh git worktree branched from `origin/main` — never edit the primary checkout directly. When the work is done and the user gives the go: commit, fetch + rebase, then push `<branch>:main`. Once the push lands, delete the worktree and its branch — never keep one around.
@@ -50,7 +54,7 @@ The managed runtime (Node + ACP adapter + claude + esbuild) auto-installs into t
 
 ## macOS entry shape (tray vs. headless)
 
-On macOS the binary's default shape is a **desktop app**: AppKit owns the main thread and shows a menu-bar status item (Open / Quit), while the HTTP server + reactor run on a background thread ([run_with_tray](src/lib.rs); status item in [vendors/macos_tray.rs](src/vendors/macos_tray.rs)). Everywhere else (Linux/Docker) tokio keeps the main thread as before. Still one binary — this is the main-thread inversion the distribution model accepted as the cost of a tray; no shell crate, no Tauri.
+On macOS the binary's default shape is a **desktop app**: AppKit owns the main thread and shows a menu-bar status item (Open / Quit), while the HTTP server + reaction run on a background thread ([run_with_tray](src/lib.rs); status item in [vendors/macos_tray.rs](src/vendors/macos_tray.rs)). Everywhere else (Linux/Docker) tokio keeps the main thread as before. Still one binary — this is the main-thread inversion the distribution model accepted as the cost of a tray; no shell crate, no Tauri.
 
 The tray **auto-skips when `SSH_CONNECTION` is set** (no window server over SSH) or with `--no-tray`, falling back to the server-owns-main-thread path. So the SSH journey-testing command below is unchanged. The visible icon can only be tested from a real desktop session (same GUI-session wall as screencast/hotkey); over SSH you can verify compile, tests, and that startup logs `tray skipped (headless)` and still binds.
 

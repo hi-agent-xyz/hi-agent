@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use hi_agent::mind::memory::Memory;
-use hi_agent::body::reactor::OutboundSignal;
+use hi_agent::body::reaction::OutboundSignal;
 use hi_agent::foundation::server::{self, ServerSeams};
 use hi_agent::types::{Scene, ViewEnvelope, ViewOp};
 use tempfile::tempdir;
@@ -23,8 +23,8 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
         dir.to_path_buf(),
         observatory,
         hi_agent::foundation::acp::AcpTap::new(),
-        hi_agent::body::reactor::ToolRegistry::new(),
-        hi_agent::body::reactor::InterruptRegistry::new(),
+        hi_agent::body::reaction::ToolRegistry::new(),
+        hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::presence::Presence::new(),
         None,
     );
@@ -38,7 +38,7 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
     (format!("http://{addr}"), seams)
 }
 
-/// Drive a view through the reactor's outbound seam — binder → bus — exactly
+/// Drive a view through the reaction's outbound seam — binder → bus — exactly
 /// as the mind emits it.
 async fn emit_view(seams: &ServerSeams, scene: &str, id: &str, op: ViewOp, url: Option<&str>) {
     seams

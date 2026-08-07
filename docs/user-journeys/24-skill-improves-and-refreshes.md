@@ -43,7 +43,7 @@
 - **统一在记忆梯度里讲?** 技能、view 工具箱([20](20-reuse-built-views.md))、drive(d4af1be)同属"agent 自己攒的东西"——要不要都顺着 raw→episodes→facets→hot.md 讲,而非另起炉灶?
 - **capability-gap**("我连个剪辑工具都没有 → 装 / 建 / 问")并到这条线,还是另起(连 [13](13-equip-a-capability.md))?本条假设工具已在,只沉淀**怎么用**。
 
-_机制:复用现成模式——`skills/` 工坊照 [views/](20-reuse-built-views.md) + self.md;reflection 策展照它给 facets / drive(d4af1be)的策展;reuse-before-start 照 [appearance.md](../../src/reactor/appearance.md)。新结构只有 `skills/` 工坊 + reflection 多策展一类。本 journey 的**核心主张**——技能与研究反射(22)的"重核 transient 半"耦合——是把"越用越快"和"不固化陈货"两件事拧成一股,正面解 [11](11-china-tax.md) 的悬案。成熟度:**guidance 已写;contribute 路径实测通过,reuse / reflection 策展 / transient 标记未验**(见下)。_
+_机制:复用现成模式——`skills/` 工坊照 [views/](20-reuse-built-views.md) + self.md;reflection 策展照它给 facets / drive(d4af1be)的策展;reuse-before-start 照 [appearance.md](../../src/reaction/appearance.md)。新结构只有 `skills/` 工坊 + reflection 多策展一类。本 journey 的**核心主张**——技能与研究反射(22)的"重核 transient 半"耦合——是把"越用越快"和"不固化陈货"两件事拧成一股,正面解 [11](11-china-tax.md) 的悬案。成熟度:**guidance 已写;contribute 路径实测通过,reuse / reflection 策展 / transient 标记未验**(见下)。_
 
 ## 实测 2026-06-22 · 分支 worktree-acquisition-reflexes(基 origin/main 422d268)
 

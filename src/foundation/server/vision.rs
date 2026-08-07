@@ -115,7 +115,7 @@ const PRESENCE_LEAVE_GRACE_SECS: i64 = 8;
 
 /// `POST /api/in/vision/presence` — one low-res camera still from the always-on
 /// presence lane. Recognize faces on the *local* models and, only when *who is
-/// present* changes, journal a perception signal and wake the reactor — so the live
+/// present* changes, journal a perception signal and wake the reaction — so the live
 /// mind learns in real time that someone is on camera (and who, when known) instead
 /// of waiting on the minute grid. Cheaply a no-op (202) without the face capability,
 /// on an undecodable frame, or when nothing changed. Stills are never persisted —
@@ -185,7 +185,7 @@ pub async fn post_presence(
         tracing::warn!(scene = %scene, error = %err, "presence: journal append failed");
     }
 
-    // The wake: journaling alone updates disk; the reactor only re-reads on a nudge.
+    // The wake: journaling alone updates disk; the reaction only re-reads on a nudge.
     let signal = Signal {
         channel: Channel::Vision,
         scene: scene.clone(),

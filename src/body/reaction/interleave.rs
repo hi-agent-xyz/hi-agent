@@ -1,11 +1,11 @@
 //! Output pacing — release one segment of a turn into ordered wire actions.
 //!
-//! The mind's output arrives as `say`/`show_view` tool calls the sequencer
+//! The mind's output arrives as `say`/`show` tool calls the sequencer
 //! ([`super::sequencer`]) feeds through here one at a time. These helpers keep a
 //! view paced to its narration: [`view_emits`] flushes the pending spoken
 //! sentence to TTS *before* showing the view, so it lands after the sentence
 //! before it and right as the sentence after it begins synthesizing — never
-//! racing ahead of already-produced speech. Both are pure (no `Reactor`), so the
+//! racing ahead of already-produced speech. Both are pure (no `Reaction`), so the
 //! release ordering is unit-testable; the sequencer performs the [`Emit`]s.
 
 use std::time::Instant;
@@ -14,16 +14,16 @@ use crate::foundation::segment::{Segmenter, Terminator};
 use crate::types::{Geometry, ViewOp};
 
 /// One release action the policy decides on. `Speak` goes to TTS only (the raw
-/// chunk is mirrored to /thought separately by the sequencer); `ShowView` is
+/// chunk is mirrored to /thought separately by the sequencer); `Show` is
 /// compiled then sent to /view.
 #[derive(Debug)]
 pub(super) enum Emit {
     Speak(String),
-    ShowView { id: String, op: ViewOp, source: String, geometry: Option<Geometry> },
+    Show { id: String, op: ViewOp, source: String, geometry: Option<Geometry> },
 }
 
 /// Coalesce spoken text into sentences for TTS. Pure: no side-effects, so the
-/// release ordering is unit-testable without a `Reactor`.
+/// release ordering is unit-testable without a `Reaction`.
 pub(super) fn speak_emits(
     text: &str,
     splitter: &mut Segmenter<Terminator>,
@@ -47,7 +47,7 @@ pub(super) fn view_emits(
     if let Some(tail) = splitter.flush() {
         out.push(Emit::Speak(tail));
     }
-    out.push(Emit::ShowView { id, op, source, geometry });
+    out.push(Emit::Show { id, op, source, geometry });
     out
 }
 
@@ -61,7 +61,7 @@ mod release_tests {
             .iter()
             .map(|e| match e {
                 Emit::Speak(s) => format!("speak:{s}"),
-                Emit::ShowView { source, .. } => format!("show:{source}"),
+                Emit::Show { source, .. } => format!("show:{source}"),
             })
             .collect()
     }
@@ -91,7 +91,7 @@ mod release_tests {
         // stays None — the floor).
         let geom_of = |want: &str| {
             emits.iter().find_map(|e| match e {
-                Emit::ShowView { id, geometry, .. } if id == want => Some(*geometry),
+                Emit::Show { id, geometry, .. } if id == want => Some(*geometry),
                 _ => None,
             })
         };

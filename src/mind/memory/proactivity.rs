@@ -14,7 +14,7 @@ use std::path::Path;
 use super::layout;
 
 /// The current license text, or `None` when nothing has been recorded yet (so the
-/// reflection pass starts a fresh file and the reactor treats every topic as
+/// reflection pass starts a fresh file and the reaction treats every topic as
 /// unproven).
 pub async fn read(data_dir: &Path) -> anyhow::Result<Option<String>> {
     match tokio::fs::read_to_string(layout::proactivity_path(data_dir)).await {

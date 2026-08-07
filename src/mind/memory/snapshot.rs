@@ -1,4 +1,4 @@
-//! Snapshot — the per-scene state projected into a scene's reactor session, and the
+//! Snapshot — the per-scene state projected into a scene's reaction session, and the
 //! recent-signals tail underneath it.
 //!
 //! **Projected = what Reaction must know without reading; everything else is recall.**
@@ -51,7 +51,7 @@ pub const RECENT_ENTRY_LIMIT: usize = 200;
 /// want, and the same one [`tasks`] makes on its own lines.
 pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 
-/// Everything the scene's reactor must know without reading, in one block, rebuilt
+/// Everything the scene's reaction must know without reading, in one block, rebuilt
 /// **on every turn**.
 ///
 /// In order: what this scene carries forward (the generated prompt, capped), what the
@@ -226,7 +226,7 @@ async fn recent_tail(memory: &Memory, scene: &Scene) -> String {
 }
 
 /// Join the non-empty sections with a blank line between them. Local to this module
-/// so `mind` never reaches into `body` for it; the reactor's `join_sections` does the
+/// so `mind` never reaches into `body` for it; the reaction's `join_sections` does the
 /// same for the turn's delta sections.
 fn join(sections: &[&str]) -> String {
     sections
@@ -425,7 +425,7 @@ mod window_tests {
         assert!(text.contains("Cut here by the host"), "{text}");
     }
 
-    /// Projected, not retrieved: the reactor is tools-off, so what it owes has to be
+    /// Projected, not retrieved: the reaction is tools-off, so what it owes has to be
     /// in the window before it says a word. No tool call fetched this.
     #[tokio::test]
     async fn open_tasks_are_in_the_window_with_nothing_fetching_them() {

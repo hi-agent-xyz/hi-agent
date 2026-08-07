@@ -1,7 +1,7 @@
 //! Cognition config → child env + settings.json. The LLM credential (base URL,
 //! key, model) and the cognition tunables (effort, permission mode, pulse,
 //! reflection cadence, …) all come from the config store (Settings). The tunables
-//! are read via [`tunables`] (a startup snapshot for the reactor's argless helpers)
+//! are read via [`tunables`] (a startup snapshot for the reaction's argless helpers)
 //! or [`crate::foundation::credentials::get_setting`] directly where a data dir is
 //! in scope. Only infra vars (e.g. the server base URL) remain env-driven.
 
@@ -41,7 +41,7 @@ impl LlmWire {
 pub const LLM_WIRES: &[(&str, &str)] = &[("claude", "Claude Code")];
 
 // Keys under which the cognition tunables live in the config store's `app_settings`
-// table. Shared by the readers (reactor, `resolve`) and the settings handler so the
+// table. Shared by the readers (reaction, `resolve`) and the settings handler so the
 // names can't drift. Each is optional; an absent key → the built-in default.
 /// Adapter `effortLevel` in settings.json (e.g. low | medium | high).
 pub const KEY_EFFORT: &str = "effort";
@@ -82,7 +82,7 @@ pub const KEY_THEME: &str = "theme";
 /// person's lead — the default when unset), or a language code from [`LANGUAGES`]
 /// (e.g. `en`, `zh-Hans`). Surfaced to the mind as one soft-guidance line in the
 /// system prompts (see `crate::identity::character_seed` and
-/// `crate::identity::reactor_system_prompt`); applies on restart, like
+/// `crate::identity::reaction_system_prompt`); applies on restart, like
 /// the other cognition tunables. Set from Settings ▸ General ▸ Language.
 pub const KEY_LANGUAGE: &str = "language";
 
@@ -131,7 +131,7 @@ pub fn flag_on(value: Option<String>) -> bool {
 pub const ENV_SERVER_BASE_URL: &str = "HI_AGENT_BASE_URL";
 
 /// The cognition tunables loaded once from the config store at startup into a
-/// process global, so the reactor's argless helpers can read them without threading
+/// process global, so the reaction's argless helpers can read them without threading
 /// a data dir. Changes apply on restart — like every other setting.
 pub mod tunables {
     use std::collections::HashMap;
@@ -141,7 +141,7 @@ pub mod tunables {
     static TUNABLES: OnceLock<HashMap<String, String>> = OnceLock::new();
 
     /// Snapshot the config store's `app_settings` into the global. Idempotent (first
-    /// wins); the composition root calls this once before the reactor spawns.
+    /// wins); the composition root calls this once before the reaction spawns.
     pub fn init(data_dir: &Path) {
         let _ = TUNABLES.set(crate::foundation::credentials::all_settings(data_dir));
     }
@@ -406,22 +406,22 @@ impl AgentConfig {
         }
     }
 
-    /// The model the **reactor** (the conversational voice) should run: the **main,
-    /// smart** model, same as cognition. The reactor's core skill is judging the edge
+    /// The model the **reaction** (the conversational voice) should run: the **main,
+    /// smart** model, same as cognition. The reaction's core skill is judging the edge
     /// of what it already holds — "can I answer from my prepared context, or must I
     /// hand this to cognition?" — which is a smart-model job, not a small-model one.
     /// Its speed comes from a *single tools-off generation* over a bounded prepared
     /// context (no fetch, no tool loop), not from a lighter model. So it takes `model`,
     /// falling back to `small` only when no main model is configured. Context-window
     /// normalized like the others. `None` (Codex, or nothing configured) → no override;
-    /// the reactor keeps whatever `auth_child_env` set.
+    /// the reaction keeps whatever `auth_child_env` set.
     ///
-    /// (Historically this pinned the reactor to the *small* slot — that was from a spell
-    /// when the reactor had accidentally inherited Opus *and* rode a hang-zone adapter,
+    /// (Historically this pinned the reaction to the *small* slot — that was from a spell
+    /// when the reaction had accidentally inherited Opus *and* rode a hang-zone adapter,
     /// and the small model was a workaround for a ~7-min turn. The adapter is pinned now;
     /// the workaround is retired in favour of the smart model the contract calls for. See
     /// docs/arch/agents.md.)
-    pub fn reactor_model(&self) -> Option<String> {
+    pub fn reaction_model(&self) -> Option<String> {
         match self.wire {
             LlmWire::Claude => self
                 .model

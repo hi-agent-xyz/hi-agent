@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 use crate::mind::memory::Memory;
 use crate::foundation::acp::AcpTap;
 use crate::foundation::observatory::Observatory;
-use crate::body::reactor::{InterruptRegistry, OutboundSignal, ToolRegistry};
+use crate::body::reaction::{InterruptRegistry, OutboundSignal, ToolRegistry};
 use crate::types::{Channel, Scene, Signal, ViewEnvelope};
 
 pub mod account;
@@ -255,12 +255,12 @@ pub struct FacePresence {
 
 /// Shared state passed to every handler via `axum::extract::State`.
 pub struct AppState {
-    /// Inbound signals from every channel POST. The reactor consumes these.
+    /// Inbound signals from every channel POST. The reaction consumes these.
     pub inbound: mpsc::Sender<Signal>,
 
     /// Scene warm-up requests. A scene-presence GET (`GET /api/out/*`, the
     /// long-polls a client opens on scene entry) sends the scene here so the
-    /// reactor stands it up — spawning the subprocess and opening the ACP session —
+    /// reaction stands it up — spawning the subprocess and opening the ACP session —
     /// before the first utterance lands, keeping that cold-start off the first
     /// reply's critical path. Bounded and best-effort: a full channel only means
     /// warm-ups are already queued, so a dropped request costs at most the
@@ -273,11 +273,11 @@ pub struct AppState {
     pub text_bus: TextBus,
 
     /// Outbound audio broadcast. GET /api/out/audio subscribers receive from
-    /// this; the reactor produces TTS clips here when a TTS provider is set.
+    /// this; the reaction produces TTS clips here when a TTS provider is set.
     pub audio_out: broadcast::Sender<AudioEvent>,
 
     /// Per-scene retained appearance state. GET /api/out/view serves whole-state
-    /// snapshots from this; the binder folds each reactor-emitted envelope in.
+    /// snapshots from this; the binder folds each reaction-emitted envelope in.
     /// Unlike a broadcast, a view shown while no client is connected is retained —
     /// refresh, a second device, or a restart all converge on the same screen.
     pub views: ViewBus,
@@ -289,7 +289,7 @@ pub struct AppState {
     /// Inbound audio broadcast — the read side of the audio *input* channel.
     /// `POST /api/in/audio` and `WS /api/in/audio/stream` publish the raw audio
     /// bytes here; `GET /api/in/audio` subscribers play them. Written directly by
-    /// the ingest handlers, not the binder — it is input data, not the reactor's
+    /// the ingest handlers, not the binder — it is input data, not the reaction's
     /// voice. The transcript the agent consumes rides the *text* channel instead.
     pub audio_in: broadcast::Sender<AudioInEvent>,
 
@@ -301,7 +301,7 @@ pub struct AppState {
     /// Inbound video broadcast — the read side of the vision *input* channel.
     /// `WS /api/in/vision/stream` publishes the camera's WebM chunks here;
     /// `GET /api/in/vision` subscribers play them. Written directly by the ingest
-    /// handler, not the binder — it is input data, not the reactor's voice. The
+    /// handler, not the binder — it is input data, not the reaction's voice. The
     /// backend never decodes the video; perceiving frames is a future job.
     pub video_in: broadcast::Sender<VideoInEvent>,
 
@@ -351,19 +351,19 @@ pub struct AppState {
     pub auth: Option<Arc<crate::foundation::auth::AuthState>>,
 
     /// Scene→tool-sink table. The `/mcp` handler looks a scene up here to route a
-    /// tool call to its reactor loop; the reactor registers each scene's sink as
-    /// it stands the loop up. See [`crate::body::reactor::ToolRegistry`].
+    /// tool call to its reaction loop; the reaction registers each scene's sink as
+    /// it stands the loop up. See [`crate::body::reaction::ToolRegistry`].
     pub tool_registry: ToolRegistry,
 
-    /// Scene→barge-in state, shared with the reactor. The STT relay reports
-    /// recognized speech here ([`crate::body::reactor::InterruptRegistry::note_speech`]);
+    /// Scene→barge-in state, shared with the reaction. The STT relay reports
+    /// recognized speech here ([`crate::body::reaction::InterruptRegistry::note_speech`]);
     /// nothing else on the HTTP side touches it — there is no interrupt
     /// endpoint, the mind infers interruptions from its own clock.
     pub interrupts: InterruptRegistry,
 
-    /// Scene→live-subscriber counts, shared with the reactor. Out-channel
+    /// Scene→live-subscriber counts, shared with the reaction. Out-channel
     /// handlers hold a [`crate::body::presence::PresenceGuard`] per connection; the
-    /// reactor renders the counts into each turn as human-model facts.
+    /// reaction renders the counts into each turn as human-model facts.
     pub presence: crate::body::presence::Presence,
 
     /// Scene-scoped phone-upload tokens for the file-upload carrier. A QR encodes
@@ -392,11 +392,11 @@ impl AppState {
         });
     }
 
-    /// Ask the reactor to warm this scene up now — spawn its subprocess and open
+    /// Ask the reaction to warm this scene up now — spawn its subprocess and open
     /// its ACP session — triggered when a client opens one of the scene's
     /// `/api/out/*` long-polls. Best-effort and non-blocking: a full queue drops
     /// the request, leaving the scene to cold-start on first use as before.
-    /// Idempotent on the reactor side, so repeated GETs are harmless.
+    /// Idempotent on the reaction side, so repeated GETs are harmless.
     pub fn warm_scene(&self, scene: &Scene) {
         let _ = self.warm.try_send(scene.clone());
     }
@@ -417,7 +417,7 @@ pub fn build(
     auth: Option<Arc<crate::foundation::auth::AuthState>>,
 ) -> (Router, ServerSeams) {
     let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
-    // Scene warm-up requests: a presence GET asks the reactor to stand a scene up
+    // Scene warm-up requests: a presence GET asks the reaction to stand a scene up
     // ahead of its first utterance (see `AppState::warm`).
     let (warm_tx, warm_rx) = mpsc::channel::<Scene>(1024);
     let text_bus = TextBus::new();
@@ -435,10 +435,10 @@ pub fn build(
     // Output text echo: the binder's non-draining mirror (see `OutputEcho`).
     let (output_echo_tx, _) = broadcast::channel::<OutputEcho>(64);
 
-    // The reactor's single transport-free outbound seam. A binder task fans each
+    // The reaction's single transport-free outbound seam. A binder task fans each
     // `OutboundSignal` out to the HTTP-shaped carriers above — assigning
     // Content-Type, framing one utterance into one response, closing the body at
-    // an utterance boundary. The reactor knows none of that.
+    // an utterance boundary. The reaction knows none of that.
     let (out_tx, out_rx) = mpsc::channel::<OutboundSignal>(1024);
     tokio::spawn(binder::bind_outbound(
         out_rx,
@@ -603,12 +603,12 @@ pub fn build(
     (router, seams)
 }
 
-/// What `build` hands back to wire the reactor to the HTTP front. `inbound_rx`
+/// What `build` hands back to wire the reaction to the HTTP front. `inbound_rx`
 /// is the channel POSTs feed; `warm_rx` carries scene warm-up requests a presence
-/// GET raises; `out_tx` is the reactor's single transport-free outbound seam (the
+/// GET raises; `out_tx` is the reaction's single transport-free outbound seam (the
 /// binder spawned in `build` carries it to the wire). The `text_bus` is exposed
 /// only so integration tests can drive utterances directly without standing up a
-/// reactor. `state` is the shared `AppState` (the same `Arc` the router holds), so
+/// reaction. `state` is the shared `AppState` (the same `Arc` the router holds), so
 /// a non-HTTP producer — the come-and-see-this gesture — can inject inbound
 /// signals through the same path as a channel POST.
 pub struct ServerSeams {

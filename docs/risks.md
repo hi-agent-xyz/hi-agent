@@ -16,8 +16,8 @@ The original architecture multiplexed N concurrent ACP sessions over one
 `claude-code` ran concurrent prompts in parallel or serialized them. That
 question is moot now: each session runs in **its own subprocess**
 (`docs/arch/core.md`), so cross-session concurrency comes from the OS, not the
-adapter. The per-scene reactor loop still serializes one turn per scene — that is
-a reactor policy, not a subprocess limit. The cost this introduces — a subprocess
+adapter. The per-scene reaction loop still serializes one turn per scene — that is
+a reaction policy, not a subprocess limit. The cost this introduces — a subprocess
 spawn per session — is tracked under "MCP attachment" below.
 
 ## MCP attachment per ephemeral session
@@ -29,8 +29,8 @@ originally, hi-agent attaches its own HTTP MCP endpoint (`/mcp`, served by the
 running axum app) through the ACP `mcp_servers` capability — `McpServer::Http`
 with scene/role/worker-id carried as `X-HI-Scene` / `X-HI-Role` /
 `X-HI-Worker-Id` headers, so one endpoint routes every session's calls. No
-subprocess, no socket. The reactor's whole expression + side-effect contract
-rides these tools: `say` / `show_view` (output), `send_message` (the one verb).
+subprocess, no socket. The reaction's whole expression + side-effect contract
+rides these tools: `say` / `show` (output), `send_message` (the one verb).
 
 The deployed adapter (`@agentclientprotocol/claude-agent-acp` 0.36.1) advertises
 `mcpCapabilities { http: true, sse: true }` and forwards http servers with
@@ -40,16 +40,16 @@ future adapter drops http support.
 **Still to measure (now the live cost):** with one subprocess per session, each
 session pays a full process spawn + ACP `initialize` + MCP `tools/list`
 round-trip — every delegated worker and every heartbeat hot-swap, not just the
-reactor session. Not yet load-tested; this is the main thing to watch when many
+reaction session. Not yet load-tested; this is the main thing to watch when many
 sessions are live at once.
 
 ## Journal-as-context coherence
 
 **Status:** designed correct; not load-tested.
 
-Routers depend on memory snapshots being faithful. The reactor writes to
+Routers depend on memory snapshots being faithful. The reaction writes to
 `journal.jsonl` **before** spawning the routing session — `server::thought::post_thought`
-journals the inbound, then sends to the reactor's mpsc, then the per-scene
+journals the inbound, then sends to the reaction's mpsc, then the per-scene
 task builds the snapshot. The snapshot read sees the just-written entry by
 construction.
 
@@ -64,7 +64,7 @@ ACP session (trace logs show snapshot contents). Each subsequent prompt's
 
 Per impl.md § Aliveness — Cognition contract, a new POST arriving for a
 scene while its queue is running a routing turn must cancel the in-flight
-router and re-prompt with both signals merged. The reactor's `dispatch_signal`
+router and re-prompt with both signals merged. The reaction's `dispatch_signal`
 checks the scene's `in_flight` slot, calls `session.cancel()`, and the
 per-scene task observes the cancel via `SessionRun::next_update` returning a
 `Cancelled` variant, then re-prompts with the merged batch.

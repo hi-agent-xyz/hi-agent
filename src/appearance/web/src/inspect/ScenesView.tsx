@@ -70,14 +70,14 @@ export function ScenesView() {
         ) : (
           <ul>
             {scenes.map((s) => {
-              const inFlight = s.reactor_session?.in_flight;
+              const inFlight = s.reaction_session?.in_flight;
               return (
                 <li
                   key={s.scene}
                   className={s.scene === selected ? "sel" : ""}
                   onClick={() => navigate(`${BASE}/${encodeURIComponent(s.scene)}`)}
                 >
-                  <span className={`dot ${inFlight ? "busy" : s.reactor_session ? "idle" : "cold"}`} />
+                  <span className={`dot ${inFlight ? "busy" : s.reaction_session ? "idle" : "cold"}`} />
                   <span className="nm">{s.scene}</span>
                 </li>
               );

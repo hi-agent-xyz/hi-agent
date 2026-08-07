@@ -85,4 +85,4 @@
 - 🧱 真接通需在真实飞书建应用 + 扫码授权,自动化会话内无法完成(预期的人类介入点)。
 
 **长期值守段**
-- 🔴 **重启恢复失效(回归)**:agent 确实把委托写进了自笔记,但写到了 `data/claude-config/projects/<proj>/memory/self.md`,而恢复读的是规范路径 `<data_dir>/memory/self.md`(`memory::layout::self_path`)。同名文件两份、写读不一致 → 重启后首个 pulse 读到空文件,**承诺静默丢失**。根因:seed 把 core/speaking/meaning 的**绝对路径**交给 mind,却没给 self.md;core.md 只给相对路径,reactor 会话 cwd=None 时解析到别处。修复见 [[feedback-absolute-paths-single-file]]。
+- 🔴 **重启恢复失效(回归)**:agent 确实把委托写进了自笔记,但写到了 `data/claude-config/projects/<proj>/memory/self.md`,而恢复读的是规范路径 `<data_dir>/memory/self.md`(`memory::layout::self_path`)。同名文件两份、写读不一致 → 重启后首个 pulse 读到空文件,**承诺静默丢失**。根因:seed 把 core/speaking/meaning 的**绝对路径**交给 mind,却没给 self.md;core.md 只给相对路径,reaction 会话 cwd=None 时解析到别处。修复见 [[feedback-absolute-paths-single-file]]。

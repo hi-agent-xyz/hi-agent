@@ -1,6 +1,6 @@
-//! Minimal MCP server — the tool carrier between the mind and the reactor module.
+//! Minimal MCP server — the tool carrier between the mind and the reaction module.
 //!
-//! The reactor session (and its workers) reach this over the ACP `mcp_servers`
+//! The reaction session (and its workers) reach this over the ACP `mcp_servers`
 //! attachment as an HTTP MCP endpoint (`/mcp`). It speaks just enough of the MCP
 //! "Streamable HTTP" transport to serve tools: a JSON-RPC *request* gets a single
 //! `application/json` response, a *notification* gets `202 Accepted`, and the GET
@@ -12,7 +12,7 @@
 //! This module is transport-free: it turns a parsed JSON-RPC message plus the
 //! routing identity (scene/role/worker id from headers) into an [`McpReply`]. The
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
-//! scene loop through the [`ToolRegistry`]; see [`crate::body::reactor::tools`].
+//! scene loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
 use serde_json::{Value, json};
 
@@ -30,7 +30,7 @@ use crate::body::capabilities::view_render;
 use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
-use crate::body::reactor::{SceneControl, ToolRegistry};
+use crate::body::reaction::{SceneControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
 use crate::types::{Geometry, Region, Scene};
 
@@ -45,10 +45,10 @@ pub enum McpReply {
     Accepted,
 }
 
-/// The tool surfaces, selected by the `X-HI-Role` header. The reactor gets only
-/// `show_view` (it speaks via plain message text, not a tool); a worker gets the
+/// The tool surfaces, selected by the `X-HI-Role` header. The reaction gets only
+/// `show` (it speaks via plain message text, not a tool); a worker gets the
 /// work tools but no voice; reflection reads/writes derived memory. The `_` fallback
-/// is the legacy agentic reactor's full toolset, kept for untagged sessions.
+/// is the legacy agentic reaction's full toolset, kept for untagged sessions.
 /// The `say` tool — Reaction's voice.
 ///
 /// Speech is a **call, not message text**, and that is the whole point: a call returns.
@@ -384,8 +384,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             ),
             see_tool(),
         ],
-        // The reactor is the fast conversational voice: it speaks via plain message
-        // text (not a `say` tool) and gets exactly one expression tool — `show_view` —
+        // The reaction is the fast conversational voice: it speaks via plain message
+        // text (not a `say` tool) and gets exactly one expression tool — `show` —
         // to put a view a worker already built on screen. Nothing else; the heavy work
         // is delegated to workers in code, not via a tool.
         // The shared brain. It delegates rather than does, so its surface is the
@@ -396,7 +396,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // matter of which rung is *told* to write it, and why that instruction moving out
         // of `deliberation.md` and into `cognition.md` is the whole of the handover.
         //
-        // No `say`, no `show_view`: it proposes, Reaction voices. Enforced three ways
+        // No `say`, no `show`: it proposes, Reaction voices. Enforced three ways
         // that agree — absent here, refused at dispatch above, and its sink carries no
         // sequencer to express through.
         Some("cognition") => vec![
@@ -423,11 +423,11 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // explicit that only Reaction's surface is a rail, and this one is sized for
         // context.
         Some("deliberation") => vec![send_message_tool()],
-        Some("reactor") => vec![say_tool(), show_view_tool(), send_message_tool()],
+        Some("reaction") => vec![say_tool(), show_tool(), send_message_tool()],
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
         // the previous occupant of this arm survived: it held the legacy agentic
-        // reactor's kit — `say`, `show_view`, `record_reflex`, `see`, `watch` —
+        // reaction's kit — `say`, `show`, `record_reflex`, `see`, `watch` —
         // long after no live role mapped to it, and read as a live surface in every
         // review. It was also a live hazard, not just clutter: `SessionRole::Deliberation`
         // stringifies to `deliberation`, which had no arm until the one above, so the
@@ -450,7 +450,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 }
 
 /// The `see` tool — understand a still the person handed in (or one surfaced in a
-/// signal). Shared by the reactor (answer in conversation) and reflection (index a
+/// signal). Shared by the reaction (answer in conversation) and reflection (index a
 /// day's photos). The bundle decides how: a native-vision model gets the raw image
 /// to reason over; a text-only one gets the vision capability's description.
 fn see_tool() -> Value {
@@ -473,7 +473,7 @@ fn see_tool() -> Value {
 }
 
 /// The `watch` tool — understand a short span of the *live* camera. Shared by the
-/// reactor (in conversation) and workers (mid-task). Always polyfilled: the clip is
+/// reaction (in conversation) and workers (mid-task). Always polyfilled: the clip is
 /// understood by the vision capability and the text handed back.
 fn watch_tool() -> Value {
     tool(
@@ -493,15 +493,15 @@ fn watch_tool() -> Value {
     )
 }
 
-/// The `show_view` tool — put a view on the screen. The reactor's one expression
+/// The `show` tool — put a view on the screen. The reaction's one expression
 /// tool beyond speech: it shows a view a worker already built (by `ref`), or a
-/// trivial inline one. Shared by the reactor surface and the legacy fallback.
-fn show_view_tool() -> Value {
+/// trivial inline one. Shared by the reaction surface and the legacy fallback.
+fn show_tool() -> Value {
     tool(
-        "show_view",
+        "show",
         "Put a view on the screen. Normally you show a view a builder made for you: \
          delegate the build, then pass the `ref` it reported back (like `project/view`) here. \
-         Interleave show_view and say calls in the order you want them experienced (say, \
+         Interleave show and say calls in the order you want them experienced (say, \
          then show) so each view lands as you speak to it. Reuse an `id` with op=replace \
          to evolve a view in place; op=dismiss takes one down. The screen is persistent \
          state: whatever you've shown stays up — across page refreshes, other devices in \
@@ -598,14 +598,14 @@ async fn dispatch_tool(
         return tool_error("missing X-HI-Scene header");
     };
 
-    // Expression tools belong to the reactor alone — it is the single
+    // Expression tools belong to the reaction alone — it is the single
     // guideline-carrying voice, so everything the person sees or hears goes through
     // its `reaction.md` generation. A worker or reflection session must never speak
     // or take the screen even if its model emits the call (these aren't in its
     // advertised surface); enforce that structurally here, not just via the tool list.
-    if matches!(name, "say" | "show_view") && role != Some("reactor") {
+    if matches!(name, "say" | "show") && role != Some("reaction") {
         return tool_error(&format!(
-            "`{name}` is reactor-only; role `{}` may not speak or show",
+            "`{name}` is reaction-only; role `{}` may not speak or show",
             role.unwrap_or("<none>")
         ));
     }
@@ -614,7 +614,7 @@ async fn dispatch_tool(
     // the scene loop (no sink), so handle them before the sink lookup. The
     // consolidated reflection session spans every scene, so the scene-specific ones
     // (`record_episode`/`keep_and_fade`/`see`) take their scene from the args, not the
-    // (sentinel) header — `see` falls back to the header for the live reactor surface.
+    // (sentinel) header — `see` falls back to the header for the live reaction surface.
     match name {
         "record_episode" => return reflection_record_episode(data_dir, args).await,
         "read_facet" => return reflection_read_facet(data_dir, args).await,
@@ -728,7 +728,7 @@ async fn dispatch_tool(
             // (`docs/arch/agents.md`: "one dispatcher is the point").
             //
             // Structural, not just absent from the advertised surface — the same reason
-            // `say`/`show_view` are checked above. Until now this was enforced only by
+            // `say`/`show` are checked above. Until now this was enforced only by
             // accident: Reaction had no `X-HI-Session-Id`, so the identity check below
             // rejected it. That fence is gone as of this commit, so the real one goes in.
             if !matches!(role, Some("reflection") | Some("cognition")) {
@@ -812,9 +812,9 @@ async fn dispatch_tool(
             // The ack is what actually happened on each channel, not a constant: the
             // tool's whole justification is that speech is answerable, and an answer
             // that always reads "spoken" answers nothing.
-            sink.say(text).await.map(crate::body::reactor::Spoken::ack)
+            sink.say(text).await.map(crate::body::reaction::Spoken::ack)
         }
-        "show_view" => {
+        "show" => {
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();
             // A view is normally shown by ref (one a worker built); resolve it to
             // source HERE, server-side, so the JSX never enters the mind's context.
@@ -823,7 +823,7 @@ async fn dispatch_tool(
             let (source, sidecar_geom) = match arg_opt("ref") {
                 Some(r) if !r.trim().is_empty() => match resolve_view_ref(data_dir, &r).await {
                     Ok(resolved) => resolved,
-                    Err(err) => return tool_error(&format!("show_view ref `{r}`: {err}")),
+                    Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
                 },
                 _ => (arg_str("source"), None),
             };
@@ -836,7 +836,7 @@ async fn dispatch_tool(
                 (None, Some(region)) => Some(Geometry { region, ..Default::default() }),
                 (None, None) => None,
             };
-            sink.show_view(arg_opt("id"), op, source, geometry).await.map(|()| "shown")
+            sink.show(arg_opt("id"), op, source, geometry).await.map(|()| "shown")
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
@@ -889,7 +889,7 @@ async fn do_look() -> Value {
 /// detection.
 ///
 /// **Placement comes from the view's own `.geom.json` unless the caller overrides it**,
-/// so a review renders the thing the way `show_view` would put it up. Reviewing a
+/// so a review renders the thing the way `show` would put it up. Reviewing a
 /// bottom-strip view in a centred square would fail it for a defect that only the
 /// review introduced.
 async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
@@ -1337,7 +1337,7 @@ async fn do_see(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
             "see: malformed ref {reff:?} (expected <YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
         ));
     };
-    // The live reactor `see` resolves against its own scene (the header). The
+    // The live reaction `see` resolves against its own scene (the header). The
     // consolidated reflection session has no single scene, so it names the scene the
     // ref belongs to in `scene` — honored here, header otherwise.
     let owned = arg_scene(args);
@@ -1559,7 +1559,7 @@ fn parse_region(s: &str) -> Option<Region> {
 
 /// Resolve a view ref to its stored JSX source (and the builder's declared
 /// placement, if any), read from the views tree. The agent passes only the tiny
-/// ref through `show_view`; this reads the component back, plus an optional
+/// ref through `show`; this reads the component back, plus an optional
 /// `<ref>.geom.json` sidecar the builder wrote next to it. A missing or
 /// unparseable sidecar is not an error — it just means the floor layout.
 async fn resolve_view_ref(
@@ -1809,16 +1809,16 @@ mod surface_tests {
     }
 
     /// Reaction's whole surface, pinned. `say` lived in the unreachable fallback arm
-    /// for the entire life of the reactor/cognition split — defined, dispatchable, and
+    /// for the entire life of the reaction/cognition split — defined, dispatchable, and
     /// advertised to nobody — so the voice fell back to plain message text. Nothing
     /// failed; it just quietly stopped being a call that returns.
     #[test]
     fn reaction_holds_say_and_show_and_nothing_else() {
-        let mut got = names(Some("reactor"));
+        let mut got = names(Some("reaction"));
         got.sort();
         assert_eq!(
             got,
-            vec!["say".to_string(), "send_message".to_string(), "show_view".to_string()],
+            vec!["say".to_string(), "send_message".to_string(), "show".to_string()],
             "its two expression channels, plus the one verb that reaches another agent"
         );
     }
@@ -1828,7 +1828,7 @@ mod surface_tests {
     #[test]
     fn every_role_can_send_a_message() {
         for role in [
-            Some("reactor"),
+            Some("reaction"),
             Some("worker"),
             Some("deliberation"),
             Some("cognition"),
@@ -1856,7 +1856,7 @@ mod surface_tests {
 
     /// An unknown role gets **nothing**, and that is the point.
     ///
-    /// This arm used to hold the legacy agentic reactor's kit — `say`, `show_view`,
+    /// This arm used to hold the legacy agentic reaction's kit — `say`, `show`,
     /// `record_reflex`, `see`, `watch` — with a comment saying no live role
     /// mapped here. It was not merely dead: `SessionRole::Deliberation` stringifies to
     /// `deliberation`, which had no arm, so the moment that role was constructed it
@@ -1874,7 +1874,7 @@ mod surface_tests {
     /// degrading to the empty fallback above.
     #[test]
     fn every_session_role_has_its_own_arm() {
-        for role in ["reactor", "worker", "deliberation", "cognition", "reflection"] {
+        for role in ["reaction", "worker", "deliberation", "cognition", "reflection"] {
             assert!(!names(Some(role)).is_empty(), "`{role}` fell through to the empty fallback");
         }
     }
@@ -1882,7 +1882,7 @@ mod surface_tests {
     /// One dispatcher. A scene rung that could create workers would be a second one,
     /// spawning against Cognition unseen.
     /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
-    /// legacy fallback, which handed it `say` and `show_view` — refused at dispatch — and
+    /// legacy fallback, which handed it `say` and `show` — refused at dispatch — and
     /// **not** `create_worker`, the one tool it exists to use. A rung with no arm is not
     /// a rung with defaults; it is a rung with someone else's.
     #[test]
@@ -1905,7 +1905,7 @@ mod surface_tests {
     fn only_the_sceneless_rungs_create_workers() {
         assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
         assert!(names(Some("cognition")).contains(&"create_worker".to_string()));
-        for role in [Some("reactor"), Some("worker")] {
+        for role in [Some("reaction"), Some("worker")] {
             assert!(
                 !names(role).contains(&"create_worker".to_string()),
                 "{role:?} must not create workers"
@@ -1930,12 +1930,12 @@ mod surface_tests {
     #[tokio::test]
     async fn create_worker_is_refused_to_the_scene_rungs_at_dispatch() {
         let dir = tempfile::tempdir().unwrap();
-        let tools = crate::body::reactor::ToolRegistry::new();
+        let tools = crate::body::reaction::ToolRegistry::new();
         let partial = Mutex::new(HashMap::new());
         let obs = Observatory::new(None);
         let scene = Scene("boss".to_string());
 
-        for role in [Some("reactor"), Some("worker"), Some("deliberation"), None] {
+        for role in [Some("reaction"), Some("worker"), Some("deliberation"), None] {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),
@@ -1965,7 +1965,7 @@ mod surface_tests {
     #[tokio::test]
     async fn a_send_that_reaches_nobody_is_still_recorded_as_an_edge() {
         let dir = tempfile::tempdir().unwrap();
-        let tools = crate::body::reactor::ToolRegistry::new();
+        let tools = crate::body::reaction::ToolRegistry::new();
         let partial = Mutex::new(HashMap::new());
         let obs = Observatory::new(None);
         let scene = Scene("boss".to_string());
@@ -1977,7 +1977,7 @@ mod surface_tests {
             &obs,
             Some(&scene),
             Some(7),
-            Some("reactor"),
+            Some("reaction"),
             "send_message",
             &json!({ "to": "99", "message": "are you there" }),
         )

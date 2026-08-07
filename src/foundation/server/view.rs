@@ -4,8 +4,8 @@
 //! active views (z-ordered) plus a version, served by the [`ViewBus`]. A call
 //! without `?since=` returns the current state immediately — even when empty —
 //! so a fresh page syncs on open; passing the last seen version parks until
-//! the state changes. The reactor mutates the state when the agent calls
-//! `show_view` and the view compiler has turned its source into a module.
+//! the state changes. The reaction mutates the state when the agent calls
+//! `show` and the view compiler has turned its source into a module.
 
 use std::sync::Arc;
 

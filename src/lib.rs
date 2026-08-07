@@ -56,7 +56,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     run_with_shutdown(config, Arc::new(Notify::new())).await
 }
 
-/// Build the axum app, spawn the ACP subprocess + reactor, bind, and serve until
+/// Build the axum app, spawn the ACP subprocess + reaction, bind, and serve until
 /// the process is terminated by an OS signal **or** `shutdown` is notified. The
 /// notify is the macOS tray's "Quit" path ([`run_with_tray`]); everywhere else it
 /// is a no-op trigger handed in by [`run`].
@@ -74,7 +74,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 
     // Snapshot the cognition tunables (pulse, reflection cadence, compact ceiling,
     // vendor-down thresholds, …) from the config store into the process global the
-    // reactor's argless helpers read. Once, before anything reads them.
+    // reaction's argless helpers read. Once, before anything reads them.
     foundation::config::tunables::init(&config.data_dir);
 
     // Restore an observed managed 402 before asking the broker for fresh account
@@ -149,7 +149,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     std::fs::create_dir_all(config.data_dir.join("drive")).context("creating drive dir")?;
 
     // Structured visibility into the ACP session lifecycle. The agent layer,
-    // reactor, workers and heartbeat feed it; `GET /api/sessions` reads the live
+    // reaction, workers and heartbeat feed it; `GET /api/sessions` reads the live
     // mirror and `GET /api/sessions/events` streams the history over SSE.
     let observatory =
         foundation::observatory::Observatory::new(Some(config.data_dir.join("sessions.jsonl")));
@@ -178,15 +178,15 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     );
 
     // Scene→tool-sink table shared between the HTTP front's `/mcp` handler and the
-    // reactor that registers each scene's sink. The mind drives output and
+    // reaction that registers each scene's sink. The mind drives output and
     // side-effects by calling tools on `/mcp`; they route here.
-    let tool_registry = body::reactor::ToolRegistry::new();
+    let tool_registry = body::reaction::ToolRegistry::new();
     // Scene→barge-in table, shared the same way: the server's STT relay reports
-    // recognized speech, the reactor stamps voice spans and folds the inferred
+    // recognized speech, the reaction stamps voice spans and folds the inferred
     // "what went unheard" note into the next prompt. No cancel, no endpoint.
-    let interrupts = body::reactor::InterruptRegistry::new();
+    let interrupts = body::reaction::InterruptRegistry::new();
     // Scene→live-subscriber counts, shared the same way: the server's out-channel
-    // handlers hold a guard per connection, the reactor renders the counts into
+    // handlers hold a guard per connection, the reaction renders the counts into
     // each turn as human-model facts ("no screen is attached").
     let presence = body::presence::Presence::new();
 
@@ -304,12 +304,12 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         format!("http://127.0.0.1:{}", config.port),
     );
     tracing::info!("agent session layer ready (one subprocess spawns per session)");
-    // A handle for shutdown: the reactor takes ownership of `agent` below, but on
+    // A handle for shutdown: the reaction takes ownership of `agent` below, but on
     // termination we still need to reap every subprocess it spawned. The clone
     // shares the same process registry.
     let agent_for_shutdown = agent.clone();
 
-    // The reactor compiles view source to ESM via esbuild; modules land under
+    // The reaction compiles view source to ESM via esbuild; modules land under
     // data_dir/views/_compiled. esbuild is hi-agent's own tool (not the
     // adapter's) — `ensure_view_esbuild` guarantees one whether the runtime came
     // from PATH or the managed install, so views aren't silently broken in dev.
@@ -318,7 +318,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .context("resolving esbuild for the view compiler")?;
     let view_compiler = mind::views::ViewCompiler::new(esbuild_bin, &config.data_dir);
     // The reviewing half needs the same compiler plus our own origin, and it runs from
-    // a *tool call* rather than from the reactor — so it cannot be handed either down
+    // a *tool call* rather than from the reaction — so it cannot be handed either down
     // the scene path. Published here, read by `review_view`.
     mind::views::set_render_context(
         view_compiler.clone(),
@@ -332,15 +332,15 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         foundation::credentials::get_setting(&config.data_dir, foundation::config::KEY_LANGUAGE)
             .unwrap_or_else(|| "system".to_string()),
     );
-    // The reactor's shutdown signal: triggered below the moment a signal / Quit is
+    // The reaction's shutdown signal: triggered below the moment a signal / Quit is
     // observed, so its scene loops, reflection, and drive retries wind down instead
     // of restarting ACP sessions into a process group that's already terminating.
-    let reactor_shutdown = foundation::shutdown::Shutdown::new();
-    // Eager sessions attach to `/mcp` during `session/new`. The reactor starts before
+    let reaction_shutdown = foundation::shutdown::Shutdown::new();
+    // Eager sessions attach to `/mcp` during `session/new`. The reaction starts before
     // the listener below, so retain one readiness edge that every startup warm-up can
     // await without racing the HTTP server.
     let (server_ready_tx, server_ready_rx) = watch::channel(false);
-    let _reactor = body::reactor::start(
+    let _reaction = body::reaction::start(
         memory,
         agent,
         seams.inbound_rx,
@@ -353,11 +353,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         presence,
         seams.state.views.clone(),
         views_dir,
-        reactor_shutdown.clone(),
+        reaction_shutdown.clone(),
         server_ready_rx,
     )
     .await?;
-    tracing::info!("reactor started");
+    tracing::info!("reaction started");
 
     // Arm the "come and see this" gesture: a double-tap of Command hands the agent
     // a screenshot of the current screen as a file (macOS only, best-effort — needs
@@ -413,10 +413,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             Err(e) => tracing::error!(error = %e, "HTTP server task panicked"),
         },
         _ = shutdown_requested(shutdown.clone()) => {
-            // Quiesce the reactor *first*, before the drain: for the whole drain
+            // Quiesce the reaction *first*, before the drain: for the whole drain
             // window it must not restart a session or open a reflection pass, or a
             // freshly spawned child would race the ACP reap below and outlive us.
-            reactor_shutdown.trigger();
+            reaction_shutdown.trigger();
             tracing::info!(grace = ?SHUTDOWN_GRACE, "shutdown requested; draining in-flight requests");
             match tokio::time::timeout(SHUTDOWN_GRACE, &mut server).await {
                 Ok(Ok(Ok(()))) => tracing::info!("HTTP server drained cleanly"),
@@ -430,10 +430,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         }
     }
 
-    // Also quiesce the reactor if we got here via the server task ending on its own
-    // (an HTTP error, not a signal) — idempotent, and it stops the reactor from
+    // Also quiesce the reaction if we got here via the server task ending on its own
+    // (an HTTP error, not a signal) — idempotent, and it stops the reaction from
     // respawning sessions while we reap. No-op on the shutdown path (already fired).
-    reactor_shutdown.trigger();
+    reaction_shutdown.trigger();
 
     // Reap every ACP subprocess (one `node` + `claude` per live session) so none
     // are orphaned. Bounded so a stuck child can't hang exit.
@@ -449,7 +449,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 }
 
 /// macOS entry: run the menu-bar status item on the **main thread** (AppKit's
-/// `NSStatusItem` requires it) while the HTTP server + reactor run on a background
+/// `NSStatusItem` requires it) while the HTTP server + reaction run on a background
 /// thread with their own runtime. This is the inversion the one-binary
 /// distribution model accepted as the cost of a tray: elsewhere tokio owns the
 /// main thread, here AppKit does.

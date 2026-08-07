@@ -153,6 +153,6 @@ Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
   `surfaces.md`.
 - [`legacy/faculties.md`](legacy/faculties.md) — the built-vs-grown organization. Its
   placement test survives as the authorship rule above.
-- [`legacy/reactor-cognition-split.md`](legacy/reactor-cognition-split.md) — the three-tempo
+- [`legacy/reaction-cognition-split.md`](legacy/reaction-cognition-split.md) — the three-tempo
   split. Superseded by the ladder above, which adds Deliberation, moves Cognition out of the
   scene, and draws reflex as the rung below Reaction.

@@ -36,7 +36,7 @@ pub struct AcpSession {
 }
 
 /// One streaming variant we surface to callers. `from_acp` collapses the
-/// schema's richer enum into what hi-agent's reactor cares about; Step 4 will
+/// schema's richer enum into what hi-agent's reaction cares about; Step 4 will
 /// extend [`ToolCall`].
 #[derive(Debug, Clone)]
 pub enum SessionUpdate {
@@ -129,7 +129,7 @@ pub struct SessionRun {
     /// The real error the prompt task resolved with, if it failed instead of
     /// producing a response. Captured here rather than dropped so `wait()` can
     /// surface the true cause — a gateway 402/429, a transport reset — to the
-    /// reactor's classifier, instead of a generic "no response" placeholder.
+    /// reaction's classifier, instead of a generic "no response" placeholder.
     error: Option<anyhow::Error>,
     /// Text chunks observed so far. Buffered so `wait()` can return a
     /// completed assembly without forcing the caller to also pull updates.
@@ -233,7 +233,7 @@ impl SessionRun {
         }
 
         // Return the response when the prompt produced one. Otherwise surface the
-        // real failure we captured (a 402/429/transport error) so the reactor can
+        // real failure we captured (a 402/429/transport error) so the reaction can
         // classify it; the generic placeholder is only the last resort when the
         // stream closed before the task resolved with anything at all.
         let response = match self.response.take() {

@@ -30,7 +30,7 @@ fn signal_out(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str) -> Jour
         scene: Scene("alice@phone".into()),
         body: body.into(),
         media: None,
-        origin: Some(Origin::Reactor),
+        origin: Some(Origin::Reaction),
     }
 }
 

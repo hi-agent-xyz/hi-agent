@@ -67,7 +67,7 @@ use crate::mind::memory::snapshot;
 use crate::types::Scene;
 
 use super::tools::{SceneControl, ToolSink};
-use super::{LoopInput, Reactor, SCENE_QUEUE_CAPACITY, workers};
+use super::{LoopInput, Reaction, SCENE_QUEUE_CAPACITY, workers};
 
 /// The pseudo-scene Cognition's sessions are opened under.
 ///
@@ -95,9 +95,9 @@ fn cognition_scene() -> Scene {
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
 
-/// Cognition's restart-recovery wake is immediate once the reactor exists.
+/// Cognition's restart-recovery wake is immediate once the reaction exists.
 ///
-/// Runtime provisioning and broker refresh finish before `reactor::start`, and
+/// Runtime provisioning and broker refresh finish before `reaction::start`, and
 /// [`glance_note`] explicitly stands every task-owned report scene up before the
 /// recovery prompt is built. Readiness is therefore structural rather than a
 /// sleep-and-hope delay.
@@ -107,13 +107,13 @@ const BOOT_WAKE_AFTER: Duration = Duration::ZERO;
 /// `Registration` **synchronously** before spawning this — `tokio::spawn` ordering is not
 /// guaranteed, and registering inside the task would leave a window at boot where the
 /// address exists in a prompt and resolves to nothing.
-pub(super) fn spawn(reactor: Reactor, registration: Registration) {
+pub(super) fn spawn(reaction: Reaction, registration: Registration) {
     tokio::spawn(async move {
-        run(reactor, registration).await;
+        run(reaction, registration).await;
     });
 }
 
-async fn run(reactor: Reactor, registration: Registration) {
+async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
     let scene = cognition_scene();
@@ -125,7 +125,7 @@ async fn run(reactor: Reactor, registration: Registration) {
     // not that map moving, it is Cognition having its own.
     let (control_tx, mut control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
     let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
-    reactor
+    reaction
         .inner
         .tools
         // `mouth: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
@@ -174,8 +174,8 @@ async fn run(reactor: Reactor, registration: Registration) {
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(cognition = id, "cognition up");
-    if reactor.wait_for_server_ready().await {
-        warm_session(&reactor, id, &scene, &mut session).await;
+    if reaction.wait_for_server_ready().await {
+        warm_session(&reaction, id, &scene, &mut session).await;
     }
 
     loop {
@@ -189,7 +189,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                         Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
                             energy_paused = false;
                             tracing::info!(cognition = id, "cognition resumed after energy refill");
-                            warm_session(&reactor, id, &scene, &mut session).await;
+                            warm_session(&reaction, id, &scene, &mut session).await;
                             // A failed turn may already be waiting in `pending`. Retain a
                             // notify permit so the next loop iteration drives it now rather
                             // than waiting for the recurring pulse or fresh mail.
@@ -204,7 +204,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                _ = reactor.inner.shutdown.cancelled() => {
+                _ = reaction.inner.shutdown.cancelled() => {
                     tracing::info!(cognition = id, "cognition shutting down");
                     break;
                 }
@@ -253,7 +253,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                 // needs startup uptime rather than time since that intervening turn.
                 let span = if first { started.elapsed() } else { last_turn.elapsed() };
                 last_turn = Instant::now();
-                match glance_note(&reactor, first, span).await {
+                match glance_note(&reaction, first, span).await {
                     Some(note) => pending.push(note),
                     // Nothing is owed, so there is nothing to glance at. Skipping
                     // costs one directory scan; waking would cost a subprocess and a
@@ -271,7 +271,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                 match ctl {
                     Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
                         if let Err(err) =
-                            workers.spawn_with_id(&reactor, worker, task, kind, owner).await
+                            workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
                         }
@@ -292,7 +292,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                     None => break,
                 }
             }
-            _ = reactor.inner.shutdown.cancelled() => {
+            _ = reaction.inner.shutdown.cancelled() => {
                 tracing::info!(cognition = id, "cognition shutting down");
                 break;
             }
@@ -324,14 +324,14 @@ async fn run(reactor: Reactor, registration: Registration) {
         // separates them. Worker *reports* stay outside too — they need `&mut pending`,
         // which this turn has borrowed, and they are next-turn input by design.
         let result = {
-            let mut turn_fut = std::pin::pin!(turn(&reactor, id, &scene, &pending, &mut session));
+            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &scene, &pending, &mut session));
             loop {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     ctl = control_rx.recv() => match ctl {
                         Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
                             if let Err(err) =
-                                workers.spawn_with_id(&reactor, worker, task, kind, owner).await
+                                workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                             {
                                 tracing::warn!(error = %err, "cognition failed to create a worker");
                             }
@@ -398,8 +398,8 @@ async fn sleep_until_opt(at: Option<Instant>) {
 /// things we own are actually alive, and read each check's real output because a probe
 /// that returns nothing means **down**, not fine. That guidance has been in the prompt
 /// since before anything could deliver a pulse to this rung.
-async fn glance_note(reactor: &Reactor, first: bool, span: Duration) -> Option<String> {
-    let data_dir = reactor.inner.memory.data_dir();
+async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option<String> {
+    let data_dir = reaction.inner.memory.data_dir();
     let open = match crate::mind::memory::tasks::open_tasks(data_dir).await {
         Ok(open) => open,
         // **Unreadable is not empty.** A ledger that cannot be read is a reason to wake
@@ -420,7 +420,7 @@ async fn glance_note(reactor: &Reactor, first: bool, span: Duration) -> Option<S
         // registers the voice synchronously; its ACP warm-up may continue while mail
         // safely queues behind it.
         for scene in super::task_report_scenes(&open) {
-            reactor.ensure_scene(scene).await;
+            reaction.ensure_scene(scene).await;
         }
     }
 
@@ -436,7 +436,7 @@ async fn glance_note(reactor: &Reactor, first: bool, span: Duration) -> Option<S
 }
 
 /// The pure half of [`glance_note`] — split out so the two things worth pinning can be
-/// tested without standing up a `Reactor`: that an empty ledger produces **no wake at
+/// tested without standing up a `Reaction`: that an empty ledger produces **no wake at
 /// all**, and that the boot note says a restart happened.
 fn note_for(open: usize, first: bool, span: Duration) -> Option<String> {
     if open == 0 {
@@ -485,7 +485,7 @@ mod tests {
 /// current projected ledger and its real messages. Failure is best-effort: the normal
 /// turn path cold-opens later.
 async fn warm_session(
-    reactor: &Reactor,
+    reaction: &Reaction,
     id: registry::SessionId,
     scene: &Scene,
     held: &mut Option<Arc<AcpSession>>,
@@ -498,7 +498,7 @@ async fn warm_session(
         return;
     }
 
-    let session = match open_session(reactor, id, scene).await {
+    let session = match open_session(reaction, id, scene).await {
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
@@ -526,7 +526,7 @@ async fn warm_session(
                 error = %err,
                 "cognition warm-up failed; first turn will cold-start"
             );
-            reactor
+            reaction
                 .inner
                 .observatory
                 .record(
@@ -542,14 +542,14 @@ async fn warm_session(
 }
 
 async fn open_session(
-    reactor: &Reactor,
+    reaction: &Reaction,
     id: registry::SessionId,
     scene: &Scene,
 ) -> anyhow::Result<Arc<AcpSession>> {
-    let data_dir = reactor.inner.memory.data_dir();
+    let data_dir = reaction.inner.memory.data_dir();
     let system_prompt = crate::identity::cognition_prompt(data_dir).await;
     let opened = Arc::new(
-        reactor
+        reaction
             .inner
             .agent
             .session(
@@ -569,7 +569,7 @@ async fn open_session(
             .await?,
     );
 
-    reactor
+    reaction
         .inner
         .observatory
         .record(
@@ -594,7 +594,7 @@ async fn open_session(
 /// "projected, not retrieved" true rather than true-at-open — the same correction the
 /// scene loop's prompt builder carries.
 async fn turn(
-    reactor: &Reactor,
+    reaction: &Reaction,
     id: registry::SessionId,
     scene: &Scene,
     pending: &[String],
@@ -605,12 +605,12 @@ async fn turn(
     let session = if let Some(existing) = held.as_ref() {
         existing.clone()
     } else {
-        let opened = open_session(reactor, id, scene).await?;
+        let opened = open_session(reaction, id, scene).await?;
         *held = Some(opened.clone());
         opened
     };
 
-    let window = snapshot::agent_window(&reactor.inner.memory, COGNITION_AGENT, id).await;
+    let window = snapshot::agent_window(&reaction.inner.memory, COGNITION_AGENT, id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")

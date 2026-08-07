@@ -34,7 +34,7 @@
 //! Callers: the perception paths that produce embeddings — face recognition on
 //! posted stills and camera-stream keyframes, voiceprints of posted clips and
 //! live-mic speaker turns ([`crate::foundation::server`]) — and reflection clustering
-//! ([`crate::body::reactor::heartbeat`]).
+//! ([`crate::body::reaction::heartbeat`]).
 
 use std::path::{Path, PathBuf};
 
@@ -486,7 +486,7 @@ pub struct ForgetReport {
 /// `now` (see [`ClusterVitals::forgettable`]). Named and recurring clusters are left
 /// untouched; a missing people dir is not an error.
 ///
-/// Folds into the reflection pass ([`crate::body::reactor::heartbeat`]) beside the
+/// Folds into the reflection pass ([`crate::body::reaction::heartbeat`]) beside the
 /// media [`super::decay`], on the same adaptive-backoff clock. Global, so it runs
 /// once per consolidation, not per scene.
 pub async fn sweep_forgettable(

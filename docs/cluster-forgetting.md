@@ -134,7 +134,7 @@ Backend (`src/foundation/server/people.rs`, global — no scene header):
 `GET /api/people`, `GET /api/people/{subject}/{modality}/{stem}` (serve one
 crop/clip), `POST /api/people/name`, `/eject`, `/split/preview`, `/split/apply`.
 Data layer: `people_vectors::{list_clusters, clip_media_path, eject_clip}`. The
-agent offers the view via `show_view _builtin/people-review`, taught in
+agent offers the view via `show _builtin/people-review`, taught in
 `identity/core.md` as a light, presence-appropriate exercise (offer, don't insist).
 
 ## Not in scope (deliberately)

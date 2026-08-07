@@ -32,9 +32,9 @@ use crate::foundation::mcp::tools_for_role;
 /// opens is named above it, so reaching it means an unheadered or unknown session, and
 /// the arm returns no tools rather than lending one an arbitrary kit. It is listed here
 /// precisely so that emptiness is visible — the arm previously held the legacy agentic
-/// reactor's toolset long after no live role mapped to it, and read as a live surface in
+/// reaction's toolset long after no live role mapped to it, and read as a live surface in
 /// every review.
-const ROLES: [&str; 6] = ["worker", "reflection", "cognition", "deliberation", "reactor", "other"];
+const ROLES: [&str; 6] = ["worker", "reflection", "cognition", "deliberation", "reaction", "other"];
 
 /// The role a listed surface is served under. `other` is the `_` arm, reached with no
 /// role at all.
@@ -143,10 +143,10 @@ mod tests {
         let names = |role: &'static str| -> Vec<String> {
             surface(role).tools.into_iter().map(|t| t.name).collect()
         };
-        assert!(names("reactor").contains(&"say".to_string()));
+        assert!(names("reaction").contains(&"say".to_string()));
         assert!(!names("cognition").contains(&"say".to_string()), "only Reaction speaks");
         assert_eq!(names("deliberation"), vec!["send_message".to_string()]);
-        for role in ["worker", "deliberation", "reactor"] {
+        for role in ["worker", "deliberation", "reaction"] {
             assert!(
                 !names(role).contains(&"create_worker".to_string()),
                 "`{role}` must not be able to dispatch work"

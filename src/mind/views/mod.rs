@@ -27,9 +27,9 @@ pub use builtin::install_builtin_views;
 
 /// What the **review** half of the view loop needs, set once at startup.
 ///
-/// Building a view is a scene-side act — the reactor holds the compiler and hands
+/// Building a view is a scene-side act — the reaction holds the compiler and hands
 /// source down. *Reviewing* one is a tool call from a working session, and
-/// `dispatch_tool` reaches neither the reactor nor the bound port: it is handed a
+/// `dispatch_tool` reaches neither the reaction nor the bound port: it is handed a
 /// scene registry, a data dir and the call's arguments, and rendering needs both a
 /// compiler and this server's own base URL. Rather than thread two more parameters
 /// through the whole tool surface for one call, the process publishes them here —

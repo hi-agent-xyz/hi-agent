@@ -41,7 +41,7 @@ fn signal_out(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str) -> Jour
         scene: Scene("boss".into()),
         body: body.into(),
         media: None,
-        origin: Some(Origin::Reactor),
+        origin: Some(Origin::Reaction),
     }
 }
 
@@ -83,7 +83,7 @@ async fn a_fresh_session_reads_back_what_was_said_and_shown() {
         mem.journal.append(entry).await.expect("append");
     }
 
-    // The reconstruction a fresh reactor session is handed.
+    // The reconstruction a fresh reaction session is handed.
     let snap = build_for_scene(&mem, &scene).await.expect("snapshot");
     assert_eq!(snap.recent_entries.len(), 6, "every channel is read back, none dropped");
     let recon = snap.render_for_prompt();

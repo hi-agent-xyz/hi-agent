@@ -196,7 +196,7 @@
   padding: 2px 4px; border-radius: 4px; flex: 0 0 auto;
   text-transform: uppercase; letter-spacing: .04em;
 }
-.skind.reactor { background: rgba(110,168,254,.18); color: var(--accent); }
+.skind.reaction { background: rgba(110,168,254,.18); color: var(--accent); }
 .skind.worker { background: rgba(232,183,90,.18); color: var(--warn); }
 
 /* a live-dot used inline beside a label (not just the sticky list head) */

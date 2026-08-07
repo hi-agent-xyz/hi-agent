@@ -59,9 +59,9 @@
 
 > 下面记的是当时的落法,跑在旧布局上:那时欠账记在一个叫 `commitments.md` 的文件里,兜底走的是当时那个机械近期摘要 `hot.md`。两者都已被 **task ledger**(`memory/facets/tasks/`,每轮投影)取代;这条 journey 的承诺不变,机制换了一个更好的——task 有结构、开着就绝不会被 reflection 剪掉、时钟还能从它重建。
 
-1. **core.md**「Your own operation」:reactor 接活当下把欠的交付记下来(当时是 commitments.md 的一条 open loop),交付即划掉;重启后读到没划掉的 loop = 很可能是被打断的活 → 先看已落什么再重做 → 面向用户的出声浮现、内部的悄悄干完划掉。open loop 并入"首个 pulse 自查清单"。
+1. **core.md**「Your own operation」:reaction 接活当下把欠的交付记下来(当时是 commitments.md 的一条 open loop),交付即划掉;重启后读到没划掉的 loop = 很可能是被打断的活 → 先看已落什么再重做 → 面向用户的出声浮现、内部的悄悄干完划掉。open loop 并入"首个 pulse 自查清单"。
 2. **reflection.md**:jot-before-crash 兜底——segment 时把"答应了却没见交付"的事在 episode gist 里点明,当时经 `refresh_hot` 投进 hot.md,醒来照样读得到。(现在这条兜底是 `"promised, never delivered" → open task`。)
-3. **reactor/mod.rs**:首个 pulse note 改写为"你刚回来(host 进程 Xm 前起的)",保留 core.md 据以识别的事实。
+3. **reaction/mod.rs**:首个 pulse note 改写为"你刚回来(host 进程 Xm 前起的)",保留 core.md 据以识别的事实。
 
 ### 待实测(复跑项)
 

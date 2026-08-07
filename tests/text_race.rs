@@ -1,7 +1,7 @@
 //! Regression: the /out/text delivery race that dropped an utterance when the
 //! subscriber was not connected at send time.
 //!
-//! The field symptom (journal-confirmed): the reactor produced a reply
+//! The field symptom (journal-confirmed): the reaction produced a reply
 //! ("Hey! What's up?") and emitted its chunks, but the web client's GET
 //! GET /out/text re-subscribed ~150ms too late. The old `tokio::broadcast` delivered
 //! nothing to a receiver created after the send, so "send hi, nothing
@@ -25,8 +25,8 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
         dir.path().to_path_buf(),
         observatory,
         hi_agent::foundation::acp::AcpTap::new(),
-        hi_agent::body::reactor::ToolRegistry::new(),
-        hi_agent::body::reactor::InterruptRegistry::new(),
+        hi_agent::body::reaction::ToolRegistry::new(),
+        hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::presence::Presence::new(),
         None,
     );

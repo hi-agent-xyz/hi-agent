@@ -1,7 +1,7 @@
 # hi-agent — Architecture (faculties)
 
 > **Second architecture doc, to be merged into `architecture.md` later.** That doc
-> is the *runtime data-flow* contract (how a signal flows: wire → adapter → reactor
+> is the *runtime data-flow* contract (how a signal flows: wire → adapter → reaction
 > → session → ACP; continuous vs. batch; carriers). This one is the *static
 > organization* contract: **what is built vs. grown, and which layer every feature
 > and line of code lives in.** They are complementary lenses on one system. The one
@@ -114,7 +114,7 @@ conflict, only a precedence decision.** Provenance is durable metadata that does
 decay (so "user-told vs. self-inferred" stays answerable — a deliberate divergence
 from human source-amnesia).
 
-*Already partially built:* `reactor::install_prompts` / `compose_prompt` layer a
+*Already partially built:* `reaction::install_prompts` / `compose_prompt` layer a
 bundled base under an operator `*.local.md` override — the same cascade, today
 spanning only base + operator. The model generalizes it to base ‹ user ‹ self.
 
@@ -133,18 +133,18 @@ the engine.
 
 ## The faculties, and where today's code lands
 
-The current tree is organized by *technical layer* (`acp`, `server`, `reactor`,
+The current tree is organized by *technical layer* (`acp`, `server`, `reaction`,
 `memory`, …), not by faculty. The mapping:
 
 | Faculty | Today's modules | Notes |
 |---|---|---|
 | **foundation** | `acp`, `agent`, `runtime`, `mcp`, `vendors`, `config`, `models`, `appearance`, `observatory`, `channel_log`, `pcm`, `segment`, `types` | the engine. `vendors` is already the clean impl-layer under `capabilities`. |
-| **body** | `capabilities` (senses + actions), `reactor` (loops, loader, sequencer, workers), `presence`, `gesture` | `capabilities`↔`vendors` already maps cleanly to body↔foundation. |
-| **identity** | **scattered, no home today**: `load_soul` + `install_prompts` + `compose_prompt` + the `core/speaking/meaning.md` bases (in `reactor/mod.rs`); `self`/`commitments`/`hot` paths (`memory/layout.rs`); `refresh_hot` (`memory/core.rs`) | consolidating these is the model's biggest readability win. |
+| **body** | `capabilities` (senses + actions), `reaction` (loops, loader, sequencer, workers), `presence`, `gesture` | `capabilities`↔`vendors` already maps cleanly to body↔foundation. |
+| **identity** | **scattered, no home today**: `load_soul` + `install_prompts` + `compose_prompt` + the `core/speaking/meaning.md` bases (in `reaction/mod.rs`); `self`/`commitments`/`hot` paths (`memory/layout.rs`); `refresh_hot` (`memory/core.rs`) | consolidating these is the model's biggest readability win. |
 | **mind** | `memory` (journal, snapshot, episodes, facets, decay, media, people_vectors, layout, core), `views` | the agent-grown store; `views` are learned procedural/presentational memory. |
 
 Frictions to resolve during migration: `server/` tangles transport (foundation) with
-channel semantics (body); identity is smeared through the hot reactor loop; and the
+channel semantics (body); identity is smeared through the hot reaction loop; and the
 "mind" term collides with `architecture.md` (below).
 
 ## Migration — status
@@ -152,10 +152,10 @@ channel semantics (body); identity is smeared through the hot reactor loop; and 
 The grouping shipped to `main` in four build-green, tested commits:
 
 1. **`identity`** ✅ — `load_soul`, the prompt cascade, and the `self`/`commitments`
-   path helpers moved out of `reactor`/`memory` into `src/identity/`.
+   path helpers moved out of `reaction`/`memory` into `src/identity/`.
 2. **`mind`** ✅ — `memory` + `views` moved under `src/mind/` (the faculty's home and
    namespace; the provenance-tagged, seed-shadowing write *port* is still future work).
-3. **`body`** ✅ — `capabilities`, `reactor`, `reflex`, `presence`, `gesture` under
+3. **`body`** ✅ — `capabilities`, `reaction`, `reflex`, `presence`, `gesture` under
    `src/body/` (the always-on apparatus + loops).
 4. **`foundation`** ✅ — the pure-Rust engine modules (`acp`, `agent`,
    `mcp`, `vendors`, `config`, `models`, `observatory`, `channel_log`, `pcm`, `segment`,
@@ -173,7 +173,7 @@ exceptions**:
   realized by the existing boundary. `server/` (now `foundation/server`) *is* the HTTP
   transport adapter — handlers bind wires ⇄ transport-free `Signal`s and the binder does
   the framing/Content-Type — while the channel *semantics* (turn-taking, fan-in to one
-  prompt, when-to-speak) live in `reactor` (now `body/reactor`). No mislocated chunk to move.
+  prompt, when-to-speak) live in `reaction` (now `body/reaction`). No mislocated chunk to move.
 
 **Intentionally not built — infrastructure ahead of need:**
 - The **`mind` write-port** (provenance tags + seed-shadowing over the memory write
@@ -197,13 +197,13 @@ This doc and `architecture.md` are complementary, not competing:
 
 The one collision to settle on merge is the word **"mind"**:
 
-- `architecture.md` calls the **reactor session** "the mind / the brain" (the cognition
+- `architecture.md` calls the **reaction session** "the mind / the brain" (the cognition
   locus).
 - This doc calls the **accumulated memory** the "mind."
 
-Proposed resolution: **reserve "mind" for the grown memory.** The reactor is **body**
-(the loops + loader). The cognition the reactor hosts keeps its precise existing names
-— *reactor session*, *working session*, *cognition* — which already avoid "mind" in
+Proposed resolution: **reserve "mind" for the grown memory.** The reaction is **body**
+(the loops + loader). The cognition the reaction hosts keeps its precise existing names
+— *reaction session*, *working session*, *cognition* — which already avoid "mind" in
 the load-bearing parts of `architecture.md` §8.
 
 ## References

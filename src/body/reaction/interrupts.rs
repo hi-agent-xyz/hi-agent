@@ -78,7 +78,7 @@ struct SceneState {
 }
 
 /// Shared scene→barge-in state. Created once in `lib.rs`, cloned into the HTTP
-/// front (whose STT relay reports recognized speech) and the reactor (whose
+/// front (whose STT relay reports recognized speech) and the reaction (whose
 /// sequencer stamps voice spans and whose turns drain pending notes).
 #[derive(Clone, Default)]
 pub struct InterruptRegistry {

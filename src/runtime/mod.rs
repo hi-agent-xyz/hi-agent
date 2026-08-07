@@ -48,7 +48,7 @@ const NODE_VERSION: &str = env!("HI_AGENT_NODE_VERSION");
 /// Pinned ACP adapter version, stamped from `src/runtime/manifest.toml` (kept in
 /// sync with `package.json`). Used to reject a *different* `claude-agent-acp` found
 /// on `PATH` — a stray global install (e.g. the 0.55.x hang-zone) silently
-/// overriding the pin is exactly what wedged reactor turns for minutes.
+/// overriding the pin is exactly what wedged reaction turns for minutes.
 const ADAPTER_VERSION: &str = env!("HI_AGENT_ADAPTER_VERSION");
 
 /// The committed pin files, embedded so `npm ci` reproduces the exact tree

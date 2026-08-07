@@ -56,7 +56,7 @@ use crate::foundation::registry;
 use crate::types::{Channel, JournalEntry, Scene};
 use crate::foundation::vendors::ffmpeg_frame;
 
-use super::Reactor;
+use super::Reaction;
 
 /// Below this many unconsolidated signals, a reflection round is skipped — not
 /// worth a whole session (and its subprocess spawn) to file a handful of lines;
@@ -106,19 +106,19 @@ struct SceneFrontier {
 /// Consolidate every given scene's unconsolidated frontier into episodes and facets
 /// in **one** "sleep" pass — the single-mind analogue of a day settling across all
 /// its contexts at once. Reads each scene's raw log after its [`episodes::scene_cursor`],
-/// opens **one** dedicated reflection session (its own subprocess; never a reactor
+/// opens **one** dedicated reflection session (its own subprocess; never a reaction
 /// live session) spanning all of them, and drives it to completion; the session
 /// writes derived memory through its tools, naming the scene on each call. Run from
 /// the global reflection clock (see [`super::reflection`]).
 /// Best-effort: the per-scene cursors make it idempotent across runs and a crash
 /// just leaves each frontier for the next tick. A no-op when no scene has enough
 /// unconsolidated signal to be worth a session.
-pub(super) async fn consolidate(reactor: &Reactor, scenes: &[Scene], id: registry::SessionId) {
-    if let Err(err) = run_consolidation(reactor, scenes, id).await {
+pub(super) async fn consolidate(reaction: &Reaction, scenes: &[Scene], id: registry::SessionId) {
+    if let Err(err) = run_consolidation(reaction, scenes, id).await {
         // A pass already in flight when shutdown began fails because its child took
         // the process group's signal — expected, not a fault. Keep it out of the
         // WARN stream so a real consolidation failure stays visible.
-        if reactor.inner.shutdown.is_triggered() {
+        if reaction.inner.shutdown.is_triggered() {
             tracing::debug!(error = %err, "consolidation aborted by shutdown");
         } else {
             tracing::warn!(error = %err, "consolidation failed");
@@ -127,11 +127,11 @@ pub(super) async fn consolidate(reactor: &Reactor, scenes: &[Scene], id: registr
 }
 
 async fn run_consolidation(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scenes: &[Scene],
     id: registry::SessionId,
 ) -> anyhow::Result<()> {
-    let data_dir = reactor.inner.memory.data_dir();
+    let data_dir = reaction.inner.memory.data_dir();
 
     // Gather each scene's frontier; keep only those with enough to be worth a pass.
     // The cheap cursor+tail read gates the expensive face/voice clustering, so a
@@ -148,7 +148,7 @@ async fn run_consolidation(
         // voices are clustered mechanically so the prompt can show a stable id per
         // detected person to name. The old-store pressure lets the same pass tend the
         // past for this scene, fading what's gone cold.
-        let prior = episodes::recent_gists(&reactor.inner.memory, Some(scene), 2)
+        let prior = episodes::recent_gists(&reaction.inner.memory, Some(scene), 2)
             .await
             .unwrap_or_default();
         let face_ids = cluster_faces(data_dir, scene, &tail).await;
@@ -226,7 +226,7 @@ async fn run_consolidation(
     // None`. Those are different facts: `docs/arch/agents.md` says the sceneless rungs
     // have no scene, and the header is a routing tag `/mcp` needs (see
     // [`CONSOLIDATION_SCENE`]).
-    let session = reactor
+    let session = reaction
         .inner
         .agent
         .session(
@@ -236,7 +236,7 @@ async fn run_consolidation(
             SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
         )
         .await?;
-    reactor
+    reaction
         .inner
         .observatory
         .record(
@@ -256,7 +256,7 @@ async fn run_consolidation(
     run.wait().await?;
 
     // hot.md now reflects the freshly written episodes across all scenes.
-    if let Err(err) = refresh_hot(&reactor.inner.memory).await {
+    if let Err(err) = refresh_hot(&reaction.inner.memory).await {
         tracing::warn!(error = %err, "failed to refresh hot.md after reflection");
     }
     tracing::info!(scenes = %scene_list, "reflection finished");
@@ -398,7 +398,7 @@ fn human_bytes(n: u64) -> String {
 }
 
 /// One frontier signal as a transcript line, reusing the snapshot's renderer so
-/// the speaker glyph and channel formatting match what the reactor sees.
+/// the speaker glyph and channel formatting match what the reaction sees.
 fn render_signal(e: &JournalEntry) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
     match e {

@@ -1,7 +1,7 @@
 //! Smoke test for the HTTP route surface.
 //!
 //! Builds the axum router via [`hi_agent::foundation::server::build`] directly. The
-//! reactor seams are returned alongside so the test holds them past the
+//! reaction seams are returned alongside so the test holds them past the
 //! handlers' send into `inbound` — otherwise the receiver drops and
 //! POST /api/in/text returns 503.
 
@@ -22,8 +22,8 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
         dir.path().to_path_buf(),
         observatory,
         hi_agent::foundation::acp::AcpTap::new(),
-        hi_agent::body::reactor::ToolRegistry::new(),
-        hi_agent::body::reactor::InterruptRegistry::new(),
+        hi_agent::body::reaction::ToolRegistry::new(),
+        hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::presence::Presence::new(),
         None,
     );

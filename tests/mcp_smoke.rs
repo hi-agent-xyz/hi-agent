@@ -21,8 +21,8 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
         dir.path().to_path_buf(),
         observatory,
         hi_agent::foundation::acp::AcpTap::new(),
-        hi_agent::body::reactor::ToolRegistry::new(),
-        hi_agent::body::reactor::InterruptRegistry::new(),
+        hi_agent::body::reaction::ToolRegistry::new(),
+        hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::presence::Presence::new(),
         None,
     );
@@ -63,7 +63,7 @@ async fn initialize_returns_server_info() {
     let resp = post_mcp(
         &client,
         &base,
-        "reactor",
+        "reaction",
         json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": { "protocolVersion": "2025-06-18" } }),
     )
@@ -80,18 +80,18 @@ async fn tools_list_is_role_gated() {
     let (base, _dir, _seams) = spawn_server().await;
     let client = reqwest::Client::new();
 
-    let reactor = post_mcp(
+    let reaction = post_mcp(
         &client,
         &base,
-        "reactor",
+        "reaction",
         json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
     )
     .await
     .json::<Value>()
     .await
     .expect("json");
-    let names = tool_names(&reactor);
-    // The reactor is the fast conversational voice: its two expression channels, both
+    let names = tool_names(&reaction);
+    // The reaction is the fast conversational voice: its two expression channels, both
     // calls, plus the one verb that reaches another agent. Nothing that reads or fetches.
     // This asserted one tool while `say` sat in the unreachable fallback arm and the
     // voice fell back to plain message text — the test agreed with the code and both
@@ -100,7 +100,7 @@ async fn tools_list_is_role_gated() {
     names.sort();
     assert_eq!(
         names,
-        vec!["say".to_string(), "send_message".to_string(), "show_view".to_string()],
+        vec!["say".to_string(), "send_message".to_string(), "show".to_string()],
         "got {names:?}"
     );
 
@@ -173,7 +173,7 @@ async fn notification_is_accepted_without_body() {
     let resp = post_mcp(
         &client,
         &base,
-        "reactor",
+        "reaction",
         json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
     )
     .await;
@@ -194,7 +194,7 @@ async fn get_declines_sse_stream() {
 
 #[tokio::test]
 async fn tool_call_for_unknown_scene_is_a_tool_error() {
-    // No reactor loop is registered (server::build doesn't start one), so a
+    // No reaction loop is registered (server::build doesn't start one), so a
     // delegate call resolves to a tool error rather than a transport failure —
     // the JSON-RPC envelope still succeeds.
     let (base, _dir, _seams) = spawn_server().await;
@@ -202,7 +202,7 @@ async fn tool_call_for_unknown_scene_is_a_tool_error() {
     let body: Value = post_mcp(
         &client,
         &base,
-        "reactor",
+        "reaction",
         json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call",
                 "params": { "name": "delegate", "arguments": { "task": "look something up" } } }),
     )

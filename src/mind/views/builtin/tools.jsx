@@ -29,7 +29,7 @@ const T = {
     // What each rung is *for*, in one line — the role name alone doesn't say why its
     // tool list is shaped the way it is.
     role: {
-      reactor: ["the speaking layer", "speaks up when someone is there, puts things on the screen; does no work"],
+      reaction: ["the speaking layer", "speaks up when someone is there, puts things on the screen; does no work"],
       cognition: ["the thinking layer", "doesn't do the work itself — hands it out, then watches for the answer"],
       deliberation: ["the pondering layer", "can only hand a thought back"],
       reflection: ["the memory-keeping layer", "looks back, writes into memory"],
@@ -41,7 +41,7 @@ const T = {
     count: (n, layers) => `${n} 个 · 分给 ${layers} 层`,
     noTools: "没有工具。",
     role: {
-      reactor: ["说话的那层", "在场时开口、把东西放到屏幕上；不干活"],
+      reaction: ["说话的那层", "在场时开口、把东西放到屏幕上；不干活"],
       cognition: ["想事情的那层", "自己不动手，派活出去、盯着回音"],
       deliberation: ["琢磨的那层", "只能把想法递回去"],
       reflection: ["整理记忆的那层", "回头看，写进记忆"],

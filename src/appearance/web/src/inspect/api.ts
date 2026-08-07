@@ -7,7 +7,7 @@
 // `src/server/channels.rs`. Kept deliberately thin: the inspect views poll the
 // snapshot and subscribe to the event streams.
 
-export type SessionKind = "reactor" | "worker" | "summarizer";
+export type SessionKind = "reaction" | "worker" | "summarizer";
 export type WorkerState = "running" | "done" | "failed";
 
 export interface SessionView {
@@ -32,7 +32,7 @@ export interface TurnView {
 // stream instead (`worker_spawned` / `worker_finished`), which is keyed by session.
 export interface SceneView {
   scene: string;
-  reactor_session: SessionView | null;
+  reaction_session: SessionView | null;
   budget_chars: number;
   swap_after_chars: number;
   swap_count: number;

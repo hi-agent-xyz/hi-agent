@@ -44,7 +44,7 @@ use tokio::sync::mpsc;
 /// Arm the gestures: from now on a double-tap of the right Command hands the agent a
 /// screenshot, and a press-and-hold opens continuous attention, both in `scene`.
 /// Spawns the OS event-loop thread and the recognizer task and returns immediately.
-/// Call once, after the reactor is running, from within the tokio runtime — it
+/// Call once, after the reaction is running, from within the tokio runtime — it
 /// captures the current runtime handle to drive the recognizers and the async
 /// capture/ingest off the (blocking) event-loop thread.
 #[cfg(target_os = "macos")]

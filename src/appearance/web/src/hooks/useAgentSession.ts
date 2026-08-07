@@ -168,7 +168,7 @@ export interface AgentSession {
  * wants to listen, but the conversation the face renders is text.
  *
  * Crucially it does NOT decide turns. Turn-taking — when the agent speaks, which
- * drafts to suppress — lives in the mind (the reactor), which commits after the
+ * drafts to suppress — lives in the mind (the reaction), which commits after the
  * inbound signal stream goes quiet.
  */
 export function useAgentSession(): AgentSession {

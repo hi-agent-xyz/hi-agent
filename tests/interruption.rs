@@ -1,6 +1,6 @@
 //! Interruption semantics — placeholder, requires `claude-code`.
 //!
-//! Contract (see `src/reactor/mod.rs` § "Fix-forward, no reflexive cancel"):
+//! Contract (see `src/reaction/mod.rs` § "Fix-forward, no reflexive cancel"):
 //! a new POST arriving for a scene whose queue is already running a turn does
 //! NOT cancel the in-flight ACP session. The per-scene loop is serial, so the
 //! new signal simply queues and is folded into the next turn; the warm session
@@ -15,7 +15,7 @@
 //! partials on its `/api/in/text` observe stream), the words buffer and fold
 //! into the next turn like any other signal, and the backend infers from its
 //! own clock that its voice was cut — recording a "what went unheard" note the
-//! next prompt carries. See `src/reactor/interrupts.rs` (unit-tested there).
+//! next prompt carries. See `src/reaction/interrupts.rs` (unit-tested there).
 //!
 //! Driving this for real requires either:
 //!

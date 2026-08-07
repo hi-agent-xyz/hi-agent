@@ -32,7 +32,7 @@
 //! `GET /api/out/audio`. The `Start` event's mime tells the client how to decode
 //! (`audio/pcm;rate=16000;channels=1` for the mic, the clip's own type for a POST).
 //!
-//! Outbound (`GET /api/out/audio`): subscriber to the reactor's `audio_out`
+//! Outbound (`GET /api/out/audio`): subscriber to the reaction's `audio_out`
 //! broadcast. A turn's speech arrives as a `Start`/`Frame`*/`End` run; this
 //! handler blocks until a `Start` for the subscriber, then streams that turn's
 //! frames as one chunked HTTP response until the matching `End`. The client
@@ -637,9 +637,9 @@ pub async fn ingest_pcm_stream(
 }
 
 /// Deliver one finalized transcript on the **audio** channel — journal it, echo
-/// it to scene observers (settled), and hand it to the reactor. The transcript is
+/// it to scene observers (settled), and hand it to the reaction. The transcript is
 /// the signal's text surface (`body`); the modality stays `audio` so its bytes,
-/// when present, land under `audio/`. The reactor reads `body` regardless. For a
+/// when present, land under `audio/`. The reaction reads `body` regardless. For a
 /// posted clip, `clip` carries the `(ts, id, media)` of the stored audio blob so
 /// the journal entry references it; the live mic passes `None` for now (its bytes
 /// aren't persisted yet — Phase 2), so the journal records no `media`.

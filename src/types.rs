@@ -13,7 +13,7 @@ use thiserror::Error;
 
 /// The situation a signal belongs to, carried by `X-HI-Scene` — a 1:1, a group,
 /// or being alone doing something, e.g. `alice@phone`. It is the unit of context
-/// isolation (one reactor session / journal slice / subprocess per scene); the
+/// isolation (one reaction session / journal slice / subprocess per scene); the
 /// human who spoke is soft, inferred content, not part of this key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -164,7 +164,7 @@ pub struct Signal {
     pub body: String,
     /// The named stream this signal arrived on within the scene (`webcam`,
     /// `headset`), or `None` for the scene's default stream. Carried so the
-    /// reactor can tell concurrent sources of one channel apart.
+    /// reaction can tell concurrent sources of one channel apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<String>,
     pub ts: DateTime<Utc>,
@@ -176,16 +176,16 @@ pub struct Signal {
 
 /// Mechanical provenance: which mind produced a signal. NOT the speaker's
 /// identity (that stays soft, inferred from content). Inbound human signals are
-/// `Human`, the reactor's own articulation is `Reactor`, and delegated workers
+/// `Human`, the reaction's own articulation is `Reaction`, and delegated workers
 /// (once they journal) are `Worker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     Human,
-    Reactor,
+    Reaction,
     Worker,
     /// The host process itself — the pulse. No mind produced it; the machinery
-    /// did. Kept distinct from `Reactor` so a reader can tell what a rung emitted
+    /// did. Kept distinct from `Reaction` so a reader can tell what a rung emitted
     /// from what it simply received.
     Host,
 }
@@ -321,7 +321,7 @@ pub enum ViewOp {
 /// dynamically imports and mounts under `id` in the view slot. For
 /// `op = dismiss` only `id` is meaningful. A view persists until the agent
 /// dismisses (or replaces) it — there is no auto-expiry; lifetime is the
-/// reactor's decision.
+/// reaction's decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViewEnvelope {
     pub id: String,

@@ -18,7 +18,7 @@
 //!
 //! Every door funnels into [`receive_file`], which mirrors the text path: store
 //! the bytes ([`media::store_blob`]), journal a `SignalIn`, echo to observers,
-//! and — crucially — send the `Signal` inbound so the reactor *wakes* and the
+//! and — crucially — send the `Signal` inbound so the reaction *wakes* and the
 //! agent reacts. (Vision only journals; a handed file must wake the mind.)
 
 use std::sync::Arc;
@@ -81,7 +81,7 @@ impl UploadResult {
 // -----------------------------------------------------------------------------
 
 /// Store one handed file under the `file` channel and deliver it as an inbound
-/// signal that wakes the reactor. `body` is the text surface the mind reacts to
+/// signal that wakes the reaction. `body` is the text surface the mind reacts to
 /// (it never sees the bytes); the blob path rides the journal entry's `media`.
 /// The framing in `body` is the caller's — a neutral handoff ([`receive_file`])
 /// or the "come and see this" gesture ([`receive_screenshot`]).
@@ -115,7 +115,7 @@ async fn ingest_file(
         tracing::error!(error = %err, "journal append failed; accepting file anyway");
     }
 
-    // Echo to scene observers (live), then wake the reactor so the agent reacts.
+    // Echo to scene observers (live), then wake the reaction so the agent reacts.
     state.echo_input(scene, Channel::File, &body, true);
     state
         .inbound

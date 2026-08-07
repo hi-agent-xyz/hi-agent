@@ -44,7 +44,7 @@
 //!   proxy stay strictly host-side; a skin never gets same-origin.
 //! - **Authoring.** The agent would register and activate skins the same way it
 //!   already puts rich content on screen: dedicated tool calls alongside
-//!   `show_view`, driven in the background by the heartbeat.
+//!   `show`, driven in the background by the heartbeat.
 //! - **Safety.** Activation is gated (preview + approval) and auto-reverts to
 //!   the embedded default if a skin fails to load; `GET /?skin=default` is the
 //!   escape hatch. The session core (channels, presence state machine, mic) is

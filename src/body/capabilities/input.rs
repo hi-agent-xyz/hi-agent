@@ -17,7 +17,7 @@
 //! its button) are a planned addition — they ride a different event family
 //! (`NSSystemDefined`) and land with the wiring pass.
 //!
-//! **No caller wires this in yet.** A future MCP `act` tool (worker/reactor
+//! **No caller wires this in yet.** A future MCP `act` tool (worker/reaction
 //! surface) is the caller; wiring it in later is purely additive.
 
 /// A screen location in global display points (origin = top-left of the main

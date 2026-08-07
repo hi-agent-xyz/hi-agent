@@ -103,7 +103,7 @@ curl -X POST -H 'X-HI-Scene: alice@phone' \
 
 ## Architecture
 
-One Rust process per agent. Inside it: an axum HTTP server, a reactor that owns per-scene queues and a worker registry, a memory facade backed by two JSONL files, an in-process MCP hub the router/worker sessions reach over a Unix socket, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start spawns the ACP adapter (via that `node`) and creates one fresh ACP session per routing turn (and one per long-lived worker). The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
+One Rust process per agent. Inside it: an axum HTTP server, a reaction that owns per-scene queues and a worker registry, a memory facade backed by two JSONL files, an in-process MCP hub the router/worker sessions reach over a Unix socket, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start spawns the ACP adapter (via that `node`) and creates one fresh ACP session per routing turn (and one per long-lived worker). The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
 
 ```
   scenes             hi-agent  (Rust process)              claude-code subprocess
@@ -116,7 +116,7 @@ One Rust process per agent. Inside it: an axum HTTP server, a reactor that owns 
    bob  ◀──GET /thought──┘            │                    ├────────────────────┤
                                       ▼                    │ session: worker A  │
                              ┌─────────────────┐           │  (long-lived task) │
-                             │     Reactor     │           ├────────────────────┤
+                             │     Reaction     │           ├────────────────────┤
                              │ per-scene queue │           │ session: worker B  │
                              │  worker reg.    │           │  (long-lived task) │
                              └────────┬────────┘           ├────────────────────┤
@@ -137,8 +137,8 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 |---|---|---|
 | `GET /` homepage | Y | Embedded Vite SPA, OG meta injected at request time |
 | `POST /thought` | Y | Body bytes are the signal; close-of-body ends the utterance; `X-HI-Scene` names the scene (defaults to anonymous when absent) |
-| `GET /thought` long-poll | Y | `X-HI-Scene` names the scene to receive on (400 if absent); per-scene buffered delivery from the reactor |
-| `POST /approval` | Y | JSON `{id, allow, reason?}`; reactor relays decision into ACP `session/request_permission` |
+| `GET /thought` long-poll | Y | `X-HI-Scene` names the scene to receive on (400 if absent); per-scene buffered delivery from the reaction |
+| `POST /approval` | Y | JSON `{id, allow, reason?}`; reaction relays decision into ACP `session/request_permission` |
 | `GET /approval` long-poll | Y | JSON event; 5-minute timeout on the requesting side |
 | `POST /vision` | 501 | Per v0 scope; body describes the omission |
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |
@@ -146,7 +146,7 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 | Per-scene routing | Y | One ACP session per routing turn, scoped by `X-HI-Scene` |
 | Workers (parallel ACP sessions) | Y | `spawn_worker` MCP tool; one session per worker; auto-stamp `X-HI-Scene` |
 | Memory: `journal.jsonl` + `intents.jsonl` | Y | Append-only journal; intents file rewritten atomically on add/remove |
-| Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reactor |
+| Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reaction |
 | `X-HI-Scene` recorded | Y | Journaled before dispatch; defaults to anonymous when absent |
 | `Authorization: Bearer ...` | accepted/logged | Parsed and logged; not validated in v0 |
 | Cron / relative intents | deferred | Per `docs/impl.md` Scope |
@@ -235,7 +235,7 @@ hi-agent/
 │   ├── lib.rs                              # `run(Config)` — wires everything
 │   ├── types.rs                            # Scene, Channel, Signal, JournalEntry, Intent
 │   ├── server/                             # axum router + extractors + handlers
-│   ├── reactor.rs                          # per-scene queues, worker registry, interruption
+│   ├── reaction.rs                          # per-scene queues, worker registry, interruption
 │   ├── acp/                                # ACP adapter subprocess + per-session helpers
 │   ├── mcp.rs                              # in-process MCP hub + the seven tools
 │   ├── memory/                             # journal, intents, snapshot builder

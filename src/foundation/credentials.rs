@@ -46,7 +46,7 @@ pub fn set_setting(data_dir: &Path, key: &str, value: &str) -> anyhow::Result<()
     db::set_setting_at(data_dir, key, value)
 }
 
-/// Every app-level setting as a map — the startup snapshot the reactor's tunables
+/// Every app-level setting as a map — the startup snapshot the reaction's tunables
 /// global loads. Empty on a fresh / unreadable store (defaults then apply).
 pub fn all_settings(data_dir: &Path) -> std::collections::HashMap<String, String> {
     db::all_settings(data_dir).unwrap_or_default()

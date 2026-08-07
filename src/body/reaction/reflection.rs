@@ -63,7 +63,7 @@ use crate::foundation::registry::{self, Registration};
 use crate::types::Scene;
 
 use super::tools::{SceneControl, ToolSink};
-use super::{LoopInput, Reactor, SCENE_QUEUE_CAPACITY, heartbeat, workers};
+use super::{LoopInput, Reaction, SCENE_QUEUE_CAPACITY, heartbeat, workers};
 
 /// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
 /// Reflection carries forward between wakes, at `memory/prompts/reflection.md`.
@@ -78,9 +78,9 @@ const REFLECTION_AGENT: &str = "reflection";
 /// `Registration` **synchronously** before spawning this, for the reason
 /// [`super::cognition::spawn`] gives: `tokio::spawn` promises no ordering, and an address
 /// named in a prompt that resolves to nothing is worse than one that is plainly absent.
-pub(super) fn spawn(reactor: Reactor, registration: Registration) {
+pub(super) fn spawn(reaction: Reaction, registration: Registration) {
     tokio::spawn(async move {
-        run(reactor, registration).await;
+        run(reaction, registration).await;
     });
 }
 
@@ -93,7 +93,7 @@ enum Wake {
     Turn,
 }
 
-async fn run(reactor: Reactor, registration: Registration) {
+async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
     let scene = heartbeat::consolidation_scene();
@@ -103,7 +103,7 @@ async fn run(reactor: Reactor, registration: Registration) {
     // about its sink rather than an agreement between a tool list and a role check.
     let (control_tx, mut control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
     let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
-    reactor
+    reaction
         .inner
         .tools
         .register(scene.clone(), ToolSink { control: control_tx, mouth: None })
@@ -152,7 +152,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                _ = reactor.inner.shutdown.cancelled() => {
+                _ = reaction.inner.shutdown.cancelled() => {
                     tracing::info!(reflection = id, "reflection shutting down");
                     break;
                 }
@@ -163,7 +163,7 @@ async fn run(reactor: Reactor, registration: Registration) {
         // When the clock is off, park the timer arm forever rather than branching the
         // whole `select!` — a never-completing sleep is the cheapest "this arm is not in
         // play" there is.
-        let last_activity = *reactor.inner.last_signal_at.lock().unwrap();
+        let last_activity = *reaction.inner.last_signal_at.lock().unwrap();
         let due = if clock_on {
             super::next_reflection_at(
                 loop_started,
@@ -202,13 +202,13 @@ async fn run(reactor: Reactor, registration: Registration) {
             _ = tokio::time::sleep(sleep_for) => Wake::Consolidate,
             // Fresh input landed: re-derive the deadline rather than sit out a long
             // backoff. Not a wake in itself.
-            _ = reactor.inner.reflect_wake.notified() => continue,
+            _ = reaction.inner.reflect_wake.notified() => continue,
             _ = mail.notified() => Wake::Turn,
             ctl = control_rx.recv() => {
                 match ctl {
                     Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
                         if let Err(err) =
-                            workers.spawn_with_id(&reactor, worker, task, kind, owner).await
+                            workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                         {
                             tracing::warn!(error = %err, "reflection failed to create a worker");
                         }
@@ -231,13 +231,13 @@ async fn run(reactor: Reactor, registration: Registration) {
                     None => break,
                 }
             }
-            _ = reactor.inner.shutdown.cancelled() => {
+            _ = reaction.inner.shutdown.cancelled() => {
                 tracing::info!(reflection = id, "reflection shutting down");
                 break;
             }
         };
 
-        if reactor.inner.shutdown.is_triggered() {
+        if reaction.inner.shutdown.is_triggered() {
             tracing::info!(reflection = id, "shutdown requested; ending reflection loop");
             break;
         }
@@ -249,7 +249,7 @@ async fn run(reactor: Reactor, registration: Registration) {
                 // doubles it toward the cap. Re-anchor whether or not anything actually
                 // consolidates, so a no-op tick cannot hot-spin the clock.
                 let now = Instant::now();
-                let last_activity = *reactor.inner.last_signal_at.lock().unwrap();
+                let last_activity = *reaction.inner.last_signal_at.lock().unwrap();
                 let anchor = last_reflection.unwrap_or(loop_started);
                 backoff_gap = if last_activity > anchor {
                     reflect_base.unwrap_or(super::DEFAULT_REFLECT_EVERY)
@@ -260,8 +260,8 @@ async fn run(reactor: Reactor, registration: Registration) {
 
                 workers.reap();
                 let scenes =
-                    super::recent_scenes(reactor.inner.memory.data_dir(), super::REWARM_WINDOW);
-                heartbeat::consolidate(&reactor, &scenes, id).await;
+                    super::recent_scenes(reaction.inner.memory.data_dir(), super::REWARM_WINDOW);
+                heartbeat::consolidate(&reaction, &scenes, id).await;
             }
             Wake::Turn => {}
         }
@@ -276,7 +276,7 @@ async fn run(reactor: Reactor, registration: Registration) {
         }
 
         workers.reap();
-        match turn(&reactor, id, &scene, &pending).await {
+        match turn(&reaction, id, &scene, &pending).await {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
@@ -299,7 +299,7 @@ async fn run(reactor: Reactor, registration: Registration) {
 /// worker reported, or another rung sent something — and it carries the projected window
 /// rather than a frontier.
 async fn turn(
-    reactor: &Reactor,
+    reaction: &Reaction,
     id: registry::SessionId,
     scene: &Scene,
     pending: &[String],
@@ -311,12 +311,12 @@ async fn turn(
     use crate::foundation::observatory::{EventKind, SessionKind};
     use crate::mind::memory::snapshot;
 
-    let data_dir = reactor.inner.memory.data_dir();
+    let data_dir = reaction.inner.memory.data_dir();
     // One file, whole — see `cognition.rs` for why the seed went.
     let system_prompt = crate::identity::reflection_prompt(data_dir).await;
 
     let session = Arc::new(
-        reactor
+        reaction
             .inner
             .agent
             .session(
@@ -333,7 +333,7 @@ async fn turn(
             .await?,
     );
 
-    reactor
+    reaction
         .inner
         .observatory
         .record(
@@ -347,7 +347,7 @@ async fn turn(
         )
         .await;
 
-    let window = snapshot::agent_window(&reactor.inner.memory, REFLECTION_AGENT, id).await;
+    let window = snapshot::agent_window(&reaction.inner.memory, REFLECTION_AGENT, id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")

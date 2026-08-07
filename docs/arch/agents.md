@@ -134,7 +134,7 @@ independently and surface upward. Handing work up to Cognition is not a contradi
 is Deliberation calling out, not something calling in.
 
 > **A naming correction, now carried out.** This rung existed for a while as the per-scene
-> follow-up the reactor drives each turn, under the name "cognition" — now the name of the
+> follow-up the reaction drives each turn, under the name "cognition" — now the name of the
 > sceneless brain below. Per-scene reading is *Deliberation*; the shared brain is
 > *Cognition*. The rename landed in the code; the unrelated *cognition tunables* (the
 > agentic model config) keep the word in its other sense.
@@ -374,5 +374,5 @@ what does not belong to its tempo, and the rung below absorbs the silence.
 
 [`core.md`](core.md) for the switchboard and glancing up ·
 [`data.md`](data.md) for what they read and write ·
-[`legacy/reactor-cognition-split.md`](legacy/reactor-cognition-split.md) for the three-tempo
+[`legacy/reaction-cognition-split.md`](legacy/reaction-cognition-split.md) for the three-tempo
 version this supersedes.

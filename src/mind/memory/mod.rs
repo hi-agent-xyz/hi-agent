@@ -1,7 +1,7 @@
 //! Memory substrate — the lossless raw signal store and snapshot building.
 //!
 //! `Memory` is a cheap-to-clone handle that holds the journal writer. Server
-//! handlers and the reactor share one instance. On-disk, signals live under
+//! handlers and the reaction share one instance. On-disk, signals live under
 //! `<data_dir>/memory/raw/` (see [`layout`]); blobs are co-located with the
 //! day-log that references them.
 

@@ -283,7 +283,7 @@ consistent for free.
 
 The view's *ref* is that path without the `.jsx` — `badminton-top10/leader`. Report
 every ref you saved back to the agent in your summary — that's the only way the agent
-can put your view on screen (it calls `show_view` with the ref). If you built several
+can put your view on screen (it calls `show` with the ref). If you built several
 views for one presentation, save each as its own file under the project folder and
 list all the refs in order, so the agent can walk them as a sequence.
 

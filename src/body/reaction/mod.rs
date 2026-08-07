@@ -1,4 +1,4 @@
-//! Reactor — the *mind*. Per-scene queues + one persistent session per scene.
+//! Reaction — the *mind*. Per-scene queues + one persistent session per scene.
 //!
 //! One mpsc per scene, one task per scene; turns run serially against a single
 //! Reaction ACP session that is opened and primed when the scene stands up, then
@@ -38,7 +38,7 @@
 //!
 //! The mind keeps a single voice, so it must never block the floor on slow
 //! work. When a turn needs research, multi-step tool use, or anything
-//! long-running, the mind calls the `delegate` tool with the task; the reactor
+//! long-running, the mind calls the `delegate` tool with the task; the reaction
 //! spawns a channel-mute [`workers`] session for it and keeps talking. The worker
 //! runs with the same substrate (memory, tools) but no voice of its own, and
 //! posts its result — or a question, if it gets stuck — back into this scene's
@@ -182,7 +182,7 @@ fn backoff_base() -> Duration {
         .unwrap_or(DEFAULT_VENDOR_PROBE)
 }
 
-/// The consecutive generic-failure count that flips the reactor into an informed
+/// The consecutive generic-failure count that flips the reaction into an informed
 /// backoff. `vendor_down_after`; `0`/unparseable → default.
 fn vendor_down_after() -> u32 {
     config::tunables::get(config::KEY_VENDOR_DOWN_AFTER)
@@ -281,7 +281,7 @@ enum VendorState {
 /// shared resource, so one scene detecting an outage steers all of them.
 ///
 /// The `note_*` writers return whether the transition warrants a *one-time* user
-/// notice (so the reactor announces "can't reach the model" exactly once),
+/// notice (so the reaction announces "can't reach the model" exactly once),
 /// mirroring the old flip-once contract.
 struct Vendor {
     state: std::sync::Mutex<VendorState>,
@@ -656,8 +656,8 @@ const REWARM_WINDOW: Duration = Duration::from_secs(7 * 24 * 3600);
 const SCENE_QUEUE_CAPACITY: usize = 64;
 
 /// One item in a scene's turn queue. Both a human utterance and a worker's
-/// report drive a reactor turn; they differ only in source. A human signal comes
-/// through [`Reactor::deliver_to_scene`]; a worker report is posted straight into
+/// report drive a reaction turn; they differ only in source. A human signal comes
+/// through [`Reaction::deliver_to_scene`]; a worker report is posted straight into
 /// the queue by the worker's drive task. Neither interrupts live speech — both
 /// wait their turn and are settled into one batch.
 enum LoopInput {
@@ -704,16 +704,16 @@ fn parse_delay(tok: &str) -> Option<Duration> {
 }
 
 #[derive(Clone)]
-pub struct Reactor {
-    inner: Arc<ReactorInner>,
+pub struct Reaction {
+    inner: Arc<ReactionInner>,
 }
 
-struct ReactorInner {
+struct ReactionInner {
     memory: Memory,
     agent: AgentLayer,
-    /// The reactor's single outbound seam: every channel signal it produces —
+    /// The reaction's single outbound seam: every channel signal it produces —
     /// text, synthesized speech, views — goes out here in transport-free form
-    /// (see [`outbound`]). A transport adapter binds these to a wire. The reactor
+    /// (see [`outbound`]). A transport adapter binds these to a wire. The reaction
     /// has no knowledge of HTTP, `Content-Type`, or response framing.
     out: mpsc::Sender<OutboundSignal>,
     /// Structured visibility into the session lifecycle. Turn, session,
@@ -747,7 +747,7 @@ struct ReactorInner {
     /// HTTP front's view bus. Read into each turn as `## On screen now` so the agent
     /// can see what it has shown — the screen is its own presentation surface, and
     /// without this it dismisses/re-shows views by guessing ids from the transcript.
-    /// Agent-authored views are emitted via `show_view` → binder → `ViewBus::apply`.
+    /// Agent-authored views are emitted via `show` → binder → `ViewBus::apply`.
     /// The vendor gate writes its one host-owned condition view directly through the
     /// idempotent `ViewBus::reconcile` path.
     views: crate::foundation::server::ViewBus,
@@ -767,7 +767,7 @@ struct ReactorInner {
     /// Wall-monotonic time of the most recent inbound human signal across **all**
     /// scenes — the global "fresh input" signal the single consolidated reflection
     /// clock reads to decide base-vs-backoff cadence (see [`reflection`]).
-    /// Written in [`Reactor::deliver_to_scene`]; read each reflection tick.
+    /// Written in [`Reaction::deliver_to_scene`]; read each reflection tick.
     last_signal_at: std::sync::Mutex<Instant>,
     /// Wakes the consolidated reflection loop when fresh input lands, so a scene
     /// that goes active after a long quiet doesn't wait out the backed-off gap
@@ -805,7 +805,7 @@ pub async fn start(
     views_dir: PathBuf,
     shutdown: Shutdown,
     server_ready: watch::Receiver<bool>,
-) -> anyhow::Result<Reactor> {
+) -> anyhow::Result<Reaction> {
     let (source, geom) = crate::mind::views::builtin::out_of_energy_view();
     let energy_view = ViewEnvelope {
         id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
@@ -822,8 +822,8 @@ pub async fn start(
         ),
     };
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
-    let reactor = Reactor {
-        inner: Arc::new(ReactorInner {
+    let reaction = Reaction {
+        inner: Arc::new(ReactionInner {
             memory,
             agent,
             out,
@@ -850,29 +850,29 @@ pub async fn start(
     // observed pause => the view is present; available => a retained stale copy is
     // removed while every unrelated view remains.
     let mut gate_energy = crate::foundation::energy_state::subscribe();
-    reactor.reconcile_energy_level().await;
+    reaction.reconcile_energy_level().await;
 
     // One process-wide gate owns the managed-energy lifecycle end to end. It applies
     // Pause/Resume to the vendor scheduler, owns the retained view, wakes held scene
     // loops, and polls the broker only while an observed 402 remains active.
-    let gate_reactor = reactor.clone();
+    let gate_reaction = reaction.clone();
     tokio::spawn(async move {
         loop {
-            gate_reactor.reconcile_energy_level().await;
+            gate_reaction.reconcile_energy_level().await;
             let wait = if crate::foundation::energy_state::is_out() {
                 tokio::select! {
                     event = gate_energy.recv() => Some(event),
                     _ = tokio::time::sleep(ENERGY_RECOVERY_POLL) => {
-                        let data_dir = gate_reactor.inner.memory.data_dir().to_path_buf();
+                        let data_dir = gate_reaction.inner.memory.data_dir().to_path_buf();
                         let _ = crate::foundation::broker::poll_energy_now(&data_dir).await;
                         None
                     }
-                    _ = gate_reactor.inner.shutdown.cancelled() => break,
+                    _ = gate_reaction.inner.shutdown.cancelled() => break,
                 }
             } else {
                 tokio::select! {
                     event = gate_energy.recv() => Some(event),
-                    _ = gate_reactor.inner.shutdown.cancelled() => break,
+                    _ = gate_reaction.inner.shutdown.cancelled() => break,
                 }
             };
             if matches!(
@@ -883,26 +883,26 @@ pub async fn start(
             }
         }
     });
-    let dispatch_reactor = reactor.clone();
+    let dispatch_reaction = reaction.clone();
 
     tokio::spawn(async move {
         while let Some(signal) = inbound_rx.recv().await {
             let scene = signal.scene.clone();
-            dispatch_reactor.deliver_to_scene(scene, signal).await;
+            dispatch_reaction.deliver_to_scene(scene, signal).await;
         }
-        tracing::warn!("reactor inbound channel closed; dispatch loop exiting");
+        tracing::warn!("reaction inbound channel closed; dispatch loop exiting");
     });
 
     // Warm-up requests: a scene-presence GET (a client opening a `/api/out/*`
     // long-poll) asks us to stand the scene up now, so its subprocess and ACP
     // session are open before the first utterance lands. `ensure_scene` is
     // idempotent — repeated GETs for an already-live scene are no-ops.
-    let warm_reactor = reactor.clone();
+    let warm_reaction = reaction.clone();
     tokio::spawn(async move {
         while let Some(scene) = warm_rx.recv().await {
-            warm_reactor.ensure_scene(scene).await;
+            warm_reaction.ensure_scene(scene).await;
         }
-        tracing::warn!("reactor warm channel closed; warm-up loop exiting");
+        tracing::warn!("reaction warm channel closed; warm-up loop exiting");
     });
 
     // Re-warm scenes with a genuinely fresh, still-live conversation, plus every
@@ -914,11 +914,11 @@ pub async fn start(
     // Each warm spawns a subprocess and an LLM call, so deduplicate before starting.
     // Cognition repeats the task-scene ensure at its boot wake as the correctness
     // backstop; this earlier pass is the latency optimization.
-    let rewarm_reactor = reactor.clone();
+    let rewarm_reaction = reaction.clone();
     tokio::spawn(async move {
-        let mut scenes = scenes_to_rewarm(rewarm_reactor.inner.memory.data_dir());
+        let mut scenes = scenes_to_rewarm(rewarm_reaction.inner.memory.data_dir());
         if let Ok(open) =
-            crate::mind::memory::tasks::open_tasks(rewarm_reactor.inner.memory.data_dir()).await
+            crate::mind::memory::tasks::open_tasks(rewarm_reaction.inner.memory.data_dir()).await
         {
             scenes.extend(task_report_scenes(&open));
         }
@@ -928,7 +928,7 @@ pub async fn start(
                 continue;
             }
             tracing::info!(scene = %scene, "re-warming scene");
-            rewarm_reactor.ensure_scene(scene).await;
+            rewarm_reaction.ensure_scene(scene).await;
         }
     });
 
@@ -947,7 +947,7 @@ pub async fn start(
         None,
         "tending the agent's own house".to_string(),
     );
-    reflection::spawn(reactor.clone(), reflection_reg);
+    reflection::spawn(reaction.clone(), reflection_reg);
 
     // Cognition: the sceneless brain every scene hands work up to.
     //
@@ -967,9 +967,9 @@ pub async fn start(
         None,
         "the shared brain".to_string(),
     );
-    cognition::spawn(reactor.clone(), cognition_reg);
+    cognition::spawn(reaction.clone(), cognition_reg);
 
-    Ok(reactor)
+    Ok(reaction)
 }
 
 /// Channels that do **not** count as a scene being alive. Exactly one: `clock`,
@@ -1260,7 +1260,7 @@ mod rewarm_tests {
     }
 }
 
-impl Reactor {
+impl Reaction {
     async fn reconcile_energy_view_for_scene(&self, scene: &Scene, out: bool) {
         let envelope = if out {
             self.inner.energy_view.clone()
@@ -1326,7 +1326,7 @@ impl Reactor {
 
         // A new signal never cancels the in-flight prompt: the serial per-scene
         // loop folds it into the next turn (fix-forward), and the lightweight
-        // reactor decides per turn whether to act or wait for the rest.
+        // reaction decides per turn whether to act or wait for the rest.
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
             tracing::error!(scene = %scene, error = %err, "scene inbound channel closed; dropping signal");
         }
@@ -1376,15 +1376,15 @@ impl Reactor {
         // loop's session opens so a tool call can never arrive with no route.
         let (control_tx, control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
 
-        // The scene's output beats: say/show_view tool calls (and the loop's turn
+        // The scene's output beats: say/show tool calls (and the loop's turn
         // brackets) flow to a dedicated sequencer task that paces speech and views.
         // Output bypasses the turn loop so it streams while the prompt still runs.
         let (beats_tx, beats_rx) = mpsc::channel::<sequencer::Beat>(SCENE_QUEUE_CAPACITY);
         {
-            let seq_reactor = self.clone();
+            let seq_reaction = self.clone();
             let seq_scene = scene.clone();
             tokio::spawn(async move {
-                sequencer::run_sequencer(seq_reactor, seq_scene, beats_rx).await;
+                sequencer::run_sequencer(seq_reaction, seq_scene, beats_rx).await;
             });
         }
 
@@ -1403,14 +1403,14 @@ impl Reactor {
             )
             .await;
 
-        let task_reactor = self.clone();
+        let task_reaction = self.clone();
         let task_scene = scene.clone();
         // The worker registry posts its reports back into this same queue, so
         // hand the loop a sender clone to seed it.
         let task_worker_inbound = tx.clone();
         tokio::spawn(async move {
             per_scene_loop(
-                task_reactor,
+                task_reaction,
                 task_scene,
                 rx,
                 task_worker_inbound,
@@ -1448,14 +1448,14 @@ enum Woke {
 /// only place an off-loop tool call touches them — through the control channel, no
 /// locking.
 async fn apply_control(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     workers: &mut workers::WorkerRegistry,
     ctl: SceneControl,
 ) -> Option<LoopInput> {
     match ctl {
         SceneControl::CreateWorker { id, task, kind, owner } => {
-            if let Err(err) = workers.spawn_with_id(reactor, id, task, kind, owner).await {
+            if let Err(err) = workers.spawn_with_id(reaction, id, task, kind, owner).await {
                 tracing::warn!(scene = %scene, error = %err, "failed to create a working session");
             }
             None
@@ -1464,7 +1464,7 @@ async fn apply_control(
 }
 
 async fn per_scene_loop(
-    reactor: Reactor,
+    reaction: Reaction,
     scene: Scene,
     mut inbound: mpsc::Receiver<LoopInput>,
     worker_inbound: mpsc::Sender<LoopInput>,
@@ -1474,7 +1474,7 @@ async fn per_scene_loop(
     // `None` while this loop runs, so a quiet tool channel can't end the scene.
     _control_keepalive: mpsc::Sender<SceneControl>,
     // The scene's output sequencer inlet. The loop sends each turn's TurnStart/
-    // TurnEnd brackets here; the `/mcp` handler sends the say/show_view beats
+    // TurnEnd brackets here; the `/mcp` handler sends the say/show beats
     // between them. The same sender is the keepalive for the sequencer task.
     beats: mpsc::Sender<sequencer::Beat>,
     // Registered synchronously by `get_or_create_scene`, before this task is spawned,
@@ -1482,17 +1482,17 @@ async fn per_scene_loop(
     // every loop exit unregisters it by scope.
     voice: registry::Registration,
 ) {
-    // The scene's persistent reactor session: opened and primed during startup when
+    // The scene's persistent reaction session: opened and primed during startup when
     // possible, then reused for every turn as the scene's continuous mind. Only this
     // loop touches it, so a plain local `Option` suffices. It is replaced only when a
     // turn fails: the `Err` arm below discards the possibly-wedged session and the next
     // turn cold-opens. Size is not a reason to replace it — the underlying agent
     // compacts its own context (see [`heartbeat`]).
-    let mut reactor_session: Option<Arc<AcpSession>> = None;
+    let mut reaction_session: Option<Arc<AcpSession>> = None;
     // What the live session has accumulated, for the observatory readout only. Reset
     // when the session is replaced, so the number always describes the session on air.
     let mut session_chars: usize = 0;
-    // The scene's live working sessions. Heavy/tool-using work the reactor
+    // The scene's live working sessions. Heavy/tool-using work the reaction
     // delegates runs here; workers post progress and results back through
     // `worker_inbound` into this same loop.
     let mut workers = workers::WorkerRegistry::new(scene.clone(), worker_inbound);
@@ -1501,21 +1501,21 @@ async fn per_scene_loop(
     // Taken once, for the life of the loop: the handle must be the same one the
     // attention lane fires, and `Presence::returns` keeps one per scene for exactly
     // that reason.
-    let came_back = reactor.inner.presence.returns(&scene);
+    let came_back = reaction.inner.presence.returns(&scene);
 
-    tracing::info!(scene = %scene, voice = voice_id, "reactor per-scene loop up");
+    tracing::info!(scene = %scene, voice = voice_id, "reaction per-scene loop up");
 
     // Pull both scene rungs' cold starts ahead of the person's first message. Reaction
     // and Deliberation each open a subprocess, initialize ACP/MCP, and pre-send their
     // system prompt. Input and recovery mail queue while the two independent warm-ups
     // run in parallel.
     let mut startup_warm_pending = false;
-    if reactor.wait_for_server_ready().await {
+    if reaction.wait_for_server_ready().await {
         startup_warm_pending = warm_scene_sessions(
-            &reactor,
+            &reaction,
             &scene,
             voice_id,
-            &mut reactor_session,
+            &mut reaction_session,
             &mut workers,
         )
         .await;
@@ -1541,13 +1541,13 @@ async fn per_scene_loop(
         // Wait for a turn-driving reason. The process-wide gate wakes this loop when
         // managed energy changes; the loop always re-reads the current vendor level.
         'wait: loop {
-            let gate = reactor.inner.vendor.scene_gate();
+            let gate = reaction.inner.vendor.scene_gate();
             if startup_warm_pending && matches!(gate, SceneGate::Go) {
                 startup_warm_pending = warm_scene_sessions(
-                    &reactor,
+                    &reaction,
                     &scene,
                     voice_id,
-                    &mut reactor_session,
+                    &mut reaction_session,
                     &mut workers,
                 )
                 .await;
@@ -1577,27 +1577,27 @@ async fn per_scene_loop(
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
-                    _ = reactor.inner.vendor_wake.notified() => Woke::Vendor,
+                    _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
                     _ = came_back.notified() => Woke::Returned,
                     _ = sleep_until(deadline) => Woke::Timer,
-                    _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
+                    _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
                 None => tokio::select! {
                     biased;
-                    _ = reactor.inner.vendor_wake.notified() => Woke::Vendor,
+                    _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
                     _ = came_back.notified() => Woke::Returned,
-                    _ = reactor.inner.shutdown.cancelled() => Woke::Shutdown,
+                    _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
             };
             match woke {
                 Woke::Inbound(Some(s)) => {
-                    enqueue(&reactor, &scene, &mut workers, &mut batch, s).await;
+                    enqueue(&reaction, &scene, &mut workers, &mut batch, s).await;
                     // While Down: collect mail without driving a turn. The
                     // probe cadence will attempt catch-up once the vendor
                     // recovers.
@@ -1631,7 +1631,7 @@ async fn per_scene_loop(
                     // Their coming back is itself the activity — otherwise the pulse
                     // that was already overdue fires straight after this turn.
                     last_activity = Instant::now();
-                    enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Returned).await;
+                    enqueue(&reaction, &scene, &mut workers, &mut batch, LoopInput::Returned).await;
                     break 'wait;
                 }
                 // Mail for the scene's voice. It drives a turn like any other
@@ -1642,7 +1642,7 @@ async fn per_scene_loop(
                 Woke::Mail => {
                     if let Some(mail) = registry::global().take_pending(voice_id) {
                         enqueue(
-                            &reactor,
+                            &reaction,
                             &scene,
                             &mut workers,
                             &mut batch,
@@ -1660,9 +1660,9 @@ async fn per_scene_loop(
                 Woke::Control(None) => continue 'wait,
                 Woke::Control(Some(ctl)) => {
                     if let Some(input) =
-                        apply_control(&reactor, &scene, &mut workers, ctl).await
+                        apply_control(&reaction, &scene, &mut workers, ctl).await
                     {
-                        enqueue(&reactor, &scene, &mut workers, &mut batch, input).await;
+                        enqueue(&reaction, &scene, &mut workers, &mut batch, input).await;
                         if !down {
                             break 'wait;
                         }
@@ -1701,7 +1701,7 @@ async fn per_scene_loop(
                         // Reset so a swallowed pulse doesn't re-fire in a tight loop.
                         last_activity = now;
                         tracing::info!(scene = %scene, "pulse fired");
-                        enqueue(&reactor, &scene, &mut workers, &mut batch, LoopInput::Pulse { note }).await;
+                        enqueue(&reaction, &scene, &mut workers, &mut batch, LoopInput::Pulse { note }).await;
                     }
                     if !batch.is_empty() {
                         break 'wait;
@@ -1717,7 +1717,7 @@ async fn per_scene_loop(
             continue;
         }
 
-        let was_down = reactor.inner.vendor.is_down();
+        let was_down = reaction.inner.vendor.is_down();
 
         // Commit-after-quiet: wait for things to settle before replying. Skipped
         // while down — a backoff retry should attempt catch-up ASAP rather than wait
@@ -1725,11 +1725,11 @@ async fn per_scene_loop(
         if !was_down {
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
-                    enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await;
+                    enqueue(&reaction, &scene, &mut workers, &mut batch, extra).await;
                 }
                 match timeout(RESPONSE_SETTLE, inbound.recv()).await {
                     // another utterance — keep collecting
-                    Ok(Some(extra)) => enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await,
+                    Ok(Some(extra)) => enqueue(&reaction, &scene, &mut workers, &mut batch, extra).await,
                     Ok(None) => break true, // inbound closed mid-settle
                     Err(_) => break false,  // quiet elapsed → commit to a reply
                 }
@@ -1743,12 +1743,12 @@ async fn per_scene_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
-        match run_reactor_turn(
-            &reactor,
+        match run_reaction_turn(
+            &reaction,
             &scene,
             &batch,
             &mut workers,
-            &mut reactor_session,
+            &mut reaction_session,
             voice_id,
             &beats,
         )
@@ -1760,7 +1760,7 @@ async fn per_scene_loop(
                 batch.clear();
                 // A reply landed — stop the presence owed-reply clock (no-op if
                 // nothing was owed, e.g. a pulse turn).
-                reactor.inner.presence.note_delivered(&scene);
+                reaction.inner.presence.note_delivered(&scene);
                 // Report what the session has accumulated, for the dashboard only.
                 // **Nothing thresholds on this.** Bounding a session's context is the
                 // underlying agent's job — it compacts in place, near its real window,
@@ -1768,7 +1768,7 @@ async fn per_scene_loop(
                 // for why the character-counting hot-swap that used to live here was
                 // deleted rather than retuned.
                 session_chars = session_chars.saturating_add(added);
-                reactor.inner.observatory.set_budget(&scene, session_chars).await;
+                reaction.inner.observatory.set_budget(&scene, session_chars).await;
             }
             Err(err) => {
                 tracing::warn!(scene = %scene, error = %err, "turn failed");
@@ -1776,18 +1776,18 @@ async fn per_scene_loop(
                     && crate::foundation::energy_state::is_out();
                 if !managed_402 {
                     session_chars = 0;
-                    reactor.inner.observatory.set_budget(&scene, 0).await;
+                    reaction.inner.observatory.set_budget(&scene, 0).await;
                     // Non-402 failures cold-open on the next attempt. A managed 402
                     // keeps the live session and its observatory identity in place.
-                    if let Some(dead) = reactor_session.take() {
-                        record_reactor_session_closed(&reactor, &scene, &dead).await;
+                    if let Some(dead) = reaction_session.take() {
+                        record_reaction_session_closed(&reaction, &scene, &dead).await;
                     }
                 }
                 // Key on the vendor state the turn just wrote, not the pre-turn one:
                 // a turn that flipped the vendor down holds the mail — a backoff drives
                 // it at the next retry deadline. Only a still-reachable blip (already
                 // apologized inside run_turn) drops it.
-                if reactor.inner.vendor.is_down() {
+                if reaction.inner.vendor.is_down() {
                     tracing::info!(scene = %scene, mail = batch.len(), "vendor down; holding mail for recovery");
                 } else {
                     batch.clear();
@@ -1808,9 +1808,9 @@ async fn per_scene_loop(
         // Up only: while down, mail is held deliberately and the backoff path owns
         // catch-up, so leave the queue for it. `try_recv` never surfaces a pulse
         // (those are generated inside `'wait`, not sent over `inbound`).
-        if !reactor.inner.vendor.is_down() {
+        if !reaction.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
-                enqueue(&reactor, &scene, &mut workers, &mut batch, extra).await;
+                enqueue(&reaction, &scene, &mut workers, &mut batch, extra).await;
             }
         }
     }
@@ -1832,11 +1832,11 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
-/// A reactor turn: the single fast conversational voice. An ACP session
-/// ([`SessionRole::Reactor`]) on the small model, carrying `reaction.md` as its system
-/// prompt and a `say` + `show_view` `/mcp` surface, with the agent's own built-in tools
+/// A reaction turn: the single fast conversational voice. An ACP session
+/// ([`SessionRole::Reaction`]) on the small model, carrying `reaction.md` as its system
+/// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
 /// switched off at session open. A turn is a single quick generation: it speaks by
-/// calling `say`, and may call `show_view` to put a view a worker already built on
+/// calling `say`, and may call `show` to put a view a worker already built on
 /// screen; both feed the sequencer. Text it merely types is working-out and is never
 /// voiced. The speed comes from the small model + a single generation, not from
 /// bypassing the adapter.
@@ -1844,28 +1844,28 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 /// Deliberation — the scene's reading and thinking — runs in parallel: the turn's human
 /// request is handed to it ([`workers::WorkerRegistry::deliberate`]),
 /// which works off the floor and reports back as an ordinary `LoopInput::Worker` the
-/// reactor voices on a later turn. So the reactor stays the single fast voice.
+/// reaction voices on a later turn. So the reaction stays the single fast voice.
 ///
 /// v1 keeps it simple — no mid-turn reorganization. A turn is one fast generation, so a
 /// human speaking during it just queues and the serial loop folds it into the next turn.
-async fn run_reactor_turn(
-    reactor: &Reactor,
+async fn run_reaction_turn(
+    reaction: &Reaction,
     scene: &Scene,
     batch: &[LoopInput],
     workers: &mut workers::WorkerRegistry,
-    reactor_session: &mut Option<Arc<AcpSession>>,
+    reaction_session: &mut Option<Arc<AcpSession>>,
     voice_id: registry::SessionId,
     beats: &mpsc::Sender<sequencer::Beat>,
 ) -> anyhow::Result<usize> {
-    let turn_id = reactor.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
+    let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
 
     // This turn's delta: whether the scene's own thinking is still running (so the
     // voice can say "still on it" rather than guess), presence, any barge-in note, and
     // the new signals. The projected state it all hangs off is assembled in
     // [`turn_context`].
     let worker_status = workers.render_status().await;
-    let presence_note = format!("## Presence\n{}", reactor.inner.presence.render(scene));
-    let interrupted = reactor
+    let presence_note = format!("## Presence\n{}", reaction.inner.presence.render(scene));
+    let interrupted = reaction
         .inner
         .interrupts
         .take_pending(scene)
@@ -1877,22 +1877,22 @@ async fn run_reactor_turn(
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
     // last turn is gone from this list now: the agent can see what's up and dismiss by
     // real id instead of guessing from the transcript.
-    let on_screen = render_on_screen(&reactor.inner.views.on_screen(scene).await);
+    let on_screen = render_on_screen(&reaction.inner.views.on_screen(scene).await);
 
-    // Open (or reuse) the persistent reactor session. `reaction.md` is prepended to its
+    // Open (or reuse) the persistent reaction session. `reaction.md` is prepended to its
     // first prompt; the session then remembers prior turns. Whether it is fresh no
     // longer changes what the turn carries — see [`turn_context`].
-    let session = match reactor_session {
+    let session = match reaction_session {
         Some(s) => s.clone(),
         None => {
-            let opened = open_reactor_session(reactor, scene, voice_id).await?;
-            *reactor_session = Some(opened.clone());
+            let opened = open_reaction_session(reaction, scene, voice_id).await?;
+            *reaction_session = Some(opened.clone());
             opened
         }
     };
 
     let context = turn_context(
-        &reactor.inner.memory,
+        &reaction.inner.memory,
         scene,
         voice_id,
         &worker_status,
@@ -1905,7 +1905,7 @@ async fn run_reactor_turn(
 
     // Captured before the prompt is handed over — it is moved into `drive_voice`.
     let context_chars = context.chars().count();
-    tracing::info!(scene = %scene, ctx_chars = context_chars, "reactor: prompting session");
+    tracing::info!(scene = %scene, ctx_chars = context_chars, "reaction: prompting session");
     let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
 
     let mut turn_error = None;
@@ -1918,12 +1918,12 @@ async fn run_reactor_turn(
             tracing::info!(
                 scene = %scene,
                 unspoken_chars = text.chars().count(),
-                "reactor: turn done"
+                "reaction: turn done"
             );
             true
         }
         Err(err) => {
-            tracing::warn!(scene = %scene, error = %err, "reactor turn failed");
+            tracing::warn!(scene = %scene, error = %err, "reaction turn failed");
             let err_text = err.to_string();
             let managed_402 = crate::foundation::energy_state::is_402_error(&err)
                 && crate::foundation::energy_state::is_out();
@@ -1947,12 +1947,12 @@ async fn run_reactor_turn(
                 // failures retain their own pause reason and have no energy UI.
                 Disposition::Pause => {
                     let first = if managed_402 {
-                        reactor.inner.vendor.note_energy_paused()
+                        reaction.inner.vendor.note_energy_paused()
                     } else {
-                        reactor.inner.vendor.note_permanent_paused()
+                        reaction.inner.vendor.note_permanent_paused()
                     };
                     if first {
-                        reactor.inner.vendor_wake.notify_waiters();
+                        reaction.inner.vendor_wake.notify_waiters();
                         tracing::warn!(
                             scene = %scene,
                             error = %err_text,
@@ -1964,7 +1964,7 @@ async fn run_reactor_turn(
                 // A blip. Absorb one, then back off — unchanged behaviour, and the
                 // default for any error nobody has classified.
                 Disposition::Retry => {
-                    let _ = reactor.inner.vendor.note_unreachable();
+                    let _ = reaction.inner.vendor.note_unreachable();
                 }
             }
             turn_error = Some(err);
@@ -1976,19 +1976,19 @@ async fn run_reactor_turn(
     let (done_tx, done_rx) = oneshot::channel();
     let _ = beats.send(sequencer::Beat::TurnEnd { done: done_tx }).await;
     let reply = done_rx.await.unwrap_or_default();
-    reactor.inner.interrupts.end_turn(scene, turn_id, &reply).await;
+    reaction.inner.interrupts.end_turn(scene, turn_id, &reply).await;
 
     if spoke {
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
-        let _ = reactor.inner.vendor.note_success();
+        let _ = reaction.inner.vendor.note_success();
         // Hand the turn's human request to Deliberation — the scene's reader — so it works
         // off the floor while the voice moves on; its report rides back as a WorkerReport
-        // the reactor voices on a later turn. Spawned once per scene, then followed up.
+        // the reaction voices on a later turn. Spawned once per scene, then followed up.
         // Nothing to hand off on a pure report/pulse turn.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
-            if let Err(e) = workers.deliberate(reactor, task).await {
+            if let Err(e) = workers.deliberate(reaction, task).await {
                 tracing::warn!(scene = %scene, error = %e, "deliberation spawn/follow-up failed");
             }
         }
@@ -2103,16 +2103,16 @@ mod turn_context_tests {
 /// Both operations are idempotent, so the managed-energy Resume edge can call this
 /// again after a startup pause without replacing sessions that are already live.
 async fn warm_scene_sessions(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     voice_id: registry::SessionId,
-    reactor_session: &mut Option<Arc<AcpSession>>,
+    reaction_session: &mut Option<Arc<AcpSession>>,
     workers: &mut workers::WorkerRegistry,
 ) -> bool {
     let blocked_before = crate::foundation::energy_state::is_out();
     let (_, deliberation) = tokio::join!(
-        warm_reactor_session(reactor, scene, voice_id, reactor_session),
-        workers.warm_deliberation(reactor),
+        warm_reaction_session(reaction, scene, voice_id, reaction_session),
+        workers.warm_deliberation(reaction),
     );
     if let Err(err) = deliberation {
         tracing::warn!(
@@ -2125,7 +2125,7 @@ async fn warm_scene_sessions(
     if blocked_after {
         // `SessionRun::wait` records the durable 402 edge. Apply its scheduler level
         // synchronously so queued input cannot race the global gate task.
-        reactor.reconcile_energy_level().await;
+        reaction.reconcile_energy_level().await;
     }
     blocked_before || blocked_after
 }
@@ -2133,13 +2133,13 @@ async fn warm_scene_sessions(
 /// Open and prime the scene's Reaction session before its first real turn.
 ///
 /// The prompt contains only the system layer. The sequencer is deliberately unarmed
-/// until `TurnStart`, so any accidental `say`/`show_view` output from this prompt is
+/// until `TurnStart`, so any accidental `say`/`show` output from this prompt is
 /// dropped. The first real turn still receives the fresh every-turn window and signals.
 ///
 /// Best-effort: a failed warm closes this session and leaves the slot empty, so the
 /// first real turn cold-opens normally.
-async fn warm_reactor_session(
-    reactor: &Reactor,
+async fn warm_reaction_session(
+    reaction: &Reaction,
     scene: &Scene,
     voice_id: registry::SessionId,
     held: &mut Option<Arc<AcpSession>>,
@@ -2152,7 +2152,7 @@ async fn warm_reactor_session(
         return;
     }
 
-    let session = match open_reactor_session(reactor, scene, voice_id).await {
+    let session = match open_reaction_session(reaction, scene, voice_id).await {
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
@@ -2180,32 +2180,32 @@ async fn warm_reactor_session(
                 error = %err,
                 "reaction warm-up failed; first turn will cold-start"
             );
-            record_reactor_session_closed(reactor, scene, &session).await;
+            record_reaction_session_closed(reaction, scene, &session).await;
         }
     }
 }
 
-async fn record_reactor_session_closed(
-    reactor: &Reactor,
+async fn record_reaction_session_closed(
+    reaction: &Reaction,
     scene: &Scene,
     session: &AcpSession,
 ) {
-    reactor
+    reaction
         .inner
         .observatory
         .record(
             Some(scene),
             EventKind::SessionClosed {
-                kind: SessionKind::Reactor,
+                kind: SessionKind::Reaction,
                 id: session.id().0.to_string(),
             },
         )
         .await;
 }
 
-/// Open a fresh **reactor** session for `scene`, carrying `reaction.md` as its system
+/// Open a fresh **reaction** session for `scene`, carrying `reaction.md` as its system
 /// prompt (prepended to the first prompt). It speaks via plain message text and gets a
-/// minimal `show_view`-only `/mcp` surface, so a turn is a single quick generation that
+/// minimal `show`-only `/mcp` surface, so a turn is a single quick generation that
 /// may also put one already-built view on screen.
 ///
 /// `voice_id` is the loop's own switchboard registration — the *same* id across every
@@ -2213,23 +2213,23 @@ async fn record_reactor_session_closed(
 /// have hosted it. Passing it is what puts `X-HI-Session-Id` on the session's MCP
 /// attach; without it the voice held a mailbox it had no identity to send from, and
 /// `send_message` answered "this session has none" to the one rung that talks most.
-async fn open_reactor_session(
-    reactor: &Reactor,
+async fn open_reaction_session(
+    reaction: &Reaction,
     scene: &Scene,
     voice_id: registry::SessionId,
 ) -> anyhow::Result<Arc<AcpSession>> {
     let session = Arc::new(
-        reactor
+        reaction
             .inner
             .agent
             .session(
                 scene,
-                SessionRole::Reactor,
+                SessionRole::Reaction,
                 Some(voice_id),
                 SessionOpts {
                     system_prompt: Some(
-                        crate::identity::reactor_system_prompt(
-                            reactor.inner.memory.data_dir(),
+                        crate::identity::reaction_system_prompt(
+                            reaction.inner.memory.data_dir(),
                         )
                         .await,
                     ),
@@ -2242,13 +2242,13 @@ async fn open_reactor_session(
             )
             .await?,
     );
-    reactor
+    reaction
         .inner
         .observatory
         .record(
             Some(scene),
             EventKind::SessionOpened {
-                kind: SessionKind::Reactor,
+                kind: SessionKind::Reaction,
                 id: session.id().0.to_string(),
             },
         )
@@ -2256,8 +2256,8 @@ async fn open_reactor_session(
     Ok(session)
 }
 
-/// Prompt the reactor session and return its spoken text (every `agent_message_chunk`
-/// concatenated). Tool calls — the reactor's only tool is `show_view` — are dispatched
+/// Prompt the reaction session and return its spoken text (every `agent_message_chunk`
+/// concatenated). Tool calls — the reaction's only tool is `show` — are dispatched
 /// server-side through hi-agent's `/mcp` (which emits the `Beat::Show`), so the drive
 /// loop just keeps streaming speech past them, exactly like a worker's loop; `wait()`
 /// then parks the session and surfaces any real prompt error (a gateway 402/429, a
@@ -2269,10 +2269,10 @@ async fn drive_voice(session: &AcpSession, scene: &Scene, context: String) -> an
         match update {
             SessionUpdate::Text(t) => text.push_str(&t),
             SessionUpdate::Thought(t) => {
-                tracing::debug!(scene = %scene, chars = t.chars().count(), "reactor: model is thinking");
+                tracing::debug!(scene = %scene, chars = t.chars().count(), "reaction: model is thinking");
             }
-            // `show_view` dispatches server-side via `/mcp`; the reactor keeps speaking.
-            // Its surface is `show_view`-only and the dispatch guard blocks any other
+            // `show` dispatches server-side via `/mcp`; the reaction keeps speaking.
+            // Its surface is `show`-only and the dispatch guard blocks any other
             // expression tool, so there is nothing to intercept here. The frame is
             // recorded at the wire by the tap, not read here — this rung interprets
             // nothing it is not about to say.
@@ -2284,7 +2284,7 @@ async fn drive_voice(session: &AcpSession, scene: &Scene, context: String) -> an
         scene = %scene,
         stop = ?result.stop_reason,
         reply_chars = text.chars().count(),
-        "reactor: turn complete"
+        "reaction: turn complete"
     );
     Ok(text)
 }
@@ -2300,7 +2300,7 @@ async fn drive_voice(session: &AcpSession, scene: &Scene, context: String) -> an
 /// Recorded at the moment the thing leaves — never buffered to make a tidier row.
 /// Best-effort, like every other append site: a failed write is logged and the
 /// reply still goes out; the log is not allowed to swallow a turn.
-async fn record_out(reactor: &Reactor, scene: &Scene, channel: Channel, body: String) {
+async fn record_out(reaction: &Reaction, scene: &Scene, channel: Channel, body: String) {
     let entry = JournalEntry::SignalOut {
         id: Uuid::now_v7().to_string(),
         ts: Utc::now(),
@@ -2308,9 +2308,9 @@ async fn record_out(reactor: &Reactor, scene: &Scene, channel: Channel, body: St
         scene: scene.clone(),
         body,
         media: None,
-        origin: Some(Origin::Reactor),
+        origin: Some(Origin::Reaction),
     };
-    if let Err(err) = reactor.inner.memory.journal.append(entry).await {
+    if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(scene = %scene, channel = %channel, error = %err, "journal append failed for outbound signal");
     }
 }
@@ -2320,7 +2320,7 @@ async fn record_out(reactor: &Reactor, scene: &Scene, channel: Channel, body: St
 /// output with nothing that could have caused it, and a restart cannot tell that
 /// the turn happened at all, let alone why.
 async fn record_in(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     channel: Channel,
     origin: Origin,
@@ -2336,19 +2336,19 @@ async fn record_in(
         media: None,
         origin: Some(origin),
     };
-    if let Err(err) = reactor.inner.memory.journal.append(entry).await {
+    if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(scene = %scene, channel = %channel, error = %err, "journal append failed for internal signal");
     }
 }
 
-async fn emit_thought_chunk(reactor: &Reactor, scene: &Scene, text: String) {
+async fn emit_thought_chunk(reaction: &Reaction, scene: &Scene, text: String) {
     // Per chunk, as it is written — not coalesced into one row per utterance. The
     // log's promise is durability before reaction, and buffering to make a neater
     // row would mean a crash mid-utterance loses words the agent already sent.
     // Readers re-join the chunks in `(ts, id)` order, which is exactly what the
     // merge already gives them.
-    record_out(reactor, scene, Channel::Text, text.clone()).await;
-    let _ = reactor
+    record_out(reaction, scene, Channel::Text, text.clone()).await;
+    let _ = reaction
         .inner
         .out
         .send(OutboundSignal::Text {
@@ -2365,7 +2365,7 @@ async fn emit_thought_chunk(reactor: &Reactor, scene: &Scene, text: String) {
 async fn perform(
     emit: interleave::Emit,
     synth_tx: &Option<mpsc::Sender<String>>,
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
 ) {
     match emit {
@@ -2374,14 +2374,14 @@ async fn perform(
                 let _ = tx.send(sentence).await;
             }
         }
-        interleave::Emit::ShowView { id, op, source, geometry } => {
-            emit_view(reactor, scene, id, op, source, geometry).await
+        interleave::Emit::Show { id, op, source, geometry } => {
+            emit_view(reaction, scene, id, op, source, geometry).await
         }
     }
 }
 
-async fn emit_end_of_utterance(reactor: &Reactor, scene: &Scene) {
-    let _ = reactor
+async fn emit_end_of_utterance(reaction: &Reaction, scene: &Scene) {
+    let _ = reaction
         .inner
         .out
         .send(OutboundSignal::TextEnd { scene: scene.clone() })
@@ -2403,7 +2403,7 @@ fn join_sections(sections: &[&str]) -> String {
 /// Render the agent's own screen as a prompt section: the ids currently displayed,
 /// z-order top-most last. Always emitted (unlike the empty-dropping sections) — when
 /// the screen is clear the agent needs to *know* it's clear so it stops firing blind
-/// dismisses at ids that are already gone. Kept to bare ids: the reactor shows/dismisses
+/// dismisses at ids that are already gone. Kept to bare ids: the reaction shows/dismisses
 /// by id, and the id is all it needs to target one.
 fn render_on_screen(ids: &[String]) -> String {
     use std::fmt::Write as _;
@@ -2511,14 +2511,14 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
 /// It is still journaled either way — the report crossed an agent boundary, and the
 /// log records what crossed regardless of where it went next.
 async fn enqueue(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     workers: &mut workers::WorkerRegistry,
     batch: &mut Vec<LoopInput>,
     input: LoopInput,
 ) {
     if let Some((channel, origin, body)) = journal_form(&input) {
-        record_in(reactor, scene, channel, origin, body).await;
+        record_in(reaction, scene, channel, origin, body).await;
     }
     if let LoopInput::Worker(report) = &input
         && let Some(owner) = report.owner
@@ -2529,7 +2529,7 @@ async fn enqueue(
         // (`from: None`) — so nothing observed it while only `send_message` was
         // instrumented. Recorded whether or not it landed: a report that missed its
         // owner is precisely what you would open the inspector to find.
-        reactor
+        reaction
             .inner
             .observatory
             .record(
@@ -2563,7 +2563,7 @@ async fn enqueue(
 /// said *and* that it was actually spoken aloud — which the text rows alone can't,
 /// since a turn with TTS unconfigured is silent and writes no span at all.
 async fn forward_frames(
-    reactor: Reactor,
+    reaction: Reaction,
     mut frames: mpsc::Receiver<Bytes>,
     out: mpsc::Sender<OutboundSignal>,
     scene: Scene,
@@ -2600,7 +2600,7 @@ async fn forward_frames(
     // nothing — so there is nothing to record.
     if total > 0 {
         record_out(
-            &reactor,
+            &reaction,
             &scene,
             Channel::Audio,
             format!("spoke the reply aloud ({codec}, {total} bytes)"),
@@ -2615,7 +2615,7 @@ async fn forward_frames(
 /// carries no module. A compile failure is logged and the view is dropped — the
 /// turn's speech already went out, so a broken view never breaks the reply.
 async fn emit_view(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     id: String,
     op: ViewOp,
@@ -2625,7 +2625,7 @@ async fn emit_view(
     let module_url = if op == ViewOp::Dismiss {
         None
     } else {
-        match reactor.inner.view_compiler.compile(&source).await {
+        match reaction.inner.view_compiler.compile(&source).await {
             Ok(url) => Some(url),
             Err(err) => {
                 tracing::error!(scene = %scene, id = %id, error = %err, "view compile failed; dropping view");
@@ -2647,8 +2647,8 @@ async fn emit_view(
     // saying it, and the screen persists across restarts, so a mind that can't read
     // back what it put up will put it up again.
     let line = render_view_line(&id, op, module_url.as_deref());
-    record_out(reactor, scene, Channel::View, line).await;
-    let _ = reactor
+    record_out(reaction, scene, Channel::View, line).await;
+    let _ = reaction
         .inner
         .out
         .send(OutboundSignal::View {

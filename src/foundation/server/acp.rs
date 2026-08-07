@@ -6,7 +6,7 @@
 //!   subscriber sees recent context), then live frames stream as they happen.
 //!
 //! This reads the [`AcpTap`](crate::foundation::acp::AcpTap) ring + feed; it never mutates
-//! it and knows nothing about the reactor. The inspect SPA's Sessions tab
+//! it and knows nothing about the reaction. The inspect SPA's Sessions tab
 //! groups the frames by `sessionId` to reconstruct per-session conversations,
 //! including the system prompt carried in the first `session/prompt`.
 

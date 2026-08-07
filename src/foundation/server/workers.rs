@@ -14,7 +14,7 @@
 //!   A restart ate an in-flight worker's report — the spawn frame is in the log, the
 //!   finish frame never came, and the work is gone (`docs/user-journeys/gaps.md` §3).
 //! - The same run: the agent said a price watch was "挂着呢,一直在盯" while
-//!   `GET /api/sessions` showed one reactor session and **zero workers** (§2). Silence
+//!   `GET /api/sessions` showed one reaction session and **zero workers** (§2). Silence
 //!   was read as health because there was no cheap way to check liveness.
 //!
 //! These handlers read [`registry::global()`] — the process switchboard, which is the

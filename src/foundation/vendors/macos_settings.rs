@@ -11,7 +11,7 @@
 //!   the native chrome and the face web view's `prefers-color-scheme`, so everything
 //!   re-themes together, live.
 //! - Language (`NSPopUpButton`) writes [`KEY_LANGUAGE`]; surfaced to the mind as one seed
-//!   line (`crate::identity::character_seed` / `reactor_system_prompt`), so it applies
+//!   line (`crate::identity::character_seed` / `reaction_system_prompt`), so it applies
 //!   on the next restart.
 //! - Attention gestures (checkbox) writes [`KEY_GESTURES`]; arming the global key tap is a
 //!   boot-time decision, so it too applies on restart.

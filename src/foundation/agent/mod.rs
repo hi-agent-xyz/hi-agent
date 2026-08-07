@@ -1,7 +1,7 @@
 //! Agent session layer — one ACP subprocess per session.
 //!
 //! Exposes each ACP session as an independent [`AcpSession`] handle. Callers
-//! (the reactor) never see subprocesses or the JSON-RPC connection — those stay
+//! (the reaction) never see subprocesses or the JSON-RPC connection — those stay
 //! internal to [`AcpProcess`], which the returned handle owns.
 //!
 //! **Granularity: one subprocess per session.** Each [`session`](AgentLayer::session)
@@ -23,20 +23,20 @@ use crate::types::Scene;
 
 /// Which tool surface a session gets, carried as `X-HI-Role` on its MCP attach so
 /// the `/mcp` server exposes the right tools (see [`crate::foundation::mcp`]). The
-/// reactor is the single fast conversational voice that owns interaction: it speaks
-/// via plain message text and gets a minimal `show_view`-only surface to put
+/// reaction is the single fast conversational voice that owns interaction: it speaks
+/// via plain message text and gets a minimal `show`-only surface to put
 /// cognition's artifacts on screen — the heavy work is delegated to workers. A
 /// worker can only raise a question; a reflection session ("sleep") only
 /// reads/writes derived memory (episodes, facets) and has no voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionRole {
-    /// The always-present **reactor** — the fast conversational voice. A turn is a
+    /// The always-present **reaction** — the fast conversational voice. A turn is a
     /// single quick generation on the small model; it speaks via its plain message
-    /// text (`agent_message_chunk`) and may call only `show_view` to display a view
+    /// text (`agent_message_chunk`) and may call only `show` to display a view
     /// a worker already built. Real work is delegated to [`Worker`](Self::Worker)
     /// sessions (cognition).
     #[default]
-    Reactor,
+    Reaction,
     Worker,
     /// The scene's reading and thinking rung.
     Deliberation,
@@ -48,7 +48,7 @@ pub enum SessionRole {
 impl SessionRole {
     fn as_str(self) -> &'static str {
         match self {
-            SessionRole::Reactor => "reactor",
+            SessionRole::Reaction => "reaction",
             SessionRole::Worker => "worker",
             SessionRole::Reflection => "reflection",
             SessionRole::Deliberation => "deliberation",
@@ -122,8 +122,8 @@ impl AgentLayer {
         opts: SessionOpts,
     ) -> anyhow::Result<AcpSession> {
         // Every role attaches hi-agent's tool surface, routed server-side by the
-        // X-HI-Role header. The reactor's surface is deliberately tiny — `show_view`
-        // only (see [`crate::foundation::mcp::tools_for_role`]) — so a reactor turn
+        // X-HI-Role header. The reaction's surface is deliberately tiny — `show`
+        // only (see [`crate::foundation::mcp::tools_for_role`]) — so a reaction turn
         // is a single quick generation that speaks via message text and, at most,
         // puts one already-built view on screen; the loop-heavy work is a worker's.
         let mcp_servers = {
@@ -158,14 +158,14 @@ impl AgentLayer {
         let mut env = spawn.env.clone();
         let cfg = AgentConfig::resolve(&self.inner.data_dir);
         env.extend(cfg.auth_child_env());
-        // The reactor runs the **smart** model (its job is judging the edge of what it
+        // The reaction runs the **smart** model (its job is judging the edge of what it
         // knows; its speed is a single tools-off generation, not a lighter model — see
-        // `AgentConfig::reactor_model`). This override pins that explicitly rather than
-        // inheriting whatever `auth_child_env` set, so the reactor's model is decided in
+        // `AgentConfig::reaction_model`). This override pins that explicitly rather than
+        // inheriting whatever `auth_child_env` set, so the reaction's model is decided in
         // one place even if the background-slot logic changes. Replace (not append) the
         // entry so there's no duplicate `ANTHROPIC_MODEL` for the child to disambiguate.
-        if matches!(role, SessionRole::Reactor) {
-            if let Some(model) = cfg.reactor_model() {
+        if matches!(role, SessionRole::Reaction) {
+            if let Some(model) = cfg.reaction_model() {
                 env.retain(|(k, _)| k.as_str() != "ANTHROPIC_MODEL");
                 env.push(("ANTHROPIC_MODEL".to_string(), model));
             }
@@ -196,7 +196,7 @@ impl AgentLayer {
         ))
     }
 
-    /// Reap every live ACP subprocess this layer has spawned (reactor, worker and
+    /// Reap every live ACP subprocess this layer has spawned (reaction, worker and
     /// reflection sessions all flow through [`session`](Self::session)). Used on
     /// host shutdown so no `node`/`claude` children are orphaned. Bound the call
     /// with a timeout — a wedged child should not hang process exit.

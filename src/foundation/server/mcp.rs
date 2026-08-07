@@ -1,6 +1,6 @@
 //! HTTP glue for the MCP tool endpoint.
 //!
-//! Binds the MCP "Streamable HTTP" transport to the reactor's tool carrier
+//! Binds the MCP "Streamable HTTP" transport to the reaction's tool carrier
 //! ([`crate::foundation::mcp`]). A POST carries one JSON-RPC message; we route by the
 //! `X-HI-Scene`/`X-HI-Role`/`X-HI-Worker-Id` headers a session's MCP attach sets
 //! (see `agent::AgentLayer::session`). A request gets a single `application/json`

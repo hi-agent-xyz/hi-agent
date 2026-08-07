@@ -1,4 +1,4 @@
-//! Output sequencer — turns the mind's `say`/`show_view` tool calls into paced
+//! Output sequencer — turns the mind's `say`/`show` tool calls into paced
 //! speech and views.
 //!
 //! With output expressed as tool calls (not parsed from the reply stream), the
@@ -6,7 +6,7 @@
 //! loop, which is busy awaiting the prompt. So each scene runs one sequencer
 //! task that owns the turn's TTS span and view pacing. It receives an ordered run
 //! of [`Beat`]s — a `TurnStart`, then the turn's `Say`/`Show` calls in arrival
-//! order, then a `TurnEnd` — and renders them onto the reactor's outbound seam.
+//! order, then a `TurnEnd` — and renders them onto the reaction's outbound seam.
 //!
 //! The buffer is the whole point: a tool call is accepted into this queue and
 //! acked immediately, so the mind never waits on synthesis or client playback. A
@@ -24,7 +24,7 @@ use crate::body::capabilities::tts::{self, TtsStream};
 use crate::foundation::segment::{Segmenter, Terminator};
 use crate::types::{Channel, Geometry, Scene, ViewOp};
 
-use super::{OutboundSignal, Reactor, interleave};
+use super::{OutboundSignal, Reaction, interleave};
 
 /// Quiet window after the last `Say` before the open /thought utterance is
 /// closed. Within-utterance chunk gaps are sub-second; a gap this long means the
@@ -46,7 +46,7 @@ pub(super) enum Beat {
 
 /// One scene's sequencer task. Drains `beats` for the life of the scene, holding
 /// the current turn's pacing state between beats.
-pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mpsc::Receiver<Beat>) {
+pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: mpsc::Receiver<Beat>) {
     // Per-turn state, reset on each TurnStart. The TTS span is opened lazily on the
     // first `Say` so a silent turn emits no audio span at all.
     let mut turn: u64 = 0;
@@ -76,7 +76,7 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
                     None => break,
                 },
                 _ = tokio::time::sleep_until(deadline) => {
-                    super::emit_end_of_utterance(&reactor, &scene).await;
+                    super::emit_end_of_utterance(&reaction, &scene).await;
                     quiet_deadline = None;
                     continue;
                 }
@@ -106,24 +106,24 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
                 // with the interruption note in hand. The cut turn keeps streaming
                 // beats (fix-forward never cancels the prompt), so every trailing
                 // one is dropped here until the next TurnStart clears the flag.
-                if reactor.inner.interrupts.should_skip(&scene, turn).await {
+                if reaction.inner.interrupts.should_skip(&scene, turn).await {
                     if synth_tx.take().is_some() {
                         synth_handle = None;
                     }
                     if quiet_deadline.take().is_some() {
-                        super::emit_end_of_utterance(&reactor, &scene).await;
+                        super::emit_end_of_utterance(&reaction, &scene).await;
                     }
                     continue;
                 }
                 if synth_tx.is_none() {
-                    open_tts(&reactor, &scene, turn, &mut synth_tx, &mut synth_handle).await;
+                    open_tts(&reaction, &scene, turn, &mut synth_tx, &mut synth_handle).await;
                 }
                 full_reply.push_str(&text);
                 for emit in interleave::speak_emits(&text, &mut splitter, Instant::now()) {
-                    super::perform(emit, &synth_tx, &reactor, &scene).await;
+                    super::perform(emit, &synth_tx, &reaction, &scene).await;
                 }
                 // /thought gets the raw chunk; TTS gets coalesced sentences (above).
-                super::emit_thought_chunk(&reactor, &scene, text).await;
+                super::emit_thought_chunk(&reaction, &scene, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
             Beat::Show { id, op, source, geometry } => {
@@ -131,11 +131,11 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
                 if !armed {
                     continue;
                 }
-                if reactor.inner.interrupts.should_skip(&scene, turn).await {
+                if reaction.inner.interrupts.should_skip(&scene, turn).await {
                     continue;
                 }
                 for emit in interleave::view_emits(&mut splitter, id, op, source, geometry) {
-                    super::perform(emit, &synth_tx, &reactor, &scene).await;
+                    super::perform(emit, &synth_tx, &reaction, &scene).await;
                 }
             }
             Beat::TurnEnd { done } => {
@@ -154,7 +154,7 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
                 // Close the /thought utterance for this turn, unless the quiet
                 // timer already did.
                 if quiet_deadline.take().is_some() {
-                    super::emit_end_of_utterance(&reactor, &scene).await;
+                    super::emit_end_of_utterance(&reaction, &scene).await;
                 }
                 if !full_reply.trim().is_empty() {
                     crate::foundation::channel_log::outbound(Channel::Text, &scene, full_reply.trim());
@@ -181,7 +181,7 @@ pub(super) async fn run_sequencer(reactor: Reactor, scene: Scene, mut beats: mps
 /// headphones mid-conversation stops being spoken to on the next `say`, with no
 /// state to reconcile.
 async fn open_tts(
-    reactor: &Reactor,
+    reaction: &Reaction,
     scene: &Scene,
     turn: u64,
     synth_tx: &mut Option<mpsc::Sender<String>>,
@@ -190,26 +190,26 @@ async fn open_tts(
     if !tts::available() {
         return;
     }
-    if !reactor.inner.presence.reachable(scene).speaker {
+    if !reaction.inner.presence.reachable(scene).speaker {
         tracing::debug!(scene = %scene, turn, "no speaker attached; not synthesizing");
         return;
     }
-    match tts::start(reactor.inner.memory.data_dir()).await {
+    match tts::start(reaction.inner.memory.data_dir()).await {
         Ok(TtsStream { mime, text, frames }) => {
-            let out = reactor.inner.out.clone();
+            let out = reaction.inner.out.clone();
             let codec = mime.clone();
             let _ = out
                 .send(OutboundSignal::AudioBegin { scene: scene.clone(), turn, codec: mime })
                 .await;
             // Stamp the voice span so a barge-in can be inferred against it
             // ("speech arrived while this turn was probably still sounding").
-            reactor
+            reaction
                 .inner
                 .interrupts
                 .audio_began(scene, turn, tokio::time::Instant::now())
                 .await;
             let handle = tokio::spawn(super::forward_frames(
-                reactor.clone(),
+                reaction.clone(),
                 frames,
                 out,
                 scene.clone(),
@@ -221,7 +221,7 @@ async fn open_tts(
         }
         Err(err) => {
             crate::foundation::energy_state::note_402_error(
-                reactor.inner.memory.data_dir(),
+                reaction.inner.memory.data_dir(),
                 &err,
             );
             tracing::warn!(scene = %scene, error = %err, "TTS session start failed; turn is silent");
@@ -229,7 +229,7 @@ async fn open_tts(
     }
 }
 
-/// Resolve a `show_view` call's raw arguments to an envelope id and op: an unknown
+/// Resolve a `show` call's raw arguments to an envelope id and op: an unknown
 /// or missing op defaults to `show`; a missing id is synthesized (no animation
 /// continuity, since only a reused id animates).
 fn resolve_view(id: Option<String>, op: &str) -> (String, ViewOp) {

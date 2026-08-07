@@ -1,4 +1,4 @@
-//! The bridge between the MCP tool server and each scene's reactor loop.
+//! The bridge between the MCP tool server and each scene's reaction loop.
 //!
 //! The mind (and its workers) express side-effects as MCP tool calls over the
 //! `/mcp` HTTP endpoint (see [`crate::foundation::mcp`]). Those calls arrive on a different
@@ -23,7 +23,7 @@ use super::sequencer::Beat;
 /// accidental dumps and leaves room for a few ordinary sentences.
 pub(super) const SAY_MAX_CHARS: usize = 240;
 
-/// One command the MCP tool server routes to a scene's reactor loop.
+/// One command the MCP tool server routes to a scene's reaction loop.
 ///
 /// Once there were four: two for dispatching work and two for a worker to reach the
 /// voice. The reaching ones are gone — a worker addresses its owner with the one verb
@@ -46,7 +46,7 @@ pub enum SceneControl {
 
 /// Per-scene handle the MCP handler dispatches to. Cheap to clone. Carries two
 /// senders: `control` for loop-applied side-effects (creating a worker), and
-/// `mouth` for output (say/show_view) that the scene's sequencer renders directly
+/// `mouth` for output (say/show) that the scene's sequencer renders directly
 /// — output bypasses the turn loop so it streams while the prompt is still
 /// running.
 #[derive(Clone)]
@@ -154,7 +154,7 @@ impl ToolSink {
         })
     }
 
-    /// Show a view (the `show_view` tool): queue it onto the sequencer, which
+    /// Show a view (the `show` tool): queue it onto the sequencer, which
     /// paces it to the surrounding narration. `op` is `show`/`replace`/`dismiss`;
     /// `id` may be omitted (one is synthesized). `geometry` is the view's declared
     /// placement (or `None` for the host's floor layout).
@@ -162,7 +162,7 @@ impl ToolSink {
     /// Unlike speech this is never gated: a view is retained scene state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
     /// into an empty room costs nothing and is waiting when they arrive.
-    pub async fn show_view(
+    pub async fn show(
         &self,
         id: Option<String>,
         op: String,
@@ -175,12 +175,12 @@ impl ToolSink {
             .beats
             .send(Beat::Show { id, op, source, geometry })
             .await
-            .map_err(|_| anyhow::anyhow!("scene sequencer gone; show_view dropped"))
+            .map_err(|_| anyhow::anyhow!("scene sequencer gone; show dropped"))
     }
 }
 
 /// Shared scene→sink table. Created once in `lib.rs`, shared (cloneable handle)
-/// between the HTTP front's `/mcp` handler and the reactor that registers sinks.
+/// between the HTTP front's `/mcp` handler and the reaction that registers sinks.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     inner: Arc<Mutex<HashMap<Scene, ToolSink>>>,

@@ -5,7 +5,7 @@
 //! `foundation`. Holds:
 //! - `capabilities` — the senses and actions (STT/TTS, vision, input, screen, …),
 //!   over the vendor adapters in `crate::foundation::vendors`.
-//! - `reactor` — the per-scene loops: turn-taking, the pulse and reflection clocks,
+//! - `reaction` — the per-scene loops: turn-taking, the pulse and reflection clocks,
 //!   the loader/assembler, the output sequencer, and delegated workers.
 //! - `reflex` — taught teach-and-fire quick actions that run with no model in the
 //!   loop (the cerebellum fast-path).
@@ -18,5 +18,5 @@
 pub mod capabilities;
 pub mod gesture;
 pub mod presence;
-pub mod reactor;
+pub mod reaction;
 pub mod reflex;
