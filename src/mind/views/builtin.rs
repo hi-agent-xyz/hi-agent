@@ -75,12 +75,13 @@ const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
 /// The review surfaces: one per kind of thing the agent accumulates, each paired with a
-/// `.geom.json` that puts it up `center/wide` because every one of them is a list.
+/// `.geom.json`. Most are focused `center/wide` lists; Tasks owns the full canvas because
+/// its category rail and working list form an operational workspace rather than a glance.
 ///
 /// They are siblings of `people-review`, and they exist for the same reason it does — the
 /// agent's own state was only inspectable by reading files over its shoulder, so nothing
 /// could be corrected. Each surface carries only the verbs its endpoint can honestly
-/// honour: tasks close and drop, a skill deletes, a facet is rewritten; workers, tools and
+/// honour: tasks change status, a skill deletes, a facet is rewritten; workers, tools and
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
 const REVIEW_VIEWS: &[(&str, &str, &str)] = &[
@@ -183,6 +184,14 @@ mod tests {
                 "{name}.geom.json must parse"
             );
         }
+    }
+
+    #[test]
+    fn the_task_review_owns_the_full_canvas() {
+        let (_, _, geom) = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "tasks").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(geom).unwrap();
+        assert_eq!(parsed["region"], "fill");
+        assert_eq!(parsed["size"], "fill");
     }
 
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint

@@ -15,7 +15,7 @@
 //! 2. **A drain.** Every live agent is driven by something. Reaction has its scene loop,
 //!    workers have `drive_worker`, Reflection has a one-shot pass. A registered rung with
 //!    nothing reading its inbox is a mailbox that reports "delivered" and forgets.
-//! 3. **A window.** Invariant 4: open tasks are *projected, not retrieved*. The ledger's
+//! 3. **A window.** Invariant 4: active tasks are *projected, not retrieved*. The ledger's
 //!    own writer going to look for it is how a duty goes missing without anyone knowing.
 //! 4. **A host for its workers.** `create_worker` needs somewhere to run them; without
 //!    this, a sceneless rung borrows an arbitrary scene and quietly files its work under
@@ -146,7 +146,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     // woken only by mail, while the pulse woke the rungs that cannot read it — so a
     // standing duty survived a restart on disk and nothing ever picked it back up.
     // `docs/arch/agents.md` has always specified the recovery sequence ("the glance-up
-    // fires → Cognition wakes → reads open tasks → …"); this is the half of it that was
+    // fires → Cognition wakes → reads active tasks → …"); this is the half of it that was
     // missing. It is **not** a scheduler and never becomes one: a clock module was
     // designed, deferred, and then declined outright — scheduling past this cadence is
     // the agent's own, built with the shell it already has
@@ -394,21 +394,21 @@ async fn sleep_until_opt(at: Option<Instant>) {
 /// What a timer wake carries into the turn, or `None` when nothing is owed.
 ///
 /// Bare situational facts, exactly like the scene pulse — *what a quiet moment is for*
-/// is `cognition.md`'s job, and it already says: read down the open tasks, check the
+/// is `cognition.md`'s job, and it already says: read down the active tasks, check the
 /// things we own are actually alive, and read each check's real output because a probe
 /// that returns nothing means **down**, not fine. That guidance has been in the prompt
 /// since before anything could deliver a pulse to this rung.
 async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option<String> {
     let data_dir = reaction.inner.memory.data_dir();
-    let open = match crate::mind::memory::tasks::open_tasks(data_dir).await {
-        Ok(open) => open,
+    let active = match crate::mind::memory::tasks::active_tasks(data_dir).await {
+        Ok(active) => active,
         // **Unreadable is not empty.** A ledger that cannot be read is a reason to wake
         // the one rung that can do something about it, not a reason to stay quiet — the
         // opposite reading is the whole failure this arm exists to fix, one level up.
         Err(err) => {
             tracing::warn!(error = %err, "cognition could not read the ledger; waking anyway");
             return Some(super::render_pulse(
-                "I couldn't read the task ledger just now — whatever is open is not in front of me",
+                "I couldn't read the task ledger just now — whatever is active is not in front of me",
             ));
         }
     };
@@ -419,15 +419,15 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
         // user-facing delivery has a reachable voice after restart. `ensure_scene`
         // registers the voice synchronously; its ACP warm-up may continue while mail
         // safely queues behind it.
-        for scene in super::task_report_scenes(&open) {
+        for scene in super::task_report_scenes(&active) {
             reaction.ensure_scene(scene).await;
         }
     }
 
-    let count = open.len();
+    let count = active.len();
     let note = note_for(count, first, span);
     tracing::info!(
-        open = count,
+        active = count,
         first_wake = first,
         waking = note.is_some(),
         "cognition timer fired"
@@ -438,8 +438,8 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
 /// The pure half of [`glance_note`] — split out so the two things worth pinning can be
 /// tested without standing up a `Reaction`: that an empty ledger produces **no wake at
 /// all**, and that the boot note says a restart happened.
-fn note_for(open: usize, first: bool, span: Duration) -> Option<String> {
-    if open == 0 {
+fn note_for(active: usize, first: bool, span: Duration) -> Option<String> {
+    if active == 0 {
         return None;
     }
     let m = span.as_secs() / 60;

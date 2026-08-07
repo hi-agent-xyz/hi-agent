@@ -29,8 +29,10 @@
 //! The only mechanical guarantee needed is that a reader never sees a half-written
 //! file, so [`update_facet`] writes to a temp sibling and atomically renames.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
+use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
 use super::layout;
@@ -81,10 +83,35 @@ pub async fn update_facet(
     let dir = layout::facets_dir(data_dir).join(&dim_s).join(&subj_s);
     tokio::fs::create_dir_all(&dir).await?;
     let path = dir.join(FACET_FILE);
+    let is_new = !tokio::fs::try_exists(&path).await.unwrap_or(false);
+    let content = if dim_s == "tasks" && is_new {
+        task_with_created_at(content)
+    } else {
+        Cow::Borrowed(content)
+    };
     let tmp = dir.join(format!(".{FACET_FILE}.tmp-{}", Uuid::now_v7().simple()));
-    tokio::fs::write(&tmp, content).await?;
+    tokio::fs::write(&tmp, content.as_ref()).await?;
     tokio::fs::rename(&tmp, &path).await?;
     Ok(format!("{dim_s}/{subj_s}"))
+}
+
+/// A task's first write is its creation instant. Stamp it at the storage boundary
+/// so generic `update_facet` callers cannot accidentally create an undated task.
+fn task_with_created_at(content: &str) -> Cow<'_, str> {
+    let stamp = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    if let Some(rest) = content.strip_prefix("---\n")
+        && let Some(end) = rest.find("\n---\n")
+    {
+        let frontmatter = &rest[..end];
+        if frontmatter.lines().any(|line| {
+            line.split_once(':')
+                .is_some_and(|(key, _)| key.trim() == "created_at")
+        }) {
+            return Cow::Borrowed(content);
+        }
+        return Cow::Owned(format!("---\ncreated_at: {stamp}\n{rest}"));
+    }
+    Cow::Owned(format!("---\ncreated_at: {stamp}\n---\n\n{content}"))
 }
 
 /// Every facet that exists, as `<dim>/<subject>` refs, sorted. Seeded into the
@@ -183,6 +210,48 @@ mod tests {
         assert_eq!(r, "people/alice");
         let got = read_facet(dir.path(), "people", "Alice").await.unwrap();
         assert_eq!(got.as_deref(), Some("She likes tea. [ep 2026-06-13-aa]"));
+    }
+
+    #[tokio::test]
+    async fn a_new_task_is_stamped_once_at_the_storage_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        update_facet(
+            dir.path(),
+            "tasks",
+            "Ship the deck",
+            "---\nstatus: todo\ntitle: Ship the deck\n---\n",
+        )
+        .await
+        .unwrap();
+        let first = read_facet(dir.path(), "tasks", "ship-the-deck")
+            .await
+            .unwrap()
+            .unwrap();
+        let created = first
+            .lines()
+            .find(|line| line.starts_with("created_at: "))
+            .unwrap()
+            .to_owned();
+
+        update_facet(
+            dir.path(),
+            "tasks",
+            "Ship the deck",
+            &format!("---\nstatus: doing\n{created}\ntitle: Ship the deck\n---\n"),
+        )
+        .await
+        .unwrap();
+        let second = read_facet(dir.path(), "tasks", "ship-the-deck")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            second
+                .lines()
+                .filter(|line| line.starts_with("created_at: "))
+                .collect::<Vec<_>>(),
+            [created.as_str()]
+        );
     }
 
     #[tokio::test]
