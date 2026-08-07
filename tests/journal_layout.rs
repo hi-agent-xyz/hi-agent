@@ -72,6 +72,42 @@ async fn appends_route_by_channel_and_recent_merges_in_ts_id_order() {
 }
 
 #[tokio::test]
+async fn legacy_reactor_origin_loads_as_reaction() {
+    let dir = tempdir().expect("tempdir");
+    let mem = Memory::open(dir.path()).await.expect("memory");
+    let scene = Scene("alice@phone".into());
+    let ts = Utc.with_ymd_and_hms(2026, 6, 13, 10, 5, 0).unwrap();
+    let log = layout::channel_log_path(mem.data_dir(), &scene, Channel::Text, ts);
+
+    tokio::fs::create_dir_all(log.parent().unwrap()).await.unwrap();
+    let legacy = serde_json::json!({
+        "kind": "signal_out",
+        "id": "legacy",
+        "ts": ts,
+        "channel": "text",
+        "scene": "alice@phone",
+        "body": "reply",
+        "origin": "reactor",
+    });
+    tokio::fs::write(&log, format!("{legacy}\n")).await.unwrap();
+
+    let got = mem
+        .journal
+        .recent(Some(&scene), ts - chrono::Duration::minutes(1), 10)
+        .await
+        .unwrap();
+    assert_eq!(got.len(), 1, "legacy row is not skipped");
+    match &got[0] {
+        JournalEntry::SignalOut { origin, .. } => assert_eq!(*origin, Some(Origin::Reaction)),
+        JournalEntry::SignalIn { .. } => panic!("expected outbound legacy row"),
+    }
+
+    let encoded = serde_json::to_string(&got[0]).unwrap();
+    assert!(encoded.contains(r#""origin":"reaction""#));
+    assert!(!encoded.contains(r#""origin":"reactor""#));
+}
+
+#[tokio::test]
 async fn store_blob_writes_relative_grid_path() {
     let dir = tempdir().expect("tempdir");
     let mem = Memory::open(dir.path()).await.expect("memory");

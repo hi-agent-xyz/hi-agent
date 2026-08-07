@@ -182,6 +182,8 @@ pub struct Signal {
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     Human,
+    /// `alias` keeps journals written before the reactor-to-reaction rename loadable.
+    #[serde(alias = "reactor")]
     Reaction,
     Worker,
     /// The host process itself — the pulse. No mind produced it; the machinery
