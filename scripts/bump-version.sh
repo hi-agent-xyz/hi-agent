@@ -2,12 +2,11 @@
 #
 # Bump the project version everywhere it is committed, in one shot.
 #
-# The version is a committed value — there is no build-time generation. `make dmg`
-# just copies the static scripts/Info.plist, so packaging does nothing
-# version-related. This script is edit-only: it does NOT commit or tag.
+# VERSION is the source of truth. This script synchronizes the committed files
+# that cannot read it directly at build time. It does NOT commit or tag.
 #
 #   scripts/bump-version.sh 0.2.0
-#   make bump-version VERSION=0.2.0
+#   make bump-version V=0.2.0
 #
 # Pure awk — no cargo/npm/plutil needed, runs on Linux or macOS.
 set -euo pipefail
@@ -17,6 +16,8 @@ NEW="${1:?usage: bump-version.sh X.Y.Z}"
   echo "error: version must look like X.Y.Z (got '$NEW')" >&2; exit 1; }
 
 cd "$(dirname "$0")/.."
+
+printf '%s\n' "$NEW" > VERSION
 
 # Rewrite $1 in place by running awk program $2 over it. awk to a temp file is
 # portable (sed -i differs GNU vs BSD); cat-back preserves perms/inode.
@@ -56,6 +57,7 @@ edit src/appearance/web/package-lock.json '
   { print }'
 
 echo "bumped version to $NEW in:"
-echo "  Cargo.toml, Cargo.lock, scripts/Info.plist,"
+echo "  VERSION, Cargo.toml, Cargo.lock, scripts/Info.plist,"
 echo "  src/appearance/web/package.json, src/appearance/web/package-lock.json"
+./scripts/check-version.sh
 echo "review with: git diff"

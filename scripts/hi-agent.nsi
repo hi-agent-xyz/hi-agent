@@ -33,7 +33,7 @@ SetCompressor /SOLID lzma
   !define ICON "HiAgent.ico"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "..\target\installer\hi-agent-setup.exe"
+  !define OUTFILE "..\target\installer\hi-agent-${VERSION}-windows-x64.exe"
 !endif
 
 !define APPNAME    "Hi Agent"

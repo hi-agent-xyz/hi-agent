@@ -41,6 +41,27 @@ Or, with `make`:
 make build && make run
 ```
 
+### Versions and release artifacts
+
+[`VERSION`](VERSION) is the project version source of truth. To update every
+committed version stamp without committing or tagging:
+
+```sh
+make bump-version V=0.2.0
+```
+
+To cut a release from an up-to-date branch, run `make version`. It proposes the
+next patch version, then updates the version files, commits `release v<version>`,
+tags it, and pushes the commit and tag to `origin`.
+
+Published desktop artifacts use the same platform-explicit convention as
+Abacad:
+
+```text
+hi-agent-<version>-macos-apple-silicon.dmg
+hi-agent-<version>-windows-x64.exe
+```
+
 ### Verify it's alive
 
 ```sh

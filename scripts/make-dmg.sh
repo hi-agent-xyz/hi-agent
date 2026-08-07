@@ -23,11 +23,13 @@
 #   REUSE_RESOURCES=DIR  Copy an already-provisioned Resources tree (with
 #                      runtime/.complete) instead of downloading again.
 #
-# Output: "target/dmg/Hi Agent.app" and target/dmg/hi-agent-<version>-macos.dmg
+# Output: "target/dmg/Hi Agent.app" and
+# target/dmg/hi-agent-<version>-macos-apple-silicon.dmg
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+./scripts/check-version.sh
 
 # --- host guard -------------------------------------------------------------
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
@@ -58,13 +60,13 @@ IDENTITY="${CODESIGN_IDENTITY:-$(env_get CODESIGN_IDENTITY)}"
 IDENTITY="${IDENTITY:--}"                    # default ad-hoc
 NOTARY_PROFILE="${NOTARY_PROFILE:-$(env_get NOTARY_PROFILE)}"
 ENT="$ROOT/scripts/hi-agent.entitlements"
-VERSION="$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+VERSION="$(cat VERSION)"
 
 OUT="$ROOT/target/dmg"
 APP="$OUT/Hi Agent.app"
 RES="$APP/Contents/Resources"
 MACOS="$APP/Contents/MacOS"
-DMG="$OUT/hi-agent-$VERSION-macos.dmg"
+DMG="$OUT/hi-agent-$VERSION-macos-apple-silicon.dmg"
 
 # --- 1. build the binary + embedded SPA ------------------------------------
 if [ "${SKIP_BUILD:-}" != "1" ]; then
@@ -80,8 +82,8 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
 cp "$BIN" "$MACOS/hi-agent"
 
-# Static bundle metadata. The version it carries is committed and bumped via
-# `make bump-version` — packaging does nothing version-related.
+# Static bundle metadata. Its committed version is synchronized from VERSION by
+# `make bump-version`.
 cp "$ROOT/scripts/Info.plist" "$APP/Contents/Info.plist"
 
 # --- 3. provision the bundled dependencies ---------------------------------

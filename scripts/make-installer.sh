@@ -15,11 +15,12 @@
 #
 #   SKIP_BUILD=1   reuse an existing target/<win>/release/hi-agent.exe
 #
-# Output: target/installer/hi-agent-<version>-x64-setup.exe
+# Output: target/installer/hi-agent-<version>-windows-x64.exe
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+./scripts/check-version.sh
 
 # --- prerequisites ----------------------------------------------------------
 if ! command -v makensis >/dev/null 2>&1; then
@@ -33,11 +34,11 @@ WIN_EXE="$ROOT/target/$WIN_TARGET/release/hi-agent.exe"
 ICON="$ROOT/scripts/HiAgent.ico"
 [ -f "$ICON" ] || { echo "error: $ICON not found" >&2; exit 1; }
 
-VERSION="$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+VERSION="$(cat VERSION)"
 VERSION4="${VERSION}.0"   # NSIS VIProductVersion wants a four-part numeric
 
 OUT="$ROOT/target/installer"
-SETUP="$OUT/hi-agent-$VERSION-x64-setup.exe"
+SETUP="$OUT/hi-agent-$VERSION-windows-x64.exe"
 mkdir -p "$OUT"
 
 # --- 1. cross-compile the Windows binary (+ embedded SPA) -------------------
