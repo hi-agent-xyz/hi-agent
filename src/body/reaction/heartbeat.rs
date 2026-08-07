@@ -299,7 +299,10 @@ fn build_consolidation_prompt(
         }
         _ => s.push_str("(none yet)\n\n"),
     }
-    s.push_str("Consolidate these now — name the scene on every `record_episode`, `keep_and_fade`, and `see`.");
+    s.push_str(
+        "Consolidate these now — name the scene on every `record_episode`, `keep_and_fade`, and \
+         `image-text-to-text`.",
+    );
     s
 }
 
@@ -307,11 +310,11 @@ fn build_consolidation_prompt(
 /// its old-media list, then its unconsolidated frontier as a numbered, oldest-first
 /// list (the mind hands back a `count` into this scene's list, never a raw id). Image
 /// signals are marked `⟨faces: <id>…⟩` when clustering placed faces (the ids the mind
-/// can name), else an `⟨image — `see` ref: …, scene: …⟩` the mind can look at (the
-/// scene is carried so `see` resolves the still without the session's header), else
-/// `⟨image⟩`. Audio clips are marked `⟨voice: <id>…⟩` when voiceprint clustering
-/// placed a speaker. A voice turn that overlapped a face on camera also carries a
-/// co-occurrence hint (see [`cooccurring_faces`]) — the legibility that lets the mind
+/// can name), else an `⟨image — `image-text-to-text` ref: …, scene: …⟩` the mind can
+/// look at (the scene is carried so the tool resolves the still without the session's
+/// header), else `⟨image⟩`. Audio clips are marked `⟨voice: <id>…⟩` when voiceprint
+/// clustering placed a speaker. A voice turn that overlapped a face on camera also
+/// carries a co-occurrence hint (see [`cooccurring_faces`]) — the legibility that lets the mind
 /// bind a voice to a face across senses.
 fn render_scene_group(s: &mut String, g: &SceneFrontier) {
     use std::fmt::Write as _;
@@ -360,7 +363,11 @@ fn render_scene_group(s: &mut String, g: &SceneFrontier) {
             }
             None if is_image(e) => match still_ref(e) {
                 Some(reff) => {
-                    let _ = write!(line, " ⟨image — `see` ref: {reff}, scene: {}⟩", g.scene.0);
+                    let _ = write!(
+                        line,
+                        " ⟨image — `image-text-to-text` ref: {reff}, scene: {}⟩",
+                        g.scene.0
+                    );
                 }
                 None => line.push_str(" ⟨image⟩"),
             },
@@ -417,8 +424,8 @@ fn is_image(e: &JournalEntry) -> bool {
     matches!(e, JournalEntry::SignalIn { media: Some(m), .. } if m.mime.starts_with("image/"))
 }
 
-/// The `see`-able ref for a still-image signal — `<date>/<HH>/<MM>-<SS>.<ext>`, the
-/// same shape the `see` tool resolves — so reflection can look at the photo itself
+/// The ref for a still-image signal — `<date>/<HH>/<MM>-<SS>.<ext>`, the same shape
+/// `image-text-to-text` resolves — so reflection can look at the photo itself
 /// and fold what it shows into episodes/facets, rather than indexing it blind.
 /// `None` for non-image or media-less signals.
 fn still_ref(e: &JournalEntry) -> Option<String> {

@@ -26,7 +26,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
 use crate::foundation::observatory::{EventKind, Observatory};
-use crate::body::capabilities::view_render;
+use crate::body::capabilities::{image_gen, video_gen, view_render};
 use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
@@ -227,13 +227,19 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                     "required": ["action"],
                 }),
             ),
-            watch_tool(),
-        ],
+            video_text_to_text_tool(),
+        ]
+        .into_iter()
+        // Generation belongs to the rung that does the job. Reaction must stay a
+        // voice (its surface is the one hard rail), Deliberation reads, Cognition
+        // dispatches — a worker is the only rung that produces artifacts.
+        .chain(generation_tools())
+        .collect(),
         // The reflection ("sleep") surface: a voice-less session that consolidates
         // the raw log into derived memory. One pass spans every recently-active
         // scene at once — the signals come grouped by scene, each group numbered
         // from 1 — so every scene-specific tool (`record_episode`, `keep_and_fade`,
-        // `see`) names the scene it acts on.
+        // `image-text-to-text`) names the scene it acts on.
         Some("reflection") => vec![
             send_message_tool(),
             create_worker_tool(),
@@ -382,7 +388,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                     "required": ["content"],
                 }),
             ),
-            see_tool(),
+            image_text_to_text_tool(),
         ],
         // The reaction is the fast conversational voice: it speaks via plain message
         // text (not a `say` tool) and gets exactly one expression tool — `show` —
@@ -416,7 +422,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // global session would serialize every other scene). The answer comes back as
         // mail, not as something to poll for.
         //
-        // No `look`/`act`/`watch` either, and that is the correction this arm exists
+        // No `look`/`act`/`video-text-to-text` either, and that is the correction this arm exists
         // for. Until now a deliberation session was **opened as `SessionRole::Worker`**,
         // so it got the effector surface and its `X-HI-Role` said `worker` — a rung
         // wearing another rung's clothes. Its built-ins stay on: `foundation.md` is
@@ -427,7 +433,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
         // the previous occupant of this arm survived: it held the legacy agentic
-        // reaction's kit — `say`, `show`, `record_reflex`, `see`, `watch` —
+        // reaction's kit — `say`, `show`, `record_reflex`, and the two understanding tools —
         // long after no live role mapped to it, and read as a live surface in every
         // review. It was also a live hazard, not just clutter: `SessionRole::Deliberation`
         // stringifies to `deliberation`, which had no arm until the one above, so the
@@ -449,35 +455,59 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
     json!({ "name": name, "description": description, "inputSchema": input_schema })
 }
 
-/// The `see` tool — understand a still the person handed in (or one surfaced in a
-/// signal). Shared by the reaction (answer in conversation) and reflection (index a
-/// day's photos). The bundle decides how: a native-vision model gets the raw image
-/// to reason over; a text-only one gets the vision capability's description.
-fn see_tool() -> Value {
+// ---------------------------------------------------------------------------
+// Modality tools
+//
+// Named for their Hugging Face task rather than for a verb — `image-text-to-text`
+// where this was once `see`. The task name states the *signature* (what goes in,
+// what comes out) where a verb states only an intent, and it is the same string the
+// provider model cards use, so a tool, its capability module and its config key all
+// carry one name. The trade: the name no longer reads as an instruction, so each
+// `description` has to open with the action.
+//
+// Six tasks, one axis that matters:
+//
+//   understanding  `image-text-to-text`, `video-text-to-text`  → goes through
+//       [`bundle::Bundle`]: raw pixels when the model takes them natively, the
+//       vision capability's text when it doesn't.
+//   generation     `text-to-image`, `image-to-image`,
+//                  `text-to-video`, `image-to-video`           → never touches the
+//       bundle. No model reached through the ACP adapter emits pixels, so these are
+//       always a provider call.
+//
+// The four generation tools are declared and return [`not_implemented`]. The surface
+// is settled here; the wiring waits on one unmade decision — where a generated
+// artifact lands and what ref it gets — and minting that ref format twice is exactly
+// the mistake this naming pass exists to stop.
+// ---------------------------------------------------------------------------
+
+/// `image-text-to-text` — an image plus an instruction in, text out.
+fn image_text_to_text_tool() -> Value {
     tool(
-        "see",
-        "Look at a still image and answer about it — a photo the person sent or held up to the \
-         camera, surfaced to you as a signal like `📷 photo arrived ⟨ref: …⟩`. Pass that `ref`, and \
-         optionally what you want to know. Reach for it the moment seeing the picture beats guessing: \
-         read a label/menu/handwriting, identify a thing, check what's on a screen they photographed.",
+        "image-text-to-text",
+        "Look at a still image and answer about it — a photo the person sent, a screenshot they \
+         handed over, or a frame held up to the camera. It reaches you as a signal carrying an \
+         `⟨ref: …⟩`; pass that `ref`, and optionally what you want to know. Reach for it the moment \
+         seeing the picture beats guessing: read a label/menu/handwriting, identify a thing, check \
+         what's on a screen they photographed.",
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ from the photo's signal, e.g. 2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ carried by the image's signal, e.g. 2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: what you want to know about the image (a question or focus). Omit to just look." },
-                "scene": { "type": "string", "description": "Reflection only: the scene shown next to a `see` ref (its `# Scene: <id>` group). Pass it so the still resolves. Omit in conversation." },
+                "scene": { "type": "string", "description": "Reflection only: the scene shown next to the ref (its `# Scene: <id>` group). Pass it so the still resolves. Omit in conversation." },
             },
             "required": ["ref"],
         }),
     )
 }
 
-/// The `watch` tool — understand a short span of the *live* camera. Shared by the
-/// reaction (in conversation) and workers (mid-task). Always polyfilled: the clip is
+/// `video-text-to-text` — a span of live camera plus an instruction in, text out.
+/// Always polyfilled: no model behind the adapter takes video, so the clip is
 /// understood by the vision capability and the text handed back.
-fn watch_tool() -> Value {
+fn video_text_to_text_tool() -> Value {
     tool(
-        "watch",
+        "video-text-to-text",
         "Watch a few seconds of the live camera and tell what happened — for when motion or a \
          sequence matters, not a single frame (someone's action, a gesture, \"did you see that?\"). \
          It reads the camera streaming right now; say how far back with `span` (e.g. \"last 20s\"), or \
@@ -491,6 +521,99 @@ fn watch_tool() -> Value {
             },
         }),
     )
+}
+
+/// `text-to-image` — a prompt in, a new image out. Backed by
+/// [`crate::body::capabilities::image_gen`], which is configured but has no caller.
+fn text_to_image_tool() -> Value {
+    tool(
+        "text-to-image",
+        "Draw a new image from a description. Say what it should show; `size` and `seed` are \
+         optional vendor knobs (a fixed seed makes a run repeatable).",
+        json!({
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string", "description": "What the image should show." },
+                "size": { "type": "string", "description": "Optional, vendor-specific: e.g. \"1024x1024\", \"2K\", \"adaptive\"." },
+                "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+            },
+            "required": ["prompt"],
+        }),
+    )
+}
+
+/// `image-to-image` — an existing image plus an instruction in, a new image out. No
+/// capability behind it yet: [`crate::body::capabilities::image_gen::ImageRequest`]
+/// carries no input image, so editing is currently unrepresentable end to end.
+fn image_to_image_tool() -> Value {
+    tool(
+        "image-to-image",
+        "Edit an existing image — say what to change and it returns a new image, leaving the \
+         original untouched. Pass the `⟨ref: …⟩` of the image to work from.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. 2026-06-25/14/23-07.jpg." },
+                "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
+                "size": { "type": "string", "description": "Optional, vendor-specific output size." },
+                "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+                "scene": { "type": "string", "description": "Reflection only: the scene the ref belongs to. Omit in conversation." },
+            },
+            "required": ["ref", "prompt"],
+        }),
+    )
+}
+
+/// `text-to-video` — a prompt in, a clip out. Backed by
+/// [`crate::body::capabilities::video_gen`], which is configured but has no caller.
+fn text_to_video_tool() -> Value {
+    tool(
+        "text-to-video",
+        "Generate a short video clip from a description. Generation is slow — this enqueues the \
+         work and the clip arrives when it's done, so don't wait on it inline.",
+        json!({
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string", "description": "What the clip should show." },
+                "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
+                "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
+                "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
+                "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+            },
+            "required": ["prompt"],
+        }),
+    )
+}
+
+/// `image-to-video` — an image as first frame plus an optional prompt in, a clip out.
+/// The one generation task the capability layer already models:
+/// [`crate::body::capabilities::video_gen::VideoRequest::first_frame`].
+fn image_to_video_tool() -> Value {
+    tool(
+        "image-to-video",
+        "Animate an existing still — it becomes the first frame of a short clip. Pass the \
+         `⟨ref: …⟩` of the image, and optionally say how it should move. Slow, like any \
+         generation: it enqueues and the clip arrives later.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. 2026-06-25/14/23-07.jpg." },
+                "prompt": { "type": "string", "description": "Optional: how it should move or what should happen." },
+                "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
+                "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
+                "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
+                "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+                "scene": { "type": "string", "description": "Reflection only: the scene the ref belongs to. Omit in conversation." },
+            },
+            "required": ["ref"],
+        }),
+    )
+}
+
+/// The four generation tasks, as one surface. Declared together because they share
+/// the blocker (no artifact home, no ref) and will be wired together.
+fn generation_tools() -> Vec<Value> {
+    vec![text_to_image_tool(), image_to_image_tool(), text_to_video_tool(), image_to_video_tool()]
 }
 
 /// The `show` tool — put a view on the screen. The reaction's one expression
@@ -613,8 +736,9 @@ async fn dispatch_tool(
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
     // the scene loop (no sink), so handle them before the sink lookup. The
     // consolidated reflection session spans every scene, so the scene-specific ones
-    // (`record_episode`/`keep_and_fade`/`see`) take their scene from the args, not the
-    // (sentinel) header — `see` falls back to the header for the live reaction surface.
+    // (`record_episode`/`keep_and_fade`/`image-text-to-text`) take their scene from the args,
+    // not the (sentinel) header — `image-text-to-text` falls back to the header for the live
+    // reaction surface.
     match name {
         "record_episode" => return reflection_record_episode(data_dir, args).await,
         "read_facet" => return reflection_read_facet(data_dir, args).await,
@@ -631,8 +755,47 @@ async fn dispatch_tool(
         "record_reflex" => return reflex_record(data_dir, args).await,
         "look" => return do_look().await,
         "act" => return do_act(args).await,
-        "see" => return do_see(data_dir, scene, args).await,
-        "watch" => return do_watch(data_dir, scene, video_partial, args).await,
+        "image-text-to-text" => return do_image_text_to_text(data_dir, scene, args).await,
+        "video-text-to-text" => {
+            return do_video_text_to_text(data_dir, scene, video_partial, args).await;
+        }
+        // Declared, advertised, and not yet wired. They fail loudly rather than
+        // being absent, because an absent tool reads to the model as "this agent
+        // cannot" — a different claim, and the wrong one. Each names the seam that
+        // is actually missing and reports live provider state, so the message is
+        // checked rather than guessed.
+        "text-to-image" => {
+            return not_implemented(
+                "text-to-image",
+                "the vendor call `image_gen::text_to_image` exists; what is missing is the handler \
+                 that persists the result and mints a ref for it",
+                image_gen::available(),
+            );
+        }
+        "image-to-image" => {
+            return not_implemented(
+                "image-to-image",
+                "`image_gen::image_to_image` is declared but has no vendor arm, and no handler \
+                 persists a result",
+                image_gen::available(),
+            );
+        }
+        "text-to-video" => {
+            return not_implemented(
+                "text-to-video",
+                "the vendor call `video_gen::text_to_video` exists; what is missing is the handler \
+                 that polls the task to a terminal state and lands the clip",
+                video_gen::available(),
+            );
+        }
+        "image-to-video" => {
+            return not_implemented(
+                "image-to-video",
+                "the vendor call `video_gen::image_to_video` exists; what is missing is resolving \
+                 the input ref to bytes, plus the handler that polls and lands the clip",
+                video_gen::available(),
+            );
+        }
         "review_view" => return do_review_view(data_dir, args).await,
         _ => {}
     }
@@ -1321,23 +1484,23 @@ async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> V
     }
 }
 
-/// `see`: understand a stored still. Resolves the `ref` (the `⟨ref: …⟩` from a
+/// `image-text-to-text`: understand a stored still. Resolves the `ref` (the `⟨ref: …⟩` from a
 /// `📷 photo arrived` signal, or one surfaced to reflection) to its bytes, then hands
 /// it to [`perceive_still`] — which the bundle routes either to the model's own eyes
 /// (native vision) or through the vision capability (text-only model).
-async fn do_see(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
+async fn do_image_text_to_text(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
         return tool_error(
-            "see needs `ref` — the ⟨ref: …⟩ from the photo's signal, e.g. 2026-06-25/14/23-07.jpg",
+            "image-text-to-text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. 2026-06-25/14/23-07.jpg",
         );
     };
     let Some((ts, rel, mime)) = parse_still_ref(reff) else {
         return tool_error(&format!(
-            "see: malformed ref {reff:?} (expected <YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
+            "image-text-to-text: malformed ref {reff:?} (expected <YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
         ));
     };
-    // The live reaction `see` resolves against its own scene (the header). The
+    // The live reaction surface resolves against its own scene (the header). The
     // consolidated reflection session has no single scene, so it names the scene the
     // ref belongs to in `scene` — honored here, header otherwise.
     let owned = arg_scene(args);
@@ -1345,21 +1508,21 @@ async fn do_see(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
     let Some(path) =
         crate::mind::memory::media::resolve(data_dir, scene, crate::types::Channel::Vision, ts, &rel).await
     else {
-        return tool_error(&format!("see: no media at {reff} (it may have faded)"));
+        return tool_error(&format!("image-text-to-text: no media at {reff} (it may have faded)"));
     };
     let bytes = match tokio::fs::read(&path).await {
         Ok(b) => Bytes::from(b),
-        Err(e) => return tool_error(&format!("see: reading {reff} failed: {e}")),
+        Err(e) => return tool_error(&format!("image-text-to-text: reading {reff} failed: {e}")),
     };
     perceive_still(data_dir, bytes, &mime, prompt).await
 }
 
-/// `watch`: understand a short span of the live camera. Reads the in-progress
-/// (not-yet-flushed) minute from [`PartialMinute`] — the freshest source — optionally
-/// trims it to the requested tail with ffmpeg, and hands the clip to
+/// `video-text-to-text`: understand a short span of the live camera. Reads the
+/// in-progress (not-yet-flushed) minute from [`PartialMinute`] — the freshest source —
+/// optionally trims it to the requested tail with ffmpeg, and hands the clip to
 /// [`perceive_clip`]. Errors plainly when no camera is streaming, so the model can
 /// ask the person to turn it on.
-async fn do_watch(
+async fn do_video_text_to_text(
     data_dir: &Path,
     scene: &Scene,
     video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
@@ -1370,8 +1533,8 @@ async fn do_watch(
 
     let Some((bytes, mime)) = partial_clip(video_partial, scene) else {
         return tool_error(
-            "no live camera to watch — `watch` reads the camera streaming right now; ask the person \
-             to turn it on, then try again.",
+            "no live camera to watch — `video-text-to-text` reads the camera streaming right now; \
+             ask the person to turn it on, then try again.",
         );
     };
 
@@ -1406,12 +1569,12 @@ async fn perceive_still(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str)
             })
         }
         Handling::Polyfill => {
-            use crate::body::capabilities::vision::{self as vision_cap, VisualMedia};
+            use crate::body::capabilities::vision as vision_cap;
             if !vision_cap::available() {
                 return tool_error("can't see stills here — no vision provider configured (set a vision key in Settings)");
             }
             let q = if prompt.trim().is_empty() { "Describe what you see." } else { prompt };
-            match vision_cap::understand(VisualMedia::image_bytes(bytes, mime.to_string()), q).await {
+            match vision_cap::image_text_to_text(bytes, mime, q).await {
                 Ok(text) => tool_ok(&text),
                 Err(e) => {
                     crate::foundation::energy_state::note_402_error(data_dir, &e);
@@ -1427,7 +1590,7 @@ async fn perceive_still(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str)
 /// comes back as text.
 async fn perceive_clip(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str) -> Value {
     use crate::body::capabilities::bundle::{self, Modality};
-    use crate::body::capabilities::vision::{self as vision_cap, VisualMedia};
+    use crate::body::capabilities::vision as vision_cap;
     // The bundle always polyfills video today — no adapter path carries video to the
     // model — so this is the only arm; consulting `handling` keeps the
     // native-vs-polyfill decision in one place for the day a native-video model lands.
@@ -1436,7 +1599,7 @@ async fn perceive_clip(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str) 
         return tool_error("can't watch video here — no vision provider configured (set a vision key in Settings)");
     }
     let q = if prompt.trim().is_empty() { "Describe what happens in this clip." } else { prompt };
-    match vision_cap::understand(VisualMedia::video_bytes(bytes, mime.to_string()), q).await {
+    match vision_cap::video_text_to_text(bytes, mime, q).await {
         Ok(text) => tool_ok(&text),
         Err(e) => {
             crate::foundation::energy_state::note_402_error(data_dir, &e);
@@ -1469,7 +1632,7 @@ async fn trim_tail(bytes: &Bytes, mime: &str, secs: f64) -> anyhow::Result<Bytes
     res
 }
 
-/// Pull a tail length out of a `watch` span like "last 20s" / "20 seconds" → 20.0.
+/// Pull a tail length out of a `video-text-to-text` span like "last 20s" / "20 seconds" → 20.0.
 /// `None` (no number) means "the whole recent stretch".
 fn parse_last_secs(span: &str) -> Option<f64> {
     let digits: String = span
@@ -1522,6 +1685,20 @@ fn tool_ok(text: &str) -> Value {
 
 fn tool_error(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": true })
+}
+
+/// A tool that is declared but not yet wired. `seam` names what is actually absent
+/// and `provider` reports whether a vendor is configured *right now* — both checked,
+/// neither guessed. The distinction is the whole point: a tool that reports a cause
+/// it did not verify gets that cause written into memory as a fact, and the wrong
+/// reason outlives the wrong result.
+fn not_implemented(task: &str, seam: &str, provider: bool) -> Value {
+    let provider =
+        if provider { "a provider is configured" } else { "no provider is configured" };
+    tool_error(&format!(
+        "`{task}` is not implemented yet — {seam}. Right now {provider}. The tool's shape is \
+         final and nothing about this call was wrong."
+    ))
 }
 
 /// A view ref is a relative path under the views tree, naming the view's source file
@@ -1843,7 +2020,7 @@ mod surface_tests {
 
     /// Deliberation's whole surface, pinned — and the reason it needed pinning: the
     /// rung was **opened as `SessionRole::Worker`**, so its `X-HI-Role` said `worker`
-    /// and it was handed the effector kit (`look`, `act`, `watch`) that belongs to the
+    /// and it was handed the effector kit (`look`, `act`, `video-text-to-text`) that belongs to the
     /// rung that does the job. It reads and it hands up; that is one tool.
     ///
     /// No `session_status`: status reads belong to owners, and Deliberation owns
@@ -1857,7 +2034,7 @@ mod surface_tests {
     /// An unknown role gets **nothing**, and that is the point.
     ///
     /// This arm used to hold the legacy agentic reaction's kit — `say`, `show`,
-    /// `record_reflex`, `see`, `watch` — with a comment saying no live role
+    /// `record_reflex`, and the understanding tools — with a comment saying no live role
     /// mapped here. It was not merely dead: `SessionRole::Deliberation` stringifies to
     /// `deliberation`, which had no arm, so the moment that role was constructed it
     /// would have landed here and been handed `say` (refused at dispatch) and no
@@ -1917,6 +2094,87 @@ mod surface_tests {
     fn no_other_role_can_speak() {
         for role in [Some("worker"), Some("reflection")] {
             assert!(!names(role).contains(&"say".to_string()), "{role:?} must not hold say");
+        }
+    }
+
+    /// The modality surface is exactly six Hugging Face task names. Pinned as a set
+    /// because the naming *is* the contract here: a seventh spelling of "look at this
+    /// picture" is how one capability ends up with two names and a tool ends up
+    /// guessing which of them it was handed.
+    #[test]
+    fn the_modality_surface_is_six_hugging_face_tasks() {
+        let mut got: Vec<String> = [
+            image_text_to_text_tool(),
+            video_text_to_text_tool(),
+            text_to_image_tool(),
+            image_to_image_tool(),
+            text_to_video_tool(),
+            image_to_video_tool(),
+        ]
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "image-text-to-text",
+                "image-to-image",
+                "image-to-video",
+                "text-to-image",
+                "text-to-video",
+                "video-text-to-text",
+            ]
+        );
+    }
+
+    /// Understanding is advertised where it was before the rename; generation goes to
+    /// the rung that produces artifacts. Pinned so a stub landing on Reaction — the one
+    /// surface that is a hard rail — fails here rather than in a conversation.
+    #[test]
+    fn generation_belongs_to_workers_and_reaction_stays_a_voice() {
+        let worker = names(Some("worker"));
+        for task in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
+            assert!(worker.contains(&task.to_string()), "worker must hold `{task}`");
+            for role in [Some("reaction"), Some("deliberation"), Some("cognition")] {
+                assert!(!names(role).contains(&task.to_string()), "{role:?} must not hold `{task}`");
+            }
+        }
+        assert!(worker.contains(&"video-text-to-text".to_string()));
+        assert!(names(Some("reflection")).contains(&"image-text-to-text".to_string()));
+    }
+
+    /// Every advertised tool must dispatch. The four generation tasks are declared
+    /// before they are wired, so the failure this guards is real: a tool in the surface
+    /// with no arm falls through to "unknown tool", which tells the model its call was
+    /// malformed when the truth is the feature does not exist yet. Reporting a cause
+    /// you did not verify is how a wrong reason outlives a wrong result.
+    #[tokio::test]
+    async fn the_generation_tasks_dispatch_to_a_not_implemented_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reaction::ToolRegistry::new();
+        let partial = Mutex::new(HashMap::new());
+        let obs = Observatory::new(None);
+        let scene = Scene("boss".to_string());
+
+        for name in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
+            let got = dispatch_tool(
+                &tools,
+                dir.path(),
+                &partial,
+                &obs,
+                Some(&scene),
+                Some(7),
+                Some("worker"),
+                name,
+                &json!({ "prompt": "a cat", "ref": "2026-06-25/14/23-07.jpg" }),
+            )
+            .await;
+            assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{name}");
+            let text = got["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("not implemented yet"), "{name} got: {text}");
+            assert!(text.contains(name), "{name} must name itself: {text}");
+            assert!(!text.contains("unknown tool"), "{name} fell through to the fallback: {text}");
         }
     }
 

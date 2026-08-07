@@ -111,7 +111,7 @@ You are given the signals that have happened across all your scenes since each w
 
    Only name or merge when you're sure — a wrong name sticks to a person.
 
-When a signal carries an image — its line shows `⟨image — `see` ref: …, scene: …⟩` — and what the picture *shows* is part of the event, call `see` with that ref and its `scene` before you write the episode: look at it, and fold what's actually in it into the gist and the facets it touches. That's what makes a photo findable later by its content instead of a bare "a photo arrived". Only for images whose content matters to the day — don't look at every one.
+When a signal carries an image — its line shows `⟨image — `image-text-to-text` ref: …, scene: …⟩` — and what the picture *shows* is part of the event, call `image-text-to-text` with that ref and its `scene` before you write the episode: look at it, and fold what's actually in it into the gist and the facets it touches. That's what makes a photo findable later by its content instead of a bare "a photo arrived". Only for images whose content matters to the day — don't look at every one.
 
 As you segment, keep one thing visible: if the person was left waiting on something the agent took on — a view promised, a file to file, any deliverable — and the signals don't show it delivered, say so plainly in that episode's gist. Your gists are what the recency digest projects, and that digest is what the agent reads when it wakes, so a promise still open is exactly what a restart-interrupted self needs to find there. Don't invent closure the signals don't show: an unfinished thing recorded as done is a promise quietly dropped.
 

@@ -101,9 +101,40 @@ pub fn available() -> bool {
 
 /// Understand `media` under the instruction `prompt` (e.g. "Describe what you
 /// see") and return the model's natural-language answer.
+///
+/// The shared vendor dispatch behind both understanding tasks. Prefer the
+/// task-named entry points ([`image_text_to_text`], [`video_text_to_text`]) when
+/// you hold bytes; reach for this directly only when the input is a URL.
 pub async fn understand(media: VisualMedia, prompt: &str) -> anyhow::Result<String> {
     match BACKEND.get() {
         Some(Backend::Doubao(cfg)) => doubao_vision::understand(cfg, media, prompt).await,
         _ => anyhow::bail!("vision not configured (set a vision key in Settings)"),
     }
+}
+
+/// `image-text-to-text` — an image plus an instruction in, text out.
+///
+/// One name for one task, all the way down: the MCP tool, this function, and the
+/// vendor's model card all say `image-text-to-text`. Naming the entry point after
+/// the task (rather than letting one `understand` serve two of them) is what stops
+/// a caller from picking the wrong [`VisualMedia`] variant — the image/video choice
+/// is made by which function you call, not by an argument you can get wrong.
+pub async fn image_text_to_text(
+    bytes: Bytes,
+    mime: impl Into<String>,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    understand(VisualMedia::image_bytes(bytes, mime), prompt).await
+}
+
+/// `video-text-to-text` — a clip plus an instruction in, text out.
+///
+/// Always a vendor call: no model reached through the ACP adapter takes video, so
+/// unlike [`image_text_to_text`] this one has no native path to fall back to.
+pub async fn video_text_to_text(
+    bytes: Bytes,
+    mime: impl Into<String>,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    understand(VisualMedia::video_bytes(bytes, mime), prompt).await
 }

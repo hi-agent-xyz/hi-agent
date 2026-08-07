@@ -1,13 +1,18 @@
-//! Video-generation capability — text prompt → short video clip.
+//! Video-generation capability — two Hugging Face tasks over one provider:
+//! [`text_to_video`] (prompt → clip) and [`image_to_video`] (still as first frame
+//! → clip).
 //!
-//! Asynchronous task: [`submit`] a request to get a task id back, then [`poll`]
+//! Asynchronous task: submit a request to get a task id back, then [`poll`]
 //! until it reaches a terminal [`VideoStatus`]. The split keeps the multi-minute
 //! wait honest instead of hiding it behind a single blocking call.
 //!
 //! The capability is a module of free functions over a process-global,
 //! once-initialized config: [`init`] resolves the vendor from the credential
-//! store, [`available`] reports whether a provider is configured, and [`submit`] /
-//! [`poll`] dispatch to it. The config never appears in a signature.
+//! store, [`available`] reports whether a provider is configured, and the task
+//! functions dispatch to it via [`submit`]. The config never appears in a
+//! signature. The provider's key arrives the same way for either task — BYOK from
+//! the credential store, or the broker-minted bundle — so a task is wired once and
+//! works under both.
 //!
 //! **No caller wires this in yet.** The module is built and unit-tested
 //! standalone so a later *emission* path can call it as a purely additive
@@ -129,11 +134,41 @@ pub fn available() -> bool {
 
 /// Submit a generation request and return the task id to poll. Fast: this only
 /// enqueues the work, it does not wait for the clip.
+///
+/// The shared vendor dispatch behind both generation tasks. Prefer the task-named
+/// entry points ([`text_to_video`], [`image_to_video`]): they make the presence or
+/// absence of a first frame — the only thing that distinguishes the two tasks —
+/// impossible to get silently wrong.
 pub async fn submit(req: &VideoRequest) -> anyhow::Result<String> {
     match BACKEND.get() {
         Some(Backend::Doubao(cfg)) => doubao_video_gen::submit(cfg, req).await,
         _ => anyhow::bail!("video generation not configured (set a video key in Settings)"),
     }
+}
+
+/// `text-to-video` — a prompt in, a clip out. Returns the task id to [`poll`].
+///
+/// Rejects a request carrying a `first_frame` rather than quietly performing
+/// image-to-video under a text-to-video name: the two are different tasks, priced
+/// and prompted differently, and a silent upgrade is the kind of substitution that
+/// gets recorded as the thing that was asked for.
+pub async fn text_to_video(req: &VideoRequest) -> anyhow::Result<String> {
+    if req.first_frame.is_some() {
+        anyhow::bail!("text-to-video was given a first frame — call `image_to_video` for that");
+    }
+    submit(req).await
+}
+
+/// `image-to-video` — a still as first frame plus an optional prompt in, a clip
+/// out. Returns the task id to [`poll`].
+///
+/// Requires `first_frame`; without it this is [`text_to_video`] and says so rather
+/// than generating something unrelated to the picture the caller meant to animate.
+pub async fn image_to_video(req: &VideoRequest) -> anyhow::Result<String> {
+    if req.first_frame.is_none() {
+        anyhow::bail!("image-to-video needs a `first_frame` — call `text_to_video` without one");
+    }
+    submit(req).await
 }
 
 /// Fetch the current state of a previously-submitted task. Callers poll this
@@ -142,5 +177,36 @@ pub async fn poll(task_id: &str) -> anyhow::Result<VideoTask> {
     match BACKEND.get() {
         Some(Backend::Doubao(cfg)) => doubao_video_gen::poll(cfg, task_id).await,
         _ => anyhow::bail!("video generation not configured (set a video key in Settings)"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The only thing separating the two generation tasks is whether a first frame
+    /// is present, which makes a mixed-up call silently plausible: text-to-video
+    /// handed a frame would generate *something*, and it would be recorded as the
+    /// animation of a picture nobody animated. Both directions are refused by name.
+    #[tokio::test]
+    async fn the_two_video_tasks_refuse_each_other_s_request() {
+        let mut with_frame = VideoRequest::new("a cat stretching");
+        with_frame.first_frame = Some(ImageRef::url("https://example.invalid/cat.png"));
+
+        let err = text_to_video(&with_frame).await.unwrap_err().to_string();
+        assert!(err.contains("image_to_video"), "{err}");
+
+        let err = image_to_video(&VideoRequest::new("a cat stretching")).await.unwrap_err().to_string();
+        assert!(err.contains("text_to_video"), "{err}");
+    }
+
+    /// The guard is the caller's mistake, not the operator's — so it must not be
+    /// reported as a missing provider. With no backend configured, a *correct*
+    /// request still falls through to the configuration error, and that is the one
+    /// the operator can act on.
+    #[tokio::test]
+    async fn a_correct_request_reports_configuration_not_shape() {
+        let err = text_to_video(&VideoRequest::new("a cat")).await.unwrap_err().to_string();
+        assert!(err.contains("not configured"), "{err}");
     }
 }
