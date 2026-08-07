@@ -74,7 +74,7 @@ pub async fn window(
     let owed = match tasks::projection(data_dir).await {
         Ok(text) => text,
         Err(err) => {
-            tracing::warn!(error = %err, "open tasks unreadable; window goes without them");
+            tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
             String::new()
         }
     };
@@ -120,7 +120,7 @@ pub async fn agent_window(
     let owed = match tasks::projection(data_dir).await {
         Ok(text) => text,
         Err(err) => {
-            tracing::warn!(error = %err, "open tasks unreadable; window goes without them");
+            tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
             String::new()
         }
     };
@@ -327,7 +327,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod window_tests {
     use super::*;
-    use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+    use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
 
     fn scene() -> Scene {
         Scene("boss".into())
@@ -428,23 +428,22 @@ mod window_tests {
     /// Projected, not retrieved: the reaction is tools-off, so what it owes has to be
     /// in the window before it says a word. No tool call fetched this.
     #[tokio::test]
-    async fn open_tasks_are_in_the_window_with_nothing_fetching_them() {
+    async fn active_tasks_are_in_the_window_with_nothing_fetching_them() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
         let scene = scene();
 
-        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.title = "Ship the flash cards".into();
         write_task(dir.path(), &owed).await.unwrap();
 
-        let mut done = Task::new("Renew the domain", TaskKind::Deadline);
+        let mut done = Task::new("Renew the domain", TaskStatus::Done);
         done.title = "Renew the domain".into();
-        done.state = crate::mind::memory::tasks::TaskState::Done;
         write_task(dir.path(), &done).await.unwrap();
 
         let text = window(&memory, &scene, 0).await;
-        assert!(text.contains("# Open tasks"), "{text}");
-        assert!(text.contains("- [wip] Ship the flash cards"), "{text}");
+        assert!(text.contains("# Active tasks"), "{text}");
+        assert!(text.contains("- [doing] Ship the flash cards"), "{text}");
         // Closed ones are history, not window furniture.
         assert!(!text.contains("Renew the domain"), "{text}");
     }
@@ -457,15 +456,15 @@ mod window_tests {
         let memory = Memory::open(dir.path()).await.unwrap();
         let scene = scene();
         write_scene_prompt(dir.path(), &scene, "He is mid-migration and wants terse answers.").await;
-        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.title = "Ship the flash cards".into();
         write_task(dir.path(), &owed).await.unwrap();
         heard(&memory, &scene, "还有多久").await;
 
         let text = window(&memory, &scene, 0).await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
-        assert!(at("## What I carry forward") < at("# Open tasks"));
-        assert!(at("# Open tasks") < at("## Recent (last 30 minutes)"));
+        assert!(at("## What I carry forward") < at("# Active tasks"));
+        assert!(at("# Active tasks") < at("## Recent (last 30 minutes)"));
     }
 
     /// The one ledger. `commitments.md` was the second one, and it is no longer
@@ -485,15 +484,15 @@ mod window_tests {
 
     /// Invariant 4 for the rung that writes the ledger. Cognition going to *look* for
     /// what is owed is a Cognition that can miss a duty and never know it missed one —
-    /// so the open tasks arrive whether or not it thought to ask.
+    /// so the active tasks arrive whether or not it thought to ask.
     #[tokio::test]
     async fn the_sceneless_window_projects_the_ledger_and_what_was_carried() {
-        use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+        use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
 
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
 
-        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.subject = "flash-cards".into();
         write_task(dir.path(), &owed).await.unwrap();
 

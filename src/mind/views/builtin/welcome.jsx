@@ -48,10 +48,6 @@ export default function Welcome() {
       transition={{ duration: 0.7, ease: EASE }}
       style={S.poster}
     >
-      {/* soft matte colour blooms — the presence, felt behind the mark */}
-      <div style={{ ...S.bloom, ...S.bloomCoral }} aria-hidden />
-      <div style={{ ...S.bloom, ...S.bloomBlue }} aria-hidden />
-
       <motion.img
         src={MARK}
         alt="hi"
@@ -81,41 +77,18 @@ const S = {
   poster: {
     position: "relative",
     overflow: "hidden",
+    boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 30,
     width: "100%",
-    minHeight: 460,
-    padding: "64px 48px 56px",
-    borderRadius: 30,
-    // warm cream → soft sky, matte
-    background:
-      "linear-gradient(158deg, #fff8f3 0%, #fdf3f4 46%, #eef6ff 100%)",
-    border: "1px solid rgba(255,255,255,0.7)",
-    boxShadow: "0 30px 80px -30px rgba(24,32,56,0.28), inset 0 1px 0 rgba(255,255,255,0.6)",
+    height: "100%",
+    minHeight: "100%",
+    padding: "64px 32px 128px",
+    background: "#fff8f3",
     fontFamily: "var(--font-display)",
-  },
-  bloom: {
-    position: "absolute",
-    borderRadius: "50%",
-    filter: "blur(64px)",
-    pointerEvents: "none",
-  },
-  bloomCoral: {
-    width: 340,
-    height: 340,
-    top: -90,
-    left: -70,
-    background: "rgba(253,96,94,0.28)",
-  },
-  bloomBlue: {
-    width: 380,
-    height: 380,
-    bottom: -120,
-    right: -90,
-    background: "rgba(19,167,245,0.24)",
   },
   mark: {
     position: "relative",
@@ -127,7 +100,7 @@ const S = {
     position: "relative",
     fontSize: 21,
     fontWeight: 600,
-    letterSpacing: "-0.01em",
+    letterSpacing: 0,
     // Fixed ink, not `var(--fg)`. This poster paints its own fixed warm ground, so a
     // token that flips with the theme lands cream-on-cream in dark mode — the rule is
     // that a fixed ground takes fixed ink. (Same reason CORAL above is literal: it is

@@ -143,19 +143,24 @@ export default function Upload() {
   );
 }
 
-// Content only — the host frames this view: it centres us in a safe-area clear of
-// the captions (we dock them up top) and paints the surface behind us.
+// Full-canvas utility surface. The view owns its background and scrolling while
+// keeping the handoff controls at a readable working width.
 const S = {
-  root: { display: "flex", flexDirection: "column", gap: 16, fontFamily: "var(--font-display)", color: "var(--fg)" },
-  title: { fontWeight: 600, fontSize: 18, textAlign: "center" },
-  row: { display: "flex", flexWrap: "wrap", gap: 16, alignItems: "stretch" },
+  root: { width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
+    display: "flex", flexDirection: "column", gap: 18,
+    padding: "36px clamp(20px,5vw,72px) 128px", background: "var(--bg-0)",
+    fontFamily: "var(--font-display)", color: "var(--fg)" },
+  title: { width: "min(980px,100%)", margin: "0 auto", fontWeight: 800, fontSize: 28,
+    lineHeight: 1.2, letterSpacing: 0, textAlign: "left" },
+  row: { width: "min(980px,100%)", margin: "0 auto", display: "flex", flexWrap: "wrap",
+    gap: 16, alignItems: "stretch" },
   drop: { flex: "1 1 240px", minHeight: 184, border: "2px dashed var(--line-strong)", borderRadius: 16, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 20, cursor: "pointer", transition: "border-color .15s, background .15s" },
   dropActive: { borderColor: "var(--accent-line)", background: "var(--accent-wash)" },
   qrCol: { flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 168 },
   // The white plate stays literal in both themes: a QR needs its light quiet zone to scan.
   qrImg: { borderRadius: 12, background: "#fff", padding: 8 },
   hint: { color: "var(--fg-mute)", fontSize: 13 },
-  list: { display: "flex", flexDirection: "column", gap: 6 },
+  list: { width: "min(980px,100%)", margin: "0 auto", display: "flex", flexDirection: "column", gap: 6 },
   listRow: { display: "flex", gap: 8, alignItems: "center", fontSize: 14 },
   name: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 };

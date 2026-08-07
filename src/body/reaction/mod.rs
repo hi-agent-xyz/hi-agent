@@ -93,7 +93,7 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// Default idle interval between host pulses — the scene's recurring moment of
 /// self-attention. A pulse is not a schedule of work: it injects bare situational
 /// facts ("nothing new for 30m") and core.md tells the mind what such a moment is
-/// for (read down its open tasks, glance at setups it owns); most pulses should
+/// for (read down its active tasks, glance at setups it owns); most pulses should
 /// conclude with nothing to do or say. Override via `pulse`; `0`/`off`
 /// disables. Boot is not a special case — the first pulse after the host starts
 /// simply carries that fact.
@@ -906,7 +906,7 @@ pub async fn start(
     });
 
     // Re-warm scenes with a genuinely fresh, still-live conversation, plus every
-    // scene an open task explicitly reports to. The activity gate remains deliberately
+    // scene an active task explicitly reports to. The activity gate remains deliberately
     // conservative for ordinary conversations; an owed delivery is different — its
     // destination must exist before Cognition's restart-recovery turn decides where
     // the result can go.
@@ -917,10 +917,10 @@ pub async fn start(
     let rewarm_reaction = reaction.clone();
     tokio::spawn(async move {
         let mut scenes = scenes_to_rewarm(rewarm_reaction.inner.memory.data_dir());
-        if let Ok(open) =
-            crate::mind::memory::tasks::open_tasks(rewarm_reaction.inner.memory.data_dir()).await
+        if let Ok(active) =
+            crate::mind::memory::tasks::active_tasks(rewarm_reaction.inner.memory.data_dir()).await
         {
-            scenes.extend(task_report_scenes(&open));
+            scenes.extend(task_report_scenes(&active));
         }
         let mut seen = std::collections::HashSet::new();
         for scene in scenes {
@@ -1145,7 +1145,7 @@ fn scenes_to_rewarm(data_dir: &std::path::Path) -> Vec<Scene> {
     warm
 }
 
-/// Unique user-facing destinations named by open tasks, in ledger order.
+/// Unique user-facing destinations named by active tasks, in ledger order.
 ///
 /// A task's `report_to` is the durable half of delivery routing. Startup uses this
 /// projection to stand those scene voices up; Cognition uses the same projection
@@ -1162,7 +1162,7 @@ fn task_report_scenes(tasks: &[crate::mind::memory::tasks::Task]) -> Vec<Scene> 
 #[cfg(test)]
 mod rewarm_tests {
     use super::*;
-    use crate::mind::memory::tasks::{Task, TaskKind};
+    use crate::mind::memory::tasks::{Task, TaskStatus};
 
     /// Lay down `<data_dir>/memory/raw/<scene>/<channel>/<day>/<channel>.jsonl`,
     /// the shape [`crate::mind::memory::layout`] writes.
@@ -1245,13 +1245,13 @@ mod rewarm_tests {
 
     #[test]
     fn task_report_scenes_are_unique_and_keep_ledger_order() {
-        let mut first = Task::new("first", TaskKind::Wip);
+        let mut first = Task::new("first", TaskStatus::Todo);
         first.report_to = Some(Scene("boss".into()));
-        let mut duplicate = Task::new("duplicate", TaskKind::Wip);
+        let mut duplicate = Task::new("duplicate", TaskStatus::Todo);
         duplicate.report_to = Some(Scene("boss".into()));
-        let mut second = Task::new("second", TaskKind::Wip);
+        let mut second = Task::new("second", TaskStatus::Todo);
         second.report_to = Some(Scene("phone".into()));
-        let internal = Task::new("internal", TaskKind::Wip);
+        let internal = Task::new("internal", TaskStatus::Todo);
 
         assert_eq!(
             task_report_scenes(&[first, duplicate, second, internal]),
@@ -2040,7 +2040,7 @@ async fn turn_context(
 mod turn_context_tests {
     use super::*;
     use crate::mind::memory::layout;
-    use crate::mind::memory::tasks::{Task, TaskKind, write_task};
+    use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
 
     /// The bug this change exists to fix. A scene's memory written — or a task opened
     /// — *after* the session was already up used to be invisible until the session
@@ -2061,14 +2061,14 @@ mod turn_context_tests {
         tokio::fs::write(&path, "He is mid-migration this week; keep answers terse.")
             .await
             .unwrap();
-        let mut owed = Task::new("Ship the flash cards", TaskKind::Wip);
+        let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.title = "Ship the flash cards".into();
         write_task(dir.path(), &owed).await.unwrap();
 
         // Turn two, same session — no re-open, no rotation.
         let second = turn_context(&memory, &scene, 0, "", "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
-        assert!(second.contains("- [wip] Ship the flash cards"), "{second}");
+        assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
     }
 

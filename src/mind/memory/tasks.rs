@@ -1,74 +1,20 @@
-//! Durable tasks — the `tasks` dimension of the facet tree.
+//! Durable tasks: one lifecycle, stored as ordinary facets.
 //!
-//! A task is what the agent **owes**: a delivery left half-done by a restart, a
-//! group it serves, a value it watches, a date it must act on, a staged job
-//! suspended for approval. Those were five separate mechanisms; they are one thing
-//! now, and that one thing is **a facet** — no new store, no new file format, no
-//! new tools. A task lives exactly where a facet lives:
+//! A task lives at `memory/facets/tasks/<subject>/facet.md`. The machine-readable
+//! shape is deliberately small:
 //!
 //! ```text
-//! <data_dir>/memory/facets/tasks/<subject>/facet.md
+//! status: todo | doing | done | cancelled
+//! created_at: <RFC3339>
 //! ```
 //!
-//! written and read with [`facets::update_facet`] / [`facets::read_facet`] like any
-//! other subject. The dimension list was always open-ended ([`super::facets`]);
-//! `tasks` is simply one more dimension, and the agent already has the tools for
-//! it. The subject **is** the task's identity: one obligation, one directory,
-//! regenerated whole (never patched) as it moves.
+//! `due_at`, `checked_at`, `completed_at`, and `cancelled_at` are optional lifecycle
+//! timestamps. A task may also carry a liveness contract (`verify`, `restart`,
+//! `owner`, `start_key`) when a `doing` task has machinery that must stay healthy.
+//! That contract is optional data, not another task kind or mode.
 //!
-//! ## What code reads, and what it doesn't
-//!
-//! The frontmatter is the machine-readable half — [`TaskKind`], [`TaskState`], an
-//! optional `report_to` scene, an optional `due`, and the liveness contract. The
-//! body below it is the agent's own prose and code never interprets it.
-//!
-//! **The liveness fields are prose written by an agent and read by an agent.** How
-//! to verify a serving task is really alive is *a count, not "something is
-//! running"*; how to restart it is instructions, not a command line this module
-//! will ever execute. Nothing here spawns, shells out, or parses them into
-//! actions — they exist so the next agent to look knows what "alive" means.
-//!
-//! **One exception, and it earns itself:** [`Task::checked`] — when the check was
-//! last run and came back alive — is a timestamp code reads, because [`projection`]
-//! has to render it. Everything else about liveness can wait to be read by whoever
-//! goes looking; *whether anyone has looked at all* cannot, since the rung that most
-//! needs to know is the one that cannot go and look.
-//!
-//! ## Why code touches this at all
-//!
-//! One query:
-//!
-//! - [`projection`] — a **code-bounded** rendering of what is open, for injection
-//!   into every agent's window. Projected is what Reaction must know without
-//!   reading; everything else is recall.
-//!
-//! There was a second, `due_before`, written for a clock to rebuild its timers
-//! from. That clock is **declined**, not deferred — see
-//! [`docs/arch/core.md`](../../../docs/arch/core.md#glancing-up--and-why-there-is-no-clock).
-//! Scheduling is the agent's own, built with the shell it already has, and the
-//! host's whole timing surface is the three loops that pace glancing up. So the
-//! query went with it rather than sitting here correct, tested and callerless.
-//!
-//! Everything else about tasks — writing one, closing one, reasoning about one —
-//! is the agent using the facet tools it already has.
-//!
-//! ## Keep-biased parsing
-//!
-//! A record whose `state` is missing or unrecognised reads as **open**, and a
-//! subject under `tasks/` with no frontmatter at all is still a task. A missed duty
-//! is a silently broken promise, so every ambiguity resolves toward "still owed" —
-//! the failure mode we can afford is a stale line in the projection, not a dropped
-//! one.
-//!
-//! ## The one place the facet shape chafes
-//!
-//! A facet subject is a **directory**, and here the subject is the task's identity —
-//! so every task costs a directory, and a title used over and over accumulates
-//! numbered siblings (`daily-digest`, `daily-digest-2`, …) that stay forever, since
-//! a closed task is the record that it was closed and is never deleted. That suits
-//! the durable obligations this is for and would suit a thousand tiny reminders
-//! badly. If tasks ever churn at that rate, the answer is a coarser task, not a
-//! second store beside `facets/`.
+//! Older records using `kind` plus `state` remain readable. New writes emit only the
+//! status taxonomy.
 
 use std::path::{Path, PathBuf};
 
@@ -78,141 +24,50 @@ use super::episodes::{frontmatter_field, jstr, strip_frontmatter};
 use super::{facets, layout};
 use crate::types::Scene;
 
-/// The facet dimension tasks live in. One more open-ended dimension beside
-/// `people`/`projects`/…, not a special case in the store.
 pub const DIMENSION: &str = "tasks";
-
-/// How many open tasks [`projection`] lists in full before it collapses the rest
-/// into one counted line.
-///
-/// **Twelve, and the bound is code's, not the agent's.** This text rides in *every*
-/// agent's window — including Reaction's, which is a small model on a latency
-/// budget — so its size has to be predictable no matter what the store holds. Two
-/// hundred open tasks must render as a summary: a list that long stops being read
-/// at all, and an unread projection is worse than a short one, because it looks
-/// like it is doing its job. Twelve is about what a person can hold as "what I owe
-/// right now"; past it, a count that says *there are more, go look* is the honest
-/// rendering. Nothing is lost by the bound — the tail is still on disk, and the
-/// facet tools reach all of it.
 pub const PROJECTED_TASKS: usize = 12;
-
-/// Per-line character cap in [`projection`], so one long title can't blow the
-/// window the way a long list would. Chars, not bytes: a CJK title clips at the
-/// same visual length and costs more bytes, which is the trade we want.
 const PROJECTED_LINE_CHARS: usize = 120;
 
-/// What kind of thing is owed. Five mechanisms that used to be separate; the kind
-/// is a label on one record, not a different store.
+/// The complete task lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskKind {
-    /// A half-finished delivery — typically interrupted by a restart.
-    Wip,
-    /// A standing duty: watch a group, file what arrives, reply in thread.
-    Serving,
-    /// A value, a baseline, a threshold, a cadence.
-    Watch,
-    /// A date and what to do at it.
-    Deadline,
-    /// A multi-stage job suspended for approval.
-    Staged,
-}
-
-impl TaskKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Wip => "wip",
-            Self::Serving => "serving",
-            Self::Watch => "watch",
-            Self::Deadline => "deadline",
-            Self::Staged => "staged",
-        }
-    }
-
-    /// Absent or unrecognised reads as [`TaskKind::Wip`] — the generic "something
-    /// is unfinished", the reading that keeps a malformed record visible.
-    fn parse(s: &str) -> Self {
-        match s.trim() {
-            "serving" => Self::Serving,
-            "watch" => Self::Watch,
-            "deadline" => Self::Deadline,
-            "staged" => Self::Staged,
-            _ => Self::Wip,
-        }
-    }
-
-    /// Ordering weight for tasks carrying no due time: resume what was interrupted,
-    /// then unblock what is waiting on someone, then the standing duties.
-    fn rank(self) -> usize {
-        match self {
-            Self::Wip => 0,
-            Self::Staged => 1,
-            Self::Serving => 2,
-            Self::Watch => 3,
-            Self::Deadline => 4,
-        }
-    }
-
-    /// Every kind, in [`TaskKind::rank`] order — the order the projection's summary
-    /// counts them in, so the line is stable across renders.
-    const ALL: [TaskKind; 5] =
-        [Self::Wip, Self::Staged, Self::Serving, Self::Watch, Self::Deadline];
-}
-
-/// Where a task stands. Only `open` is projected; `done` and `dropped` are history
-/// and stay on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskState {
-    Open,
+pub enum TaskStatus {
+    Todo,
+    Doing,
     Done,
-    Dropped,
+    Cancelled,
 }
 
-impl TaskState {
+impl TaskStatus {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Open => "open",
+            Self::Todo => "todo",
+            Self::Doing => "doing",
             Self::Done => "done",
-            Self::Dropped => "dropped",
+            Self::Cancelled => "cancelled",
         }
     }
 
-    /// Only the two explicit closings close a task; everything else — absent,
-    /// blank, misspelt — is [`TaskState::Open`]. See the module's keep-biased note.
+    /// Unknown values remain active and visible.
     fn parse(s: &str) -> Self {
         match s.trim() {
+            "doing" => Self::Doing,
             "done" => Self::Done,
-            "dropped" => Self::Dropped,
-            _ => Self::Open,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Todo,
         }
     }
 
-    pub fn is_open(self) -> bool {
-        matches!(self, Self::Open)
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Todo | Self::Doing)
     }
 }
 
-/// The liveness contract of a serving task: **not an existence check**. Every field
-/// is prose an agent wrote for the next agent to read — how to tell it is *really*
-/// alive (a count of what it has actually done, not "a process exists"), how to
-/// bring it back, and who owns it or what key makes starting it twice a no-op, so
-/// two scenes cannot both relaunch it.
-///
-/// This module never executes, resolves, or schedules any of it.
-///
-/// **When it was last actually run is [`Task::checked`]**, not a field here, because
-/// that one thing *is* machine-readable: the projection renders it, and rendering
-/// "never checked" is the only way the rung that cannot go and look can tell an
-/// unverified duty from a healthy one.
+/// Optional health instructions for a `doing` task backed by running machinery.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Liveness {
-    /// How to verify it is really alive — a count, not "something is running".
     pub verify: Option<String>,
-    /// How to bring it back if the check says it isn't.
     pub restart: Option<String>,
-    /// Who owns the running copy.
     pub owner: Option<String>,
-    /// An idempotent start key, so a second start is a no-op rather than a
-    /// duplicate.
     pub start_key: Option<String>,
 }
 
@@ -225,85 +80,78 @@ impl Liveness {
     }
 }
 
-/// One durable task: a facet under [`DIMENSION`], parsed.
 #[derive(Debug, Clone)]
 pub struct Task {
-    /// The facet subject — the directory name. `tasks/<subject>` is its ref, and
-    /// the subject is the task's identity.
     pub subject: String,
-    pub kind: TaskKind,
-    pub state: TaskState,
-    /// Human prose title. Falls back to the subject when a record carries none.
+    pub status: TaskStatus,
     pub title: String,
-    /// Optional scene to report into. A task is global — created in one scene and
-    /// delivered in another — so this is a preference, never a scope.
     pub report_to: Option<Scene>,
-    /// When it comes due, if it ever does.
-    ///
-    /// **Read, never fired.** It orders the projection and marks what is overdue;
-    /// nothing in the host wakes on it, so a deadline is met at the next glance
-    /// rather than at its minute. An alarm that must land on the minute is the
-    /// agent's to build — see the clock we declined in `docs/arch/core.md`.
-    pub due: Option<DateTime<Utc>>,
+    /// Always present on tasks created by current writers. Legacy records may not
+    /// have one; reads do not invent a creation instant.
+    pub created_at: Option<DateTime<Utc>>,
+    /// Optional because most tasks have no user-set due time.
+    pub due_at: Option<DateTime<Utc>>,
     pub liveness: Liveness,
-    /// When [`Liveness::verify`] was last actually run, and the answer was *alive*.
-    ///
-    /// Written by whoever ran the check; `None` means nobody ever has. It is the one
-    /// liveness field code reads, because it is the one that answers a question the
-    /// projection must not get wrong — and getting it wrong is not hypothetical:
-    /// a `watch` that had never started once projected identically to a running one,
-    /// so the voice reported it as healthy and the person had no way to find out.
-    ///
-    /// Not "when it was last looked at": a check that came back **down** must not
-    /// stamp this, or the field records attention rather than health, which is the
-    /// same lie one level further in.
-    pub checked: Option<DateTime<Utc>>,
-    /// The agent's own prose, below the frontmatter. Code never interprets it.
+    /// Last successful liveness verification, not merely the last attempt.
+    pub checked_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
     pub body: String,
 }
 
 impl Task {
-    /// A new open task with `subject` derived from `title`. Fields are public —
-    /// set `due`, `report_to` and `liveness` directly. Use [`fresh_subject`] first
-    /// when the title might already name an existing task.
-    pub fn new(title: &str, kind: TaskKind) -> Self {
+    pub fn new(title: &str, status: TaskStatus) -> Self {
+        let now = Utc::now();
         Self {
             subject: facets::slug(title),
-            kind,
-            state: TaskState::Open,
+            status,
             title: title.trim().to_owned(),
             report_to: None,
-            due: None,
+            created_at: Some(now),
+            due_at: None,
             liveness: Liveness::default(),
-            checked: None,
+            checked_at: None,
+            completed_at: (status == TaskStatus::Done).then_some(now),
+            cancelled_at: (status == TaskStatus::Cancelled).then_some(now),
             body: String::new(),
         }
     }
 
-    /// `tasks/<subject>` — the same ref shape [`facets::update_facet`] returns and
-    /// [`facets::facet_subject_index`] lists.
     pub fn facet_ref(&self) -> String {
         format!("{DIMENSION}/{}", self.subject)
     }
 
-    /// Due at or before `now`.
-    fn is_overdue(&self, now: DateTime<Utc>) -> bool {
-        self.due.is_some_and(|d| d <= now)
+    /// Apply a lifecycle transition and keep its closing timestamps coherent.
+    pub fn set_status(&mut self, status: TaskStatus, at: DateTime<Utc>) {
+        if self.status == status {
+            return;
+        }
+        self.status = status;
+        match status {
+            TaskStatus::Todo | TaskStatus::Doing => {
+                self.completed_at = None;
+                self.cancelled_at = None;
+            }
+            TaskStatus::Done => {
+                self.completed_at = Some(at);
+                self.cancelled_at = None;
+            }
+            TaskStatus::Cancelled => {
+                self.completed_at = None;
+                self.cancelled_at = Some(at);
+            }
+        }
     }
 
-    /// Whether this is a task that is supposed to be **running between glances** —
-    /// something with a live thing behind it that can quietly die.
-    ///
-    /// The other three cannot: a `wip` is unfinished work, a `staged` job is waiting
-    /// on a person, and a `deadline` is a date. Asking whether any of them is "alive"
-    /// has no answer, so the projection does not ask.
-    fn is_standing(&self) -> bool {
-        matches!(self.kind, TaskKind::Serving | TaskKind::Watch)
+    fn is_overdue(&self, now: DateTime<Utc>) -> bool {
+        self.due_at.is_some_and(|due| due <= now)
+    }
+
+    fn has_liveness_contract(&self) -> bool {
+        self.status == TaskStatus::Doing && !self.liveness.is_empty()
     }
 }
 
-/// One task by subject, or `None` if nothing is written there. A thin read over
-/// [`facets::read_facet`] — same file, same layout.
 pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<Task>> {
     let subject = facets::slug(subject);
     match facets::read_facet(data_dir, DIMENSION, &subject).await? {
@@ -312,25 +160,11 @@ pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<
     }
 }
 
-/// Write `task` as the whole record for its subject — regenerate, don't patch,
-/// exactly the facet convention (and the same atomic temp-then-rename, so a reader
-/// never sees a torn task). Returns the `tasks/<subject>` ref.
-///
-/// This is a **write to that subject**: it advances the task already there, it does
-/// not create a second one beside it. To add a genuinely new task whose title may
-/// already be taken, take a [`fresh_subject`] first.
 pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     let content = render(data_dir, task)?;
     facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await
 }
 
-/// A subject not yet taken: `slug(title)`, else `-2`, `-3`, … — the same escalation
-/// [`super::episodes`] uses for a colliding episode name.
-///
-/// It steps past *any* existing subject, closed ones included: a finished task is
-/// the record that it was finished, and quietly writing over it would lose the only
-/// evidence the promise was ever kept. The cost is that a title used often
-/// accumulates numbered siblings — the module's one noted awkwardness.
 pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<String> {
     let base = facets::slug(title);
     if base.is_empty() {
@@ -347,92 +181,77 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
     anyhow::bail!("too many tasks already named like {base:?}; give this one its own title")
 }
 
-/// Every open task, sorted by subject. The base both queries read from — one
-/// directory listing plus one small file per task, which is why the projection can
-/// afford to be rebuilt rather than cached.
-///
-/// Never deletes, closes, or rewrites anything: this module only ever *reads* an
-/// open task.
-pub async fn open_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
+/// Todo and doing tasks, sorted by subject.
+pub async fn active_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     let mut all = scan(data_dir).await?;
-    all.retain(|t| t.state.is_open());
+    all.retain(|task| task.status.is_active());
     Ok(all)
 }
 
-/// What is open, rendered for injection into an agent's window — bounded by
-/// [`PROJECTED_TASKS`], not by anyone's judgment.
-///
-/// Empty string when nothing is open, so a caller joining sections drops it (the
-/// same contract as the other sections [`super::snapshot::window`] joins).
 pub async fn projection(data_dir: &Path) -> anyhow::Result<String> {
-    Ok(render_projection(&open_tasks(data_dir).await?, Utc::now()))
+    Ok(render_projection(&active_tasks(data_dir).await?, Utc::now()))
 }
 
-/// The projection's pure half: order, clip, and summarise. Split out so the bound
-/// can be tested at any scale without writing that many files.
-fn render_projection(open: &[Task], now: DateTime<Utc>) -> String {
+fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
     use std::fmt::Write as _;
 
-    if open.is_empty() {
+    if active.is_empty() {
         return String::new();
     }
 
-    // Overdue first (most overdue leading), then what is coming, then the
-    // undated by kind. Subject breaks every tie, so the same store always renders
-    // the same text — and so the bound below always drops the *least* urgent tail.
     let mut decorated: Vec<(OrderKey<'_>, &Task)> =
-        open.iter().map(|t| (order_key(t, now), t)).collect();
+        active.iter().map(|task| (order_key(task, now), task)).collect();
     decorated.sort_by(|a, b| a.0.cmp(&b.0));
-    let ordered: Vec<&Task> = decorated.into_iter().map(|(_, t)| t).collect();
+    let ordered: Vec<&Task> = decorated.into_iter().map(|(_, task)| task).collect();
 
     let shown = ordered.len().min(PROJECTED_TASKS);
-    let mut s = String::from(
-        "# Open tasks\n\n_What you owe right now — projected, never fetched. Full records: memory/facets/tasks/<subject>/facet.md_\n\n",
+    let mut out = String::from(
+        "# Active tasks\n\n_What you owe right now. Full records: memory/facets/tasks/<subject>/facet.md_\n\n",
     );
-    for t in &ordered[..shown] {
-        s.push_str(&clip(&line(t, now), PROJECTED_LINE_CHARS));
-        // **Appended after the clip, deliberately.** The per-line bound exists to stop
-        // one long title blowing the window; it must not be able to eat the one token
-        // that says we have no evidence this is running. Same rule the summary below
-        // already applies to overdue: the bound may hide a task, it must never hide
-        // that a task is late — or that nobody has checked it.
-        if let Some(note) = liveness_note(t, now) {
-            let _ = write!(s, " · {note}");
+    for task in &ordered[..shown] {
+        out.push_str(&clip(&line(task, now), PROJECTED_LINE_CHARS));
+        if let Some(note) = liveness_note(task, now) {
+            let _ = write!(out, " · {note}");
         }
-        s.push('\n');
+        out.push('\n');
     }
 
     let rest = &ordered[shown..];
     if !rest.is_empty() {
-        let mut parts: Vec<String> = Vec::new();
-        for kind in TaskKind::ALL {
-            let n = rest.iter().filter(|t| t.kind == kind).count();
-            if n > 0 {
-                parts.push(format!("{n} {}", kind.as_str()));
-            }
+        let todo = rest.iter().filter(|task| task.status == TaskStatus::Todo).count();
+        let doing = rest.iter().filter(|task| task.status == TaskStatus::Doing).count();
+        let mut parts = Vec::new();
+        if todo > 0 {
+            parts.push(format!("{todo} todo"));
         }
-        let overdue = rest.iter().filter(|t| t.is_overdue(now)).count();
-        let unchecked = rest.iter().filter(|t| t.is_standing() && t.checked.is_none()).count();
-        let _ = write!(s, "- … and {} more open ({})", rest.len(), parts.join(", "));
+        if doing > 0 {
+            parts.push(format!("{doing} doing"));
+        }
+        let overdue = rest.iter().filter(|task| task.is_overdue(now)).count();
+        let unchecked = rest
+            .iter()
+            .filter(|task| task.has_liveness_contract() && task.checked_at.is_none())
+            .count();
+        let _ = write!(
+            out,
+            "- ... and {} more active ({})",
+            rest.len(),
+            parts.join(", ")
+        );
         if overdue > 0 {
-            // Say it even though these lines were cut: the bound may hide a task,
-            // it must never hide that a task is late.
-            let _ = write!(s, ", {overdue} of them overdue");
+            let _ = write!(out, ", {overdue} of them overdue");
         }
         if unchecked > 0 {
-            // And for the same reason it must never hide that something we are
-            // supposed to be *running* has never been confirmed to be running.
-            let _ = write!(s, ", {unchecked} never checked");
+            let _ = write!(out, ", {unchecked} monitored tasks never checked");
         }
-        s.push_str(". The whole list is memory/facets/tasks/.\n");
+        out.push_str(". The whole list is memory/facets/tasks/.\n");
     }
-    s
+    out
 }
 
-/// One projected line: kind, lateness, title, and where it reports.
-fn line(t: &Task, now: DateTime<Utc>) -> String {
-    let mut head = t.kind.as_str().to_string();
-    if let Some(due) = t.due {
+fn line(task: &Task, now: DateTime<Utc>) -> String {
+    let mut head = task.status.as_str().to_owned();
+    if let Some(due) = task.due_at {
         let when = due.format("%Y-%m-%d %H:%MZ");
         if due <= now {
             head = format!("{head}, overdue since {when}");
@@ -440,50 +259,29 @@ fn line(t: &Task, now: DateTime<Utc>) -> String {
             head = format!("{head}, due {when}");
         }
     }
-    let title = t.title.trim().replace('\n', " ");
-    let title = if title.is_empty() { t.subject.replace('-', " ") } else { title };
-    match &t.report_to {
-        Some(scene) => format!("- [{head}] {title} → {}", scene.0),
+    let title = task.title.trim().replace('\n', " ");
+    let title = if title.is_empty() {
+        task.subject.replace('-', " ")
+    } else {
+        title
+    };
+    match &task.report_to {
+        Some(scene) => format!("- [{head}] {title} -> {}", scene.0),
         None => format!("- [{head}] {title}"),
     }
 }
 
-/// What the projection says about whether a standing task is **actually running**.
-///
-/// `None` for the kinds that were never running to begin with ([`Task::is_standing`]).
-///
-/// For the two that are, this is never `None`, and that is the whole point.
-/// `docs/arch/data.md` says liveness is *a contract, not an existence check* — but
-/// until this existed the projection rendered only kind, due, title and `report_to`,
-/// so a watch that had never started, one that had silently died, and one running
-/// perfectly all produced the identical line. The projection is the entirety of what
-/// Reaction knows (it is tools-off and cannot go and look), so an identical line is a
-/// direct instruction that **existence means health** — which is how a watch that was
-/// never running came to be reported as "挂着呢，一直在盯". Silence has to render as
-/// silence.
-///
-/// The three answers are deliberately distinct, because the repair differs: run the
-/// check, write down a way to run it, or nothing.
-fn liveness_note(t: &Task, now: DateTime<Utc>) -> Option<String> {
-    if !t.is_standing() {
+fn liveness_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    if !task.has_liveness_contract() {
         return None;
     }
-    Some(match (t.checked, t.liveness.verify.is_some()) {
-        // What was last *confirmed*, not when it was last thought about.
+    Some(match (task.checked_at, task.liveness.verify.is_some()) {
         (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
         (None, true) => "never checked".to_owned(),
-        // The worst of the three and the easiest to miss: there is no recorded way to
-        // find out, so nobody can check it, now or later.
         (None, false) => "never checked, and no recorded way to".to_owned(),
     })
 }
 
-/// Compact elapsed time for a projected line: `12m ago`, `4h ago`, `3d ago`.
-///
-/// Coarse on purpose. This rides in every window on every turn, and to the question
-/// the reader is actually asking — *is this stale?* — `4h` and `4h12m` are the same
-/// answer at twice the characters. A `then` in the future (clock skew, a hand-edited
-/// record) clamps to `just now` rather than rendering a negative age.
 fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     let mins = (now - then).num_minutes();
     match mins {
@@ -494,22 +292,18 @@ fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     }
 }
 
-/// (group, due-or-zero, subject). Group 0 is overdue, 1 is upcoming, and 2+ are the
-/// undated ranked by kind — so urgency, not alphabet, decides who survives the
-/// bound.
+/// Overdue first, then upcoming, then undated doing work before todo work.
 type OrderKey<'a> = (usize, i64, &'a str);
 
-fn order_key(t: &Task, now: DateTime<Utc>) -> OrderKey<'_> {
-    match t.due {
-        Some(due) if due <= now => (0, due.timestamp(), &t.subject),
-        Some(due) => (1, due.timestamp(), &t.subject),
-        None => (2 + t.kind.rank(), 0, &t.subject),
+fn order_key(task: &Task, now: DateTime<Utc>) -> OrderKey<'_> {
+    match task.due_at {
+        Some(due) if due <= now => (0, due.timestamp(), &task.subject),
+        Some(due) => (1, due.timestamp(), &task.subject),
+        None if task.status == TaskStatus::Doing => (2, 0, &task.subject),
+        None => (3, 0, &task.subject),
     }
 }
 
-/// Every task under the dimension, open or not, sorted by subject. A stray file
-/// (not a directory) or a subject with no `facet.md` is skipped — a subject "exists"
-/// once it has prose, the same rule [`facets::facet_subject_index`] applies.
 async fn scan(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     let root = tasks_dir(data_dir);
     let mut rd = match tokio::fs::read_dir(&root).await {
@@ -518,17 +312,18 @@ async fn scan(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
         Err(err) => return Err(err.into()),
     };
     let mut out = Vec::new();
-    while let Some(ent) = rd.next_entry().await? {
-        if !ent.file_type().await?.is_dir() {
+    while let Some(entry) = rd.next_entry().await? {
+        if !entry.file_type().await?.is_dir() {
             continue;
         }
-        let Ok(subject) = ent.file_name().into_string() else {
+        let Ok(subject) = entry.file_name().into_string() else {
             continue;
         };
         if subject.is_empty() || subject.starts_with('.') {
             continue;
         }
-        let Ok(content) = tokio::fs::read_to_string(ent.path().join(facets::FACET_FILE)).await
+        let Ok(content) =
+            tokio::fs::read_to_string(entry.path().join(facets::FACET_FILE)).await
         else {
             continue;
         };
@@ -538,44 +333,55 @@ async fn scan(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     Ok(out)
 }
 
-/// `<memory>/facets/tasks` — the dimension directory. Derived from
-/// [`layout::facets_dir`]; tasks add no path of their own.
 fn tasks_dir(data_dir: &Path) -> PathBuf {
     layout::facets_dir(data_dir).join(DIMENSION)
 }
 
-/// Read one record. Forgiving on purpose — an agent writes these by hand through
-/// the ordinary facet tool, so an unknown key is ignored, a bare value is taken
-/// as-is, and anything missing takes the keep-biased default.
 fn parse(subject: &str, content: &str) -> Task {
-    let field = |k: &str| frontmatter_field(content, k).filter(|v| !v.trim().is_empty());
-    let title = field("title").unwrap_or_else(|| subject.replace('-', " "));
+    let field = |key: &str| frontmatter_field(content, key).filter(|v| !v.trim().is_empty());
+    let status = match field("status") {
+        Some(value) => TaskStatus::parse(&value),
+        None => legacy_status(field("kind").as_deref(), field("state").as_deref()),
+    };
     Task {
         subject: subject.to_owned(),
-        kind: field("kind").map_or(TaskKind::Wip, |v| TaskKind::parse(&v)),
-        state: field("state").map_or(TaskState::Open, |v| TaskState::parse(&v)),
-        title,
+        status,
+        title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
         report_to: field("report_to").map(Scene),
-        due: field("due").and_then(|v| parse_due(&v)),
+        created_at: field("created_at").and_then(|value| parse_timestamp(&value)),
+        due_at: field("due_at")
+            .or_else(|| field("due"))
+            .and_then(|value| parse_timestamp(&value)),
         liveness: Liveness {
             verify: field("verify"),
             restart: field("restart"),
             owner: field("owner"),
             start_key: field("start_key"),
         },
-        // Unparseable reads as `None` — i.e. "never checked". Keep-biased in the same
-        // direction as everything else here: the ambiguity resolves toward *we do not
-        // know that this is alive*, never toward health.
-        checked: field("checked").and_then(|v| parse_due(&v)),
+        checked_at: field("checked_at")
+            .or_else(|| field("checked"))
+            .and_then(|value| parse_timestamp(&value)),
+        completed_at: field("completed_at").and_then(|value| parse_timestamp(&value)),
+        cancelled_at: field("cancelled_at").and_then(|value| parse_timestamp(&value)),
         body: strip_frontmatter(content).trim().to_owned(),
     }
 }
 
-/// A due time as RFC3339, or a bare `YYYY-MM-DD` read as that date's UTC midnight —
-/// a date is what an agent writing by hand most often means. Anything else is
-/// `None`: an unparseable due leaves the task open and projected, just untimed,
-/// rather than silently arming nothing.
-fn parse_due(s: &str) -> Option<DateTime<Utc>> {
+/// Compatibility for the retired `kind` + `state` schema.
+fn legacy_status(kind: Option<&str>, state: Option<&str>) -> TaskStatus {
+    match state.map(str::trim) {
+        Some("done") => TaskStatus::Done,
+        Some("dropped") => TaskStatus::Cancelled,
+        _ => match kind.map(str::trim) {
+            Some("staged") | Some("deadline") => TaskStatus::Todo,
+            // `wip`, `watch`, `serving`, absent, and malformed kinds represented
+            // work the old system considered underway.
+            _ => TaskStatus::Doing,
+        },
+    }
+}
+
+fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
     let s = s.trim();
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Some(dt.with_timezone(&Utc));
@@ -584,34 +390,34 @@ fn parse_due(s: &str) -> Option<DateTime<Utc>> {
     Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?))
 }
 
-/// Render a task to its `facet.md` text: JSON scalars in the frontmatter (a colon,
-/// quote or newline in a title can never break the block), the agent's prose below.
-///
-/// Refuses to persist a frontmatter value carrying this install's own absolute data
-/// directory: `data/` has to stay a directory you can move to another machine, and
-/// a `restart:` line naming `/Users/someone/…` is exactly what would break that.
-/// The guard is deliberately narrow — it knows one absolute path, its own — because
-/// anything wider would start rejecting ordinary prose.
 fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     use std::fmt::Write as _;
 
-    let mut s = String::from("---\n");
-    let _ = writeln!(s, "kind: {}", task.kind.as_str());
-    let _ = writeln!(s, "state: {}", task.state.as_str());
+    let mut out = String::from("---\n");
+    let _ = writeln!(out, "status: {}", task.status.as_str());
     let mut field = |key: &str, value: &str| -> anyhow::Result<()> {
         reject_host_path(data_dir, key, value)?;
-        let _ = writeln!(s, "{key}: {}", jstr(value.trim()));
+        let _ = writeln!(out, "{key}: {}", jstr(value.trim()));
         Ok(())
     };
     field("title", task.title.as_str())?;
+    if let Some(created_at) = task.created_at {
+        field("created_at", created_at.to_rfc3339().as_str())?;
+    }
     if let Some(scene) = &task.report_to {
         field("report_to", scene.0.as_str())?;
     }
-    if let Some(due) = task.due {
-        field("due", due.to_rfc3339().as_str())?;
+    if let Some(due_at) = task.due_at {
+        field("due_at", due_at.to_rfc3339().as_str())?;
     }
-    if let Some(checked) = task.checked {
-        field("checked", checked.to_rfc3339().as_str())?;
+    if let Some(checked_at) = task.checked_at {
+        field("checked_at", checked_at.to_rfc3339().as_str())?;
+    }
+    if let Some(completed_at) = task.completed_at {
+        field("completed_at", completed_at.to_rfc3339().as_str())?;
+    }
+    if let Some(cancelled_at) = task.cancelled_at {
+        field("cancelled_at", cancelled_at.to_rfc3339().as_str())?;
     }
     for (key, value) in [
         ("verify", &task.liveness.verify),
@@ -619,14 +425,14 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
         ("owner", &task.liveness.owner),
         ("start_key", &task.liveness.start_key),
     ] {
-        if let Some(v) = value {
-            field(key, v.as_str())?;
+        if let Some(value) = value {
+            field(key, value)?;
         }
     }
-    s.push_str("---\n\n");
-    s.push_str(task.body.trim());
-    s.push('\n');
-    Ok(s)
+    out.push_str("---\n\n");
+    out.push_str(task.body.trim());
+    out.push('\n');
+    Ok(out)
 }
 
 fn reject_host_path(data_dir: &Path, key: &str, value: &str) -> anyhow::Result<()> {
@@ -640,13 +446,12 @@ fn reject_host_path(data_dir: &Path, key: &str, value: &str) -> anyhow::Result<(
     Ok(())
 }
 
-/// Clip to `max` **characters** (never a byte boundary), marking the cut.
 fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_owned();
     }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
-    out.push('…');
+    let mut out: String = s.chars().take(max.saturating_sub(3)).collect();
+    out.push_str("...");
     out
 }
 
@@ -655,7 +460,6 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    /// A July-2026 instant, so `now()` sits between the "past" and "future" fixtures.
     fn at(day: u32, hour: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 7, day, hour, 0, 0).unwrap()
     }
@@ -664,406 +468,194 @@ mod tests {
         at(28, 12)
     }
 
-    fn task(title: &str, kind: TaskKind) -> Task {
-        Task::new(title, kind)
+    fn task(title: &str, status: TaskStatus) -> Task {
+        let mut task = Task::new(title, status);
+        task.created_at = Some(at(1, 9));
+        task
     }
 
     #[tokio::test]
-    async fn round_trips_through_the_facet_layout() {
+    async fn current_schema_round_trips_without_kind_or_state() {
         let dir = tempfile::tempdir().unwrap();
-        let mut t = Task::new("File the Feishu digest", TaskKind::Serving);
-        t.report_to = Some(Scene("boss".into()));
-        t.due = Some(at(30, 9));
-        t.liveness = Liveness {
-            verify: Some("count today's rows in drive/ledgers/feishu.jsonl — one per filed message".into()),
-            restart: Some("re-open the group listener; see skills/feishu-watch.md".into()),
-            start_key: Some("feishu-digest".into()),
-            ..Default::default()
-        };
-        t.body = "Boss asked for a daily digest of the ops group.".into();
+        let mut task = task("File the Feishu digest", TaskStatus::Doing);
+        task.report_to = Some(Scene("boss".into()));
+        task.due_at = Some(at(30, 9));
+        task.checked_at = Some(at(28, 10));
+        task.liveness.verify =
+            Some("count today's rows in drive/ledgers/feishu.jsonl".into());
+        task.body = "Boss asked for a daily digest of the ops group.".into();
 
-        let r = write_task(dir.path(), &t).await.unwrap();
-        assert_eq!(r, "tasks/file-the-feishu-digest");
-
-        // It is a facet: the ordinary facet reader and the subject index see it.
-        assert!(
-            facets::read_facet(dir.path(), DIMENSION, "file-the-feishu-digest")
-                .await
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            facets::facet_subject_index(dir.path())
-                .await
-                .unwrap()
-                .contains(&"tasks/file-the-feishu-digest".to_string())
-        );
+        write_task(dir.path(), &task).await.unwrap();
+        let raw = facets::read_facet(dir.path(), DIMENSION, "file-the-feishu-digest")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(raw.contains("status: doing"));
+        assert!(raw.contains("created_at:"));
+        assert!(raw.contains("due_at:"));
+        assert!(!raw.contains("\nkind:"));
+        assert!(!raw.contains("\nstate:"));
 
         let got = read_task(dir.path(), "File the Feishu digest").await.unwrap().unwrap();
-        assert_eq!(got.subject, "file-the-feishu-digest");
-        assert_eq!(got.facet_ref(), "tasks/file-the-feishu-digest");
-        assert_eq!(got.kind, TaskKind::Serving);
-        assert_eq!(got.state, TaskState::Open);
-        assert_eq!(got.title, "File the Feishu digest");
-        assert_eq!(got.report_to.as_ref().map(|s| s.0.as_str()), Some("boss"));
-        assert_eq!(got.due, Some(at(30, 9)));
-        assert_eq!(got.liveness.start_key.as_deref(), Some("feishu-digest"));
-        assert!(got.liveness.verify.as_deref().unwrap().contains("count"));
-        assert!(got.liveness.owner.is_none());
+        assert_eq!(got.status, TaskStatus::Doing);
+        assert_eq!(got.created_at, Some(at(1, 9)));
+        assert_eq!(got.due_at, Some(at(30, 9)));
+        assert_eq!(got.checked_at, Some(at(28, 10)));
         assert_eq!(got.body, "Boss asked for a daily digest of the ops group.");
     }
 
     #[tokio::test]
-    async fn read_missing_is_none() {
+    async fn legacy_kind_and_state_map_into_the_four_statuses() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(read_task(dir.path(), "nothing").await.unwrap().is_none());
-        assert!(open_tasks(dir.path()).await.unwrap().is_empty());
-        assert!(projection(dir.path()).await.unwrap().is_empty());
-    }
-
-    /// A record written by hand through the plain facet tool, with a colon in a
-    /// value, an unknown key, and no `state` — it must still read as an open task.
-    #[tokio::test]
-    async fn hand_written_record_parses_keep_biased() {
-        let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            DIMENSION,
-            "renew the domain",
-            "---\nkind: deadline\ntitle: Renew xiaoyuanzhu.com: expires soon\ndue: 2026-08-01\nnote: whatever\n---\n\nCard on file.\n",
-        )
-        .await
-        .unwrap();
-        // And one with no frontmatter at all.
-        facets::update_facet(dir.path(), DIMENSION, "half a slide deck", "Got three slides in.")
+        for (subject, frontmatter, expected) in [
+            ("queued", "kind: staged\nstate: open", TaskStatus::Todo),
+            ("deadline", "kind: deadline\nstate: open", TaskStatus::Todo),
+            ("wip", "kind: wip\nstate: open", TaskStatus::Doing),
+            ("watch", "kind: watch\nstate: open", TaskStatus::Doing),
+            ("done", "kind: serving\nstate: done", TaskStatus::Done),
+            ("dropped", "kind: wip\nstate: dropped", TaskStatus::Cancelled),
+        ] {
+            facets::update_facet(
+                dir.path(),
+                DIMENSION,
+                subject,
+                &format!("---\n{frontmatter}\ntitle: {subject}\n---\n"),
+            )
             .await
             .unwrap();
-
-        let still_open = open_tasks(dir.path()).await.unwrap();
-        assert_eq!(still_open.len(), 2);
-        assert_eq!(still_open[0].subject, "half-a-slide-deck");
-        assert_eq!(still_open[0].kind, TaskKind::Wip);
-        assert_eq!(still_open[0].state, TaskState::Open);
-        assert_eq!(still_open[0].title, "half a slide deck");
-        assert_eq!(still_open[0].body, "Got three slides in.");
-        assert_eq!(still_open[1].title, "Renew xiaoyuanzhu.com: expires soon");
-        assert_eq!(still_open[1].kind, TaskKind::Deadline);
-        assert_eq!(still_open[1].due, Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single());
+            let got = read_task(dir.path(), subject).await.unwrap().unwrap();
+            assert_eq!(got.status, expected, "{subject}");
+        }
     }
 
     #[tokio::test]
-    async fn done_and_dropped_leave_the_open_set() {
+    async fn done_and_cancelled_leave_the_active_set() {
         let dir = tempfile::tempdir().unwrap();
-        let mut a = task("ship the deck", TaskKind::Wip);
-        let mut b = task("chase the invoice", TaskKind::Wip);
-        let c = task("watch the build", TaskKind::Watch);
-        a.state = TaskState::Done;
-        b.state = TaskState::Dropped;
-        for t in [&a, &b, &c] {
-            write_task(dir.path(), t).await.unwrap();
+        for task in [
+            task("todo", TaskStatus::Todo),
+            task("doing", TaskStatus::Doing),
+            task("done", TaskStatus::Done),
+            task("cancelled", TaskStatus::Cancelled),
+        ] {
+            write_task(dir.path(), &task).await.unwrap();
         }
-
-        let still_open = open_tasks(dir.path()).await.unwrap();
-        assert_eq!(still_open.len(), 1);
-        assert_eq!(still_open[0].subject, "watch-the-build");
-        // Closed ones are history, not deletions — still on disk, still readable.
+        let active = active_tasks(dir.path()).await.unwrap();
         assert_eq!(
-            read_task(dir.path(), "ship the deck").await.unwrap().unwrap().state,
-            TaskState::Done
+            active.iter().map(|task| task.subject.as_str()).collect::<Vec<_>>(),
+            vec!["doing", "todo"]
         );
     }
 
     #[test]
-    fn projection_is_empty_when_nothing_is_open() {
-        assert!(render_projection(&[], now()).is_empty());
+    fn transitions_stamp_and_clear_closing_times() {
+        let mut task = task("ship", TaskStatus::Doing);
+        task.set_status(TaskStatus::Done, at(28, 9));
+        assert_eq!(task.completed_at, Some(at(28, 9)));
+        assert!(task.cancelled_at.is_none());
+
+        task.set_status(TaskStatus::Todo, at(28, 10));
+        assert!(task.completed_at.is_none());
+        assert!(task.cancelled_at.is_none());
+
+        task.set_status(TaskStatus::Cancelled, at(28, 11));
+        assert_eq!(task.cancelled_at, Some(at(28, 11)));
+        assert!(task.completed_at.is_none());
     }
 
     #[test]
-    fn projection_leads_with_the_overdue() {
-        let mut wip = task("finish the deck", TaskKind::Wip);
-        wip.title = "Finish the deck".into();
-        let mut late = task("renew the domain", TaskKind::Deadline);
-        late.title = "Renew the domain".into();
-        late.due = Some(at(20, 8));
-        late.report_to = Some(Scene("boss".into()));
-        let mut coming = task("quarterly filing", TaskKind::Deadline);
-        coming.title = "Quarterly filing".into();
-        coming.due = Some(at(31, 8));
-        let watching = task("watch the build", TaskKind::Watch);
-
-        let text = render_projection(&[watching, coming, wip, late], now());
-        let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("- ")).collect();
-        assert_eq!(
-            lines,
-            vec![
-                "- [deadline, overdue since 2026-07-20 08:00Z] Renew the domain → boss",
-                "- [deadline, due 2026-07-31 08:00Z] Quarterly filing",
-                "- [wip] Finish the deck",
-                // The watch carries its liveness state and the other three do not —
-                // only a watch was ever supposed to be running. See
-                // `a_standing_task_says_whether_anyone_has_confirmed_it_is_alive`.
-                "- [watch] watch the build · never checked, and no recorded way to",
-            ]
-        );
+    fn projection_uses_status_and_only_mentions_due_when_set() {
+        let plain = task("Write the brief", TaskStatus::Todo);
+        let mut late = task("Renew the domain", TaskStatus::Doing);
+        late.due_at = Some(at(20, 8));
+        let text = render_projection(&[plain, late], now());
+        assert!(text.contains("# Active tasks"));
+        assert!(text.contains("- [todo] Write the brief"));
+        assert!(text.contains("- [doing, overdue since 2026-07-20 08:00Z] Renew the domain"));
+        let plain_line = text.lines().find(|line| line.contains("Write the brief")).unwrap();
+        assert!(!plain_line.contains("due"));
     }
 
-    /// The reason this store exists in code at all: 200 open tasks must render as a
-    /// summary, not a list — and the bound must not be able to hide lateness.
     #[test]
-    fn two_hundred_open_tasks_render_as_a_summary() {
+    fn liveness_is_optional_data_on_doing_tasks() {
+        let plain = task("Draft the report", TaskStatus::Doing);
+        let text = render_projection(std::slice::from_ref(&plain), now());
+        assert!(!text.contains("checked"), "{text}");
+
+        let mut monitored = task("Watch the queue", TaskStatus::Doing);
+        monitored.liveness.verify = Some("latest ledger row is under 30m old".into());
+        let text = render_projection(std::slice::from_ref(&monitored), now());
+        assert!(text.contains("never checked"), "{text}");
+
+        monitored.checked_at = Some(now() - Duration::hours(3));
+        let text = render_projection(std::slice::from_ref(&monitored), now());
+        assert!(text.contains("last confirmed alive 3h ago"), "{text}");
+
+        monitored.status = TaskStatus::Todo;
+        let text = render_projection(std::slice::from_ref(&monitored), now());
+        assert!(!text.contains("checked"), "{text}");
+    }
+
+    #[test]
+    fn two_hundred_active_tasks_are_bounded_and_counted_by_status() {
         let mut tasks = Vec::new();
-        for i in 0..60 {
-            tasks.push(task(&format!("watch value {i}"), TaskKind::Watch));
-        }
-        for i in 0..60 {
-            tasks.push(task(&format!("serve group {i}"), TaskKind::Serving));
-        }
-        for i in 0..60 {
-            tasks.push(task(&format!("finish thing {i}"), TaskKind::Wip));
-        }
-        for i in 0..20 {
-            let mut t = task(&format!("deadline {i}"), TaskKind::Deadline);
-            // Half already blown, half still ahead.
-            t.due = Some(if i % 2 == 0 { at(20, 8) } else { at(31, 8) });
-            tasks.push(t);
-        }
-        assert_eq!(tasks.len(), 200);
-
-        let text = render_projection(&tasks, now());
-        let listed: Vec<&str> =
-            text.lines().filter(|l| l.starts_with("- ") && !l.starts_with("- …")).collect();
-        assert_eq!(listed.len(), PROJECTED_TASKS);
-
-        // The ten overdue ones all fit inside the bound and lead it.
-        assert_eq!(listed.iter().filter(|l| l.contains("overdue")).count(), 10);
-        assert!(listed[0].contains("overdue"));
-
-        // The tail is counted, not dropped, and says so by kind.
-        let summary = text.lines().find(|l| l.starts_with("- …")).expect("a summary line");
-        assert!(summary.contains("188 more open"), "{summary}");
-        assert!(summary.contains("60 wip"), "{summary}");
-        assert!(summary.contains("60 serving"), "{summary}");
-        assert!(summary.contains("60 watch"), "{summary}");
-        assert!(summary.contains("memory/facets/tasks/"), "{summary}");
-
-        // And the whole thing stays small enough to sit in every window.
-        assert!(text.chars().count() < 2_500, "{} chars", text.chars().count());
-    }
-
-    /// Lateness must survive the bound even when the overdue tasks are cut from the
-    /// list: more overdue than [`PROJECTED_TASKS`] means the count is stated.
-    #[test]
-    fn summary_states_overdue_it_could_not_list() {
-        let mut tasks = Vec::new();
-        for i in 0..30 {
-            let mut t = task(&format!("late {i:02}"), TaskKind::Deadline);
-            t.due = Some(at(20, 8));
-            tasks.push(t);
+        for i in 0..100 {
+            tasks.push(task(&format!("todo {i}"), TaskStatus::Todo));
+            tasks.push(task(&format!("doing {i}"), TaskStatus::Doing));
         }
         let text = render_projection(&tasks, now());
-        let summary = text.lines().find(|l| l.starts_with("- …")).expect("a summary line");
-        assert!(summary.contains("18 more open"), "{summary}");
-        assert!(summary.contains("18 of them overdue"), "{summary}");
-    }
-
-    #[test]
-    fn a_long_title_cannot_blow_the_line() {
-        let mut t = task("long", TaskKind::Wip);
-        t.title = "x".repeat(1_000);
-        let text = render_projection(std::slice::from_ref(&t), now());
-        let line = text.lines().find(|l| l.starts_with("- ")).unwrap();
-        assert_eq!(line.chars().count(), PROJECTED_LINE_CHARS);
-        assert!(line.ends_with('…'));
-
-        // Chars, not bytes: a CJK title clips without splitting a character.
-        t.title = "任务".repeat(200);
-        let text = render_projection(std::slice::from_ref(&t), now());
-        let line = text.lines().find(|l| l.starts_with("- ")).unwrap();
-        assert_eq!(line.chars().count(), PROJECTED_LINE_CHARS);
+        let listed = text
+            .lines()
+            .filter(|line| line.starts_with("- ["))
+            .count();
+        assert_eq!(listed, PROJECTED_TASKS);
+        let summary = text.lines().find(|line| line.starts_with("- ...")).unwrap();
+        assert!(summary.contains("188 more active"), "{summary}");
+        assert!(summary.contains("100 todo"), "{summary}");
+        assert!(summary.contains("88 doing"), "{summary}");
+        assert!(text.chars().count() < 2_500);
     }
 
     #[tokio::test]
-    async fn projection_reads_through_the_store() {
+    async fn fresh_subject_never_reuses_closed_history() {
         let dir = tempfile::tempdir().unwrap();
-        let mut t = task("Water the plants", TaskKind::Wip);
-        t.title = "Water the plants".into();
-        write_task(dir.path(), &t).await.unwrap();
-        let text = projection(dir.path()).await.unwrap();
-        assert!(text.contains("- [wip] Water the plants"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn fresh_subject_never_takes_an_existing_one() {
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(fresh_subject(dir.path(), "Daily digest").await.unwrap(), "daily-digest");
-
-        let t = task("Daily digest", TaskKind::Serving);
-        write_task(dir.path(), &t).await.unwrap();
-        assert_eq!(fresh_subject(dir.path(), "Daily digest").await.unwrap(), "daily-digest-2");
-
-        // Even a closed one keeps its name — a finished task is the record that it
-        // was finished.
-        let mut done = task("Daily digest", TaskKind::Serving);
-        done.state = TaskState::Done;
+        let done = task("Daily digest", TaskStatus::Done);
         write_task(dir.path(), &done).await.unwrap();
-        assert_eq!(fresh_subject(dir.path(), "Daily digest").await.unwrap(), "daily-digest-2");
-
-        assert!(fresh_subject(dir.path(), "???").await.is_err());
+        assert_eq!(
+            fresh_subject(dir.path(), "Daily digest").await.unwrap(),
+            "daily-digest-2"
+        );
     }
 
-    /// `data/` must stay portable: nothing this module persists may carry this
-    /// machine's absolute paths.
     #[tokio::test]
     async fn no_absolute_host_path_is_persisted() {
         let dir = tempfile::tempdir().unwrap();
         let host = dir.path().display().to_string();
-
-        let mut t = task("Serve the group", TaskKind::Serving);
-        t.title = "Serve the group".into();
-        t.liveness.verify = Some("count rows in drive/ledgers/group.jsonl".into());
-        t.liveness.restart = Some("re-run skills/group-watch.md".into());
-        t.body = "Filed 12 messages so far.".into();
-        write_task(dir.path(), &t).await.unwrap();
-
-        let path = facets::subject_dir(dir.path(), DIMENSION, "serve-the-group")
-            .join(facets::FACET_FILE);
-        let written = tokio::fs::read_to_string(&path).await.unwrap();
-        assert!(!written.contains(&host), "{written}");
-        assert!(!written.lines().any(|l| l.contains(": \"/")), "{written}");
-
-        // And an absolute one is refused rather than quietly written.
-        let mut bad = t.clone();
-        bad.liveness.restart = Some(format!("run {host}/bin/watch"));
-        let err = write_task(dir.path(), &bad).await.unwrap_err().to_string();
+        let mut task = task("Watch the queue", TaskStatus::Doing);
+        task.liveness.restart = Some(format!("run {host}/bin/watch"));
+        let err = write_task(dir.path(), &task).await.unwrap_err().to_string();
         assert!(err.contains("restart"), "{err}");
         assert!(err.contains("relative"), "{err}");
-
-        // The refusal did not touch what was already there.
-        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), written);
-    }
-
-    /// Reflection may not prune an open task, and neither may this module: no read
-    /// path here removes, closes, or rewrites one.
-    #[tokio::test]
-    async fn nothing_here_removes_an_open_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut t = task("Deliver the report", TaskKind::Wip);
-        t.due = Some(at(20, 8));
-        write_task(dir.path(), &t).await.unwrap();
-        let path = facets::subject_dir(dir.path(), DIMENSION, "deliver-the-report")
-            .join(facets::FACET_FILE);
-        let before = tokio::fs::read_to_string(&path).await.unwrap();
-
-        for _ in 0..3 {
-            open_tasks(dir.path()).await.unwrap();
-            projection(dir.path()).await.unwrap();
-            read_task(dir.path(), "deliver-the-report").await.unwrap();
-            fresh_subject(dir.path(), "Deliver the report").await.unwrap();
-        }
-
-        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), before);
-        let still = read_task(dir.path(), "deliver-the-report").await.unwrap().unwrap();
-        assert!(still.state.is_open());
     }
 
     #[test]
-    fn due_accepts_rfc3339_and_a_bare_date() {
-        assert_eq!(parse_due("2026-08-01T09:30:00Z"), Utc.with_ymd_and_hms(2026, 8, 1, 9, 30, 0).single());
-        assert_eq!(parse_due("2026-08-01"), Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single());
-        assert_eq!(parse_due("next tuesday"), None);
-        assert_eq!(parse_due(""), None);
-    }
-
-    /// **The regression this exists for.** A watch that was never running once
-    /// projected identically to a healthy one, so the only rung that could answer
-    /// "how's it going" was told nothing but that the task existed — and answered
-    /// that it was being watched. The three states must be three different lines.
-    #[test]
-    fn a_standing_task_says_whether_anyone_has_confirmed_it_is_alive() {
-        let never = task("watch the oil price", TaskKind::Watch);
-        let text = render_projection(std::slice::from_ref(&never), now());
-        assert!(text.contains("never checked, and no recorded way to"), "{text}");
-
-        let mut no_check_run = never.clone();
-        no_check_run.liveness.verify = Some("count rows in drive/ledgers/oil.jsonl".into());
-        let text = render_projection(std::slice::from_ref(&no_check_run), now());
-        assert!(text.contains("· never checked"), "{text}");
-        assert!(!text.contains("no recorded way"), "{text}");
-
-        let mut confirmed = no_check_run.clone();
-        confirmed.checked = Some(now() - Duration::hours(3));
-        let text = render_projection(std::slice::from_ref(&confirmed), now());
-        assert!(text.contains("last confirmed alive 3h ago"), "{text}");
-        assert!(!text.contains("never checked"), "{text}");
-    }
-
-    /// Only the kinds that are *supposed* to be running get asked. A deadline is a
-    /// date and a wip is unfinished work — "never checked" on either is noise.
-    #[test]
-    fn liveness_is_not_asked_of_things_that_were_never_running() {
-        for kind in [TaskKind::Wip, TaskKind::Staged, TaskKind::Deadline] {
-            let t = task("something", kind);
-            let text = render_projection(std::slice::from_ref(&t), now());
-            assert!(!text.contains("checked"), "{kind:?}: {text}");
-        }
-    }
-
-    /// The per-line bound may hide a title; it must never hide that nothing has
-    /// confirmed a standing duty is alive — the same rule lateness already gets.
-    #[test]
-    fn the_line_bound_cannot_eat_the_liveness_note() {
-        let mut t = task("watch", TaskKind::Watch);
-        t.title = "x".repeat(1_000);
-        let text = render_projection(std::slice::from_ref(&t), now());
-        let line = text.lines().find(|l| l.starts_with("- ")).unwrap();
-        assert!(line.contains('…'), "the title should still clip: {line}");
-        assert!(line.ends_with("never checked, and no recorded way to"), "{line}");
-    }
-
-    /// And when the bound cuts the lines entirely, the count survives.
-    #[test]
-    fn summary_states_unchecked_standing_tasks_it_could_not_list() {
-        let mut tasks = Vec::new();
-        for i in 0..30 {
-            tasks.push(task(&format!("watch {i:02}"), TaskKind::Watch));
-        }
-        let text = render_projection(&tasks, now());
-        let summary = text.lines().find(|l| l.starts_with("- …")).expect("a summary line");
-        assert!(summary.contains("18 never checked"), "{summary}");
-    }
-
-    /// `checked` round-trips, and an unparseable one reads as *never* rather than as
-    /// now — keep-biased in the direction of "we do not know that this is alive".
-    #[tokio::test]
-    async fn checked_round_trips_and_garbage_reads_as_never() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut t = task("Serve the ops group", TaskKind::Serving);
-        t.checked = Some(at(28, 9));
-        write_task(dir.path(), &t).await.unwrap();
-        let got = read_task(dir.path(), "Serve the ops group").await.unwrap().unwrap();
-        assert_eq!(got.checked, Some(at(28, 9)));
-
-        facets::update_facet(
-            dir.path(),
-            DIMENSION,
-            "watch the queue",
-            "---\nkind: watch\nchecked: yesterday I think\n---\n\nWatching.\n",
-        )
-        .await
-        .unwrap();
-        let got = read_task(dir.path(), "watch the queue").await.unwrap().unwrap();
-        assert_eq!(got.checked, None);
+    fn timestamp_accepts_rfc3339_and_a_bare_date() {
+        assert_eq!(
+            parse_timestamp("2026-08-01T09:30:00Z"),
+            Utc.with_ymd_and_hms(2026, 8, 1, 9, 30, 0).single()
+        );
+        assert_eq!(
+            parse_timestamp("2026-08-01"),
+            Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single()
+        );
+        assert_eq!(parse_timestamp("next tuesday"), None);
     }
 
     #[test]
-    fn ago_is_coarse_and_never_negative() {
-        let n = now();
-        assert_eq!(ago(n, n), "just now");
-        assert_eq!(ago(n, n + Duration::hours(5)), "just now", "a future stamp clamps");
-        assert_eq!(ago(n, n - Duration::minutes(12)), "12m ago");
-        assert_eq!(ago(n, n - Duration::minutes(59)), "59m ago");
-        assert_eq!(ago(n, n - Duration::minutes(60)), "1h ago");
-        assert_eq!(ago(n, n - Duration::hours(47)), "1d ago");
-        assert_eq!(ago(n, n - Duration::days(9)), "9d ago");
+    fn long_titles_clip_on_character_boundaries() {
+        let mut task = task("long", TaskStatus::Doing);
+        task.title = "任务".repeat(200);
+        let text = render_projection(std::slice::from_ref(&task), now());
+        let line = text.lines().find(|line| line.starts_with("- ")).unwrap();
+        assert_eq!(line.chars().count(), PROJECTED_LINE_CHARS);
     }
 }
