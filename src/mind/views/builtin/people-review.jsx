@@ -368,8 +368,10 @@ function lift(el, on) {
 const S = {
   page: { "--ppl-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     "--ppl-shadow-lift": "0 4px 10px var(--shadow),0 22px 55px var(--shadow-strong)",
-    padding: "8px 4px 40px", color: "var(--fg)", fontFamily: "var(--font-display)" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: "-.03em", marginBottom: 26 },
+    width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
+    padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
+    color: "var(--fg)", fontFamily: "var(--font-display)" },
+  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 26 },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(168px,1fr))", gap: 18, alignItems: "start" },
   card: { background: "var(--surface-strong)", borderRadius: 22, boxShadow: "var(--ppl-shadow)", overflow: "hidden",
     cursor: "pointer", transition: "transform .2s cubic-bezier(.32,.72,0,1),box-shadow .2s" },

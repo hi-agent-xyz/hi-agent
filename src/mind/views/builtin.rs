@@ -47,16 +47,18 @@ use std::path::Path;
 /// The file-handoff view shown when the user wants to hand the agent a file.
 /// Ref: `_builtin/upload` (the agent puts it on screen via `show`).
 const UPLOAD: &str = include_str!("builtin/upload.jsx");
+const UPLOAD_GEOM: &str = include_str!("builtin/upload.geom.json");
 
 /// The "认识的人" review surface — review stored faces/voices, name the unknown
 /// ones, eject a mis-clustered clip, or auto-regroup a mixed cluster. Reads and
 /// writes the `/api/people/*` endpoints. Ref: `_builtin/people-review`.
 const PEOPLE_REVIEW: &str = include_str!("builtin/people-review.jsx");
+const PEOPLE_REVIEW_GEOM: &str = include_str!("builtin/people-review.geom.json");
 /// The first-hello a brand-new person meets — a first *impression*, not a tutorial.
 /// The agent puts it on screen (ref `_builtin/welcome`) the once, on a genuine first
 /// meeting (see [`crate::identity::reaction_system_prompt`] + `reaction.md`), while it speaks the
-/// same idea in its own voice. Ships with a `.geom.json` sidecar so the host floats it
-/// over the living presence room.
+/// same idea in its own voice. Ships with a `.geom.json` sidecar and owns the canvas
+/// like every other bundled system surface.
 const WELCOME: &str = include_str!("builtin/welcome.jsx");
 const WELCOME_GEOM: &str = include_str!("builtin/welcome.geom.json");
 /// The real, sealed "hi" mark (red h + blue i, white die-cut, soft shadow) the welcome
@@ -75,8 +77,9 @@ const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
 /// The review surfaces: one per kind of thing the agent accumulates, each paired with a
-/// `.geom.json`. Most are focused `center/wide` lists; Tasks owns the full canvas because
-/// its category rail and working list form an operational workspace rather than a glance.
+/// `.geom.json`. Bundled system surfaces own the full canvas and provide their own
+/// background, scrolling, and safe padding. The host's centered-card fallback remains
+/// available to agent-authored views that declare no placement.
 ///
 /// They are siblings of `people-review`, and they exist for the same reason it does — the
 /// agent's own state was only inspectable by reading files over its shoulder, so nothing
@@ -114,7 +117,9 @@ pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
     let dir = data_dir.join("views").join("_builtin");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("upload.jsx"), UPLOAD)?;
+    std::fs::write(dir.join("upload.geom.json"), UPLOAD_GEOM)?;
     std::fs::write(dir.join("people-review.jsx"), PEOPLE_REVIEW)?;
+    std::fs::write(dir.join("people-review.geom.json"), PEOPLE_REVIEW_GEOM)?;
     std::fs::write(dir.join("welcome.jsx"), WELCOME)?;
     std::fs::write(dir.join("welcome.geom.json"), WELCOME_GEOM)?;
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
@@ -187,11 +192,33 @@ mod tests {
     }
 
     #[test]
-    fn the_task_review_owns_the_full_canvas() {
-        let (_, _, geom) = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "tasks").unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(geom).unwrap();
-        assert_eq!(parsed["region"], "fill");
-        assert_eq!(parsed["size"], "fill");
+    fn all_bundled_system_views_own_the_full_canvas() {
+        let assert_full = |name: &str, geom: &str| {
+            let parsed: serde_json::Value = serde_json::from_str(geom).unwrap();
+            assert_eq!(parsed["region"], "fill", "{name}");
+            assert_eq!(parsed["size"], "fill", "{name}");
+        };
+
+        assert_full("upload", UPLOAD_GEOM);
+        assert_full("people-review", PEOPLE_REVIEW_GEOM);
+        assert_full("welcome", WELCOME_GEOM);
+        assert_full("vendor-outage", OUT_OF_ENERGY_GEOM);
+        for (name, _, geom) in REVIEW_VIEWS {
+            assert_full(name, geom);
+        }
+    }
+
+    #[test]
+    fn seeds_geometry_for_the_standalone_builtins() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        for name in ["upload", "people-review", "welcome", "vendor-outage"] {
+            let raw = std::fs::read_to_string(builtin.join(format!("{name}.geom.json"))).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(parsed["region"], "fill", "{name}");
+            assert_eq!(parsed["size"], "fill", "{name}");
+        }
     }
 
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint

@@ -210,8 +210,10 @@ function short(iso) {
 
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
-    padding: "8px 4px 40px", color: "var(--fg)", fontFamily: "var(--font-display)" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: "-.03em", marginBottom: 20 },
+    width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
+    padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
+    color: "var(--fg)", fontFamily: "var(--font-display)" },
+  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 20 },
   sect: { fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", color: "var(--fg-mute)",
     margin: "28px 0 11px" },
 
