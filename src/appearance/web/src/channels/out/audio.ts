@@ -1,8 +1,6 @@
 // Subscriber for the outbound audio channel — the agent's synthesized voice.
 
 export interface SubscribeAudioOpts {
-  /** Scene we receive on (sent as X-HI-Scene). */
-  scene: string;
   signal: AbortSignal;
 }
 
@@ -30,7 +28,7 @@ export async function* subscribeAudioTurns(
   while (!opts.signal.aborted) {
     const res = await fetch("/api/out/audio", {
       method: "GET",
-      headers: { "X-HI-Scene": opts.scene, Accept: "audio/*" },
+      headers: { Accept: "audio/*" },
       signal: opts.signal,
       cache: "no-store",
     });

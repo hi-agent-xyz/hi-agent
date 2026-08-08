@@ -34,10 +34,10 @@
 //! # in another, fire two POSTs in rapid succession to the same scene
 //! BASE=http://127.0.0.1:12358
 //! ME=alice@phone
-//! curl -X POST -H "X-HI-Scene: $ME" \
+//! curl -X POST -H ": $ME" \
 //!     --data-binary 'first thought, take your time' "$BASE/api/in/text" &
 //! sleep 0.2
-//! curl -X POST -H "X-HI-Scene: $ME" \
+//! curl -X POST -H ": $ME" \
 //!     --data-binary 'actually never mind, what time is it' "$BASE/api/in/text"
 //! ```
 //!

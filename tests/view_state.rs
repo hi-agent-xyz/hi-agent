@@ -10,7 +10,7 @@ use std::time::Duration;
 use hi_agent::mind::memory::Memory;
 use hi_agent::body::reaction::OutboundSignal;
 use hi_agent::foundation::server::{self, ServerSeams};
-use hi_agent::types::{Scene, ViewEnvelope, ViewOp};
+use hi_agent::types::{ViewEnvelope, ViewOp};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 
@@ -40,11 +40,11 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
 
 /// Drive a view through the reaction's outbound seam — binder → bus — exactly
 /// as the mind emits it.
-async fn emit_view(seams: &ServerSeams, scene: &str, id: &str, op: ViewOp, url: Option<&str>) {
+async fn emit_view(
+    seams: &ServerSeams, id: &str, op: ViewOp, url: Option<&str>) {
     seams
         .out_tx
         .send(OutboundSignal::View {
-            scene: Scene(scene.to_string()),
             envelope: ViewEnvelope {
                 id: id.to_string(),
                 op,
@@ -60,7 +60,6 @@ async fn emit_view(seams: &ServerSeams, scene: &str, id: &str, op: ViewOp, url: 
 
 async fn get_state(
     base: &str,
-    scene: &str,
     since: Option<u64>,
     budget: Duration,
 ) -> Result<serde_json::Value, ()> {
@@ -69,7 +68,6 @@ async fn get_state(
     tokio::time::timeout(budget, async {
         client
             .get(format!("{base}/api/out/view{query}"))
-            .header("X-HI-Scene", scene)
             .send()
             .await
             .expect("send")
@@ -98,9 +96,9 @@ async fn late_and_repeat_subscribers_see_the_same_appearance() {
     let dir = tempdir().expect("tempdir");
     let (base, seams) = spawn_server_at(dir.path()).await;
 
-    emit_view(&seams, "web@local", "card", ViewOp::Show, Some("/m/card.mjs")).await;
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
 
-    let first = get_state(&base, "web@local", None, Duration::from_millis(500))
+    let first = get_state(&base, None, Duration::from_millis(500))
         .await
         .expect("late GET should receive the retained state");
     assert_eq!(first["version"], 1);
@@ -108,7 +106,7 @@ async fn late_and_repeat_subscribers_see_the_same_appearance() {
     assert_eq!(first["views"][0]["module_url"], "/m/card.mjs");
 
     // A refresh (or a second device) syncs to the identical state.
-    let second = get_state(&base, "web@local", None, Duration::from_millis(500))
+    let second = get_state(&base, None, Duration::from_millis(500))
         .await
         .expect("repeat GET");
     assert_eq!(second, first);
@@ -120,42 +118,45 @@ async fn since_long_polls_until_the_state_changes() {
     let dir = tempdir().expect("tempdir");
     let (base, seams) = spawn_server_at(dir.path()).await;
 
-    emit_view(&seams, "web@local", "card", ViewOp::Show, Some("/m/card.mjs")).await;
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
 
     // Up to date → the poll parks.
-    let parked = get_state(&base, "web@local", Some(1), Duration::from_millis(250)).await;
+    let parked = get_state(&base, Some(1), Duration::from_millis(250)).await;
     assert!(parked.is_err(), "in-sync poll should hang; got {parked:?}");
 
     let base2 = base.clone();
     let waiter = tokio::spawn(async move {
-        get_state(&base2, "web@local", Some(1), Duration::from_millis(800)).await
+        get_state(&base2, Some(1), Duration::from_millis(800)).await
     });
     tokio::time::sleep(Duration::from_millis(80)).await;
-    emit_view(&seams, "web@local", "card", ViewOp::Dismiss, None).await;
+    emit_view(&seams, "card", ViewOp::Dismiss, None).await;
 
     let state = waiter.await.expect("join").expect("dismiss should wake the poll");
     assert_eq!(state["version"], 2);
     assert!(ids(&state).is_empty());
 }
 
-/// Appearance is per scene: one scene's views never leak into another's state.
+/// Every attached client converges on the same screen. The appearance is retained
+/// state, not a per-client stream, so a second window syncing after a view was
+/// shown sees exactly what the first one sees — which is what makes "show it on
+/// the screen" mean one screen rather than whichever window asked first.
 #[tokio::test]
-async fn appearance_is_per_scene() {
+async fn every_client_sees_the_same_screen() {
     let dir = tempdir().expect("tempdir");
     let (base, seams) = spawn_server_at(dir.path()).await;
 
-    emit_view(&seams, "alice@phone", "hers", ViewOp::Show, Some("/m/h.mjs")).await;
+    emit_view(&seams, "hers", ViewOp::Show, Some("/m/h.mjs")).await;
 
-    let bob = get_state(&base, "bob@desktop", None, Duration::from_millis(500))
+    let first = get_state(&base, None, Duration::from_millis(500))
         .await
-        .expect("bob's first sync returns immediately");
-    assert_eq!(bob["version"], 0);
-    assert!(ids(&bob).is_empty());
+        .expect("first client syncs");
+    let second = get_state(&base, None, Duration::from_millis(500))
+        .await
+        .expect("second client syncs");
 
-    let alice = get_state(&base, "alice@phone", None, Duration::from_millis(500))
-        .await
-        .expect("alice GET");
-    assert_eq!(ids(&alice), vec!["hers"]);
+    assert_eq!(ids(&first), vec!["hers"]);
+    assert_eq!(ids(&second), vec!["hers"]);
+    assert_eq!(first["version"], second["version"]);
 }
 
 /// The whole point: the appearance survives a server restart. A fresh server
@@ -170,9 +171,9 @@ async fn appearance_survives_restart() {
 
     let before = {
         let (base, seams) = spawn_server_at(dir.path()).await;
-        emit_view(&seams, "web@local", "a", ViewOp::Show, Some("/m/a.mjs")).await;
-        emit_view(&seams, "web@local", "b", ViewOp::Show, Some("/m/b.mjs")).await;
-        get_state(&base, "web@local", None, Duration::from_millis(500))
+        emit_view(&seams, "a", ViewOp::Show, Some("/m/a.mjs")).await;
+        emit_view(&seams, "b", ViewOp::Show, Some("/m/b.mjs")).await;
+        get_state(&base, None, Duration::from_millis(500))
             .await
             .expect("GET before restart")
     };
@@ -180,7 +181,7 @@ async fn appearance_survives_restart() {
 
     // "Restart": a second server over the same data dir.
     let (base, _seams) = spawn_server_at(dir.path()).await;
-    let after = get_state(&base, "web@local", None, Duration::from_millis(500))
+    let after = get_state(&base, None, Duration::from_millis(500))
         .await
         .expect("GET after restart");
     assert_eq!(after, before);

@@ -117,7 +117,6 @@ function frameLabel(f: RawFrame): string {
 interface Group {
   key: string; // URL key + dedup key
   conn: number;
-  scene: string;
   sessionId: string | null; // adopted from the session/new response; null until then
   frames: RawFrame[];
 }
@@ -131,7 +130,7 @@ function group(frames: RawFrame[]): Group[] {
   for (const f of frames) {
     let g = map.get(f.conn);
     if (!g) {
-      g = { key: `c::${f.conn}`, conn: f.conn, scene: f.scene, sessionId: f.session_id, frames: [] };
+      g = { key: `c::${f.conn}`, conn: f.conn, sessionId: f.session_id, frames: [] };
       map.set(f.conn, g);
     }
     if (!g.sessionId && f.session_id) g.sessionId = f.session_id;
@@ -171,7 +170,7 @@ export function SessionsView() {
           <span className={`live-dot ${live ? "on" : ""}`} title={live ? "frame stream live" : "reconnecting"} />
         </div>
         {groups.length === 0 ? (
-          <div className="muted pad">No ACP frames yet. They appear on a scene's first contact.</div>
+          <div className="muted pad">No ACP frames yet. They appear on the first contact with an agent session.</div>
         ) : (
           <ul>
             {groups.map((g) => (
@@ -183,7 +182,6 @@ export function SessionsView() {
                 <span className={`skind ${g.sessionId ? "reaction" : "worker"}`}>{g.sessionId ? "id" : "··"}</span>
                 <span className="nm">{g.sessionId ? g.sessionId.slice(0, 20) : "opening…"}</span>
                 <span className="badges">
-                  <span className="mini">{g.scene}</span>
                   <span className="mini">{g.frames.length}</span>
                 </span>
               </li>
@@ -209,7 +207,6 @@ function FrameLog({ group: g }: { group: Group }) {
       <div className="dh-title">
         <b>{g.sessionId ? "session" : "opening…"}</b>
         <span className="muted">
-          {g.scene}
           {g.sessionId ? <> · <code>{g.sessionId}</code></> : null} · {g.frames.length} frames
         </span>
       </div>

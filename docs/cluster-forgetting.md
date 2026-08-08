@@ -28,7 +28,7 @@ who has a name or who has been seen more than once.
   the normal way. (Considered a soft-archive/`.forgotten/` tier; rejected as
   hoarding — the store never consults it, so it would only cost disk.)
 - **Runs inside reflection.** Folded into `heartbeat::run_consolidation`, once per
-  consolidation (the people store is global, not per-scene), on the same
+  consolidation, on the same
   adaptive-backoff reflection clock as the media `decay`.
 - **Armed, with no switch.** It shipped as a dry run so the criteria could be
   watched on real data; a sweep over 100 clusters took 19 one-off strangers and
@@ -130,7 +130,7 @@ Every correction maps to a `people_vectors` primitive:
   → human confirms → `apply_split` (largest group keeps the name). The shortcut for
   "too mixed to fix clip-by-clip."
 
-Backend (`src/foundation/server/people.rs`, global — no scene header):
+Backend (`src/foundation/server/people.rs`):
 `GET /api/people`, `GET /api/people/{subject}/{modality}/{stem}` (serve one
 crop/clip), `POST /api/people/name`, `/eject`, `/split/preview`, `/split/apply`.
 Data layer: `people_vectors::{list_clusters, clip_media_path, eject_clip}`. The

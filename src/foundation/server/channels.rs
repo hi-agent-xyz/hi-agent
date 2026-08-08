@@ -1,10 +1,10 @@
-//! `GET /api/scenes/{scene}/channels` — one scene's channels, observed live.
+//! `GET /api/conversations/{conversation}/channels` — one conversation's channels, observed live.
 //!
 //! The inspect console's channel inspector wants a single window onto everything flowing
-//! through a scene's senses and expressions. Each channel already fans out on
+//! through the conversation's senses and expressions. Each channel already fans out on
 //! its own broadcast in [`AppState`](crate::foundation::server::AppState); this handler
-//! subscribes to all of them, keeps only what belongs to the path scene (plus
-//! un-targeted broadcasts, which reach every scene), and merges them into one
+//! subscribes to all of them, keeps only what belongs to the path conversation (plus
+//! un-targeted broadcasts, which reach the conversation), and merges them into one
 //! Server-Sent Events stream of uniform [`ChannelSignal`] frames.
 //!
 //! It is *presence*, not history: the underlying broadcasts are lossy with no
@@ -16,7 +16,7 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use chrono::{DateTime, Utc};
 use futures::stream::Stream;
@@ -24,7 +24,7 @@ use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent, VideoInEvent};
-use crate::types::{Channel, Scene};
+use crate::types::Channel;
 
 /// One unit of channel activity, uniform across every channel and direction.
 /// `body` is always a short human-readable line — recognized/spoken text for the
@@ -41,33 +41,22 @@ pub struct ChannelSignal {
     pub is_final: bool,
 }
 
-/// `GET /api/scenes/{scene}/channels` — merged live presence across every
-/// channel of one scene. No replay; keep-alive holds the connection open.
-pub async fn get_scene_channels(
+/// `GET /api/conversations/{conversation}/channels` — merged live presence across every
+/// channel of one conversation. No replay; keep-alive holds the connection open.
+pub async fn get_channels(
     State(state): State<Arc<AppState>>,
-    Path(scene): Path<String>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let scene = Scene(scene);
-    let stream = merge_channels(state, scene);
+    let stream = merge_channels(state);
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Does an `Option<Scene>` routing target reach `want`? A `None` target is an
-/// un-addressed broadcast that reaches every scene, so it always matches.
-fn targets(target: &Option<Scene>, want: &Scene) -> bool {
-    match target {
-        Some(s) => s == want,
-        None => true,
-    }
-}
-
+/// Does an `Option<Conversation>` routing target reach `want`? A `None` target is an
 /// Subscribe to all per-channel broadcasts and merge the ones belonging to
-/// `scene` into a single `ChannelSignal` stream. Uses `tokio::select!` so a
+/// `conversation` into a single `ChannelSignal` stream. Uses `tokio::select!` so a
 /// channel with no traffic never blocks the others; lagged receivers resume from
 /// the live edge (dropped frames are presence we don't replay).
 fn merge_channels(
     state: Arc<AppState>,
-    scene: Scene,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     struct Subs {
         input: tokio::sync::broadcast::Receiver<crate::foundation::server::InputEcho>,
@@ -87,58 +76,52 @@ fn merge_channels(
         vision: state.video_in.subscribe(),
     };
 
-    futures::stream::unfold((subs, scene), |(mut s, scene)| async move {
+    futures::stream::unfold(subs, |mut s| async move {
         loop {
             // Each branch resolves to `Option<ChannelSignal>`: `None` means the
-            // frame was filtered out (other scene, audio frame body, lag) and we
+            // frame was filtered out (other conversation, audio frame body, lag) and we
             // re-loop; `Some` is forwarded. A `Closed` receiver ends the stream.
             let sig: Option<ChannelSignal> = tokio::select! {
                 r = s.input.recv() => match r {
-                    Ok(e) if e.scene == scene => Some(ChannelSignal {
+                    Ok(e) => Some(ChannelSignal {
                         ts: e.ts, channel: e.channel, direction: "in", body: e.text, is_final: e.is_final,
                     }),
-                    Ok(_) => None,
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.output.recv() => match r {
-                    Ok(e) if e.scene == scene => Some(ChannelSignal {
+                    Ok(e) => Some(ChannelSignal {
                         ts: e.ts, channel: e.channel, direction: "out", body: e.text, is_final: e.is_final,
                     }),
-                    Ok(_) => None,
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.audio.recv() => match r {
-                    Ok(e) if targets(e.scene(), &scene) => audio_summary(&e),
-                    Ok(_) => None,
+                    Ok(e) => audio_summary(&e),
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.audio_in.recv() => match r {
-                    Ok(e) if targets(e.scene(), &scene) => audio_in_summary(&e),
-                    Ok(_) => None,
+                    Ok(e) => audio_in_summary(&e),
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.view.recv() => match r {
-                    Ok(e) if targets(&e.scene, &scene) => Some(ChannelSignal {
+                    Ok(e) => Some(ChannelSignal {
                         ts: e.ts, channel: Channel::Vision, direction: "out",
                         body: view_summary(&e.envelope), is_final: true,
                     }),
-                    Ok(_) => None,
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.vision.recv() => match r {
-                    Ok(e) if targets(e.scene(), &scene) => video_in_summary(&e),
-                    Ok(_) => None,
+                    Ok(e) => video_in_summary(&e),
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
             };
             if let Some(sig) = sig {
-                return Some((Ok(to_sse_event(&sig)), (s, scene)));
+                return Some((Ok(to_sse_event(&sig)), (s)));
             }
         }
     })

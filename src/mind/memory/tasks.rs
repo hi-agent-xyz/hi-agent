@@ -22,7 +22,6 @@ use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 
 use super::episodes::{frontmatter_field, jstr, strip_frontmatter};
 use super::{facets, layout};
-use crate::types::Scene;
 
 pub const DIMENSION: &str = "tasks";
 pub const PROJECTED_TASKS: usize = 12;
@@ -85,7 +84,6 @@ pub struct Task {
     pub subject: String,
     pub status: TaskStatus,
     pub title: String,
-    pub report_to: Option<Scene>,
     /// Always present on tasks created by current writers. Legacy records may not
     /// have one; reads do not invent a creation instant.
     pub created_at: Option<DateTime<Utc>>,
@@ -106,7 +104,6 @@ impl Task {
             subject: facets::slug(title),
             status,
             title: title.trim().to_owned(),
-            report_to: None,
             created_at: Some(now),
             due_at: None,
             liveness: Liveness::default(),
@@ -265,10 +262,7 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
     } else {
         title
     };
-    match &task.report_to {
-        Some(scene) => format!("- [{head}] {title} -> {}", scene.0),
-        None => format!("- [{head}] {title}"),
-    }
+    format!("- [{head}] {title}")
 }
 
 fn liveness_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
@@ -347,7 +341,6 @@ fn parse(subject: &str, content: &str) -> Task {
         subject: subject.to_owned(),
         status,
         title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
-        report_to: field("report_to").map(Scene),
         created_at: field("created_at").and_then(|value| parse_timestamp(&value)),
         due_at: field("due_at")
             .or_else(|| field("due"))
@@ -403,9 +396,6 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     field("title", task.title.as_str())?;
     if let Some(created_at) = task.created_at {
         field("created_at", created_at.to_rfc3339().as_str())?;
-    }
-    if let Some(scene) = &task.report_to {
-        field("report_to", scene.0.as_str())?;
     }
     if let Some(due_at) = task.due_at {
         field("due_at", due_at.to_rfc3339().as_str())?;
@@ -478,7 +468,6 @@ mod tests {
     async fn current_schema_round_trips_without_kind_or_state() {
         let dir = tempfile::tempdir().unwrap();
         let mut task = task("File the Feishu digest", TaskStatus::Doing);
-        task.report_to = Some(Scene("boss".into()));
         task.due_at = Some(at(30, 9));
         task.checked_at = Some(at(28, 10));
         task.liveness.verify =

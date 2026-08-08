@@ -18,7 +18,7 @@ use crate::mind::memory::Memory;
 use crate::foundation::acp::AcpTap;
 use crate::foundation::observatory::Observatory;
 use crate::body::reaction::{InterruptRegistry, OutboundSignal, ToolRegistry};
-use crate::types::{Channel, Scene, Signal, ViewEnvelope};
+use crate::types::{Channel, Signal, ViewEnvelope};
 
 pub mod account;
 pub mod acp;
@@ -57,26 +57,17 @@ pub use view_bus::ViewBus;
 /// `End`. The GET /audio handler turns one such run into one chunked HTTP
 /// response — the client just appends bytes and plays, no per-clip reassembly.
 ///
-/// `scene` routes to a scene (or broadcast when `None`); `turn` is the monotonic
-/// cognition turn, used to keep a handler's response bound to a single turn so
-/// frames from a later turn never bleed into an earlier response.
+/// `turn` is the monotonic cognition turn, used to keep a handler's response
+/// bound to a single turn so frames from a later turn never bleed into an
+/// earlier response.
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
-    Start { scene: Option<Scene>, turn: u64, mime: String },
-    Frame { scene: Option<Scene>, turn: u64, bytes: Bytes },
-    End { scene: Option<Scene>, turn: u64 },
+    Start { turn: u64, mime: String },
+    Frame { turn: u64, bytes: Bytes },
+    End { turn: u64 },
 }
 
 impl AudioEvent {
-    /// The routing target, common to every variant.
-    pub fn scene(&self) -> &Option<Scene> {
-        match self {
-            AudioEvent::Start { scene, .. }
-            | AudioEvent::Frame { scene, .. }
-            | AudioEvent::End { scene, .. } => scene,
-        }
-    }
-
     /// The cognition turn this event belongs to.
     pub fn turn(&self) -> u64 {
         match self {
@@ -94,29 +85,20 @@ impl AudioEvent {
 /// one run into one chunked HTTP response a client can play.
 ///
 /// `turn` is a per-source id (one WS connection or one POST), keeping a
-/// listener's response bound to a single source so concurrent uploaders in a
-/// scene never interleave in one body. `mime` carries the format so a listener
+/// listener's response bound to a single source so concurrent uploaders never
+/// interleave in one body. `mime` carries the format so a listener
 /// can decode — `audio/pcm;rate=16000;channels=1` for the live mic stream, the
 /// clip's own type for a posted clip. Like the other channel broadcasts this is
 /// lossy presence with no replay; the transcript the agent actually consumes
 /// rides the *text* channel.
 #[derive(Debug, Clone)]
 pub enum AudioInEvent {
-    Start { scene: Option<Scene>, turn: u64, mime: String },
-    Frame { scene: Option<Scene>, turn: u64, bytes: Bytes },
-    End { scene: Option<Scene>, turn: u64 },
+    Start { turn: u64, mime: String },
+    Frame { turn: u64, bytes: Bytes },
+    End { turn: u64 },
 }
 
 impl AudioInEvent {
-    /// The routing target, common to every variant.
-    pub fn scene(&self) -> &Option<Scene> {
-        match self {
-            AudioInEvent::Start { scene, .. }
-            | AudioInEvent::Frame { scene, .. }
-            | AudioInEvent::End { scene, .. } => scene,
-        }
-    }
-
     /// The source this event belongs to (one mic stream or one posted clip).
     pub fn turn(&self) -> u64 {
         match self {
@@ -128,11 +110,9 @@ impl AudioInEvent {
 }
 
 /// Outbound agent-authored view event. Carries the view envelope (compiled
-/// module URL + op) plus the routing target the GET /out/view long-poll filters
-/// on.
+/// module URL + op) for the GET /out/view long-poll.
 #[derive(Debug, Clone)]
 pub struct ViewEvent {
-    pub scene: Option<Scene>,
     pub envelope: ViewEnvelope,
     pub ts: DateTime<Utc>,
 }
@@ -152,21 +132,12 @@ pub struct ViewEvent {
 /// observer join mid-stream.
 #[derive(Debug, Clone)]
 pub enum VideoInEvent {
-    Start { scene: Option<Scene>, turn: u64, mime: String },
-    Frame { scene: Option<Scene>, turn: u64, bytes: Bytes },
-    End { scene: Option<Scene>, turn: u64 },
+    Start { turn: u64, mime: String },
+    Frame { turn: u64, bytes: Bytes },
+    End { turn: u64 },
 }
 
 impl VideoInEvent {
-    /// The routing target, common to every variant.
-    pub fn scene(&self) -> &Option<Scene> {
-        match self {
-            VideoInEvent::Start { scene, .. }
-            | VideoInEvent::Frame { scene, .. }
-            | VideoInEvent::End { scene, .. } => scene,
-        }
-    }
-
     /// The source this event belongs to (one camera WS connection).
     pub fn turn(&self) -> u64 {
         match self {
@@ -177,7 +148,7 @@ impl VideoInEvent {
     }
 }
 
-/// The currently-active inbound-video source for a scene: its turn id, mime, and
+/// The currently-active inbound-video source: its turn id, mime, and
 /// cached WebM initialization segment (the first chunk). A `GET /api/in/vision`
 /// observer that connects after the camera started writes this init before the
 /// live frames so MSE can decode the stream; without it the `<video>` stalls.
@@ -188,7 +159,7 @@ pub struct VideoSource {
     pub init: Bytes,
 }
 
-/// A snapshot of the in-progress (not-yet-flushed) camera minute for a scene, so a
+/// A snapshot of the in-progress (not-yet-flushed) camera minute, so a
 /// tool can grab "what just happened" without waiting for the minute to roll over and
 /// flush to disk. Holds the cached init segment plus the media bytes accumulated so
 /// far this minute; `init` followed by `buf` is an independently-decodable clip — the
@@ -202,17 +173,16 @@ pub struct PartialMinute {
     pub buf: Bytes,
 }
 
-/// One recognized input, echoed to scene observers on `GET /api/in/<channel>`.
+/// One recognized input, echoed to observers on `GET /api/in/<channel>`.
 ///
 /// Inputs (typed text, recognized speech) cross the world→agent boundary on a
-/// single POST/WS held by one client, but every client in the scene should see
+/// single POST/WS held by one client, but every client watching should see
 /// them — the same identical-UI guarantee the outbound channels give. So each
 /// input is published here and fanned out live. This is a *presence* signal, not
 /// a log: it is broadcast (lossy ring, no replay), matching `audio_out` /
 /// `view_out`. A late joiner sees inputs from the moment it connects.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InputEcho {
-    pub scene: Scene,
     pub channel: Channel,
     pub text: String,
     /// `false` for a rolling partial (e.g. live STT), `true` once the utterance
@@ -222,15 +192,12 @@ pub struct InputEcho {
     pub ts: DateTime<Utc>,
 }
 
-/// One spoken/typed reply, echoed to scene observers — the outbound mirror of
-/// [`InputEcho`]. The agent's worded reply is *delivered* through the consuming
-/// [`TextBus`], so an operator can't watch it there without stealing it from the
-/// real client. The binder publishes a non-draining copy here, letting the
-/// channel inspector observe outbound text the same way `InputEcho` exposes
-/// inbound text. Presence, not a log: broadcast, lossy, no replay.
+/// One spoken/typed reply, echoed to observers — the outbound mirror of
+/// [`InputEcho`]. It carries the reply as a live presence signal, the way
+/// `InputEcho` carries inbound text, so the channel inspector sees both sides on
+/// the same terms. Presence, not a log: broadcast, lossy, no replay.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OutputEcho {
-    pub scene: Scene,
     pub channel: Channel,
     pub text: String,
     /// `false` while a reply is still streaming chunks, `true` at end-of-utterance.
@@ -239,7 +206,7 @@ pub struct OutputEcho {
     pub ts: DateTime<Utc>,
 }
 
-/// Per-scene face-presence state for the presence lane (`POST /api/in/vision/presence`).
+/// Face-presence state for the presence lane (`POST /api/in/vision/presence`).
 ///
 /// The presence still-loop posts a low-res camera frame every couple of seconds;
 /// the handler recognizes faces locally and edge-triggers a perception signal only
@@ -258,25 +225,26 @@ pub struct AppState {
     /// Inbound signals from every channel POST. The reaction consumes these.
     pub inbound: mpsc::Sender<Signal>,
 
-    /// Scene warm-up requests. A scene-presence GET (`GET /api/out/*`, the
-    /// long-polls a client opens on scene entry) sends the scene here so the
-    /// reaction stands it up — spawning the subprocess and opening the ACP session —
-    /// before the first utterance lands, keeping that cold-start off the first
-    /// reply's critical path. Bounded and best-effort: a full channel only means
-    /// warm-ups are already queued, so a dropped request costs at most the
-    /// cold-start it would have saved.
-    pub warm: mpsc::Sender<Scene>,
+    /// Warm-up requests. A presence GET (`GET /api/out/*`, the long-polls a client
+    /// opens when it attaches) asks here so the reaction stands itself up —
+    /// spawning the subprocess and opening the ACP session — before the first
+    /// utterance lands, keeping that cold-start off the first reply's critical
+    /// path. Bounded and best-effort: a full channel only means warm-ups are
+    /// already queued, so a dropped request costs at most the cold-start it would
+    /// have saved.
+    pub warm: mpsc::Sender<()>,
 
-    /// Outbound text buffer. GET /api/out/text readers drain it per scene.
-    /// Unlike a broadcast, a reply produced while no reader is connected is
-    /// retained for the next GET instead of being dropped.
+    /// Outbound text log. GET /api/out/text readers read it by cursor. Unlike a
+    /// broadcast, a reply produced while no reader is connected is retained; and
+    /// unlike a queue, reading does not consume it, so several attached surfaces
+    /// all see it.
     pub text_bus: TextBus,
 
     /// Outbound audio broadcast. GET /api/out/audio subscribers receive from
     /// this; the reaction produces TTS clips here when a TTS provider is set.
     pub audio_out: broadcast::Sender<AudioEvent>,
 
-    /// Per-scene retained appearance state. GET /api/out/view serves whole-state
+    /// Retained appearance state. GET /api/out/view serves whole-state
     /// snapshots from this; the binder folds each reaction-emitted envelope in.
     /// Unlike a broadcast, a view shown while no client is connected is retained —
     /// refresh, a second device, or a restart all converge on the same screen.
@@ -309,16 +277,16 @@ pub struct AppState {
     /// `turn` id, keeping a `GET /api/in/vision` observer bound to one camera.
     pub video_in_turn: AtomicU64,
 
-    /// The active inbound-video source per scene, holding its cached WebM init
-    /// segment so an observer can join the live stream mid-flight (see
-    /// [`VideoSource`]). Inserted on a camera's first chunk, removed on close.
-    pub video_in_live: Mutex<HashMap<Scene, VideoSource>>,
+    /// The active inbound-video source, holding its cached WebM init segment so an
+    /// observer can join the live stream mid-flight (see [`VideoSource`]). Set on a
+    /// camera's first chunk, cleared on close.
+    pub video_in_live: Mutex<Option<VideoSource>>,
 
-    /// The in-progress (not-yet-flushed) camera minute per scene — a freshness window
-    /// for the agent's `watch` tool, which otherwise sees only persisted minute files
-    /// up to ~60s stale. Refreshed as chunks accumulate, cleared on camera close. See
+    /// The in-progress (not-yet-flushed) camera minute — a freshness window for the
+    /// agent's `watch` tool, which otherwise sees only persisted minute files up to
+    /// ~60s stale. Refreshed as chunks accumulate, cleared on camera close. See
     /// [`PartialMinute`].
-    pub video_in_partial: Mutex<HashMap<Scene, PartialMinute>>,
+    pub video_in_partial: Mutex<Option<PartialMinute>>,
 
     /// Inbound echo broadcast. GET /api/in/<channel> observers receive recognized
     /// inputs (typed text, recognized speech) from this — live, no replay.
@@ -350,41 +318,39 @@ pub struct AppState {
     /// surface moved to the native tray. `None` ⇒ sign-in unavailable (free tier).
     pub auth: Option<Arc<crate::foundation::auth::AuthState>>,
 
-    /// Scene→tool-sink table. The `/mcp` handler looks a scene up here to route a
-    /// tool call to its reaction loop; the reaction registers each scene's sink as
-    /// it stands the loop up. See [`crate::body::reaction::ToolRegistry`].
+    /// The tool sink. The `/mcp` handler routes a tool call to the reaction loop
+    /// through it; the reaction registers the sink as it stands the loop up. See
+    /// [`crate::body::reaction::ToolRegistry`].
     pub tool_registry: ToolRegistry,
 
-    /// Scene→barge-in state, shared with the reaction. The STT relay reports
+    /// Barge-in state, shared with the reaction. The STT relay reports
     /// recognized speech here ([`crate::body::reaction::InterruptRegistry::note_speech`]);
     /// nothing else on the HTTP side touches it — there is no interrupt
     /// endpoint, the mind infers interruptions from its own clock.
     pub interrupts: InterruptRegistry,
 
-    /// Scene→live-subscriber counts, shared with the reaction. Out-channel
+    /// Live-subscriber counts, shared with the reaction. Out-channel
     /// handlers hold a [`crate::body::presence::PresenceGuard`] per connection; the
     /// reaction renders the counts into each turn as human-model facts.
     pub presence: crate::body::presence::Presence,
 
-    /// Scene-scoped phone-upload tokens for the file-upload carrier. A QR encodes
-    /// `/up/<token>`; the token resolves to the scene so a phone with no
-    /// `X-HI-Scene` header lands in the right scene. Short TTL, pruned on access,
-    /// in-memory (a restart drops outstanding links). See [`files`].
+    /// Phone-upload grants for the file-upload carrier. A QR encodes `/up/<token>`;
+    /// holding a live token is what authorizes the upload. Short TTL, pruned on
+    /// access, in-memory (a restart drops outstanding links). See [`files`].
     pub handoffs: Mutex<HashMap<String, files::Handoff>>,
 
-    /// Per-scene face-presence state for the presence lane. The presence handler
-    /// reads and updates this to decide when an appear/leave event is worth a
-    /// signal. See [`FacePresence`] and [`vision::post_presence`].
-    pub face_presence: Mutex<HashMap<Scene, FacePresence>>,
+    /// Face-presence state for the presence lane. The presence handler reads and
+    /// updates this to decide when an appear/leave event is worth a signal. See
+    /// [`FacePresence`] and [`vision::post_presence`].
+    pub face_presence: Mutex<FacePresence>,
 }
 
 impl AppState {
-    /// Publish one recognized input to the scene's observers. Best-effort and
+    /// Publish one recognized input to the observers. Best-effort and
     /// non-blocking: with no live observer the send is simply dropped (no replay),
     /// matching the live-presence semantics of the outbound broadcasts.
-    pub fn echo_input(&self, scene: &Scene, channel: Channel, text: &str, is_final: bool) {
+    pub fn echo_input(&self, channel: Channel, text: &str, is_final: bool) {
         let _ = self.input_echo.send(InputEcho {
-            scene: scene.clone(),
             channel,
             text: text.to_owned(),
             is_final,
@@ -392,13 +358,13 @@ impl AppState {
         });
     }
 
-    /// Ask the reaction to warm this scene up now — spawn its subprocess and open
-    /// its ACP session — triggered when a client opens one of the scene's
-    /// `/api/out/*` long-polls. Best-effort and non-blocking: a full queue drops
-    /// the request, leaving the scene to cold-start on first use as before.
-    /// Idempotent on the reaction side, so repeated GETs are harmless.
-    pub fn warm_scene(&self, scene: &Scene) {
-        let _ = self.warm.try_send(scene.clone());
+    /// Ask the reaction to warm up now — spawn its subprocess and open its ACP
+    /// session — triggered when a client opens one of the `/api/out/*` long-polls.
+    /// Best-effort and non-blocking: a full queue drops the request, leaving the
+    /// cold-start to happen on first use as before. Idempotent on the reaction
+    /// side, so repeated GETs are harmless.
+    pub fn warm(&self) {
+        let _ = self.warm.try_send(());
     }
 }
 
@@ -417,16 +383,16 @@ pub fn build(
     auth: Option<Arc<crate::foundation::auth::AuthState>>,
 ) -> (Router, ServerSeams) {
     let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
-    // Scene warm-up requests: a presence GET asks the reaction to stand a scene up
-    // ahead of its first utterance (see `AppState::warm`).
-    let (warm_tx, warm_rx) = mpsc::channel::<Scene>(1024);
+    // Warm-up requests: a presence GET asks the reaction to stand itself up ahead
+    // of the first utterance (see `AppState::warm`).
+    let (warm_tx, warm_rx) = mpsc::channel::<()>(1024);
     let text_bus = TextBus::new();
     let (audio_tx, _) = broadcast::channel::<AudioEvent>(64);
     // Inbound audio: small, frequent PCM frames, so a larger ring than the others.
     let (audio_in_tx, _) = broadcast::channel::<AudioInEvent>(256);
     let (view_tx, _) = broadcast::channel::<ViewEvent>(64);
-    // Per-scene retained appearance state, reloaded from disk so a scene's
-    // screen survives a restart (see `ViewBus`).
+    // Retained appearance state, reloaded from disk so the screen survives a
+    // restart (see `ViewBus`).
     let view_bus = ViewBus::load(&data_dir);
     // Inbound video: continuous WebM chunks, so a larger ring like inbound audio.
     let (video_in_tx, _) = broadcast::channel::<VideoInEvent>(256);
@@ -460,8 +426,8 @@ pub fn build(
         view_out: view_tx.clone(),
         video_in: video_in_tx.clone(),
         video_in_turn: AtomicU64::new(0),
-        video_in_live: Mutex::new(HashMap::new()),
-        video_in_partial: Mutex::new(HashMap::new()),
+        video_in_live: Mutex::new(None),
+        video_in_partial: Mutex::new(None),
         input_echo: input_echo_tx.clone(),
         output_echo: output_echo_tx.clone(),
         memory,
@@ -473,12 +439,12 @@ pub fn build(
         interrupts,
         presence,
         handoffs: Mutex::new(HashMap::new()),
-        face_presence: Mutex::new(HashMap::new()),
+        face_presence: Mutex::new(FacePresence::default()),
     });
 
     // Channels are namespaced by boundary: `/api/in/*` is the world→agent side
     // (perception), `/api/out/*` is the agent→world side (expression). Each side
-    // is observable via GET so every client in a scene renders identical UI.
+    // is observable via GET so every attached client renders identical UI.
     // `/api/sessions` is observability, not a channel.
     let router = Router::new()
         .route("/api/in/text", post(text::post_text).get(text::get_in_text))
@@ -486,7 +452,7 @@ pub fn build(
         .route("/api/in/audio", post(audio::post_audio).get(audio::get_in_audio))
         .route("/api/in/audio/stream", get(audio::get_audio_stream))
         .route("/api/out/audio", get(audio::get_out_audio))
-        // The view channel — a scene's retained appearance, served as versioned
+        // The view channel — the retained appearance, served as versioned
         // whole-state snapshots (long-poll on `?since=`).
         .route("/api/out/view", get(view::get_out_view).delete(view::clear_out_view))
         // Vision is an input channel that is also observable: the camera streams
@@ -522,7 +488,7 @@ pub fn build(
         .route("/api/acp/frames/events", get(acp::get_acp_frames_events))
         // The MCP tool endpoint a session's `mcp_servers` attach connects to. The
         // mind drives output and side-effects by calling tools here; routing is by
-        // the X-HI-Scene/X-HI-Role headers the attach carries.
+        // the X-HI-Role header the attach carries.
         .route("/mcp", post(mcp::post_mcp).get(mcp::get_mcp))
         // Fire a taught quick-action reflex — recognize the current field via the
         // accessibility tree and type the stored value, no model in the loop. The
@@ -572,9 +538,9 @@ pub fn build(
         // Loopback-only (the callback's peer must be 127.0.0.1). See account.rs.
         .route("/account/link/start", get(account::get_link_start))
         .route("/account/link/callback", get(account::get_link_callback))
-        // A scene's channels, observed live as one merged presence stream — the
-        // channel inspector's window onto every in/out channel of one scene.
-        .route("/api/scenes/{scene}/channels", get(channels::get_scene_channels))
+        // Every channel, observed live as one merged presence stream — the channel
+        // inspector's window onto the whole conversation, in and out.
+        .route("/api/channels", get(channels::get_channels))
         // The agent's view workshop on disk (under data_dir) — compiled view modules,
         // images, and build-agent artifacts. Served here, not in the appearance
         // router, because that router is embed-only and stateless.
@@ -604,7 +570,7 @@ pub fn build(
 }
 
 /// What `build` hands back to wire the reaction to the HTTP front. `inbound_rx`
-/// is the channel POSTs feed; `warm_rx` carries scene warm-up requests a presence
+/// is the channel POSTs feed; `warm_rx` carries warm-up requests a presence
 /// GET raises; `out_tx` is the reaction's single transport-free outbound seam (the
 /// binder spawned in `build` carries it to the wire). The `text_bus` is exposed
 /// only so integration tests can drive utterances directly without standing up a
@@ -613,7 +579,7 @@ pub fn build(
 /// signals through the same path as a channel POST.
 pub struct ServerSeams {
     pub inbound_rx: mpsc::Receiver<Signal>,
-    pub warm_rx: mpsc::Receiver<Scene>,
+    pub warm_rx: mpsc::Receiver<()>,
     pub text_bus: TextBus,
     pub out_tx: mpsc::Sender<OutboundSignal>,
     pub state: Arc<AppState>,

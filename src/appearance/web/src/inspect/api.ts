@@ -1,7 +1,7 @@
 // Inspect data layer — typed views over the endpoints the Rust backend exposes:
-//   GET  /api/sessions                    → live per-scene snapshot (JSON)
+//   GET  /api/sessions                    → live snapshot of the voice (JSON)
 //   GET  /api/sessions/events             → SSE of every lifecycle event ("session")
-//   GET  /api/scenes/{scene}/channels     → SSE of one scene's channel activity ("channel")
+//   GET  /api/channels                     → SSE of channel activity ("channel")
 //
 // These mirror the serde shapes in `src/observatory/mod.rs` and
 // `src/server/channels.rs`. Kept deliberately thin: the inspect views poll the
@@ -26,12 +26,10 @@ export interface TurnView {
   reply_chars: number | null;
 }
 
-// Scene-shaped state only. Worker lifecycle is NOT here: a working session belongs to
-// whoever created it, and the rungs that create them have no scene — so a per-scene
-// list could only hold the ones incidentally hosted there. Read workers off the event
+// Voice-shaped state only. Worker lifecycle is NOT here: a working session belongs to
+// whoever created it, so it is not the state of the mouth. Read workers off the event
 // stream instead (`worker_spawned` / `worker_finished`), which is keyed by session.
-export interface SceneView {
-  scene: string;
+export interface AgentView {
   reaction_session: SessionView | null;
   budget_chars: number;
   swap_after_chars: number;
@@ -47,23 +45,21 @@ export interface SceneView {
 export interface SessionEvent {
   seq: number;
   ts: string;
-  /** null when the event happened outside every conversation — the sceneless rungs. */
-  scene: string | null;
   event: string;
   [k: string]: unknown;
 }
 
-/** Fetch the live per-scene snapshot. Throws on network/HTTP error. */
-export async function fetchSessions(signal?: AbortSignal): Promise<SceneView[]> {
+/** Fetch the live snapshot of the voice. Throws on network/HTTP error. */
+export async function fetchSessions(signal?: AbortSignal): Promise<AgentView> {
   const res = await fetch("/api/sessions", { signal });
   if (!res.ok) throw new Error(`GET /api/sessions → ${res.status}`);
-  return (await res.json()) as SceneView[];
+  return (await res.json()) as AgentView;
 }
 
 export type Channel = "text" | "vision" | "audio" | "touch" | "smell" | "taste";
 export type Direction = "in" | "out";
 
-// One unit of channel activity for a scene — a recognized/spoken line on the
+// One unit of channel activity — a recognized/spoken line on the
 // text channel, or a metadata summary for binary/structured channels. Mirrors
 // `ChannelSignal` in `src/server/channels.rs`.
 export interface ChannelSignal {
@@ -75,17 +71,16 @@ export interface ChannelSignal {
 }
 
 /**
- * Subscribe to one scene's merged channel-activity stream. Returns an
+ * Subscribe to the merged channel-activity stream. Returns an
  * unsubscribe fn. This is live presence only — the backend replays nothing, so a
  * fresh subscriber sees activity from the moment it connects. EventSource
- * auto-reconnects. `scene` is encoded into the path (ids may contain `@`, `:`).
+ * auto-reconnects.
  */
 export function subscribeChannels(
-  scene: string,
   onSignal: (sig: ChannelSignal) => void,
   onStatus?: (live: boolean) => void,
 ): () => void {
-  const es = new EventSource(`/api/scenes/${encodeURIComponent(scene)}/channels`);
+  const es = new EventSource("/api/channels");
   es.addEventListener("open", () => onStatus?.(true));
   es.addEventListener("error", () => onStatus?.(false));
   es.addEventListener("channel", (e) => {
@@ -107,7 +102,6 @@ export interface RawFrame {
   seq: number;
   ts: string;
   conn: number;
-  scene: string;
   dir: AcpDir;
   session_id: string | null;
   method: string | null;
@@ -141,8 +135,8 @@ export function subscribeAcpFrames(
 export interface EventStreamHandlers {
   /** A lifecycle event arrived — append it to the event log. */
   onEvent?: (ev: SessionEvent) => void;
-  /** A fresh full per-scene snapshot arrived — replace prior scene state. */
-  onSnapshot?: (scenes: SceneView[]) => void;
+  /** A fresh full snapshot arrived — replace prior state. */
+  onSnapshot?: (conversations: AgentView[]) => void;
   /** Connection liveness toggled (open → true, error/reconnecting → false). */
   onStatus?: (live: boolean) => void;
 }
@@ -151,7 +145,7 @@ export interface EventStreamHandlers {
  * Subscribe to the lifecycle stream. Returns an unsubscribe fn. One SSE
  * connection carries two frame types: `session` lifecycle events (buffered
  * history replayed on connect, then live) and periodic `snapshot` frames (the
- * full per-scene mirror). Reading scene state from the snapshot frames here
+ * full per-conversation mirror). Reading conversation state from the snapshot frames here
  * means the dashboard polls nothing — it holds a single connection rather than
  * leaking a `/api/sessions` request per tick into a starved HTTP/1.1 pool.
  * EventSource auto-reconnects.
@@ -169,7 +163,7 @@ export function subscribeEvents(handlers: EventStreamHandlers): () => void {
   });
   es.addEventListener("snapshot", (e) => {
     try {
-      handlers.onSnapshot?.(JSON.parse((e as MessageEvent).data) as SceneView[]);
+      handlers.onSnapshot?.(JSON.parse((e as MessageEvent).data) as AgentView[]);
     } catch {
       /* ignore malformed frame */
     }

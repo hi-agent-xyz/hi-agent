@@ -3,9 +3,12 @@
 // Spec rules we obey here:
 //   * GET /api/out/text is a long-poll. The server holds the response open and
 //     streams body bytes as the agent emits. Body-close ends the utterance.
-//   * X-HI-Scene names the scene we want to receive on (i.e. "stream me this
-//     scene's output"). Without it the server can't key the right mailbox.
 //   * After body-close we re-subscribe. Each subscription is one utterance.
+//   * Reading does not consume: the server retains utterances so every attached
+//     surface sees each one. We say where we are with `?after=<id>` and it
+//     answers with the id it just delivered on `X-HI-Utterance`, which becomes
+//     the next request's cursor. Without that a re-subscribe would loop on the
+//     same line; with it, several windows can watch one conversation.
 //
 // The function is an async generator: each yielded string is a UTF-8 chunk
 // of one in-flight utterance. The generator returns when the body closes.
@@ -16,10 +19,16 @@ export interface TextChunk {
 }
 
 export interface SubscribeOpts {
-  /** Scene we want to receive on. Sent as X-HI-Scene. */
-  scene: string;
   /** Abort signal so the caller can cancel cleanly on unmount. */
   signal: AbortSignal;
+  /**
+   * Id of the last utterance received in full, or null to start at the oldest
+   * the server still holds — which is what makes a reply produced before this
+   * client ever connected still arrive.
+   */
+  after?: number | null;
+  /** Called with the id of the utterance this subscription carries. */
+  onUtterance?: (id: number) => void;
 }
 
 /**
@@ -31,10 +40,10 @@ export interface SubscribeOpts {
 export async function* subscribeOutText(
   opts: SubscribeOpts,
 ): AsyncGenerator<TextChunk, void, void> {
-  const res = await fetch("/api/out/text", {
+  const qs = opts.after == null ? "" : `?after=${opts.after}`;
+  const res = await fetch(`/api/out/text${qs}`, {
     method: "GET",
     headers: {
-      "X-HI-Scene": opts.scene,
       Accept: "text/plain, application/octet-stream",
     },
     signal: opts.signal,
@@ -45,6 +54,9 @@ export async function* subscribeOutText(
   if (!res.ok) {
     throw new Error(`/api/out/text subscribe failed: ${res.status} ${res.statusText}`);
   }
+
+  const delivered = Number(res.headers.get("X-HI-Utterance"));
+  if (Number.isFinite(delivered)) opts.onUtterance?.(delivered);
 
   // Some servers (or proxies) may return a non-streaming body. fall through:
   if (!res.body) {

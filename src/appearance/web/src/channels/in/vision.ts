@@ -7,7 +7,7 @@
 // `subscribeInVideo` is the read side: `GET /api/in/vision` long-polls one camera
 // session per response (the live video bytes), so we yield a session and re-GET
 // for the next — the same shape `out/audio` uses for TTS turns. Used to watch a
-// scene's camera (e.g. the inspector); each session's bytes go to a MediaSource.
+// conversation's camera (e.g. the inspector); each session's bytes go to a MediaSource.
 
 /** One camera session: a continuous video byte body the caller plays. */
 export interface VideoInTurn {
@@ -18,13 +18,12 @@ export interface VideoInTurn {
 }
 
 export async function* subscribeInVideo(opts: {
-  scene: string;
   signal: AbortSignal;
 }): AsyncGenerator<VideoInTurn, void, void> {
   while (!opts.signal.aborted) {
     const res = await fetch("/api/in/vision", {
       method: "GET",
-      headers: { "X-HI-Scene": opts.scene, Accept: "video/*" },
+      headers: { Accept: "video/*" },
       signal: opts.signal,
       cache: "no-store",
     });
@@ -38,7 +37,6 @@ export async function* subscribeInVideo(opts: {
 }
 
 export async function postVision(opts: {
-  scene: string;
   blob: Blob;
   mime: string;
   signal?: AbortSignal;
@@ -47,7 +45,6 @@ export async function postVision(opts: {
     method: "POST",
     headers: {
       "Content-Type": opts.mime,
-      "X-HI-Scene": opts.scene,
     },
     body: opts.blob,
     signal: opts.signal,
@@ -65,7 +62,6 @@ export async function postVision(opts: {
 // stills) and the full-fidelity video stream — these frames are never archived,
 // they only feed real-time "who's here" recognition.
 export async function postPresenceStill(opts: {
-  scene: string;
   blob: Blob;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -73,7 +69,6 @@ export async function postPresenceStill(opts: {
     method: "POST",
     headers: {
       "Content-Type": "image/jpeg",
-      "X-HI-Scene": opts.scene,
     },
     body: opts.blob,
     signal: opts.signal,

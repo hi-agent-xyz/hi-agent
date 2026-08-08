@@ -20,7 +20,7 @@ function clip(s: string, n = 160): string {
 // Everything except the envelope — the envelope is already its own columns, and a
 // debug surface should not print the same fact twice.
 function payload(e: SessionEvent): Record<string, unknown> {
-  const { seq: _s, ts: _t, scene: _sc, event: _e, ...rest } = e;
+  const { seq: _s, ts: _t, event: _e, ...rest } = e;
   return rest;
 }
 
@@ -75,7 +75,7 @@ function summary(e: SessionEvent): ReactNode {
  * `onEvent` callback since it was written and nothing subscribed to it, so every
  * event the host recorded was reachable only by curl. In particular no surface showed
  * **agent-to-agent messages**, which is the one thing you cannot infer from the other
- * two tabs: `Scenes` shows conversations and `Sessions` shows raw ACP wire traffic,
+ * two tabs: `Conversation` shows the live channels and `Sessions` shows raw ACP wire traffic,
  * and an edge between two agents is neither.
  *
  * Deliberately unaggregated. Per `docs/arch/foundation.md#debug-surfaces` a debug
@@ -126,7 +126,7 @@ export function EventsView() {
 
         {shown.length === 0 ? (
           <div className="muted pad">
-            No events yet. They appear as soon as a scene opens a session, a turn runs, or one
+            No events yet. They appear as soon as a session opens, a turn runs, or one
             agent messages another.
           </div>
         ) : (
@@ -135,7 +135,6 @@ export function EventsView() {
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Scene</th>
                   <th>Event</th>
                   <th>#</th>
                   <th>Detail</th>
@@ -146,9 +145,6 @@ export function EventsView() {
                 {shown.map((e) => (
                   <tr key={e.seq}>
                     <td className="ts">{time(e.ts)}</td>
-                    {/* null scene = a sceneless rung (Cognition, Reflection). It is not
-                        a conversation and must not be shown as one. */}
-                    <td className="mini">{e.scene ?? <span className="muted">—</span>}</td>
                     <td className={`evname ${e.event}`}>{e.event}</td>
                     <td className="evseq">{e.seq}</td>
                     <td className="evframe">{summary(e)}</td>

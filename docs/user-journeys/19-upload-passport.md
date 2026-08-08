@@ -25,7 +25,7 @@
 - **看不准是什么**(模糊 / 多页 / 非证件)→ 别硬贴标签;先把原件存住,问一句"这是什么、归到哪",按答案归档(软证据、容忍模糊、可纠错,范型见 [16](16-recognize-people.md))。
 - **敏感隐私件**(护照 / 身份证 / 银行卡)→ 默认私密:别投到公共 view、别念证件号、别外发;确认后再存/取。
 - **归属或位置存错** → 可纠正:"这不是我的,是 Alice 的"一句就改归属(认识可改,物件不动)。
-- **agent 看不到字节路径** → 今天 snapshot 只给字幕、不给 media 路径,存盘的 worker 得按"刚收到的那个文件"以最近/scene 定位,而非拿到确切路径;新鲜时行,久了靠已归档的 drive 名找回(见 [[file-exchange-drive-carriers]] 的 seam)。
+- **agent 看不到字节路径** → 今天 snapshot 只给字幕、不给 media 路径,存盘的 worker 得按"刚收到的那个文件"以最近/conversation 定位,而非拿到确切路径;新鲜时行,久了靠已归档的 drive 名找回(见 [[file-exchange-drive-carriers]] 的 seam)。
 
 ## Open questions
 

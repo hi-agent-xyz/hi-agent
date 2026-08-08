@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { subscribeOutText } from "../channels/out/text";
+
+/** Where this browser has got to in the outbound text log (see `subscribeOutText`). */
+const TEXT_CURSOR_KEY = "hi-agent.out-text-cursor";
 import { subscribeAudioTurns } from "../channels/out/audio";
 import { postInText, subscribeInText } from "../channels/in/text";
 import { reportAttention, type WindowState } from "../channels/in/attention";
@@ -10,7 +13,6 @@ import { VideoStreamer } from "../lib/videoStreamer";
 import { PresenceStiller } from "../lib/presenceStiller";
 import { VoicePlayer } from "../lib/voicePlayer";
 import { SentenceBuffer, breakLongSentence } from "../lib/sentences";
-import { getScene } from "../lib/scene";
 import { onNativeLifecycle } from "../lib/nativeBridge";
 import type { PresenceState } from "../ui/Presence";
 import type { SpeechItem } from "../ui/SpeechText";
@@ -23,7 +25,7 @@ import type { SpeechItem } from "../ui/SpeechText";
 const AGENT_REPLY_WINDOW = 3;
 
 // Stable id for the single rolling-interim line (the user's speech as it's
-// being recognized). One slot per scene by design: partials are cumulative, so
+// being recognized). One slot by design: partials are cumulative, so
 // each replaces the last, and keying by a constant id lets React patch the
 // same <p> instead of remounting per partial.
 const INTERIM_ID = -1;
@@ -163,7 +165,7 @@ export interface AgentSession {
  * arrival, /api/out/text chunks fade in as whole sentences. The user's words —
  * whether typed or recognized from speech — arrive as settled text lines on
  * /api/in/text (the server transcribes the mic and posts the transcript there),
- * so every client in the scene shows identical UI whether or not it holds the
+ * so every attached client shows identical UI whether or not it holds the
  * mic. "Audio is audio": the raw mic bytes ride /api/in/audio for anyone who
  * wants to listen, but the conversation the face renders is text.
  *
@@ -172,7 +174,6 @@ export interface AgentSession {
  * inbound signal stream goes quiet.
  */
 export function useAgentSession(): AgentSession {
-  const scene = useMemo(() => getScene(), []);
 
   // Saved channel intents. Held in a ref (read synchronously by startSession /
   // the toggles) and written through on every explicit user change.
@@ -204,7 +205,7 @@ export function useAgentSession(): AgentSession {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   // The user's speech as it's being recognized (cumulative rolling text), or
   // null when no utterance is in flight. Server-broadcast on /in/text, so every
-  // client in the scene shows the same live line.
+  // every attached client shows the same live line.
   const [interim, setInterim] = useState<string | null>(null);
   // Is anyone actually looking at this window right now?
   //
@@ -350,9 +351,9 @@ export function useAgentSession(): AgentSession {
   // ---- GET /out/text subscription loop (after wake) ----------------------
   // Held open only while the window is attended. Dropping it when nobody is
   // looking is what makes the backend's `reach.window` honest — and because the
-  // server's text bus buffers per scene and only removes an utterance once a
-  // reader has drained it to completion, the words wait there instead of being
-  // handed to a window nobody is watching. That is the difference between the
+  // server's text bus retains utterances and never removes one just because it
+  // was read, the words wait there instead of being handed to a window nobody is
+  // watching — and every other attached surface still gets them. That is the difference between the
   // reply being deferred and being half-spent: previously the band kept scrolling
   // behind another app, so a reply longer than AGENT_REPLY_WINDOW arrived, rolled,
   // and was already truncated by the time it was looked at.
@@ -361,6 +362,13 @@ export function useAgentSession(): AgentSession {
     const ctrl = new AbortController();
     let cancelled = false;
     const buffer = new SentenceBuffer();
+    // Where this reader has got to. Persisted so a reload continues the thread
+    // instead of replaying whatever the server still holds.
+    let after: number | null = (() => {
+      const raw = sessionStorage.getItem(TEXT_CURSOR_KEY);
+      const n = raw == null ? NaN : Number(raw);
+      return Number.isFinite(n) ? n : null;
+    })();
 
     void (async () => {
       while (!cancelled) {
@@ -369,7 +377,18 @@ export function useAgentSession(): AgentSession {
           // Render the agent's words as they arrive. The mind only streams a
           // reply once it has committed to speaking (the human yielded the
           // floor), so there are no superseded drafts to untangle here.
-          for await (const chunk of subscribeOutText({ scene, signal: ctrl.signal })) {
+          for await (const chunk of subscribeOutText({
+            signal: ctrl.signal,
+            after,
+            onUtterance: (id) => {
+              after = id;
+              try {
+                sessionStorage.setItem(TEXT_CURSOR_KEY, String(id));
+              } catch {
+                /* private mode — the cursor just won't survive a reload */
+              }
+            },
+          })) {
             if (cancelled) break;
             if (!gotChunk) {
               gotChunk = true;
@@ -396,7 +415,7 @@ export function useAgentSession(): AgentSession {
       ctrl.abort();
       clearAgentQueue();
     };
-  }, [woken, attended, scene, enqueueAgent, clearAgentQueue]);
+  }, [woken, attended, enqueueAgent, clearAgentQueue]);
 
   // ---- Attention reporter (window came forward) --------------------------
   // Tell the backend what our own window is doing. First-party only: our window,
@@ -413,7 +432,7 @@ export function useAgentSession(): AgentSession {
       const prev = lastReportRef.current;
       if (prev && prev.state === next && now - prev.at < 1000) return;
       lastReportRef.current = { state: next, at: now };
-      void reportAttention({ scene, state: next });
+      void reportAttention({ state: next });
     };
     enterWindowRef.current = enter;
     // Mount is an arrival: the page being up at all is someone opening it.
@@ -432,7 +451,7 @@ export function useAgentSession(): AgentSession {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
     };
-  }, [scene]);
+  }, []);
 
   // ---- GET /out/audio subscription loop (TTS playback) -------------------
   // Pure render: each response is one turn's continuous audio. Stream its body
@@ -455,7 +474,7 @@ export function useAgentSession(): AgentSession {
     void (async () => {
       while (!cancelled) {
         try {
-          for await (const turn of subscribeAudioTurns({ scene, signal: ctrl.signal })) {
+          for await (const turn of subscribeAudioTurns({ signal: ctrl.signal })) {
             if (cancelled) break;
             const voice = voiceRef.current;
             if (!voice) continue;
@@ -485,7 +504,7 @@ export function useAgentSession(): AgentSession {
       // hear it, so the tail of the current utterance must not keep playing.
       voiceRef.current?.stop();
     };
-  }, [woken, attended, audioOutput, scene]);
+  }, [woken, attended, audioOutput]);
 
   // Reflexive duck: recognized speech (a rolling partial on the observe
   // stream) lands while the agent's voice is playing → cut playback right
@@ -504,7 +523,7 @@ export function useAgentSession(): AgentSession {
   // ---- GET /in/text observe loop: typed lines (this client or another) ---
   // Every user line lands here: typed input the server echoes back, and speech
   // the server transcribed and posted to the text channel. Both render the same
-  // way, so the conversation reads uniformly across every client in the scene.
+  // way, so the conversation reads uniformly across every attached client.
   // Rolling partials (`final:false`, live STT) render as a live italic line
   // (the interim slot) and double as the duck trigger above.
   useEffect(() => {
@@ -514,7 +533,7 @@ export function useAgentSession(): AgentSession {
     void (async () => {
       while (!cancelled) {
         try {
-          for await (const ev of subscribeInText({ scene, signal: ctrl.signal })) {
+          for await (const ev of subscribeInText({ signal: ctrl.signal })) {
             if (cancelled) break;
             if (ev.text.trim().length === 0) continue;
             if (!ev.final) {
@@ -537,7 +556,7 @@ export function useAgentSession(): AgentSession {
       ctrl.abort();
       clearInterim();
     };
-  }, [woken, scene, finalizeUser, duck, updateInterim, clearInterim]);
+  }, [woken, finalizeUser, duck, updateInterim, clearInterim]);
 
   // ---- audio-input channel: acquire/release the mic (and vision) ---------
   // Independent of the session itself — text and audio are coequal input
@@ -576,7 +595,7 @@ export function useAgentSession(): AgentSession {
       // — the recognized text arrives on the /in/text observe loop above (the
       // server posts the transcript to the text channel), so even this client
       // reads its own words from there.
-      const streamer = await AudioStreamer.create(audioBus.ctx, micNode, { scene });
+      const streamer = await AudioStreamer.create(audioBus.ctx, micNode, {});
       if (superseded()) {
         // Disabled while we were acquiring — don't leave the socket open.
         streamer.stop();
@@ -599,7 +618,7 @@ export function useAgentSession(): AgentSession {
       // Leave the flag untouched if a newer start/teardown already owns it.
       if (!superseded()) micStartingRef.current = false;
     }
-  }, [scene]);
+  }, []);
 
   const disableAudio = useCallback(() => {
     // Cancel any enableAudio still acquiring devices, and clear the in-flight
@@ -653,10 +672,10 @@ export function useAgentSession(): AgentSession {
       const got = videoStream.getVideoTracks()[0]?.getSettings();
       console.debug("[vision] captured", got?.width, "x", got?.height, got);
       visionStreamRef.current = videoStream;
-      visionRef.current = await VideoStreamer.create(videoStream, { scene });
+      visionRef.current = await VideoStreamer.create(videoStream, {});
       // Start the presence lane on the same stream — a cheap low-res still feed for
       // real-time local face recognition, beside the full-fidelity video upload.
-      presenceRef.current = new PresenceStiller(videoStream, { scene });
+      presenceRef.current = new PresenceStiller(videoStream, {});
       setVisionStream(videoStream);
       setVideoError(null);
       setVideoInput(true);
@@ -673,7 +692,7 @@ export function useAgentSession(): AgentSession {
       );
       setVideoInput(false);
     }
-  }, [scene]);
+  }, []);
 
   const disableVision = useCallback(() => {
     visionRef.current?.stop();
@@ -807,7 +826,7 @@ export function useAgentSession(): AgentSession {
   // reopens". It wasn't: the band evicts past AGENT_REPLY_WINDOW as it reveals,
   // and it reveals on a timer that doesn't know whether anyone is watching, so a
   // long reply was already truncated by the time the window came back. The words
-  // wait in the server's per-scene buffer now, whole, and arrive when there is
+  // wait in the server's per-conversation buffer now, whole, and arrive when there is
   // someone to read them. Inert in a browser tab (no native lifecycle events).
   useEffect(() => {
     return onNativeLifecycle((phase) => {
@@ -851,9 +870,9 @@ export function useAgentSession(): AgentSession {
       // The server echoes the line back on /in/text, where the observe loop folds
       // it into the timeline as a user line — so we don't add it locally.
       setAwaiting(true);
-      postInText({ scene, body: trimmed }).catch(() => setAwaiting(false));
+      postInText({ body: trimmed }).catch(() => setAwaiting(false));
     },
-    [scene],
+    [],
   );
 
   const state: PresenceState = !woken

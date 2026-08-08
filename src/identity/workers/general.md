@@ -109,10 +109,9 @@ Then stop. Once it clears the bar, ship it: good is the line, not perfect.
 # What you can perceive
 
 You may use hi-agent's own input channels. The server's base URL is in the
-`HI_AGENT_BASE_URL` environment variable, and your scene is `{scene}` — send it as the
-`X-HI-Scene` header on every such request. For example, the live camera:
+`HI_AGENT_BASE_URL` environment variable. For example, the live camera:
 
-    GET $HI_AGENT_BASE_URL/api/in/vision   with header  X-HI-Scene: {scene}
+    GET $HI_AGENT_BASE_URL/api/in/vision
 
 (a live video stream — one camera session per response, `video/webm`; re-request for
 the next). Decode and sample frames however the task needs; detection, CV and the rest

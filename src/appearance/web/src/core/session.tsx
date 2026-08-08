@@ -1,6 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { useAgentSession, type AgentSession } from "../hooks/useAgentSession";
-import { getScene } from "../lib/scene";
 
 // The session core, exposed to any view (host chrome or agent-authored) through
 // one React context. A view never re-owns devices or sockets; it reads the live
@@ -14,7 +13,7 @@ import { getScene } from "../lib/scene";
 // out of the `@hi/core` surface a view authors against): the headless render page
 // provides a fabricated session here instead of mounting `SessionProvider`, which
 // would open the mic, the camera and every channel long-poll — and would register
-// as a live scene subscriber, making a review render look like a person in the
+// as a live subscriber, making a review render look like a person in the
 // room. See `src/render/main.tsx`.
 export const SessionContext = createContext<AgentSession | null>(null);
 
@@ -77,7 +76,3 @@ export function useSendText() {
   return useSession().sendText;
 }
 
-/** The scene this client belongs to (the isolation key). */
-export function useScene() {
-  return getScene();
-}

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { usePath } from "./router";
 import { EventsView } from "./EventsView";
-import { ScenesView } from "./ScenesView";
+import { ConversationView } from "./ConversationView";
 import { SessionsView } from "./SessionsView";
 import "./inspect.css";
 
@@ -13,7 +13,7 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { key: "scenes", label: "Scenes", path: "/inspect/scenes", render: () => <ScenesView /> },
+  { key: "conversation", label: "Conversation", path: "/inspect/conversation", render: () => <ConversationView /> },
   { key: "sessions", label: "Sessions", path: "/inspect/sessions", render: () => <SessionsView /> },
   { key: "events", label: "Events", path: "/inspect/events", render: () => <EventsView /> },
 ];
@@ -22,7 +22,7 @@ const FIRST_TAB = TABS[0]!;
 
 /**
  * The inspect console — an operator-facing surface distinct from the agent "face"
- * at `/`. Tabs map to nested routes: `/inspect/scenes` inspects a scene's live
+ * at `/`. Tabs map to nested routes: `/inspect/conversation` inspects the live
  * channels, `/inspect/sessions` inspects ACP sessions. Bare `/inspect` redirects
  * to the first tab. Each tab owns deeper nested routes (`…/{id}`) for its detail view.
  */

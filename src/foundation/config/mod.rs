@@ -52,7 +52,7 @@ pub const KEY_PERMISSION_MODE: &str = "permission_mode";
 pub const KEY_PULSE: &str = "pulse";
 /// Master switch for the reflection ("sleep") pass; `off` disables it entirely.
 pub const KEY_REFLECT: &str = "reflect";
-/// Base reflection cadence — how often a scene with fresh input consolidates.
+/// Base reflection cadence — how often a conversation with fresh input consolidates.
 /// Duration grammar; `0`/`off` disables; unset → the built-in default (1m).
 pub const KEY_REFLECT_EVERY: &str = "reflect_every";
 /// Ceiling on the idle reflection backoff. Duration grammar; unset → default (8h).
@@ -156,12 +156,12 @@ pub mod tunables {
 }
 
 /// HTTP headers a session's MCP attach carries on every tool call, so the `/mcp`
-/// server can route a call back to the right scene loop and tool surface. Set
+/// server can route a call back to the right reaction loop and tool surface. Set
 /// when the session is opened (see `agent::AgentLayer::session`) and read by the
-/// MCP handler (see `crate::foundation::mcp`). The scene is the isolation key; the role
+/// MCP handler (see `crate::foundation::mcp`). The conversation is the isolation key; the role
 /// selects which tools are exposed; the worker id (workers only) names which
 /// working session raised an `ask`.
-pub const HEADER_SCENE: &str = "X-HI-Scene";
+pub const HEADER_SCENE: &str = "X-HI-Conversation";
 pub const HEADER_ROLE: &str = "X-HI-Role";
 pub const HEADER_SESSION_ID: &str = "X-HI-Session-Id";
 

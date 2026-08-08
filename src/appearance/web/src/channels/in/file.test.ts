@@ -27,7 +27,6 @@ describe("postInFiles", () => {
 
     await expect(
       postInFiles({
-        scene: "test",
         files: [new File(["a"], "a.txt"), new File(["b"], "b.txt")],
       }),
     ).resolves.toEqual({ attempted: 2, received: 2, failed: [] });
@@ -44,7 +43,6 @@ describe("postInFiles", () => {
       .mockResolvedValue(response(JSON.stringify(result), 207));
 
     const error = await postInFiles({
-      scene: "test",
       files: [new File(["a"], "a.txt"), new File(["b"], "b.txt")],
     }).catch((caught: unknown) => caught);
 
@@ -59,7 +57,6 @@ describe("postInFiles", () => {
 
     await expect(
       postInFiles({
-        scene: "test",
         files: [new File(["a"], "a.txt")],
       }),
     ).rejects.toThrow("request body too large");

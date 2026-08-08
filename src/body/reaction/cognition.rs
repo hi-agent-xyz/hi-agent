@@ -1,9 +1,9 @@
 //! Cognition — the shared brain. One of it for the whole agent.
 //!
-//! It belongs to no scene, and every scene hands work up to it. It owns the task ledger,
+//! It belongs to no conversation, and the conversation hands work up to it. It owns the task ledger,
 //! it is the only thing that creates workers, and it tries hard to stay idle so it is
 //! free the moment something arrives. It never speaks: what it wants said it sends to a
-//! scene, where Reaction decides when the room is right.
+//! conversation, where Reaction decides when the room is right.
 //!
 //! Most of what makes Cognition *Cognition* is its prompt (`identity/cognition.md`) —
 //! "a new role is a new prompt, not new machinery". This module is the four things a
@@ -12,13 +12,13 @@
 //! 1. **An address.** An address is a session id, and its own is minted fresh each boot —
 //!    so it registers once, for the life of the process, and the host projects that id
 //!    into the window of everyone allowed to reach it ([`registry::Registry::reachable`]).
-//! 2. **A drain.** Every live agent is driven by something. Reaction has its scene loop,
+//! 2. **A drain.** Every live agent is driven by something. Reaction has its reaction loop,
 //!    workers have `drive_worker`, Reflection has a one-shot pass. A registered rung with
 //!    nothing reading its inbox is a mailbox that reports "delivered" and forgets.
 //! 3. **A window.** Invariant 4: active tasks are *projected, not retrieved*. The ledger's
 //!    own writer going to look for it is how a duty goes missing without anyone knowing.
 //! 4. **A host for its workers.** `create_worker` needs somewhere to run them; without
-//!    this, a sceneless rung borrows an arbitrary scene and quietly files its work under
+//!    this, a standing rung borrows an arbitrary conversation and quietly files its work under
 //!    a stranger's conversation.
 //!
 //! ## One long-lived session; the agent bounds its own context
@@ -64,33 +64,23 @@ use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, SessionKind};
 use crate::foundation::registry::{self, Registration};
 use crate::mind::memory::snapshot;
-use crate::types::Scene;
 
-use super::tools::{SceneControl, ToolSink};
-use super::{LoopInput, Reaction, SCENE_QUEUE_CAPACITY, workers};
+use super::tools::{LoopControl, ToolSink};
+use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, workers};
 
-/// The pseudo-scene Cognition's sessions are opened under.
+/// The pseudo-conversation Cognition's sessions are opened under.
 ///
-/// It exists for the two places that require *some* scene and mean different things by
-/// it: the `X-HI-Scene` header the `/mcp` dispatch routes by, and the label on a
+/// It exists for the two places that require *some* conversation and mean different things by
+/// it: the `X-HI-Conversation` header the `/mcp` dispatch routes by, and the label on a
 /// subprocess in the logs. It is never a conversation and never a data path — the `*…*`
-/// form marks that ([`Scene::is_pseudo`]), and it cannot collide with a real scene id.
+/// form marks that ([`Conversation::is_pseudo`]), and it cannot collide with a real conversation id.
 ///
-/// **Nothing may journal under it.** `encode_scene("*cognition*")` is
+/// **Nothing may journal under it.** The old percent-encoding of a sentinel id is
 /// `%2Acognition%2A`, which is a perfectly ordinary directory name to
-/// [`crate::mind::memory::layout::is_scene_dir`] and no longer looks pseudo to anything
-/// checking — so a single write into `memory/raw/` would manufacture a scene that gets a
-/// full per-scene loop, subprocess and pulse at the next boot. That is the bug `c085e29`
+/// [`crate::mind::memory::layout::is_signal_dir`] and no longer looks pseudo to anything
+/// checking — so a single write into `memory/raw/` would manufacture a conversation that gets a
+/// full per-reaction loop, subprocess and pulse at the next boot. That is the bug `c085e29`
 /// fixed arriving by a different road. Cognition's durable record is the ledger, which is
-/// what the ledger is for.
-const COGNITION_SCENE: &str = "*cognition*";
-
-fn cognition_scene() -> Scene {
-    let s = Scene(COGNITION_SCENE.to_string());
-    debug_assert!(s.is_pseudo(), "the sentinel must be recognizable as one");
-    s
-}
-
 /// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
@@ -98,7 +88,7 @@ const COGNITION_AGENT: &str = "cognition";
 /// Cognition's restart-recovery wake is immediate once the reaction exists.
 ///
 /// Runtime provisioning and broker refresh finish before `reaction::start`, and
-/// [`glance_note`] explicitly stands every task-owned report scene up before the
+/// [`glance_note`] explicitly stands every task-owned report conversation up before the
 /// recovery prompt is built. Readiness is therefore structural rather than a
 /// sleep-and-hope delay.
 const BOOT_WAKE_AFTER: Duration = Duration::ZERO;
@@ -116,28 +106,27 @@ pub(super) fn spawn(reaction: Reaction, registration: Registration) {
 async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
-    let scene = cognition_scene();
 
-    // Its workers run under it. `create_worker` looks the caller's scene up in the tool
-    // registry, and the caller's header scene *is* `*cognition*` — so registering a sink
-    // here means the lookup succeeds and `any_host()`, which would have lent an arbitrary
-    // live conversation, is never reached. The per-scene worker map is untouched: this is
+    // Its workers run under it. `create_worker` reaches the tool registry, so
+    // registering a sink here means the lookup succeeds and `any_host()`, which would
+    // have lent an arbitrary
+    // live conversation, is never reached. The per-conversation worker map is untouched: this is
     // not that map moving, it is Cognition having its own.
-    let (control_tx, mut control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
-    let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
+    let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
+    let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
     reaction
         .inner
         .tools
         // `mouth: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
         // voices. That it *cannot* express is now a fact about the sink rather than an
         // agreement between the tool list and the role check at dispatch.
-        .register(scene.clone(), ToolSink { control: control_tx, mouth: None })
+        .register(ToolSink { control: control_tx, mouth: None })
         .await;
 
-    let mut workers = workers::WorkerRegistry::new(scene.clone(), report_tx);
+    let mut workers = workers::WorkerRegistry::new(report_tx);
 
     // Held across turns, cleared only after one succeeds — a turn that fails must not
-    // swallow the mail it was carrying. (The scene loop keeps its batch for the same
+    // swallow the mail it was carrying. (The reaction loop keeps its batch for the same
     // reason; this is that property without the vendor-gate machinery around it, which
     // Cognition does not need: it has no floor to hold and nobody waiting on a reply.)
     let mut pending: Vec<String> = Vec::new();
@@ -155,7 +144,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     // Two wakes, deliberately different things: the **boot** one fires once because a
     // restart happened, and the **recurring** one fires into idleness because a duty
     // can die quietly at any time. `last_turn` resets on every turn, so the second is
-    // a quiet-moment glance rather than a metronome — the scene pulse's shape.
+    // a quiet-moment glance rather than a metronome — the conversation pulse's shape.
     let started = Instant::now();
     let mut last_turn = started;
     let mut woke_at_boot = false;
@@ -175,7 +164,7 @@ async fn run(reaction: Reaction, registration: Registration) {
 
     tracing::info!(cognition = id, "cognition up");
     if reaction.wait_for_server_ready().await {
-        warm_session(&reaction, id, &scene, &mut session).await;
+        warm_session(&reaction, id, &mut session).await;
     }
 
     loop {
@@ -189,7 +178,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                         Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
                             energy_paused = false;
                             tracing::info!(cognition = id, "cognition resumed after energy refill");
-                            warm_session(&reaction, id, &scene, &mut session).await;
+                            warm_session(&reaction, id, &mut session).await;
                             // A failed turn may already be waiting in `pending`. Retain a
                             // notify permit so the next loop iteration drives it now rather
                             // than waiting for the recurring pulse or fresh mail.
@@ -213,7 +202,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         }
 
         // Resolved per iteration so a mid-session change to the `pulse` tunable takes
-        // effect at the next wake, the way it does for a scene.
+        // effect at the next wake, the way it does for a conversation.
         //
         // **`pulse: off` silences the recurring arm and not the boot one.** They are
         // different mechanisms wearing one knob: the cadence is a preference, while
@@ -269,7 +258,7 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
+                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner }) => {
                         if let Err(err) =
                             workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                         {
@@ -324,12 +313,12 @@ async fn run(reaction: Reaction, registration: Registration) {
         // separates them. Worker *reports* stay outside too — they need `&mut pending`,
         // which this turn has borrowed, and they are next-turn input by design.
         let result = {
-            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &scene, &pending, &mut session));
+            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &pending, &mut session));
             loop {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     ctl = control_rx.recv() => match ctl {
-                        Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
+                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner }) => {
                             if let Err(err) =
                                 workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                             {
@@ -349,7 +338,7 @@ async fn run(reaction: Reaction, registration: Registration) {
             Err(err) => {
                 // Keep `pending` — the mail is still owed. The recurring wake above is
                 // now what carries it: a failed turn used to wait for the next message
-                // to arrive, which for a sceneless rung could be never.
+                // to arrive, which for a standing rung could be never.
                 //
                 // **Drop the session too.** A handle that failed once will usually fail
                 // every later prompt, and nothing above would notice a rung that has gone
@@ -393,7 +382,7 @@ async fn sleep_until_opt(at: Option<Instant>) {
 
 /// What a timer wake carries into the turn, or `None` when nothing is owed.
 ///
-/// Bare situational facts, exactly like the scene pulse — *what a quiet moment is for*
+/// Bare situational facts, exactly like the conversation pulse — *what a quiet moment is for*
 /// is `cognition.md`'s job, and it already says: read down the active tasks, check the
 /// things we own are actually alive, and read each check's real output because a probe
 /// that returns nothing means **down**, not fine. That guidance has been in the prompt
@@ -414,14 +403,11 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
     };
 
     if first {
-        // A task's `report_to` is durable, but Cognition can send only to live session
-        // ids. Stand those scenes up before building this turn's window so every owed
-        // user-facing delivery has a reachable voice after restart. `ensure_scene`
-        // registers the voice synchronously; its ACP warm-up may continue while mail
-        // safely queues behind it.
-        for scene in super::task_report_scenes(&active) {
-            reaction.ensure_scene(scene).await;
-        }
+        // Cognition can send only to live session ids. Stand the voice up before
+        // building this turn's window so every owed user-facing delivery has
+        // somewhere to land after a restart. `ensure_voice` registers the address
+        // synchronously; its ACP warm-up may continue while mail queues behind it.
+        reaction.ensure_voice().await;
     }
 
     let count = active.len();
@@ -462,7 +448,7 @@ mod tests {
         assert_eq!(note_for(0, false, Duration::from_secs(9_999)), None);
     }
 
-    /// Both notes are bare situational facts under the same `(pulse)` marker the scene
+    /// Both notes are bare situational facts under the same `(pulse)` marker the conversation
     /// loop uses — `cognition.md` keys on that word, and on "the first pulse after the
     /// host process starts" to know a restart is what it is looking at.
     #[test]
@@ -487,7 +473,6 @@ mod tests {
 async fn warm_session(
     reaction: &Reaction,
     id: registry::SessionId,
-    scene: &Scene,
     held: &mut Option<Arc<AcpSession>>,
 ) {
     if held.is_some() {
@@ -498,7 +483,7 @@ async fn warm_session(
         return;
     }
 
-    let session = match open_session(reaction, id, scene).await {
+    let session = match open_session(reaction, id).await {
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
@@ -530,7 +515,6 @@ async fn warm_session(
                 .inner
                 .observatory
                 .record(
-                    None,
                     EventKind::SessionClosed {
                         kind: SessionKind::Cognition,
                         id: session.id().0.to_string(),
@@ -544,7 +528,6 @@ async fn warm_session(
 async fn open_session(
     reaction: &Reaction,
     id: registry::SessionId,
-    scene: &Scene,
 ) -> anyhow::Result<Arc<AcpSession>> {
     let data_dir = reaction.inner.memory.data_dir();
     let system_prompt = crate::identity::cognition_prompt(data_dir).await;
@@ -553,7 +536,6 @@ async fn open_session(
             .inner
             .agent
             .session(
-                scene,
                 SessionRole::Cognition,
                 Some(id),
                 SessionOpts {
@@ -573,8 +555,6 @@ async fn open_session(
         .inner
         .observatory
         .record(
-            // Sceneless: `*cognition*` is a routing tag, not a conversation.
-            None,
             EventKind::SessionOpened {
                 kind: SessionKind::Cognition,
                 id: opened.id().0.to_string(),
@@ -592,11 +572,10 @@ async fn open_session(
 /// opened, a duty closed, or a note written since this session started is exactly what it
 /// cannot have remembered, because it did not exist yet. Injecting per turn is what makes
 /// "projected, not retrieved" true rather than true-at-open — the same correction the
-/// scene loop's prompt builder carries.
+/// reaction loop's prompt builder carries.
 async fn turn(
     reaction: &Reaction,
     id: registry::SessionId,
-    scene: &Scene,
     pending: &[String],
     held: &mut Option<Arc<AcpSession>>,
 ) -> anyhow::Result<()> {
@@ -605,7 +584,7 @@ async fn turn(
     let session = if let Some(existing) = held.as_ref() {
         existing.clone()
     } else {
-        let opened = open_session(reaction, id, scene).await?;
+        let opened = open_session(reaction, id).await?;
         *held = Some(opened.clone());
         opened
     };
@@ -618,7 +597,7 @@ async fn turn(
         format!("{}\n\n## New messages\n{messages}", window.trim())
     };
 
-    // Paired with "cognition turn done". Cognition is sceneless, so it never reaches
+    // Paired with "cognition turn done". Cognition has no conversation of its own, so it never reaches
     // the observatory mirror and the log is the only place it is visible at all; with
     // only a done line, "thinking" and "parked with nothing to do" read the same.
     tracing::info!(cognition = id, prompt_chars = prompt.chars().count(), "cognition turn start");

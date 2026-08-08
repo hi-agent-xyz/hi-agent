@@ -129,7 +129,7 @@ mod tests {
     }
 
     /// The shape the view is written against, plus the two facts the whole endpoint is
-    /// for: the surfaces genuinely differ per role, and only the sceneless rungs may
+    /// for: the surfaces genuinely differ per role, and only the standing rungs may
     /// dispatch work.
     #[test]
     fn the_response_is_keyed_by_role_and_the_surfaces_differ() {

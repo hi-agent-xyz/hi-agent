@@ -67,7 +67,7 @@
 
 - **大宗结构化数据到底归哪**(本 journey 暴露的核心设计接缝):(a) 消化进重构记忆、(b) 逐字进 drive 按需查、(c) 留在 my-life-db 让 agent 读——三者边界未定。倾向:意义→记忆、字节→drive、可查询数值库→外部 skill / view;但**没定**。
 - **reflection 毕业 vs live 当场存的分界**:全凭"明确 vs 涌现"判断够不够?要不要一句指引(像 [20](20-reuse-built-views.md) 的软引导)?
-- **raw 暂存大字节的形态**:move 还是 stage、落到哪?`raw/files` 当 scene-bound 暂存、drive 当有组织的家,这个分工对不对?
+- **raw 暂存大字节的形态**:move 还是 stage、落到哪?`raw/files` 当 conversation-bound 暂存、drive 当有组织的家,这个分工对不对?
 - **增量 / 去重**:再导一次怎么合(理解可合、原件各留),今天都没有。
 - **分析 skill 与 drive 原件怎么搭**:`apple-health` 这类 skill 读 drive 里的原件出图,结论回流记忆?谁触发、多久一次?
 

@@ -15,7 +15,7 @@
 //!   `src/appearance/web/dist/` via RustEmbed; `runtime` — embeds its npm
 //!   `package.json`/`-lock.json` by `CARGO_MANIFEST_DIR` path and is what the
 //!   Makefile/dev-server build against.
-//! - `types` — shared cross-faculty vocabulary (Channel/Scene/Signal/…); domain
+//! - `types` — shared cross-faculty vocabulary (Channel/Conversation/Signal/…); domain
 //!   data crossing every boundary, not engine machinery.
 
 pub mod acp;

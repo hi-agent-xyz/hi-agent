@@ -1,17 +1,17 @@
-//! Per-scene retained appearance state for `/out/view`, replacing a lossy
+//! Retained appearance state for `/out/view`, replacing a lossy
 //! broadcast.
 //!
-//! A scene's appearance is *state*, not a stream of utterances: the set of
+//! Appearance is *state*, not a stream of utterances: the set of
 //! views currently mounted, in z-order. The previous design broadcast each
 //! envelope over a `tokio::broadcast`, so a view shown before a client's GET
 //! opened — or while a page was refreshing, or before a second device joined —
 //! was simply never seen. This bus folds the reaction's show/replace/dismiss
-//! envelopes into an ordered map per scene and serves the whole state to any
-//! subscriber, so every client in a scene converges on the same screen no
+//! envelopes into one retained state and serves the whole of it to any
+//! subscriber, so every attached client converges on the same screen no
 //! matter when it connects.
 //!
-//! Sync is a versioned long-poll: `wait_state(scene, since)` returns the full
-//! state as soon as the scene's version exceeds `since` (immediately when
+//! Sync is a versioned long-poll: `wait_state(since)` returns the full
+//! state as soon as the version exceeds `since` (immediately when
 //! `since` is absent or behind). State is tiny — a few ids and module URLs —
 //! so resending it whole kills the missed-delta bug class outright.
 //!
@@ -20,14 +20,13 @@
 //!
 //! The state also survives restarts: every mutation appends a whole-state
 //! snapshot to the memory store at
-//! `raw/<scene>/appearance/<date>/appearance-<HHMMSSZ>.json`, and
-//! [`ViewBus::load`] restores each scene from its newest snapshot on boot. The
-//! snapshots double as the scene's appearance history (the screen as
+//! `raw/appearance/<date>/appearance-<HHMMSSZ>.json`, and
+//! [`ViewBus::load`] restores from the newest snapshot on boot. The
+//! snapshots double as the appearance history (the screen as
 //! expression, for later reflection). Module URLs stay valid across restarts
 //! because compiled views are content-addressed on disk and never collected
 //! (see [`crate::mind::views`]).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -36,18 +35,18 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
 use crate::mind::memory::layout;
-use crate::types::{Scene, ViewEnvelope, ViewOp, ViewTraits};
+use crate::types::{ViewEnvelope, ViewOp, ViewTraits};
 
-/// Per-scene appearance state, keyed by scene. Cloneable handle over shared
+/// Retained appearance state. Cloneable handle over shared
 /// state.
 #[derive(Clone)]
 pub struct ViewBus {
-    inner: Arc<Mutex<HashMap<Scene, SceneAppearance>>>,
-    /// The memory data dir; snapshots live under `raw/<scene>/appearance/`.
+    inner: Arc<Mutex<Appearance>>,
+    /// The memory data dir; snapshots live under `raw/appearance/`.
     data_dir: PathBuf,
 }
 
-/// A scene's screen: two fixed slots, not a stack.
+/// The screen: two fixed slots, not a stack.
 ///
 /// The screen used to be an open z-ordered list any `show` could push onto, and
 /// it accumulated exactly as you'd expect — the appearance history has states
@@ -66,7 +65,7 @@ pub struct ViewBus {
 /// [`reconcile`](ViewBus::reconcile) is the process's level-driven path and owns
 /// `condition`.
 #[derive(Default)]
-struct SceneAppearance {
+struct Appearance {
     /// The one agent-shown view, filling the screen. `None` = the empty room.
     content: Option<RetainedView>,
     /// The host's condition layer over the content (e.g. a vendor outage).
@@ -88,9 +87,8 @@ struct RetainedView {
     traits: Option<ViewTraits>,
 }
 
-/// On-disk whole-state snapshot of one scene's appearance at a moment. Carries
-/// the true scene id (the path is its percent-encoding, never decoded back) and
-/// `as_of` so the history reads as a step-function of what was on screen.
+/// On-disk whole-state snapshot of the appearance at a moment, with `as_of` so
+/// the history reads as a step-function of what was on screen.
 ///
 /// `legacy_views` reads the flat z-ordered list snapshots carried before the two
 /// slots existed. Those states are exactly the pile-ups the slots abolished, so
@@ -98,8 +96,7 @@ struct RetainedView {
 /// looking at — rather than resurrecting a stack that can no longer be
 /// represented.
 #[derive(Serialize, Deserialize)]
-struct SceneSnapshot {
-    scene: Scene,
+struct Snapshot {
     version: u64,
     as_of: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,7 +117,7 @@ pub struct WireView {
     pub traits: Option<ViewTraits>,
 }
 
-/// A scene's full appearance state — the body of one `GET /api/out/view`
+/// The full appearance state — the body of one `GET /api/out/view`
 /// response. `views` is in z-order (first = bottom), so it is at most the
 /// content view followed by the host's condition layer. The wire shape is
 /// unchanged — an ordered list of full-bleed layers — only what can appear in it
@@ -132,37 +129,28 @@ pub struct ViewState {
 }
 
 impl ViewBus {
-    /// Open the bus, restoring each scene's appearance from its newest snapshot
-    /// under `raw/<scene>/appearance/`.
+    /// Open the bus, restoring the appearance from the newest snapshot under
+    /// `raw/appearance/`.
     pub fn load(data_dir: &Path) -> Self {
-        let mut map = HashMap::new();
-        let raw = layout::raw_root(data_dir);
-        if let Ok(scenes) = std::fs::read_dir(&raw) {
-            for scene_ent in scenes.flatten() {
-                let app_dir = scene_ent.path().join("appearance");
-                if let Some(snap) = newest_snapshot(&app_dir) {
-                    // A legacy flat list restores as its top-most view only; see
-                    // `SceneSnapshot::legacy_views`.
-                    let content = snap.content.or_else(|| snap.legacy_views.last().cloned());
-                    map.insert(
-                        snap.scene,
-                        SceneAppearance {
-                            content,
-                            condition: snap.condition,
-                            version: snap.version,
-                            notify: Arc::new(Notify::new()),
-                        },
-                    );
-                }
-            }
-        }
+        let app_dir = layout::raw_root(data_dir).join("appearance");
+        let state = match newest_snapshot(&app_dir) {
+            // A legacy flat list restores as its top-most view only; see
+            // `Snapshot::legacy_views`.
+            Some(snap) => Appearance {
+                content: snap.content.or_else(|| snap.legacy_views.last().cloned()),
+                condition: snap.condition,
+                version: snap.version,
+                notify: Arc::new(Notify::new()),
+            },
+            None => Appearance::default(),
+        };
         Self {
-            inner: Arc::new(Mutex::new(map)),
+            inner: Arc::new(Mutex::new(state)),
             data_dir: data_dir.to_path_buf(),
         }
     }
 
-    /// Fold one reaction-emitted envelope into the scene's **content** slot.
+    /// Fold one reaction-emitted envelope into the **content** slot.
     ///
     /// `show` and `replace` both put this view on the screen in place of whatever
     /// was there — the difference is only the id the client keys the slot by, which
@@ -175,9 +163,9 @@ impl ViewBus {
     ///
     /// A write that changes nothing is dropped, so a repeated `show` of what is
     /// already up costs no version bump, no client re-render and no snapshot.
-    pub async fn apply(&self, scene: &Scene, envelope: ViewEnvelope) {
+    pub async fn apply(&self, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
-        let entry = map.entry(scene.clone()).or_default();
+        let entry = &mut *map;
         let Some(next) = resolve_slot(&entry.content, envelope) else {
             return;
         };
@@ -187,7 +175,7 @@ impl ViewBus {
         entry.content = next;
         entry.version += 1;
         entry.notify.notify_waiters();
-        persist(&self.data_dir, scene, entry).await;
+        persist(&self.data_dir, entry).await;
     }
 
     /// Reconcile the host-owned **condition** layer against the desired level.
@@ -200,9 +188,9 @@ impl ViewBus {
     /// separation is the whole reason two slots exist: an outage arriving must not
     /// evict the view it covers, and lifting must reveal that view again rather
     /// than leaving the person on a blank screen.
-    pub async fn reconcile(&self, scene: &Scene, envelope: ViewEnvelope) {
+    pub async fn reconcile(&self, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
-        let entry = map.entry(scene.clone()).or_default();
+        let entry = &mut *map;
         let Some(next) = resolve_slot(&entry.condition, envelope) else {
             return;
         };
@@ -212,17 +200,18 @@ impl ViewBus {
         entry.condition = next;
         entry.version += 1;
         entry.notify.notify_waiters();
-        persist(&self.data_dir, scene, entry).await;
+        persist(&self.data_dir, entry).await;
     }
 
-    /// Scene ids already known to the retained appearance store. Used by
-    /// process-level condition gates to reconcile restored scenes before the HTTP
-    /// listener starts and every known scene on later condition edges.
-    pub async fn scenes(&self) -> Vec<Scene> {
-        self.inner.lock().await.keys().cloned().collect()
+    /// Whether the retained appearance store holds anything yet. Used by
+    /// process-level condition gates to decide whether to reconcile a restored
+    /// screen before the HTTP listener starts.
+    pub async fn has_state(&self) -> bool {
+        let a = self.inner.lock().await;
+        a.content.is_some() || a.condition.is_some()
     }
 
-    /// Clear the scene's content — back to the default empty room. A user control:
+    /// Clear the content — back to the default empty room. A user control:
     /// the screen is the agent's presentation, but the user can reclaim it. Bumps
     /// the version and persists the empty snapshot so every device + a refresh
     /// converge on the cleared screen (and the appearance history records it).
@@ -232,19 +221,19 @@ impl ViewBus {
     /// The condition layer is deliberately left alone: it reflects a live process
     /// state rather than anything the person put there, so clearing it would only
     /// have it reconciled straight back.
-    pub async fn clear(&self, scene: &Scene) {
+    pub async fn clear(&self) {
         let mut map = self.inner.lock().await;
-        let entry = map.entry(scene.clone()).or_default();
+        let entry = &mut *map;
         if entry.content.is_none() {
             return;
         }
         entry.content = None;
         entry.version += 1;
         entry.notify.notify_waiters();
-        persist(&self.data_dir, scene, entry).await;
+        persist(&self.data_dir, entry).await;
     }
 
-    /// The id currently on screen for a scene, if any. The reaction reads this into
+    /// The id currently on screen, if any. The reaction reads this into
     /// each turn so the agent can *see* its own presentation surface — what it has
     /// shown — instead of guessing ids from the transcript. This is the read side of
     /// the same authoritative state [`apply`](Self::apply) writes, so a view
@@ -254,22 +243,24 @@ impl ViewBus {
     /// Reports the content slot only. The condition layer is the host's, not the
     /// agent's to dismiss, and listing an id it cannot act on would only invite it
     /// to try.
-    pub async fn on_screen(&self, scene: &Scene) -> Vec<String> {
-        let map = self.inner.lock().await;
-        map.get(scene)
-            .and_then(|a| a.content.as_ref())
+    pub async fn on_screen(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .await
+            .content
+            .as_ref()
             .map(|v| vec![v.id.clone()])
             .unwrap_or_default()
     }
 
-    /// The scene's appearance, as soon as its version exceeds `since`.
+    /// The appearance, as soon as its version exceeds `since`.
     /// `since: None` returns the present state immediately — even when empty —
     /// so a fresh page knows it is synced; passing the last seen version parks
     /// until the state changes.
-    pub async fn wait_state(&self, scene: &Scene, since: Option<u64>) -> ViewState {
+    pub async fn wait_state(&self, since: Option<u64>) -> ViewState {
         loop {
             let mut map = self.inner.lock().await;
-            let entry = map.entry(scene.clone()).or_default();
+            let entry = &mut *map;
             if since.is_none_or(|s| entry.version > s) {
                 return ViewState {
                     version: entry.version,
@@ -332,10 +323,10 @@ fn resolve_slot(
     }
 }
 
-/// The newest parseable snapshot under a scene's `appearance/` dir, or `None`.
+/// The newest parseable snapshot under the `appearance/` dir, or `None`.
 /// Walks day-folders newest-first, then `appearance-*.json` newest-first, so a
 /// torn final write falls back to the prior snapshot.
-fn newest_snapshot(appearance_dir: &Path) -> Option<SceneSnapshot> {
+fn newest_snapshot(appearance_dir: &Path) -> Option<Snapshot> {
     let mut days: Vec<String> = std::fs::read_dir(appearance_dir)
         .ok()?
         .flatten()
@@ -355,7 +346,7 @@ fn newest_snapshot(appearance_dir: &Path) -> Option<SceneSnapshot> {
         files.sort();
         for f in files.iter().rev() {
             if let Ok(bytes) = std::fs::read(day_dir.join(f)) {
-                if let Ok(snap) = serde_json::from_slice::<SceneSnapshot>(&bytes) {
+                if let Ok(snap) = serde_json::from_slice::<Snapshot>(&bytes) {
                     return Some(snap);
                 }
             }
@@ -364,15 +355,14 @@ fn newest_snapshot(appearance_dir: &Path) -> Option<SceneSnapshot> {
     None
 }
 
-/// Append a whole-state snapshot to `raw/<scene>/appearance/<date>/`. The file
+/// Append a whole-state snapshot to `raw/appearance/<date>/`. The file
 /// is named for the wall-clock second; on the rare same-second collision the
 /// second is bumped until free, so no snapshot in the history is overwritten.
 /// Tempfile + rename so a crash mid-write never leaves a torn snapshot at a real
 /// name. Failures are logged, not fatal — the live state stays authoritative.
-async fn persist(data_dir: &Path, scene: &Scene, entry: &SceneAppearance) {
+async fn persist(data_dir: &Path, entry: &Appearance) {
     let now = Utc::now();
-    let snap = SceneSnapshot {
-        scene: scene.clone(),
+    let snap = Snapshot {
         version: entry.version,
         as_of: now,
         content: entry.content.clone(),
@@ -382,13 +372,13 @@ async fn persist(data_dir: &Path, scene: &Scene, entry: &SceneAppearance) {
     let bytes = match serde_json::to_vec_pretty(&snap) {
         Ok(bytes) => bytes,
         Err(err) => {
-            tracing::warn!(scene = %scene, error = %err, "encoding appearance snapshot failed");
+            tracing::warn!(error = %err, "encoding appearance snapshot failed");
             return;
         }
     };
-    let dir = layout::appearance_day_dir(data_dir, scene, now);
+    let dir = layout::appearance_day_dir(data_dir, now);
     if let Err(err) = tokio::fs::create_dir_all(&dir).await {
-        tracing::warn!(scene = %scene, error = %err, "creating appearance dir failed");
+        tracing::warn!(error = %err, "creating appearance dir failed");
         return;
     }
     let mut slot = now;
@@ -410,17 +400,13 @@ async fn persist(data_dir: &Path, scene: &Scene, entry: &SceneAppearance) {
     }
     .await;
     if let Err(err) = result {
-        tracing::warn!(scene = %scene, path = %path.display(), error = %err, "persisting appearance snapshot failed");
+        tracing::warn!(path = %path.display(), error = %err, "persisting appearance snapshot failed");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn scene() -> Scene {
-        Scene("boss".into())
-    }
 
     fn show(id: &str, url: &str) -> ViewEnvelope {
         ViewEnvelope {
@@ -448,20 +434,20 @@ mod tests {
     async fn late_subscriber_receives_retained_state() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.apply(&scene(), show("a", "/m/a.mjs")).await;
+        bus.apply(show("a", "/m/a.mjs")).await;
 
         // No subscriber existed at apply time — the state is still served.
-        let state = bus.wait_state(&scene(), None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(state.version, 1);
         assert_eq!(ids(&state), vec!["a"]);
         assert_eq!(state.views[0].module_url, "/m/a.mjs");
     }
 
     #[tokio::test]
-    async fn empty_scene_returns_immediately() {
+    async fn an_empty_screen_returns_immediately() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&scene(), None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(state.version, 0);
         assert!(state.views.is_empty());
     }
@@ -470,15 +456,15 @@ mod tests {
     async fn since_parks_until_next_change() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.apply(&scene(), show("a", "/m/a.mjs")).await;
-        let v = bus.wait_state(&scene(), None).await.version;
+        bus.apply(show("a", "/m/a.mjs")).await;
+        let v = bus.wait_state(None).await.version;
 
         let waiter = {
             let bus = bus.clone();
-            tokio::spawn(async move { bus.wait_state(&scene(), Some(v)).await })
+            tokio::spawn(async move { bus.wait_state(Some(v)).await })
         };
         tokio::task::yield_now().await;
-        bus.apply(&scene(), show("b", "/m/b.mjs")).await;
+        bus.apply(show("b", "/m/b.mjs")).await;
 
         let state = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
             .await
@@ -496,11 +482,10 @@ mod tests {
     async fn showing_replaces_rather_than_stacks() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.apply(&s, show("tasks", "/m/tasks.mjs")).await;
-        bus.apply(&s, show("bj01", "/m/bj01.mjs")).await;
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.apply(show("bj01", "/m/bj01.mjs")).await;
 
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(
             ids(&state),
             vec!["bj01"],
@@ -513,10 +498,8 @@ mod tests {
     async fn replace_swaps_the_module_under_a_kept_id() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.apply(&s, show("deck", "/m/v1.mjs")).await;
+        bus.apply(show("deck", "/m/v1.mjs")).await;
         bus.apply(
-            &s,
             ViewEnvelope {
                 id: "deck".into(),
                 op: ViewOp::Replace,
@@ -526,7 +509,7 @@ mod tests {
         )
         .await;
 
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(ids(&state), vec!["deck"]);
         assert_eq!(state.views[0].module_url, "/m/v2.mjs");
     }
@@ -535,28 +518,26 @@ mod tests {
     async fn dismiss_clears_only_the_id_it_names() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.apply(&s, show("current", "/m/c.mjs")).await;
+        bus.apply(show("current", "/m/c.mjs")).await;
 
         // A stale dismiss aimed at something already replaced must not blank the
         // screen out from under whatever took its place.
-        bus.apply(&s, dismiss("long-gone")).await;
-        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["current"]);
+        bus.apply(dismiss("long-gone")).await;
+        assert_eq!(ids(&bus.wait_state(None).await), vec!["current"]);
 
-        bus.apply(&s, dismiss("current")).await;
-        assert!(bus.wait_state(&s, None).await.views.is_empty());
+        bus.apply(dismiss("current")).await;
+        assert!(bus.wait_state(None).await.views.is_empty());
     }
 
     #[tokio::test]
     async fn repeated_identical_show_is_a_no_op() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.apply(&s, show("a", "/m/a.mjs")).await;
-        let v = bus.wait_state(&s, None).await.version;
-        bus.apply(&s, show("a", "/m/a.mjs")).await;
+        bus.apply(show("a", "/m/a.mjs")).await;
+        let v = bus.wait_state(None).await.version;
+        bus.apply(show("a", "/m/a.mjs")).await;
         assert_eq!(
-            bus.wait_state(&s, None).await.version,
+            bus.wait_state(None).await.version,
             v,
             "re-showing what is already up must not churn the version"
         );
@@ -566,22 +547,21 @@ mod tests {
     async fn clear_empties_and_wakes() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
 
-        // Clearing an already-empty scene is a no-op: version stays at 0.
-        bus.clear(&s).await;
-        assert_eq!(bus.wait_state(&s, None).await.version, 0);
+        // Clearing an already-empty screen is a no-op: version stays at 0.
+        bus.clear().await;
+        assert_eq!(bus.wait_state(None).await.version, 0);
 
-        bus.apply(&s, show("a", "/m/a.mjs")).await;
-        let v = bus.wait_state(&s, None).await.version;
+        bus.apply(show("a", "/m/a.mjs")).await;
+        let v = bus.wait_state(None).await.version;
 
         // A parked reader wakes on the clear with the empty, version-bumped state.
         let waiter = {
             let bus = bus.clone();
-            tokio::spawn(async move { bus.wait_state(&scene(), Some(v)).await })
+            tokio::spawn(async move { bus.wait_state(Some(v)).await })
         };
         tokio::task::yield_now().await;
-        bus.clear(&s).await;
+        bus.clear().await;
 
         let state = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
             .await
@@ -598,21 +578,20 @@ mod tests {
     async fn condition_layers_over_content_and_restores_it() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.apply(&s, show("feishu-board", "/m/board.mjs")).await;
-        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+        bus.apply(show("feishu-board", "/m/board.mjs")).await;
+        bus.reconcile(show("vendor-outage", "/m/energy.mjs"))
             .await;
 
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(
             ids(&state),
             vec!["feishu-board", "vendor-outage"],
             "content first, the condition layer over it"
         );
 
-        bus.reconcile(&s, dismiss("vendor-outage")).await;
+        bus.reconcile(dismiss("vendor-outage")).await;
         assert_eq!(
-            ids(&bus.wait_state(&s, None).await),
+            ids(&bus.wait_state(None).await),
             vec!["feishu-board"],
             "lifting the outage reveals the content it covered"
         );
@@ -624,24 +603,23 @@ mod tests {
     async fn content_writes_leave_the_condition_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+        bus.reconcile(show("vendor-outage", "/m/energy.mjs"))
             .await;
 
-        bus.apply(&s, show("a", "/m/a.mjs")).await;
-        bus.apply(&s, show("b", "/m/b.mjs")).await;
+        bus.apply(show("a", "/m/a.mjs")).await;
+        bus.apply(show("b", "/m/b.mjs")).await;
         assert_eq!(
-            ids(&bus.wait_state(&s, None).await),
+            ids(&bus.wait_state(None).await),
             vec!["b", "vendor-outage"]
         );
 
-        bus.apply(&s, dismiss("b")).await;
-        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["vendor-outage"]);
+        bus.apply(dismiss("b")).await;
+        assert_eq!(ids(&bus.wait_state(None).await), vec!["vendor-outage"]);
 
-        bus.apply(&s, show("c", "/m/c.mjs")).await;
-        bus.clear(&s).await;
+        bus.apply(show("c", "/m/c.mjs")).await;
+        bus.clear().await;
         assert_eq!(
-            ids(&bus.wait_state(&s, None).await),
+            ids(&bus.wait_state(None).await),
             vec!["vendor-outage"],
             "a user clear reclaims the content, not the live condition"
         );
@@ -653,40 +631,38 @@ mod tests {
     async fn the_agent_cannot_dismiss_the_condition_layer() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+        bus.reconcile(show("vendor-outage", "/m/energy.mjs"))
             .await;
-        bus.apply(&s, dismiss("vendor-outage")).await;
-        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["vendor-outage"]);
+        bus.apply(dismiss("vendor-outage")).await;
+        assert_eq!(ids(&bus.wait_state(None).await), vec!["vendor-outage"]);
     }
 
     #[tokio::test]
     async fn reconcile_is_level_driven_and_does_not_churn_versions() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
         let energy = show("vendor-outage", "/m/energy.mjs");
 
-        bus.reconcile(&s, energy.clone()).await;
-        let shown = bus.wait_state(&s, None).await;
+        bus.reconcile(energy.clone()).await;
+        let shown = bus.wait_state(None).await;
         assert_eq!(shown.version, 1);
         assert_eq!(ids(&shown), vec!["vendor-outage"]);
 
-        bus.reconcile(&s, energy).await;
+        bus.reconcile(energy).await;
         assert_eq!(
-            bus.wait_state(&s, None).await.version,
+            bus.wait_state(None).await.version,
             shown.version,
             "re-applying the same condition must be a no-op"
         );
 
-        bus.reconcile(&s, dismiss("vendor-outage")).await;
-        let hidden = bus.wait_state(&s, None).await;
+        bus.reconcile(dismiss("vendor-outage")).await;
+        let hidden = bus.wait_state(None).await;
         assert_eq!(hidden.version, shown.version + 1);
         assert!(hidden.views.is_empty());
 
-        bus.reconcile(&s, dismiss("vendor-outage")).await;
+        bus.reconcile(dismiss("vendor-outage")).await;
         assert_eq!(
-            bus.wait_state(&s, None).await.version,
+            bus.wait_state(None).await.version,
             hidden.version,
             "dismissing an absent condition must be a no-op"
         );
@@ -695,57 +671,54 @@ mod tests {
     #[tokio::test]
     async fn persists_and_reloads_across_restart() {
         let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
         let version = {
             let bus = ViewBus::load(tmp.path());
-            bus.apply(&s, show("a", "/m/a.mjs")).await;
-            bus.apply(&s, show("b", "/m/b.mjs")).await;
-            bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+            bus.apply(show("a", "/m/a.mjs")).await;
+            bus.apply(show("b", "/m/b.mjs")).await;
+            bus.reconcile(show("vendor-outage", "/m/energy.mjs"))
                 .await;
-            bus.wait_state(&s, None).await.version
+            bus.wait_state(None).await.version
         };
 
         // "Restart": a fresh bus over the same data dir restores the newest
         // snapshot, both slots intact.
         let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(state.version, version);
         assert_eq!(ids(&state), vec!["b", "vendor-outage"]);
         assert_eq!(state.views[0].module_url, "/m/b.mjs");
     }
 
+    /// The screen survives a restart: a view shown before the process went down
+    /// is on screen again when it comes back, at the same version.
     #[tokio::test]
-    async fn reload_handles_unsafe_scene_ids() {
+    async fn reload_restores_the_screen() {
         let tmp = tempfile::tempdir().unwrap();
-        let s = Scene("alice@phone/1".into());
-        {
+        let version = {
             let bus = ViewBus::load(tmp.path());
-            bus.apply(&s, show("keep", "/m/k.mjs")).await;
-        }
-        // A fresh bus restores the path-unsafe scene from its snapshot.
+            bus.apply(show("keep", "/m/k.mjs")).await;
+            bus.wait_state(None).await.version
+        };
+
         let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.version, version);
         assert_eq!(ids(&state), vec!["keep"]);
     }
 
-    /// Every workshop on disk has snapshots in the old flat-list shape, most of
-    /// them pile-ups. They must load — as the top-most view alone, the one the
-    /// person was actually looking at — rather than failing the parse or
-    /// resurrecting a stack the slots can no longer represent.
     #[tokio::test]
     async fn loads_legacy_stacked_snapshot_as_its_topmost_view() {
         let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
-        let dir = layout::appearance_day_dir(tmp.path(), &s, Utc::now());
+        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
         std::fs::create_dir_all(&dir).unwrap();
-        let old = r#"{"scene":"boss","version":3423,"as_of":"2026-08-07T09:05:30Z","views":[
+        let old = r#"{"version":3423,"as_of":"2026-08-07T09:05:30Z","views":[
             {"id":"tasks","module_url":"/m/tasks.mjs","geometry":{"region":"center","size":"wide"}},
             {"id":"bj01","module_url":"/m/bj01.mjs","geometry":{"region":"center","size":"auto"}}
         ]}"#;
         std::fs::write(dir.join("appearance-090530Z.json"), old).unwrap();
 
         let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(state.version, 3423);
         assert_eq!(ids(&state), vec!["bj01"]);
         assert!(
@@ -757,7 +730,6 @@ mod tests {
     #[tokio::test]
     async fn apply_carries_traits_through_wire_and_reload() {
         let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
         let traits = ViewTraits {
             owns_captions: true,
         };
@@ -765,7 +737,6 @@ mod tests {
         let version = {
             let bus = ViewBus::load(tmp.path());
             bus.apply(
-                &s,
                 ViewEnvelope {
                     id: "g".into(),
                     op: ViewOp::Show,
@@ -774,14 +745,14 @@ mod tests {
                 },
             )
             .await;
-            let state = bus.wait_state(&s, None).await;
+            let state = bus.wait_state(None).await;
             assert_eq!(state.views[0].traits, Some(traits));
             state.version
         };
 
         // Traits ride the snapshot, so they survive a restart.
         let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
+        let state = bus.wait_state(None).await;
         assert_eq!(state.version, version);
         assert_eq!(state.views[0].traits, Some(traits));
     }
@@ -790,14 +761,13 @@ mod tests {
     async fn on_screen_reports_the_content_slot_only() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        assert!(bus.on_screen(&s).await.is_empty());
+        assert!(bus.on_screen().await.is_empty());
 
-        bus.apply(&s, show("a", "/m/a.mjs")).await;
-        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+        bus.apply(show("a", "/m/a.mjs")).await;
+        bus.reconcile(show("vendor-outage", "/m/energy.mjs"))
             .await;
         assert_eq!(
-            bus.on_screen(&s).await,
+            bus.on_screen().await,
             vec!["a".to_string()],
             "the agent is told what it can act on, not the host's layer"
         );

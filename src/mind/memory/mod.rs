@@ -21,7 +21,7 @@ pub mod tasks;
 
 pub use self::core::refresh_hot;
 pub use journal::Journal;
-pub use snapshot::{Snapshot, build_for_scene, window};
+pub use snapshot::{Snapshot, build, window};
 
 #[derive(Clone)]
 pub struct Memory {

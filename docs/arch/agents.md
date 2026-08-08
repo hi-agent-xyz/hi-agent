@@ -13,14 +13,14 @@ prompt, not new machinery.
 | Decision | Reasoning |
 |---|---|
 | Fast means *no fetch*, not *no knowledge* | Reaction runs a capable model; it is fast because it cannot wait on anything |
-| Deliberation is per scene | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and no scene may go deaf because another scene is thinking |
-| Cognition is sceneless and stays idle | Someone has to be awake when nobody is talking, and it must be free when they are |
+| Deliberation is separate from Reaction | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and the voice may not go deaf while that happens |
+| Cognition stays idle | Someone has to be awake when nobody is talking, and it must be free when they are |
 | Only workers act | The moment there is an artifact or a side effect, that is a worker. A division of labour, not a security boundary — [tool surfaces](foundation.md#default-tool-surfaces) are sized for context, not to fence anyone out |
 | Cognition never speaks | Single-voice coherence: it proposes, Reaction voices |
 | The switchboard is the host | No agent↔agent link; all routing and timers are Rust |
-| A worker belongs to the session that created it | Not to a scene. Ownership is what makes a *sceneless* agent able to delegate at all — and a worker whose owner is a scene has nowhere to report but into someone's conversation |
-| Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches a scene except through Reaction, because a scene is where a person is spoken to |
-| An id names a **session**, not a role | A role has many sessions over a run; two scenes' Deliberations are two sessions of one role |
+| A worker belongs to the session that created it | Ownership is what makes delegation addressable at all — a report has exactly one place to go, and it is not "the conversation" by default |
+| Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches the person except through Reaction |
+| An id names a **session**, not a role | A role has many sessions over a run; a Deliberation replaced after a failure is a second session of one role |
 | **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
 | A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
 | Cognition is the sole writer of the ledger | Two writers to one ledger means one of them is wrong and no way to tell which |
@@ -28,9 +28,8 @@ prompt, not new machinery.
 
 ### Ownership and addressing
 
-Every agent session has a process-wide id. **Process-wide, not per scene** — ownership
-crosses scenes, and a sceneless owner holds sessions no per-scene counter could name
-without collision.
+Every agent session has a process-wide id — one namespace for every rung and every worker,
+so any session can name any other without ambiguity.
 
 It is a locally minted id rather than the underlying agent-protocol session id, and that
 is forced rather than chosen: the tool surface identifies its caller by a header set when
@@ -38,7 +37,7 @@ the session opens, so the identifier must exist before the protocol assigns one.
 
 A worker records the session that created it. Its report is delivered to that session,
 which reads it on its next prompt. If the owner has shut down, the report falls back to
-the scene rather than being dropped — **surfacing finished work one rung too high beats
+Reaction rather than being dropped — **surfacing finished work one rung too high beats
 losing it.**
 
 Two things follow, and both are load-bearing:
@@ -66,12 +65,11 @@ defensible *and* the gap gates the work. Nothing the agent produces arrives empt
 answer never came. The [Decision Maker](#decision-maker) is the escalation of this rule, not
 the only place it applies.
 
-### Reaction — per scene, one generation
+### Reaction — one generation
 
-The mouth — **of its scene**. One Reaction and one mouth per scene; the singleton is not
-process-wide, for the reason given in [invariant 1](arch.md#invariants). It speaks, holds the
-floor, manages the interaction, and decides whether to answer from what it holds or hand the
-question onward.
+The mouth. One Reaction, one mouth, one turn at a time —
+[invariant 1](arch.md#invariants). It speaks, holds the floor, manages the interaction, and
+decides whether to answer from what it holds or hand the question onward.
 
 **Tools: `say`, `show`, and `SendMessage`.** Its two expression channels are calls — the
 voice included — plus the one verb that reaches another agent. **No reads, no fetches, no
@@ -80,8 +78,8 @@ anything, not because it is small. Judging the edge of your own knowledge is a h
 and needs a capable model.
 
 **It also owns the social layer** — the mouth, the presence gate, and the timing of anything
-unprompted. That was once a separate host component; all four of its duties were per-scene,
-and this is the per-scene thing that speaks. See [`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
+unprompted. That was once a separate host component; all four of its duties belong to
+whatever speaks, and this is what speaks. See [`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
 
 > **Enforced, not merely instructed.** This is the one place where a tool surface is a hard
 > limit rather than a division of labour: the whole argument for the rung — that it *cannot*
@@ -89,22 +87,22 @@ and this is the per-scene thing that speaks. See [`core.md`](core.md#the-social-
 > not sufficient on its own; the session's underlying toolset has to be restricted too, or
 > "cannot" means "was asked not to".
 
-Not blind, because its memory is **prepared**: the bundled prompt for its role, plus its
-scene's [generated one](data.md#memoryprompts) — what the conversation carries forward,
+Not blind, because its memory is **prepared**: the bundled prompt for its role, plus the
+[generated one](data.md#memoryprompts) — what the conversation carries forward,
 open tasks, the recent log tail — all in context before the first word. **Code injects that
 every turn and caps it**, so it cannot grow with usage. Two hundred open tasks project as a
 summary, not a list.
 
-It does not write that memory; it has no file access to write anything with. Its scene's
-Deliberation writes it. And because this is the one rung that cannot go and look, it is also
+It does not write that memory; it has no file access to write anything with. Deliberation
+writes it. And because this is the one rung that cannot go and look, it is also
 the measure for everything else: **projected = what Reaction must know without reading** —
 [the test](data.md#what-earns-a-place).
 
-### Deliberation — per scene, seconds
+### Deliberation — seconds
 
-**The scene's reading and thinking.** It exists because Reaction can speak and show but not
-*read*: someone has to read a little, check a file, look at the photo that just arrived, and
-work out what was actually asked — per scene, before anything reaches the shared brain. That
+**The conversation's reading and thinking.** It exists because Reaction can speak and show
+but not *read*: someone has to read a little, check a file, look at the photo that just
+arrived, and work out what was actually asked, before anything reaches the shared brain. That
 gap is the whole reason for this rung. Reaction follows up with it every turn.
 
 Anything heavy — a real task, a standing duty, a long errand — is handed **up to Cognition**
@@ -113,8 +111,8 @@ deliberate: one dispatcher, so no two rungs can spawn against each other unseen.
 surface enforces it — reads and one write, no shell and no editor, so heavy work has nowhere
 to go but up.
 
-The hand-up must be **asynchronous**, and that is a requirement rather than a convenience: if
-a scene waited on Cognition, one global session would serialize every scene, which is
+The hand-up must be **asynchronous**, and that is a requirement rather than a convenience: a
+voice that waited on Cognition would go deaf for as long as the brain took to think, which is
 [invariant 3](arch.md#invariants) broken where it matters most. `SendMessage` does not wait,
 so it cannot happen.
 
@@ -122,64 +120,63 @@ Perception needs no tool here. A photo or a file arrives as a **ref**, a ref is 
 an agent that can read files can open it. What Deliberation needs is not a grant but knowing
 where things land.
 
-**Its second job is the scene's memory.** Reaction consumes a generated system prompt it
-cannot write, so someone has to decide what this conversation carries forward — and that is a
-judgment made out of having read around, which is exactly this rung. It writes
-[`memory/prompts/scenes/<id>.md`](data.md#memoryprompts) the way reflection
+**Its second job is the conversation's memory.** Reaction consumes a generated system prompt
+it cannot write, so someone has to decide what the conversation carries forward — and that is
+a judgment made out of having read around, which is exactly this rung. It writes
+[`memory/prompts/conversation.md`](data.md#memoryprompts) the way reflection
 writes a facet: no new tool, no new machinery, file access it already has.
 
-Nothing **addresses** Deliberation except its own scene's Reaction — that is the direction of
+Nothing **addresses** Deliberation except Reaction — that is the direction of
 the call stack, and it is a stack in *addressing* only, not in **lifetime**: it can be woken
 independently and surface upward. Handing work up to Cognition is not a contradiction; that
 is Deliberation calling out, not something calling in.
 
-> **A naming correction, now carried out.** This rung existed for a while as the per-scene
-> follow-up the reaction drives each turn, under the name "cognition" — now the name of the
-> sceneless brain below. Per-scene reading is *Deliberation*; the shared brain is
-> *Cognition*. The rename landed in the code; the unrelated *cognition tunables* (the
-> agentic model config) keep the word in its other sense.
+> **A naming correction, now carried out.** This rung existed for a while as the follow-up
+> the reaction drives each turn, under the name "cognition" — now the name of the brain
+> below. The conversation's reading is *Deliberation*; the brain that outlives any one
+> exchange is *Cognition*. The rename landed in the code; the unrelated *cognition tunables*
+> (the agentic model config) keep the word in its other sense.
 
-### Cognition — sceneless, minutes and beyond
+### Cognition — minutes and beyond
 
-**The shared brain.** One of it for the whole agent: it belongs to no scene, and every scene
-hands work up to it. It does its heavy lifting by **delegating** — owns [Tasks](data.md#tasks),
+**The brain.** One of it for the whole agent, and Deliberation hands work up to it. It does its heavy lifting by **delegating** — owns [Tasks](data.md#tasks),
 dispatches workers, reasons across everything in memory, and tries hard to stay idle so it
 is free the moment something arrives.
 
 It is the **only** thing that creates workers, and the **only** writer of the task ledger.
 Both follow from the same idea: durable work is what it means for something to be real, and
-deciding that is judgment, not bookkeeping a scene rung should do in passing.
+deciding that is judgment, not bookkeeping the voice should do in passing.
 
-It has no scene, which is what makes it the right home for everything that has no scene:
+It outlives any one exchange, which is what makes it the right home for everything that
+outlives one:
 
 > **After a restart, before any user input:** the glance-up fires → Cognition wakes → reads
 > open tasks → runs each one's `verify` and believes the answer → checks what already landed
 > so nothing is redone → does or re-arms what is still wanted → for the user-facing ones,
-> messages the task's `report_to` scene, where its Deliberation frames it and Reaction voices
-> it when the room is right.
+> messages Deliberation, which frames it, and Reaction voices it when the room is right.
 
 This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
 loop ([`core.md`](core.md#glancing-up--and-why-there-is-no-clock)) — one wake shortly after
 the process starts, then on the pulse cadence while anything is owed.
 
-Answers travel back the way they came: what a Deliberation handed up returns to that
-Deliberation. Cognition is sceneless, so its results arrive unframed — the scene rung is what
-turns "the build failed" into something that fits the conversation it belongs to.
+Answers travel back the way they came: what Deliberation handed up returns to Deliberation.
+Cognition's results arrive unframed — Deliberation is what turns "the build failed" into
+something that fits the conversation.
 
-Cognition never calls `say`. Everything it wants said is a **proposal** the arbiter
-schedules. Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, the
-arbiter asks *"is now the moment?"* The thinking part decides it matters; the social part
-decides the timing.
+Cognition never calls `say`. Everything it wants said is a **proposal** Reaction schedules.
+Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, Reaction asks
+*"is now the moment?"* The thinking part decides it matters; the social part decides the
+timing.
 
-### Reflection — sceneless, background
+### Reflection — background
 
-**The inward brain, and the same kind of thing as Cognition.** Both are sceneless, both
-are as capable as the agent gets, both dispatch workers, neither speaks. What separates
-them is not intelligence and not machinery — it is **who the work is for**:
+**The inward brain, and the same kind of thing as Cognition.** Both are as capable as the
+agent gets, both dispatch workers, neither speaks. What separates them is not intelligence
+and not machinery — it is **who the work is for**:
 
 | | Work arrives from | Answers to | Owns |
 |---|---|---|---|
-| **Cognition** | a person, through a scene | that scene | the task ledger |
+| **Cognition** | a person, through the conversation | the conversation | the task ledger |
 | **Reflection** | nobody — it notices | itself | `data/` |
 
 That asymmetry is the reason Reflection needs a rung of its own rather than being a job
@@ -197,17 +194,17 @@ everything else. It keeps the **session per pass** that Cognition has since give
 that divergence is deliberate: see [Session lifetime](#session-lifetime-per-rung).
 
 **Never speaks.** That belongs to Reaction, and a second mouth inside the consolidation
-loop is a second voice. What it wants said it sends to Cognition or to a scene, and
+loop is a second voice. What it wants said it sends to Cognition or to Reaction, and
 Reaction chooses the moment.
 
 **It does dispatch**, and that too was once forbidden here on the reasoning that it would
 make a second dispatcher. The reasoning does not survive ownership: a worker belongs to
 the session that created it, so Reflection's workers are Reflection's, report to
-Reflection, and are visible to no scene. What must stay singular is the *mouth* and the
-*task ledger* — not the act of asking for help.
+Reflection, and never surface in the conversation. What must stay singular is the *mouth*
+and the *task ledger* — not the act of asking for help.
 
-**Global, not per scene**: it merges a person seen in two scenes, dedupes skills, does
-drive housekeeping. It is the one agent legitimately not scene-partitioned.
+**It works across the whole store**: it merges a person seen on two occasions, dedupes
+skills, does drive housekeeping.
 
 Its workers come in two kinds:
 
@@ -216,7 +213,7 @@ Its workers come in two kinds:
   `raw → drive bytes + facets meaning`, and `"promised, never delivered" → open task`.
 
 Views are not on that list. Reuse needs no promotion step — a view that mattered is already in
-the scene's own memory, and the rest of the toolbox is [read on demand](data.md#views).
+the conversation's own memory, and the rest of the toolbox is [read on demand](data.md#views).
 
 Both kinds are **prose in `reflection.md`**. Adding one is not a code change.
 
@@ -231,8 +228,8 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 
 | Rung | Session | Replaced when |
 |---|---|---|
-| **Reaction** | one per scene, long-lived | a turn fails |
-| **Deliberation** | one per scene, long-lived | a turn fails, or it sits idle past a TTL |
+| **Reaction** | one, process-wide, long-lived | a turn fails |
+| **Deliberation** | one, process-wide, long-lived | a turn fails, or it sits idle past a TTL |
 | **Cognition** | one, process-wide, long-lived | a turn fails |
 | **Reflection** | **one per pass** | never — the pass ends |
 | Workers | one per errand | the errand ends, or an idle TTL |
@@ -241,11 +238,10 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 which compacts in place; see [`core.md`](core.md#session-layer) for why that is not ours to
 do. A session is replaced here only because it **broke**.
 
-Deliberation keeps the idle TTL it inherited from the worker machinery it shares: a scene
-quiet for long enough drops it, and the next turn opens a fresh one. That is a **resource**
-bound — it exists so a long-dead conversation does not hold a subprocess forever, which is the
-one cost a resident rung carries. Retiring it wants its own evidence about how many scenes a
-real install keeps alive.
+Deliberation keeps the idle TTL it inherited from the worker machinery it shares: quiet for
+long enough drops it, and the next turn opens a fresh one. That is a **resource** bound — it
+exists so an install nobody has spoken to since Tuesday does not hold a subprocess forever,
+which is the one cost a resident rung carries.
 
 **The three thinking rungs are long-lived from creation.** A rung that reopens each time cannot
 remember what it was in the middle of — and that is not something the ledger can hand back,
@@ -265,16 +261,19 @@ than a new dependency: every rung's state is *re-projected into every turn* — 
 it carries forward, who it can reach. A session that wedges is discarded and reopened cold; it
 loses the thread, never the truth. This is why a session may break loudly and the system is fine.
 
-## Cross-scene knowledge
+## Recall
 
-Cross-scene reference is an **accepted side effect of one shared memory — not a goal.**
+**Memory is one store, and every agent reading it reaches everything.** There is no
+partition to cross — recall works the way it does for a person, by going and looking.
 
-It happens the way it happens for a person: by *recall*. Any agent reading memory reaches
-everything, because memory is global. What we specifically do not do is share a session
-window between scenes — that is not one mind, it is one transcript, and it costs both
-privacy and the ability of one scene to proceed while another thinks.
-
-Privacy across scenes is handled the way everything else is: soft guidance and judgment.
+Discretion about what to repeat, and to whom, is handled the way everything else is: soft
+guidance and judgment. It was never anything else. Even when conversations were partitioned,
+memory underneath them was shared, so the partition bought a narrower thing than it appeared
+to — a separate *session window*, not a separate mind. What it did buy is worth naming now
+that it is gone: material from one exchange sits in the same window as the next, so the
+agent's judgment about what to bring up is doing work that structure used to do partway.
+That is the trade [`core.md`](core.md#one-conversation) took deliberately, and the place to
+revisit it is when a second party genuinely exists.
 
 ## Workers
 

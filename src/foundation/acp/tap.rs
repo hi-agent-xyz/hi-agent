@@ -7,7 +7,7 @@
 //! taps the one place every frame transits — the `with_debug` hook on the ACP
 //! connection (see [`crate::foundation::acp::process`]) — and records each line verbatim,
 //! tagged with a per-connection id (one subprocess hosts one session, so this
-//! groups a session's frames together), the scene, the direction, and whatever
+//! groups a session's frames together), the rung's role, the direction, and whatever
 //! `sessionId`/`method`/`id` can be parsed out of the JSON.
 //!
 //! It mirrors the observatory's ring+broadcast shape so the SSE handler reads it
@@ -61,7 +61,8 @@ pub struct RawFrame {
     /// host before the subprocess starts, so it names every frame including the first —
     /// which is what makes a durable per-session file possible at all.
     pub agent_session: Option<u64>,
-    pub scene: String,
+    /// The rung this subprocess hosts (`reaction`, `deliberation`, `worker`, …).
+    pub role: String,
     pub dir: Dir,
     /// `sessionId` parsed from `params`/`result`, when present. The `initialize`
     /// handshake and the `session/new` request carry `None` (the id doesn't exist
@@ -138,7 +139,7 @@ impl AcpTap {
     /// hook (no await, no IO under the lock). A poisoned lock is ignored — the
     /// tap is a convenience, never load-bearing. `conn` identifies the emitting
     /// subprocess so the inspector can group one session's frames together.
-    pub fn record(&self, conn: u64, agent_session: Option<u64>, scene: &str, dir: Dir, line: &str) {
+    pub fn record(&self, conn: u64, agent_session: Option<u64>, role: &str, dir: Dir, line: &str) {
         let (session_id, method, id) = parse_meta(line);
         let mut state = match self.inner.state.lock() {
             Ok(g) => g,
@@ -150,7 +151,7 @@ impl AcpTap {
             ts: Utc::now(),
             conn,
             agent_session,
-            scene: scene.to_string(),
+            role: role.to_string(),
             dir,
             session_id,
             method,
@@ -231,10 +232,10 @@ mod tests {
         let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
 
         let tool_call = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"Read","kind":"read","status":"completed","rawInput":{"path":"/etc/hosts"},"rawOutput":{"content":"127.0.0.1"}}}}"#;
-        tap.record(1, Some(42), "boss", Dir::Recv, tool_call);
-        tap.record(1, Some(42), "boss", Dir::Stderr, "a warning from the subprocess");
+        tap.record(1, Some(42), "reaction", Dir::Recv, tool_call);
+        tap.record(1, Some(42), "reaction", Dir::Stderr, "a warning from the subprocess");
         // A different session must not land in the same file.
-        tap.record(2, Some(43), "boss", Dir::Recv, r#"{"jsonrpc":"2.0","method":"initialize"}"#);
+        tap.record(2, Some(43), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0","method":"initialize"}"#);
 
         // Let the writer task drain.
         let run = crate::foundation::run::id();
@@ -255,7 +256,7 @@ mod tests {
         assert_eq!(lines.len(), 2, "both directions are kept, not just the interesting one");
 
         let first: Value = serde_json::from_str(lines[0]).expect("a json object per line");
-        assert_eq!(first["scene"], "boss");
+        assert_eq!(first["role"], "reaction");
         assert_eq!(first["dir"], "recv");
         assert_eq!(first["session_id"], "s1", "grouping metadata is parsed out beside the line");
         // ...and the line itself is untouched, payload and all.
@@ -280,7 +281,7 @@ mod tests {
     async fn a_frame_with_no_session_is_seen_but_not_filed() {
         let dir = tempfile::tempdir().unwrap();
         let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
-        tap.record(9, None, "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        tap.record(9, None, "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
         let (backlog, _live) = tap.subscribe();
@@ -293,7 +294,7 @@ mod tests {
     #[test]
     fn an_inspector_only_tap_keeps_nothing() {
         let tap = AcpTap::new();
-        tap.record(1, Some(1), "boss", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        tap.record(1, Some(1), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         let (backlog, _live) = tap.subscribe();
         assert_eq!(backlog.len(), 1, "still an inspector window");
     }
@@ -324,14 +325,14 @@ mod tests {
     #[tokio::test]
     async fn subscribe_replays_then_streams_live() {
         let tap = AcpTap::new();
-        tap.record(0, Some(7), "alice@phone", Dir::Send, r#"{"method":"initialize","id":0}"#);
+        tap.record(0, Some(7), "deliberation", Dir::Send, r#"{"method":"initialize","id":0}"#);
         let (replay, mut rx) = tap.subscribe();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].seq, 1);
         assert_eq!(replay[0].conn, 0);
         assert_eq!(replay[0].dir, Dir::Send);
 
-        tap.record(0, Some(7), "alice@phone", Dir::Recv, r#"{"id":0,"result":{}}"#);
+        tap.record(0, Some(7), "deliberation", Dir::Recv, r#"{"id":0,"result":{}}"#);
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live frame follows replay with no gap or dup");
         assert_eq!(live.dir, Dir::Recv);

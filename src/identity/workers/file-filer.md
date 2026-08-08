@@ -60,9 +60,9 @@ easy or the one-off; a workshop you can't find anything in is no workshop.
 The bytes are already saved verbatim — that happened before you were spun up, and it is
 not yours to redo. Your job is to put a copy where the agent will find it again.
 
-**Where it landed.** Files for this scene arrive under:
+**Where it landed.** Handed files arrive under:
 
-    {data_dir}/memory/raw/{scene_dir}/file/
+    {data_dir}/memory/raw/file/
 
 in dated subfolders. The most recently written file there is the one just handed over.
 

@@ -102,7 +102,6 @@ async fn post_thought_accepts_and_journals() {
 
     let resp = client
         .post(format!("{base}/api/in/text"))
-        .header("X-HI-Scene", "alice@phone")
         .body("hi")
         .send()
         .await
@@ -113,8 +112,7 @@ async fn post_thought_accepts_and_journals() {
     let entries = read_journal(dir.path());
     assert_eq!(entries.len(), 1, "expected one journal entry, got {entries:?}");
     match &entries[0] {
-        JournalEntry::SignalIn { scene, body, .. } => {
-            assert_eq!(scene.0, "alice@phone");
+        JournalEntry::SignalIn { body, .. } => {
             assert_eq!(body, "hi");
         }
         other => panic!("expected SignalIn, got {other:?}"),
@@ -123,7 +121,7 @@ async fn post_thought_accepts_and_journals() {
 
 #[tokio::test]
 async fn post_thought_without_scene_header_is_anonymous() {
-    // X-HI-Scene is "recommended" per spec; we default missing/empty to a
+    //  is "recommended" per spec; we default missing/empty to a
     // stable anonymous scene so per-scene routing still has a key.
     let (base, dir, _seams) = spawn_server().await;
     let client = reqwest::Client::new();
@@ -140,7 +138,7 @@ async fn post_thought_without_scene_header_is_anonymous() {
     let entries = read_journal(dir.path());
     assert_eq!(entries.len(), 1);
     match &entries[0] {
-        JournalEntry::SignalIn { scene, .. } => assert_eq!(scene.0, "anonymous"),
+        JournalEntry::SignalIn { .. } => {}
         other => panic!("expected SignalIn, got {other:?}"),
     }
 }
@@ -157,7 +155,6 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
 
     let resp = client
         .post(format!("{base}/api/in/file"))
-        .header("X-HI-Scene", "alice@phone")
         .header("Content-Type", content_type)
         .body(body)
         .send()
@@ -175,9 +172,8 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     let mut bodies = entries
         .iter()
         .map(|entry| match entry {
-            JournalEntry::SignalIn { channel, scene, body, media, .. } => {
+            JournalEntry::SignalIn { channel, body, media, .. } => {
                 assert_eq!(*channel, Channel::File);
-                assert_eq!(scene.0, "alice@phone");
                 assert!(media.is_some(), "file handoff carries its stored blob");
                 body.as_str()
             }
@@ -202,7 +198,6 @@ async fn post_files_reports_each_failed_part_when_the_inbound_lane_is_closed() {
 
     let resp = client
         .post(format!("{base}/api/in/file"))
-        .header("X-HI-Scene", "alice@phone")
         .header("Content-Type", content_type)
         .body(body)
         .send()
@@ -231,7 +226,6 @@ async fn post_vision_journals_and_persists() {
 
     let resp = client
         .post(format!("{base}/api/in/vision"))
-        .header("X-HI-Scene", "alice@phone")
         .header("Content-Type", "image/jpeg")
         .body(vec![0xFFu8, 0xD8, 0xFF, 0xD9]) // minimal JPEG-ish bytes
         .send()
@@ -249,9 +243,8 @@ async fn post_vision_journals_and_persists() {
     }
     assert_eq!(entries.len(), 1, "vision still should journal one entry, got {entries:?}");
     match &entries[0] {
-        JournalEntry::SignalIn { channel, scene, body, media, .. } => {
+        JournalEntry::SignalIn { channel, body, media, .. } => {
             assert_eq!(*channel, Channel::Vision);
-            assert_eq!(scene.0, "alice@phone");
             assert!(!body.is_empty(), "vision signal carries a caption (placeholder when no provider)");
             let media = media.as_ref().expect("vision signal carries media");
             assert!(media.file.ends_with(".jpg"), "relative blob path, got {}", media.file);
@@ -280,7 +273,6 @@ async fn all_sensory_stubs_return_501() {
     for ch in ["touch", "smell", "taste"] {
         let resp = client
             .post(format!("{base}/api/in/{ch}"))
-            .header("X-HI-Scene", "alice@phone")
             .body("...")
             .send()
             .await
@@ -296,7 +288,6 @@ async fn all_sensory_stubs_return_501() {
     // body.
     let resp = client
         .post(format!("{base}/api/in/audio"))
-        .header("X-HI-Scene", "alice@phone")
         .header("Content-Type", "audio/wav")
         .body(vec![0u8; 16])
         .send()
@@ -348,7 +339,6 @@ async fn vision_get_streams_camera_video() {
         let c = reqwest::Client::new();
         let resp = c
             .get(format!("{get_base}/api/in/vision"))
-            .header("X-HI-Scene", "alice@phone")
             .send()
             .await
             .expect("send GET");

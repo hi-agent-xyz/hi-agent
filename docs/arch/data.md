@@ -41,7 +41,7 @@ through, and what the agent writes for itself lives in
 
 | Decision | Reasoning |
 |---|---|
-| Tasks are **global** | Created in one scene, delivered in another; a restart has no scene at all |
+| Tasks are **global** | They outlive the exchange that created them, and a restart recovers them with no conversation in progress at all |
 | Open tasks are **projected, not retrieved** | Retrieval can miss; a missed duty is a silently broken promise |
 | **Projected** = what Reaction must know without reading | It is tools-off, so its window is the whole of what it knows; every other rung can go and look |
 | `prompts/` is **bundled**; carried-forward state is **generated** | Both are text handed to an agent at init — what differs is who wrote it and whether losing it matters |
@@ -140,8 +140,8 @@ One file per agent that needs state carried forward.
 
 | File | Whose state |
 |---|---|
-| `scenes/<id>.md` | what one scene carries forward |
-| `cognition.md` | the sceneless brain's |
+| `conversation.md` | what the conversation carries forward |
+| `cognition.md` | the brain's |
 
 That is not a full set, on purpose — an agent gets one when it turns out to need one.
 Reflection plausibly never will: its state is a frontier cursor plus the stores themselves,
@@ -164,15 +164,15 @@ agent remembers to bring.
 | Size | code's, a **hard cap**. Over it, code truncates and says so — a ceiling that shows up as text is real; one that shows up as latency is not |
 | Floor | the **log tail**, which code already assembles from [`memory/raw/`](#memoryraw). An agent that never got round to writing its memory — busy, crashed, mid-restart — leaves a window that is uncurated, never empty |
 
-**Who writes a scene's.** Reaction holds `say` and `show` and nothing else, so it has no file
-access and cannot write its own. A scene's memory is therefore *consumed* by Reaction and
-*written by* [Deliberation](agents.md#deliberation--per-scene-seconds) — the rung that already
-reads around and works out what was asked. That falls out of the tool surfaces rather than
-being imposed on them, and it hands Deliberation its second job: deciding what this
-conversation carries forward. No new tool is needed — it has file access, and writes the
-scene's memory the way reflection writes a facet.
+**Who writes the conversation's.** Reaction holds `say` and `show` and nothing else, so it has
+no file access and cannot write its own. The conversation's memory is therefore *consumed* by
+Reaction and *written by* [Deliberation](agents.md#deliberation--seconds) — the rung that
+already reads around and works out what was asked. That falls out of the tool surfaces rather
+than being imposed on them, and it hands Deliberation its second job: deciding what the
+conversation carries forward. No new tool is needed — it has file access, and writes that
+memory the way reflection writes a facet.
 
-**A fresh scene starts from what is global, not from nothing.** Who this install is, what is
+**A fresh install starts from what is global, not from nothing.** Who this install is, what is
 open, what is generally true of the person — the generator includes them, so a first reply is
 not generic. Per-install identity is therefore a *section*, not a file, not a slot, and not a
 separate always-projected block.
@@ -219,11 +219,11 @@ merge it.
 
 Four properties, each earned by a real failure:
 
-1. **Global**, with an optional `report_to: SceneId`.
+1. **Global.** There is one place a result can be voiced, so a task carries no destination.
 2. **Always projected** into every agent's window, never fetched on demand.
 3. **Liveness is a contract, not an existence check** — a serving task carries how to verify
    it is really alive (a count, not "something is running"), how to restart it, and either
-   an owner or an idempotent start so two scenes cannot both relaunch it.
+   an owner or an idempotent start so two rungs cannot both relaunch it.
 
    This is the property that lets an agent pick **any** timing mechanism it likes — cron,
    `launchd`, a parked worker — without the host knowing or caring, so it carries the weight
@@ -288,7 +288,7 @@ Facts go to memory, procedures go here.
 The toolbox of built surfaces, named by *what they are* rather than by the task that made
 them — the name is what makes reuse possible.
 
-**Nothing graduates out of the toolbox.** A view used recently leaves a trace in its scene's
+**Nothing graduates out of the toolbox.** A view used recently leaves a trace in the
 [memory](#memoryprompts) because it mattered there — the same way anything else that
 mattered does, written by the same judgment. Everything else is read on demand: list the
 toolbox, against the guidelines for building views. Slow, and it always works.

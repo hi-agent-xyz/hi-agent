@@ -25,12 +25,9 @@ const MAX_EDGE = 640;
 const JPEG_QUALITY = 0.7;
 
 export interface PresenceStillerOptions {
-  /** Scene identity, sent as X-HI-Scene on each still. */
-  scene: string;
 }
 
 export class PresenceStiller {
-  private readonly scene: string;
   private readonly video: HTMLVideoElement;
   private readonly canvas: HTMLCanvasElement;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -43,8 +40,7 @@ export class PresenceStiller {
    * canvas; it is never added to the DOM — the visible self-view is
    * `CameraPreview`'s own element.
    */
-  constructor(stream: MediaStream, opts: PresenceStillerOptions) {
-    this.scene = opts.scene;
+  constructor(stream: MediaStream, _opts: PresenceStillerOptions) {
     this.video = document.createElement("video");
     this.video.muted = true;
     this.video.playsInline = true;
@@ -81,7 +77,7 @@ export class PresenceStiller {
 
     this.inFlight = true;
     try {
-      await postPresenceStill({ scene: this.scene, blob });
+      await postPresenceStill({ blob });
     } catch {
       /* best-effort reflex feed — a dropped still is harmless */
     } finally {

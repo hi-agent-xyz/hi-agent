@@ -8,7 +8,6 @@ export {
   useWake,
   useChannels,
   useSendText,
-  useScene,
 } from "./session";
 export { ViewsProvider, useViews, type ActiveView } from "./views";
 

@@ -37,7 +37,6 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Notify;
 
-use crate::types::Scene;
 
 /// Recent-enough window over which repeated window activations read as "they keep
 /// checking" — the eager signal. A couple of brings-to-front inside this span.
@@ -57,7 +56,7 @@ const OWED_EAGER: Duration = Duration::from_secs(30);
 /// this long, is away, not eager.
 const AWAY_AFTER: Duration = Duration::from_secs(300);
 
-/// Cap on retained activation timestamps per scene (they're pruned by age anyway).
+/// Cap on retained activation timestamps per conversation (they're pruned by age anyway).
 const MAX_ACTIVATIONS: usize = 16;
 
 /// One output channel a client can subscribe to — the reach surfaces the agent
@@ -93,7 +92,7 @@ pub struct Reach {
     pub mic: bool,
 }
 
-/// A read of the scene's presence across all three axes, taken at one instant.
+/// A read of the conversation's presence across all three axes, taken at one instant.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Snapshot {
     pub reach: Reach,
@@ -113,7 +112,7 @@ pub struct Snapshot {
 /// They are not the same situation: **background is ambient and closed is an
 /// act.** A window behind an editor may be glanced at in seconds; a window the
 /// person shut is one they decided they were done with. That difference is worth
-/// exactly one thing — how fast the scene reads Away — which is why this feeds
+/// exactly one thing — how fast the conversation reads Away — which is why this feeds
 /// [`Expectation`] instead of becoming a fourth axis.
 ///
 /// Deliberately *not* projected and deliberately not in `say`'s answer: nothing
@@ -132,8 +131,8 @@ pub enum WindowState {
     Closed,
 }
 
-/// Per-scene engagement bookkeeping for the expectation axis. All timestamps are
-/// monotonic `Instant`s; a scene with no entry has simply never engaged.
+/// Engagement bookkeeping for the expectation axis. All timestamps are monotonic
+/// `Instant`s; all-`None` means nobody has engaged yet.
 #[derive(Default)]
 struct Engagement {
     /// Last message or window activation — the recency that decays toward away.
@@ -144,25 +143,30 @@ struct Engagement {
     /// Set when a human message arrives with no reply yet delivered; the age of
     /// this is the "owed reply" clock. Cleared on delivery.
     owed_since: Option<Instant>,
-    /// Last reported window state. Defaults to [`WindowState::Active`] for a
-    /// scene that has never reported: a client that says nothing is treated as
-    /// present, the same keep-biased default the rest of this module takes.
+    /// Last reported window state. Defaults to [`WindowState::Active`] before
+    /// anything is reported: a client that says nothing is treated as present,
+    /// the same keep-biased default the rest of this module takes.
     window: WindowState,
 }
 
-/// Shared presence state for every scene. Cloneable handle over shared maps:
-/// reach counts move with guard lifetimes (a dropped connection un-counts
-/// itself), and engagement is poked by the signal sites.
+/// Shared presence state. Cloneable handle: reach counts move with guard
+/// lifetimes (a dropped connection un-counts itself), and engagement is poked by
+/// the signal sites.
+///
+/// **Counts, not identities.** Several surfaces can watch one conversation at
+/// once — a window, a popover, a phone — and the question the mouth asks is "is
+/// there a speaker anywhere I can be heard on", not "which client". So this
+/// counts live connections per channel and nothing about who holds them.
 #[derive(Clone, Default)]
 pub struct Presence {
     /// Live out-channel subscriber counts (screen/speaker/words reach).
-    channels: Arc<Mutex<HashMap<(Scene, OutChannel), usize>>>,
+    channels: Arc<Mutex<HashMap<OutChannel, usize>>>,
     /// Live mic-in stream count (mic reach / voice posture).
-    mic: Arc<Mutex<HashMap<Scene, usize>>>,
+    mic: Arc<Mutex<usize>>,
     /// Expectation-axis bookkeeping.
-    engagement: Arc<Mutex<HashMap<Scene, Engagement>>>,
-    /// Per-scene "they came back" notifiers — see [`Presence::returns`].
-    return_notifiers: Arc<Mutex<HashMap<Scene, Arc<Notify>>>>,
+    engagement: Arc<Mutex<Engagement>>,
+    /// The "they came back" notifier — see [`Presence::returns`].
+    return_notifier: Arc<Notify>,
 }
 
 impl Presence {
@@ -173,44 +177,43 @@ impl Presence {
     // ---- Reach: connection guards -------------------------------------------
 
     /// Count one live out-channel subscriber until the returned guard drops.
-    /// Connecting is itself a light engagement (the user showed up), so it seeds
-    /// the decay clock if this scene had none.
-    pub fn connect(&self, scene: &Scene, channel: OutChannel) -> PresenceGuard {
-        let key = (scene.clone(), channel);
-        *self.channels.lock().unwrap().entry(key.clone()).or_insert(0) += 1;
-        self.touch_engaged(scene);
-        PresenceGuard { channels: self.channels.clone(), key }
+    /// Connecting is itself a light engagement (someone showed up), so it seeds
+    /// the decay clock if nothing had.
+    pub fn connect(&self, channel: OutChannel) -> PresenceGuard {
+        *self.channels.lock().unwrap().entry(channel).or_insert(0) += 1;
+        self.touch_engaged();
+        PresenceGuard { channels: self.channels.clone(), key: channel }
     }
 
     /// Count one live mic-in stream until the returned guard drops. Held for the
     /// life of the audio-in WebSocket, so it doubles as the voice-posture signal.
-    pub fn connect_mic(&self, scene: &Scene) -> MicGuard {
-        *self.mic.lock().unwrap().entry(scene.clone()).or_insert(0) += 1;
-        self.touch_engaged(scene);
-        MicGuard { mic: self.mic.clone(), scene: scene.clone() }
+    pub fn connect_mic(&self) -> MicGuard {
+        *self.mic.lock().unwrap() += 1;
+        self.touch_engaged();
+        MicGuard { mic: self.mic.clone() }
     }
 
-    fn live(&self, scene: &Scene, channel: OutChannel) -> bool {
-        self.channels.lock().unwrap().get(&(scene.clone(), channel)).copied().unwrap_or(0) > 0
+    fn live(&self, channel: OutChannel) -> bool {
+        self.channels.lock().unwrap().get(&channel).copied().unwrap_or(0) > 0
     }
 
-    fn mic_live(&self, scene: &Scene) -> bool {
-        self.mic.lock().unwrap().get(scene).copied().unwrap_or(0) > 0
+    fn mic_live(&self) -> bool {
+        *self.mic.lock().unwrap() > 0
     }
 
-    fn reach(&self, scene: &Scene) -> Reach {
+    fn reach(&self) -> Reach {
         Reach {
-            window: self.live(scene, OutChannel::View) || self.live(scene, OutChannel::Text),
-            speaker: self.live(scene, OutChannel::Audio),
-            mic: self.mic_live(scene),
+            window: self.live(OutChannel::View) || self.live(OutChannel::Text),
+            speaker: self.live(OutChannel::Audio),
+            mic: self.mic_live(),
         }
     }
 
-    /// What can land on this scene right now. Public because the mouth needs it at
+    /// What can land right now. Public because the mouth needs it at
     /// the moment of emission, not just at prompt-render time: the speaker is the
     /// one surface where an unheard word is *spent* rather than kept.
-    pub fn reachable(&self, scene: &Scene) -> Reach {
-        self.reach(scene)
+    pub fn reachable(&self) -> Reach {
+        self.reach()
     }
 
     // ---- Expectation: engagement pokes --------------------------------------
@@ -219,11 +222,11 @@ impl Presence {
     /// signal ("they keep checking"). Reported first-party by the web face's own
     /// visibility/focus events.
     ///
-    /// Returns `true` when this activation is a **return**: the scene read
+    /// Returns `true` when this activation is a **return**: presence read
     /// [`Expectation::Away`] until this instant, and nothing was owed. That is the
     /// edge [`Presence::returns`] fires on.
-    pub fn note_activation(&self, scene: &Scene) -> bool {
-        self.note_window(scene, WindowState::Active)
+    pub fn note_activation(&self) -> bool {
+        self.note_window(WindowState::Active)
     }
 
     /// The face reports what its window is doing. [`WindowState::Active`] is an
@@ -235,18 +238,16 @@ impl Presence {
     /// over has not gone anywhere.
     ///
     /// Returns `true` only for a return (see [`Presence::note_activation`]).
-    pub fn note_window(&self, scene: &Scene, state: WindowState) -> bool {
+    pub fn note_window(&self, state: WindowState) -> bool {
         if state != WindowState::Active {
-            let mut map = self.engagement.lock().unwrap();
-            map.entry(scene.clone()).or_default().window = state;
+            self.engagement.lock().unwrap().window = state;
             return false;
         }
         let now = Instant::now();
         let returned = {
-            let mut map = self.engagement.lock().unwrap();
-            let e = map.entry(scene.clone()).or_default();
+            let e = &mut *self.engagement.lock().unwrap();
             // Classified against the state *before* this activation lands — after it,
-            // the scene reads Present by construction and the edge would be invisible.
+            // presence reads Present by construction and the edge would be invisible.
             // That includes the window state: coming back from `Closed` is *the* return
             // to catch, and clearing it first would be the edge erasing its own cause.
             let was_away = matches!(classify_at(e, now), Expectation::Away);
@@ -265,53 +266,40 @@ impl Presence {
         };
         if returned {
             // Fires at most once per absence, and needs no debounce state to do it:
-            // the line above sets `last_engaged`, so the scene cannot read Away again
+            // the line above sets `last_engaged`, so the conversation cannot read Away again
             // until another full `AWAY_AFTER` of silence. A page refresh — disconnect
             // then immediate reconnect — is two activations seconds apart, and only
             // the first can possibly be a return.
-            self.returns(scene).notify_waiters();
+            self.return_notifier.notify_waiters();
         }
         returned
     }
 
     /// A human message arrived — refresh engagement and start the owed-reply
     /// clock if nothing is owed yet.
-    pub fn note_activity(&self, scene: &Scene) {
+    pub fn note_activity(&self) {
         let now = Instant::now();
-        let mut map = self.engagement.lock().unwrap();
-        let e = map.entry(scene.clone()).or_default();
+        let e = &mut *self.engagement.lock().unwrap();
         e.last_engaged = Some(now);
         e.owed_since.get_or_insert(now);
     }
 
     /// A turn finished delivering — clear the owed-reply clock. A no-op when
     /// nothing was owed.
-    pub fn note_delivered(&self, scene: &Scene) {
-        if let Some(e) = self.engagement.lock().unwrap().get_mut(scene) {
-            e.owed_since = None;
-        }
+    pub fn note_delivered(&self) {
+        self.engagement.lock().unwrap().owed_since = None;
     }
 
     /// Seed the decay clock on first contact without starting an owed-reply.
-    fn touch_engaged(&self, scene: &Scene) {
-        self.engagement
-            .lock()
-            .unwrap()
-            .entry(scene.clone())
-            .or_default()
-            .last_engaged
-            .get_or_insert(Instant::now());
+    fn touch_engaged(&self) {
+        self.engagement.lock().unwrap().last_engaged.get_or_insert(Instant::now());
     }
 
-    fn expectation(&self, scene: &Scene, now: Instant) -> Expectation {
-        let map = self.engagement.lock().unwrap();
-        let Some(e) = map.get(scene) else {
-            return Expectation::Present; // connected but nothing observed yet
-        };
-        classify_at(e, now)
+    fn expectation(&self, now: Instant) -> Expectation {
+        classify_at(&self.engagement.lock().unwrap(), now)
     }
 
-    /// A handle the scene's loop parks on, pulsed the moment this scene goes from
+    /// A handle the reaction loop parks on, pulsed the moment presence goes from
     /// *away* to the person actually being back.
     ///
     /// **Only [`Presence::note_activation`] fires it**, and that is the whole care in
@@ -324,30 +312,25 @@ impl Presence {
     ///
     /// **Drop, don't queue** ([`docs/arch/core.md`] clock rule 3): `notify_waiters`
     /// stores no permit, so a return that fires while the loop is mid-turn is
-    /// discarded rather than delivered late. That is the wanted behaviour — a scene
-    /// taking a turn is a scene already talking to them.
-    pub fn returns(&self, scene: &Scene) -> Arc<Notify> {
-        self.return_notifiers
-            .lock()
-            .unwrap()
-            .entry(scene.clone())
-            .or_default()
-            .clone()
+    /// discarded rather than delivered late. That is the wanted behaviour — a turn
+    /// in progress is already talking to them.
+    pub fn returns(&self) -> Arc<Notify> {
+        self.return_notifier.clone()
     }
 
     // ---- Read ----------------------------------------------------------------
 
-    /// The scene's presence across all three axes, right now.
-    pub fn snapshot(&self, scene: &Scene) -> Snapshot {
-        let reach = self.reach(scene);
+    /// Presence across all three axes, right now.
+    pub fn snapshot(&self) -> Snapshot {
+        let reach = self.reach();
         Snapshot {
             reach,
-            expectation: self.expectation(scene, Instant::now()),
+            expectation: self.expectation(Instant::now()),
             voice_posture: reach.mic,
         }
     }
 
-    /// The scene's presence as human-model facts for the mind's prompt — **the
+    /// The conversation's presence as human-model facts for the mind's prompt — **the
     /// expectation, and only the expectation**. Facts only.
     ///
     /// Reach deliberately does not appear here. It is binary and per-channel, so a
@@ -362,12 +345,12 @@ impl Presence {
     /// binary (eager / around / away) and it is true even when every channel is
     /// open, because it shapes *how much* to say rather than *whether* — a failed
     /// send can never teach it, since there was no failure to read.
-    pub fn render(&self, scene: &Scene) -> String {
-        render_expectation(self.expectation(scene, Instant::now())).to_owned()
+    pub fn render(&self) -> String {
+        render_expectation(self.expectation(Instant::now())).to_owned()
     }
 }
 
-/// One scene's expectation at `now`, read off its raw engagement record. Split out
+/// One conversation's expectation at `now`, read off its raw engagement record. Split out
 /// so the return edge can classify the state *before* an activation is applied,
 /// against the same rule the prompt-render path uses.
 fn classify_at(e: &Engagement, now: Instant) -> Expectation {
@@ -427,8 +410,8 @@ fn render_expectation(e: Expectation) -> &'static str {
 
 /// Un-counts its out-channel subscriber on drop.
 pub struct PresenceGuard {
-    channels: Arc<Mutex<HashMap<(Scene, OutChannel), usize>>>,
-    key: (Scene, OutChannel),
+    channels: Arc<Mutex<HashMap<OutChannel, usize>>>,
+    key: OutChannel,
 }
 
 impl Drop for PresenceGuard {
@@ -445,19 +428,13 @@ impl Drop for PresenceGuard {
 
 /// Un-counts its mic-in stream on drop.
 pub struct MicGuard {
-    mic: Arc<Mutex<HashMap<Scene, usize>>>,
-    scene: Scene,
+    mic: Arc<Mutex<usize>>,
 }
 
 impl Drop for MicGuard {
     fn drop(&mut self) {
-        let mut map = self.mic.lock().unwrap();
-        if let Some(n) = map.get_mut(&self.scene) {
-            *n = n.saturating_sub(1);
-            if *n == 0 {
-                map.remove(&self.scene);
-            }
-        }
+        let mut n = self.mic.lock().unwrap();
+        *n = n.saturating_sub(1);
     }
 }
 
@@ -465,44 +442,37 @@ impl Drop for MicGuard {
 mod tests {
     use super::*;
 
-    fn scene(s: &str) -> Scene {
-        Scene(s.to_owned())
-    }
-
     // ---- Reach ----
 
     #[test]
     fn out_channel_counts_follow_guard_lifetimes() {
         let p = Presence::new();
-        let s = scene("boss");
-        assert!(!p.live(&s, OutChannel::View));
-        let g1 = p.connect(&s, OutChannel::View);
-        let g2 = p.connect(&s, OutChannel::View);
-        assert!(p.live(&s, OutChannel::View));
+        assert!(!p.live(OutChannel::View));
+        let g1 = p.connect(OutChannel::View);
+        let g2 = p.connect(OutChannel::View);
+        assert!(p.live(OutChannel::View));
         drop(g1);
-        assert!(p.live(&s, OutChannel::View));
+        assert!(p.live(OutChannel::View));
         drop(g2);
-        assert!(!p.live(&s, OutChannel::View));
+        assert!(!p.live(OutChannel::View));
     }
 
     #[test]
     fn mic_liveness_follows_its_guard() {
         let p = Presence::new();
-        let s = scene("boss");
-        assert!(!p.reach(&s).mic);
-        let g = p.connect_mic(&s);
-        assert!(p.reach(&s).mic);
-        assert!(p.snapshot(&s).voice_posture);
+        assert!(!p.reach().mic);
+        let g = p.connect_mic();
+        assert!(p.reach().mic);
+        assert!(p.snapshot().voice_posture);
         drop(g);
-        assert!(!p.reach(&s).mic);
+        assert!(!p.reach().mic);
     }
 
     #[test]
     fn reach_reports_each_surface_independently() {
         let p = Presence::new();
-        let s = scene("boss");
-        let _v = p.connect(&s, OutChannel::View);
-        let r = p.reach(&s);
+        let _v = p.connect(OutChannel::View);
+        let r = p.reach();
         assert!(r.window && !r.speaker && !r.mic);
     }
 
@@ -510,9 +480,8 @@ mod tests {
     fn a_words_only_client_still_counts_as_a_window() {
         // A text-reply reader has a window up even with no rendered view.
         let p = Presence::new();
-        let s = scene("boss");
-        let _t = p.connect(&s, OutChannel::Text);
-        assert!(p.reach(&s).window);
+        let _t = p.connect(OutChannel::Text);
+        assert!(p.reach().window);
     }
 
     // ---- Expectation policy (pure) ----
@@ -589,19 +558,18 @@ mod tests {
     #[test]
     fn background_and_closed_diverge_only_on_expectation() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activity(&s); // just spoke — nothing stale
-        p.note_delivered(&s);
+        p.note_activity(); // just spoke — nothing stale
+        p.note_delivered();
 
-        p.note_window(&s, WindowState::Background);
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+        p.note_window(WindowState::Background);
+        assert_eq!(p.snapshot().expectation, Expectation::Present);
 
-        p.note_window(&s, WindowState::Closed);
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Away);
+        p.note_window(WindowState::Closed);
+        assert_eq!(p.snapshot().expectation, Expectation::Away);
 
         // Neither touched reach: the channels are what say whether anything lands,
         // and nothing here opened or closed one.
-        assert!(!p.reachable(&s).window);
+        assert!(!p.reachable().window);
     }
 
     /// Opening a shut window is the return edge, and it must survive the state
@@ -609,12 +577,11 @@ mod tests {
     #[test]
     fn reopening_a_closed_window_is_a_return() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activity(&s);
-        p.note_delivered(&s);
-        p.note_window(&s, WindowState::Closed);
-        assert!(p.note_window(&s, WindowState::Active), "reopening is a return");
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+        p.note_activity();
+        p.note_delivered();
+        p.note_window(WindowState::Closed);
+        assert!(p.note_window(WindowState::Active), "reopening is a return");
+        assert_eq!(p.snapshot().expectation, Expectation::Present);
     }
 
     // ---- Expectation through the store ----
@@ -622,29 +589,26 @@ mod tests {
     #[test]
     fn fresh_activity_reads_present() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activity(&s);
+        p.note_activity();
         // Just messaged: engaged and owed, but not yet overdue → present.
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+        assert_eq!(p.snapshot().expectation, Expectation::Present);
     }
 
     #[test]
     fn delivered_clears_the_owed_clock() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activity(&s);
-        p.note_delivered(&s);
+        p.note_activity();
+        p.note_delivered();
         // With nothing owed and no activations, they're just present.
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+        assert_eq!(p.snapshot().expectation, Expectation::Present);
     }
 
     #[test]
     fn two_activations_read_eager() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activation(&s);
-        p.note_activation(&s);
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Eager);
+        p.note_activation();
+        p.note_activation();
+        assert_eq!(p.snapshot().expectation, Expectation::Eager);
     }
 
     /// The projection carries the expectation and *not* the reach: reach is what a
@@ -653,10 +617,9 @@ mod tests {
     #[test]
     fn render_states_expectation_only() {
         let p = Presence::new();
-        let s = scene("boss");
-        let _v = p.connect(&s, OutChannel::View);
-        let _a = p.connect(&s, OutChannel::Audio);
-        let out = p.render(&s);
+        let _v = p.connect(OutChannel::View);
+        let _a = p.connect(OutChannel::Audio);
+        let out = p.render();
         assert_eq!(out, render_expectation(Expectation::Present));
         for leaked in ["screen", "window", "speaker", "mic", "Open to them"] {
             assert!(!out.contains(leaked), "reach leaked into the projection: {leaked:?}");
@@ -665,47 +628,42 @@ mod tests {
 
     // ---- The return edge ----
 
-    /// Backdate a scene's last engagement past [`AWAY_AFTER`] so it reads Away
-    /// without a five-minute test. Reaches into the private map on purpose: the
-    /// alternative is a clock injection that only this handful of tests would use.
-    fn make_away(p: &Presence, s: &Scene) {
+    /// Backdate the last engagement past [`AWAY_AFTER`] so it reads Away without a
+    /// five-minute test. Reaches into the private state on purpose: the alternative
+    /// is a clock injection that only this handful of tests would use.
+    fn make_away(p: &Presence) {
         let stale = Instant::now()
             .checked_sub(AWAY_AFTER + Duration::from_secs(1))
             .expect("monotonic clock younger than AWAY_AFTER — machine booted seconds ago?");
-        p.engagement
-            .lock()
-            .unwrap()
-            .insert(s.clone(), Engagement { last_engaged: Some(stale), ..Default::default() });
+        *p.engagement.lock().unwrap() =
+            Engagement { last_engaged: Some(stale), ..Default::default() };
     }
 
     #[test]
     fn activation_after_an_absence_is_a_return() {
         let p = Presence::new();
-        let s = scene("boss");
-        make_away(&p, &s);
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Away);
-        assert!(p.note_activation(&s), "coming back to a cold scene is a return");
-        assert_eq!(p.snapshot(&s).expectation, Expectation::Present);
+        make_away(&p);
+        assert_eq!(p.snapshot().expectation, Expectation::Away);
+        assert!(p.note_activation(), "coming back to a cold conversation is a return");
+        assert_eq!(p.snapshot().expectation, Expectation::Present);
     }
 
     #[test]
     fn activation_while_they_are_already_here_is_not_a_return() {
         let p = Presence::new();
-        let s = scene("boss");
-        p.note_activation(&s);
-        assert!(!p.note_activation(&s), "they never left");
+        p.note_activation();
+        assert!(!p.note_activation(), "they never left");
     }
 
     #[test]
     fn a_page_refresh_fires_the_edge_at_most_once() {
         // Disconnect + immediate reconnect is two activations seconds apart. The
         // first may be a genuine return; the second must not re-fire, or every
-        // reload would wake the scene.
+        // reload would wake the conversation.
         let p = Presence::new();
-        let s = scene("boss");
-        make_away(&p, &s);
-        assert!(p.note_activation(&s));
-        assert!(!p.note_activation(&s), "the reload half must not fire again");
+        make_away(&p);
+        assert!(p.note_activation());
+        assert!(!p.note_activation(), "the reload half must not fire again");
     }
 
     #[test]
@@ -714,19 +672,17 @@ mod tests {
         // turn on its own. The page reporting focus at the same moment must not
         // schedule a second one.
         let p = Presence::new();
-        let s = scene("boss");
-        make_away(&p, &s);
-        p.note_activity(&s);
-        assert!(!p.note_activation(&s), "their message is already the reason to turn");
+        make_away(&p);
+        p.note_activity();
+        assert!(!p.note_activation(), "their message is already the reason to turn");
     }
 
+    /// One conversation, one return handle — so a waiter parked before an absence
+    /// is the same waiter the activation notifies.
     #[test]
-    fn a_scenes_return_handle_is_stable() {
-        // The loop parks on the handle it took at startup; a fresh Notify per call
-        // would mean firing into one nobody is waiting on.
+    fn the_return_handle_is_stable() {
         let p = Presence::new();
-        let s = scene("boss");
-        assert!(Arc::ptr_eq(&p.returns(&s), &p.returns(&s)));
-        assert!(!Arc::ptr_eq(&p.returns(&s), &p.returns(&scene("other"))));
+        assert!(Arc::ptr_eq(&p.returns(), &p.returns()));
     }
+
 }

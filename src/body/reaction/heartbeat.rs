@@ -1,4 +1,4 @@
-//! The reflection ("sleep") pass — consolidate each scene's raw frontier into
+//! The reflection ("sleep") pass — consolidate the raw frontier into
 //! episodes and facets, cluster faces and voices, and fade what has gone cold.
 //!
 //! ## There is no session-swap here, on purpose — the agent compacts itself
@@ -22,7 +22,7 @@
 //!   available from outside the boundary — and it is strictly lossier than what the
 //!   agent does internally.
 //! - **The ceiling was wrong by more than an order of magnitude.** 48,000 chars is
-//!   roughly 3% of a 1M-token window. In practice a scene crossed it within one
+//!   roughly 3% of a 1M-token window. In practice a conversation crossed it within one
 //!   sitting, so an ordinary conversation was being summarized and restarted
 //!   repeatedly, for nothing.
 //! - **It fought the rungs being long-lived.** Cognition is long-lived so it can
@@ -53,7 +53,7 @@ use crate::foundation::pcm;
 use crate::mind::memory::{decay, episodes, facets, layout, people_vectors, refresh_hot};
 use crate::foundation::observatory::EventKind;
 use crate::foundation::registry;
-use crate::types::{Channel, JournalEntry, Scene};
+use crate::types::{Channel, JournalEntry};
 use crate::foundation::vendors::ffmpeg_frame;
 
 use super::Reaction;
@@ -66,7 +66,7 @@ const MIN_REFLECT_SIGNALS: usize = 4;
 /// How many of a frontier's signals count toward [`MIN_REFLECT_SIGNALS`]: everything
 /// except the host's own clock (see [`super::NON_ACTIVITY_CHANNELS`]). The pulses stay
 /// *in* the frontier — "then it was quiet for three hours" is worth settling — they
-/// just may not be the reason a session opens. Otherwise a scene left alone would
+/// just may not be the reason a session opens. Otherwise a conversation left alone would
 /// tick its way over the threshold on heartbeats alone and reflect on nothing, the
 /// same self-feeding loop the re-warm gate has to avoid.
 fn reflectable(tail: &[JournalEntry]) -> usize {
@@ -78,24 +78,9 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
         .count()
 }
 
-/// The pseudo-scene the single consolidated reflection session is opened under. It
-/// carries the `X-HI-Scene` header (so the `/mcp` dispatch has a scene to route by)
-/// and labels the session in logs, but it is never a real data path: one session
-/// now spans every scene, so the reflection tools take the scene they act on as an
-/// explicit argument instead of reading the header. The `*…*` form can't collide
-/// with a real scene id.
-const CONSOLIDATION_SCENE: &str = "*consolidation*";
-
-pub(super) fn consolidation_scene() -> Scene {
-    let s = Scene(CONSOLIDATION_SCENE.to_string());
-    debug_assert!(s.is_pseudo(), "the sentinel must be recognizable as one");
-    s
-}
-
-/// One scene's gathered frontier and context for the consolidated pass — the input
+/// The gathered frontier and context for the consolidated pass — the input
 /// to one labelled group in [`build_consolidation_prompt`].
-struct SceneFrontier {
-    scene: Scene,
+struct Frontier {
     tail: Vec<JournalEntry>,
     prior: Vec<String>,
     face_ids: HashMap<usize, Vec<String>>,
@@ -103,18 +88,18 @@ struct SceneFrontier {
     pressure: Vec<decay::FadeDay>,
 }
 
-/// Consolidate every given scene's unconsolidated frontier into episodes and facets
+/// Consolidate every given conversation's unconsolidated frontier into episodes and facets
 /// in **one** "sleep" pass — the single-mind analogue of a day settling across all
-/// its contexts at once. Reads each scene's raw log after its [`episodes::scene_cursor`],
+/// its contexts at once. Reads the raw log after its [`episodes::consolidation_cursor`],
 /// opens **one** dedicated reflection session (its own subprocess; never a reaction
 /// live session) spanning all of them, and drives it to completion; the session
-/// writes derived memory through its tools, naming the scene on each call. Run from
+/// writes derived memory through its tools, naming the conversation on each call. Run from
 /// the global reflection clock (see [`super::reflection`]).
-/// Best-effort: the per-scene cursors make it idempotent across runs and a crash
-/// just leaves each frontier for the next tick. A no-op when no scene has enough
+/// Best-effort: the per-conversation cursors make it idempotent across runs and a crash
+/// just leaves each frontier for the next tick. A no-op when no conversation has enough
 /// unconsolidated signal to be worth a session.
-pub(super) async fn consolidate(reaction: &Reaction, scenes: &[Scene], id: registry::SessionId) {
-    if let Err(err) = run_consolidation(reaction, scenes, id).await {
+pub(super) async fn consolidate(reaction: &Reaction, id: registry::SessionId) {
+    if let Err(err) = run_consolidation(reaction, id).await {
         // A pass already in flight when shutdown began fails because its child took
         // the process group's signal — expected, not a fault. Keep it out of the
         // WARN stream so a real consolidation failure stays visible.
@@ -126,57 +111,33 @@ pub(super) async fn consolidate(reaction: &Reaction, scenes: &[Scene], id: regis
     }
 }
 
-async fn run_consolidation(
-    reaction: &Reaction,
-    scenes: &[Scene],
-    id: registry::SessionId,
-) -> anyhow::Result<()> {
+async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyhow::Result<()> {
     let data_dir = reaction.inner.memory.data_dir();
 
-    // Gather each scene's frontier; keep only those with enough to be worth a pass.
+    // Gather the frontier; a pass is only worth opening when there is enough on it.
     // The cheap cursor+tail read gates the expensive face/voice clustering, so a
-    // caught-up scene costs almost nothing.
-    let mut groups: Vec<SceneFrontier> = Vec::new();
-    for scene in scenes {
-        let cursor = episodes::scene_cursor(data_dir, scene).await?;
-        let tail =
-            after_cursor(data_dir, scene, cursor.as_deref(), episodes::REFLECTION_TAIL_LIMIT).await?;
-        if reflectable(&tail) < MIN_REFLECT_SIGNALS {
-            continue;
-        }
-        // Prior episode gists (scene-scoped) give continue-vs-new context; faces and
-        // voices are clustered mechanically so the prompt can show a stable id per
-        // detected person to name. The old-store pressure lets the same pass tend the
-        // past for this scene, fading what's gone cold.
-        let prior = episodes::recent_gists(&reaction.inner.memory, Some(scene), 2)
-            .await
-            .unwrap_or_default();
-        let face_ids = cluster_faces(data_dir, scene, &tail).await;
-        let voice_ids = cluster_voices(data_dir, scene, &tail).await;
-        let pressure = decay::fade_pressure(data_dir, scene, Utc::now()).await.unwrap_or_default();
-        groups.push(SceneFrontier {
-            scene: scene.clone(),
-            tail,
-            prior,
-            face_ids,
-            voice_ids,
-            pressure,
-        });
-    }
-
-    if groups.is_empty() {
-        tracing::debug!("consolidation skipped; no scene has enough on its frontier");
+    // caught-up store costs almost nothing.
+    let cursor = episodes::consolidation_cursor(data_dir).await?;
+    let tail = after_cursor(data_dir, cursor.as_deref(), episodes::REFLECTION_TAIL_LIMIT).await?;
+    if reflectable(&tail) < MIN_REFLECT_SIGNALS {
+        tracing::debug!("consolidation skipped; not enough on the frontier");
         return Ok(());
     }
+    // Prior episode gists give continue-vs-new context; faces and voices are
+    // clustered mechanically so the prompt can show a stable id per detected person
+    // to name. The old-store pressure lets the same pass tend the past, fading what
+    // has gone cold.
+    let prior = episodes::recent_gists(&reaction.inner.memory, 2).await.unwrap_or_default();
+    let face_ids = cluster_faces(data_dir, &tail).await;
+    let voice_ids = cluster_voices(data_dir, &tail).await;
+    let pressure = decay::fade_pressure(data_dir, Utc::now()).await.unwrap_or_default();
+    let frontier = Frontier { tail, prior, face_ids, voice_ids, pressure };
 
-    let total: usize = groups.iter().map(|g| g.tail.len()).sum();
-    let scene_list = groups.iter().map(|g| g.scene.0.as_str()).collect::<Vec<_>>().join(", ");
-    tracing::info!(scenes = %scene_list, groups = groups.len(), n = total, "reflection fired");
+    tracing::info!(n = frontier.tail.len(), "reflection fired");
 
     // Forget ambient, one-off identity clusters — the video-night strangers and
-    // passers-by that would otherwise bury the real people. The people store is
-    // global, so this runs once per consolidation (not per scene), on the same
-    // reflection clock. The log names each cluster as it goes, since the deletion
+    // passers-by that would otherwise bury the real people. Runs once per
+    // consolidation, on the same reflection clock. The log names each cluster as it goes, since the deletion
     // itself leaves nothing behind to inspect.
     match people_vectors::sweep_forgettable(data_dir, Utc::now()).await {
         Ok(report) if !report.forgotten.is_empty() => {
@@ -198,8 +159,8 @@ async fn run_consolidation(
         Err(err) => tracing::warn!(error = %err, "cluster forgetting sweep failed"),
     }
 
-    // The facet subject index is global — gathered once, shared across every group so
-    // the mind reuses a subject instead of coining a near-duplicate in each scene.
+    // The facet subject index is global — gathered once so the mind reuses a subject
+    // instead of coining a near-duplicate.
     let subjects = facets::facet_subject_index(data_dir).await.unwrap_or_default();
 
     // The current proactivity read, folded into the prompt so the pass can
@@ -207,13 +168,12 @@ async fn run_consolidation(
     // itself, so it goes in (and back out through `update_proactivity`) like facets.
     let current_proactivity = crate::mind::memory::proactivity::read(data_dir).await.ok().flatten();
 
-    let prompt = build_consolidation_prompt(&groups, &subjects, current_proactivity.as_deref());
+    let prompt = build_consolidation_prompt(std::slice::from_ref(&frontier), &subjects, current_proactivity.as_deref());
     // The same prompt a Reflection *mail* turn opens with — one self-contained file. It
     // was the role layer alone until `cd008a6`, then seed-plus-layer; it is now neither,
     // because `reflection.md` carries the whole thing.
     let system_prompt = crate::identity::reflection_prompt(data_dir).await;
 
-    let sentinel = consolidation_scene();
 
     // **The pass runs under Reflection's standing id**, handed in by the loop that owns
     // it ([`super::reflection`]). It used to mint its own registration scoped to this
@@ -222,15 +182,14 @@ async fn run_consolidation(
     // address that had already been dropped. The note that used to sit here said exactly
     // that and pointed at a later item; this is that item.
     //
-    // The MCP header stays the sentinel scene while the registration carries `scene:
-    // None`. Those are different facts: `docs/arch/agents.md` says the sceneless rungs
-    // have no scene, and the header is a routing tag `/mcp` needs (see
+    // The MCP header stays the sentinel conversation while the registration carries `conversation:
+    // None`. Those are different facts: `docs/arch/agents.md` says the standing rungs
+    // have no conversation, and the header is a routing tag `/mcp` needs (see
     // [`CONSOLIDATION_SCENE`]).
     let session = reaction
         .inner
         .agent
         .session(
-            &sentinel,
             SessionRole::Reflection,
             Some(id),
             SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
@@ -240,11 +199,6 @@ async fn run_consolidation(
         .inner
         .observatory
         .record(
-            // Sceneless: Reflection spans every scene at once, so attributing its
-            // open to one would be arbitrary, and attributing it to the sentinel put
-            // `*consolidation*` in the dashboard's scene list — a conversation nobody
-            // is having. The MCP header keeps the sentinel; the mirror gets nothing.
-            None,
             EventKind::SessionOpened {
                 kind: crate::foundation::observatory::SessionKind::Reflection,
                 id: session.id().0.to_string(),
@@ -255,35 +209,34 @@ async fn run_consolidation(
     let run = session.prompt(prompt).await?;
     run.wait().await?;
 
-    // hot.md now reflects the freshly written episodes across all scenes.
+    // hot.md now reflects the freshly written episodes across the conversation.
     if let Err(err) = refresh_hot(&reaction.inner.memory).await {
         tracing::warn!(error = %err, "failed to refresh hot.md after reflection");
     }
-    tracing::info!(scenes = %scene_list, "reflection finished");
+    tracing::info!("reflection finished");
     Ok(())
 }
 
 /// Assemble the consolidated reflection prompt: the global subject index once, then
-/// one labelled group per scene (see [`render_scene_group`]). Each scene's frontier
+/// one labelled group per conversation (see [`render_frontier`]). Each conversation's frontier
 /// is numbered oldest-first from 1 independently, so the `count` the mind hands back
-/// to `record_episode` is into *that scene's* list; the scene is named on the call.
+/// to `record_episode` is into *that conversation's* list; the conversation is named on the call.
 fn build_consolidation_prompt(
-    groups: &[SceneFrontier],
+    groups: &[Frontier],
     subjects: &[String],
     current_proactivity: Option<&str>,
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
-    // The subject index is global — one block, shared across every scene group, so a
-    // subject coined while consolidating one scene is reused (not duplicated) in the
-    // next. The per-scene "subjects you already model" is gone; this replaces it.
+    // The subject index is global — one block, shared across the conversation group, so a
+    // subject coined while consolidating one conversation is reused (not duplicated) in the
+    // next. The per-conversation "subjects you already model" is gone; this replaces it.
     if !subjects.is_empty() {
-        s.push_str("## Subjects you already model (reuse these refs, across every scene below)\n");
+        s.push_str("## Subjects you already model (reuse these refs)\n");
         let _ = writeln!(s, "{}\n", subjects.join(", "));
     }
     for g in groups {
-        let _ = writeln!(s, "# Scene: {}\n", g.scene.0);
-        render_scene_group(&mut s, g);
+        render_frontier(&mut s, g);
         s.push('\n');
     }
     // The current proactivity read goes in so the pass regenerates it from
@@ -300,23 +253,23 @@ fn build_consolidation_prompt(
         _ => s.push_str("(none yet)\n\n"),
     }
     s.push_str(
-        "Consolidate these now — name the scene on every `record_episode`, `keep_and_fade`, and \
+        "Consolidate these now — name the conversation on every `record_episode`, `keep_and_fade`, and \
          `image-text-to-text`.",
     );
     s
 }
 
-/// Render one scene's group into the consolidated prompt: its prior-episode context,
+/// Render one conversation's group into the consolidated prompt: its prior-episode context,
 /// its old-media list, then its unconsolidated frontier as a numbered, oldest-first
-/// list (the mind hands back a `count` into this scene's list, never a raw id). Image
+/// list (the mind hands back a `count` into this conversation's list, never a raw id). Image
 /// signals are marked `⟨faces: <id>…⟩` when clustering placed faces (the ids the mind
-/// can name), else an `⟨image — `image-text-to-text` ref: …, scene: …⟩` the mind can
-/// look at (the scene is carried so the tool resolves the still without the session's
+/// can name), else an `⟨image — `image-text-to-text` ref: …, conversation: …⟩` the mind can
+/// look at (the conversation is carried so the tool resolves the still without the session's
 /// header), else `⟨image⟩`. Audio clips are marked `⟨voice: <id>…⟩` when voiceprint
 /// clustering placed a speaker. A voice turn that overlapped a face on camera also
 /// carries a co-occurrence hint (see [`cooccurring_faces`]) — the legibility that lets the mind
 /// bind a voice to a face across senses.
-fn render_scene_group(s: &mut String, g: &SceneFrontier) {
+fn render_frontier(s: &mut String, g: &Frontier) {
     use std::fmt::Write as _;
     if !g.prior.is_empty() {
         s.push_str("## Your last episodes here (for continue-vs-new judgment)\n");
@@ -363,11 +316,7 @@ fn render_scene_group(s: &mut String, g: &SceneFrontier) {
             }
             None if is_image(e) => match still_ref(e) {
                 Some(reff) => {
-                    let _ = write!(
-                        line,
-                        " ⟨image — `image-text-to-text` ref: {reff}, scene: {}⟩",
-                        g.scene.0
-                    );
+                    let _ = write!(line, " ⟨image — `image-text-to-text` ref: {reff}⟩");
                 }
                 None => line.push_str(" ⟨image⟩"),
             },
@@ -524,7 +473,6 @@ fn media_dur(media: Option<&crate::types::Media>) -> Duration {
 /// is unconfigured; a per-signal failure is logged and skipped.
 async fn cluster_faces(
     data_dir: &Path,
-    scene: &Scene,
     tail: &[JournalEntry],
 ) -> HashMap<usize, Vec<String>> {
     let mut out: HashMap<usize, Vec<String>> = HashMap::new();
@@ -532,7 +480,7 @@ async fn cluster_faces(
         return out;
     }
     for (i, e) in tail.iter().enumerate() {
-        let JournalEntry::SignalIn { channel: Channel::Vision, media: Some(m), ts, scene: sig_scene, .. } = e
+        let JournalEntry::SignalIn { channel: Channel::Vision, media: Some(m), ts, .. } = e
         else {
             continue;
         };
@@ -541,11 +489,11 @@ async fn cluster_faces(
         if !is_image && !is_video {
             continue;
         }
-        let path = layout::channel_day_dir(data_dir, sig_scene, Channel::Vision, *ts).join(&m.file);
+        let path = layout::channel_day_dir(data_dir, Channel::Vision, *ts).join(&m.file);
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(err) => {
-                tracing::warn!(scene = %scene, error = %err, "cluster: reading vision media failed");
+                tracing::warn!(error = %err, "cluster: reading vision media failed");
                 continue;
             }
         };
@@ -555,7 +503,7 @@ async fn cluster_faces(
             match ffmpeg_frame::first_frame(bytes.into()).await {
                 Ok(frame) => frame,
                 Err(err) => {
-                    tracing::warn!(scene = %scene, error = %err, "cluster: keyframe extraction failed");
+                    tracing::warn!(error = %err, "cluster: keyframe extraction failed");
                     continue;
                 }
             }
@@ -567,7 +515,7 @@ async fn cluster_faces(
         let faces = match face::detect_and_embed(image.clone()).await {
             Ok(f) => f,
             Err(err) => {
-                tracing::warn!(scene = %scene, error = %err, "cluster: face detect failed");
+                tracing::warn!(error = %err, "cluster: face detect failed");
                 continue;
             }
         };
@@ -577,7 +525,7 @@ async fn cluster_faces(
             let jpg = match face::crop_to_jpeg(image.as_ref(), f.bbox, 0.3) {
                 Ok(jpg) => jpg,
                 Err(err) => {
-                    tracing::warn!(scene = %scene, error = %err, "cluster: face crop failed");
+                    tracing::warn!(error = %err, "cluster: face crop failed");
                     continue;
                 }
             };
@@ -585,7 +533,7 @@ async fn cluster_faces(
                 Ok(id) => {
                     out.entry(i).or_default().push(id);
                 }
-                Err(err) => tracing::warn!(scene = %scene, error = %err, "cluster: assign failed"),
+                Err(err) => tracing::warn!(error = %err, "cluster: assign failed"),
             }
         }
     }
@@ -601,7 +549,6 @@ async fn cluster_faces(
 /// live-mic utterances are media-less and are clustered inline on the stream.
 async fn cluster_voices(
     data_dir: &Path,
-    scene: &Scene,
     tail: &[JournalEntry],
 ) -> HashMap<usize, Vec<String>> {
     let mut out: HashMap<usize, Vec<String>> = HashMap::new();
@@ -609,7 +556,7 @@ async fn cluster_voices(
         return out;
     }
     for (i, e) in tail.iter().enumerate() {
-        let JournalEntry::SignalIn { channel: Channel::Audio, media: Some(m), ts, scene: sig_scene, body, .. } = e
+        let JournalEntry::SignalIn { channel: Channel::Audio, media: Some(m), ts, body, .. } = e
         else {
             continue;
         };
@@ -620,11 +567,11 @@ async fn cluster_voices(
         if body.starts_with("说话人") {
             continue;
         }
-        let path = layout::channel_day_dir(data_dir, sig_scene, Channel::Audio, *ts).join(&m.file);
+        let path = layout::channel_day_dir(data_dir, Channel::Audio, *ts).join(&m.file);
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(err) => {
-                tracing::warn!(scene = %scene, error = %err, "cluster: reading audio failed");
+                tracing::warn!(error = %err, "cluster: reading audio failed");
                 continue;
             }
         };
@@ -632,14 +579,14 @@ async fn cluster_voices(
             Ok(s) if !s.is_empty() => s,
             Ok(_) => continue,
             Err(err) => {
-                tracing::warn!(scene = %scene, error = %err, "cluster: audio decode failed");
+                tracing::warn!(error = %err, "cluster: audio decode failed");
                 continue;
             }
         };
         let embedding = match voiceprint::embed(samples).await {
             Ok(e) => e,
             Err(err) => {
-                tracing::warn!(scene = %scene, error = %err, "cluster: voiceprint embed failed");
+                tracing::warn!(error = %err, "cluster: voiceprint embed failed");
                 continue;
             }
         };
@@ -649,7 +596,7 @@ async fn cluster_voices(
             Ok(id) => {
                 out.entry(i).or_default().push(id);
             }
-            Err(err) => tracing::warn!(scene = %scene, error = %err, "cluster: voice assign failed"),
+            Err(err) => tracing::warn!(error = %err, "cluster: voice assign failed"),
         }
     }
     out
@@ -672,7 +619,6 @@ mod frontier_tests {
             id: "x".into(),
             ts: Utc::now(),
             channel,
-            scene: Scene("s".into()),
             body: String::new(),
             stream: None,
             media: None,
@@ -684,7 +630,7 @@ mod frontier_tests {
     fn heartbeats_alone_never_reach_the_threshold() {
         let tail: Vec<JournalEntry> =
             (0..MIN_REFLECT_SIGNALS * 3).map(|_| on(Channel::Clock)).collect();
-        assert_eq!(reflectable(&tail), 0, "a scene left alone must not reflect on its own pulses");
+        assert_eq!(reflectable(&tail), 0, "a conversation left alone must not reflect on its own pulses");
     }
 
     #[test]
@@ -715,7 +661,6 @@ mod cooccur_tests {
             id: "v".into(),
             ts,
             channel: Channel::Vision,
-            scene: Scene("s".into()),
             body: String::new(),
             stream: None,
             media: Some(Media {
@@ -734,7 +679,6 @@ mod cooccur_tests {
             id: "a".into(),
             ts,
             channel: Channel::Audio,
-            scene: Scene("s".into()),
             body: "hi".into(),
             stream: None,
             media: dur_ms.map(|ms| Media {
@@ -796,9 +740,8 @@ mod cooccur_tests {
         assert_eq!(c.get(&1).map(Vec::len), Some(1));
     }
 
-    fn group(scene: &str, tail: Vec<JournalEntry>, face_ids: HashMap<usize, Vec<String>>) -> SceneFrontier {
-        SceneFrontier {
-            scene: Scene(scene.into()),
+    fn group(conversation: &str, tail: Vec<JournalEntry>, face_ids: HashMap<usize, Vec<String>>) -> Frontier {
+        Frontier {
             tail,
             prior: Vec::new(),
             face_ids,
@@ -813,19 +756,6 @@ mod cooccur_tests {
         let g = group("s", tail, faces(&[(0, "ff32ce3w")]));
         let p = build_consolidation_prompt(std::slice::from_ref(&g), &[], None);
         assert!(p.contains("⟨one face present: ff32ce3w⟩"), "prompt was:\n{p}");
-    }
-
-    #[test]
-    fn two_scenes_are_labelled_and_each_numbered_from_one() {
-        // Two scenes in one consolidated pass: each gets its own labelled group and
-        // its frontier restarts numbering at [1], so a `count` is unambiguous per scene.
-        let a = group("alpha", vec![audio(at(0), None), audio(at(1), None)], HashMap::new());
-        let b = group("beta", vec![audio(at(10), None)], HashMap::new());
-        let p = build_consolidation_prompt(&[a, b], &[], None);
-        assert!(p.contains("# Scene: alpha"), "prompt was:\n{p}");
-        assert!(p.contains("# Scene: beta"), "prompt was:\n{p}");
-        // Two groups, so the "[1]" first-signal marker appears exactly twice.
-        assert_eq!(p.matches("[1]").count(), 2, "prompt was:\n{p}");
     }
 
     #[test]

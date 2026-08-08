@@ -1,10 +1,10 @@
 //! Reflection — the inward brain. One of it for the whole agent.
 //!
-//! **Cognition and Reflection are the same kind of thing.** Both are sceneless, both are
+//! **Cognition and Reflection are the same kind of thing.** Both are , both are
 //! as capable as the agent gets, both dispatch workers, neither speaks. What separates
 //! them is not intelligence and not machinery — it is **who the work is for**:
 //!
-//! - **Cognition faces outward.** Its work arrives from a person, through a scene, and
+//! - **Cognition faces outward.** Its work arrives from a person, through a conversation, and
 //!   its answers go back that way. It owns the task ledger because a duty is something
 //!   owed to someone.
 //! - **Reflection faces inward.** Its work is the agent's own house: what it remembers,
@@ -36,10 +36,10 @@
 //! 2. **A drain.** Nothing read its inbox — the note this replaces said so outright. A
 //!    registered rung nobody reads is a mailbox that answers "delivered" and forgets.
 //! 3. **A host for its workers.** Without a sink of its own, `create_worker` fell through
-//!    to `any_host()`, which lent an arbitrary live conversation: the borrowed scene
-//!    became the worker's `X-HI-Scene` (so `watch` resolved to a stranger's camera), the
-//!    `{scene}` in its prompt, and the scene its report was journaled under — feeding
-//!    *that* scene's episodes with work it never asked for. That function is gone as of
+//!    to `any_host()`, which lent an arbitrary live conversation: the borrowed conversation
+//!    became the worker's `X-HI-Conversation` (so `watch` resolved to a stranger's camera), the
+//!    `{conversation}` in its prompt, and the conversation its report was journaled under — feeding
+//!    *that* conversation's episodes with work it never asked for. That function is gone as of
 //!    this commit, because this was its last caller.
 //! 4. **Two kinds of wake.** Reflection is the one rung driven by a clock *and* by mail.
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
@@ -60,10 +60,9 @@ use tokio::time::Instant;
 use tokio::sync::mpsc;
 
 use crate::foundation::registry::{self, Registration};
-use crate::types::Scene;
 
-use super::tools::{SceneControl, ToolSink};
-use super::{LoopInput, Reaction, SCENE_QUEUE_CAPACITY, heartbeat, workers};
+use super::tools::{LoopControl, ToolSink};
+use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
 
 /// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
 /// Reflection carries forward between wakes, at `memory/prompts/reflection.md`.
@@ -87,7 +86,7 @@ pub(super) fn spawn(reaction: Reaction, registration: Registration) {
 /// Why this loop woke. Two sources, and they do different work — which is the one real
 /// difference from Cognition's loop, where every wake is a turn.
 enum Wake {
-    /// The backoff clock came due: sweep the recently-active scenes.
+    /// The backoff clock came due: sweep the recently-active conversations.
     Consolidate,
     /// Mail, or a worker of ours reporting. Drives an ordinary turn.
     Turn,
@@ -96,20 +95,19 @@ enum Wake {
 async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
-    let scene = heartbeat::consolidation_scene();
 
     // Its workers run under it — see the module note's point 3. `beats: None`: Reflection
     // has no floor, no sequencer, no screen. It never speaks, and that is now a fact
     // about its sink rather than an agreement between a tool list and a role check.
-    let (control_tx, mut control_rx) = mpsc::channel::<SceneControl>(SCENE_QUEUE_CAPACITY);
-    let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(SCENE_QUEUE_CAPACITY);
+    let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
+    let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
     reaction
         .inner
         .tools
-        .register(scene.clone(), ToolSink { control: control_tx, mouth: None })
+        .register(ToolSink { control: control_tx, mouth: None })
         .await;
 
-    let mut workers = workers::WorkerRegistry::new(scene.clone(), report_tx);
+    let mut workers = workers::WorkerRegistry::new(report_tx);
     let mut pending: Vec<String> = Vec::new();
 
     // The clock. Unchanged in behaviour from the free-standing loop this replaces:
@@ -206,7 +204,7 @@ async fn run(reaction: Reaction, registration: Registration) {
             _ = mail.notified() => Wake::Turn,
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(SceneControl::CreateWorker { id: worker, task, kind, owner }) => {
+                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner }) => {
                         if let Err(err) =
                             workers.spawn_with_id(&reaction, worker, task, kind, owner).await
                         {
@@ -259,9 +257,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 last_reflection = Some(now);
 
                 workers.reap();
-                let scenes =
-                    super::recent_scenes(reaction.inner.memory.data_dir(), super::REWARM_WINDOW);
-                heartbeat::consolidate(&reaction, &scenes, id).await;
+                heartbeat::consolidate(&reaction, id).await;
             }
             Wake::Turn => {}
         }
@@ -276,7 +272,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         }
 
         workers.reap();
-        match turn(&reaction, id, &scene, &pending).await {
+        match turn(&reaction, id, &pending).await {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
@@ -295,13 +291,12 @@ async fn run(reaction: Reaction, registration: Registration) {
 /// One mail wake: open a session, prompt it once, drop it.
 ///
 /// Distinct from a consolidation pass, which has a whole prompt of its own built from
-/// every scene's frontier ([`heartbeat::consolidate`]). This is the ordinary path — a
+/// the conversation's frontier ([`heartbeat::consolidate`]). This is the ordinary path — a
 /// worker reported, or another rung sent something — and it carries the projected window
 /// rather than a frontier.
 async fn turn(
     reaction: &Reaction,
     id: registry::SessionId,
-    scene: &Scene,
     pending: &[String],
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
@@ -320,7 +315,6 @@ async fn turn(
             .inner
             .agent
             .session(
-                scene,
                 SessionRole::Reflection,
                 Some(id),
                 SessionOpts {
@@ -337,9 +331,6 @@ async fn turn(
         .inner
         .observatory
         .record(
-            // Sceneless: the sentinel is a routing tag, not a conversation. Passing it
-            // would put a room nobody is in on the dashboard — `15391e9`.
-            None,
             EventKind::SessionOpened {
                 kind: SessionKind::Reflection,
                 id: session.id().0.to_string(),

@@ -55,11 +55,11 @@ async function* readNdjson<T>(res: Response, signal: AbortSignal): AsyncGenerato
  */
 export async function* observeInput(
   path: string,
-  opts: { scene: string; signal: AbortSignal },
+  opts: { signal: AbortSignal },
 ): AsyncGenerator<InputEvent, void, void> {
   const res = await fetch(path, {
     method: "GET",
-    headers: { "X-HI-Scene": opts.scene, Accept: "application/x-ndjson" },
+    headers: { Accept: "application/x-ndjson" },
     signal: opts.signal,
     cache: "no-store",
   });

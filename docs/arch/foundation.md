@@ -37,7 +37,7 @@ so an upgrade replaces one and never the other.
 | | |
 |---|---|
 | Runtime | process management, the bundled toolchain |
-| ACP / MCP | the agent wire and the tool surface, scene-routed |
+| ACP / MCP | the agent wire and the tool surface, routed by session id |
 | Gateway + vendors | model access, credentials, energy accounting |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
@@ -108,17 +108,16 @@ calling; letting an agent name itself is letting it impersonate.
 back from `CreateWorker`, and the ids of the standing rungs are **projected** into the
 window of whoever may reach them, the same way open tasks are.
 
-That last part is the point. The alternative — letting an agent name a *scene* and having
-the registry resolve it — is retrieval: the agent produces a string and hopes something is
-behind it. Retrieval can miss, and here a miss is indistinguishable from "nobody is there".
-Projecting live ids inverts it: an agent is told who is reachable this turn, so a rung that
-is cold is visible as cold *before* a message is sent at it, and the registry goes back to
-being a map lookup rather than a search.
+That last part is the point. The alternative — letting an agent name a destination by some
+other string and having the registry resolve it — is retrieval: the agent produces a name and
+hopes something is behind it. Retrieval can miss, and here a miss is indistinguishable from
+"nobody is there". Projecting live ids inverts it: an agent is told who is reachable this
+turn, so a rung that is cold is visible as cold *before* a message is sent at it, and the
+registry goes back to being a map lookup rather than a search.
 
-Session ids die with the process, so **nothing durable may hold one** — a task holds a
-scene, and the host resolves that to an id when it builds the window. The durable layer
-speaks scenes; the live layer speaks ids; the projection is the join between them, rebuilt
-every turn because that is the only rate at which it is true.
+Session ids die with the process, so **nothing durable may hold one.** Durable work is
+recovered from [Tasks](data.md#tasks) and re-addressed to whatever session is live now; the
+projection is rebuilt every turn because that is the only rate at which it is true.
 
 One structural restriction, because it is routing rather than policy: **a worker may only
 address its owner.** Whether something is worth saying mid-task is a judgment and lives in
@@ -151,7 +150,7 @@ host fences anyone out.
 | Role | Default surface | Why that size |
 |---|---|---|
 | **Reaction** | `say` · `show` · `SendMessage`, and **no built-ins at all** | its expression channels plus the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
-| **Deliberation** | `SendMessage` · reads (files, memory, web) · write **only** its scene's brief | enough to work out what was asked. No shell and no editor, so heavy work has nowhere to go but up |
+| **Deliberation** | `SendMessage` · reads (files, memory, web) · write **only** the conversation's brief | enough to work out what was asked. No shell and no editor, so heavy work has nowhere to go but up |
 | **Cognition** | `SendMessage` · `CreateWorker` · session reads · task writes | it delegates rather than does, and it is the **sole writer** of the ledger |
 | **Reflection** | as Cognition, minus task writes, plus memory curation | it curates `data/`; duties are not its to record |
 | **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |

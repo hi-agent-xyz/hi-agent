@@ -1,29 +1,27 @@
 //! On-disk paths for the raw memory store.
 //!
-//! Raw is the lossless source of truth, organized by scene (the isolation unit),
-//! then by **channel**, then sharded by UTC day. A channel is that sense's
-//! complete record; the day-folder keeps reads bounded and makes per-channel
-//! fading/archival a single subtree. Each channel-day carries a surface log
-//! named for the channel (`text.jsonl`, `audio.jsonl`, …) plus the bytes its
-//! signals reference, laid out on a wall-clock grid.
+//! Raw is the lossless source of truth, organized by **channel**, then sharded by
+//! UTC day. A channel is that sense's complete record; the day-folder keeps reads
+//! bounded and makes per-channel fading/archival a single subtree. Each channel-day
+//! carries a surface log named for the channel (`text.jsonl`, `audio.jsonl`, …) plus
+//! the bytes its signals reference, laid out on a wall-clock grid.
 //!
 //! ```text
-//! <data_dir>/memory/raw/<scene_enc>/
-//!   ├── scene.json
+//! <data_dir>/memory/raw/
 //!   ├── text/<YYYY-MM-DD>/text.jsonl
 //!   ├── audio/<YYYY-MM-DD>/{ audio.jsonl, <HH>/<MM>-<SS>.<ext>, output/<HH>/<MM>.<ext> … }
-//!   └── vision/<YYYY-MM-DD>/{ vision.jsonl, <HH>/<MM>-<SS>.<ext> … }
+//!   ├── vision/<YYYY-MM-DD>/{ vision.jsonl, <HH>/<MM>-<SS>.<ext> … }
+//!   └── sessions/<run>/<session>.jsonl        (frame logs — see `session_frames_path`)
 //! ```
 //!
-//! Scene ids are arbitrary strings (`alice@phone`) and may carry path-unsafe
-//! characters, so the directory name is a percent-encoding of the id; the true
-//! id is recorded in `scene.json`.
+//! Every child of `raw/` is a channel name or `sessions/`, both of which are
+//! code-supplied constants — so nothing here percent-encodes a user string.
 
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
-use crate::types::{Channel, Scene};
+use crate::types::Channel;
 
 /// Where a signal's media bytes sit within its channel-day folder. Input is the
 /// default (bare); output lives under `output/`. A one-off capture (a posted
@@ -71,17 +69,14 @@ pub fn generated_prompts_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("prompts")
 }
 
-/// `<memory>/prompts/scenes/<scene_enc>.md` — what one scene carries forward,
-/// written by that scene's Deliberation and injected into every one of its turns.
-/// The file name is [`encode_scene`]d for the same reason the raw slice's folder is:
-/// a scene id is an arbitrary string and may carry path-unsafe characters.
-pub fn scene_prompt_path(data_dir: &Path, scene: &Scene) -> PathBuf {
+/// `<memory>/prompts/conversation.md` — what the conversation carries forward,
+/// written by Deliberation and injected into every one of Reaction's turns.
+pub fn conversation_prompt_path(data_dir: &Path) -> PathBuf {
     generated_prompts_dir(data_dir)
-        .join("scenes")
-        .join(format!("{}.md", encode_scene(scene)))
+        .join("conversation.md")
 }
 
-/// `<memory>/prompts/<agent>.md` — what a **sceneless** agent carries forward
+/// `<memory>/prompts/<agent>.md` — what a standing agent carries forward
 /// (`cognition.md`). Not a full set on purpose: an agent gets a file when it turns
 /// out to need one. `agent` is a code-supplied name, never a user string.
 pub fn agent_prompt_path(data_dir: &Path, agent: &str) -> PathBuf {
@@ -115,7 +110,6 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("reflexes")
 }
 
-/// `<raw>/<scene_enc>` — one slice per scene.
 /// `<memory>/raw/sessions/<run>/<session>.jsonl` — **one agent session's stream,
 /// verbatim**.
 ///
@@ -141,63 +135,39 @@ pub fn session_frames_path(data_dir: &Path, run: &str, session: u64) -> PathBuf 
     raw_root(data_dir).join(SESSIONS_DIR).join(run).join(format!("{session}.jsonl"))
 }
 
-/// The one child of `raw/` that is **not** a scene: foundation's own per-session frame
-/// log ([`session_frames_path`]). Every other child is `encode_scene(scene)`.
-///
-/// Named here, beside the path that creates it, because a walker of `raw/` cannot tell
-/// the difference structurally — a scene's `scene.json` sidecar is written best-effort,
-/// so its absence proves nothing and using it as the test would hide a real scene whose
-/// sidecar write failed. A name list is exact for the one case that exists.
-///
-/// The cost, stated: a scene literally named `sessions` encodes to this same folder and
-/// would be skipped by anything consulting [`is_scene_dir`]. Degraded (invisible to
-/// re-warm), not corrupt — its log still writes and reads normally.
+/// The child of `raw/` that is **not** a channel: foundation's own per-session frame
+/// log ([`session_frames_path`]). Every other child is [`Channel::as_str`] or
+/// `appearance`, and all of those are code-supplied constants — so a walker can tell
+/// them apart by name with no ambiguity and no sidecar to consult.
 pub const SESSIONS_DIR: &str = "sessions";
 
-/// Whether a directory name directly under `raw/` names a scene. See [`SESSIONS_DIR`].
-pub fn is_scene_dir(name: &str) -> bool {
+/// Whether a directory name directly under `raw/` holds journalled signals — i.e.
+/// anything but the frame log. See [`SESSIONS_DIR`].
+pub fn is_signal_dir(name: &str) -> bool {
     name != SESSIONS_DIR
 }
 
-pub fn scene_dir(data_dir: &Path, scene: &Scene) -> PathBuf {
-    raw_root(data_dir).join(encode_scene(scene))
-}
-
-/// `<scene>/<channel>/<YYYY-MM-DD>` — the channel-day folder a signal at `ts`
+/// `<raw>/<channel>/<YYYY-MM-DD>` — the channel-day folder a signal at `ts`
 /// belongs to, holding that day's surface log and the bytes its signals
 /// reference. The parent of both the log and the byte grid.
-pub fn channel_day_dir(
-    data_dir: &Path,
-    scene: &Scene,
-    channel: Channel,
-    ts: DateTime<Utc>,
-) -> PathBuf {
-    scene_dir(data_dir, scene)
-        .join(channel.as_str())
-        .join(day_key(ts))
+pub fn channel_day_dir(data_dir: &Path, channel: Channel, ts: DateTime<Utc>) -> PathBuf {
+    raw_root(data_dir).join(channel.as_str()).join(day_key(ts))
 }
 
 /// `<channel>/<date>/<channel>.jsonl` — the day's surface log for one channel,
 /// named for the channel so the file is self-describing even detached from its
 /// folder.
-pub fn channel_log_path(
-    data_dir: &Path,
-    scene: &Scene,
-    channel: Channel,
-    ts: DateTime<Utc>,
-) -> PathBuf {
-    channel_day_dir(data_dir, scene, channel, ts).join(format!("{}.jsonl", channel.as_str()))
+pub fn channel_log_path(data_dir: &Path, channel: Channel, ts: DateTime<Utc>) -> PathBuf {
+    channel_day_dir(data_dir, channel, ts).join(format!("{}.jsonl", channel.as_str()))
 }
 
-/// `<scene>/appearance/<YYYY-MM-DD>` — the day-folder for a scene's screen-state
-/// history. Appearance is a state channel, not an event stream: it holds
-/// timestamped whole-state snapshots (`appearance-<HHMMSSZ>.json`), not a
-/// `<channel>.jsonl`, so it is reached through this helper rather than
-/// [`channel_day_dir`] (there is no `Channel::Appearance`).
-pub fn appearance_day_dir(data_dir: &Path, scene: &Scene, ts: DateTime<Utc>) -> PathBuf {
-    scene_dir(data_dir, scene)
-        .join("appearance")
-        .join(day_key(ts))
+/// `<raw>/appearance/<YYYY-MM-DD>` — the day-folder for the screen-state history.
+/// Appearance is a state channel, not an event stream: it holds timestamped
+/// whole-state snapshots (`appearance-<HHMMSSZ>.json`), not a `<channel>.jsonl`, so
+/// it is reached through this helper rather than [`channel_day_dir`] (there is no
+/// `Channel::Appearance`).
+pub fn appearance_day_dir(data_dir: &Path, ts: DateTime<Utc>) -> PathBuf {
+    raw_root(data_dir).join("appearance").join(day_key(ts))
 }
 
 /// The byte path for a signal's media **relative to its channel-day folder**, by
@@ -218,30 +188,9 @@ pub fn day_key(ts: DateTime<Utc>) -> String {
     ts.format("%Y-%m-%d").to_string()
 }
 
-/// Path-safe directory name for a scene: percent-encode every byte outside the
-/// unreserved set `[A-Za-z0-9._-]`. Deterministic, so a scene always maps to the
-/// same folder; the inverse is never needed (the true id lives in `scene.json`).
-pub fn encode_scene(scene: &Scene) -> String {
-    let mut out = String::with_capacity(scene.0.len());
-    for b in scene.0.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn encodes_path_unsafe_chars() {
-        assert_eq!(encode_scene(&Scene("alice@phone".into())), "alice%40phone");
-        assert_eq!(encode_scene(&Scene("a/b".into())), "a%2Fb");
-        assert_eq!(encode_scene(&Scene("plain-1.0_x".into())), "plain-1.0_x");
-    }
 
     /// The generated tree sits under `memory/`, never beside the bundled
     /// `<data_dir>/prompts/` — the parent directory is what says who wrote the file.
@@ -254,14 +203,9 @@ mod tests {
             agent_prompt_path(root, "cognition"),
             root.join("memory").join("prompts").join("cognition.md")
         );
-        // A scene id with path-unsafe characters cannot escape the tree.
         assert_eq!(
-            scene_prompt_path(root, &Scene("alice@phone".into())),
-            root.join("memory").join("prompts").join("scenes").join("alice%40phone.md")
-        );
-        assert!(
-            scene_prompt_path(root, &Scene("../../etc/passwd".into()))
-                .starts_with(root.join("memory").join("prompts").join("scenes"))
+            conversation_prompt_path(root),
+            root.join("memory").join("prompts").join("conversation.md")
         );
     }
 }

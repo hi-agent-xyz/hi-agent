@@ -1,4 +1,4 @@
-//! Snapshot — the per-scene state projected into a scene's reaction session, and the
+//! Snapshot — the state projected into the reaction session, and the
 //! recent-signals tail underneath it.
 //!
 //! **Projected = what Reaction must know without reading; everything else is recall.**
@@ -11,12 +11,12 @@
 //!
 //! - **Injection is every turn**, not once at session open. A window that is only
 //!   correct when the session rotates is stale for the rest of the conversation — a
-//!   task opened mid-thread, or a scene memory written a minute ago, would simply not
+//!   task opened mid-thread, or a memory written a minute ago, would simply not
 //!   be there. This is the one that everything else here exists to serve.
 //! - **The bound is code's**, never the agent's: [`CARRIED_FORWARD_CHARS`], and over it
 //!   the text says so. A ceiling that shows up as text is real; one that shows up as
 //!   latency is not.
-//! - **The floor is the log tail** ([`build_for_scene`]). An agent that never got round
+//! - **The floor is the log tail** ([`build`]). An agent that never got round
 //!   to writing its memory — busy, crashed, mid-restart — leaves a window that is
 //!   uncurated, never empty.
 //!
@@ -30,7 +30,7 @@ use std::path::Path;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::mind::memory::{Memory, layout, tasks};
-use crate::types::{Channel, JournalEntry, Scene};
+use crate::types::{Channel, JournalEntry};
 
 pub const RECENT_WINDOW_MIN: i64 = 30;
 pub const RECENT_ENTRY_LIMIT: usize = 200;
@@ -51,10 +51,10 @@ pub const RECENT_ENTRY_LIMIT: usize = 200;
 /// want, and the same one [`tasks`] makes on its own lines.
 pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 
-/// Everything the scene's reaction must know without reading, in one block, rebuilt
+/// Everything the reaction must know without reading, in one block, rebuilt
 /// **on every turn**.
 ///
-/// In order: what this scene carries forward (the generated prompt, capped), what the
+/// In order: what the conversation carries forward (the generated prompt, capped), what the
 /// agent owes ([`tasks::projection`]), what it may reach,
 /// the learned read on speaking up unprompted, and the recent-signals tail — the tail
 /// last, so it sits against the turn's new signals and reads as one continuous thread.
@@ -66,11 +66,10 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 /// in here has to stay small.
 pub async fn window(
     memory: &Memory,
-    scene: &Scene,
     id: crate::foundation::registry::SessionId,
 ) -> String {
     let data_dir = memory.data_dir();
-    let carried = carried_forward(&layout::scene_prompt_path(data_dir, scene)).await;
+    let carried = carried_forward(&layout::conversation_prompt_path(data_dir)).await;
     let owed = match tasks::projection(data_dir).await {
         Ok(text) => text,
         Err(err) => {
@@ -79,13 +78,12 @@ pub async fn window(
         }
     };
     let unprompted = speaking_up_unprompted(data_dir).await;
-    // Who this rung may reach, by id — see [`agent_window`]. For a scene rung that is
-    // the shared brain and nothing else: work goes up, and a scene is not somewhere
-    // another scene's work belongs.
+    // Who this rung may reach, by id — see [`agent_window`]. For the voice that is
+    // the brain and nothing else: work goes up.
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
     );
-    let tail = recent_tail(memory, scene).await;
+    let tail = recent_tail(memory).await;
     join(&[
         carried.as_str(),
         owed.as_str(),
@@ -95,11 +93,12 @@ pub async fn window(
     ])
 }
 
-/// The window for a **sceneless** agent — what it must know without going to look.
+/// The window for an agent that is not the voice — what it must know without going to
+/// look.
 ///
-/// The scene-shaped [`window`] cannot serve one: four of its five sections are a
-/// conversation's (the scene's brief, its recent tail, the proactivity read that only a
-/// voice can act on). What survives the loss of a scene is what belongs to the whole
+/// The voice-shaped [`window`] cannot serve one: four of its five sections are the
+/// conversation's (its brief, its recent tail, the proactivity read that only a
+/// voice can act on). What survives without a conversation is what belongs to the whole
 /// agent — the open-task ledger, and whatever this agent has written down for itself.
 ///
 /// **Projected, not retrieved**, which is the whole reason this exists rather than a
@@ -126,8 +125,8 @@ pub async fn agent_window(
     };
     // Who it can reach, by id. This is projection for the same reason the ledger is:
     // an address that has to be guessed is an address that can be wrong in a way the
-    // guesser cannot detect. A task's `report_to` is a durable scene name, and this is
-    // where that becomes a live session — or visibly does not, when the scene is cold.
+    // guesser cannot detect. Durable work is recovered from the ledger, and this is
+    // where a live session to voice it through becomes visible — or visibly does not.
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
     );
@@ -192,10 +191,10 @@ go without.]"
 }
 
 // `legacy_working_set` lived here: `self.md` under "Who I am to this person" and
-// `hot.md` under "Lately on my mind", read off disk and injected into every scene
+// `hot.md` under "Lately on my mind", read off disk and injected into every
 // window. **Both are gone**, which its own TODO said would happen with the change that
 // gave Deliberation the writer's job — and Deliberation now writes
-// `memory/prompts/scenes/<id>.md`, which is what [`carried_forward`] projects at the top
+// `memory/prompts/conversation.md`, which is what [`carried_forward`] projects at the top
 // of this window.
 //
 // They were held back because removing them *before* anything wrote the generated
@@ -206,20 +205,20 @@ go without.]"
 // competed with the brief a rung actually authored for itself.
 //
 // The writers are untouched: reflection still refreshes `hot.md`, and `self.md` is still
-// authored. What changed is that neither is injected into a window any more. If the scene
+// authored. What changed is that neither is injected into a window any more. If the
 // brief turns out to be thinner in practice than what these carried, that is a fix to
 // `deliberation.md` — the rung that writes it — and not a reason to re-add a second
 // source of the same thing.
 
 
-/// The floor: the scene's recent signals, straight off the log. Never empty — an
+/// The floor: the recent signals, straight off the log. Never empty — an
 /// unwritten window is uncurated, not blank — and never fatal: a log that cannot be
 /// read says exactly that, rather than rendering `(none)` and claiming a quiet room.
-async fn recent_tail(memory: &Memory, scene: &Scene) -> String {
-    match build_for_scene(memory, scene).await {
+async fn recent_tail(memory: &Memory) -> String {
+    match build(memory).await {
         Ok(snap) => snap.render_for_prompt(),
         Err(err) => {
-            tracing::warn!(scene = %scene, error = %err, "recent tail unreadable");
+            tracing::warn!(error = %err, "recent tail unreadable");
             format!("## Recent (last {RECENT_WINDOW_MIN} minutes)\n(unavailable — I couldn't read the log just now)\n")
         }
     }
@@ -239,20 +238,18 @@ fn join(sections: &[&str]) -> String {
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
-    pub scene: Scene,
     pub recent_entries: Vec<JournalEntry>,
     pub now: DateTime<Utc>,
 }
 
-pub async fn build_for_scene(memory: &Memory, scene: &Scene) -> anyhow::Result<Snapshot> {
+pub async fn build(memory: &Memory) -> anyhow::Result<Snapshot> {
     let now = Utc::now();
     let since = now - Duration::minutes(RECENT_WINDOW_MIN);
     let recent_entries = memory
         .journal
-        .recent(Some(scene), since, RECENT_ENTRY_LIMIT)
+        .recent(since, RECENT_ENTRY_LIMIT)
         .await?;
     Ok(Snapshot {
-        scene: scene.clone(),
         recent_entries,
         now,
     })
@@ -329,19 +326,14 @@ mod window_tests {
     use super::*;
     use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
 
-    fn scene() -> Scene {
-        Scene("boss".into())
-    }
-
-    /// Put one line in the scene's log, so the floor has something to stand on.
-    async fn heard(memory: &Memory, scene: &Scene, body: &str) {
+    /// Put one line in the log, so the floor has something to stand on.
+    async fn heard(memory: &Memory, body: &str) {
         memory
             .journal
             .append(JournalEntry::SignalIn {
                 id: uuid::Uuid::now_v7().to_string(),
                 ts: Utc::now(),
                 channel: Channel::Text,
-                scene: scene.clone(),
                 body: body.to_string(),
                 stream: None,
                 media: None,
@@ -351,8 +343,8 @@ mod window_tests {
             .unwrap();
     }
 
-    async fn write_scene_prompt(data_dir: &Path, scene: &Scene, body: &str) {
-        let path = layout::scene_prompt_path(data_dir, scene);
+    async fn write_conversation_prompt(data_dir: &Path, body: &str) {
+        let path = layout::conversation_prompt_path(data_dir);
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, body).await.unwrap();
     }
@@ -363,21 +355,20 @@ mod window_tests {
     async fn a_missing_generated_prompt_still_leaves_the_log_tail() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let scene = scene();
-        heard(&memory, &scene, "把周报发我").await;
+        heard(&memory, "把周报发我").await;
 
         // Not merely absent as a file — absent as a whole tree.
         assert!(!layout::generated_prompts_dir(dir.path()).exists());
 
-        let text = window(&memory, &scene, 0).await;
+        let text = window(&memory, 0).await;
         assert!(!text.trim().is_empty());
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
         assert!(text.contains("把周报发我"), "{text}");
 
         // A blank file is the same as no file, not an empty section header.
-        write_scene_prompt(dir.path(), &scene, "   \n\t\n").await;
-        let text = window(&memory, &scene, 0).await;
+        write_conversation_prompt(dir.path(), "   \n\t\n").await;
+        let text = window(&memory, 0).await;
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("把周报发我"), "{text}");
     }
@@ -388,7 +379,7 @@ mod window_tests {
     async fn an_empty_store_still_yields_a_window() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let text = window(&memory, &scene(), 0).await;
+        let text = window(&memory, 0).await;
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
         assert!(text.contains("(none)"), "{text}");
     }
@@ -399,11 +390,10 @@ mod window_tests {
     async fn over_the_cap_the_text_is_cut_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let scene = scene();
 
         // Just under the cap: whole, and no notice.
-        write_scene_prompt(dir.path(), &scene, &"a".repeat(CARRIED_FORWARD_CHARS)).await;
-        let text = window(&memory, &scene, 0).await;
+        write_conversation_prompt(dir.path(), &"a".repeat(CARRIED_FORWARD_CHARS)).await;
+        let text = window(&memory, 0).await;
         assert!(text.contains("## What I carry forward"), "{text}");
         assert!(!text.contains("Cut here by the host"), "{text}");
 
@@ -411,16 +401,16 @@ mod window_tests {
         // `q` appears nowhere in the headings or the notice, so counting it counts
         // exactly what survived the cut.
         let long = format!("{}TAIL-THAT-MUST-NOT-SURVIVE", "q".repeat(CARRIED_FORWARD_CHARS));
-        write_scene_prompt(dir.path(), &scene, &long).await;
-        let text = window(&memory, &scene, 0).await;
+        write_conversation_prompt(dir.path(), &long).await;
+        let text = window(&memory, 0).await;
         assert!(!text.contains("TAIL-THAT-MUST-NOT-SURVIVE"), "the tail rode past the cap");
         assert!(text.contains("Cut here by the host"), "{text}");
         assert!(text.contains(&CARRIED_FORWARD_CHARS.to_string()), "{text}");
         assert_eq!(text.matches('q').count(), CARRIED_FORWARD_CHARS);
 
         // Characters, not bytes — a CJK prompt clips at the same visible length.
-        write_scene_prompt(dir.path(), &scene, &"记".repeat(CARRIED_FORWARD_CHARS * 2)).await;
-        let text = window(&memory, &scene, 0).await;
+        write_conversation_prompt(dir.path(), &"记".repeat(CARRIED_FORWARD_CHARS * 2)).await;
+        let text = window(&memory, 0).await;
         assert_eq!(text.matches('记').count(), CARRIED_FORWARD_CHARS);
         assert!(text.contains("Cut here by the host"), "{text}");
     }
@@ -431,7 +421,6 @@ mod window_tests {
     async fn active_tasks_are_in_the_window_with_nothing_fetching_them() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let scene = scene();
 
         let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.title = "Ship the flash cards".into();
@@ -441,7 +430,7 @@ mod window_tests {
         done.title = "Renew the domain".into();
         write_task(dir.path(), &done).await.unwrap();
 
-        let text = window(&memory, &scene, 0).await;
+        let text = window(&memory, 0).await;
         assert!(text.contains("# Active tasks"), "{text}");
         assert!(text.contains("- [doing] Ship the flash cards"), "{text}");
         // Closed ones are history, not window furniture.
@@ -454,14 +443,13 @@ mod window_tests {
     async fn the_block_reads_in_one_fixed_order() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let scene = scene();
-        write_scene_prompt(dir.path(), &scene, "He is mid-migration and wants terse answers.").await;
+        write_conversation_prompt(dir.path(), "He is mid-migration and wants terse answers.").await;
         let mut owed = Task::new("Ship the flash cards", TaskStatus::Doing);
         owed.title = "Ship the flash cards".into();
         write_task(dir.path(), &owed).await.unwrap();
-        heard(&memory, &scene, "还有多久").await;
+        heard(&memory, "还有多久").await;
 
-        let text = window(&memory, &scene, 0).await;
+        let text = window(&memory, 0).await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
         assert!(at("## What I carry forward") < at("# Active tasks"));
         assert!(at("# Active tasks") < at("## Recent (last 30 minutes)"));
@@ -477,7 +465,7 @@ mod window_tests {
         tokio::fs::create_dir_all(commitments.parent().unwrap()).await.unwrap();
         tokio::fs::write(&commitments, "- watch the ops group\n").await.unwrap();
 
-        let text = window(&memory, &scene(), 0).await;
+        let text = window(&memory, 0).await;
         assert!(!text.contains("watch the ops group"), "{text}");
         assert!(!text.contains("standing commitments"), "{text}");
     }
@@ -486,7 +474,7 @@ mod window_tests {
     /// what is owed is a Cognition that can miss a duty and never know it missed one —
     /// so the active tasks arrive whether or not it thought to ask.
     #[tokio::test]
-    async fn the_sceneless_window_projects_the_ledger_and_what_was_carried() {
+    async fn the_standing_window_projects_the_ledger_and_what_was_carried() {
         use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
 
         let dir = tempfile::tempdir().unwrap();
@@ -507,27 +495,26 @@ mod window_tests {
         assert!(text.contains("needs sudo"), "{text}");
     }
 
-    /// Nothing of a *conversation* may leak into a sceneless window. The scene-shaped
+    /// Nothing of a *conversation* may leak into a standing agent's window. The voice-shaped
     /// sections are four fifths of `window`, and each one would be answering a question
     /// about a room Cognition is not in.
     #[tokio::test]
-    async fn the_sceneless_window_carries_nothing_scene_shaped() {
+    async fn the_standing_window_carries_nothing_conversational() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let scene = scene();
-        heard(&memory, &scene, "把周报发我").await;
-        write_scene_prompt(dir.path(), &scene, "He is mid-migration this week.").await;
+        heard(&memory, "把周报发我").await;
+        write_conversation_prompt(dir.path(), "He is mid-migration this week.").await;
 
         let text = agent_window(&memory, "cognition", 0).await;
-        assert!(!text.contains("把周报发我"), "no scene's log tail: {text}");
-        assert!(!text.contains("mid-migration"), "no scene's brief: {text}");
+        assert!(!text.contains("把周报发我"), "no log tail: {text}");
+        assert!(!text.contains("mid-migration"), "no conversation brief: {text}");
     }
 
     /// An agent that has written nothing down yet, and owes nothing yet, gets an empty
     /// window rather than a header with nothing under it — the join drops empties, and a
     /// section that is only a title reads as data that failed to load.
     #[tokio::test]
-    async fn an_empty_sceneless_window_is_empty() {
+    async fn an_empty_standing_window_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
         assert!(agent_window(&memory, "cognition", 0).await.trim().is_empty());

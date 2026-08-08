@@ -59,13 +59,16 @@ all run a capable model. What differs is how long each may take and how much of 
 is responsible for. The bottom rung is the exception: **reflex runs no model at all**, because
 a generation is far too slow for what it handles.
 
-| | Scope | Time | Job |
-|---|---|---|---|
-| **Reflex** | one scene | sub-second | taught quick-actions and barge-in — **no model in the loop** |
-| **Reaction** | one scene | one generation | speaks, holds the floor, manages the interaction |
-| **Deliberation** | one scene | seconds | works out what was actually asked — reads a little, checks a file, looks at the photo |
-| **Cognition** | sceneless | minutes+ | the outward brain: owns Tasks, dispatches workers, stays idle and responsive |
-| **Reflection** | sceneless | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
+There is **one of each**. The agent is one mind having one continuous conversation, so no
+rung is partitioned — see [One conversation](core.md#one-conversation).
+
+| | Time | Job |
+|---|---|---|
+| **Reflex** | sub-second | taught quick-actions and barge-in — **no model in the loop** |
+| **Reaction** | one generation | speaks, holds the floor, manages the interaction |
+| **Deliberation** | seconds | works out what was actually asked — reads a little, checks a file, looks at the photo |
+| **Cognition** | minutes+ | the outward brain: owns Tasks, dispatches workers, stays idle and responsive |
+| **Reflection** | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
 
 Reflex is drawn on the ladder because it is a real tempo, but it is not an agent — it lives in
 the host, in [`core.md`](core.md#reflex).
@@ -79,11 +82,11 @@ Below the ladder sit **workers** — where the actual jobs get done.
   CHANNELS     in: text · audio · vision · file(by ref)
                out: say · show · act
   ─────────────────────────────────────────────────────────────────────────────
-  CORE         wire · scene router · channel mux · arbiter · presence ·
+  CORE         wire · channel mux · presence ·
   (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
-  AGENTS       per scene:  Reaction ⟷ Deliberation
-               sceneless:  Cognition · Reflection
+  AGENTS       the voice:  Reaction ⟷ Deliberation
+               the brain:  Cognition · Reflection
                workers:    general · view builder · view reviewer · decision maker
                all of the above = one ACP session, differing only by prompt + tools
   ─────────────────────────────────────────────────────────────────────────────
@@ -100,23 +103,22 @@ Below the ladder sit **workers** — where the actual jobs get done.
 
 Each is a statement we can test, and each has a real failure behind it.
 
-1. **One mouth per scene.** Only Reaction speaks, and within a scene utterances never
-   overlap. The guarantee is *per scene, not process-wide* — a global mouth would make one
-   scene queue behind another's turn, which is exactly what invariant 3 forbids. Everything
-   else proposes; the arbiter decides when.
+1. **One mouth.** Only Reaction speaks, and utterances never overlap. Everything else
+   proposes; Reaction decides when.
 2. **Only workers act** — meaning **workers do the actual jobs**, and nothing more. This is a
    division of labour, not a security boundary. Per-role prompts and
    [tool surfaces](foundation.md#default-tool-surfaces) are a *context optimization* — a
    smaller window and a faster turn — not a rail deciding which agent may call which tool.
-3. **Never wait on another scene.** Cross-scene reference is an accepted side effect of one
-   shared memory — not a goal, and never worth a scene going deaf for.
+3. **The voice never waits on a slower rung.** Reaction hands work down and reads the answer
+   when it arrives; it does not block on Deliberation, Cognition, or a worker. A mouth that
+   waits is a person left staring at silence, and no result is worth going deaf for.
 4. **Open tasks are projected, not retrieved.** Retrieval can miss, and a missed duty is a
    silently broken promise. The general form — what earns a place in any window at all — is
    the [projection test](data.md#what-earns-a-place).
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
    through Reaction, and an empty room holds the turn rather than dropping it.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
-   glancing up — the scene pulse, the reflection backoff, Cognition's glance-up. Scheduling
+   glancing up — the pulse, the reflection backoff, Cognition's glance-up. Scheduling
    past that is the agent's to build with the shell it already has; see
    [the clock we declined](core.md#glancing-up--and-why-there-is-no-clock).
 7. **Recovery is reconstruction, not continuation.** Workers are volatile, so anything
@@ -135,7 +137,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | Doc | Covers |
 |---|---|
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
-| [`core.md`](core.md) | the Rust host: scene routing, the arbiter, sessions, reflex, glancing up |
+| [`core.md`](core.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |
@@ -154,5 +156,5 @@ Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
 - [`legacy/faculties.md`](legacy/faculties.md) — the built-vs-grown organization. Its
   placement test survives as the authorship rule above.
 - [`legacy/reaction-cognition-split.md`](legacy/reaction-cognition-split.md) — the three-tempo
-  split. Superseded by the ladder above, which adds Deliberation, moves Cognition out of the
-  scene, and draws reflex as the rung below Reaction.
+  split. Superseded by the ladder above, which adds Deliberation and draws reflex as the
+  rung below Reaction.

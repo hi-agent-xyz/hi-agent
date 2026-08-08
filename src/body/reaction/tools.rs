@@ -1,20 +1,19 @@
-//! The bridge between the MCP tool server and each scene's reaction loop.
+//! The bridge between the MCP tool server and the reaction loop.
 //!
 //! The mind (and its workers) express side-effects as MCP tool calls over the
 //! `/mcp` HTTP endpoint (see [`crate::foundation::mcp`]). Those calls arrive on a different
-//! task than the per-scene loop, so they cannot touch the loop's private state
-//! directly. Instead each scene registers a [`ToolSink`] — a control-channel
-//! sender — into a shared [`ToolRegistry`] keyed by scene. The MCP handler looks
-//! the sink up by the call's `X-HI-Scene` header and forwards a [`SceneControl`]
+//! task than the reaction loop, so they cannot touch the loop's private state
+//! directly. Instead the loop registers a [`ToolSink`] — a control-channel
+//! sender — into the shared [`ToolRegistry`]. The MCP handler takes the sink from
+//! there and forwards a [`LoopControl`]
 //! the loop applies on its own turn, so the worker registry stays owned by the
 //! loop with no locking.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, mpsc};
 
-use crate::types::{Scene, ViewTraits};
+use crate::types::ViewTraits;
 
 use super::sequencer::Beat;
 
@@ -23,38 +22,38 @@ use super::sequencer::Beat;
 /// accidental dumps and leaves room for a few ordinary sentences.
 pub(super) const SAY_MAX_CHARS: usize = 240;
 
-/// One command the MCP tool server routes to a scene's reaction loop.
+/// One command the MCP tool server routes to the reaction loop.
 ///
 /// Once there were four: two for dispatching work and two for a worker to reach the
 /// voice. The reaching ones are gone — a worker addresses its owner with the one verb
-/// now, through the switchboard, which needs no per-scene channel because it is not
-/// per-scene. `Alarm` went with [the clock we declined](../../../docs/arch/core.md);
+/// now, through the switchboard, which needs no channel of its own.
+/// `Alarm` went with [the clock we declined](../../../docs/arch/core.md);
 /// scheduling is the agent's own, built with the shell it already has. What is left
 /// is one variant, and it is here because the loop owns the state it touches.
 #[derive(Debug)]
-pub enum SceneControl {
+pub enum LoopControl {
     /// Start a working session for `task` (the `create_worker` tool), owned by the
     /// session that asked.
     ///
     /// Creating a worker is the caller's decision but the loop's bookkeeping — the
     /// live-session map is the loop's own state, so this crosses on the control
     /// channel like everything else that touches it. `owner` is who the finished work
-    /// answers to; a worker belongs to the session that created it, never to the scene
+    /// answers to; a worker belongs to the session that created it, never to the voice
     /// it happens to run in.
     CreateWorker { id: u64, task: String, kind: crate::identity::WorkerType, owner: Option<u64> },
 }
 
-/// Per-scene handle the MCP handler dispatches to. Cheap to clone. Carries two
+/// The handle the MCP handler dispatches to. Cheap to clone. Carries two
 /// senders: `control` for loop-applied side-effects (creating a worker), and
-/// `mouth` for output (say/show) that the scene's sequencer renders directly
+/// `mouth` for output (say/show) that the sequencer renders directly
 /// — output bypasses the turn loop so it streams while the prompt is still
 /// running.
 #[derive(Clone)]
 pub struct ToolSink {
-    pub(super) control: mpsc::Sender<SceneControl>,
+    pub(super) control: mpsc::Sender<LoopControl>,
     /// Where expression goes — **`None` for a rung with no mouth.**
     ///
-    /// Only a scene has somewhere for speech to go. Cognition registers a sink so its
+    /// Only the voice has somewhere for speech to go. Cognition registers a sink so its
     /// workers have a home, and it has no sequencer, no audio, no screen; expressing
     /// there is not "blocked", it is undefined. Making that an `Option` states it once
     /// in the type instead of leaving it to two guards elsewhere agreeing — the tool
@@ -63,23 +62,22 @@ pub struct ToolSink {
     pub(super) mouth: Option<Mouth>,
 }
 
-/// One scene's outbound half: the sequencer to emit onto, plus the presence read
+/// The outbound half: the sequencer to emit onto, plus the presence read
 /// that decides what an emission can actually reach.
 ///
 /// Presence lives here rather than being looked up at the call site because the two
-/// are the same fact — a mouth *is* a scene's channels — and because the answer is
+/// are the same fact — a mouth *is* the channels — and because the answer is
 /// needed at the instant of emission, not at the instant the sink was built.
 #[derive(Clone)]
 pub(super) struct Mouth {
     pub(super) beats: mpsc::Sender<Beat>,
     pub(super) presence: crate::body::presence::Presence,
-    pub(super) scene: Scene,
 }
 
 /// What became of an utterance — the answer `say` hands back to Reaction.
 ///
 /// The accepted cases are not degrees of success; they are different fates, and
-/// only one of them is lossy. Text is buffered per scene and delivered to a reader
+/// only one of them is lossy. Text is retained and delivered to every reader
 /// that opens later, so words keep. **Voice does not**: a TTS span synthesized with
 /// no speaker attached is spent, and the person never learns it happened — the
 /// failure `docs/arch/core.md#presence` exists to prevent. `TooLong` is rejected
@@ -117,16 +115,16 @@ impl Spoken {
 }
 
 impl ToolSink {
-    /// Forward one control command to the scene loop. Returns an error only if
+    /// Forward one control command to the reaction loop. Returns an error only if
     /// the loop is gone (channel closed).
-    pub async fn send(&self, control: SceneControl) -> anyhow::Result<()> {
+    pub async fn send(&self, control: LoopControl) -> anyhow::Result<()> {
         self.control
             .send(control)
             .await
-            .map_err(|_| anyhow::anyhow!("scene loop gone; control dropped"))
+            .map_err(|_| anyhow::anyhow!("reaction loop gone; control dropped"))
     }
 
-    /// Speak `text` (the `say` tool): queue it onto the scene's output sequencer,
+    /// Speak `text` (the `say` tool): queue it onto the output sequencer,
     /// which paces it to TTS. Acks immediately — never waits on synthesis.
     ///
     /// The returned [`Spoken`] is read against presence *here*, at emission, rather
@@ -141,12 +139,12 @@ impl ToolSink {
         if text.chars().count() > SAY_MAX_CHARS {
             return Ok(Spoken::TooLong);
         }
-        let reach = mouth.presence.reachable(&mouth.scene);
+        let reach = mouth.presence.reachable();
         mouth
             .beats
             .send(Beat::Say(text))
             .await
-            .map_err(|_| anyhow::anyhow!("scene sequencer gone; say dropped"))?;
+            .map_err(|_| anyhow::anyhow!("sequencer gone; say dropped"))?;
         Ok(match (reach.speaker, reach.window) {
             (true, _) => Spoken::Voiced,
             (false, true) => Spoken::TextOnly,
@@ -159,7 +157,7 @@ impl ToolSink {
     /// `id` may be omitted (one is synthesized). `traits` is what the view declared
     /// about itself (or `None` — host-owned captions).
     ///
-    /// Unlike speech this is never gated: a view is retained scene state, folded and
+    /// Unlike speech this is never gated: a view is retained state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
     /// into an empty room costs nothing and is waiting when they arrive.
     pub async fn show(
@@ -175,15 +173,15 @@ impl ToolSink {
             .beats
             .send(Beat::Show { id, op, source, traits })
             .await
-            .map_err(|_| anyhow::anyhow!("scene sequencer gone; show dropped"))
+            .map_err(|_| anyhow::anyhow!("sequencer gone; show dropped"))
     }
 }
 
-/// Shared scene→sink table. Created once in `lib.rs`, shared (cloneable handle)
+/// The shared sink slot. Created once in `lib.rs`, shared (cloneable handle)
 /// between the HTTP front's `/mcp` handler and the reaction that registers sinks.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
-    inner: Arc<Mutex<HashMap<Scene, ToolSink>>>,
+    inner: Arc<Mutex<Option<ToolSink>>>,
 }
 
 impl ToolRegistry {
@@ -191,32 +189,25 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Register (or replace) a scene's sink. Called when the per-scene loop is
+    /// Register (or replace) the sink. Called when the reaction loop is
     /// created, before its session opens and can issue any tool call.
-    pub async fn register(&self, scene: Scene, sink: ToolSink) {
-        self.inner.lock().await.insert(scene, sink);
+    pub async fn register(&self, sink: ToolSink) {
+        *self.inner.lock().await = Some(sink);
     }
 
-    /// Look a scene's sink up by its `X-HI-Scene` header. `None` if no loop is
-    /// registered for it (e.g. a stale or unknown scene).
-    pub async fn get(&self, scene: &Scene) -> Option<ToolSink> {
-        self.inner.lock().await.get(scene).cloned()
+    /// The registered sink, or `None` before the loop has stood itself up.
+    pub async fn get(&self) -> Option<ToolSink> {
+        self.inner.lock().await.clone()
     }
 
-    // `any_host()` used to live here: "any live scene loop, for work that must run
-    // somewhere but belongs to nobody's conversation". It is **deleted**, not moved.
-    //
-    // It existed because a sceneless rung creating a worker had nowhere to run it, so it
-    // borrowed the lowest-named live scene. Borrowing was never only hosting: the lent
-    // scene became the worker's `X-HI-Scene` (so `watch`/`see` resolved to a stranger's
-    // camera), the `{scene}` in its prompt, and the scene its report was journaled under
-    // — which then fed *that* scene's episodes with work it never asked for. The doc
-    // comment claimed the scene was not told; it was told three ways.
-    //
-    // Both callers have their own sink now — Cognition under `*cognition*`, Reflection
-    // under `*consolidation*` — so `registry.get(scene)` succeeds for each and the
-    // fallback had no remaining caller. A rung that dispatches work hosts its own
-    // workers; that is the whole rule, and it needs no fallback.
+    // `any_host()` used to live here: "any live reaction loop, for work that must run
+    // somewhere". It is gone with the key it borrowed. It existed because a rung with
+    // no conversation of its own creating a worker had nowhere to run it, so it took
+    // the lowest-named live conversation. Borrowing was never only hosting: the lent conversation
+    // became the worker's `X-HI-Conversation` (so `watch`/`see` resolved to a stranger's
+    // camera), the `{conversation}` in its prompt, and the conversation its report was journaled
+    // under — which then fed *that* conversation's episodes with work it never asked for.
+    // With one conversation there is nothing to borrow and nothing to mislabel.
 }
 
 #[cfg(test)]
@@ -224,14 +215,14 @@ mod tests {
     use super::*;
     use crate::body::presence::{OutChannel, Presence};
 
-    /// A scene mouth wired to a live receiver, so `send` succeeds and the outcome
+    /// A mouth wired to a live receiver, so `send` succeeds and the outcome
     /// under test is the presence read rather than a closed channel.
-    fn mouth(presence: &Presence, scene: &Scene) -> (ToolSink, mpsc::Receiver<Beat>) {
+    fn mouth(presence: &Presence) -> (ToolSink, mpsc::Receiver<Beat>) {
         let (beats, rx) = mpsc::channel(8);
         let (control, _ctl) = mpsc::channel(8);
         let sink = ToolSink {
             control,
-            mouth: Some(Mouth { beats, presence: presence.clone(), scene: scene.clone() }),
+            mouth: Some(Mouth { beats, presence: presence.clone() }),
         };
         (sink, rx)
     }
@@ -239,34 +230,30 @@ mod tests {
     #[tokio::test]
     async fn a_speaker_makes_it_voiced() {
         let p = Presence::new();
-        let s = Scene("boss".to_owned());
-        let _audio = p.connect(&s, OutChannel::Audio);
-        let (sink, _rx) = mouth(&p, &s);
+        let _audio = p.connect(OutChannel::Audio);
+        let (sink, _rx) = mouth(&p);
         assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::Voiced);
     }
 
     #[tokio::test]
     async fn a_window_without_a_speaker_is_text_only() {
         let p = Presence::new();
-        let s = Scene("boss".to_owned());
-        let _view = p.connect(&s, OutChannel::View);
-        let (sink, _rx) = mouth(&p, &s);
+        let _view = p.connect(OutChannel::View);
+        let (sink, _rx) = mouth(&p);
         assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::TextOnly);
     }
 
     #[tokio::test]
     async fn an_empty_room_holds_it() {
         let p = Presence::new();
-        let s = Scene("boss".to_owned());
-        let (sink, _rx) = mouth(&p, &s);
+        let (sink, _rx) = mouth(&p);
         assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::Held);
     }
 
     #[tokio::test]
     async fn an_overlong_say_is_rejected_without_emission() {
         let p = Presence::new();
-        let s = Scene("boss".to_owned());
-        let (sink, mut rx) = mouth(&p, &s);
+        let (sink, mut rx) = mouth(&p);
         let text = "x".repeat(SAY_MAX_CHARS + 1);
 
         assert_eq!(sink.say(text).await.unwrap(), Spoken::TooLong);
@@ -276,10 +263,9 @@ mod tests {
     #[tokio::test]
     async fn the_words_are_emitted_whatever_the_room() {
         // The gate is about voice, never about dropping the utterance: text is
-        // buffered per scene and keeps, so the beat goes out even to nobody.
+        // retained and keeps, so the beat goes out even to nobody.
         let p = Presence::new();
-        let s = Scene("boss".to_owned());
-        let (sink, mut rx) = mouth(&p, &s);
+        let (sink, mut rx) = mouth(&p);
         sink.say("hi".into()).await.unwrap();
         assert!(matches!(rx.try_recv(), Ok(Beat::Say(t)) if t == "hi"));
     }

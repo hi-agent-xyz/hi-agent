@@ -2,8 +2,8 @@
 //!
 //! The reaction keeps a single voice and must never block the floor on slow
 //! work, so heavy or long-running tasks are delegated here. A worker is a
-//! *voice-mute capability within the scene*: it has the full substrate — the
-//! scene's memory, tools, code execution, and its own sub-agents — but no voice
+//! *voice-mute capability within the conversation*: it has the full substrate — the
+//! conversation's memory, tools, code execution, and its own sub-agents — but no voice
 //! of its own. Those sub-agents live *inside* its session and are invisible here:
 //! they get no hi-agent session id, no address, and no registry entry, which is
 //! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
@@ -47,19 +47,18 @@ use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
 use crate::identity::WorkerType;
 use crate::mind::memory::layout;
-use crate::types::Scene;
 
 use super::{LoopInput, Reaction};
 
 /// Handle for one **agent session**, unique process-wide.
 ///
 /// It identifies a *session*, not a role: the same role has many sessions over a run,
-/// and two scenes' Deliberations are two sessions of one role. So this is never a
+/// and two conversations' Deliberations are two sessions of one role. So this is never a
 /// "worker id" — ownership, addressing and reporting all key on the session, which is
 /// the thing that is actually singular.
 ///
-/// Process-wide rather than per-scene because ownership crosses scenes: a sceneless
-/// owner (Cognition, Reflection) holds sessions that no scene counter could name
+/// Process-wide rather than per-conversation because ownership crosses conversations: a standing
+/// owner (Cognition, Reflection) holds sessions that no conversation counter could name
 /// without colliding.
 ///
 /// Minted before the ACP session is opened, because the MCP surface identifies its
@@ -97,23 +96,23 @@ const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 /// (`docs/arch/foundation.md`); until the type existed there was no way to hand a
 /// worker a different prompt, which is why the conditionals were there.
 
-/// A report a worker posts back to the reaction's per-scene loop. It enters the
+/// A report a worker posts back to the reaction's per-reaction loop. It enters the
 /// queue as a `LoopInput::Worker`, so it waits its turn and never interrupts
 /// live speech.
 pub(super) struct WorkerReport {
     pub(super) id: SessionId,
     pub(super) task: String,
     pub(super) kind: WorkerReportKind,
-    /// Whether this is the scene's **Deliberation** (vs. an ordinary task worker).
-    /// Deliberation is the scene's own reading and thinking, so its result is not one
+    /// Whether this is the conversation's **Deliberation** (vs. an ordinary task worker).
+    /// Deliberation is the conversation's own reading and thinking, so its result is not one
     /// signal among many the voice may note or drop — it is the substance of a reply
     /// Reaction asked for, and [`render_report`] frames it as a must-relay instruction.
     /// A plain worker's report stays an observation the voice surfaces on its own
     /// social timing.
     pub(super) is_deliberation: bool,
-    /// The session this report is *for*. `None` means the scene loop — the report
+    /// The session this report is *for*. `None` means the reaction loop — the report
     /// becomes a signal the voice may speak to. `Some` means it travels up to the
-    /// session that asked for the work, and the scene never sees it.
+    /// session that asked for the work, and the conversation never sees it.
     pub(super) owner: Option<SessionId>,
 }
 
@@ -145,18 +144,18 @@ struct Worker {
     drive: JoinHandle<()>,
 }
 
-/// The scene's live working sessions. Owned by the per-scene loop, so a plain
+/// The conversation's live working sessions. Owned by the per-reaction loop, so a plain
 /// map suffices — no locking. Survives a reaction-session cold reopen: workers are
-/// independent of the mind's own lifecycle within a scene.
+/// independent of the mind's own lifecycle within a conversation.
 ///
 /// **TODO — this map is an optimization that currently optimizes nothing, and the
 /// switchboard already is the process-wide session pool. Do not "move the pool";
 /// delete it, whenever the code next comes through here.**
 ///
-/// It looked like the pool was per-scene and had to be re-homed, because a worker
-/// belongs to Cognition or Reflection and neither has a scene. But there is no pool to
+/// It looked like the pool was per-conversation and had to be re-homed, because a worker
+/// belongs to Cognition or Reflection and neither has a conversation. But there is no pool to
 /// move — `registry::global()` is already keyed by `SessionId`, process-wide, and holds
-/// `task`, `busy`, `owner`, `scene` and a bounded output tail. Everything in `Worker`
+/// `task`, `busy`, `owner`, `conversation` and a bounded output tail. Everything in `Worker`
 /// except the `JoinHandle` is a second copy of that, and the copies can disagree.
 ///
 /// What the map is actually for, checked one by one:
@@ -165,12 +164,12 @@ struct Worker {
 ///   only caller is [`WorkerRegistry::deliberate`]. A worker made by `create_worker` is
 ///   never followed up; it runs once and ends. So the whole `WORKER_IDLE_TTL` warm-idle
 ///   machinery serves exactly one client, and that client is **Deliberation** — one
-///   long-lived session per scene, which the scene already tracks in the single
+///   long-lived session per conversation, which the conversation already tracks in the single
 ///   `deliberation` field below. A map is not needed to hold one id.
 /// - **Reaping** ([`WorkerRegistry::reap`]) — bookkeeping, and the only reader of
 ///   `Worker::drive`. A session that has finished is the thing that knows it finished;
 ///   self-removal at the end of `drive_worker` replaces both, and works for a worker
-///   with no scene loop to reap it.
+///   with no reaction loop to reap it.
 /// - **Status** ([`WorkerRegistry::render_status`]) — the only genuine reader, and it
 ///   wants metadata the switchboard already has (`registry::status`), plus a transcript
 ///   tail the switchboard also keeps (`record_output`).
@@ -181,28 +180,27 @@ struct Worker {
 /// **The three provenance bugs this used to list are all fixed**, and the way the first
 /// one went is worth keeping, because it is the pattern:
 ///
-/// 1. ~~`any_host()` lends an **arbitrary** scene to host a sceneless-owned worker,~~
-///    which then became the worker's `X-HI-Scene` (so `watch`/`see` resolved to a
-///    stranger's camera), the `{scene}` in its prompt, and the scene its report was
+/// 1. ~~`any_host()` lends an **arbitrary** conversation to host a standing-owned worker,~~
+///    which then became the worker's `X-HI-Conversation` (so `watch`/`see` resolved to a
+///    stranger's camera), the `{conversation}` in its prompt, and the conversation its report was
 ///    journaled under — hosting used as provenance. **Fixed by deletion.** Both rungs
-///    that dispatch now register a sink under their own sentinel scene, so the lookup
+///    that dispatch now register a sink under their own sentinel conversation, so the lookup
 ///    succeeds and there is nothing to borrow. A rung that dispatches work hosts its own
 ///    workers.
 /// 2. ~~`create_worker` answers "brief it with `send_message`" before `register` runs.~~
 ///    **Fixed** — registration now precedes the session open, with `unregister` on the
 ///    spawn-failure path.
-/// 3. ~~The `{scene}` in `memory/raw/{scene}/file/` is interpolated raw where the
+/// 3. ~~The `{conversation}` in `memory/raw/{conversation}/file/` is interpolated raw where the
 ///    directory is percent-encoded.~~ **Fixed** — `{scene_dir}` is a separate
 ///    substitution, because the word meant two different things in the two places.
 pub(super) struct WorkerRegistry {
-    scene: Scene,
-    /// A clone of the scene's queue sender, handed to each worker's drive task so
+    /// A clone of the conversation's queue sender, handed to each worker's drive task so
     /// its reports land back in the same loop.
     inbound: mpsc::Sender<LoopInput>,
     workers: HashMap<SessionId, Worker>,
-    /// The scene's persistent **Deliberation**, if warmed — the rung that reads a
+    /// The conversation's persistent **Deliberation**, if warmed — the rung that reads a
     /// little, checks the file, looks at the photo, and works out what was actually
-    /// asked, per scene, so no scene ever waits on another. Reaction follows up with it
+    /// asked, per conversation, so no conversation ever waits on another. Reaction follows up with it
     /// every turn; followed up rather than respawned, so it keeps full context.
     /// Startup normally fills this before the first turn. `None` is the best-effort
     /// fallback when warm-up failed. See [`WorkerRegistry::deliberate`].
@@ -210,16 +208,15 @@ pub(super) struct WorkerRegistry {
 }
 
 impl WorkerRegistry {
-    pub(super) fn new(scene: Scene, inbound: mpsc::Sender<LoopInput>) -> Self {
+    pub(super) fn new(inbound: mpsc::Sender<LoopInput>) -> Self {
         Self {
-            scene,
             inbound,
             workers: HashMap::new(),
             deliberation: None,
         }
     }
 
-    /// Open, address, and prime this scene's Deliberation before it has a task.
+    /// Open, address, and prime this conversation's Deliberation before it has a task.
     ///
     /// The drive task starts idle on the same mailbox normal follow-ups use. The first
     /// human request therefore resumes this already-initialized session instead of
@@ -229,12 +226,12 @@ impl WorkerRegistry {
             return Ok(());
         }
         if crate::foundation::energy_state::is_out() {
-            tracing::info!(scene = %self.scene, "deliberation warm-up held while out of energy");
+            tracing::info!("deliberation warm-up held while out of energy");
             return Ok(());
         }
 
         let id = mint_session_id();
-        let placeholder = "waiting for the scene's first question";
+        let placeholder = "waiting for the conversation's first question";
         let (session, mail) = self
             .open_working_session(
                 reaction,
@@ -260,7 +257,6 @@ impl WorkerRegistry {
             .inner
             .observatory
             .record(
-                self.mirror_scene(),
                 EventKind::WorkerSpawned {
                     id,
                     task: placeholder.to_string(),
@@ -277,7 +273,6 @@ impl WorkerRegistry {
             transcript.clone(),
             self.inbound.clone(),
             reaction.inner.observatory.clone(),
-            self.scene.clone(),
             mail,
             busy.clone(),
             true,
@@ -293,7 +288,7 @@ impl WorkerRegistry {
             },
         );
         self.deliberation = Some(id);
-        tracing::info!(scene = %self.scene, session = id, "deliberation session warmed");
+        tracing::info!(session = id, "deliberation session warmed");
         Ok(())
     }
 
@@ -320,7 +315,7 @@ impl WorkerRegistry {
     }
 
     /// `spawn`, plus the `is_deliberation` flag that tags every report this worker posts
-    /// so the voice can tell the scene's own thinking (must-relay) from a task worker's
+    /// so the voice can tell the conversation's own thinking (must-relay) from a task worker's
     /// observation. Deliberation goes through [`deliberate`](Self::deliberate);
     /// everything else through [`spawn`](Self::spawn) with the flag false.
     async fn spawn_inner(
@@ -338,11 +333,11 @@ impl WorkerRegistry {
 
         let observatory = reaction.inner.observatory.clone();
         observatory
-            // A pseudo-scene is a routing tag, never a mirror key: Cognition hosts its
+            // A pseudo-conversation is a routing tag, never a mirror key: Cognition hosts its
             // workers under `*cognition*`, and passing that through would put a room
-            // nobody is in on the dashboard's scene list. The event still records — it
+            // nobody is in on the dashboard's conversation list. The event still records — it
             // just describes no conversation, which is the truth about it.
-            .record(self.mirror_scene(), EventKind::WorkerSpawned { id, task: task.clone() })
+            .record(EventKind::WorkerSpawned { id, task: task.clone() })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));
@@ -354,7 +349,6 @@ impl WorkerRegistry {
             transcript.clone(),
             self.inbound.clone(),
             observatory,
-            self.scene.clone(),
             mail.clone(),
             busy.clone(),
             is_deliberation,
@@ -372,9 +366,8 @@ impl WorkerRegistry {
             },
         );
         tracing::info!(
-            scene = %self.scene,
             session = id,
-            owner = owner.map(|o| o.to_string()).unwrap_or_else(|| "scene-loop".into()),
+            owner = owner.map(|o| o.to_string()).unwrap_or_else(|| "conversation-loop".into()),
             "spawned working session"
         );
         Ok(id)
@@ -393,14 +386,14 @@ impl WorkerRegistry {
         // prompt for their requested specialism.
         let system_prompt = if is_deliberation {
             let data_dir = reaction.inner.memory.data_dir();
-            if let Some(parent) = layout::scene_prompt_path(data_dir, &self.scene).parent() {
+            if let Some(parent) = layout::conversation_prompt_path(data_dir).parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    tracing::warn!(scene = %self.scene, error = %e, "could not pre-create the scene prompt dir");
+                    tracing::warn!(error = %e, "could not pre-create the conversation prompt dir");
                 }
             }
-            crate::identity::deliberation_prompt(data_dir, &self.scene).await
+            crate::identity::deliberation_prompt(data_dir).await
         } else {
-            crate::identity::worker_prompt(reaction.inner.memory.data_dir(), &self.scene, kind).await
+            crate::identity::worker_prompt(reaction.inner.memory.data_dir(), kind).await
         };
 
         // The address exists before subprocess startup so mail can queue during both
@@ -408,7 +401,6 @@ impl WorkerRegistry {
         let mail = registry::global().register(
             id,
             if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
-            Some(self.scene.clone()),
             owner,
             task.to_string(),
         );
@@ -417,7 +409,6 @@ impl WorkerRegistry {
             .inner
             .agent
             .session(
-                &self.scene,
                 if is_deliberation { SessionRole::Deliberation } else { SessionRole::Worker },
                 Some(id),
                 SessionOpts {
@@ -464,8 +455,7 @@ impl WorkerRegistry {
                 .inner
                 .observatory
                 .record(
-                    Some(&self.scene).filter(|s| !s.is_pseudo()),
-                    EventKind::MessageSent {
+                                        EventKind::MessageSent {
                         from: None,
                         to: id,
                         delivery,
@@ -482,9 +472,9 @@ impl WorkerRegistry {
                 reaction
                     .inner
                     .observatory
-                    .record(self.mirror_scene(), EventKind::WorkerResumed { id, task })
+                    .record(EventKind::WorkerResumed { id, task })
                     .await;
-                tracing::info!(scene = %self.scene, worker = id, "merged follow-up into working session");
+                tracing::info!(worker = id, "merged follow-up into working session");
                 return Ok(id);
             }
             // The worker closed itself (idle past TTL) before we got the lock; drop
@@ -492,7 +482,7 @@ impl WorkerRegistry {
             self.workers.remove(&id);
             registry::global().unregister(id);
         }
-        tracing::info!(scene = %self.scene, worker = id, "follow-up target gone; spawning fresh worker");
+        tracing::info!(worker = id, "follow-up target gone; spawning fresh worker");
         // `WorkerType::General` rather than a threaded parameter: this method has
         // exactly one caller, `deliberate`, and Deliberation's base layer *is* the
         // general worker's — it is a working session with a role layer on top, not a
@@ -501,9 +491,9 @@ impl WorkerRegistry {
             .await
     }
 
-    /// Ensure the scene's persistent **Deliberation** is working on `task`: resume the
+    /// Ensure the conversation's persistent **Deliberation** is working on `task`: resume the
     /// warm one if it exists (full context, no clobbering), else spawn it. Reaction
-    /// follows up with it each turn that carries a human request, so the scene keeps
+    /// follows up with it each turn that carries a human request, so the conversation keeps
     /// reading and thinking off the floor while the voice speaks; its output rides back
     /// as an ordinary [`WorkerReport`] Reaction articulates.
     /// [`follow_up`](Self::follow_up) already falls back to a fresh spawn if the tracked
@@ -511,7 +501,7 @@ impl WorkerRegistry {
     ///
     /// Anything heavy — a real task, a standing duty, a long errand — belongs *up* at
     /// Cognition rather than here. Deliberation stays light on purpose: it exists so a
-    /// scene can think without leaving the scene.
+    /// conversation can think without leaving the conversation.
     pub(super) async fn deliberate(&mut self, reaction: &Reaction, task: String) -> anyhow::Result<()> {
         let id = match self.deliberation {
             Some(id) => self.follow_up(reaction, id, task, true, None).await?,
@@ -526,16 +516,12 @@ impl WorkerRegistry {
 
     /// Forget workers whose drive task has finished, so the map doesn't grow.
     /// Their result already rode back as a report; this just drops the handle.
-    /// This registry's scene as a *mirror* key — `None` when it is a pseudo-scene.
+    /// This registry's conversation as a *mirror* key — `None` when it is a pseudo-conversation.
     ///
-    /// A worker pool is hosted under a scene, and since Cognition that scene is sometimes
+    /// A worker pool is hosted under a conversation, and since Cognition that conversation is sometimes
     /// `*cognition*`: a value the `/mcp` dispatch routes by and the logs label with, but
-    /// which names no conversation. The observatory's mirror is keyed by scene and its
+    /// which names no conversation. The observatory's mirror is keyed by conversation and its
     /// entry is created on sight, so handing it one is enough to invent a room.
-    fn mirror_scene(&self) -> Option<&Scene> {
-        Some(&self.scene).filter(|s| !s.is_pseudo())
-    }
-
     pub(super) fn reap(&mut self) {
         self.workers.retain(|id, w| {
             let alive = !w.drive.is_finished();
@@ -551,11 +537,11 @@ impl WorkerRegistry {
     ///
     /// This is how work travels **up**: a worker reports to the session that asked,
     /// which reads it on its next prompt and decides what, if anything, is worth
-    /// passing further up. A worker never reaches a scene, because a scene is where a
+    /// passing further up. A worker never reaches a conversation, because a conversation is where a
     /// person is spoken to and only Reaction speaks there.
     ///
     /// Anything but `Delivered` means the owner is gone. The caller must fall back to
-    /// the scene loop rather than drop the report — losing finished work because its
+    /// the reaction loop rather than drop the report — losing finished work because its
     /// requester shut down is worse than surfacing it one rung too high.
     ///
     /// Returns the outcome rather than a bool so the caller can *record* the edge; a
@@ -564,7 +550,7 @@ impl WorkerRegistry {
         registry::global().post(id, text)
     }
 
-    /// Whether this scene's own thinking is still running, for injection into
+    /// Whether this conversation's own thinking is still running, for injection into
     /// Reaction's turn. Empty string when there is nothing to say.
     ///
     /// **One line, about Deliberation, and nothing else.** The block used to list every
@@ -625,7 +611,7 @@ impl Drop for WorkerRegistry {
 
 /// Render one report for the `## New signals` section the reaction sees.
 ///
-/// A **Deliberation** report is the scene's own thinking coming back — the answer to
+/// A **Deliberation** report is the conversation's own thinking coming back — the answer to
 /// something it told the person it would look into — so it is framed as a *must-relay
 /// instruction*, not a passive "a worker finished" line the voice might note in passing
 /// and drop. This is the fix for that substance never reaching the person: the
@@ -694,7 +680,6 @@ async fn drive_worker(
     transcript: Arc<Mutex<String>>,
     inbound: mpsc::Sender<LoopInput>,
     observatory: Observatory,
-    scene: Scene,
     mail: Arc<Notify>,
     busy: Arc<AtomicBool>,
     is_deliberation: bool,
@@ -703,7 +688,7 @@ async fn drive_worker(
     let mut next_task = initial_task;
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
-    // Deliberation is long-lived per scene; a worker made by `create_worker` runs its
+    // Deliberation is long-lived per conversation; a worker made by `create_worker` runs its
     // errand and ends. Neither is bounded by size from here — the underlying agent
     // compacts its own context (see [`crate::body::reaction::heartbeat`]).
     let session = session;
@@ -713,7 +698,7 @@ async fn drive_worker(
             None => match wait_for_mail(id, &mail).await {
                 Some(task) => task,
                 None => {
-                    tracing::info!(scene = %scene, worker = id, "working session idle past ttl; closing");
+                    tracing::info!(worker = id, "working session idle past ttl; closing");
                     return;
                 }
             },
@@ -731,7 +716,6 @@ async fn drive_worker(
         // and went quiet — the two look identical, which is exactly the ambiguity the
         // completion event exists to remove.
         tracing::info!(
-            scene = %scene,
             worker = id,
             task_chars = task.chars().count(),
             "working session turn start"
@@ -743,7 +727,6 @@ async fn drive_worker(
                     && crate::foundation::energy_state::is_out() =>
             {
                 tracing::warn!(
-                    scene = %scene,
                     worker = id,
                     "working session paused on 402; task and session held"
                 );
@@ -763,12 +746,10 @@ async fn drive_worker(
         };
         observatory
             .record(
-                Some(&scene).filter(|s| !s.is_pseudo()),
-                EventKind::WorkerFinished { id, state, summary_chars },
+                                EventKind::WorkerFinished { id, state, summary_chars },
             )
             .await;
         tracing::info!(
-            scene = %scene,
             worker = id,
             state = ?state,
             summary_chars,
@@ -776,7 +757,7 @@ async fn drive_worker(
         );
         let report = WorkerReport { id, task: task.clone(), kind, is_deliberation, owner };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
-            tracing::warn!(worker = id, "worker report dropped; scene loop gone");
+            tracing::warn!(worker = id, "worker report dropped; reaction loop gone");
             return;
         }
 
@@ -872,7 +853,7 @@ async fn run_worker(
                 // the whole life of every session.
                 //
                 // This is also the *only* live-progress mirror now: the observatory's
-                // per-scene worker tail is gone, because a worker's progress is not a
+                // per-conversation worker tail is gone, because a worker's progress is not a
                 // fact about a conversation. Whoever asked for the work can read it
                 // here, keyed by the session id they were handed.
                 registry::global().record_output(id, &text);
@@ -902,13 +883,13 @@ mod ownership_tests {
 
     fn registry() -> WorkerRegistry {
         let (tx, _rx) = mpsc::channel(8);
-        WorkerRegistry::new(Scene("alice@phone".into()), tx)
+        WorkerRegistry::new(tx)
     }
 
     /// The fallback that keeps finished work from vanishing. An owner can shut down
     /// while the worker it asked for is still running; when that happens `deliver_to`
     /// must *say so* rather than quietly accept the report, so the caller can surface
-    /// it to the scene instead. A silent success here would lose completed work in the
+    /// it to the conversation instead. A silent success here would lose completed work in the
     /// one case nobody would think to test by hand.
     ///
     /// Asserted as `Unknown` specifically, not merely "not delivered": the caller now
@@ -924,7 +905,7 @@ mod ownership_tests {
     }
 
 
-    /// Session ids are process-wide, not per registry — two scenes must never mint
+    /// Session ids are process-wide, not per registry — two conversations must never mint
     /// the same id, or a report would be delivered into the wrong conversation.
     #[test]
     fn session_ids_are_unique_across_registries() {

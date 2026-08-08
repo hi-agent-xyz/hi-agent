@@ -113,13 +113,14 @@ Journeys in [docs/user-journeys/](docs/user-journeys/) are specs of *intended* b
 
 Talk to it over the text channel — Claude plays the boss; the human is only pulled in for account-side steps (QR/device auth, credentials) and for observing effects in external apps (e.g. what actually landed in the Feishu group):
 
-    curl -X POST -H "X-HI-Scene: boss" --data-binary "..." localhost:12358/api/in/text
-    curl -H "X-HI-Scene: boss" localhost:12358/api/out/text   # long-poll; one utterance per GET
+    curl -X POST --data-binary "..." localhost:12358/api/in/text
+    curl localhost:12358/api/out/text                  # long-poll; one utterance per GET
+    curl "localhost:12358/api/out/text?after=3"        # …and the next one, by cursor
 
 Method — the parts that keep the test honest:
 
 - **Don't lead the witness.** Speak like a terse, normal boss; never script journey-expected behaviors into the prompt. Test recovery by *creating the situation* (kill its processes, restart the host, plant a failure) and watching — not by mentioning it.
-- **Trust but verify every claim.** Ground truth lives outside the conversation: `server.log`, `GET /api/sessions`, the scene transcripts (`data/claude-config/projects/*/<session>.jsonl` — `tool_use` entries show what it actually ran), and its workspace artifacts/ledgers.
+- **Trust but verify every claim.** Ground truth lives outside the conversation: `server.log`, `GET /api/sessions`, the session transcripts (`data/claude-config/projects/*/<session>.jsonl` — `tool_use` entries show what it actually ran), and its workspace artifacts/ledgers.
 - **Keep the harness out of the experiment.** A watcher whose own command line contains the probe string becomes a decoy (`pgrep -f "[f]oo"` avoids self-match); a long-poll `--max-time` that aborts mid-utterance triggers at-least-once redelivery on the next poll.
 - To speed pulses up for a test session, set the `pulse` tunable in the config store (`sqlite3 data/config.db "INSERT INTO app_settings(key,value) VALUES('pulse','120') ON CONFLICT(key) DO UPDATE SET value='120'"`) or the Agent section of Settings; reset it afterwards (default 30m).
 - Findings go back into the journey doc (实测缺口 / 复测 sections). When behavior and journey disagree, that's a bug in one or the other — resolve explicitly.

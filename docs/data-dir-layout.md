@@ -32,13 +32,13 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 ```
 data/
   memory/            # the mind — what the agent experiences & understands   (precious; see memory.md)
-    raw/             #   the log: every signal IN and OUT, lossless, per-scene (verbatim, auto-captured)
+    raw/             #   the log: every signal IN and OUT, lossless, by channel (verbatim, auto-captured)
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
     tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
     prompts/         #   GENERATED system prompts, one per agent that needs state — agent-written, precious
-      scenes/<id>.md #     what one scene carries forward (written by that scene's Deliberation)
-      cognition.md   #     the sceneless brain's
+      conversation.md #    what the conversation carries forward (written by Deliberation)
+      cognition.md   #     the brain's
 
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
     projects/<p>/    #   sedimented work: kept view source + assets (the source of record)
@@ -93,7 +93,7 @@ reconstructive part of this tree — it rewrites facets whole, but never the log
 Two things under `memory/` are **not** reconstructive and not reflection's: `tasks/` is the
 one ledger of what is owed (nothing else records a duty), and `memory/prompts/` holds the
 **generated** system prompts — one per agent that needs state, written by that agent, injected
-and capped by code, and rebuildable by nothing else. A scene's is written by its Deliberation,
+and capped by code, and rebuildable by nothing else. The conversation's is written by Deliberation,
 because Reaction has no file access to write its own. It shares a leaf name with the bundled
 `prompts/` at the root because it is the same kind of thing; the parent directory is the whole
 of the difference. Contract in [`arch/data.md`](arch/data.md#memoryprompts).
@@ -225,6 +225,6 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
 
 ## References
 
-- [Architecture](arch/arch.md) — the layered bands, scenes, the tempo ladder.
+- [Architecture](arch/arch.md) — the layered bands, the one conversation, the tempo ladder.
 - [Memory subsystem](memory.md) — the contract for `memory/` (raw, episodes, facets, reflection).
 - CLAUDE.md — "Testing user journeys live" (transcripts as ground truth), Mac-mini-as-disposable.

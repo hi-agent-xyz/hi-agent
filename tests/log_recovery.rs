@@ -10,8 +10,8 @@
 //! actually opened with.
 
 use chrono::{DateTime, Duration, Utc};
-use hi_agent::mind::memory::{Memory, build_for_scene};
-use hi_agent::types::{Channel, JournalEntry, Origin, Scene};
+use hi_agent::mind::memory::{Memory, build};
+use hi_agent::types::{Channel, JournalEntry, Origin};
 use tempfile::tempdir;
 
 fn signal_in(
@@ -25,7 +25,6 @@ fn signal_in(
         id: id.into(),
         ts,
         channel,
-        scene: Scene("boss".into()),
         body: body.into(),
         stream: None,
         media: None,
@@ -38,7 +37,6 @@ fn signal_out(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str) -> Jour
         id: id.into(),
         ts,
         channel,
-        scene: Scene("boss".into()),
         body: body.into(),
         media: None,
         origin: Some(Origin::Reaction),
@@ -59,7 +57,6 @@ fn find(haystack: &str, needle: &str) -> usize {
 async fn a_fresh_session_reads_back_what_was_said_and_shown() {
     let dir = tempdir().expect("tempdir");
     let mem = Memory::open(dir.path()).await.expect("memory");
-    let scene = Scene("boss".into());
 
     // Inside the snapshot's recent window, in the order they happened. Ids are
     // lexically ordered so the cross-channel merge is deterministic.
@@ -84,7 +81,7 @@ async fn a_fresh_session_reads_back_what_was_said_and_shown() {
     }
 
     // The reconstruction a fresh reaction session is handed.
-    let snap = build_for_scene(&mem, &scene).await.expect("snapshot");
+    let snap = build(&mem).await.expect("snapshot");
     assert_eq!(snap.recent_entries.len(), 6, "every channel is read back, none dropped");
     let recon = snap.render_for_prompt();
 
@@ -123,7 +120,6 @@ async fn the_new_channels_use_the_same_on_disk_layout() {
 
     let dir = tempdir().expect("tempdir");
     let mem = Memory::open(dir.path()).await.expect("memory");
-    let scene = Scene("boss".into());
     let ts = Utc::now();
 
     mem.journal
@@ -136,7 +132,7 @@ async fn the_new_channels_use_the_same_on_disk_layout() {
         .expect("append");
 
     for channel in [Channel::View, Channel::Clock] {
-        let log = layout::channel_log_path(mem.data_dir(), &scene, channel, ts);
+        let log = layout::channel_log_path(mem.data_dir(), channel, ts);
         assert!(log.exists(), "{} log written at {log:?}", channel.as_str());
         assert!(
             log.ends_with(format!("{0}/{1}/{0}.jsonl", channel.as_str(), layout::day_key(ts))),

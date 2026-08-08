@@ -16,9 +16,9 @@
 //! (software VP8/VP9) — and rides through as the source mime. Each chunk is
 //! republished on the `video_in` broadcast. Such a stream is only decodable from
 //! its first chunk (the initialization segment), so that chunk is cached per
-//! scene ([`VideoSource`]) to let an observer join mid-stream.
+//! conversation ([`VideoSource`]) to let an observer join mid-stream.
 //!
-//! Observe (`GET /api/in/vision`): the live video for the scene, one camera
+//! Observe (`GET /api/in/vision`): the live video for the conversation, one camera
 //! session per chunked response — the visual twin of `GET /api/in/audio`. If a
 //! camera is already live, the response opens with the cached init segment so
 //! MediaSource can decode immediately; otherwise it blocks for the next session.
@@ -50,9 +50,9 @@ use crate::foundation::vendors::ffmpeg_frame;
 use crate::mind::memory::layout::{MediaSlot, day_key};
 use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
-use crate::foundation::server::headers::{AuthBearer, RequiredScene, SceneHeader};
+use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::{AppState, FacePresence, PartialMinute, VideoInEvent, VideoSource};
-use crate::types::{Channel, JournalEntry, Media, Origin, Scene, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
 
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";
@@ -64,7 +64,6 @@ const RECOGNISE_MIN: f32 = 0.4;
 
 pub async fn post_vision(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
@@ -79,14 +78,14 @@ pub async fn post_vision(
         .unwrap_or_else(|| DEFAULT_IMAGE_MIME.to_string());
     let ext = mime_to_ext(&mime);
 
-    tracing::debug!(scene = %scene, mime = %mime, bytes = body.len(), "POST /api/in/vision");
+    tracing::debug!(mime = %mime, bytes = body.len(), "POST /api/in/vision");
 
     // A one-off still: persist the bytes, then raise a minimal signal pointing at
     // them (a `see`-able ref) — understanding is the agent's call, not an eager
     // caption. Perception runs in the background so the POST returns promptly; the
     // journaled signal lands a moment later.
     let ts = Utc::now();
-    let rel = match media::store_blob(&state.data_dir, &scene, Channel::Vision, ts, MediaSlot::InputOneOff, ext, &body).await {
+    let rel = match media::store_blob(&state.data_dir, Channel::Vision, ts, MediaSlot::InputOneOff, ext, &body).await {
         Ok(rel) => rel,
         Err(err) => {
             tracing::error!(error = %err, "failed to persist vision frame");
@@ -95,7 +94,7 @@ pub async fn post_vision(
     };
     // Keep the raw bytes for the receive-time face reflex; nothing is captioned.
     let recognise = FaceSource::Image(body);
-    spawn_perceive(state.clone(), scene.clone(), Perceived::Still, rel, mime, ts, None, Some(recognise));
+    spawn_perceive(state.clone(), Perceived::Still, rel, mime, ts, None, Some(recognise));
     StatusCode::ACCEPTED.into_response()
 }
 
@@ -122,7 +121,6 @@ const PRESENCE_LEAVE_GRACE_SECS: i64 = 8;
 /// this lane is a reflex, not a record; the full video stream remains the archive.
 pub async fn post_presence(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     body: Bytes,
 ) -> StatusCode {
     // No models or no body → accept and drop without spending a decode. The client
@@ -134,7 +132,7 @@ pub async fn post_presence(
     let faces = match face::detect_and_embed(body).await {
         Ok(f) => f,
         Err(err) => {
-            tracing::debug!(scene = %scene, error = %err, "presence: face detect failed");
+            tracing::debug!(error = %err, "presence: face detect failed");
             return StatusCode::ACCEPTED;
         }
     };
@@ -160,7 +158,7 @@ pub async fn post_presence(
     // Diff under the lock (sync, no await held across it), then journal/wake outside.
     let (appeared, left) = {
         let mut map = state.face_presence.lock().expect("face_presence mutex poisoned");
-        let entry = map.entry(scene.clone()).or_default();
+        let entry = &mut *map;
         presence_delta(entry, &seen_now, now, grace)
     };
 
@@ -169,32 +167,30 @@ pub async fn post_presence(
     }
 
     let body_text = presence_body(&appeared, &left);
-    crate::foundation::channel_log::inbound(Channel::Vision, &scene, &body_text);
+    crate::foundation::channel_log::inbound(Channel::Vision, &body_text);
 
     let entry = JournalEntry::SignalIn {
         id: Uuid::now_v7().to_string(),
         ts: now,
         channel: Channel::Vision,
-        scene: scene.clone(),
         body: body_text.clone(),
         stream: Some(PRESENCE_STREAM.to_string()),
         media: None,
         origin: Some(Origin::Human),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::warn!(scene = %scene, error = %err, "presence: journal append failed");
+        tracing::warn!(error = %err, "presence: journal append failed");
     }
 
     // The wake: journaling alone updates disk; the reaction only re-reads on a nudge.
     let signal = Signal {
         channel: Channel::Vision,
-        scene: scene.clone(),
         body: body_text,
         stream: Some(PRESENCE_STREAM.to_string()),
         ts: now,
     };
     if let Err(err) = state.inbound.send(signal).await {
-        tracing::error!(scene = %scene, error = %err, "presence: inbound channel closed");
+        tracing::error!(error = %err, "presence: inbound channel closed");
     }
 
     StatusCode::ACCEPTED
@@ -209,7 +205,7 @@ fn presence_salient(f: &face::DetectedFace) -> bool {
     f.score >= 0.6 && w >= 36.0 && h >= 36.0
 }
 
-/// Fold this frame's observed labels into a scene's presence state and return the
+/// Fold this frame's observed labels into the conversation's presence state and return the
 /// `(appeared, left)` labels that changed. Hysteresis: a label counts as present
 /// from when first seen until `grace` elapses with no sighting, so a dropped
 /// detection doesn't flap a leave. `announced` is the set currently treated as
@@ -348,7 +344,6 @@ enum Perceived {
 /// Runs detached so capture never blocks on the (possibly slow) keyframe decode.
 fn spawn_perceive(
     state: Arc<AppState>,
-    scene: Scene,
     kind: Perceived,
     blob_rel: String,
     mime: String,
@@ -388,14 +383,13 @@ fn spawn_perceive(
             id: Uuid::now_v7().to_string(),
             ts,
             channel: Channel::Vision,
-            scene: scene.clone(),
             body,
             stream: None,
             media: Some(Media { file: blob_rel, mime, duration_ms, width: None, height: None }),
             origin: Some(Origin::Human),
         };
         if let Err(err) = state.memory.journal.append(entry).await {
-            tracing::warn!(scene = %scene, error = %err, "journal append failed for vision perception");
+            tracing::warn!(error = %err, "journal append failed for vision perception");
         }
     });
 }
@@ -440,7 +434,6 @@ async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
 /// failure is logged and perception is skipped.
 async fn flush_video_minute(
     state: &Arc<AppState>,
-    scene: &Scene,
     mime: &str,
     init: Option<Bytes>,
     media_chunks: &[u8],
@@ -452,10 +445,10 @@ async fn flush_video_minute(
     }
     bytes.extend_from_slice(media_chunks);
     let ext = video_mime_to_ext(mime);
-    let rel = match media::store_blob(&state.data_dir, scene, Channel::Vision, ts, MediaSlot::InputStream, ext, &bytes).await {
+    let rel = match media::store_blob(&state.data_dir, Channel::Vision, ts, MediaSlot::InputStream, ext, &bytes).await {
         Ok(rel) => rel,
         Err(err) => {
-            tracing::warn!(scene = %scene, error = %err, "persisting camera minute failed");
+            tracing::warn!(error = %err, "persisting camera minute failed");
             return;
         }
     };
@@ -465,17 +458,16 @@ async fn flush_video_minute(
     // whether this ambient minute is worth a signal. Decoding happens inside the
     // detached perceive task, so the flush itself stays cheap.
     let recognise = face::available().then(move || FaceSource::Video(video));
-    spawn_perceive(state.clone(), scene.clone(), Perceived::CameraMinute, rel, mime.to_string(), ts, None, recognise);
+    spawn_perceive(state.clone(), Perceived::CameraMinute, rel, mime.to_string(), ts, None, recognise);
 }
 
 #[derive(Debug, Deserialize)]
 pub struct StreamParams {
-    /// The streaming scene. Browsers can't set `X-HI-Scene` on a WebSocket
-    /// handshake, so the scene rides in the query string instead.
-    scene: Option<String>,
+    /// The streaming conversation. Browsers can't set `X-HI-Conversation` on a WebSocket
+    /// handshake, so the conversation rides in the query string instead.
     /// The exact `MediaRecorder` mime (`video/webm;codecs=vp8`) — an observer
     /// needs it verbatim to open a matching MediaSource buffer. Rides the query
-    /// string for the same handshake reason as `scene`.
+    /// string for the same handshake reason as `conversation`.
     mime: Option<String>,
 }
 
@@ -489,23 +481,16 @@ pub async fn get_vision_stream(
     Query(params): Query<StreamParams>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let scene = Scene(
-        params
-            .scene
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "anonymous".to_string()),
-    );
     let mime = params
         .mime
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_VIDEO_MIME.to_string());
-    tracing::info!(scene = %scene, mime = %mime, "WS /api/in/vision/stream opened");
-    ws.on_upgrade(move |socket| stream_video_in(state, scene, mime, socket))
+    tracing::info!(mime = %mime, "WS /api/in/vision/stream opened");
+    ws.on_upgrade(move |socket| stream_video_in(state, mime, socket))
 }
 
 async fn stream_video_in(
     state: Arc<AppState>,
-    scene: Scene,
     mime: String,
     mut socket: axum::extract::ws::WebSocket,
 ) {
@@ -547,12 +532,9 @@ async fn stream_video_in(
                     started = true;
                     cap_ts = now;
                     cap_minute = Some(now.format("%Y-%m-%dT%H:%M").to_string());
-                    state.video_in_live.lock().unwrap().insert(
-                        scene.clone(),
-                        VideoSource { turn, mime: mime.clone(), init: b.clone() },
-                    );
+                    *state.video_in_live.lock().unwrap() =
+                        Some(VideoSource { turn, mime: mime.clone(), init: b.clone() });
                     let _ = state.video_in.send(VideoInEvent::Start {
-                        scene: Some(scene.clone()),
                         turn,
                         mime: mime.clone(),
                     });
@@ -568,7 +550,7 @@ async fn stream_video_in(
                         cap_buf.extend_from_slice(&init_acc[n..]);
                         init_acc = Vec::new();
                         // Refine the late-joiner cache to the *full* init segment.
-                        if let Some(src) = state.video_in_live.lock().unwrap().get_mut(&scene)
+                        if let Some(src) = state.video_in_live.lock().unwrap().as_mut()
                             && src.turn == turn
                         {
                             src.init = init.clone();
@@ -579,7 +561,7 @@ async fn stream_video_in(
                     let minute = now.format("%Y-%m-%dT%H:%M").to_string();
                     if cap_minute.as_deref() != Some(minute.as_str()) {
                         if !cap_buf.is_empty() {
-                            flush_video_minute(&state, &scene, &mime, cap_init.clone(), &cap_buf, cap_ts).await;
+                            flush_video_minute(&state, &mime, cap_init.clone(), &cap_buf, cap_ts).await;
                         }
                         cap_buf.clear();
                         cap_minute = Some(minute);
@@ -593,9 +575,7 @@ async fn stream_video_in(
                         && last_partial.elapsed() >= Duration::from_secs(1)
                     {
                         last_partial = Instant::now();
-                        state.video_in_partial.lock().unwrap().insert(
-                            scene.clone(),
-                            PartialMinute {
+                        *state.video_in_partial.lock().unwrap() = Some(PartialMinute {
                                 turn,
                                 mime: mime.clone(),
                                 init: init.clone(),
@@ -605,7 +585,6 @@ async fn stream_video_in(
                     }
                 }
                 let _ = state.video_in.send(VideoInEvent::Frame {
-                    scene: Some(scene.clone()),
                     turn,
                     bytes: b,
                 });
@@ -617,51 +596,42 @@ async fn stream_video_in(
 
     // Flush the final, partial minute of camera media.
     if !cap_buf.is_empty() {
-        flush_video_minute(&state, &scene, &mime, cap_init.clone(), &cap_buf, cap_ts).await;
+        flush_video_minute(&state, &mime, cap_init.clone(), &cap_buf, cap_ts).await;
     }
 
     if started {
         // Clear the cache only if we're still the active source (a newer camera
         // may have replaced us), then close the source for observers.
         let mut live = state.video_in_live.lock().unwrap();
-        if live.get(&scene).map(|s| s.turn) == Some(turn) {
-            live.remove(&scene);
+        if live.as_ref().map(|s| s.turn) == Some(turn) {
+            *live = None;
         }
         drop(live);
         // Drop the freshness snapshot too, if we're still its owner.
         let mut partial = state.video_in_partial.lock().unwrap();
-        if partial.get(&scene).map(|p| p.turn) == Some(turn) {
-            partial.remove(&scene);
+        if partial.as_ref().map(|p| p.turn) == Some(turn) {
+            *partial = None;
         }
         drop(partial);
-        let _ = state.video_in.send(VideoInEvent::End { scene: Some(scene.clone()), turn });
+        let _ = state.video_in.send(VideoInEvent::End { turn });
     }
-    tracing::info!(scene = %scene, "WS /api/in/vision/stream closed");
+    tracing::info!("WS /api/in/vision/stream closed");
 }
 
-/// Whether an event routed to `target` should reach this `scene` subscriber.
-fn routed(target: &Option<Scene>, scene: &Scene) -> bool {
-    match target {
-        None => true,
-        Some(t) => t == scene,
-    }
-}
-
-/// `GET /api/in/vision` — the live camera video on this scene, one session per
+/// `GET /api/in/vision` — the live camera video on this conversation, one session per
 /// long-poll. The visual twin of [`crate::foundation::server::audio::get_in_audio`], with a
 /// cached-init prelude so an observer can join a camera that's already running.
 pub async fn get_vision(
     State(state): State<Arc<AppState>>,
-    RequiredScene(scene): RequiredScene,
     AuthBearer(auth): AuthBearer,
 ) -> impl IntoResponse {
     let mut rx = state.video_in.subscribe();
 
-    tracing::info!(scene = %scene, auth = ?auth, "GET /api/in/vision long-poll opened");
+    tracing::info!(auth = ?auth, "GET /api/in/vision long-poll opened");
 
     // Subscribe first, then look for an already-active camera: any frame that
     // lands between these two steps is still caught on `rx`.
-    let active = state.video_in_live.lock().unwrap().get(&scene).cloned();
+    let active = state.video_in_live.lock().unwrap().clone();
 
     let (turn, mime, init): (u64, String, Option<Bytes>) = match active {
         // A camera is already live: open with its cached init segment, then play
@@ -672,9 +642,6 @@ pub async fn get_vision(
         None => loop {
             match rx.recv().await {
                 Ok(event) => {
-                    if !routed(event.scene(), &scene) {
-                        continue;
-                    }
                     if let VideoInEvent::Start { turn, mime, .. } = event {
                         break (turn, mime, None);
                     }
@@ -691,19 +658,19 @@ pub async fn get_vision(
     };
 
     // Stream this source's frames until its `End`. Frames from any other source
-    // or scene are filtered out, so the response stays bound to one camera.
-    let frames = futures::stream::unfold((rx, scene, turn), |(mut rx, scene, turn)| async move {
+    // or conversation are filtered out, so the response stays bound to one camera.
+    let frames = futures::stream::unfold((rx, turn), |(mut rx, turn)| async move {
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    if !routed(event.scene(), &scene) || event.turn() != turn {
+                    if event.turn() != turn {
                         continue;
                     }
                     match event {
                         VideoInEvent::Frame { bytes, .. } => {
                             return Some((
                                 Ok::<Bytes, std::convert::Infallible>(bytes),
-                                (rx, scene, turn),
+                                (rx, turn),
                             ));
                         }
                         VideoInEvent::End { .. } => return None,

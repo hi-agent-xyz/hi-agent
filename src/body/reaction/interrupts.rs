@@ -22,16 +22,15 @@
 //! in" and hands over the full text — the mind judges, the way a person isn't
 //! quite sure you caught their last sentence.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
-use crate::types::Scene;
 
-/// How many finished turns' replies a scene retains for note resolution.
+/// How many finished turns' replies are retained for note resolution.
 /// Playback lags synthesis by at most a reply or so; a barged turn is almost
 /// always the latest finished one.
 const RECENT_REPLIES: usize = 2;
@@ -62,8 +61,8 @@ pub struct Interruption {
 }
 
 #[derive(Default)]
-struct SceneState {
-    /// The scene's latest voice span: which turn, and when its audio started
+struct SpeechState {
+    /// The latest voice span: which turn, and when its audio started
     /// flowing. Stamped by the sequencer when it opens a turn's TTS.
     audio: Option<(u64, Instant)>,
     /// Last few finished turns' replies, newest last: `(turn, reply)`.
@@ -77,12 +76,12 @@ struct SceneState {
     flush_turn: Option<u64>,
 }
 
-/// Shared scene→barge-in state. Created once in `lib.rs`, cloned into the HTTP
+/// Shared barge-in state. Created once in `lib.rs`, cloned into the HTTP
 /// front (whose STT relay reports recognized speech) and the reaction (whose
 /// sequencer stamps voice spans and whose turns drain pending notes).
 #[derive(Clone, Default)]
 pub struct InterruptRegistry {
-    inner: Arc<Mutex<HashMap<Scene, SceneState>>>,
+    inner: Arc<Mutex<SpeechState>>,
 }
 
 impl InterruptRegistry {
@@ -92,17 +91,17 @@ impl InterruptRegistry {
 
     /// A turn's voice just started flowing. Called by the sequencer as it opens
     /// the turn's TTS span; the latest span wins.
-    pub async fn audio_began(&self, scene: &Scene, turn: u64, now: Instant) {
+    pub async fn audio_began(&self, turn: u64, now: Instant) {
         let mut inner = self.inner.lock().await;
-        inner.entry(scene.clone()).or_default().audio = Some((turn, now));
+        inner.audio = Some((turn, now));
     }
 
     /// The turn closed with `reply` as its full spoken text. Caches the reply
     /// for note resolution and back-fills a pending note that cut into this
     /// very turn.
-    pub async fn end_turn(&self, scene: &Scene, turn: u64, reply: &str) {
+    pub async fn end_turn(&self, turn: u64, reply: &str) {
         let mut inner = self.inner.lock().await;
-        let state = inner.entry(scene.clone()).or_default();
+        let state = &mut *inner;
         let reply = reply.trim();
         if reply.is_empty() {
             return; // a silent turn can't be barged into
@@ -118,14 +117,14 @@ impl InterruptRegistry {
         }
     }
 
-    /// Recognized human speech just arrived on this scene (any rolling
+    /// Recognized human speech just arrived (any rolling
     /// partial). If our own clock says the last reply is probably still
     /// sounding, record the barge-in note; otherwise this is a normal
     /// post-listen reply and nothing is recorded. Cheap and idempotent —
     /// called for every partial, only the first mid-sound one lands.
-    pub async fn note_speech(&self, scene: &Scene, now: Instant) {
+    pub async fn note_speech(&self, now: Instant) {
         let mut inner = self.inner.lock().await;
-        let Some(state) = inner.get_mut(scene) else { return };
+        let state = &mut *inner;
         if state.pending.is_some() {
             return; // first barge-in wins
         }
@@ -151,7 +150,7 @@ impl InterruptRegistry {
         }
         state.flush_turn = Some(turn);
         state.pending = Some(Interruption { turn, heard_ms: heard.as_millis() as u64, reply });
-        tracing::info!(scene = %scene, turn, heard_ms = heard.as_millis() as u64, "barge-in inferred (speech while voice sounding)");
+        tracing::info!(turn, heard_ms = heard.as_millis() as u64, "barge-in inferred (speech while voice sounding)");
     }
 
     /// Mark `turn` for flush directly, without an audio span. Used when the mind
@@ -161,21 +160,21 @@ impl InterruptRegistry {
     /// any say/show beats this now-abandoned turn emits before it's cancelled.
     /// `flush_turn` is monotonic-per-turn, so this never collides with a later
     /// reorganized pass's id (self-clearing, no reset).
-    pub async fn mark_flush(&self, scene: &Scene, turn: u64) {
-        self.inner.lock().await.entry(scene.clone()).or_default().flush_turn = Some(turn);
+    pub async fn mark_flush(&self, turn: u64) {
+        self.inner.lock().await.flush_turn = Some(turn);
     }
 
-    /// Take (and clear) the scene's pending note, for the next prompt.
-    pub async fn take_pending(&self, scene: &Scene) -> Option<Interruption> {
-        self.inner.lock().await.get_mut(scene)?.pending.take()
+    /// Take (and clear) the pending note, for the next prompt.
+    pub async fn take_pending(&self) -> Option<Interruption> {
+        self.inner.lock().await.pending.take()
     }
 
     /// Whether the sequencer should abandon `turn`'s remaining output — a
     /// barge-in landed on it. Unlike [`take_pending`] (consumed once by the next
     /// prompt), this stays set so every trailing beat of the cut turn is skipped.
-    pub async fn should_skip(&self, scene: &Scene, turn: u64) -> bool {
+    pub async fn should_skip(&self, turn: u64) -> bool {
         let inner = self.inner.lock().await;
-        inner.get(scene).and_then(|s| s.flush_turn) == Some(turn)
+        inner.flush_turn == Some(turn)
     }
 }
 
@@ -205,10 +204,6 @@ pub(super) fn render_interruption(i: &Interruption) -> String {
 mod tests {
     use super::*;
 
-    fn scene() -> Scene {
-        Scene("test".to_string())
-    }
-
     fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
     }
@@ -217,38 +212,38 @@ mod tests {
     async fn speech_mid_reply_records_a_note_with_text() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 7, t0).await;
+        reg.audio_began(7, t0).await;
         // 100 chars ≈ 20s spoken; turn closed (synthesis done) while audio plays on.
-        reg.end_turn(&scene(), 7, &"字".repeat(100)).await;
-        reg.note_speech(&scene(), t0 + secs(5)).await;
-        let p = reg.take_pending(&scene()).await.expect("note recorded");
+        reg.end_turn(7, &"字".repeat(100)).await;
+        reg.note_speech(t0 + secs(5)).await;
+        let p = reg.take_pending().await.expect("note recorded");
         assert_eq!(p.turn, 7);
         assert!(p.reply.is_some());
         // ~5s elapsed minus the playback-start beat.
         assert!((4_000..=5_000).contains(&p.heard_ms), "heard_ms = {}", p.heard_ms);
-        assert!(reg.take_pending(&scene()).await.is_none(), "take drains");
+        assert!(reg.take_pending().await.is_none(), "take drains");
     }
 
     #[tokio::test]
     async fn speech_after_reply_finished_is_not_a_barge_in() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 7, t0).await;
-        reg.end_turn(&scene(), 7, &"字".repeat(10)).await; // ≈2s spoken
-        reg.note_speech(&scene(), t0 + secs(10)).await; // long after it finished
-        assert!(reg.take_pending(&scene()).await.is_none());
+        reg.audio_began(7, t0).await;
+        reg.end_turn(7, &"字".repeat(10)).await; // ≈2s spoken
+        reg.note_speech(t0 + secs(10)).await; // long after it finished
+        assert!(reg.take_pending().await.is_none());
     }
 
     #[tokio::test]
     async fn turn_still_in_progress_counts_as_sounding_and_backfills() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 3, t0).await;
+        reg.audio_began(3, t0).await;
         // No end_turn yet — mid-generation. Speech arrives:
-        reg.note_speech(&scene(), t0 + secs(2)).await;
+        reg.note_speech(t0 + secs(2)).await;
         // The turn then closes with its full reply.
-        reg.end_turn(&scene(), 3, "what was said in full").await;
-        let p = reg.take_pending(&scene()).await.expect("note recorded");
+        reg.end_turn(3, "what was said in full").await;
+        let p = reg.take_pending().await.expect("note recorded");
         assert_eq!(p.turn, 3);
         assert_eq!(p.reply.as_deref(), Some("what was said in full"));
     }
@@ -257,29 +252,29 @@ mod tests {
     async fn first_barge_in_wins() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 1, t0).await;
-        reg.note_speech(&scene(), t0 + secs(1)).await;
-        reg.note_speech(&scene(), t0 + secs(3)).await; // later partials are noise
-        let p = reg.take_pending(&scene()).await.expect("note recorded");
+        reg.audio_began(1, t0).await;
+        reg.note_speech(t0 + secs(1)).await;
+        reg.note_speech(t0 + secs(3)).await; // later partials are noise
+        let p = reg.take_pending().await.expect("note recorded");
         assert!(p.heard_ms <= 1_000, "heard_ms = {}", p.heard_ms);
     }
 
     #[tokio::test]
     async fn speech_with_no_voice_span_records_nothing() {
         let reg = InterruptRegistry::new();
-        reg.note_speech(&scene(), Instant::now()).await;
-        assert!(reg.take_pending(&scene()).await.is_none());
+        reg.note_speech(Instant::now()).await;
+        assert!(reg.take_pending().await.is_none());
     }
 
     #[tokio::test]
     async fn heard_estimate_is_capped_at_reply_length() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 5, t0).await;
-        reg.end_turn(&scene(), 5, &"字".repeat(10)).await; // ≈2s spoken
+        reg.audio_began(5, t0).await;
+        reg.end_turn(5, &"字".repeat(10)).await; // ≈2s spoken
         // Speech lands inside the slack window, past the estimated end.
-        reg.note_speech(&scene(), t0 + secs(3)).await;
-        let p = reg.take_pending(&scene()).await.expect("note recorded");
+        reg.note_speech(t0 + secs(3)).await;
+        let p = reg.take_pending().await.expect("note recorded");
         assert!(p.heard_ms <= 2_000, "heard_ms = {}", p.heard_ms);
     }
 
@@ -287,31 +282,31 @@ mod tests {
     async fn barge_in_marks_its_turn_for_skip() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 4, t0).await;
-        reg.note_speech(&scene(), t0 + secs(1)).await;
-        assert!(reg.should_skip(&scene(), 4).await);
+        reg.audio_began(4, t0).await;
+        reg.note_speech(t0 + secs(1)).await;
+        assert!(reg.should_skip(4).await);
         // A later turn is unaffected — monotonic ids never collide with a stale flag.
-        assert!(!reg.should_skip(&scene(), 5).await);
+        assert!(!reg.should_skip(5).await);
         // Draining the note for the prompt does not un-flush the turn.
-        let _ = reg.take_pending(&scene()).await;
-        assert!(reg.should_skip(&scene(), 4).await);
+        let _ = reg.take_pending().await;
+        assert!(reg.should_skip(4).await);
     }
 
     #[tokio::test]
     async fn no_barge_in_no_skip() {
         let reg = InterruptRegistry::new();
         let t0 = Instant::now();
-        reg.audio_began(&scene(), 4, t0).await;
-        assert!(!reg.should_skip(&scene(), 4).await);
+        reg.audio_began(4, t0).await;
+        assert!(!reg.should_skip(4).await);
     }
 
     #[tokio::test]
     async fn mark_flush_marks_turn_for_skip_without_an_audio_span() {
         let reg = InterruptRegistry::new();
         // No audio_began / note_speech — the thinking-phase reorg case.
-        reg.mark_flush(&scene(), 9).await;
-        assert!(reg.should_skip(&scene(), 9).await);
+        reg.mark_flush(9).await;
+        assert!(reg.should_skip(9).await);
         // A later (reorganized) pass with a fresh id is unaffected.
-        assert!(!reg.should_skip(&scene(), 10).await);
+        assert!(!reg.should_skip(10).await);
     }
 }

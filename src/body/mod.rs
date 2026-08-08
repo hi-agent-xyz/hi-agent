@@ -5,11 +5,11 @@
 //! `foundation`. Holds:
 //! - `capabilities` — the senses and actions (STT/TTS, vision, input, screen, …),
 //!   over the vendor adapters in `crate::foundation::vendors`.
-//! - `reaction` — the per-scene loops: turn-taking, the pulse and reflection clocks,
+//! - `reaction` — the per-reaction loops: turn-taking, the pulse and reflection clocks,
 //!   the loader/assembler, the output sequencer, and delegated workers.
 //! - `reflex` — taught teach-and-fire quick actions that run with no model in the
 //!   loop (the cerebellum fast-path).
-//! - `presence` — who/what is attached to a scene right now.
+//! - `presence` — who/what is attached to a conversation right now.
 //! - `gesture` — the desktop attention gestures (come-and-see, press-and-hold-⌘).
 //!
 //! Whether a piece runs continuously (a sense, a clock) or is invoked on demand

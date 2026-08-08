@@ -35,8 +35,6 @@ const CANDIDATE_MIMES = [
 const TIMESLICE_MS = 250;
 
 export interface VideoStreamerOptions {
-  /** Scene identity; rides in the WS query string (browsers can't set headers). */
-  scene: string;
   /** Fired when the socket closes (network drop or stop()). */
   onClose?: () => void;
 }
@@ -79,7 +77,7 @@ export class VideoStreamer {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const url =
       `${proto}://${location.host}/api/in/vision/stream` +
-      `?scene=${encodeURIComponent(opts.scene)}&mime=${encodeURIComponent(actualMime)}`;
+      `?mime=${encodeURIComponent(actualMime)}`;
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
     this.ws.onopen = () => {

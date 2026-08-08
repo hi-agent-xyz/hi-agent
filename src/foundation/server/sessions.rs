@@ -1,11 +1,11 @@
 //! Session visibility endpoints — the operator's window into ACP sessions.
 //!
-//! - `GET /api/sessions` — JSON live snapshot of every scene (process, reaction
+//! - `GET /api/sessions` — JSON live snapshot of the conversation (process, reaction
 //!   session, workers, context budget, last turn).
 //! - `GET /api/sessions/events` — Server-Sent Events carrying two frame types:
 //!   `session` lifecycle events (replayed from the ring on connect, then live)
-//!   and periodic `snapshot` frames (the full per-scene mirror). The dashboard
-//!   reads scene state from the snapshot frames here rather than polling
+//!   and periodic `snapshot` frames (the full per-conversation mirror). The dashboard
+//!   reads conversation state from the snapshot frames here rather than polling
 //!   `/api/sessions` — one less long-lived endpoint competing for the browser's
 //!   ~6 per-origin HTTP/1.1 connections (the channel streams already claim
 //!   several), and the snapshots also carry the two mirror-only fields the event
@@ -26,14 +26,14 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::{self, Stream, StreamExt};
 use tokio::time::interval;
 
-use crate::foundation::observatory::{SceneView, SessionEvent, event_stream};
+use crate::foundation::observatory::{AgentView, SessionEvent, event_stream};
 use crate::foundation::server::AppState;
 
 /// How often the events SSE pushes a fresh full snapshot. Matches the old client
 /// poll cadence; the frame is ~1 KB so this is negligible on the wire.
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// `GET /api/sessions` — the live per-scene snapshot as JSON.
+/// `GET /api/sessions` — the live per-conversation snapshot as JSON.
 pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(state.observatory.snapshot().await)
 }
@@ -45,8 +45,8 @@ pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoRespon
 ///   stream as they happen. Replay and live are cut atomically by
 ///   [`Observatory::subscribe`](crate::foundation::observatory::Observatory::subscribe), so
 ///   no event is dropped or duplicated across the seam.
-/// - `snapshot` — the full per-scene mirror, pushed every [`SNAPSHOT_INTERVAL`].
-///   The first frame fires immediately, so a fresh subscriber has complete scene
+/// - `snapshot` — the full per-conversation mirror, pushed every [`SNAPSHOT_INTERVAL`].
+///   The first frame fires immediately, so a fresh subscriber has complete conversation
 ///   state at once without a separate poll.
 pub async fn get_sessions_events(
     State(state): State<Arc<AppState>>,
@@ -61,7 +61,7 @@ pub async fn get_sessions_events(
     });
 
     // Periodic full-snapshot frames on the same connection. `interval`'s first
-    // tick is immediate, so the subscriber gets scene state on connect.
+    // tick is immediate, so the subscriber gets conversation state on connect.
     let obs = state.observatory.clone();
     let snapshots = stream::unfold((obs, interval(SNAPSHOT_INTERVAL)), |(obs, mut tick)| async move {
         tick.tick().await;
@@ -80,7 +80,7 @@ fn session_event(ev: &SessionEvent) -> Event {
         .unwrap_or_else(|_| Event::default().comment("serialize error"))
 }
 
-fn snapshot_event(snap: &[SceneView]) -> Event {
+fn snapshot_event(snap: &AgentView) -> Event {
     Event::default()
         .event("snapshot")
         .json_data(snap)

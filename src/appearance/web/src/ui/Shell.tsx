@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { usePresence, useSpeech, useChannels, useSendText, useScene } from "../core";
+import { usePresence, useSpeech, useChannels, useSendText } from "../core";
 import { useViews } from "../core/views";
 import { floorLayout, CAPTIONS_ID, CAMERA_ID, type Participant } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
@@ -31,7 +31,6 @@ import { HandoffOverlay } from "./HandoffOverlay";
  * the feed.
  */
 export function Shell() {
-  const scene = useScene();
   const presence = usePresence();
   const sentences = useSpeech();
   const ch = useChannels();
@@ -45,7 +44,6 @@ export function Shell() {
     setPastedInputText({ id: pasteIdRef.current, text });
   }, []);
   const handoff = useHandoff({
-    scene,
     textInputOpen: ch.textInput,
     sendText,
     pasteIntoTextInput,

@@ -9,7 +9,7 @@
 // injection `GET /` uses. One map, one React, no second copy to drift.
 //
 // What it deliberately does not do: mount `SessionProvider`. That opens the mic,
-// the camera and every channel long-poll, and registers as a live scene
+// the camera and every channel long-poll, and registers as a live
 // subscriber — a review render would look like a person in the room. Instead a
 // fabricated session is supplied on the same context object, so a view's
 // `useSpeech()` / `usePresence()` return plausible sample state.

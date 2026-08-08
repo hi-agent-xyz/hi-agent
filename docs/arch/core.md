@@ -2,9 +2,9 @@
 
 ## Goal
 
-Be the part of the system that is always awake, always fast, and never thinking: route
-signals to the right scene, decide *when* the agent may speak, own every process and every
-clock, and write everything down before anyone reacts to it.
+Be the part of the system that is always awake, always fast, and never thinking: carry
+signals into the one conversation, decide *when* the agent may speak, own every process and
+every clock, and write everything down before anyone reacts to it.
 
 Nothing here consults a model. That is the point — the core has to keep working while the
 thinking layers are slow, confused, or dead.
@@ -13,9 +13,10 @@ thinking layers are slow, confused, or dead.
 
 | Decision | Reasoning |
 |---|---|
-| Scene is the isolation unit | One conversation's context must not bleed into another's |
-| One mouth **per scene**, arbitrated centrally | Many sub-minds may think; a conversation hears one voice — but two conversations must never queue behind each other |
-| A vendor outage is decided process-wide, not per turn | Every scene shares one upstream; N scenes must not each rediscover it, or apologize for it |
+| **There is one conversation, and it has no name** | The agent is one mind talking to one person, continuously. A partition key would have to be assigned by someone — and every candidate (the browser, the device, the surface) names a *client*, not a situation. See [One conversation](#one-conversation) |
+| A client is a connection, never an identity | Clients attach and detach. Nothing a client sends may decide what the mind knows, because a client cannot know that |
+| One mouth, one floor | Many sub-minds may think; the person hears one voice, one utterance at a time |
+| A vendor outage is decided process-wide, not per turn | One upstream, decided once — never rediscovered or apologized for twice |
 | The reflex path never reaches a model | Stopping when someone starts talking cannot wait a generation |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
 | The host opens the agent's eyes; the agent owns its own timers | A scheduler we build dies with the process; a crontab the agent writes does not |
@@ -29,20 +30,41 @@ Bind concrete protocols (HTTP today, WebSocket or local audio later) to transpor
 channel signals. Framing, mime, long-poll, body-close, per-turn frame binding — all of it
 lives here so that none of it exists above.
 
-### Scene router
+### One conversation
 
-A **scene** is the situation a signal belongs to: with a person, with a group, or alone.
-It is the context-isolation unit — one Reaction and one [Deliberation](agents.md#deliberation--per-scene-seconds)
-per scene, one memory slice, one tag on every session's tool attach. **The router's only
-target is Reaction** — it is the scene's front door. Everything deeper is reached by
+**There is no context-isolation key.** One Reaction, one [Deliberation](agents.md#deliberation--seconds),
+one memory, one continuous thread — the same conversation whether it arrives by voice from a
+browser tab, by a screenshot from the ⌘⌘ gesture, or by a file from a phone. Everything
+inbound joins it; everything outbound reaches every attached client.
+
+Signals reach Reaction, which is the mind's front door. Everything deeper is reached by
 [message](foundation.md#the-agent-session-registry), agent to agent, through the registry:
-Reaction hands down to its Deliberation, Deliberation hands up to
-[Cognition](agents.md#cognition--sceneless-minutes-and-beyond), and answers come back the way
-they went. Cognition is sceneless and the router never addresses it.
+Reaction hands down to Deliberation, Deliberation hands up to
+[Cognition](agents.md#cognition--minutes-and-beyond), and answers come back the way they went.
 
-Participants are *soft*, inferred from content, never a structural key. An external source
-maps onto a scene (a group chat is a scene). The topology is decided once by judgment when
-work is delegated, then executed mechanically.
+Participants are *soft*, inferred from content, never a structural key. The person the agent
+recognizes by face or voice is content it knows, not a partition it lives in — someone
+walking into the room does not start a second conversation.
+
+> **This replaced `Scene`, which was removed.** A scene was "the situation a signal belongs
+> to", the isolation unit keying a Reaction, a Deliberation, a memory slice, and a tag on
+> every tool attach. It was removed for three reasons, in increasing order of weight:
+>
+> 1. **It isolated two rungs of four.** Cognition and Reflection are global by design and
+>    memory was always shared, so a scene only ever partitioned Reaction and Deliberation —
+>    while costing a parameter on almost every function in the tree.
+> 2. **It had no derivation rule.** The design said what a scene *meant* and never who
+>    decided one, so the browser decided, with a random id in `localStorage`. Every scene
+>    that ever existed on a real install was a browser profile wearing the name of a
+>    situation — and clearing site data forked a new mind with a blank memory, silently.
+> 3. **It is not how a person works.** Nobody keeps a separate memory per device. Moving
+>    from a laptop to a phone mid-thought is the same thought.
+>
+> The isolation it was meant to provide, when a second party genuinely exists, is not
+> reintroduced here. When an external channel adapter lands (a group chat, a mail thread),
+> that adapter knows its own thread id exactly, and partitioning can be built on a fact
+> rather than on a guess. Deferring it costs nothing today: no such adapter exists, and
+> every one of the scenes a real install accumulated was the same person.
 
 ### Channel mux
 
@@ -53,15 +75,13 @@ goal in itself.
 ### The social layer lives in Reaction, not here
 
 *This was once a host component called the arbiter.* It has been retired, and its four
-duties moved into [Reaction](agents.md#reaction--per-scene-one-generation) — because all four
-are per-scene, and Reaction is already the only per-scene thing that speaks. A separate
-module arbitrating a mouth that only one agent owns was machinery around a decision that
-belonged to the agent making it.
+duties moved into [Reaction](agents.md#reaction--one-generation) — because all four are the
+conversation's, and Reaction is the thing that speaks. A separate module arbitrating a mouth
+that only one agent owns was machinery around a decision that belonged to the agent making
+it.
 
-- **Mouth singleton, per scene** — now structural rather than enforced: one Reaction per
-  scene, taking one turn at a time. The singleton is scene-wide, never process-wide, because
-  a global mouth would make one scene wait on another —
-  [invariant 3](arch.md#invariants).
+- **Mouth singleton** — now structural rather than enforced: there is one Reaction, taking
+  one turn at a time.
 - **Turn-taking** — the quiet-settle commit that decides a turn is over. Still host-side:
   it is [batching](surfaces.md#batching), and it happens before Reaction is woken.
 - **Presence gate** — Reaction reads [presence](#presence) and decides whether to speak into
@@ -124,8 +144,8 @@ even when every channel is open, since it shapes *how much* to say rather than *
 — so it, alone, is rendered into the window. One reader either way: Reaction.
 
 **What the gate protects is narrower than it first looks, and that is the point.**
-Words and views survive an empty room without help: outbound text is buffered per scene
-and delivered to a reader that connects later, and the screen is retained state, folded
+Words and views survive an empty room without help: outbound text is retained and
+delivered to a reader that connects later, and the screen is retained state, folded
 and replayed to whoever attaches next. Neither is spent. **Voice is the exception** — it
 exists only in the moment it is heard, so a spoken line synthesized with no speaker
 attached is gone, and the person comes back and never learns it happened. So the host
@@ -135,26 +155,31 @@ them. Everything above that is Reaction's judgment, not a rail.
 
 **That narrowing is only sound while the buffer is honest, and it is the buffer's reader
 that decides.** Text is deferred rather than spent because it waits for a reader that
-connects later — but the bus is drain-and-delete, not a cursor, so it defers only until
-*a* reader takes it, and an unattended reader takes it and shows it to nobody. The
-mechanism that was supposed to protect the words is then the one that spends them, and
-the outcome is worse than either honest end: the person gets a fragment that reads as a
-whole message rather than a message they can tell they missed. **Half-spent is the
-failure to design against here** — voice is spent by physics, text by attention, and the
-gate can only see the first. Which is why an out-channel must be held open only while
-someone is reading it: with that true, "only voice is spent" is true, and without it the
-sentence is aspirational.
+connects later. A drain-and-delete bus cannot promise that: it defers only until *a*
+reader takes it, and an unattended reader takes it and shows it to nobody. The mechanism
+meant to protect the words is then the one that spends them, and the outcome is worse
+than either honest end — the person gets a fragment that reads as a whole message rather
+than a message they can tell they missed. **Half-spent is the failure designed against
+here**: voice is spent by physics, text by attention, and the gate can only see the first.
+
+So **the text bus is a retained log with a cursor per reader**, not a queue that empties.
+Every attached client sees every utterance; an utterance is retired when all live readers
+have passed it, not when the first one does. This is what `/out/view` already does — the
+screen is retained state replayed to whoever attaches — and with one conversation it is
+mandatory rather than merely correct: the desktop window, the menu-bar popover, and a
+browser tab are three readers of one mouth, and a queue would let them steal each other's
+words.
 
 **Coming back is an event, and the only one here.** Every other presence change is read
 off the axes during a turn that was already happening. A return is not: it happens
 precisely when nothing is happening, so without an edge nothing would observe it, and
 "hold it for their return" would mean "hold it until they type" — or until the pulse
-comes round, which is half an hour. So the scene's Reaction is woken when the person
-brings the window forward after an absence. **Only a first-party activation counts**: an
-out-channel reconnecting proves a browser exists, never that someone is in front of it,
-and a long-poll re-opens on its own while a tab sits forgotten in the background. The
-wake carries a fact and no instruction, and it is dropped rather than queued if it fires
-while the scene is mid-turn — a scene taking a turn is a scene already talking to them.
+comes round, which is half an hour. So Reaction is woken when the person brings a window
+forward after an absence. **Only a first-party activation counts**: an out-channel
+reconnecting proves a browser exists, never that someone is in front of it, and a
+long-poll re-opens on its own while a tab sits forgotten in the background. The wake
+carries a fact and no instruction, and it is dropped rather than queued if it fires
+mid-turn — a turn in progress is already talking to them.
 
 ### Reflex
 
@@ -214,17 +239,17 @@ the thread, never the truth. The session carries the thread; `data/` carries the
 
 ### Vendor gate
 
-One **process-wide** view of whether the upstream model is reachable, read by every scene
-before it takes a turn. The vendor is a shared resource, so one scene discovering an outage
-must steer all of them.
+One **process-wide** view of whether the upstream model is reachable, read before a turn is
+taken. The vendor is a shared resource, so an outage discovered by one rung must steer every
+rung — Reaction, Deliberation, Cognition, Reflection and every worker share one upstream.
 
-- **It gates the turn, not the reply.** During an outage no scene starts a generation at all;
+- **It gates the turn, not the reply.** During an outage no generation starts at all;
   incoming mail is held rather than answered badly or dropped.
 - **Backoff, absorbed and capped.** A blip is absorbed before anything is declared down; from
   there the retry gap doubles to a ceiling. A rate limit is not an outage worth mentioning; a
   string of failures is.
 - **One apology, once.** The transition — not each failed turn — is what earns a word to the
-  person. N scenes × M retries must never become N × M apologies, and recovery is likewise
+  person. N rungs × M retries must never become N × M apologies, and recovery is likewise
   announced once.
 
 When it clears, the held mail drives a catch-up turn. Fix-forward, like everything else here.
@@ -245,8 +270,8 @@ here, deferred once, and is now **declined**. What replaces it is not a smaller
 scheduler: it is the observation that scheduling was never the host's problem.
 
 **The host owns one thing: opening the agent's eyes on a cadence.** Three loops do
-that, each pacing itself from inside its own subsystem — the **pulse** for each
-scene, the **reflection backoff** for consolidation, and **Cognition's glance-up**
+that, each pacing itself from inside its own subsystem — the **pulse** for the
+conversation, the **reflection backoff** for consolidation, and **Cognition's glance-up**
 (one wake shortly after the process starts, then on the pulse cadence whenever
 anything is owed). That is the whole of the host's timing surface, and it is
 already built.

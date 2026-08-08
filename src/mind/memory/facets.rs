@@ -22,8 +22,8 @@
 //!
 //! ## Concurrency
 //!
-//! Facets are **global**, not per-scene — two scenes can both touch
-//! `people/alice.md`. A read-modify-write across scenes is **last-writer-wins, and
+//! Facets are **global**, not per-conversation — two conversations can both touch
+//! `people/alice.md`. A read-modify-write across conversations is **last-writer-wins, and
 //! that is fine**: a facet is a regenerable cache whose truth lives in the
 //! episodes, so the next reflection re-derives whatever a racing write dropped.
 //! The only mechanical guarantee needed is that a reader never sees a half-written

@@ -16,27 +16,27 @@
 
 use bytes::Bytes;
 
-use crate::types::{Scene, ViewEnvelope};
+use crate::types::ViewEnvelope;
 
-/// One continuous outbound signal on a channel, addressed to a scene. The
+/// One continuous outbound signal on a channel. The
 /// reaction's entire output surface in human-channel terms.
 #[derive(Debug, Clone)]
 pub enum OutboundSignal {
-    /// A chunk of agent text on the /thought channel. Concatenate a scene's
+    /// A chunk of agent text on the /thought channel. Concatenate the
     /// chunks between [`TextEnd`](OutboundSignal::TextEnd)s to get one utterance.
-    Text { scene: Scene, chunk: String },
+    Text { chunk: String },
     /// The boundary that ends one continuous /thought utterance.
-    TextEnd { scene: Scene },
+    TextEnd,
     /// A span of synthesized speech begins; `codec` names the audio format
     /// (e.g. `audio/mpeg`). `turn` correlates this span's frames so the adapter
     /// can hold one response open for exactly one utterance.
-    AudioBegin { scene: Scene, turn: u64, codec: String },
+    AudioBegin { turn: u64, codec: String },
     /// One frame of synthesized speech within the open span.
-    AudioFrame { scene: Scene, turn: u64, bytes: Bytes },
+    AudioFrame { turn: u64, bytes: Bytes },
     /// The span of speech ends (synthesis finished, or the turn was cut short).
-    AudioEnd { scene: Scene, turn: u64 },
+    AudioEnd { turn: u64 },
     /// An agent-authored view module to mount on the /view channel. `envelope`
     /// carries the compiled module URL; the binder broadcasts it to GET
     /// /api/out/view subscribers.
-    View { scene: Scene, envelope: ViewEnvelope },
+    View { envelope: ViewEnvelope },
 }

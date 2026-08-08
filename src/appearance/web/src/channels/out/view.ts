@@ -1,6 +1,6 @@
-// Client for the outbound view channel — a scene's retained appearance state.
+// Client for the outbound view channel — the conversation's retained appearance state.
 //
-// GET /api/out/view serves the scene's whole appearance (active views in
+// GET /api/out/view serves the conversation's whole appearance (active views in
 // z-order, plus a version) and long-polls on `?since=<version>`: the first
 // request returns the current state immediately (even when empty), each
 // following one is held until the state changes. Refresh, a second device, or
@@ -16,11 +16,11 @@ export interface ViewTraits {
   owns_captions?: boolean;
 }
 
-/** One active layer in the scene's appearance, in z-order (first = bottom).
+/** One active layer in the conversation's appearance, in z-order (first = bottom).
  *
  * At most two arrive: the agent's content view, and the host's condition layer
  * over it (a vendor outage). The server holds them in fixed slots, so this list
- * can no longer grow into the stacks it used to — see the Rust `SceneAppearance`. */
+ * can no longer grow into the stacks it used to — see the Rust `Appearance`. */
 export interface WireView {
   id: string;
   /** URL of the compiled ESM module to import and mount under `id`. */
@@ -29,14 +29,13 @@ export interface WireView {
   traits?: ViewTraits;
 }
 
-/** A scene's full appearance state — one GET /api/out/view response. */
+/** The conversation's full appearance state — one GET /api/out/view response. */
 export interface ViewState {
   version: number;
   views: WireView[];
 }
 
 export interface SubscribeViewOpts {
-  scene: string;
   signal: AbortSignal;
 }
 
@@ -48,7 +47,7 @@ export async function* subscribeViewState(
     const query = since === undefined ? "" : `?since=${since}`;
     const res = await fetch(`/api/out/view${query}`, {
       method: "GET",
-      headers: { "X-HI-Scene": opts.scene, Accept: "application/json" },
+      headers: { Accept: "application/json" },
       signal: opts.signal,
       cache: "no-store",
     });
@@ -62,14 +61,11 @@ export async function* subscribeViewState(
   }
 }
 
-/** Clear the scene's appearance — close all views, back to the default room.
+/** Clear the conversation's appearance — close all views, back to the default room.
  * The server bumps the version, so every device's long-poll converges on empty
  * (there is no optimistic local change; the next snapshot drives the UI). */
-export async function clearViewState(scene: string): Promise<void> {
-  const res = await fetch("/api/out/view", {
-    method: "DELETE",
-    headers: { "X-HI-Scene": scene },
-  });
+export async function clearViewState(): Promise<void> {
+  const res = await fetch("/api/out/view", { method: "DELETE" });
   if (!res.ok) {
     throw new Error(`/api/out/view clear failed: ${res.status} ${res.statusText}`);
   }

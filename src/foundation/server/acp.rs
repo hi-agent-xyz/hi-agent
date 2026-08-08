@@ -2,7 +2,7 @@
 //!
 //! - `GET /api/acp/frames/events` — Server-Sent Events carrying one frame type,
 //!   `frame`: every JSON-RPC line that crosses the wire between hi-agent and a
-//!   scene's ACP subprocess. The buffered ring replays on connect (so a late
+//!   conversation's ACP subprocess. The buffered ring replays on connect (so a late
 //!   subscriber sees recent context), then live frames stream as they happen.
 //!
 //! This reads the [`AcpTap`](crate::foundation::acp::AcpTap) ring + feed; it never mutates

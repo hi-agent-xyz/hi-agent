@@ -18,15 +18,13 @@ export type WindowState = "active" | "background" | "closed";
  *  body-less beat, kept so callers that only ever say "I'm here" can stay silent
  *  about it. */
 export async function reportAttention(opts: {
-  scene: string;
   state?: WindowState;
   signal?: AbortSignal;
 }): Promise<void> {
   try {
     await fetch("/api/in/attention", {
       method: "POST",
-      headers: { "X-HI-Scene": opts.scene },
-      body: opts.state ?? "active",
+            body: opts.state ?? "active",
       signal: opts.signal,
     });
   } catch {

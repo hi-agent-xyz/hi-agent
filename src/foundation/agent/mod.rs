@@ -18,8 +18,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema::v1::{HttpHeader, McpServer, McpServerHttp};
 
 use crate::foundation::acp::{AcpProcess, AcpSession, AcpTap, ProcessRegistry, SessionOpts};
-use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SCENE, HEADER_SESSION_ID};
-use crate::types::Scene;
+use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SESSION_ID};
 
 /// Which tool surface a session gets, carried as `X-HI-Role` on its MCP attach so
 /// the `/mcp` server exposes the right tools (see [`crate::foundation::mcp`]). The
@@ -38,9 +37,9 @@ pub enum SessionRole {
     #[default]
     Reaction,
     Worker,
-    /// The scene's reading and thinking rung.
+    /// The conversation's reading and thinking rung.
     Deliberation,
-    /// The sceneless shared brain.
+    /// The shared brain.
     Cognition,
     Reflection,
 }
@@ -107,7 +106,7 @@ impl AgentLayer {
         }
     }
 
-    /// Spawn a dedicated subprocess and open its single session for `scene`.
+    /// Spawn a dedicated subprocess and open its single session.
     /// `role` selects the tool surface the session gets; `worker_id` (workers
     /// only) names which working session a tool call comes from. The session
     /// connects to hi-agent's own `/mcp` endpoint, tagged with these via headers
@@ -116,7 +115,6 @@ impl AgentLayer {
     /// process down.
     pub async fn session(
         &self,
-        scene: &Scene,
         role: SessionRole,
         session_id: Option<u64>,
         opts: SessionOpts,
@@ -127,10 +125,7 @@ impl AgentLayer {
         // is a single quick generation that speaks via message text and, at most,
         // puts one already-built view on screen; the loop-heavy work is a worker's.
         let mcp_servers = {
-            let mut headers = vec![
-                HttpHeader::new(HEADER_SCENE, scene.0.clone()),
-                HttpHeader::new(HEADER_ROLE, role.as_str()),
-            ];
+            let mut headers = vec![HttpHeader::new(HEADER_ROLE, role.as_str())];
             if let Some(id) = session_id {
                 headers.push(HttpHeader::new(HEADER_SESSION_ID, id.to_string()));
             }
@@ -170,13 +165,13 @@ impl AgentLayer {
                 env.push(("ANTHROPIC_MODEL".to_string(), model));
             }
         }
-        tracing::info!(scene = %scene, role = role.as_str(), cwd = ?cwd, "spawning ACP subprocess for session");
+        tracing::info!(role = role.as_str(), cwd = ?cwd, "spawning ACP subprocess for session");
         let (process, rx) = AcpProcess::spawn(
             spawn.program.clone(),
             spawn.args.clone(),
             env,
             self.inner.tap.clone(),
-            scene.0.clone(),
+            role.as_str().to_string(),
             // hi-agent's own session id, not the protocol's: it exists before the
             // subprocess does, which is exactly what a durable per-session record needs.
             session_id,

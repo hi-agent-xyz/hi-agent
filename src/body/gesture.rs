@@ -32,7 +32,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::foundation::server::AppState;
-use crate::types::Scene;
 
 #[cfg(target_os = "macos")]
 use bytes::Bytes;
@@ -42,16 +41,15 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 /// Arm the gestures: from now on a double-tap of the right Command hands the agent a
-/// screenshot, and a press-and-hold opens continuous attention, both in `scene`.
+/// screenshot, and a press-and-hold opens continuous attention, both in `conversation`.
 /// Spawns the OS event-loop thread and the recognizer task and returns immediately.
 /// Call once, after the reaction is running, from within the tokio runtime — it
 /// captures the current runtime handle to drive the recognizers and the async
 /// capture/ingest off the (blocking) event-loop thread.
 #[cfg(target_os = "macos")]
-pub fn install(state: Arc<AppState>, scene: Scene) {
+pub fn install(state: Arc<AppState>) {
     use crate::body::capabilities::hotkey;
 
-    let scene_label = scene.to_string();
     let handle = tokio::runtime::Handle::current();
 
     // Raw Command-key edges flow from the OS tap thread to the async recognizer on
@@ -61,8 +59,8 @@ pub fn install(state: Arc<AppState>, scene: Scene) {
     // The follower mirrors the held conversation onto the menu-bar item's single
     // text field — the transcript while you hold, then the reply, in sequence.
     let (attn_tx, attn_rx) = tokio::sync::mpsc::unbounded_channel::<AttnEvent>();
-    handle.spawn(tray_text_follower(state.clone(), scene.clone(), attn_rx));
-    handle.spawn(recognizer_loop(state, scene, edge_rx, attn_tx));
+    handle.spawn(tray_text_follower(state.clone(), attn_rx));
+    handle.spawn(recognizer_loop(state, edge_rx, attn_tx));
 
     let spawned = std::thread::Builder::new()
         .name("hotkey-gesture".to_string())
@@ -79,7 +77,7 @@ pub fn install(state: Arc<AppState>, scene: Scene) {
         });
     match spawned {
         Ok(_) => tracing::info!(
-            scene = %scene_label,
+            conversation = %"the conversation",
             "right-Command gestures armed (single-tap → chat, double-tap → screenshot, press-hold → attention)"
         ),
         Err(e) => tracing::warn!(error = %e, "gesture: could not spawn listener thread; gestures disabled"),
@@ -105,7 +103,6 @@ enum AttnEvent {
 #[cfg(target_os = "macos")]
 async fn tray_text_follower(
     state: Arc<AppState>,
-    scene: Scene,
     mut events: tokio::sync::mpsc::UnboundedReceiver<AttnEvent>,
 ) {
     use crate::body::capabilities::tray;
@@ -161,7 +158,7 @@ async fn tray_text_follower(
             },
             r = input_rx.recv(), if active => match r {
                 Ok(echo) => {
-                    if echo.scene == scene && echo.channel == Channel::Text {
+                    if echo.channel == Channel::Text {
                         tray::set_text(&tail(&echo.text)); // listen phase
                     }
                 }
@@ -170,7 +167,7 @@ async fn tray_text_follower(
             },
             r = output_rx.recv(), if active => match r {
                 Ok(echo) => {
-                    if echo.scene == scene && echo.channel == Channel::Text {
+                    if echo.channel == Channel::Text {
                         reply.push_str(&echo.text); // speak phase
                         tray::set_text(&tail(&reply));
                         if deadline.is_some() {
@@ -202,7 +199,6 @@ async fn tray_text_follower(
 #[cfg(target_os = "macos")]
 async fn recognizer_loop(
     state: Arc<AppState>,
-    scene: Scene,
     mut edges: tokio::sync::mpsc::UnboundedReceiver<crate::body::capabilities::hotkey::Edge>,
     attn_tx: tokio::sync::mpsc::UnboundedSender<AttnEvent>,
 ) {
@@ -262,7 +258,7 @@ async fn recognizer_loop(
                             dt.on_other_input();
                             hold.cancel();
                             glanced_since_down = true;
-                            glance(&state, &scene);
+                            glance(&state);
                         }
                     }
                     Edge::CmdUp => {
@@ -296,7 +292,7 @@ async fn recognizer_loop(
                     // Stage 1: open the mic and start buffering, no processing yet.
                     Some(GestureEvent::CaptureStart) => {
                         captured_since_down = true;
-                        arm_capture(&state, &scene, &mut session);
+                        arm_capture(&state, &mut session);
                     }
                     // Stage 2: commit the pre-roll to live processing. Cancels a
                     // half-formed double-tap so a later tap doesn't pair with this press.
@@ -323,14 +319,13 @@ async fn recognizer_loop(
 /// tray first as an instant ack of the *gesture* (before the async capture), then
 /// spawns the capture + carrier ingest so a slow grab never stalls the recognizer.
 #[cfg(target_os = "macos")]
-fn glance(state: &Arc<AppState>, scene: &Scene) {
+fn glance(state: &Arc<AppState>) {
     crate::body::capabilities::tray::flash();
     let state = state.clone();
-    let scene = scene.clone();
     tokio::spawn(async move {
         match crate::body::capabilities::screencast::grab_screen_png().await {
             Ok(png) => {
-                if let Err(e) = crate::foundation::server::files::receive_screenshot(&state, &scene, &png).await {
+                if let Err(e) = crate::foundation::server::files::receive_screenshot(&state, &png).await {
                     tracing::warn!(error = %e, "gesture: handing screenshot to the agent failed");
                 }
             }
@@ -380,7 +375,7 @@ struct MicSession {
 /// is dropped ([`discard_capture`] / [`stop_attention`]) and no transcript is produced.
 /// Idempotent (a re-entrant capture is ignored) and best-effort — no mic, no attention.
 #[cfg(target_os = "macos")]
-fn arm_capture(state: &Arc<AppState>, scene: &Scene, session: &mut Option<MicSession>) {
+fn arm_capture(state: &Arc<AppState>, session: &mut Option<MicSession>) {
     if session.is_some() {
         return; // already capturing
     }
@@ -391,7 +386,7 @@ fn arm_capture(state: &Arc<AppState>, scene: &Scene, session: &mut Option<MicSes
     match crate::body::capabilities::audio_capture::start() {
         Ok((capture, frames)) => {
             let (ctrl_tx, ctrl_rx) = mpsc::channel::<Ctrl>(1);
-            tokio::spawn(pump_capture(state.clone(), scene.clone(), frames, ctrl_rx));
+            tokio::spawn(pump_capture(state.clone(), frames, ctrl_rx));
             *session = Some(MicSession { _capture: capture, ctrl: ctrl_tx, committed: false });
             tracing::info!("press-hold attention: capturing (mic open, buffering pre-roll)");
         }
@@ -464,7 +459,6 @@ fn stop_attention(
 #[cfg(target_os = "macos")]
 async fn pump_capture(
     state: Arc<AppState>,
-    scene: Scene,
     mut frames: mpsc::Receiver<Bytes>,
     mut ctrl: mpsc::Receiver<Ctrl>,
 ) {
@@ -483,7 +477,6 @@ async fn pump_capture(
                         let (tx, rx) = mpsc::channel::<Bytes>(64);
                         tokio::spawn(crate::foundation::server::audio::ingest_pcm_stream(
                             state.clone(),
-                            scene.clone(),
                             None,
                             Some(ATTENTION_TAG.to_string()),
                             rx,
@@ -529,4 +522,4 @@ async fn pump_capture(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn install(_state: Arc<AppState>, _scene: Scene) {}
+pub fn install(_state: Arc<AppState>) {}

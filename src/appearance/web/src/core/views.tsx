@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { subscribeViewState, clearViewState, type ViewTraits } from "../channels/out/view";
-import { usePresence, useScene, useWake } from "./session";
+import { usePresence, useWake } from "./session";
 
 // How long a newly appearing view waits for the voice before showing anyway.
 // The view is paced to its narration, but the /view and /audio channels have
@@ -44,13 +44,12 @@ const ViewsContext = createContext<ViewsValue>({
 /**
  * Runs the /api/out/view long-poll ABOVE the view slot, so the stream — like the
  * session's channel loops — survives any view swap. Mirrors the server's retained
- * per-scene appearance state: each response is the whole set of active views in
+ * retained appearance state: each response is the whole set of active views in
  * z-order, so a fresh page, a second device, or a reconnect all converge on the
  * same screen. A view persists until the agent dismisses or replaces it — there
  * is no client-side expiry; the next snapshot is the only lifecycle driver.
  */
 export function ViewsProvider({ children }: { children: ReactNode }) {
-  const scene = useScene();
   const { woken } = useWake();
   // Whether the agent's voice is audibly playing right now — the gate signal
   // for a newly appearing view (see VOICE_GATE_FALLBACK_MS). Mirrored into a ref
@@ -73,8 +72,8 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   }, [reactive]);
 
   const clear = useCallback(() => {
-    void clearViewState(scene);
-  }, [scene]);
+    void clearViewState();
+  }, []);
 
   useEffect(() => {
     if (!woken) return;
@@ -109,7 +108,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       const applied = new Set<string>();
       while (!cancelled) {
         try {
-          for await (const state of subscribeViewState({ scene, signal: ctrl.signal })) {
+          for await (const state of subscribeViewState({ signal: ctrl.signal })) {
             if (cancelled) break;
             // A snapshot that brings up a view id not on screen yet is held
             // until the voice is audibly playing (or the fallback elapses), so
@@ -141,7 +140,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       ctrl.abort();
     };
-  }, [woken, scene]);
+  }, [woken]);
 
   const value = useMemo<ViewsValue>(
     () => ({

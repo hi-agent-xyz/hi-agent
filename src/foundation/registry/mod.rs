@@ -21,13 +21,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Utc};
 use tokio::sync::Notify;
 
-use crate::types::Scene;
 
 /// Handle for one agent session, unique process-wide.
 ///
-/// It names a *session*, not a role: a role has many sessions over a run, and two scenes'
-/// Deliberations are two sessions of one role. Process-wide rather than per-scene because
-/// ownership crosses scenes — a sceneless owner holds sessions no per-scene counter could
+/// It names a *session*, not a role: a role has many sessions over a run, and a
+/// Deliberation replaced after a failure is a second session of one role. One namespace
+/// for every rung and every worker, because ownership crosses rungs — an owner holds
+/// sessions no per-rung counter could
 /// name without collision.
 pub type SessionId = u64;
 
@@ -89,8 +89,6 @@ pub enum Delivery {
 pub struct Status {
     pub id: SessionId,
     pub role: Role,
-    /// The scene this belongs to, if any. Cognition and Reflection have none.
-    pub scene: Option<Scene>,
     /// The session that created this one and to which its work answers.
     pub owner: Option<SessionId>,
     /// What it is working on, in its own words.
@@ -111,7 +109,7 @@ pub struct Status {
 #[derive(Debug, Clone)]
 pub struct Message {
     /// Who to answer — or `None` when the **host** put this here rather than another
-    /// agent. A follow-up the scene loop hands down is not a message from a colleague,
+    /// agent. A follow-up the reaction loop hands down is not a message from a colleague,
     /// and rendering it with a return address would put a second voice in a room that
     /// has only one.
     pub from: Option<SessionId>,
@@ -171,7 +169,6 @@ struct Inbox {
 
 struct Entry {
     role: Role,
-    scene: Option<Scene>,
     owner: Option<SessionId>,
     task: String,
     busy: bool,
@@ -186,8 +183,8 @@ struct Entry {
 
 /// A registration that ends when it goes out of scope.
 ///
-/// The scene loop leaves by several paths — inbound closed, closed mid-settle, shutdown
-/// — and a registration released at only some of them is how a scene ends up with more
+/// The reaction loop leaves by several paths — inbound closed, closed mid-settle, shutdown
+/// — and a registration released at only some of them is how the agent ends up with more
 /// than one voice, `reachable` then offering an arbitrary dead one. Rather than
 /// remember every exit, hold this: the exits are then not something anyone has to get
 /// right again, including whoever adds the next one.
@@ -216,11 +213,10 @@ impl Drop for Registration {
 pub fn register_scoped(
     id: SessionId,
     role: Role,
-    scene: Option<Scene>,
     owner: Option<SessionId>,
     task: String,
 ) -> Registration {
-    let mail = global().register(id, role, scene, owner, task);
+    let mail = global().register(id, role, owner, task);
     Registration { id, mail }
 }
 
@@ -241,7 +237,6 @@ impl Registry {
         &self,
         id: SessionId,
         role: Role,
-        scene: Option<Scene>,
         owner: Option<SessionId>,
         task: String,
     ) -> std::sync::Arc<Notify> {
@@ -251,7 +246,6 @@ impl Registry {
             id,
             Entry {
                 role,
-                scene,
                 owner,
                 task,
                 busy: false,
@@ -285,7 +279,8 @@ impl Registry {
     ///
     /// A worker's id comes back from `CreateWorker`; a standing rung's is projected into
     /// the window of whoever may reach it ([`Registry::reachable`]). What this replaced —
-    /// letting an agent name a *scene* and searching for the session behind it — was
+    /// letting an agent name a destination by some other string and searching for the
+    /// session behind it — was
     /// retrieval, and a retrieval that misses is indistinguishable from nobody being
     /// there. Being told who is live, every turn, is strictly more information than being
     /// allowed to guess, and it turns this from a scan into a map lookup.
@@ -312,14 +307,13 @@ impl Registry {
     }
 
     /// Who `asker` may reach right now, as `(label, id)` — the projection that replaced
-    /// scene addressing.
+    /// name-a-destination addressing.
     ///
     /// Deliberately narrow, and narrow **per asker**, because this is the whole of what an
     /// agent knows about the rest of the agent: what it is offered here is what it can
     /// do. A worker gets its owner and nothing else, which is also the only thing the
-    /// routing rule would let it send to; a scene rung gets the shared brain; Cognition
-    /// gets the live scenes, because a task's `report_to` is a scene name and this is
-    /// where that durable name becomes a live target.
+    /// routing rule would let it send to; the voice's rungs get the shared brain; Cognition
+    /// gets the voice, because that is the one way anything reaches the person.
     ///
     /// Rebuilt every turn by the caller. There is no cache and should not be: the answer
     /// is only true for as long as those sessions are up, and a stale id is worse than no
@@ -336,23 +330,20 @@ impl Registry {
                     out.push(("the session that asked for this work".to_string(), owner));
                 }
             }
-            // The scene rungs hand work up, and that is all they address.
+            // The voice's rungs hand work up, and that is all they address.
             Role::Reaction | Role::Deliberation => {
-                if let Some((id, _)) =
-                    map.iter().find(|(_, e)| e.role == Role::Cognition && e.scene.is_none())
-                {
+                if let Some((id, _)) = map.iter().find(|(_, e)| e.role == Role::Cognition) {
                     out.push(("cognition — the shared brain".to_string(), *id));
                 }
             }
-            // Every live conversation, so `report_to` resolves, plus whatever it has
-            // running. A scene that is cold simply is not here, which is the fact
-            // Cognition needs before it decides to hold a task rather than send at it.
+            // The voice, so anything worth saying has somewhere to land, plus whatever
+            // this rung has running. A voice that is cold simply is not here, which is
+            // the fact Cognition needs before it decides to hold a result rather than
+            // send at it.
             Role::Cognition | Role::Reflection => {
                 for (id, e) in map.iter() {
-                    if e.role == Role::Reaction
-                        && let Some(scene) = &e.scene
-                    {
-                        out.push((format!("scene `{}`", scene.0), *id));
+                    if e.role == Role::Reaction {
+                        out.push(("the voice — what reaches the person".to_string(), *id));
                     }
                 }
                 for (id, e) in map.iter() {
@@ -439,7 +430,7 @@ impl Registry {
     ///
     /// Deliberation is registered and warmed before it receives its first real task,
     /// so the switchboard entry must move from its startup placeholder to the work the
-    /// scene actually handed down.
+    /// the voice actually handed down.
     pub fn set_task(&self, id: SessionId, task: String) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
             e.task = task;
@@ -471,7 +462,6 @@ impl Registry {
         Some(Status {
             id,
             role: e.role,
-            scene: e.scene.clone(),
             owner: e.owner,
             task: e.task.clone(),
             busy: e.busy,
@@ -516,8 +506,8 @@ mod tests {
     fn a_message_reaches_the_target_inbox() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, None, "thinking".into());
-        r.register(b, Role::Worker, None, Some(a), "the errand".into());
+        r.register(a, Role::Cognition, None, "thinking".into());
+        r.register(b, Role::Worker, Some(a), "the errand".into());
 
         assert_eq!(r.send(a, b, "go".into()), Delivery::Delivered);
         let mail = r.take_pending(b).expect("delivered");
@@ -533,8 +523,8 @@ mod tests {
     fn messages_landing_together_merge_into_one_prompt() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, None, String::new());
-        r.register(b, Role::Worker, None, Some(a), String::new());
+        r.register(a, Role::Cognition, None, String::new());
+        r.register(b, Role::Worker, Some(a), String::new());
 
         r.send(a, b, "first".into());
         r.send(a, b, "second".into());
@@ -553,8 +543,8 @@ mod tests {
     fn taking_or_closing_never_loses_the_racing_message() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, None, String::new());
-        r.register(b, Role::Worker, None, Some(a), String::new());
+        r.register(a, Role::Cognition, None, String::new());
+        r.register(b, Role::Worker, Some(a), String::new());
 
         // Mail present: it is taken, and the inbox stays open for more.
         r.send(a, b, "one more thing".into());
@@ -582,8 +572,8 @@ mod tests {
     fn the_host_can_post_without_being_a_sender() {
         let r = reg();
         let (owner, w) = (mint(), mint());
-        r.register(owner, Role::Deliberation, None, None, String::new());
-        r.register(w, Role::Worker, None, Some(owner), String::new());
+        r.register(owner, Role::Deliberation, None, String::new());
+        r.register(w, Role::Worker, Some(owner), String::new());
 
         // A worker may not address itself as an agent — that is not its owner.
         assert_eq!(r.send(w, w, "self".into()), Delivery::NotPermitted);
@@ -597,18 +587,17 @@ mod tests {
         assert_eq!(r.post(w, "too late".into()), Delivery::Unknown);
     }
 
-    /// The bug this exists to make impossible: a scene loop leaves by several paths, and
+    /// The bug this exists to make impossible: the reaction loop leaves by several paths, and
     /// a registration released at only some of them leaves a second voice behind for the
-    /// same scene — which `reachable` would then offer, and a sender would send at.
+    /// one role — which `reachable` would then offer, and a sender would send at.
     #[test]
     fn a_scoped_registration_ends_with_its_scope() {
-        let scene = Scene("boss".into());
         let sender = mint();
-        global().register(sender, Role::Cognition, None, None, String::new());
+        global().register(sender, Role::Cognition, None, String::new());
 
         let id = {
             let voice =
-                register_scoped(mint(), Role::Reaction, Some(scene.clone()), None, String::new());
+                register_scoped(mint(), Role::Reaction, None, String::new());
             let id = voice.id();
             assert_eq!(
                 global().send(sender, id, "hi".into()),
@@ -621,7 +610,7 @@ mod tests {
         assert_eq!(
             global().send(sender, id, "hi again".into()),
             Delivery::Unknown,
-            "no stale voice is left answering for the scene"
+            "no stale voice is left registered"
         );
         global().unregister(sender);
     }
@@ -630,7 +619,7 @@ mod tests {
     fn a_notifier_is_reachable_after_registration() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Reaction, Some(Scene("boss".into())), None, String::new());
+        r.register(a, Role::Reaction, None, String::new());
         assert!(r.notifier(a).is_some());
         assert!(r.notifier(9_999).is_none());
     }
@@ -642,11 +631,11 @@ mod tests {
     fn an_absent_target_is_reported_not_swallowed() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Cognition, None, None, String::new());
+        r.register(a, Role::Cognition, None, String::new());
         assert_eq!(r.send(a, 9_999, "hello".into()), Delivery::Unknown);
 
         let gone = mint();
-        r.register(gone, Role::Worker, None, Some(a), String::new());
+        r.register(gone, Role::Worker, Some(a), String::new());
         r.unregister(gone);
         assert_eq!(r.send(a, gone, "hello".into()), Delivery::Unknown);
     }
@@ -657,9 +646,9 @@ mod tests {
     fn a_worker_may_address_only_its_owner() {
         let r = reg();
         let (owner, other, worker) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, None, String::new());
-        r.register(other, Role::Reaction, Some(Scene("boss".into())), None, String::new());
-        r.register(worker, Role::Worker, None, Some(owner), String::new());
+        r.register(owner, Role::Cognition, None, String::new());
+        r.register(other, Role::Reaction, None, String::new());
+        r.register(worker, Role::Worker, Some(owner), String::new());
 
         assert_eq!(r.send(worker, owner, "done".into()), Delivery::Delivered);
         assert_eq!(
@@ -668,14 +657,15 @@ mod tests {
         );
     }
 
-    /// The projection that replaced scene addressing. A scene rung is offered the shared
+    /// The projection that replaced name-a-destination addressing. The voice's rungs are
+    /// offered the shared
     /// brain and nothing else, because handing work up is the only edge it has.
     #[test]
-    fn a_scene_rung_is_offered_the_shared_brain() {
+    fn the_voices_rungs_are_offered_the_shared_brain() {
         let r = reg();
         let (dl, cog) = (mint(), mint());
-        r.register(dl, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
-        r.register(cog, Role::Cognition, None, None, "thinking".into());
+        r.register(dl, Role::Deliberation, None, String::new());
+        r.register(cog, Role::Cognition, None, "thinking".into());
 
         let who = r.reachable(dl);
         assert_eq!(who.len(), 1, "{who:?}");
@@ -694,27 +684,26 @@ mod tests {
     fn a_rung_that_is_not_up_is_not_offered() {
         let r = reg();
         let dl = mint();
-        r.register(dl, Role::Deliberation, Some(Scene("boss".into())), None, String::new());
+        r.register(dl, Role::Deliberation, None, String::new());
         assert!(r.reachable(dl).is_empty());
     }
 
-    /// Cognition is offered the live scenes, because a task's `report_to` is a durable
-    /// scene name and this is where it becomes a live session id.
+    /// Cognition is offered the live voice, because that is the one way anything it
+    /// works out reaches the person.
     #[test]
-    fn cognition_is_offered_the_live_scenes_and_its_own_workers() {
+    fn cognition_is_offered_the_voice_and_its_own_workers() {
         let r = reg();
         let (cog, rx, dl, w) = (mint(), mint(), mint(), mint());
-        let scene = Scene("boss".into());
-        r.register(cog, Role::Cognition, None, None, "thinking".into());
-        r.register(rx, Role::Reaction, Some(scene.clone()), None, String::new());
-        r.register(dl, Role::Deliberation, Some(scene), None, String::new());
-        r.register(w, Role::Worker, None, Some(cog), "file the receipts".into());
+        r.register(cog, Role::Cognition, None, "thinking".into());
+        r.register(rx, Role::Reaction, None, String::new());
+        r.register(dl, Role::Deliberation, None, String::new());
+        r.register(w, Role::Worker, Some(cog), "file the receipts".into());
 
         let who = r.reachable(cog);
         let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
-        assert!(ids.contains(&rx), "the scene's voice: {who:?}");
+        assert!(ids.contains(&rx), "the voice: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
-        assert!(!ids.contains(&dl), "a scene is reached through its voice: {who:?}");
+        assert!(!ids.contains(&dl), "deliberation is reached through the voice: {who:?}");
     }
 
     /// A worker is offered its owner and nothing else — which is also the only thing the
@@ -723,9 +712,9 @@ mod tests {
     fn a_worker_is_offered_only_its_owner() {
         let r = reg();
         let (owner, worker, other) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, None, String::new());
-        r.register(other, Role::Reaction, Some(Scene("boss".into())), None, String::new());
-        r.register(worker, Role::Worker, None, Some(owner), String::new());
+        r.register(owner, Role::Cognition, None, String::new());
+        r.register(other, Role::Reaction, None, String::new());
+        r.register(worker, Role::Worker, Some(owner), String::new());
 
         let who = r.reachable(worker);
         assert_eq!(who.len(), 1, "{who:?}");
@@ -753,10 +742,10 @@ mod tests {
     fn an_owner_with_live_children_is_not_idle() {
         let r = reg();
         let (owner, child) = (mint(), mint());
-        r.register(owner, Role::Deliberation, None, None, String::new());
+        r.register(owner, Role::Deliberation, None, String::new());
         assert!(!r.has_live_children(owner));
 
-        r.register(child, Role::Worker, None, Some(owner), String::new());
+        r.register(child, Role::Worker, Some(owner), String::new());
         assert!(r.has_live_children(owner));
         assert_eq!(r.children(owner), vec![child]);
 
@@ -768,8 +757,8 @@ mod tests {
     fn status_carries_meta_and_never_content() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, None, String::new());
-        r.register(b, Role::Worker, Some(Scene("boss".into())), Some(a), "file the receipts".into());
+        r.register(a, Role::Cognition, None, String::new());
+        r.register(b, Role::Worker, Some(a), "file the receipts".into());
 
         let s = r.status(b).expect("registered");
         assert_eq!(s.role, Role::Worker);
@@ -795,7 +784,6 @@ mod tests {
         r.register(
             id,
             Role::Deliberation,
-            Some(Scene("boss".into())),
             None,
             "waiting for the first question".into(),
         );
@@ -812,7 +800,7 @@ mod tests {
     fn output_is_a_bounded_tail_not_an_archive() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Worker, None, None, String::new());
+        r.register(a, Role::Worker, None, String::new());
         r.record_output(a, "hello ");
         r.record_output(a, "world");
         assert_eq!(r.messages(a).as_deref(), Some("hello world"));

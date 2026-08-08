@@ -4,7 +4,7 @@
 // mono 16-bit PCM. There is NO client-side voice-activity detection: the browser
 // streams audio blindly and the upstream STT does all the endpointing. This is
 // UPLOAD-ONLY — nothing comes back on the socket. Recognized speech is published
-// by the server to the scene's observe stream (`GET /api/in/audio`), so the
+// by the server to the conversation's observe stream (`GET /api/in/audio`), so the
 // uploading client reads its own words there like every other client; display
 // and barge-in are driven from that stream, not from this socket.
 //
@@ -28,8 +28,6 @@
 import workletUrl from "./pcmWorklet.js?url";
 
 export interface AudioStreamerOptions {
-  /** Scene identity; rides in the WS query string (browsers can't set headers). */
-  scene: string;
 }
 
 // Reconnect backoff: first retry is quick, then doubles to a ceiling so a server
@@ -76,9 +74,9 @@ export class AudioStreamer {
     return new AudioStreamer(ctx, source, opts);
   }
 
-  private constructor(ctx: AudioContext, source: AudioNode, opts: AudioStreamerOptions) {
+  private constructor(ctx: AudioContext, source: AudioNode, _opts: AudioStreamerOptions) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    this.url = `${proto}://${location.host}/api/in/audio/stream?scene=${encodeURIComponent(opts.scene)}`;
+    this.url = `${proto}://${location.host}/api/in/audio/stream`;
     this.open();
 
     this.node = new AudioWorkletNode(ctx, "pcm-stream", {

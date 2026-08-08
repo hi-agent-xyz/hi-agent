@@ -1,7 +1,7 @@
 // Client for the inbound text channel.
 //
 // `postInText` sends a typed line to the agent (POST /api/in/text). The server
-// dispatches it to the mind *and* echoes it to scene observers, so the line is
+// dispatches it to the mind *and* echoes it to conversation observers, so the line is
 // rendered from the observe stream below — not echoed locally — keeping every
 // client's UI identical.
 //
@@ -9,9 +9,8 @@
 
 import { observeInput, type InputEvent } from "../ndjson";
 
-/** Observe typed inputs on this scene (live, no replay). */
+/** Observe typed inputs on this conversation (live, no replay). */
 export function subscribeInText(opts: {
-  scene: string;
   signal: AbortSignal;
 }): AsyncGenerator<InputEvent, void, void> {
   return observeInput("/api/in/text", opts);
@@ -22,7 +21,6 @@ export function subscribeInText(opts: {
  * Returns when the server has accepted the body (202).
  */
 export async function postInText(opts: {
-  scene: string;
   body: string;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -30,7 +28,6 @@ export async function postInText(opts: {
     method: "POST",
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "X-HI-Scene": opts.scene,
     },
     body: opts.body,
     signal: opts.signal,

@@ -155,7 +155,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         foundation::observatory::Observatory::new(Some(config.data_dir.join("sessions.jsonl")));
 
     // Raw ACP wire tap — every JSON-RPC frame, business-logic agnostic. The agent
-    // layer hands it to each scene's subprocess; `GET /api/acp/frames/events`
+    // layer hands it to each rung's subprocess; `GET /api/acp/frames/events`
     // streams it to the raw session inspector.
     let acp_tap = foundation::acp::AcpTap::with_durable_log(config.data_dir.clone());
 
@@ -177,15 +177,15 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         "capabilities resolved"
     );
 
-    // Scene→tool-sink table shared between the HTTP front's `/mcp` handler and the
-    // reaction that registers each scene's sink. The mind drives output and
+    // The tool-sink slot shared between the HTTP front's `/mcp` handler and the
+    // reaction that registers its sink. The mind drives output and
     // side-effects by calling tools on `/mcp`; they route here.
     let tool_registry = body::reaction::ToolRegistry::new();
-    // Scene→barge-in table, shared the same way: the server's STT relay reports
+    // The barge-in state, shared the same way: the server's STT relay reports
     // recognized speech, the reaction stamps voice spans and folds the inferred
     // "what went unheard" note into the next prompt. No cancel, no endpoint.
     let interrupts = body::reaction::InterruptRegistry::new();
-    // Scene→live-subscriber counts, shared the same way: the server's out-channel
+    // Live-subscriber counts, shared the same way: the server's out-channel
     // handlers hold a guard per connection, the reaction renders the counts into
     // each turn as human-model facts ("no screen is attached").
     let presence = body::presence::Presence::new();
@@ -239,7 +239,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     config.agent.render_settings_json(&claude_config_dir)?;
 
     // Spawn config for the agent session layer. The subprocess itself is spawned
-    // lazily, one per scene, on that scene's first session (Chrome-style isolation);
+    // lazily, one per conversation, on that conversation's first session (Chrome-style isolation);
     // the pinned runtime and managed env are shared by all. The child reaches the
     // upstream LLM directly (no local proxy).
     let mut child_env = config.agent.child_env(
@@ -319,7 +319,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     let view_compiler = mind::views::ViewCompiler::new(esbuild_bin, &config.data_dir);
     // The reviewing half needs the same compiler plus our own origin, and it runs from
     // a *tool call* rather than from the reaction — so it cannot be handed either down
-    // the scene path. Published here, read by `review_view`.
+    // the conversation path. Published here, read by `review_view`.
     mind::views::set_render_context(
         view_compiler.clone(),
         format!("http://127.0.0.1:{}", config.port),
@@ -333,7 +333,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             .unwrap_or_else(|| "system".to_string()),
     );
     // The reaction's shutdown signal: triggered below the moment a signal / Quit is
-    // observed, so its scene loops, reflection, and drive retries wind down instead
+    // observed, so its reaction loops, reflection, and drive retries wind down instead
     // of restarting ACP sessions into a process group that's already terminating.
     let reaction_shutdown = foundation::shutdown::Shutdown::new();
     // Eager sessions attach to `/mcp` during `session/new`. The reaction starts before
@@ -361,8 +361,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 
     // Arm the "come and see this" gesture: a double-tap of Command hands the agent
     // a screenshot of the current screen as a file (macOS only, best-effort — needs
-    // the Accessibility + Screen Recording grants, else it stays inert). One
-    // desktop, one person showing one agent, so it lands in a single fixed scene.
+    // the Accessibility + Screen Recording grants, else it stays inert). It joins
+    // the conversation like any other signal — the same one the browser is talking
+    // in, which is the whole point: showing the agent your screen and then asking
+    // about it out loud is one exchange.
     //
     // Off unless the user has opted in (the tray's "Attention gestures" item): the
     // global key event tap forces the macOS "Input Monitoring" grant the moment it's
@@ -371,7 +373,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     if foundation::config::flag_on(foundation::config::tunables::get(
         foundation::config::KEY_GESTURES,
     )) {
-        body::gesture::install(seams.state, crate::types::Scene("desktop".to_string()));
+        body::gesture::install(seams.state);
     } else {
         tracing::info!("attention gestures off (enable in the tray menu to arm them)");
     }

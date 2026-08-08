@@ -29,8 +29,8 @@
 //! Writes go through [`facets::update_facet`], which renames a temp sibling into place,
 //! so a reader never sees a torn file. Both path segments are checked for traversal and
 //! then [`facets::slug`]ged, so a request can only ever name a path inside
-//! `<data_dir>/memory/facets/`. The store is global (not scene-scoped), so like
-//! `/api/people` these take no `X-HI-Scene`.
+//! `<data_dir>/memory/facets/`. The store is global, so like
+//! `/api/people` these take no `X-HI-Conversation`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -234,15 +234,14 @@ struct EpisodeDto {
     /// something finished happening. Empty when the frontmatter carries neither
     /// `to_ts` nor `from_ts`.
     at: String,
-    scene: String,
     /// The episode body with its frontmatter stripped — the gist the mind wrote.
     gist: String,
 }
 
-/// The most recent `limit` episodes across every scene, newest first. Walks
+/// The most recent `limit` episodes, newest first. Walks
 /// `memory/episodes/<date>-<slug>/episode.md` directly rather than going through
 /// [`crate::mind::memory::episodes::recent_gists`], which returns bodies only (no
-/// timestamp, no scene) and oldest-first — this surface needs all three fields.
+/// timestamp) and oldest-first — this surface needs both fields.
 /// A missing episodes dir, or one whose entries are unreadable, yields an empty list.
 async fn recent_episodes(data_dir: &Path, limit: usize) -> anyhow::Result<Vec<EpisodeDto>> {
     let dir = layout::episodes_dir(data_dir);
@@ -272,7 +271,6 @@ async fn recent_episodes(data_dir: &Path, limit: usize) -> anyhow::Result<Vec<Ep
             .map(normalize_ts)
             .unwrap_or_default();
         let dto = EpisodeDto {
-            scene: frontmatter_field(&content, "scene").unwrap_or_default(),
             gist: strip_frontmatter(&content).trim().to_owned(),
             at: at.clone(),
         };
@@ -355,12 +353,11 @@ mod tests {
     /// Write an episode bundle the way `record_episode` does — same dir shape, same
     /// JSON-scalar frontmatter — so the parser is tested against the real on-disk form
     /// without standing up a journal.
-    async fn write_episode(data_dir: &Path, name: &str, scene: &str, to_ts: &str, gist: &str) {
+    async fn write_episode(data_dir: &Path, name: &str, conversation: &str, to_ts: &str, gist: &str) {
         let dir = layout::episodes_dir(data_dir).join(name);
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let body = format!(
-            "---\nscene: {}\ntitle: {}\nfrom_id: \"a\"\nto_id: \"b\"\nfrom_ts: {}\nto_ts: {}\nsubjects: []\nkind: reflection\n---\n\n{gist}\n",
-            serde_json::to_string(scene).unwrap(),
+            "---\ntitle: {}\nfrom_id: \"a\"\nto_id: \"b\"\nfrom_ts: {}\nto_ts: {}\nsubjects: []\nkind: reflection\n---\n\n{gist}\n",
             serde_json::to_string(name).unwrap(),
             serde_json::to_string(to_ts).unwrap(),
             serde_json::to_string(to_ts).unwrap(),
@@ -459,7 +456,6 @@ mod tests {
             ["third", "second", "first"]
         );
         assert_eq!(eps[0].at, "2026-08-04T11:00:00Z");
-        assert_eq!(eps[1].scene, "alice@phone");
 
         let eps = recent_episodes(d.path(), 1).await.unwrap();
         assert_eq!(eps.len(), 1);

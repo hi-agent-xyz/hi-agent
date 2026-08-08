@@ -23,7 +23,6 @@ struct TaskDto {
     subject: String,
     title: String,
     status: &'static str,
-    report_to: Option<String>,
     created_at: Option<String>,
     due_at: Option<String>,
     checked_at: Option<String>,
@@ -52,7 +51,6 @@ fn dto(task: &Task, malformed: bool) -> TaskDto {
         subject: task.subject.clone(),
         title: task.title.clone(),
         status: task.status.as_str(),
-        report_to: task.report_to.as_ref().map(|scene| scene.0.clone()),
         created_at: task.created_at.map(rfc3339),
         due_at: task.due_at.map(rfc3339),
         checked_at: task.checked_at.map(rfc3339),
@@ -264,8 +262,7 @@ fn not_found(message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Scene;
-    use chrono::TimeZone;
+        use chrono::TimeZone;
 
     fn at(day: u32, hour: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, day, hour, 0, 0)
@@ -278,7 +275,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut task = Task::new("Watch oil prices", TaskStatus::Doing);
         task.created_at = Some(at(1, 9));
-        task.report_to = Some(Scene("boss".into()));
         task.due_at = Some(at(9, 10));
         task.checked_at = Some(at(4, 22));
         task.liveness.verify =

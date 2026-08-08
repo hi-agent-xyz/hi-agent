@@ -18,25 +18,24 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Timelike, Utc};
 use tokio::io::AsyncWriteExt;
 
-use crate::types::{Channel, Scene};
+use crate::types::Channel;
 
 use super::layout::{self, MediaSlot};
 
-/// Persist `bytes` inside the scene's channel-day folder for `ts` — the same
+/// Persist `bytes` inside the channel-day folder for `ts` — the same
 /// folder that holds `<channel>.jsonl` — at the grid slot `slot` dictates, and
 /// return the path **relative to that folder**. The caller records it in the
 /// entry's `media.file`; a reader resolves it as
 /// `channel_day_dir(..).join(media.file)`.
 pub async fn store_blob(
     data_dir: &Path,
-    scene: &Scene,
     channel: Channel,
     ts: DateTime<Utc>,
     slot: MediaSlot,
     ext: &str,
     bytes: &[u8],
 ) -> anyhow::Result<String> {
-    let dir = layout::channel_day_dir(data_dir, scene, channel, ts);
+    let dir = layout::channel_day_dir(data_dir, channel, ts);
     let rel = layout::media_rel_path(ts, slot, ext);
     let path = dir.join(&rel);
     if let Some(parent) = path.parent() {
@@ -58,12 +57,11 @@ pub async fn store_blob(
 /// gracefully instead of 404-ing.
 pub async fn resolve(
     data_dir: &Path,
-    scene: &Scene,
     channel: Channel,
     ts: DateTime<Utc>,
     rel: &str,
 ) -> Option<PathBuf> {
-    let dir = layout::channel_day_dir(data_dir, scene, channel, ts);
+    let dir = layout::channel_day_dir(data_dir, channel, ts);
     let original = dir.join(rel);
     if tokio::fs::try_exists(&original).await.unwrap_or(false) {
         return Some(original);
@@ -136,26 +134,25 @@ mod tests {
     async fn resolves_original_then_keepsake_then_none() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        let scene = Scene("s".into());
         let when = Utc.with_ymd_and_hms(2000, 1, 1, 9, 16, 0).unwrap();
-        let rel = store_blob(dir, &scene, Channel::Audio, when, MediaSlot::InputStream, "wav", b"x")
+        let rel = store_blob(dir, Channel::Audio, when, MediaSlot::InputStream, "wav", b"x")
             .await
             .unwrap();
 
         // Original present → returns it.
-        let got = resolve(dir, &scene, Channel::Audio, when, &rel).await.unwrap();
+        let got = resolve(dir, Channel::Audio, when, &rel).await.unwrap();
         assert!(got.ends_with("09/16.wav"));
 
         // Original gone, a keepsake left → falls back to the keepsake.
-        let day = layout::channel_day_dir(dir, &scene, Channel::Audio, when);
+        let day = layout::channel_day_dir(dir, Channel::Audio, when);
         tokio::fs::remove_file(day.join(&rel)).await.unwrap();
         tokio::fs::create_dir_all(day.join("keep")).await.unwrap();
         tokio::fs::write(day.join("keep").join("091610-091618.wav"), b"k").await.unwrap();
-        let got = resolve(dir, &scene, Channel::Audio, when, &rel).await.unwrap();
+        let got = resolve(dir, Channel::Audio, when, &rel).await.unwrap();
         assert!(got.ends_with("keep/091610-091618.wav"));
 
         // Keepsake gone too → caption-only (None).
         tokio::fs::remove_file(day.join("keep").join("091610-091618.wav")).await.unwrap();
-        assert!(resolve(dir, &scene, Channel::Audio, when, &rel).await.is_none());
+        assert!(resolve(dir, Channel::Audio, when, &rel).await.is_none());
     }
 }

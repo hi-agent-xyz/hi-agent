@@ -1,9 +1,9 @@
-//! `GET /api/in/<channel>` — observe a scene's recognized inputs, live.
+//! `GET /api/in/<channel>` — observe recognized inputs, live.
 //!
 //! Inputs cross the world→agent boundary on a single client's POST/WS, but every
-//! client in the scene should render them identically — the same guarantee the
-//! outbound channels give. Each handler here subscribes to the per-scene
-//! [`InputEcho`](crate::foundation::server::InputEcho) broadcast, keeps only this scene +
+//! attached client should render them identically — the same guarantee the
+//! outbound channels give. Each handler here subscribes to the
+//! [`InputEcho`](crate::foundation::server::InputEcho) broadcast, keeps only this
 //! channel, and streams the matches as newline-delimited JSON for as long as the
 //! connection is held.
 //!
@@ -22,17 +22,17 @@ use futures::stream::unfold;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::foundation::server::AppState;
-use crate::types::{Channel, Scene};
+use crate::types::Channel;
 
-/// Stream this scene's inputs on `channel` as NDJSON until the client hangs up.
-pub fn stream_input(state: Arc<AppState>, scene: Scene, channel: Channel) -> Response {
+/// Stream the inputs on `channel` as NDJSON until the client hangs up.
+pub fn stream_input(state: Arc<AppState>, channel: Channel) -> Response {
     let rx = state.input_echo.subscribe();
 
-    let stream = unfold((rx, scene, channel), |(mut rx, scene, channel)| async move {
+    let stream = unfold((rx, channel), |(mut rx, channel)| async move {
         loop {
             match rx.recv().await {
                 Ok(echo) => {
-                    if echo.channel != channel || echo.scene != scene {
+                    if echo.channel != channel {
                         continue;
                     }
                     // One JSON object per line. Serialization can't fail for this
@@ -43,7 +43,7 @@ pub fn stream_input(state: Arc<AppState>, scene: Scene, channel: Channel) -> Res
                     line.push(b'\n');
                     return Some((
                         Ok::<Bytes, std::convert::Infallible>(Bytes::from(line)),
-                        (rx, scene, channel),
+                        (rx, channel),
                     ));
                 }
                 // A slow observer that fell behind just resumes from the live

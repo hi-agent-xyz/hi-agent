@@ -1,16 +1,16 @@
 //! Live sessions — the switchboard read directly, so "what is running right now"
 //! stops being a question you answer by folding an event log.
 //!
-//! Nothing else on the wire answers it. `GET /api/sessions` is keyed by scene and
-//! carries no workers on purpose ([`SceneView`](crate::foundation::observatory::SceneView)
+//! Nothing else on the wire answers it. `GET /api/sessions` is keyed by conversation and
+//! carries no workers on purpose ([`AgentView`](crate::foundation::observatory::AgentView)
 //! states why: a working session belongs to whoever created it, and the rungs that
-//! create them — Cognition, Reflection — have no scene). So worker lifecycle exists
+//! create them — Cognition, Reflection — have no conversation). So worker lifecycle exists
 //! only as `worker_spawned` / `worker_resumed` / `worker_finished` frames on the
 //! `GET /api/sessions/events` SSE stream, and "is that watch still up?" means pairing
 //! spawns against finishes by hand. Both halves of that pairing have already been
 //! wrong in production:
 //!
-//! - `server.log`, 2026-08-03: `WARN worker report dropped; scene loop gone worker=9`.
+//! - `server.log`, 2026-08-03: `WARN worker report dropped; reaction loop gone worker=9`.
 //!   A restart ate an in-flight worker's report — the spawn frame is in the log, the
 //!   finish frame never came, and the work is gone (`docs/user-journeys/gaps.md` §3).
 //! - The same run: the agent said a price watch was "挂着呢,一直在盯" while
@@ -60,11 +60,10 @@ use crate::foundation::registry::{self, Role, SessionId, Status};
 struct WorkerDto {
     id: String,
     role: &'static str,
-    /// The scene this is hosted under, `null` for the sceneless rungs. May be a
-    /// pseudo-scene (`*cognition*`, `*consolidation*`) — a routing tag that names no
+    /// The conversation this is hosted under, `null` for the standing rungs. May be a
+    /// pseudo-conversation (`*cognition*`, `*consolidation*`) — a routing tag that names no
     /// conversation; it is passed through as-is rather than blanked, because that is
-    /// what the session's `X-HI-Scene` actually says.
-    scene: Option<String>,
+    /// what the session's `X-HI-Conversation` actually says.
     owner: Option<String>,
     task: String,
     busy: bool,
@@ -160,7 +159,6 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
     WorkerDto {
         id: st.id.to_string(),
         role: role_name(st.role),
-        scene: st.scene.as_ref().map(|s| s.0.clone()),
         owner: owner_label(st.owner),
         task: st.task.clone(),
         busy: st.busy,
@@ -202,14 +200,12 @@ fn err(msg: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Scene;
-    use chrono::{TimeZone, Utc};
+        use chrono::{TimeZone, Utc};
 
     fn status(id: SessionId, busy: bool, minute: u32) -> Status {
         Status {
             id,
             role: Role::Worker,
-            scene: Some(Scene("boss".into())),
             owner: None,
             task: "check oil prices".into(),
             busy,
@@ -245,7 +241,6 @@ mod tests {
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["id"], "9");
         assert_eq!(v["role"], "worker");
-        assert_eq!(v["scene"], "boss");
         assert_eq!(v["owner"], serde_json::Value::Null);
         assert_eq!(v["task"], "check oil prices");
         assert_eq!(v["busy"], true);
@@ -273,7 +268,7 @@ mod tests {
     #[test]
     fn an_owner_reads_as_its_rung_and_a_dead_one_as_its_id() {
         let owner = registry::mint();
-        registry::global().register(owner, Role::Cognition, None, None, String::new());
+        registry::global().register(owner, Role::Cognition, None, String::new());
         assert_eq!(owner_label(Some(owner)).as_deref(), Some("cognition"));
 
         registry::global().unregister(owner);
@@ -285,7 +280,7 @@ mod tests {
     #[test]
     fn the_tail_is_the_last_nonblank_line() {
         let id = registry::mint();
-        registry::global().register(id, Role::Worker, None, None, "an errand".into());
+        registry::global().register(id, Role::Worker, None, "an errand".into());
         assert_eq!(tail(id), None, "nothing said yet");
 
         registry::global().record_output(id, "first\n\nsecond\n\n");

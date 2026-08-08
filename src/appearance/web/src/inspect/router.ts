@@ -29,9 +29,9 @@ export function usePath(): Router {
 }
 
 /**
- * The selected id under a tab base, or null. `/inspect/scenes/alice%40phone`
- * with base `/inspect/scenes` → `alice@phone`. Ids are URL-encoded in links
- * (scene ids may contain `@`/`:`), so they are decoded here.
+ * The selected id under a tab base, or null. `/inspect/sessions/7` with base
+ * `/inspect/sessions` → `7`. Ids are URL-encoded in links, so they are decoded
+ * here.
  */
 export function selectedUnder(path: string, base: string): string | null {
   const prefix = `${base}/`;

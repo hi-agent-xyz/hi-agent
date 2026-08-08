@@ -66,14 +66,13 @@ hi-agent-<version>-windows-x64.exe
 
 ```sh
 curl -X POST http://127.0.0.1:12358/thought \
-  -H 'X-HI-Scene: alice@phone' \
   --data-binary 'hello'
 ```
 
 You should see `202 Accepted` and a fresh line in `data/journal.jsonl`. To watch the agent talk back, open a long-poll in another terminal first:
 
 ```sh
-curl -N -H 'X-HI-Scene: alice@phone' http://127.0.0.1:12358/thought
+curl -N http://127.0.0.1:12358/thought
 ```
 
 ## Curl recipes
@@ -81,21 +80,21 @@ curl -N -H 'X-HI-Scene: alice@phone' http://127.0.0.1:12358/thought
 The most useful four:
 
 ```sh
-# Open a long-poll on /thought for scene alice@phone (Ctrl-C to close)
-curl -N -H 'X-HI-Scene: alice@phone' http://127.0.0.1:12358/thought
+# Open a long-poll on /thought (Ctrl-C to close)
+curl -N http://127.0.0.1:12358/thought
 
 # Send a thought
-curl -X POST -H 'X-HI-Scene: alice@phone' \
+curl -X POST \
   --data-binary 'hey, are you there?' \
   http://127.0.0.1:12358/thought
 
 # Schedule a reminder (the router decides whether to call set_intent)
-curl -X POST -H 'X-HI-Scene: alice@phone' \
+curl -X POST \
   --data-binary 'remind me at 21:00 to call mom' \
   http://127.0.0.1:12358/thought
 
 # Approve a pending action (id comes from the /approval long-poll JSON)
-curl -X POST -H 'X-HI-Scene: alice@phone' \
+curl -X POST
   -H 'Content-Type: application/json' \
   -d '{"id":"<approval-uuid>","allow":true}' \
   http://127.0.0.1:12358/approval
@@ -103,10 +102,10 @@ curl -X POST -H 'X-HI-Scene: alice@phone' \
 
 ## Architecture
 
-One Rust process per agent. Inside it: an axum HTTP server, a reaction that owns per-scene queues and a worker registry, a memory facade backed by two JSONL files, an in-process MCP hub the router/worker sessions reach over a Unix socket, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start spawns the ACP adapter (via that `node`) and creates one fresh ACP session per routing turn (and one per long-lived worker). The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
+One Rust process per agent. Inside it: an axum HTTP server, a reaction that owns per-conversation queues and a worker registry, a memory facade backed by two JSONL files, an in-process MCP hub the router/worker sessions reach over a Unix socket, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start spawns the ACP adapter (via that `node`) and creates one fresh ACP session per routing turn (and one per long-lived worker). The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
 
 ```
-  scenes             hi-agent  (Rust process)              claude-code subprocess
+  conversation             hi-agent  (Rust process)              claude-code subprocess
  ───────            ──────────────────────────             ──────────────────────────
 
   alice ──POST /thought──┐
@@ -117,7 +116,7 @@ One Rust process per agent. Inside it: an axum HTTP server, a reaction that owns
                                       ▼                    │ session: worker A  │
                              ┌─────────────────┐           │  (long-lived task) │
                              │     Reaction     │           ├────────────────────┤
-                             │ per-scene queue │           │ session: worker B  │
+                             │ per-conversation queue │           │ session: worker B  │
                              │  worker reg.    │           │  (long-lived task) │
                              └────────┬────────┘           ├────────────────────┤
                                       │                    │ session: ...       │
@@ -136,18 +135,18 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 | Spec requirement | Status | Notes |
 |---|---|---|
 | `GET /` homepage | Y | Embedded Vite SPA, OG meta injected at request time |
-| `POST /thought` | Y | Body bytes are the signal; close-of-body ends the utterance; `X-HI-Scene` names the scene (defaults to anonymous when absent) |
-| `GET /thought` long-poll | Y | `X-HI-Scene` names the scene to receive on (400 if absent); per-scene buffered delivery from the reaction |
+| `POST /thought` | Y | Body bytes are the signal; close-of-body ends the utterance; `X-HI-Conversation` names the conversation (defaults to anonymous when absent) |
+| `GET /thought` long-poll | Y | `X-HI-Conversation` names the conversation to receive on (400 if absent); per-conversation buffered delivery from the reaction |
 | `POST /approval` | Y | JSON `{id, allow, reason?}`; reaction relays decision into ACP `session/request_permission` |
 | `GET /approval` long-poll | Y | JSON event; 5-minute timeout on the requesting side |
 | `POST /vision` | 501 | Per v0 scope; body describes the omission |
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |
 | `POST /touch`, `POST /smell`, `POST /taste` | 501 | Per v0 scope |
-| Per-scene routing | Y | One ACP session per routing turn, scoped by `X-HI-Scene` |
-| Workers (parallel ACP sessions) | Y | `spawn_worker` MCP tool; one session per worker; auto-stamp `X-HI-Scene` |
+| Per-conversation routing | Y | One ACP session per routing turn, scoped by `X-HI-Conversation` |
+| Workers (parallel ACP sessions) | Y | `spawn_worker` MCP tool; one session per worker; auto-stamp `X-HI-Conversation` |
 | Memory: `journal.jsonl` + `intents.jsonl` | Y | Append-only journal; intents file rewritten atomically on add/remove |
 | Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reaction |
-| `X-HI-Scene` recorded | Y | Journaled before dispatch; defaults to anonymous when absent |
+| `X-HI-Conversation` recorded | Y | Journaled before dispatch; defaults to anonymous when absent |
 | `Authorization: Bearer ...` | accepted/logged | Parsed and logged; not validated in v0 |
 | Cron / relative intents | deferred | Per `docs/impl.md` Scope |
 | Forgetting curve / significance / compaction | deferred | Per `docs/impl.md` Scope |
@@ -233,9 +232,9 @@ hi-agent/
 ├── src/
 │   ├── main.rs                             # CLI; re-exec branch for the MCP shim
 │   ├── lib.rs                              # `run(Config)` — wires everything
-│   ├── types.rs                            # Scene, Channel, Signal, JournalEntry, Intent
+│   ├── types.rs                            # Conversation, Channel, Signal, JournalEntry, Intent
 │   ├── server/                             # axum router + extractors + handlers
-│   ├── reaction.rs                          # per-scene queues, worker registry, interruption
+│   ├── reaction.rs                          # per-conversation queues, worker registry, interruption
 │   ├── acp/                                # ACP adapter subprocess + per-session helpers
 │   ├── mcp.rs                              # in-process MCP hub + the seven tools
 │   ├── memory/                             # journal, intents, snapshot builder
@@ -274,7 +273,7 @@ runtime for cognition to work.
 
 ## Risks and known unverified things
 
-See [`docs/risks.md`](docs/risks.md). The headline item: concurrent ACP sessions in the Claude Code runtime have not been measured under load. Validate the concurrency assumption (drive concurrent thoughts from several scenes and compare wall-clock) before trusting the architecture in production.
+See [`docs/risks.md`](docs/risks.md). The headline item: concurrent ACP sessions in the Claude Code runtime have not been measured under load. Validate the concurrency assumption (drive concurrent thoughts from several conversation and compare wall-clock) before trusting the architecture in production.
 
 ## License
 

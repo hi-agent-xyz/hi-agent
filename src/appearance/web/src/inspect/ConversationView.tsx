@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { selectedUnder, usePath } from "./router";
 import {
   subscribeChannels,
-  subscribeEvents,
   type Channel,
   type ChannelSignal,
-  type SceneView,
 } from "./api";
 import { subscribeAudioTurns } from "../channels/out/audio";
 import { subscribeInAudioTurns } from "../channels/in/audio";
@@ -14,7 +11,6 @@ import { AudioBus } from "../lib/audioBus";
 import { VoicePlayer } from "../lib/voicePlayer";
 import { PcmPlayer } from "../lib/pcmMonitor";
 
-const BASE = "/inspect/scenes";
 const MAX_PER_CHANNEL = 200;
 
 // Channels shown in the detail view, in display order. A card per channel lets
@@ -42,56 +38,11 @@ function time(iso: string): string {
   }
 }
 
-export function ScenesView() {
-  const { path, navigate } = usePath();
-  const selected = selectedUnder(path, BASE);
-  const [scenes, setScenes] = useState<SceneView[]>([]);
-
-  // The live scene roster rides the snapshot frames on the lifecycle SSE — one
-  // connection, no polling. The Scenes tab ignores the lifecycle events
-  // themselves; it only needs the per-scene list the snapshot carries.
-  useEffect(() => {
-    return subscribeEvents({
-      onSnapshot: (data) => {
-        data.sort((a, b) => a.scene.localeCompare(b.scene));
-        setScenes(data);
-      },
-    });
-  }, []);
-
+export function ConversationView() {
   return (
     <div className="acp">
-      <aside className="acp-list">
-        <div className="acp-list-head">
-          <span>Scenes</span>
-        </div>
-        {scenes.length === 0 ? (
-          <div className="muted pad">No active scenes yet. They appear on a scene's first turn.</div>
-        ) : (
-          <ul>
-            {scenes.map((s) => {
-              const inFlight = s.reaction_session?.in_flight;
-              return (
-                <li
-                  key={s.scene}
-                  className={s.scene === selected ? "sel" : ""}
-                  onClick={() => navigate(`${BASE}/${encodeURIComponent(s.scene)}`)}
-                >
-                  <span className={`dot ${inFlight ? "busy" : s.reaction_session ? "idle" : "cold"}`} />
-                  <span className="nm">{s.scene}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </aside>
-
       <section className="acp-detail">
-        {!selected ? (
-          <div className="muted pad">Select a scene to inspect its channels.</div>
-        ) : (
-          <SceneChannels key={selected} scene={selected} />
-        )}
+        <Channels />
       </section>
     </div>
   );
@@ -128,9 +79,9 @@ async function pumpVoice(
  * audio bytes. Output (the agent's voice) and encoded input clips play through a
  * MediaSource `VoicePlayer`; the live mic arrives as raw PCM, played through a
  * `PcmPlayer`. The toggle click is the user gesture that lets the AudioContext
- * start. Everything is torn down on toggle-off, scene-switch, or unmount.
+ * start. Everything is torn down on toggle-off-switch, or unmount.
  */
-function AudioMonitor({ scene, direction }: { scene: string; direction: "in" | "out" }) {
+function AudioMonitor({ direction }: { direction: "in" | "out" }) {
   const [on, setOn] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -157,8 +108,8 @@ function AudioMonitor({ scene, direction }: { scene: string; direction: "in" | "
       try {
         const turns =
           direction === "out"
-            ? subscribeAudioTurns({ scene, signal: ctrl.signal })
-            : subscribeInAudioTurns({ scene, signal: ctrl.signal });
+            ? subscribeAudioTurns({ signal: ctrl.signal })
+            : subscribeInAudioTurns({ signal: ctrl.signal });
         for await (const turn of turns) {
           if (cancelled) break;
           if (turn.mime.startsWith("audio/pcm")) {
@@ -191,7 +142,7 @@ function AudioMonitor({ scene, direction }: { scene: string; direction: "in" | "
       pcm?.stop();
       bus?.close();
     };
-  }, [on, scene, direction]);
+  }, [on, direction]);
 
   return (
     <button
@@ -317,9 +268,9 @@ async function playVideoSession(
  * A monitor for the vision input channel: toggles a live view of the camera.
  * `GET /api/in/vision` streams one camera session (WebM) per response, which we
  * play into a `<video>` via MediaSource and re-GET for the next session. The
- * MediaSource + fetch are torn down on toggle-off / scene-switch / unmount.
+ * MediaSource + fetch are torn down on toggle-off / unmount.
  */
-function VisionMonitor({ scene }: { scene: string }) {
+function VisionMonitor() {
   const [on, setOn] = useState(false);
   const [failed, setFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -333,7 +284,7 @@ function VisionMonitor({ scene }: { scene: string }) {
 
     void (async () => {
       try {
-        for await (const turn of subscribeInVideo({ scene, signal: ctrl.signal })) {
+        for await (const turn of subscribeInVideo({ signal: ctrl.signal })) {
           if (cancelled) break;
           await playVideoSession(video, turn, () => cancelled);
         }
@@ -356,7 +307,7 @@ function VisionMonitor({ scene }: { scene: string }) {
         /* ignore */
       }
     };
-  }, [on, scene]);
+  }, [on]);
 
   return (
     <>
@@ -377,18 +328,16 @@ function VisionMonitor({ scene }: { scene: string }) {
 }
 
 /**
- * Live presence across one scene's channels. Subscribes to the merged channel
+ * Live presence across the channels. Subscribes to the merged channel
  * stream and buckets signals by channel; each channel renders a rolling feed.
- * Keyed by scene at the call site so switching scenes remounts a fresh stream.
  */
-function SceneChannels({ scene }: { scene: string }) {
+function Channels() {
   const [signals, setSignals] = useState<ChannelSignal[]>([]);
   const [live, setLive] = useState(false);
 
   useEffect(() => {
     setSignals([]);
     return subscribeChannels(
-      scene,
       (sig) => {
         // Text `final` markers carry no body — they only close an utterance, so
         // they're not worth a feed line; keep everything else.
@@ -400,7 +349,7 @@ function SceneChannels({ scene }: { scene: string }) {
       },
       setLive,
     );
-  }, [scene]);
+  }, []);
 
   // Bucket per (direction, channel) so each section's channel card draws only
   // its own side of the conversation.
@@ -419,7 +368,7 @@ function SceneChannels({ scene }: { scene: string }) {
   return (
     <div className="detail-head">
       <div className="dh-title">
-        <b>{scene}</b>
+        <b>Conversation</b>
         <span className="muted">
           live channels
           <span className={`live-dot ${live ? "on" : ""}`} title={live ? "channel stream live" : "reconnecting"} />
@@ -439,12 +388,12 @@ function SceneChannels({ scene }: { scene: string }) {
                   </h4>
                   {key === "audio" && (
                     <div className="chan-monitor-row">
-                      <AudioMonitor scene={scene} direction={dir} />
+                      <AudioMonitor direction={dir} />
                     </div>
                   )}
                   {key === "vision" && dir === "in" && (
                     <div className="chan-monitor-row">
-                      <VisionMonitor scene={scene} />
+                      <VisionMonitor />
                     </div>
                   )}
                   {items.length === 0 ? (

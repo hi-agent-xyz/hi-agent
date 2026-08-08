@@ -7,11 +7,11 @@
 //! `GET /api/in/audio` lets any client hear the raw audio.
 //!
 //! Inbound clip (`POST /api/in/audio`): the body bytes are audio; we save them
-//! as a co-located `audio-<id>.<ext>` blob beside the scene's day-log, publish
+//! as a co-located `audio-<id>.<ext>` blob beside the conversation's day-log, publish
 //! them on the inbound-audio broadcast (so `GET /api/in/audio` can play the
 //! clip), transcribe via the configured STT capability
 //! ([`crate::body::capabilities::stt`]), and feed the transcript into the same
-//! per-scene path that `POST /api/in/text` uses. The journal records a
+//! per-conversation path that `POST /api/in/text` uses. The journal records a
 //! `SignalIn { channel: Text, body: <transcript>, media: Some(..) }` — the
 //! agent reads text, while the media reference (sharing the blob's id) links
 //! back to the audio this transcript was derived from.
@@ -23,11 +23,11 @@
 //! inbound-audio broadcast (so `GET /api/in/audio` plays the live mic), and each
 //! finalized sentence is dispatched as a text `SignalIn`. The agent sees no live
 //! partials — a sentence reaches it once, settled — but rolling partials *are*
-//! echoed to scene observers (`GET /api/in/text`, `final:false`): they're the
+//! echoed to conversation observers (`GET /api/in/text`, `final:false`): they're the
 //! barge-in trigger, letting a client duck its playback the instant speech is
 //! recognized.
 //!
-//! Observe (`GET /api/in/audio`): the live audio bytes for the scene, one source
+//! Observe (`GET /api/in/audio`): the live audio bytes for the conversation, one source
 //! (mic stream or posted clip) per chunked response — the inbound mirror of
 //! `GET /api/out/audio`. The `Start` event's mime tells the client how to decode
 //! (`audio/pcm;rate=16000;channels=1` for the mic, the clip's own type for a POST).
@@ -67,10 +67,10 @@ use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::pcm;
-use crate::foundation::server::headers::{AuthBearer, RequiredScene, SceneHeader, StreamHeader};
+use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
 use crate::foundation::segment::{Segmenter, Speech};
-use crate::types::{Channel, JournalEntry, Media, Origin, Scene, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
 use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";
@@ -208,7 +208,6 @@ struct PostAudioAck {
 
 pub async fn post_audio(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     StreamHeader(stream): StreamHeader,
     AuthBearer(auth): AuthBearer,
     headers: HeaderMap,
@@ -234,7 +233,6 @@ pub async fn post_audio(
     let ext = mime_to_ext(&mime);
 
     tracing::info!(
-        scene = %scene,
         auth = ?auth,
         mime = %mime,
         bytes = body.len(),
@@ -249,7 +247,7 @@ pub async fn post_audio(
     // 1. Persist the raw bytes so we can replay/audit and so the log has a
     //    stable reference. We do this before STT so a transcription failure
     //    still leaves the audio on disk.
-    let media_path = match media::store_blob(&state.data_dir, &scene, Channel::Audio, ts, MediaSlot::InputOneOff, ext, &body).await {
+    let media_path = match media::store_blob(&state.data_dir, Channel::Audio, ts, MediaSlot::InputOneOff, ext, &body).await {
         Ok(f) => f,
         Err(err) => {
             tracing::error!(error = %err, "failed to persist incoming audio");
@@ -262,16 +260,14 @@ pub async fn post_audio(
     //    no listener this is a cheap drop.
     let turn = state.audio_in_turn.fetch_add(1, Ordering::Relaxed);
     let _ = state.audio_in.send(AudioInEvent::Start {
-        scene: Some(scene.clone()),
         turn,
         mime: mime.clone(),
     });
     let _ = state.audio_in.send(AudioInEvent::Frame {
-        scene: Some(scene.clone()),
         turn,
         bytes: body.clone(),
     });
-    let _ = state.audio_in.send(AudioInEvent::End { scene: Some(scene.clone()), turn });
+    let _ = state.audio_in.send(AudioInEvent::End { turn });
 
     // Keep the raw bytes for voiceprint before STT consumes them below.
     let vp_bytes = body.clone();
@@ -296,7 +292,7 @@ pub async fn post_audio(
     // audio is already persisted for audit) — the SPA reads the empty
     // transcript and drops back to idle rather than treating it as a failure.
     if transcript.trim().is_empty() {
-        tracing::info!(scene = %scene, media_path = %media_path, "audio clip held no speech");
+        tracing::info!(media_path = %media_path, "audio clip held no speech");
         let ack = PostAudioAck { transcript: String::new(), media_path };
         return (StatusCode::ACCEPTED, axum::Json(ack)).into_response();
     }
@@ -319,7 +315,7 @@ pub async fn post_audio(
     if let Some(note) = voice_note(&vp_bytes, &mime, &transcript, &state.data_dir).await {
         delivered.push_str(&note);
     }
-    if !deliver_transcript(&state, &scene, stream, &delivered, Some((ts, id, media))).await {
+    if !deliver_transcript(&state, stream, &delivered, Some((ts, id, media))).await {
         return (StatusCode::SERVICE_UNAVAILABLE, "inbound channel closed\n").into_response();
     }
 
@@ -329,12 +325,11 @@ pub async fn post_audio(
 
 #[derive(Debug, Deserialize)]
 pub struct StreamParams {
-    /// The streaming scene. Browsers can't set `X-HI-Scene` on a WebSocket
-    /// handshake, so the scene rides in the query string instead.
-    scene: Option<String>,
-    /// The named stream within the scene, same role as `X-HI-Stream` on the POST
+    /// The streaming conversation. Browsers can't set `X-HI-Conversation` on a WebSocket
+    /// handshake, so the conversation rides in the query string instead.
+    /// The named stream within the conversation, same role as `X-HI-Stream` on the POST
     /// path; absent/empty → the default stream. Rides the query string for the
-    /// same handshake reason as `scene`.
+    /// same handshake reason as `conversation`.
     stream: Option<String>,
 }
 
@@ -358,27 +353,20 @@ pub async fn get_audio_stream(
         )
             .into_response();
     }
-    let scene = Scene(
-        params
-            .scene
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "anonymous".to_string()),
-    );
     let stream = params.stream.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
-    tracing::info!(scene = %scene, stream = ?stream, "WS /api/in/audio/stream opened");
-    ws.on_upgrade(move |socket| stream_audio_in(state, scene, stream, socket))
+    tracing::info!(stream = ?stream, "WS /api/in/audio/stream opened");
+    ws.on_upgrade(move |socket| stream_audio_in(state, stream, socket))
 }
 
 async fn stream_audio_in(
     state: Arc<AppState>,
-    scene: Scene,
     stream: Option<String>,
     mut socket: axum::extract::ws::WebSocket,
 ) {
     // Hold a mic-reach guard for the life of the socket: the mic is open for the
     // whole voice session, so this doubles as the "voice conversation active"
     // posture signal for presence. Dropped when the stream ends below.
-    let _mic = state.presence.connect_mic(&scene);
+    let _mic = state.presence.connect_mic();
     // The WS is just one source of PCM frames. Forward its binary frames into the
     // shared ingest; when the socket closes the sender drops, the ingest sees the
     // stream end, and it finalizes. A browser mic carries no source tag.
@@ -397,9 +385,9 @@ async fn stream_audio_in(
         }
     });
 
-    ingest_pcm_stream(state, scene.clone(), stream, None, rx).await;
+    ingest_pcm_stream(state, stream, None, rx).await;
     pump.abort();
-    tracing::info!(scene = %scene, "WS /api/in/audio/stream closed");
+    tracing::info!("WS /api/in/audio/stream closed");
 }
 
 /// Ingest a stream of raw 16 kHz mono 16-bit PCM frames as live inbound speech,
@@ -416,7 +404,6 @@ async fn stream_audio_in(
 /// without any branch downstream. The browser mic passes `None`.
 pub async fn ingest_pcm_stream(
     state: Arc<AppState>,
-    scene: Scene,
     stream: Option<String>,
     source_tag: Option<String>,
     mut frames: mpsc::Receiver<Bytes>,
@@ -444,7 +431,6 @@ pub async fn ingest_pcm_stream(
     // drives the time-based cut rules when the speaker has gone quiet. Each
     // finalized sentence is delivered on the text channel; there are no partials.
     let relay_state = state.clone();
-    let relay_scene = scene.clone();
     let relay_stream = stream.clone();
     let relay_pcm = timeline.clone();
     let relay_names = speaker_names.clone();
@@ -463,7 +449,7 @@ pub async fn ingest_pcm_stream(
             let cuts = tokio::select! {
                 msg = tr_rx.recv() => match msg {
                     Some(t) => {
-                        // Echo every rolling partial to the scene's observers
+                        // Echo every rolling partial to the conversation's observers
                         // (`final:false`). This is the duck trigger: the client
                         // stops its own playback the moment speech is
                         // recognized, hundreds of ms before a sentence settles.
@@ -471,8 +457,8 @@ pub async fn ingest_pcm_stream(
                         // whose own clock decides whether the agent's voice was
                         // probably still sounding (→ "what went unheard" note).
                         if !t.is_final && !t.text.trim().is_empty() {
-                            relay_state.echo_input(&relay_scene, Channel::Text, &t.text, false);
-                            relay_state.interrupts.note_speech(&relay_scene, tokio::time::Instant::now()).await;
+                            relay_state.echo_input(Channel::Text, &t.text, false);
+                            relay_state.interrupts.note_speech(tokio::time::Instant::now()).await;
                         }
                         // A diarized utterance just finalized. Each segment names a
                         // speaker and its `[start_ms, end_ms]`; slice that speaker's
@@ -532,7 +518,7 @@ pub async fn ingest_pcm_stream(
                     line.push_str(&format!(" ⟨{tag}⟩"));
                     source_noted = true;
                 }
-                deliver_transcript(&relay_state, &relay_scene, relay_stream.clone(), &line, None).await;
+                deliver_transcript(&relay_state, relay_stream.clone(), &line, None).await;
             }
         }
         // Flush any trailing words as a final sentence when the session ends.
@@ -543,7 +529,7 @@ pub async fn ingest_pcm_stream(
             {
                 line.push_str(&format!(" ⟨{tag}⟩"));
             }
-            deliver_transcript(&relay_state, &relay_scene, relay_stream.clone(), &line, None).await;
+            deliver_transcript(&relay_state, relay_stream.clone(), &line, None).await;
         }
     });
 
@@ -568,13 +554,11 @@ pub async fn ingest_pcm_stream(
         if !started {
             started = true;
             let _ = state.audio_in.send(AudioInEvent::Start {
-                scene: Some(scene.clone()),
                 turn,
                 mime: PCM_MIME.to_owned(),
             });
         }
         let _ = state.audio_in.send(AudioInEvent::Frame {
-            scene: Some(scene.clone()),
             turn,
             bytes: b.clone(),
         });
@@ -584,7 +568,7 @@ pub async fn ingest_pcm_stream(
         let minute = now.format("%Y-%m-%dT%H:%M").to_string();
         match &cap_minute {
             Some(m) if *m != minute => {
-                flush_mic_minute(&state, &scene, cap_ts, &cap_buf).await;
+                flush_mic_minute(&state, cap_ts, &cap_buf).await;
                 cap_buf.clear();
                 cap_minute = Some(minute);
                 cap_ts = now;
@@ -613,11 +597,11 @@ pub async fn ingest_pcm_stream(
 
     // Close the inbound-audio source so listeners end their current response.
     if started {
-        let _ = state.audio_in.send(AudioInEvent::End { scene: Some(scene.clone()), turn });
+        let _ = state.audio_in.send(AudioInEvent::End { turn });
     }
     // Flush the final, partial minute of mic audio.
     if !cap_buf.is_empty() {
-        flush_mic_minute(&state, &scene, cap_ts, &cap_buf).await;
+        flush_mic_minute(&state, cap_ts, &cap_buf).await;
     }
 
     // Closing the audio side lets the STT session flush its last utterance.
@@ -628,16 +612,16 @@ pub async fn ingest_pcm_stream(
             // same budget) — raise the out-of-energy hint now, without waiting for the
             // next balance poll. No-op in BYOK / for non-402 STT failures.
             crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
-            tracing::warn!(scene = %scene, error = %err, "audio ingest STT ended");
+            tracing::warn!(error = %err, "audio ingest STT ended");
         }
-        Err(_) => tracing::warn!(scene = %scene, "audio ingest STT did not finalize in time"),
+        Err(_) => tracing::warn!("audio ingest STT did not finalize in time"),
         _ => {}
     }
     out_task.abort();
 }
 
 /// Deliver one finalized transcript on the **audio** channel — journal it, echo
-/// it to scene observers (settled), and hand it to the reaction. The transcript is
+/// it to conversation observers (settled), and hand it to the reaction. The transcript is
 /// the signal's text surface (`body`); the modality stays `audio` so its bytes,
 /// when present, land under `audio/`. The reaction reads `body` regardless. For a
 /// posted clip, `clip` carries the `(ts, id, media)` of the stored audio blob so
@@ -645,7 +629,6 @@ pub async fn ingest_pcm_stream(
 /// aren't persisted yet — Phase 2), so the journal records no `media`.
 async fn deliver_transcript(
     state: &AppState,
-    scene: &Scene,
     stream: Option<String>,
     text: &str,
     clip: Option<(DateTime<Utc>, String, Media)>,
@@ -656,17 +639,15 @@ async fn deliver_transcript(
     };
     let signal = Signal {
         channel: Channel::Audio,
-        scene: scene.clone(),
         body: text.to_owned(),
         stream: stream.clone(),
         ts,
     };
-    crate::foundation::channel_log::inbound(Channel::Audio, scene, text);
+    crate::foundation::channel_log::inbound(Channel::Audio, text);
     let entry = JournalEntry::SignalIn {
         id,
         ts,
         channel: Channel::Audio,
-        scene: scene.clone(),
         body: text.to_owned(),
         stream,
         media,
@@ -677,7 +658,7 @@ async fn deliver_transcript(
     }
     // Echo before dispatching inward. The caption display rides the text channel
     // (a display concern), so a spoken line shows the same way a typed line does.
-    state.echo_input(scene, Channel::Text, text, true);
+    state.echo_input(Channel::Text, text, true);
     if let Err(err) = state.inbound.send(signal).await {
         tracing::error!(error = %err, "inbound channel closed");
         return false;
@@ -726,12 +707,12 @@ fn resolve_speaker(
 
 /// Persist one wall-clock minute of live mic PCM as a WAV under
 /// `audio/<date>/<HH>/<MM>.wav`. Best-effort: a failure is logged, never fatal.
-async fn flush_mic_minute(state: &AppState, scene: &Scene, ts: DateTime<Utc>, pcm: &[u8]) {
+async fn flush_mic_minute(state: &AppState, ts: DateTime<Utc>, pcm: &[u8]) {
     let wav = pcm16_mono_16k_to_wav(pcm);
     if let Err(err) =
-        media::store_blob(&state.data_dir, scene, Channel::Audio, ts, MediaSlot::InputStream, "wav", &wav).await
+        media::store_blob(&state.data_dir, Channel::Audio, ts, MediaSlot::InputStream, "wav", &wav).await
     {
-        tracing::warn!(scene = %scene, error = %err, "persisting mic minute failed");
+        tracing::warn!(error = %err, "persisting mic minute failed");
     }
 }
 
@@ -763,24 +744,15 @@ fn pcm16_mono_16k_to_wav(pcm: &[u8]) -> Vec<u8> {
     w
 }
 
-/// Whether an event routed to `target` should reach this `scene` subscriber.
-fn routed(target: &Option<Scene>, scene: &Scene) -> bool {
-    match target {
-        None => true,
-        Some(t) => t == scene,
-    }
-}
-
-/// `GET /api/in/audio` — the live audio bytes on this scene, one source per
+/// `GET /api/in/audio` — the live audio bytes on this conversation, one source per
 /// long-poll. The inbound mirror of [`get_out_audio`].
 pub async fn get_in_audio(
     State(state): State<Arc<AppState>>,
-    RequiredScene(scene): RequiredScene,
     AuthBearer(auth): AuthBearer,
 ) -> impl IntoResponse {
     let mut rx = state.audio_in.subscribe();
 
-    tracing::info!(scene = %scene, auth = ?auth, "GET /api/in/audio long-poll opened");
+    tracing::info!(auth = ?auth, "GET /api/in/audio long-poll opened");
 
     // Block until a source for this subscriber starts. `Start` carries the mime,
     // which must be set before any body byte; Frame/End seen before a Start (we
@@ -789,9 +761,6 @@ pub async fn get_in_audio(
     let (turn, mime) = loop {
         match rx.recv().await {
             Ok(event) => {
-                if !routed(event.scene(), &scene) {
-                    continue;
-                }
                 if let AudioInEvent::Start { turn, mime, .. } = event {
                     break (turn, mime);
                 }
@@ -807,20 +776,20 @@ pub async fn get_in_audio(
     };
 
     // Stream this source's frames as a chunked body until its `End`. Frames from
-    // any other source or scene are filtered out, so a response stays bound to the
+    // any other source or conversation are filtered out, so a response stays bound to the
     // single source it opened on.
-    let stream = futures::stream::unfold((rx, scene, turn), |(mut rx, scene, turn)| async move {
+    let stream = futures::stream::unfold((rx, turn), |(mut rx, turn)| async move {
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    if !routed(event.scene(), &scene) || event.turn() != turn {
+                    if event.turn() != turn {
                         continue;
                     }
                     match event {
                         AudioInEvent::Frame { bytes, .. } => {
                             return Some((
                                 Ok::<Bytes, std::convert::Infallible>(bytes),
-                                (rx, scene, turn),
+                                (rx, turn),
                             ));
                         }
                         AudioInEvent::End { .. } => return None,
@@ -846,18 +815,17 @@ pub async fn get_in_audio(
 /// `GET /api/out/audio` — the agent's voice, one turn per long-poll.
 pub async fn get_out_audio(
     State(state): State<Arc<AppState>>,
-    RequiredScene(scene): RequiredScene,
     AuthBearer(auth): AuthBearer,
 ) -> impl IntoResponse {
     let mut rx = state.audio_out.subscribe();
     // A held audio long-poll = their ears are on; counted while we wait for a turn.
-    let _presence = state.presence.connect(&scene, crate::body::presence::OutChannel::Audio);
+    let _presence = state.presence.connect(crate::body::presence::OutChannel::Audio);
 
-    tracing::info!(scene = %scene, auth = ?auth, "GET /api/out/audio long-poll opened");
+    tracing::info!(auth = ?auth, "GET /api/out/audio long-poll opened");
 
-    // Opening this long-poll is a scene-presence signal: warm the scene up so its
+    // Opening this long-poll is a presence signal: warm the conversation up so its
     // process + session + upstream cache are hot before the first utterance.
-    state.warm_scene(&scene);
+    state.warm();
 
     // Block until a turn for this subscriber starts. `Start` carries the mime,
     // which must be set before any body byte; Frame/End seen before a Start
@@ -866,9 +834,6 @@ pub async fn get_out_audio(
     let (turn, mime) = loop {
         match rx.recv().await {
             Ok(event) => {
-                if !routed(event.scene(), &scene) {
-                    continue;
-                }
                 if let AudioEvent::Start { turn, mime, .. } = event {
                     break (turn, mime);
                 }
@@ -884,25 +849,25 @@ pub async fn get_out_audio(
     };
 
     // Stream this turn's frames as a chunked body until its `End`. Frames from
-    // any other turn or scene are filtered out, so a response stays bound to the
+    // any other turn or conversation are filtered out, so a response stays bound to the
     // single turn it opened on.
     let stream = futures::stream::unfold(
-        (rx, scene, turn, false),
-        |(mut rx, scene, turn, done)| async move {
+        (rx, turn, false),
+        |(mut rx, turn, done)| async move {
             if done {
                 return None;
             }
             loop {
                 match rx.recv().await {
                     Ok(event) => {
-                        if !routed(event.scene(), &scene) || event.turn() != turn {
+                        if event.turn() != turn {
                             continue;
                         }
                         match event {
                             AudioEvent::Frame { bytes, .. } => {
                                 return Some((
                                     Ok::<Bytes, std::convert::Infallible>(bytes),
-                                    (rx, scene, turn, false),
+                                    (rx, turn, false),
                                 ));
                             }
                             AudioEvent::End { .. } => return None,

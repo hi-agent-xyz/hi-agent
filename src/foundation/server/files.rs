@@ -8,12 +8,12 @@
 //! "stdlib" for receiving files; the agent's filing/recall on top is agentic.
 //!
 //! Two doors, one core:
-//! - `POST /api/in/file` — drag-drop from the agent's own page; the scene rides
-//!   the `X-HI-Scene` header like every other channel.
+//! - `POST /api/in/file` — drag-drop from the agent's own page; the conversation rides
+//!   the `X-HI-Conversation` header like every other channel.
 //! - phone handoff — `POST /api/handoff` mints a short-lived token bound to the
-//!   scene and returns a `/up/<token>` URL; the built-in view renders it as a QR
+//!   conversation and returns a `/up/<token>` URL; the built-in view renders it as a QR
 //!   (`GET /api/qr`). A phone opens `GET /up/<token>` (a tiny uploader) and posts
-//!   to `POST /api/up/<token>`, where the token supplies the scene the phone has
+//!   to `POST /api/up/<token>`, where the token supplies the conversation the phone has
 //!   no header for.
 //!
 //! Every door funnels into [`receive_file`], which mirrors the text path: store
@@ -35,18 +35,16 @@ use uuid::Uuid;
 
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
-use crate::foundation::server::headers::SceneHeader;
 use crate::foundation::server::AppState;
-use crate::types::{Channel, JournalEntry, Media, Origin, Scene, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
 
 /// How long a minted phone-upload token stays valid. Long enough to pick up your
 /// phone and scan; short enough that a leaked QR doesn't linger.
 const HANDOFF_TTL: Duration = Duration::from_secs(600);
 
-/// A scene-scoped phone-upload grant. The phone reaches `/up/<token>` and
-/// `/api/up/<token>` with no `X-HI-Scene` header; the token carries the scene.
+/// A conversation-scoped phone-upload grant. The phone reaches `/up/<token>` and
+/// `/api/up/<token>` with no `X-HI-Conversation` header; the token carries the conversation.
 pub struct Handoff {
-    pub scene: Scene,
     pub expires: Instant,
 }
 
@@ -87,7 +85,6 @@ impl UploadResult {
 /// or the "come and see this" gesture ([`receive_screenshot`]).
 async fn ingest_file(
     state: &AppState,
-    scene: &Scene,
     name: &str,
     mime: &str,
     bytes: &Bytes,
@@ -95,17 +92,16 @@ async fn ingest_file(
 ) -> Result<(), String> {
     let ts = Utc::now();
     let ext = ext_for(name, mime);
-    let rel = media::store_blob(&state.data_dir, scene, Channel::File, ts, MediaSlot::InputOneOff, &ext, bytes)
+    let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, &ext, bytes)
         .await
         .map_err(|e| format!("store file: {e}"))?;
 
-    crate::foundation::channel_log::inbound(Channel::File, scene, &body);
+    crate::foundation::channel_log::inbound(Channel::File, &body);
 
     let entry = JournalEntry::SignalIn {
         id: Uuid::now_v7().to_string(),
         ts,
         channel: Channel::File,
-        scene: scene.clone(),
         body: body.clone(),
         stream: None,
         media: Some(Media { file: rel, mime: mime.to_string(), duration_ms: None, width: None, height: None }),
@@ -115,11 +111,11 @@ async fn ingest_file(
         tracing::error!(error = %err, "journal append failed; accepting file anyway");
     }
 
-    // Echo to scene observers (live), then wake the reaction so the agent reacts.
-    state.echo_input(scene, Channel::File, &body, true);
+    // Echo to conversation observers (live), then wake the reaction so the agent reacts.
+    state.echo_input(Channel::File, &body, true);
     state
         .inbound
-        .send(Signal { channel: Channel::File, scene: scene.clone(), body, stream: None, ts })
+        .send(Signal { channel: Channel::File, body, stream: None, ts })
         .await
         .map_err(|_| "inbound channel closed".to_string())?;
     Ok(())
@@ -129,13 +125,12 @@ async fn ingest_file(
 /// document handoff, framed as such.
 async fn receive_file(
     state: &AppState,
-    scene: &Scene,
     name: &str,
     mime: &str,
     bytes: &Bytes,
 ) -> Result<(), String> {
     let body = format!("The user handed you a file: {name} ({mime}, {}).", human_size(bytes.len()));
-    ingest_file(state, scene, name, mime, bytes, body).await
+    ingest_file(state, name, mime, bytes, body).await
 }
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
@@ -144,7 +139,6 @@ async fn receive_file(
 /// over for the agent to look at and help with, not a neutral document.
 pub(crate) async fn receive_screenshot(
     state: &AppState,
-    scene: &Scene,
     bytes: &Bytes,
 ) -> Result<(), String> {
     let name = format!("screen-{}.png", Utc::now().format("%Y%m%d-%H%M%S"));
@@ -153,14 +147,13 @@ pub(crate) async fn receive_screenshot(
          Attached is a screenshot of what they're looking at right now ({}).",
         human_size(bytes.len())
     );
-    ingest_file(state, scene, &name, "image/png", bytes, body).await
+    ingest_file(state, &name, "image/png", bytes, body).await
 }
 
 /// Drain a multipart body, storing every file part. A failed file does not hide
 /// siblings that already landed or prevent later parts from being attempted.
 async fn drain_multipart(
     state: &AppState,
-    scene: &Scene,
     mut mp: Multipart,
 ) -> Result<UploadResult, (StatusCode, String)> {
     let mut result = UploadResult::default();
@@ -181,10 +174,10 @@ async fn drain_multipart(
                 let index = result.attempted;
                 result.attempted += 1;
                 match field.bytes().await {
-                    Ok(bytes) => match receive_file(state, scene, &name, &mime, &bytes).await {
+                    Ok(bytes) => match receive_file(state, &name, &mime, &bytes).await {
                         Ok(()) => result.received += 1,
                         Err(error) => {
-                            tracing::error!(scene = %scene, file = %name, %error, "file upload failed");
+                            tracing::error!(file = %name, %error, "file upload failed");
                             result.failed.push(UploadFailure { index, name, error });
                         }
                     }
@@ -202,26 +195,24 @@ async fn drain_multipart(
 // Routes
 // -----------------------------------------------------------------------------
 
-/// `POST /api/in/file` — drag-drop / picker from the agent's own page. Scene via
-/// the `X-HI-Scene` header.
+/// `POST /api/in/file` — drag-drop / picker from the agent's own page. Conversation via
+/// the `X-HI-Conversation` header.
 pub async fn post_file(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     mp: Multipart,
 ) -> Response {
-    tracing::info!(scene = %scene, "POST /api/in/file");
-    match drain_multipart(&state, &scene, mp).await {
+    tracing::info!("POST /api/in/file");
+    match drain_multipart(&state, mp).await {
         Ok(result) => (result.status(), Json(result)).into_response(),
         Err((code, msg)) => (code, msg).into_response(),
     }
 }
 
-/// `POST /api/handoff` — mint a scene-scoped upload token and return the
+/// `POST /api/handoff` — mint a conversation-scoped upload token and return the
 /// `/up/<token>` URL (absolute, built from the request's `Host`) for the built-in
 /// view to render as a QR. Reusable until it expires.
 pub async fn post_handoff(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     headers: HeaderMap,
 ) -> Response {
     let token = Uuid::now_v7().to_string();
@@ -235,31 +226,31 @@ pub async fn post_handoff(
     {
         let mut map = state.handoffs.lock().unwrap();
         prune_expired(&mut map);
-        map.insert(token.clone(), Handoff { scene, expires: Instant::now() + HANDOFF_TTL });
+        map.insert(token.clone(), Handoff { expires: Instant::now() + HANDOFF_TTL });
     }
     Json(serde_json::json!({ "url": url, "token": token })).into_response()
 }
 
 /// `GET /up/{token}` — the phone's uploader page. A self-contained HTML form that
-/// posts to `POST /api/up/<token>`; the token carries the scene.
+/// posts to `POST /api/up/<token>`; the token carries the conversation.
 pub async fn get_up_page(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
-    if resolve_token(&state, &token).is_none() {
+    if !resolve_token(&state, &token) {
         return (StatusCode::GONE, Html(EXPIRED_PAGE.to_string())).into_response();
     }
     Html(upload_page(&token)).into_response()
 }
 
-/// `POST /api/up/{token}` — the phone uploads here; the token supplies the scene.
+/// `POST /api/up/{token}` — the phone uploads here; the token supplies the conversation.
 pub async fn post_up(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
     mp: Multipart,
 ) -> Response {
-    let Some(scene) = resolve_token(&state, &token) else {
+    if !resolve_token(&state, &token) {
         return (StatusCode::GONE, Html(EXPIRED_PAGE.to_string())).into_response();
-    };
-    tracing::info!(scene = %scene, "POST /api/up/<token>");
-    match drain_multipart(&state, &scene, mp).await {
+    }
+    tracing::info!("POST /api/up/<token>");
+    match drain_multipart(&state, mp).await {
         Ok(result) if result.attempted == 0 => {
             (StatusCode::BAD_REQUEST, Html(result_page("没有选择文件", false))).into_response()
         }
@@ -313,12 +304,12 @@ pub async fn get_qr(Query(q): Query<QrQuery>) -> Response {
 // Token helpers
 // -----------------------------------------------------------------------------
 
-/// Resolve a token to its scene, dropping it if expired. Prunes other stale
+/// Resolve a token to its conversation, dropping it if expired. Prunes other stale
 /// entries while holding the lock.
-fn resolve_token(state: &AppState, token: &str) -> Option<Scene> {
+fn resolve_token(state: &AppState, token: &str) -> bool {
     let mut map = state.handoffs.lock().unwrap();
     prune_expired(&mut map);
-    map.get(token).map(|h| h.scene.clone())
+    map.contains_key(token)
 }
 
 fn prune_expired(map: &mut std::collections::HashMap<String, Handoff>) {

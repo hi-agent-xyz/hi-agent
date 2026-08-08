@@ -1,7 +1,7 @@
 // Client for the inbound file channel.
 //
 // Files are handed artifacts: POST multipart bytes to /api/in/file with the
-// scene header, and the backend stores them + wakes the mind on the file channel.
+// conversation header, and the backend stores them + wakes the mind on the file channel.
 
 export interface UploadFailure {
   index: number;
@@ -77,7 +77,6 @@ function parseJson(value: string): unknown {
 
 /** Send one or more files and return the backend's per-batch outcome. */
 export async function postInFiles(opts: {
-  scene: string;
   files: File[];
   signal?: AbortSignal;
 }): Promise<UploadResult> {
@@ -88,8 +87,7 @@ export async function postInFiles(opts: {
 
   const res = await fetch("/api/in/file", {
     method: "POST",
-    headers: { "X-HI-Scene": opts.scene },
-    body: fd,
+        body: fd,
     signal: opts.signal,
   });
 

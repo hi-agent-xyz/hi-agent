@@ -199,18 +199,15 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 /// **This replaced a `const &str` in `reaction/workers.rs`** — the one role prompt that
 /// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
 ///
-/// Two scene placeholders are interpolated here, on top of the directory ones
-/// [`rung_prompt`] already expands, because a worker reaches hi-agent's own surfaces
-/// over HTTP and has to name the right scene:
-/// - `{scene}` — the scene as the `X-HI-Scene` header wants it.
-/// - `{scene_dir}` — the same scene as it appears **on disk**, which is percent-encoded
-///   (`alice@phone` lives at `alice%40phone`). Substituting the raw form here pointed
-///   the filing worker at a directory that did not exist, for every scene with an `@`
-///   in it.
-pub async fn worker_prompt(data_dir: &Path, scene: &crate::types::Scene, kind: WorkerType) -> String {
-    let text = rung_prompt(data_dir, &format!("workers/{}", kind.as_str()), kind.base()).await;
-    let scene_dir = crate::mind::memory::layout::encode_scene(scene);
-    text.replace("{scene_dir}", &scene_dir).replace("{scene}", &scene.0)
+/// Only the directory placeholders [`rung_prompt`] already expands are interpolated.
+/// There were two more — `{conversation}` for the `X-HI-Conversation` header a worker had to name,
+/// and `{scene_dir}` for the same id percent-encoded on disk — and both are gone with
+/// the key they named. The `{scene_dir}` one was a real bug's home: the raw form was
+/// substituted into a path whose directory was encoded, so for the conversation with an `@`
+/// in it the filing worker was pointed somewhere empty. A path with no user string in
+/// it cannot have that bug.
+pub async fn worker_prompt(data_dir: &Path, kind: WorkerType) -> String {
+    rung_prompt(data_dir, &format!("workers/{}", kind.as_str()), kind.base()).await
 }
 
 
@@ -289,7 +286,7 @@ async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> Str
 }
 
 /// **Deliberation**'s role layer — what it is beyond being a working session, and the
-/// job that makes it load-bearing: writing its scene's
+/// job that makes it load-bearing: writing its conversation's
 /// [generated prompt](../../docs/arch/data.md#memoryprompts), the brief Reaction reads
 /// every turn and cannot write for itself.
 ///
@@ -298,15 +295,15 @@ async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> Str
 /// rather than replacing it. Read fresh each spawn (operator-overridable via
 /// `deliberation.local.md`), so an edit takes effect without a restart.
 ///
-/// `{scene_memory}` is interpolated to the **absolute** path of the file it must write,
-/// because an agent-facing path that is relative is a path to the wrong file.
-pub async fn deliberation_prompt(data_dir: &Path, scene: &crate::types::Scene) -> String {
+/// `{conversation_memory}` is interpolated to the **absolute** path of the file it must
+/// write, because an agent-facing path that is relative is a path to the wrong file.
+pub async fn deliberation_prompt(data_dir: &Path) -> String {
     let text = rung_prompt(data_dir, "deliberation", DELIBERATION_BASE).await;
-    let target = crate::mind::memory::layout::scene_prompt_path(&abs(data_dir), scene);
-    text.replace("{scene_memory}", &target.display().to_string())
+    let target = crate::mind::memory::layout::conversation_prompt_path(&abs(data_dir));
+    text.replace("{conversation_memory}", &target.display().to_string())
 }
 
-/// **Cognition**'s role layer — the sceneless brain that owns the task ledger, hands
+/// **Cognition**'s role layer — the brain that owns the task ledger, hands
 /// work out, and never speaks (`docs/arch/agents.md#cognition`).
 ///
 /// Cognition's **whole** prompt, like every other rung's: the character and the role
@@ -333,7 +330,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
     rung_prompt(data_dir, "reflection", REFLECTION_BASE).await
 }
 
-/// **Reaction**'s system prompt — the scene's voice (`docs/arch/agents.md#reaction`).
+/// **Reaction**'s system prompt — the conversation's voice (`docs/arch/agents.md#reaction`).
 ///
 /// Reaction is tools-off by design: it has no Read, so nothing it needs may be a path.
 /// Its brief is therefore **inlined and singular** — `reaction.md` *is* its whole system
@@ -552,14 +549,13 @@ mod soul_tests {
             assert!(base.len() > 2_000, "{name} looks too thin to be self-contained");
         }
         // And the interpolations resolve rather than reaching the model raw.
-        let scene = crate::types::Scene("boss".into());
         for text in [
-            deliberation_prompt(dir.path(), &scene).await,
+            deliberation_prompt(dir.path()).await,
             cognition_prompt(dir.path()).await,
             reflection_prompt(dir.path()).await,
         ] {
             assert!(!text.contains("{skills_dir}"), "an unresolved placeholder reached the rung");
-            assert!(!text.contains("{scene_memory}"));
+            assert!(!text.contains("{conversation_memory}"));
             let skills = crate::mind::skills::skills_dir(dir.path());
             assert!(skills.is_absolute());
             assert!(text.contains(&skills.display().to_string()));
@@ -597,40 +593,24 @@ mod soul_tests {
         assert!(prompt.starts_with(REACTION_BASE.trim()));
     }
 
-    /// The path a worker is given to find a handed-over file must be the path that
-    /// exists on disk. It was substituted with the same raw scene id as the `X-HI-Scene`
-    /// header, but the directory is percent-encoded — so for every scene with an `@` in
-    /// it, which is every `user@device`, the filing worker was sent somewhere there was
-    /// nothing to find, and had no way to know that was why.
-    ///
-    /// The two facts now live in different files, which is the point of flattening: the
-    /// **filer** needs the on-disk directory, and only the **general** worker is told
-    /// about hi-agent's input channels and the header they want.
+    /// Nothing in a worker prompt is interpolated from a user string any more. The
+    /// two placeholders that were — `{scene}` for a header, `{scene_dir}` for the same
+    /// id percent-encoded on disk — are gone with the key they named, and with them the
+    /// bug where the raw form was substituted into an encoded path.
     #[tokio::test]
-    async fn the_scene_is_encoded_for_a_path_and_verbatim_for_a_header() {
+    async fn no_user_string_is_interpolated_into_a_worker_prompt() {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
-        let scene = crate::types::Scene("alice@phone".into());
 
-        let filer = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
+        let filer = worker_prompt(dir.path(), WorkerType::FileFiler).await;
         assert!(
-            filer.contains("memory/raw/alice%40phone/file/"),
-            "the file path must be the on-disk directory"
-        );
-        assert!(
-            !filer.contains("memory/raw/alice@phone/"),
-            "the raw id must not survive as a path"
-        );
-
-        let general = worker_prompt(dir.path(), &scene, WorkerType::General).await;
-        assert!(
-            general.contains("X-HI-Scene: alice@phone"),
-            "the header must stay the scene id verbatim"
+            filer.contains("memory/raw/file/"),
+            "the filer is pointed at the flat channel directory"
         );
 
         for t in WorkerType::ALL {
-            let p = worker_prompt(dir.path(), &scene, *t).await;
-            assert!(!p.contains("{scene"), "unsubstituted placeholder in {}", t.as_str());
+            let p = worker_prompt(dir.path(), *t).await;
+            assert!(!p.contains("{conversation"), "unsubstituted placeholder in {}", t.as_str());
         }
     }
 
@@ -642,13 +622,12 @@ mod soul_tests {
     async fn a_worker_gets_the_common_layer_and_only_its_own() {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
-        let scene = crate::types::Scene("boss".into());
 
         for t in WorkerType::ALL {
-            let p = worker_prompt(dir.path(), &scene, *t).await;
+            let p = worker_prompt(dir.path(), *t).await;
             assert!(p.contains("You are a working session"), "{}", t.as_str());
-            // The layer's opening heading, not the whole base: `{scene_dir}` and
-            // `{scene}` are substituted on the way through, so the composed prompt is
+            // The layer's opening heading, not the whole base: the directory
+            // placeholders are substituted on the way through, so the composed prompt is
             // deliberately not a superstring of the file on disk.
             let heading = t.base().lines().next().unwrap();
             assert!(heading.starts_with("# "), "{} has no opening heading", t.as_str());
@@ -661,11 +640,11 @@ mod soul_tests {
         // existed. Pin prose the layer actually carries, so deleting the layer fails
         // the test and deleting a file it merely mentions does not.
         const VIEW_LAYER: &str = "review_view";
-        let builder = worker_prompt(dir.path(), &scene, WorkerType::ViewBuilder).await;
+        let builder = worker_prompt(dir.path(), WorkerType::ViewBuilder).await;
         assert!(builder.contains(VIEW_LAYER));
         assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
 
-        let filer = worker_prompt(dir.path(), &scene, WorkerType::FileFiler).await;
+        let filer = worker_prompt(dir.path(), WorkerType::FileFiler).await;
         assert!(!filer.contains(VIEW_LAYER), "the view layer must not ride along");
     }
 
@@ -682,10 +661,9 @@ mod soul_tests {
     async fn the_long_running_workers_are_told_to_write_as_they_go() {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
-        let scene = crate::types::Scene("boss".into());
 
         for t in [WorkerType::General, WorkerType::ViewBuilder, WorkerType::DecisionMaker] {
-            let p = worker_prompt(dir.path(), &scene, t).await;
+            let p = worker_prompt(dir.path(), t).await;
             assert!(p.contains("only copy of the work"), "{} loses its work", t.as_str());
             // The location is the load-bearing half, and it has to arrive absolute: a
             // relative `memory/facets/...` resolves against a cwd that differs per rung.
@@ -701,10 +679,10 @@ mod soul_tests {
         // Redoing lost work is fine; redoing something a person already saw is not. Only
         // the general worker acts on the outside world, so only it carries the ordering
         // rule — the others build, judge, or file.
-        let general = worker_prompt(dir.path(), &scene, WorkerType::General).await;
+        let general = worker_prompt(dir.path(), WorkerType::General).await;
         assert!(general.contains("outside world can already see"));
         for t in [WorkerType::ViewReviewer, WorkerType::FileFiler] {
-            let p = worker_prompt(dir.path(), &scene, t).await;
+            let p = worker_prompt(dir.path(), t).await;
             assert!(!p.contains("only copy of the work"), "{} rode along", t.as_str());
         }
     }
@@ -836,20 +814,20 @@ mod soul_tests {
     #[tokio::test]
     async fn deliberation_is_told_the_absolute_path_of_the_file_it_must_write() {
         let dir = tempfile::tempdir().unwrap();
-        let scene = crate::types::Scene("alice@phone".into());
-        let prompt = deliberation_prompt(dir.path(), &scene).await;
+        let prompt = deliberation_prompt(dir.path()).await;
 
-        let expected = crate::mind::memory::layout::scene_prompt_path(dir.path(), &scene);
+        let expected = crate::mind::memory::layout::conversation_prompt_path(dir.path());
         assert!(expected.is_absolute(), "the target path must be absolute");
         assert!(
             prompt.contains(&expected.display().to_string()),
             "the prompt must name the exact file the window reads back"
         );
-        assert!(!prompt.contains("{scene_memory}"), "the placeholder must be interpolated");
+        assert!(
+            !prompt.contains("{conversation_memory}"),
+            "the placeholder must be interpolated"
+        );
 
-        // Two scenes must not be handed the same file.
-        let other = crate::types::Scene("bob@feishu".into());
-        assert!(!deliberation_prompt(dir.path(), &other).await.contains(&expected.display().to_string()));
+        // Two conversations must not be handed the same file.
     }
 
     #[tokio::test]
@@ -859,7 +837,7 @@ mod soul_tests {
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("deliberation.local.md"), "Keep the brief in French.").unwrap();
         install_prompts(dir.path()).unwrap();
-        let prompt = deliberation_prompt(dir.path(), &crate::types::Scene("alice@phone".into())).await;
+        let prompt = deliberation_prompt(dir.path()).await;
         assert!(prompt.contains("Keep the brief in French."));
     }
 

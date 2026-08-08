@@ -34,7 +34,6 @@ export interface HandoffFeedback {
 }
 
 interface UseHandoffOptions {
-  scene: string;
   textInputOpen: boolean;
   sendText: (text: string) => void;
   pasteIntoTextInput: (text: string) => void;
@@ -103,7 +102,6 @@ function uploadFailureFeedback(
 }
 
 export function useHandoff({
-  scene,
   textInputOpen,
   sendText,
   pasteIntoTextInput,
@@ -156,7 +154,7 @@ export function useHandoff({
       const abort = new AbortController();
       uploadAbortRef.current = abort;
       try {
-        const result = await postInFiles({ scene, files, signal: abort.signal });
+        const result = await postInFiles({ files, signal: abort.signal });
         retryFilesRef.current = [];
         showTimedFeedback({
           state: "sent",
@@ -175,7 +173,7 @@ export function useHandoff({
         sendingRef.current = false;
       }
     },
-    [clearStatusTimer, scene, showTimedFeedback],
+    [clearStatusTimer, showTimedFeedback],
   );
 
   const retry = useCallback(() => {

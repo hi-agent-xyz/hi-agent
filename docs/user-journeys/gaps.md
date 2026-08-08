@@ -42,11 +42,11 @@
 - Reaction 在 pulse 那一轮拿到的窗口小节是:`What I carry forward` · `Who you can reach right now` · `Recent (last 30 minutes)` · `On screen now` · `Presence` · `New signals`。**没有任何一节是开放职责。**
 
 **机制,一句话:pulse 唤醒的是看不见台账的那一路,而看得见台账的那一路没有 pulse。**
-- 台账按 invariant 4 只投影给它的**写者**——Cognition。Reaction 的窗口有意不带 scene 之外的东西。
+- 台账按 invariant 4 只投影给它的**写者**——Cognition。Reaction 的窗口有意不带 conversation 之外的东西。
 - Cognition **只被信件唤醒**,没有自己的时钟。
 - 当时时钟被 deferred,`due` 不触发任何东西(此后时钟被**彻底放弃**,见 `5429a97`——`due` 从此是"只读不触发",写进了 `docs/arch/data.md`)。
 
-这正是 `arch-refactor.md` 在 skip 掉 N4 时**自己写下的那个洞**(*"Cognition, which owns the ledger, has no pulse; it is woken only by mail. That is the hole"*)——现在它在真机上被 journey 撞到了。那份文件同时给了窄修法:**在 Cognition 的 `select!` 上加一条 timer 臂**,带上 scene pulse 用的同一句"读一遍你的开放职责",二十行,不是调度器。
+这正是 `arch-refactor.md` 在 skip 掉 N4 时**自己写下的那个洞**(*"Cognition, which owns the ledger, has no pulse; it is woken only by mail. That is the hole"*)——现在它在真机上被 journey 撞到了。那份文件同时给了窄修法:**在 Cognition 的 `select!` 上加一条 timer 臂**,带上 conversation pulse 用的同一句"读一遍你的开放职责",二十行,不是调度器。
 
 **注意这跟 2026-06-18 那次失败不是同一个原因。** 那次是 `self.md` 写读路径不一致(已修);这次职责**正确地**落进了规范台账,依然接不上,原因是结构性的。
 
@@ -107,7 +107,7 @@
 
 **症状。** 重启瞬间正在跑的 worker,干完之后**没有地方交差**,报告直接丢弃。
 
-**证据(2026-08-03)。** `server.log`:`WARN worker report dropped; scene loop gone worker=9`——那正是去取油价基准的 worker。它的成果不见了,而派它出去的那条职责还挂在台账上说"还没开始"。
+**证据(2026-08-03)。** `server.log`:`WARN worker report dropped; conversation loop gone worker=9`——那正是去取油价基准的 worker。它的成果不见了,而派它出去的那条职责还挂在台账上说"还没开始"。
 
 **为什么疼(当时)。** 与 1 叠加就是:活白干了、没人知道白干了、而记下来的那条职责也永远不会重试。
 
@@ -174,7 +174,7 @@
 那个 `dropped` 是关键:上一轮这条缺口的实质是"欠账只增不减",而**能关掉一件做不成的事**正是"只增不减"的反面。#14 通宵空转的成本随之塌掉(见该条复测)。
 
 **残留两处,都比原来轻:**
-- **frontmatter 订正了,正文没跟上**:`repo-ai-for-beginners-card` 的 `state: done`,正文却仍写着 *"scene 已经跟他说了「一分钟」,**这是欠着的**"*。结构化字段是可信的,散文不是。
+- **frontmatter 订正了,正文没跟上**:`repo-ai-for-beginners-card` 的 `state: done`,正文却仍写着 *"conversation 已经跟他说了「一分钟」,**这是欠着的**"*。结构化字段是可信的,散文不是。
 - **即时内容仍然沉淀成 facet**:`culture/ai-for-beginners` 是一次性"讲讲这个项目"留下的,[04](04-trending-feeds.md) 说这类不进持久记忆。**但落点变对了**——上一轮石宇奇被建进 `people/`(那是给认得的人用的命名空间),本轮 `people/` 下**只有 boss 一个**,球员进了 `culture/badminton`。而且那条 facet 自带保质期提醒:*"排名每周二更新——上面这份会过期,再被问起时要重新去 BWF 官网拿,别照抄。"*
 
 **另外,上一轮没验的那一半(reflection 写的 `people/<who>` Open threads)本轮验了,会订正。** `people/boss/facet.md` 同时维护"已交付"清单和"**还欠着**"清单,并且明确把一条从欠账里划掉:*"AI-For-Beginners 那边此前欠着的两条口头内容(涨星与仓库无关、sparse checkout)**已经补说给他了**。"*
@@ -187,13 +187,13 @@
 
 **证据(2026-08-03)。** 老板 13:01:29 问"最近 GitHub 上在火什么" → 该 turn 撞上 402 失败。13:44 上游恢复,老板说"在吗",agent 答"在呢,我在。怎么了?"——**完全不知道有个问题挂着**。逐字帧可证:恢复那一轮 Reaction 的窗口里,`## New signals` 与 `## Recent (last 30 minutes)` 都只有"在吗",GitHub 那句不在其中。它只活在 Reflection 的 `## Unconsolidated signals` 里(`[3] >最近 GitHub 上在火什么`),也就是说**只有整理记忆的那一路见过它,负责说话的那一路再也没见过**。
 
-**机制。** 信号在驱动 turn 时就被从批次里取走;turn 终止失败时没有把它放回去。`SceneGate::Retry` 说的是"hold mail",指的是 agent 之间的信件,不含**已经出队的人类信号**。
+**机制。** 信号在驱动 turn 时就被从批次里取走;turn 终止失败时没有把它放回去。`VendorGate::Retry` 说的是"hold mail",指的是 agent 之间的信件,不含**已经出队的人类信号**。
 
 **为什么疼。** 这是最不该静默的一类失败:人明确说了一句话,系统吞掉它,而且不留痕迹给会说话的那一路。
 
 **涉及。** 所有 journey 的失败路径;[01](01-badminton-top10.md) 实测中撞到。
 
-**复测 2026-08-05 · `a05b734` — 通过,而且比要求的更强:那句话跨进程重启活下来了。** 09:57:37 问"今天有什么大新闻?",当时 scene 正停在 `Pause` 里等额度(见 #21 撤回:那是正确行为),这句话**一个 turn 都没驱动**就被扣住了。10:02:45 我杀掉进程重启。10:05:17,新进程的第一句话是:
+**复测 2026-08-05 · `a05b734` — 通过,而且比要求的更强:那句话跨进程重启活下来了。** 09:57:37 问"今天有什么大新闻?",当时 conversation 正停在 `Pause` 里等额度(见 #21 撤回:那是正确行为),这句话**一个 turn 都没驱动**就被扣住了。10:02:45 我杀掉进程重启。10:05:17,新进程的第一句话是:
 
 > "抱歉,刚才我这边断了一会儿,**你那句问话我没接上**。现在恢复了。今天有什么大新闻——我这就去看……"
 
@@ -308,7 +308,7 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 **这是 2026-06-18 那个 `self.md` 路径 bug 的新变体**——同一个形状:**一份逻辑文件存在两个地方,写的那份不是读的那份**(见 [[feedback-absolute-paths-single-file]])。区别在于这次不是路径拼错,而是**两套记忆系统并存**,而 worker 顺手用了不归 hi-agent 管的那套。
 
-**注意这次没有酿成事故的原因是巧合:** 这条事实同时通过 scene brief 传播了("位于北京(已存记忆,天气/时间默认北京,别再问)"),所以行为上看不出来。
+**注意这次没有酿成事故的原因是巧合:** 这条事实同时通过 conversation brief 传播了("位于北京(已存记忆,天气/时间默认北京,别再问)"),所以行为上看不出来。
 
 **涉及。** [21](21-hand-over-bulk-data.md) · [13](13-equip-a-capability.md) · 任何 worker 产生持久知识的 journey
 
@@ -318,11 +318,11 @@ core 已明令禁止这类填充语;比 2026-06-18 那轮少,但没根除。属�
 
 **症状。** 跑了十来轮之后,`turns`、`turns_total` 仍是 `0`,`last_turn` 仍是 `null`。
 
-**证据(2026-08-03)。** `{"scene":"boss","turns":0,"turns_total":0,"budget_chars":47886,"last_turn":null}`——同一响应里 `budget_chars` 从 2085 一路涨到 47886,证明这个 session 确实在干活。
+**证据(2026-08-03)。** `{"conversation":"boss","turns":0,"turns_total":0,"budget_chars":47886,"last_turn":null}`——同一响应里 `budget_chars` 从 2085 一路涨到 47886,证明这个 session 确实在干活。
 
 **为什么记一笔。** 这是 N2 修过的那类形状(*"session_status reported every session idle with 0 turns"*)的残留:读者接上了,**这个计数器仍然没有写者**。只影响可观测性,不影响行为——但排障时会骗人。
 
-**复测 2026-08-05 · `a05b734` — 原样存在。** `{"scene":"boss",...,"turns":0,"last_turn":null,"turns_total":0}`,而同一响应里 `budget_chars` 已经涨到 22729,同一时刻 reaction session 正在服务第 12 轮对话。
+**复测 2026-08-05 · `a05b734` — 原样存在。** `{"conversation":"boss",...,"turns":0,"last_turn":null,"turns_total":0}`,而同一响应里 `budget_chars` 已经涨到 22729,同一时刻 reaction session 正在服务第 12 轮对话。
 
 **本轮它有了实际代价,不再只是"排障时骗人"。** agent 自己写的 `skills/dispatching-workers.md` 把 turn 数认定为**唯一可信的存活信号**:*"`N turn(s) so far` —— 这是唯一可信的「有没有真的干活」信号。`idle, with mail waiting` + **0 turns** = ……**这是坏的。**"* 它是对的——但它依赖的这个计数器在 `/api/sessions` 这一侧根本没有写者。**一个没有写者的计数器,正在被当作健康判据使用。**
 
@@ -500,7 +500,7 @@ run-b 通宵挂着没关,第二天直接读它的磁盘:
 
 > **不要把这个任务架在 create_worker 上。**……这个常驻任务用系统 cron,**不依赖任何 agent 机制**,机器重启后 cron 也会自己回来。
 
-**分工也终于对了:** *"cron 只取数和记账,不负责说话。我在 pulse 醒来时读 `ledger.jsonl` 和 `ALERT.json`,该叫人时由我 `send_message` 给 scene 3。这样:我睡着了,取数不断;**cron 死了,我读账本发现最新一行是几小时前的,当场就知道它死了**,而不是以为还在跑。"* ——这正是 #2/#16 一直要的那个性质,由它自己推出来。
+**分工也终于对了:** *"cron 只取数和记账,不负责说话。我在 pulse 醒来时读 `ledger.jsonl` 和 `ALERT.json`,该叫人时由我 `send_message` 给 conversation 3。这样:我睡着了,取数不断;**cron 死了,我读账本发现最新一行是几小时前的,当场就知道它死了**,而不是以为还在跑。"* ——这正是 #2/#16 一直要的那个性质,由它自己推出来。
 
 **判据到手,而且是正面的。** 前两轮都停在"没观测到 cron 触发过"或"响了也不干活"。本轮直接读磁盘:
 
@@ -627,7 +627,7 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 同一个问题(男单前十)重跑,三处**逐行一致**——口播、`culture/badminton` facet、屏上的 view 十个名次十个人全同(石宇奇/昆拉武特/安东森/波波夫/克里斯蒂/周天成/李诗沣/林俊易/奈良冈功大/拉尼尔)。渲染结果已人工看图核对。
 
 **机制上做对了两件事:**
-1. **单一数据源钉在台账里**:facet 写着"**数据已定,不用再查**(……由 scene 提供)",十个人连中英文名一次性列全。
+1. **单一数据源钉在台账里**:facet 写着"**数据已定,不用再查**(……由 conversation 提供)",十个人连中英文名一次性列全。
 2. **明令禁止下游各自取数**:*"已叮嘱它若查到官方名次/译名与上述名单有出入,**报给我、不许自己改**。"* 上一轮的病根正是"两条路各自取数",这一句直接掐掉。
 
 **而且它现在会主动弥合而不是掩盖分歧。** 两个例子:
@@ -692,20 +692,20 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 
 **机制,一句话:worker 的孵化由派它的那个 rung 的 loop 负责,而这个 loop 正阻塞在派它的那个 turn 上。**
 
-worker 本身是**真的子进程**,不是"turn 里的一段任务";落在 loop 里的是它的**孵化与看管**。`create_worker`([`mcp/mod.rs:755`](../../src/foundation/mcp/mod.rs))铸一个 id,把 `SceneControl::CreateWorker` 投进**调用者自己 scene 的 sink**(注释:*"The caller's own header scene is that loop"*),然后**只要投递成功就回报 `starting`**——不等子进程真的起来。而 `cognition.rs` 的循环形状是:
+worker 本身是**真的子进程**,不是"turn 里的一段任务";落在 loop 里的是它的**孵化与看管**。`create_worker`([`mcp/mod.rs:755`](../../src/foundation/mcp/mod.rs))铸一个 id,把 `LoopControl::CreateWorker` 投进**调用者自己 conversation 的 sink**(注释:*"The caller's own header conversation is that loop"*),然后**只要投递成功就回报 `starting`**——不等子进程真的起来。而 `cognition.rs` 的循环形状是:
 
 ```rust
 tokio::select! {
     _ = mail.notified() => {}
     _ = sleep_until_opt(wake_at) => { ... }
     ctl = control_rx.recv() => {            // ← 孵化 worker 的就是这条臂
-        Some(SceneControl::CreateWorker { .. }) =>
+        Some(LoopControl::CreateWorker { .. }) =>
             workers.spawn_with_id(&reaction, worker, task, kind, owner).await
     }
     ...
 }
 // …select! 之外…
-match turn(&reaction, id, &scene, &pending, &mut session).await { ... }
+match turn(&reaction, id, &conversation, &pending, &mut session).await { ... }
 ```
 
 `turn()` 在 `select!` **外面** await。**turn 进行期间没有任何东西在 poll `control_rx`。** 而 Cognition 恰恰是**在自己的 turn 里**调 `create_worker` 的——于是:请求这个 worker 的那次 turn,正是唯一能孵化它的那段代码所等待的东西。**它要到自己结束之后才能满足自己发出的请求。**
@@ -737,7 +737,7 @@ match turn(&reaction, id, &scene, &pending, &mut session).await { ... }
 **修法(已实施)。** 把 turn 的 future pin 住,在等它的同时**继续服务 `control_rx`**——只服务这一条臂:
 
 ```rust
-let mut turn_fut = std::pin::pin!(turn(&reaction, id, &scene, &pending, &mut session));
+let mut turn_fut = std::pin::pin!(turn(&reaction, id, &conversation, &pending, &mut session));
 loop {
     tokio::select! {
         done = &mut turn_fut => break done,
@@ -746,11 +746,11 @@ loop {
 }
 ```
 
-架构不动:live-session map 仍归这个 loop 独有,仍然无锁,`SceneControl` 仍走同一条 channel。`tools.rs:34` 那条不变量原样成立——只是这个 loop 不再在整个 turn 期间对自己的 channel 失聪。
+架构不动:live-session map 仍归这个 loop 独有,仍然无锁,`LoopControl` 仍走同一条 channel。`tools.rs:34` 那条不变量原样成立——只是这个 loop 不再在整个 turn 期间对自己的 channel 失聪。
 
 **只服务控制臂是有意的。** 把唤醒臂/邮件臂也放进来会**在一个 turn 之上再起一个 turn**。worker 的**回报**也留在外面:它需要 `&mut pending`,而当前 turn 正借着它——借用检查器在这里恰好把设计逼对了(*"what comes back arrives later, as a message of its own"*)。
 
-**只需要改 Cognition 一处。**`per_scene_loop` 形状相同,但**没有同一个病**:scene loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `create_worker` 时 scene loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reaction_turn` 本身就借着 `&mut workers`。)
+**只需要改 Cognition 一处。**`reaction_loop` 形状相同,但**没有同一个病**:conversation loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `create_worker` 时 conversation loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reaction_turn` 本身就借着 `&mut workers`。)
 
 **现场复测 2026-08-05 12:29(打了补丁的 release,同一个 data-dir)。** 给它一件必须现查 + 出图的活("今年国内新能源车的销量,做个图放屏幕上"),读 Cognition 的逐字帧与 `server.log` 对时间:
 
@@ -827,7 +827,7 @@ loop {
 
 **公平地说,钱花出了东西。** 交付的榜单我人工核过:排版干净、层次清楚、标了来源与周次、积分留白并注明理由。**质量是真的**——问题是这个"慢一点换好一点"的取舍**没人问过老板**,而老板正在等。
 
-**兜底动作已经存在,值得记一笔。** 22:2x 左右 scene 侧发现 worker 迟迟不动,主动发信:*"如果 worker 卡住或者在纠结细节,就让它先交一版最朴素的能用的……我先上屏,好看的版本再迭代"*,并且真的**先上了一版朴素榜单(2.5 KB),8 分钟后用同一个 id `op=Replace` 换成精修版(8 KB)**。**渐进交付这条路它会走**——只是要等它自己察觉,没有机制触发。
+**兜底动作已经存在,值得记一笔。** 22:2x 左右 conversation 侧发现 worker 迟迟不动,主动发信:*"如果 worker 卡住或者在纠结细节,就让它先交一版最朴素的能用的……我先上屏,好看的版本再迭代"*,并且真的**先上了一版朴素榜单(2.5 KB),8 分钟后用同一个 id `op=Replace` 换成精修版(8 KB)**。**渐进交付这条路它会走**——只是要等它自己察觉,没有机制触发。
 
 **涉及。** [01](01-badminton-top10.md) · [04](04-trending-feeds.md) · [03](03-feishu-flash-cards.md)(样稿校准 vs 无限打磨)。
 
@@ -835,7 +835,7 @@ loop {
 
 ## 24 · Cognition 对在场与否是瞎的,但它照样推断,并据此决定要不要着急 🟡
 
-**症状。** Cognition 的窗口里**没有任何在场信息**(设计如此——presence 只投给 scene)。但它会**自己编一个**,写进台账,并用它决定交付节奏。
+**症状。** Cognition 的窗口里**没有任何在场信息**(设计如此——presence 只投给 conversation)。但它会**自己编一个**,写进台账,并用它决定交付节奏。
 
 **证据(2026-08-04,`a05b734`)。** `tasks/badminton-ms-top10-view/facet.md`:
 
@@ -849,7 +849,7 @@ loop {
 
 **后果是可量化的:** 这句"不用抢时间"直接写进了给 worker 的 brief,是 **#23** 那十几分钟的授权来源。
 
-**它后来自己改回来了——但靠的是运气。** 老板问石宇奇时,scene 在转派的信里写了 *"**用户此刻在屏幕前**,所以如果照片或某项拿不到就先出没照片的版本,别卡着"*,于是这一轮就快了(164 秒)。**同一个事实,一次编错一次说对,取决于哪个 rung 恰好开口。**
+**它后来自己改回来了——但靠的是运气。** 老板问石宇奇时,conversation 在转派的信里写了 *"**用户此刻在屏幕前**,所以如果照片或某项拿不到就先出没照片的版本,别卡着"*,于是这一轮就快了(164 秒)。**同一个事实,一次编错一次说对,取决于哪个 rung 恰好开口。**
 
 **倾向。** 要么把在场这件事**投给 Cognition**(哪怕只是一行"人现在在/不在"),要么在引导里明确 *"你看不到在场情况,所以不要对它做任何假设,更不要用它换时间"*。**现状是最坏的一种:它看不见,却以为自己看得见。**
 
@@ -859,11 +859,11 @@ loop {
 
 ## 25 · Cognition 的失败路径不认识 `a05b734` 的三分法 🟡
 
-**症状。** 402 期间,scene loop 正确地停下了,**Cognition 照常每 2 分钟冷开一个子进程去撞同一堵墙**。
+**症状。** 402 期间,conversation loop 正确地停下了,**Cognition 照常每 2 分钟冷开一个子进程去撞同一堵墙**。
 
 **证据(2026-08-04,`a05b734`)。** 38 分钟的 402 窗口里,`cognition turn failed; session dropped, mail held` 出现 **10 次**,间隔整齐的 2 分钟(15:08:01、15:10:04、15:12:06 …… 15:28:30),每次都伴随一次 `role="cognition"` 的子进程 spawn。
 
-**机制。** `disposition()` 与整个 vendor gate 都只长在 scene loop 上。`cognition.rs:262` 的 `Err(err)` 分支**不看 `err` 是什么**——一律 `session = None` + 保留 mail + 等下一次时钟。`reflection.rs` 同理。`cognition.rs:143` 的注释其实已经承认了这件事:*"this is that property without the vendor-gate machinery around it"*。
+**机制。** `disposition()` 与整个 vendor gate 都只长在 conversation loop 上。`cognition.rs:262` 的 `Err(err)` 分支**不看 `err` 是什么**——一律 `session = None` + 保留 mail + 等下一次时钟。`reflection.rs` 同理。`cognition.rs:143` 的注释其实已经承认了这件事:*"this is that property without the vendor-gate machinery around it"*。
 
 **为什么记一笔。** `a05b734` 的账算的是"每次尝试都要花一次子进程 spawn:run-b 在 16 小时里花了 487 次"。**那 487 次里的绝大多数正是 Cognition 花的**(run-b 一夜 538 次 cognition wake,几乎全部 402 失败)——也就是说,**这笔账主要发生在没被这次修复覆盖的那条路上**。本轮 10 次是因为窗口只有 38 分钟。
 
@@ -885,7 +885,7 @@ loop {
 - **别信 `GET /api/account/energy` 来决定"还能不能测"。** 它会在能力完好时报 `out_of_energy:true` + 一个 28 天后的恢复时间(#13)。**判据是发一句话看有没有回复**,不是读这个端点。本轮差点因此误判为配额耗尽而中止。
 - **`GET /api/out/view` 不带 `?since=<version>` 就不是长轮询**,会立即返回当前状态。裸 `while true` 轮询会在几分钟内往 `server.log` 灌上万行 `long-poll opened`,把真信号淹掉(本轮踩到,14126 行)。正确姿势是回读响应里的 `version` 并带回去:
   ```sh
-  body=$(curl -s --max-time 300 -H "X-HI-Scene: boss" "$HOST/api/out/view?since=$ver")
+  body=$(curl -s --max-time 300 "$HOST/api/out/view?since=$ver")
   ```
 - **`grep` `server.log` 要先剥 ANSI 转义。** 日志里的字段名带颜色码,`grep -c 'role="worker"'` 会返回 0 而实际有值。先 `sed -E 's/\x1b\[[0-9;]*m//g'`。本轮据此一度误判"没有 worker"。
 
@@ -908,7 +908,7 @@ loop {
 
 一个挂着不管的实例不是免费的:台账里有一条没关闭的 open 任务,就足以让 Cognition 按 pulse 节奏整夜不停地醒(#14)。**跑完就 `kill`,数据目录保留即可。**
 
-⚠️ **`pulse` 是全局的,不只加速 scene。** `pulse_interval()` 被 scene 与 Cognition 的 glance-up **共用**(`reaction/mod.rs` 的注释明说这是有意的:"one 'how often does this agent look up' setting")。把它调到 120s 做测试,等于同时把 Cognition 的空转频率放大 15 倍。**分析空转成本时务必按 `DEFAULT_PULSE = 1800s` 折算**,否则会把测试配置当成出厂行为——本轮初稿就踩了这个坑。
+⚠️ **`pulse` 是全局的,不只加速 conversation。** `pulse_interval()` 被 conversation 与 Cognition 的 glance-up **共用**(`reaction/mod.rs` 的注释明说这是有意的:"one 'how often does this agent look up' setting")。把它调到 120s 做测试,等于同时把 Cognition 的空转频率放大 15 倍。**分析空转成本时务必按 `DEFAULT_PULSE = 1800s` 折算**,否则会把测试配置当成出厂行为——本轮初稿就踩了这个坑。
 
 ### 别拿 `energy` 端点推因果
 

@@ -8,7 +8,7 @@
 //! the reflection session, which calls [`keep_and_fade`] with the spans it chose.
 //!
 //! The one safety rail is mechanical, not the mind's to bend: a day is only ever
-//! faded once it lies **strictly behind the scene's consolidation cursor**
+//! faded once it lies **strictly behind the consolidation cursor**
 //! (`max(episode.to_id)`), so reflection has always already turned that day's
 //! signals into episodes — un-summarized detail can never be lost. Everything else
 //! (when, what, how much) is the caller's soft call.
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 
-use crate::types::{Channel, Scene};
+use crate::types::Channel;
 use crate::foundation::vendors::ffmpeg_frame;
 
 use super::{episodes, journal, layout};
@@ -52,7 +52,7 @@ pub struct FadeDay {
     pub date: String,
     pub bytes: u64,
     pub age_days: i64,
-    /// How many of the scene's episodes began *after* this day — its burial depth.
+    /// How many episodes began *after* this day — its burial depth.
     /// The interference signal (how much life has piled on since), which matters
     /// more than the calendar: a day buried under many events has truly receded.
     pub episodes_since: usize,
@@ -70,25 +70,22 @@ fn day_start(date: &str) -> anyhow::Result<DateTime<Utc>> {
     Ok(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).expect("midnight is valid")))
 }
 
-/// The day strictly behind which everything in `scene` is consolidated:
-/// `day_key(uuidv7_ts(scene_cursor))`. `None` when nothing has been consolidated
+/// The day strictly behind which everything is consolidated:
+/// `day_key(uuidv7_ts(consolidation_cursor))`. `None` when nothing has been consolidated
 /// yet (genesis) — in which case nothing may fade.
-async fn consolidated_through_day(
-    data_dir: &Path,
-    scene: &Scene,
-) -> anyhow::Result<Option<String>> {
-    let cursor = episodes::scene_cursor(data_dir, scene).await?;
+async fn consolidated_through_day(data_dir: &Path) -> anyhow::Result<Option<String>> {
+    let cursor = episodes::consolidation_cursor(data_dir).await?;
     Ok(cursor
         .as_deref()
         .and_then(journal::uuidv7_ts)
         .map(layout::day_key))
 }
 
-/// Fade one `(scene, channel, date)`: cut each keep-span into a clip under
+/// Fade one `(channel, date)`: cut each keep-span into a clip under
 /// `<channel>/<date>/keep/`, then unlink the full-fidelity grid for that day,
 /// leaving only `<channel>.jsonl` and `keep/`.
 ///
-/// **Refuses** (returns `Err`) unless the whole day is strictly behind the scene
+/// **Refuses** (returns `Err`) unless the whole day is strictly behind the
 /// cursor — the safety rail. Keepsakes are written and fsynced *before* any byte
 /// is dropped, and a keepsake that fails to cut aborts the whole fade (bytes
 /// stay), so a moment the mind asked to keep is never lost to a half-done pass.
@@ -96,7 +93,6 @@ async fn consolidated_through_day(
 /// a clean no-op.
 pub async fn keep_and_fade(
     data_dir: &Path,
-    scene: &Scene,
     channel: Channel,
     date: &str,
     keep: &[KeepSpan],
@@ -107,15 +103,15 @@ pub async fn keep_and_fade(
     let day0 = day_start(date)?;
 
     // The safety rail.
-    match consolidated_through_day(data_dir, scene).await? {
-        None => bail!("refusing to fade {date}: nothing consolidated in this scene yet"),
+    match consolidated_through_day(data_dir).await? {
+        None => bail!("refusing to fade {date}: nothing consolidated yet"),
         Some(through) if date >= through.as_str() => bail!(
             "refusing to fade {date}: not strictly behind the consolidation cursor ({through})"
         ),
         Some(_) => {}
     }
 
-    let dir = layout::channel_day_dir(data_dir, scene, channel, day0);
+    let dir = layout::channel_day_dir(data_dir, channel, day0);
     if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
         return Ok(FadeReport::default());
     }
@@ -139,24 +135,23 @@ pub async fn keep_and_fade(
     Ok(report)
 }
 
-/// Survey a scene's consolidated-but-still-heavy media: every `(channel, day)`
+/// Survey the consolidated-but-still-heavy media: every `(channel, day)`
 /// strictly behind the cursor that still holds full bytes, heaviest first. This is
 /// the pressure the reflection seed surfaces; it makes no decision. Empty at
 /// genesis (nothing consolidated) and when no cold day still holds bytes.
 pub async fn fade_pressure(
     data_dir: &Path,
-    scene: &Scene,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<FadeDay>> {
-    let Some(through) = consolidated_through_day(data_dir, scene).await? else {
+    let Some(through) = consolidated_through_day(data_dir).await? else {
         return Ok(Vec::new());
     };
-    // The scene's episode start-dates (sorted), to weigh each cold day's burial
+    // The episode start-dates (sorted), to weigh each cold day's burial
     // depth — how many events have piled on since — without rescanning per day.
-    let from_dates = episodes::scene_from_dates(data_dir, scene).await.unwrap_or_default();
+    let from_dates = episodes::episode_from_dates(data_dir).await.unwrap_or_default();
     let mut out = Vec::new();
     for channel in FADEABLE {
-        let root = layout::scene_dir(data_dir, scene).join(channel.as_str());
+        let root = layout::raw_root(data_dir).join(channel.as_str());
         let mut rd = match tokio::fs::read_dir(&root).await {
             Ok(rd) => rd,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
@@ -181,7 +176,7 @@ pub async fn fade_pressure(
             // Episodes whose start-date is strictly after this day (sorted list).
             let episodes_since =
                 from_dates.len() - from_dates.partition_point(|d| d.as_str() <= date.as_str());
-            let episodes = episodes::names_overlapping_day(data_dir, scene, &date)
+            let episodes = episodes::names_overlapping_day(data_dir, &date)
                 .await
                 .unwrap_or_default();
             out.push(FadeDay { channel, date, bytes, age_days, episodes_since, episodes });
@@ -375,15 +370,14 @@ mod tests {
     use uuid::Uuid;
 
     /// Append `n` text signals "now" and record one episode covering them, so the
-    /// scene cursor sits on today — the precondition for fading any earlier day.
-    async fn consolidate_today(dir: &Path, scene: &Scene) {
+    /// cursor sits on today — the precondition for fading any earlier day.
+    async fn consolidate_today(dir: &Path) {
         let j = Journal::open(dir.to_path_buf()).await.unwrap();
         for _ in 0..3 {
             j.append(JournalEntry::SignalIn {
                 id: Uuid::now_v7().to_string(),
                 ts: Utc::now(),
                 channel: Channel::Text,
-                scene: scene.clone(),
                 body: "x".into(),
                 stream: None,
                 media: None,
@@ -393,12 +387,12 @@ mod tests {
             .unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
-        episodes::record_episode(dir, scene, 3, "today", "today", &[]).await.unwrap();
+        episodes::record_episode(dir, 3, "today", "today", &[]).await.unwrap();
     }
 
-    /// Lay down a fake faded-able day: `<scene>/audio/<date>/{audio.jsonl, 09/16.wav}`.
-    async fn seed_audio_day(dir: &Path, scene: &Scene, date: &str, wav_bytes: usize) {
-        let day = layout::channel_day_dir(dir, scene, Channel::Audio, day_start(date).unwrap());
+    /// Lay down a fake faded-able day: `audio/<date>/{audio.jsonl, 09/16.wav}`.
+    async fn seed_audio_day(dir: &Path, date: &str, wav_bytes: usize) {
+        let day = layout::channel_day_dir(dir, Channel::Audio, day_start(date).unwrap());
         tokio::fs::create_dir_all(day.join("09")).await.unwrap();
         tokio::fs::write(day.join("audio.jsonl"), b"{}\n").await.unwrap();
         tokio::fs::write(day.join("09").join("16.wav"), vec![0u8; wav_bytes]).await.unwrap();
@@ -407,54 +401,50 @@ mod tests {
     #[tokio::test]
     async fn refuses_at_genesis() {
         let dir = tempfile::tempdir().unwrap();
-        let scene = Scene("s".into());
-        seed_audio_day(dir.path(), &scene, "2000-01-01", 1000).await;
+        seed_audio_day(dir.path(), "2000-01-01", 1000).await;
         // No episode yet → no cursor → must refuse.
-        assert!(keep_and_fade(dir.path(), &scene, Channel::Audio, "2000-01-01", &[]).await.is_err());
+        assert!(keep_and_fade(dir.path(), Channel::Audio, "2000-01-01", &[]).await.is_err());
     }
 
     #[tokio::test]
     async fn refuses_unconsolidated_day() {
         let dir = tempfile::tempdir().unwrap();
-        let scene = Scene("s".into());
-        consolidate_today(dir.path(), &scene).await;
+        consolidate_today(dir.path()).await;
         let today = Utc::now().format("%Y-%m-%d").to_string();
         // Today is the cursor's day → not strictly behind it → refuse.
-        assert!(keep_and_fade(dir.path(), &scene, Channel::Audio, &today, &[]).await.is_err());
+        assert!(keep_and_fade(dir.path(), Channel::Audio, &today, &[]).await.is_err());
     }
 
     #[tokio::test]
     async fn fades_old_day_to_text() {
         let dir = tempfile::tempdir().unwrap();
-        let scene = Scene("s".into());
-        consolidate_today(dir.path(), &scene).await;
-        seed_audio_day(dir.path(), &scene, "2000-01-01", 4096).await;
+        consolidate_today(dir.path()).await;
+        seed_audio_day(dir.path(), "2000-01-01", 4096).await;
 
-        let report = keep_and_fade(dir.path(), &scene, Channel::Audio, "2000-01-01", &[])
+        let report = keep_and_fade(dir.path(), Channel::Audio, "2000-01-01", &[])
             .await
             .unwrap();
         assert_eq!(report.bytes_freed, 4096);
         assert_eq!(report.kept, 0);
 
-        let day = layout::channel_day_dir(dir.path(), &scene, Channel::Audio, day_start("2000-01-01").unwrap());
+        let day = layout::channel_day_dir(dir.path(), Channel::Audio, day_start("2000-01-01").unwrap());
         assert!(tokio::fs::try_exists(day.join("audio.jsonl")).await.unwrap(), "log stays");
         assert!(!tokio::fs::try_exists(day.join("09")).await.unwrap(), "grid gone");
 
         // Idempotent: a second pass frees nothing and does not error.
-        let again = keep_and_fade(dir.path(), &scene, Channel::Audio, "2000-01-01", &[]).await.unwrap();
+        let again = keep_and_fade(dir.path(), Channel::Audio, "2000-01-01", &[]).await.unwrap();
         assert_eq!(again.bytes_freed, 0);
     }
 
     #[tokio::test]
     async fn pressure_lists_only_consolidated_heavy_days() {
         let dir = tempfile::tempdir().unwrap();
-        let scene = Scene("s".into());
-        consolidate_today(dir.path(), &scene).await;
-        seed_audio_day(dir.path(), &scene, "2000-01-01", 2048).await;
+        consolidate_today(dir.path()).await;
+        seed_audio_day(dir.path(), "2000-01-01", 2048).await;
         let today = Utc::now().format("%Y-%m-%d").to_string();
-        seed_audio_day(dir.path(), &scene, &today, 9999).await; // not behind cursor → excluded
+        seed_audio_day(dir.path(), &today, 9999).await; // not behind cursor → excluded
 
-        let pressure = fade_pressure(dir.path(), &scene, Utc::now()).await.unwrap();
+        let pressure = fade_pressure(dir.path(), Utc::now()).await.unwrap();
         assert_eq!(pressure.len(), 1);
         assert_eq!(pressure[0].date, "2000-01-01");
         assert_eq!(pressure[0].bytes, 2048);

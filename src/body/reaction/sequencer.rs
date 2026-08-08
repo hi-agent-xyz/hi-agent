@@ -2,8 +2,8 @@
 //! speech and views.
 //!
 //! With output expressed as tool calls (not parsed from the reply stream), the
-//! calls arrive on the `/mcp` HTTP handler — a different task than the per-scene
-//! loop, which is busy awaiting the prompt. So each scene runs one sequencer
+//! calls arrive on the `/mcp` HTTP handler — a different task than the reaction
+//! loop, which is busy awaiting the prompt. So there is one sequencer
 //! task that owns the turn's TTS span and view pacing. It receives an ordered run
 //! of [`Beat`]s — a `TurnStart`, then the turn's `Say`/`Show` calls in arrival
 //! order, then a `TurnEnd` — and renders them onto the reaction's outbound seam.
@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::body::capabilities::tts::{self, TtsStream};
 use crate::foundation::segment::{Segmenter, Terminator};
-use crate::types::{Channel, Scene, ViewOp, ViewTraits};
+use crate::types::{Channel, ViewOp, ViewTraits};
 
 use super::{OutboundSignal, Reaction, interleave};
 
@@ -44,9 +44,9 @@ pub(super) enum Beat {
     TurnEnd { done: oneshot::Sender<String> },
 }
 
-/// One scene's sequencer task. Drains `beats` for the life of the scene, holding
+/// The sequencer task. Drains `beats` for the life of the process, holding
 /// the current turn's pacing state between beats.
-pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: mpsc::Receiver<Beat>) {
+pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<Beat>) {
     // Per-turn state, reset on each TurnStart. The TTS span is opened lazily on the
     // first `Say` so a silent turn emits no audio span at all.
     let mut turn: u64 = 0;
@@ -76,7 +76,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                     None => break,
                 },
                 _ = tokio::time::sleep_until(deadline) => {
-                    super::emit_end_of_utterance(&reaction, &scene).await;
+                    super::emit_end_of_utterance(&reaction).await;
                     quiet_deadline = None;
                     continue;
                 }
@@ -106,24 +106,24 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                 // with the interruption note in hand. The cut turn keeps streaming
                 // beats (fix-forward never cancels the prompt), so every trailing
                 // one is dropped here until the next TurnStart clears the flag.
-                if reaction.inner.interrupts.should_skip(&scene, turn).await {
+                if reaction.inner.interrupts.should_skip(turn).await {
                     if synth_tx.take().is_some() {
                         synth_handle = None;
                     }
                     if quiet_deadline.take().is_some() {
-                        super::emit_end_of_utterance(&reaction, &scene).await;
+                        super::emit_end_of_utterance(&reaction).await;
                     }
                     continue;
                 }
                 if synth_tx.is_none() {
-                    open_tts(&reaction, &scene, turn, &mut synth_tx, &mut synth_handle).await;
+                    open_tts(&reaction, turn, &mut synth_tx, &mut synth_handle).await;
                 }
                 full_reply.push_str(&text);
                 for emit in interleave::speak_emits(&text, &mut splitter, Instant::now()) {
-                    super::perform(emit, &synth_tx, &reaction, &scene).await;
+                    super::perform(emit, &synth_tx, &reaction).await;
                 }
                 // /thought gets the raw chunk; TTS gets coalesced sentences (above).
-                super::emit_thought_chunk(&reaction, &scene, text).await;
+                super::emit_thought_chunk(&reaction, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
             Beat::Show { id, op, source, traits } => {
@@ -131,11 +131,11 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                 if !armed {
                     continue;
                 }
-                if reaction.inner.interrupts.should_skip(&scene, turn).await {
+                if reaction.inner.interrupts.should_skip(turn).await {
                     continue;
                 }
                 for emit in interleave::view_emits(&mut splitter, id, op, source, traits) {
-                    super::perform(emit, &synth_tx, &reaction, &scene).await;
+                    super::perform(emit, &synth_tx, &reaction).await;
                 }
             }
             Beat::TurnEnd { done } => {
@@ -154,10 +154,10 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                 // Close the /thought utterance for this turn, unless the quiet
                 // timer already did.
                 if quiet_deadline.take().is_some() {
-                    super::emit_end_of_utterance(&reaction, &scene).await;
+                    super::emit_end_of_utterance(&reaction).await;
                 }
                 if !full_reply.trim().is_empty() {
-                    crate::foundation::channel_log::outbound(Channel::Text, &scene, full_reply.trim());
+                    crate::foundation::channel_log::outbound(Channel::Text, full_reply.trim());
                 }
                 let _ = done.send(std::mem::take(&mut full_reply));
             }
@@ -171,18 +171,17 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
 ///
 /// **Also a no-op when no speaker is attached**, which is the presence gate at the
 /// only place it can bite. Words and views survive an empty room — the text bus
-/// buffers utterances for a reader that opens later, and the view bus retains scene
+/// retains utterances for a reader that opens later, and the view bus retains
 /// state and replays it — so neither needs holding. Voice is the one channel with no
 /// second chance: synthesized frames go out on the wire as they are made, and a span
 /// nobody is listening to is spent rather than deferred. That is the failure
 /// `docs/arch/core.md#presence` names, and it is *only* about this span.
 ///
-/// Note this is read per turn, not per scene lifetime: a person who unplugs
+/// Note this is read per turn, not once for the process: a person who unplugs
 /// headphones mid-conversation stops being spoken to on the next `say`, with no
 /// state to reconcile.
 async fn open_tts(
     reaction: &Reaction,
-    scene: &Scene,
     turn: u64,
     synth_tx: &mut Option<mpsc::Sender<String>>,
     synth_handle: &mut Option<JoinHandle<()>>,
@@ -190,8 +189,8 @@ async fn open_tts(
     if !tts::available() {
         return;
     }
-    if !reaction.inner.presence.reachable(scene).speaker {
-        tracing::debug!(scene = %scene, turn, "no speaker attached; not synthesizing");
+    if !reaction.inner.presence.reachable().speaker {
+        tracing::debug!(turn, "no speaker attached; not synthesizing");
         return;
     }
     match tts::start(reaction.inner.memory.data_dir()).await {
@@ -199,20 +198,19 @@ async fn open_tts(
             let out = reaction.inner.out.clone();
             let codec = mime.clone();
             let _ = out
-                .send(OutboundSignal::AudioBegin { scene: scene.clone(), turn, codec: mime })
+                .send(OutboundSignal::AudioBegin { turn, codec: mime })
                 .await;
             // Stamp the voice span so a barge-in can be inferred against it
             // ("speech arrived while this turn was probably still sounding").
             reaction
                 .inner
                 .interrupts
-                .audio_began(scene, turn, tokio::time::Instant::now())
+                .audio_began(turn, tokio::time::Instant::now())
                 .await;
             let handle = tokio::spawn(super::forward_frames(
                 reaction.clone(),
                 frames,
                 out,
-                scene.clone(),
                 turn,
                 codec,
             ));
@@ -224,7 +222,7 @@ async fn open_tts(
                 reaction.inner.memory.data_dir(),
                 &err,
             );
-            tracing::warn!(scene = %scene, error = %err, "TTS session start failed; turn is silent");
+            tracing::warn!(error = %err, "TTS session start failed; turn is silent");
         }
     }
 }

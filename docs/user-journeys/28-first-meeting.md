@@ -45,6 +45,6 @@ _机制:seed 里一次性"第一次见"提示(`identity/mod.rs` `is_first_meetin
 - ✅ **不走导览**:没有 walkthrough、没有分步、没有功能清单,一个 beat 就收。
 - ✅ **只此一次**:同一 install 后续再打招呼("在吗",13:44)没有二次自我介绍——`is_first_meeting` 随 history 自清,按设计生效,`.hi-met` 哨兵文件不需要建。
 - ⚠️ **收尾冒了填充语**:末句 "So — what's on your mind?" 正是 core 明令禁止的那类("有什么可以帮你")。预期是"温暖一个 beat 然后让位",而不是把话筒**问**回去。同一轮测试里 4 次回复有 2 次出现此类尾巴(见 [01](01-badminton-top10.md) 实测),属概率性漂移。
-- 🔴 **欢迎 view 永不退场**:`_builtin/welcome` 从 12:47 一直挂到 16 分钟后、跨 3 个话题(羽毛球 → 石宇奇 → 天气)仍在屏上,后来的 view 全是叠在它上面。"收住、让位"只做到了**话**,没做到**屏**。换域时它会 dismiss 羽毛球的两块(见 01 实测),证明它**会**用 dismiss——只是从没想起要收掉开场那块。倾向:第一次让位时就该由 Reaction 主动 dismiss,或由 host 在该 scene 第一次 `show` 非 welcome 内容时自动收掉。
+- 🔴 **欢迎 view 永不退场**:`_builtin/welcome` 从 12:47 一直挂到 16 分钟后、跨 3 个话题(羽毛球 → 石宇奇 → 天气)仍在屏上,后来的 view 全是叠在它上面。"收住、让位"只做到了**话**,没做到**屏**。换域时它会 dismiss 羽毛球的两块(见 01 实测),证明它**会**用 dismiss——只是从没想起要收掉开场那块。倾向:第一次让位时就该由 Reaction 主动 dismiss,或由 host 在该 conversation 第一次 `show` 非 welcome 内容时自动收掉。
 
 **Open question 有答案了:** `center/wide` 实机成立(内容不抢屏、后续 view 可叠),暂不需要 `fill`。

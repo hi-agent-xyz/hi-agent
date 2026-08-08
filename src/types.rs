@@ -8,55 +8,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // -----------------------------------------------------------------------------
-// Scene
-// -----------------------------------------------------------------------------
-
-/// The situation a signal belongs to, carried by `X-HI-Scene` — a 1:1, a group,
-/// or being alone doing something, e.g. `alice@phone`. It is the unit of context
-/// isolation (one reaction session / journal slice / subprocess per scene); the
-/// human who spoke is soft, inferred content, not part of this key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Scene(pub String);
-
-impl fmt::Display for Scene {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Scene {
-    /// Whether this is a **pseudo-scene** — a `*…*` placeholder a sceneless rung is
-    /// opened under so the `/mcp` dispatch and the subprocess logs have something to
-    /// route and label by, never a conversation anyone is having.
-    ///
-    /// The convention was already relied on (`*consolidation*`, chosen because the
-    /// `*…*` form cannot collide with a real scene id) but existed only as a comment,
-    /// so every consumer had to either hardcode the literal or accidentally treat the
-    /// placeholder as real. Anything that would *show* a scene to a person, or file
-    /// data under one, should ask this first.
-    pub fn is_pseudo(&self) -> bool {
-        self.0.len() >= 2 && self.0.starts_with('*') && self.0.ends_with('*')
-    }
-}
-
-#[derive(Debug, Error)]
-#[error("scene id may not be empty")]
-pub struct SceneParseError;
-
-impl FromStr for Scene {
-    type Err = SceneParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
-            Err(SceneParseError)
-        } else {
-            Ok(Scene(s.to_owned()))
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Channel — the six spec channels
 // -----------------------------------------------------------------------------
 
@@ -86,7 +37,7 @@ pub enum Channel {
     /// Inbound, because it drives a turn exactly like an utterance does — but it
     /// came from no one, which is why it gets its own channel rather than being
     /// mixed into `text` where it would read as something the person said.
-    /// Deliberately excluded from the "is this scene still alive" activity scan;
+    /// Deliberately excluded from the "is anyone still here" activity scan;
     /// a heartbeat is not a conversation.
     Clock,
     /// Reports coming back from the agent's own delegated workers — cognition's
@@ -112,7 +63,7 @@ impl Channel {
     }
 
     /// The channel's textual form for a prompt/journal line, suffixed with a
-    /// `#stream` label when the signal came from a named stream within the scene
+    /// `#stream` label when the signal came from a named stream
     /// (`audio#webcam`). The default stream (`None`) renders bare (`audio`), so
     /// single-stream output stays identical. The `#` notation lives only here.
     pub fn with_stream(self, stream: Option<&str>) -> String {
@@ -160,11 +111,10 @@ impl FromStr for Channel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Signal {
     pub channel: Channel,
-    pub scene: Scene,
     pub body: String,
-    /// The named stream this signal arrived on within the scene (`webcam`,
-    /// `headset`), or `None` for the scene's default stream. Carried so the
-    /// reaction can tell concurrent sources of one channel apart.
+    /// The named stream this signal arrived on (`webcam`, `headset`), or `None`
+    /// for the default stream. Carried so the reaction can tell concurrent
+    /// sources of one channel apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<String>,
     pub ts: DateTime<Utc>,
@@ -216,7 +166,7 @@ pub struct Media {
 }
 
 // -----------------------------------------------------------------------------
-// JournalEntry — the discriminated union written to each scene's day-log
+// JournalEntry — the discriminated union written to the day-log
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,11 +178,8 @@ pub enum JournalEntry {
         id: String,
         ts: DateTime<Utc>,
         channel: Channel,
-        #[serde(alias = "from")]
-        scene: Scene,
         body: String,
-        /// Named stream within the scene this signal arrived on, or absent for
-        /// the default stream.
+        /// Named stream this signal arrived on, or absent for the default stream.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stream: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -244,8 +191,6 @@ pub enum JournalEntry {
         id: String,
         ts: DateTime<Utc>,
         channel: Channel,
-        #[serde(alias = "to")]
-        scene: Scene,
         body: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         media: Option<Media>,

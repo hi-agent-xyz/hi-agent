@@ -21,12 +21,10 @@ use axum::http::StatusCode;
 
 use crate::body::presence::WindowState;
 use crate::foundation::server::AppState;
-use crate::foundation::server::headers::SceneHeader;
 
-/// Record what this scene's window is doing.
+/// Record what the window is doing.
 pub async fn post_attention(
     State(state): State<Arc<AppState>>,
-    SceneHeader(scene): SceneHeader,
     body: String,
 ) -> StatusCode {
     let Some(window) = parse_state(&body) else {
@@ -35,8 +33,8 @@ pub async fn post_attention(
     // The one signal that can mean "they came back" — see `Presence::returns`. Worth
     // a line at info: it is the cause of a turn nobody typed, so a reader of
     // `server.log` needs to be able to account for one.
-    if state.presence.note_window(&scene, window) {
-        tracing::info!(scene = %scene, "attention: they're back after an absence");
+    if state.presence.note_window(window) {
+        tracing::info!("attention: they're back after an absence");
     }
     StatusCode::ACCEPTED
 }

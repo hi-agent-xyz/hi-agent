@@ -24,7 +24,7 @@
 //! This is the **mechanical half of identity**: [`nearest`] returns ranked
 //! *candidates* as evidence; the decision — same person? a new person? attach a
 //! name? — is the agent's, deliberately ([[project-people-recognition-design]]).
-//! Writes are atomic (temp sibling + rename) and last-writer-wins across scenes.
+//! Writes are atomic (temp sibling + rename) and last-writer-wins across conversations.
 //!
 //! Legacy: older galleries stored one packed `<modality>.f32` blob at the person
 //! root, with no per-sample media link. [`nearest`] still reads it so recognition
@@ -488,7 +488,7 @@ pub struct ForgetReport {
 ///
 /// Folds into the reflection pass ([`crate::body::reaction::heartbeat`]) beside the
 /// media [`super::decay`], on the same adaptive-backoff clock. Global, so it runs
-/// once per consolidation, not per scene.
+/// once per consolidation, not per conversation.
 pub async fn sweep_forgettable(
     data_dir: &Path,
     now: chrono::DateTime<chrono::Utc>,

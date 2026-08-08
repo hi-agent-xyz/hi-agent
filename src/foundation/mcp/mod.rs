@@ -6,19 +6,18 @@
 //! `application/json` response, a *notification* gets `202 Accepted`, and the GET
 //! SSE stream is declined (`405`) since we never push server-initiated messages.
 //! No session ids — each ACP session opens its own MCP connection and identifies
-//! its scene/role/worker on every call via headers, so the transport stays
+//! its conversation/role/worker on every call via headers, so the transport stays
 //! stateless here.
 //!
 //! This module is transport-free: it turns a parsed JSON-RPC message plus the
-//! routing identity (scene/role/worker id from headers) into an [`McpReply`]. The
+//! routing identity (conversation/role/worker id from headers) into an [`McpReply`]. The
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
-//! scene loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
+//! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
 use serde_json::{Value, json};
 
 use base64::Engine as _;
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -30,9 +29,9 @@ use crate::body::capabilities::{image_gen, video_gen, view_render};
 use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
-use crate::body::reaction::{SceneControl, ToolRegistry};
+use crate::body::reaction::{LoopControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
-use crate::types::{Scene, ViewTraits};
+use crate::types::ViewTraits;
 
 /// MCP protocol version we advertise when the client doesn't pin one. We echo the
 /// client's requested version when present, so this is only the fallback.
@@ -235,9 +234,9 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         .collect(),
         // The reflection ("sleep") surface: a voice-less session that consolidates
         // the raw log into derived memory. One pass spans every recently-active
-        // scene at once — the signals come grouped by scene, each group numbered
-        // from 1 — so every scene-specific tool (`record_episode`, `keep_and_fade`,
-        // `image-text-to-text`) names the scene it acts on.
+        // conversation at once — the signals come grouped by conversation, each group numbered
+        // from 1 — so the conversation-specific tool (`record_episode`, `keep_and_fade`,
+        // `image-text-to-text`) names the conversation it acts on.
         Some("reflection") => vec![
             send_message_tool(),
             create_worker_tool(),
@@ -245,11 +244,11 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             session_messages_tool(),
             tool(
                 "record_episode",
-                "File one coherent event as an episode. You are shown each scene's still-unconsolidated \
-                 signals as its own numbered list, oldest first, under a `# Scene: <id>` header; `scene` is \
-                 that id and `count` is how many signals from the TOP of THAT scene's list this one episode \
-                 covers. Work one scene at a time, in order, front to back — each call consumes that many \
-                 signals from the front of its scene, so the next `count` for the same scene starts after \
+                "File one coherent event as an episode. You are shown the still-unconsolidated \
+                 signals as its own numbered list, oldest first, under a `# Conversation: <id>` header; `conversation` is \
+                 that id and `count` is how many signals from the TOP of THAT conversation's list this one episode \
+                 covers. Work one conversation at a time, in order, front to back — each call consumes that many \
+                 signals from the front of its conversation, so the next `count` for the same conversation starts after \
                  them. STOP early (just don't cover the last few) when the most recent signals are an event \
                  still in progress; they'll come back next time. `gist` is the consolidated event in your own \
                  prose. `title` is a short handle for this event (a few words) — it becomes the episode's \
@@ -260,13 +259,13 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 json!({
                     "type": "object",
                     "properties": {
-                        "scene": { "type": "string", "description": "The scene this episode belongs to — the id from its `# Scene: <id>` group header." },
-                        "count": { "type": "integer", "minimum": 1, "description": "How many signals from the top of THAT scene's unconsolidated list this episode covers." },
+                        "conversation": { "type": "string", "description": "The conversation this episode belongs to — the id from its `# Conversation: <id>` group header." },
+                        "count": { "type": "integer", "minimum": 1, "description": "How many signals from the top of THAT conversation's unconsolidated list this episode covers." },
                         "title": { "type": "string", "description": "A short, specific handle for this event (a few words); becomes the episode's directory name, e.g. \"Lunch plan with Alice\"." },
                         "gist": { "type": "string", "description": "The consolidated event, in prose — what happened, what mattered." },
                         "subjects": { "type": "array", "items": { "type": "string" }, "description": "The dimension/subject refs this episode touches, e.g. [\"people/alice\", \"projects/kyoto-trip\"]." },
                     },
-                    "required": ["scene", "count", "title", "gist"],
+                    "required": ["conversation", "count", "title", "gist"],
                 }),
             ),
             tool(
@@ -338,7 +337,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 "Let a cold day's media fade to the text, keeping only the moments worth keeping \
                  vivid. Use it on a day from the old-store list you're shown — one genuinely old and \
                  settled, heaviest first — when the raw bytes are vividness the words have outlived. \
-                 `scene` is the scene that day belongs to (the `# Scene: <id>` group the old-store list \
+                 `conversation` is the conversation that day belongs to (the `# Conversation: <id>` group the old-store list \
                  appeared under). `channel` is `audio` or `vision`, `date` the `YYYY-MM-DD` day. `keep` is \
                  the spans to preserve, each `{start, end}` in RFC3339 — a vision keepsake is a still at \
                  `start`, an audio keepsake the clip `[start, end)`. Keep almost nothing: a frame or a few \
@@ -349,7 +348,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 json!({
                     "type": "object",
                     "properties": {
-                        "scene": { "type": "string", "description": "The scene this day belongs to — the id from the `# Scene: <id>` group its old-store list appeared under." },
+                        "conversation": { "type": "string", "description": "The conversation this day belongs to — the id from the `# Conversation: <id>` group its old-store list appeared under." },
                         "channel": { "type": "string", "enum": ["audio", "vision"], "description": "Which sense's media to fade for this day." },
                         "date": { "type": "string", "description": "The day to fade, YYYY-MM-DD (UTC), from the old-store list." },
                         "keep": {
@@ -365,7 +364,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                             },
                         },
                     },
-                    "required": ["scene", "channel", "date"],
+                    "required": ["conversation", "channel", "date"],
                 }),
             ),
             tool(
@@ -409,15 +408,15 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             session_status_tool(),
             session_messages_tool(),
         ],
-        // **Deliberation** — the scene's reading and thinking. One tool, which is the
+        // **Deliberation** — the conversation's reading and thinking. One tool, which is the
         // whole shape of the rung: it hands work *up*, and everything else it does it
         // does with the adapter's own Read/Write/fetch (`docs/arch/foundation.md`:
-        // "SendMessage · reads · write **only** its scene's brief").
+        // "SendMessage · reads · write **only** its conversation's brief").
         //
         // No `session_status`/`session_messages`: those belong to owners, and
         // Deliberation owns nothing — it creates no workers, and the hand-up to
-        // Cognition is one-way by design (invariant 3: a scene that waited on the one
-        // global session would serialize every other scene). The answer comes back as
+        // Cognition is one-way by design (invariant 3: a conversation that waited on the one
+        // global session would serialize every other conversation). The answer comes back as
         // mail, not as something to poll for.
         //
         // No `look`/`act`/`video-text-to-text` either, and that is the correction this arm exists
@@ -493,7 +492,7 @@ fn image_text_to_text_tool() -> Value {
             "properties": {
                 "ref": { "type": "string", "description": "The ⟨ref: …⟩ carried by the image's signal, e.g. 2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: what you want to know about the image (a question or focus). Omit to just look." },
-                "scene": { "type": "string", "description": "Reflection only: the scene shown next to the ref (its `# Scene: <id>` group). Pass it so the still resolves. Omit in conversation." },
+                "conversation": { "type": "string", "description": "Reflection only: the conversation shown next to the ref (its `# Conversation: <id>` group). Pass it so the still resolves. Omit in conversation." },
             },
             "required": ["ref"],
         }),
@@ -555,7 +554,7 @@ fn image_to_image_tool() -> Value {
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
                 "size": { "type": "string", "description": "Optional, vendor-specific output size." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
-                "scene": { "type": "string", "description": "Reflection only: the scene the ref belongs to. Omit in conversation." },
+                "conversation": { "type": "string", "description": "Reflection only: the conversation the ref belongs to. Omit in conversation." },
             },
             "required": ["ref", "prompt"],
         }),
@@ -601,7 +600,7 @@ fn image_to_video_tool() -> Value {
                 "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
                 "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
-                "scene": { "type": "string", "description": "Reflection only: the scene the ref belongs to. Omit in conversation." },
+                "conversation": { "type": "string", "description": "Reflection only: the conversation the ref belongs to. Omit in conversation." },
             },
             "required": ["ref"],
         }),
@@ -633,7 +632,7 @@ fn show_tool() -> Value {
          rather than blinking); op=dismiss clears the screen back to the empty room, which \
          is what you want when the topic is over and nothing replaces it. \
          The screen is persistent state: what you've shown stays up across page refreshes, \
-         other devices in the scene, even restarts, until something replaces it or you \
+         other devices in the conversation, even restarts, until something replaces it or you \
          dismiss it. What is up right now is listed under `## On screen now` in your \
          context — trust that list, don't guess. If it says the room is clear, there is \
          nothing to dismiss; don't fire dismisses at remembered ids. \
@@ -651,14 +650,13 @@ fn show_tool() -> Value {
     )
 }
 
-/// Handle one parsed JSON-RPC message. `scene`/`role`/`worker_id` come from the
-/// request headers; `registry` routes tool calls to the owning scene loop.
+/// Handle one parsed JSON-RPC message. `conversation`/`role`/`worker_id` come from the
+/// request headers; `registry` routes tool calls to the owning reaction loop.
 pub async fn handle(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
-    video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
+    video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
-    scene: Option<Scene>,
     role: Option<&str>,
     session_id: Option<u64>,
     msg: &Value,
@@ -694,7 +692,7 @@ pub async fn handle(
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             McpReply::Json(result(
                 id,
-                dispatch_tool(registry, data_dir, video_partial, observatory, scene.as_ref(), session_id, role, name, &args).await,
+                dispatch_tool(registry, data_dir, video_partial, observatory, session_id, role, name, &args).await,
             ))
         }
         // ping is a no-op request the client may send.
@@ -705,23 +703,18 @@ pub async fn handle(
 
 /// Run one tool call, returning the MCP `tools/call` result shape (a content list
 /// with an `isError` flag). Tools are fire-and-forget: we forward the call to the
-/// scene (its loop for side-effects, its sequencer for output) and ack
+/// conversation (its loop for side-effects, its sequencer for output) and ack
 /// immediately, never blocking on playback or on the worker a delegate spawns.
 async fn dispatch_tool(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
-    video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
+    video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
-    scene: Option<&Scene>,
     session_id: Option<u64>,
     role: Option<&str>,
     name: &str,
     args: &Value,
 ) -> Value {
-    let Some(scene) = scene else {
-        return tool_error("missing X-HI-Scene header");
-    };
-
     // Expression tools belong to the reaction alone — it is the single
     // guideline-carrying voice, so everything the person sees or hears goes through
     // its `reaction.md` generation. A worker or reflection session must never speak
@@ -735,9 +728,9 @@ async fn dispatch_tool(
     }
 
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
-    // the scene loop (no sink), so handle them before the sink lookup. The
-    // consolidated reflection session spans every scene, so the scene-specific ones
-    // (`record_episode`/`keep_and_fade`/`image-text-to-text`) take their scene from the args,
+    // the reaction loop (no sink), so handle them before the sink lookup. The
+    // consolidated reflection session spans the conversation, so the conversation-specific ones
+    // (`record_episode`/`keep_and_fade`/`image-text-to-text`) take their conversation from the args,
     // not the (sentinel) header — `image-text-to-text` falls back to the header for the live
     // reaction surface.
     match name {
@@ -756,9 +749,9 @@ async fn dispatch_tool(
         "record_reflex" => return reflex_record(data_dir, args).await,
         "look" => return do_look().await,
         "act" => return do_act(args).await,
-        "image-text-to-text" => return do_image_text_to_text(data_dir, scene, args).await,
+        "image-text-to-text" => return do_image_text_to_text(data_dir, args).await,
         "video-text-to-text" => {
-            return do_video_text_to_text(data_dir, scene, video_partial, args).await;
+            return do_video_text_to_text(data_dir, video_partial, args).await;
         }
         // Declared, advertised, and not yet wired. They fail loudly rather than
         // being absent, because an absent tool reads to the model as "this agent
@@ -805,13 +798,13 @@ async fn dispatch_tool(
         |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     let arg_opt = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
 
-    // The switchboard calls, handled **before** any scene is looked up.
+    // The switchboard calls, handled **before** any conversation is looked up.
     //
-    // They reach the process-wide session registry and touch no scene at all, so
-    // requiring a live scene loop to make one was a category error — and a load-bearing
-    // one: `create_worker` belongs to the sceneless rungs, and Reflection runs under a
-    // sentinel scene that has no loop, so the one rung holding the tool was the one rung
-    // that could never call it. Same for the one verb: a sceneless agent could be sent
+    // They reach the process-wide session registry and touch no conversation at all, so
+    // requiring a live reaction loop to make one was a category error — and a load-bearing
+    // one: `create_worker` belongs to the standing rungs, and Reflection runs under a
+    // sentinel conversation that has no loop, so the one rung holding the tool was the one rung
+    // that could never call it. Same for the one verb: a standing agent could be sent
     // to, but could not send.
     match name {
         "send_message" => {
@@ -833,14 +826,13 @@ async fn dispatch_tool(
             };
             let delivery = registry::global().send(from, target, message.clone());
 
-            // The edge, observed. Attributed to the **sender's** scene, because that is
+            // The edge, observed. Attributed to the **sender's** conversation, because that is
             // the one fact we hold at this point — the switchboard resolves the target
-            // and does not report its scene. For a sceneless rung the header carries a
+            // and does not report its conversation. For a standing rung the header carries a
             // sentinel, so pass `None` rather than let a placeholder become a
             // conversation in the mirror.
             observatory
                 .record(
-                    Some(scene).filter(|s| !s.is_pseudo()),
                     EventKind::MessageSent { from: Some(from), to: target, delivery, message },
                 )
                 .await;
@@ -886,9 +878,9 @@ async fn dispatch_tool(
             };
         }
         "create_worker" => {
-            // Workers belong to the sceneless rungs — Cognition and Reflection, per
+            // Workers belong to the standing rungs — Cognition and Reflection, per
             // `docs/arch/foundation.md`. Reaction speaks and Deliberation reads; neither
-            // dispatches, and a scene-bound rung that could would be a second dispatcher
+            // dispatches, and a conversation-bound rung that could would be a second dispatcher
             // (`docs/arch/agents.md`: "one dispatcher is the point").
             //
             // Structural, not just absent from the advertised surface — the same reason
@@ -897,7 +889,7 @@ async fn dispatch_tool(
             // rejected it. That fence is gone as of this commit, so the real one goes in.
             if !matches!(role, Some("reflection") | Some("cognition")) {
                 return tool_error(&format!(
-                    "`create_worker` belongs to the sceneless rungs; role `{}` may not dispatch work",
+                    "`create_worker` belongs to the standing rungs; role `{}` may not dispatch work",
                     role.unwrap_or("<none>")
                 ));
             }
@@ -934,28 +926,26 @@ async fn dispatch_tool(
             // before the protocol assigns one.
             let id = registry::mint();
             // A worker must *run* somewhere: a loop to hold its handle and reap it. The
-            // caller's own header scene is that loop — both rungs allowed here register a
+            // caller's own header conversation is that loop — both rungs allowed here register a
             // sink under their sentinel (`*cognition*`, `*consolidation*`), so this is a
             // plain lookup with no fallback.
             //
-            // There used to be one: `any_host()`, which lent the lowest-named live scene
+            // There used to be one: `any_host()`, which lent the lowest-named live conversation
             // when the lookup missed. It is gone, and its absence is the point — a
-            // borrowed scene leaked straight into the worker's provenance (its
-            // `X-HI-Scene`, its prompt, and the scene its report was journaled under).
-            let host_scene = scene.clone();
-            let Some(sink) = registry.get(scene).await else {
+            // borrowed conversation leaked straight into the worker's provenance (its
+            // ``, its prompt, and the conversation its report was journaled under).
+            let Some(sink) = registry.get().await else {
                 return tool_error(
-                    "no loop registered for this session's scene, so there is nowhere to run a worker",
+                    "the reaction loop is not up, so there is nowhere to run a worker",
                 );
             };
             return match sink
-                .send(SceneControl::CreateWorker { id, task, kind, owner: Some(owner) })
+                .send(LoopControl::CreateWorker { id, task, kind, owner: Some(owner) })
                 .await
             {
                 Ok(()) => tool_ok(&format!(
-                    "session {id} starting (running under scene `{}`); brief it with \
-                     send_message, check it with session_status",
-                    host_scene.0
+                    "session {id} starting; brief it with send_message, check it with \
+                     session_status"
                 )),
                 Err(err) => tool_error(&err.to_string()),
             };
@@ -963,8 +953,8 @@ async fn dispatch_tool(
         _ => {}
     }
 
-    let Some(sink) = registry.get(scene).await else {
-        return tool_error(&format!("no active scene loop for {}", scene.0));
+    let Some(sink) = registry.get().await else {
+        return tool_error("the reaction loop is not up");
     };
 
     let outcome = match name {
@@ -1259,27 +1249,13 @@ fn parse_mods(v: Option<&Value>) -> Vec<crate::body::capabilities::input::Modifi
         .unwrap_or_default()
 }
 
-/// The scene a reflection tool names explicitly in its args. The consolidated
-/// reflection session spans every scene, so the scene-writing tools carry the scene
+/// The conversation a reflection tool names explicitly in its args. The consolidated
+/// reflection session spans the conversation, so the conversation-writing tools carry the conversation
 /// they act on as an argument rather than reading the session's (sentinel) header.
-/// `None` (and the caller's error) when missing or blank.
-fn arg_scene(args: &Value) -> Option<Scene> {
-    args.get("scene")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| Scene(s.to_string()))
-}
-
-/// `record_episode`: file the first `count` of the named scene's unconsolidated
-/// signals as one episode (see [`crate::mind::memory::episodes::record_episode`]).
+/// `record_episode`: file the first `count` unconsolidated signals as one episode
+/// (see [`crate::mind::memory::episodes::record_episode`]).
 /// Returns the episode ref for the session to cite when it updates a facet.
 async fn reflection_record_episode(data_dir: &std::path::Path, args: &Value) -> Value {
-    let Some(scene) = arg_scene(args) else {
-        return tool_error(
-            "record_episode requires `scene` — the id from the episode's `# Scene: <id>` group header",
-        );
-    };
     let Some(count) = args.get("count").and_then(Value::as_u64) else {
         return tool_error("record_episode requires an integer `count` >= 1");
     };
@@ -1296,7 +1272,7 @@ async fn reflection_record_episode(data_dir: &std::path::Path, args: &Value) -> 
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
         .unwrap_or_default();
-    match crate::mind::memory::episodes::record_episode(data_dir, &scene, count as usize, title, gist, &subjects)
+    match crate::mind::memory::episodes::record_episode(data_dir, count as usize, title, gist, &subjects)
         .await
     {
         Ok(name) => tool_ok(&format!("recorded episode {name}")),
@@ -1430,11 +1406,6 @@ async fn reflection_merge_people(data_dir: &std::path::Path, args: &Value) -> Va
 /// gate lives in the tool, so an attempt on an un-consolidated day comes back as a
 /// tool error the session can read, not a panic.
 async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> Value {
-    let Some(scene) = arg_scene(args) else {
-        return tool_error(
-            "keep_and_fade requires `scene` — the id from the day's `# Scene: <id>` group header",
-        );
-    };
     let Some(channel) = args.get("channel").and_then(Value::as_str) else {
         return tool_error("keep_and_fade requires `channel` (audio|vision)");
     };
@@ -1462,7 +1433,7 @@ async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> V
             spans.push(crate::mind::memory::decay::KeepSpan { start, end });
         }
     }
-    match crate::mind::memory::decay::keep_and_fade(data_dir, &scene, channel, date, &spans).await {
+    match crate::mind::memory::decay::keep_and_fade(data_dir, channel, date, &spans).await {
         Ok(r) => tool_ok(&format!(
             "faded {} {date}: kept {} keepsake(s), freed {} bytes",
             channel.as_str(),
@@ -1477,7 +1448,7 @@ async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> V
 /// `📷 photo arrived` signal, or one surfaced to reflection) to its bytes, then hands
 /// it to [`perceive_still`] — which the bundle routes either to the model's own eyes
 /// (native vision) or through the vision capability (text-only model).
-async fn do_image_text_to_text(data_dir: &Path, scene: &Scene, args: &Value) -> Value {
+async fn do_image_text_to_text(data_dir: &Path, args: &Value) -> Value {
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
         return tool_error(
@@ -1489,13 +1460,8 @@ async fn do_image_text_to_text(data_dir: &Path, scene: &Scene, args: &Value) -> 
             "image-text-to-text: malformed ref {reff:?} (expected <YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
         ));
     };
-    // The live reaction surface resolves against its own scene (the header). The
-    // consolidated reflection session has no single scene, so it names the scene the
-    // ref belongs to in `scene` — honored here, header otherwise.
-    let owned = arg_scene(args);
-    let scene = owned.as_ref().unwrap_or(scene);
     let Some(path) =
-        crate::mind::memory::media::resolve(data_dir, scene, crate::types::Channel::Vision, ts, &rel).await
+        crate::mind::memory::media::resolve(data_dir, crate::types::Channel::Vision, ts, &rel).await
     else {
         return tool_error(&format!("image-text-to-text: no media at {reff} (it may have faded)"));
     };
@@ -1513,14 +1479,13 @@ async fn do_image_text_to_text(data_dir: &Path, scene: &Scene, args: &Value) -> 
 /// ask the person to turn it on.
 async fn do_video_text_to_text(
     data_dir: &Path,
-    scene: &Scene,
-    video_partial: &Mutex<HashMap<Scene, PartialMinute>>,
+    video_partial: &Mutex<Option<PartialMinute>>,
     args: &Value,
 ) -> Value {
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let span = args.get("span").and_then(Value::as_str).unwrap_or_default();
 
-    let Some((bytes, mime)) = partial_clip(video_partial, scene) else {
+    let Some((bytes, mime)) = partial_clip(video_partial) else {
         return tool_error(
             "no live camera to watch — `video-text-to-text` reads the camera streaming right now; \
              ask the person to turn it on, then try again.",
@@ -1597,12 +1562,12 @@ async fn perceive_clip(data_dir: &Path, bytes: Bytes, mime: &str, prompt: &str) 
     }
 }
 
-/// Concatenate a scene's in-progress minute (`init` + `buf`) into one
+/// Concatenate the conversation's in-progress minute (`init` + `buf`) into one
 /// independently-decodable clip, with its container mime. `None` when no camera is
-/// streaming for the scene.
-fn partial_clip(map: &Mutex<HashMap<Scene, PartialMinute>>, scene: &Scene) -> Option<(Bytes, String)> {
+/// streaming for the conversation.
+fn partial_clip(map: &Mutex<Option<PartialMinute>>) -> Option<(Bytes, String)> {
     let guard = map.lock().unwrap();
-    let p = guard.get(scene)?;
+    let p = guard.as_ref()?;
     let mut v = Vec::with_capacity(p.init.len() + p.buf.len());
     v.extend_from_slice(&p.init);
     v.extend_from_slice(&p.buf);
@@ -2035,7 +2000,7 @@ mod surface_tests {
         }
     }
 
-    /// One dispatcher. A scene rung that could create workers would be a second one,
+    /// One dispatcher. A the voice that could create workers would be a second one,
     /// spawning against Cognition unseen.
     /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
     /// legacy fallback, which handed it `say` and `show` — refused at dispatch — and
@@ -2058,7 +2023,7 @@ mod surface_tests {
     }
 
     #[test]
-    fn only_the_sceneless_rungs_create_workers() {
+    fn only_the__rungs_create_workers() {
         assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
         assert!(names(Some("cognition")).contains(&"create_worker".to_string()));
         for role in [Some("reaction"), Some("worker")] {
@@ -2132,9 +2097,8 @@ mod surface_tests {
     async fn the_generation_tasks_dispatch_to_a_not_implemented_error() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
-        let partial = Mutex::new(HashMap::new());
+        let partial = Mutex::new(None);
         let obs = Observatory::new(None);
-        let scene = Scene("boss".to_string());
 
         for name in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
             let got = dispatch_tool(
@@ -2142,7 +2106,6 @@ mod surface_tests {
                 dir.path(),
                 &partial,
                 &obs,
-                Some(&scene),
                 Some(7),
                 Some("worker"),
                 name,
@@ -2168,9 +2131,8 @@ mod surface_tests {
     async fn create_worker_is_refused_to_the_scene_rungs_at_dispatch() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
-        let partial = Mutex::new(HashMap::new());
+        let partial = Mutex::new(None);
         let obs = Observatory::new(None);
-        let scene = Scene("boss".to_string());
 
         for role in [Some("reaction"), Some("worker"), Some("deliberation"), None] {
             let got = dispatch_tool(
@@ -2178,7 +2140,6 @@ mod surface_tests {
                 dir.path(),
                 &partial,
                 &obs,
-                Some(&scene),
                 // An identity, so this cannot pass for the old accidental rejection.
                 Some(7),
                 role,
@@ -2203,17 +2164,15 @@ mod surface_tests {
     async fn a_send_that_reaches_nobody_is_still_recorded_as_an_edge() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
-        let partial = Mutex::new(HashMap::new());
+        let partial = Mutex::new(None);
         let obs = Observatory::new(None);
-        let scene = Scene("boss".to_string());
 
         let got = dispatch_tool(
             &tools,
             dir.path(),
             &partial,
             &obs,
-            Some(&scene),
-            Some(7),
+                Some(7),
             Some("reaction"),
             "send_message",
             &json!({ "to": "99", "message": "are you there" }),
@@ -2229,6 +2188,5 @@ mod surface_tests {
         assert_eq!(v["to"], 99);
         assert_eq!(v["delivery"], "unknown");
         assert_eq!(v["message"], "are you there");
-        assert_eq!(v["scene"], "boss");
     }
 }

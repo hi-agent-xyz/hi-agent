@@ -38,7 +38,6 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
 async fn post_mcp(client: &reqwest::Client, base: &str, role: &str, msg: Value) -> reqwest::Response {
     client
         .post(format!("{base}/mcp"))
-        .header("X-HI-Scene", "alice@phone")
         .header("X-HI-Role", role)
         .header("Content-Type", "application/json")
         .body(msg.to_string())
