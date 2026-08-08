@@ -68,8 +68,8 @@ There are exactly four statuses:
 - `cancelled` — explicitly abandoned rather than completed
 
 Stamp `completed_at:` when moving to `done`, and `cancelled_at:` when moving to
-`cancelled`; clear either closing timestamp when reopening a task. `report_to:` is
-optional. **Only write `due_at:` when the person actually set a due date or time.**
+`cancelled`; clear either closing timestamp when reopening a task. **Only write
+`due_at:` when the person actually set a due date or time.**
 Do not invent one, and do not add or mention due information for an undated task.
 
 A `doing` task may optionally describe machinery that must stay healthy with `verify:`

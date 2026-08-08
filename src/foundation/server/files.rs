@@ -8,13 +8,11 @@
 //! "stdlib" for receiving files; the agent's filing/recall on top is agentic.
 //!
 //! Two doors, one core:
-//! - `POST /api/in/file` — drag-drop from the agent's own page; the conversation rides
-//!   the `X-HI-Conversation` header like every other channel.
-//! - phone handoff — `POST /api/handoff` mints a short-lived token bound to the
-//!   conversation and returns a `/up/<token>` URL; the built-in view renders it as a QR
+//! - `POST /api/in/file` — drag-drop from the agent's own page.
+//! - phone handoff — `POST /api/handoff` mints a short-lived upload token and
+//!   returns a `/up/<token>` URL; the built-in view renders it as a QR
 //!   (`GET /api/qr`). A phone opens `GET /up/<token>` (a tiny uploader) and posts
-//!   to `POST /api/up/<token>`, where the token supplies the conversation the phone has
-//!   no header for.
+//!   to `POST /api/up/<token>`.
 //!
 //! Every door funnels into [`receive_file`], which mirrors the text path: store
 //! the bytes ([`media::store_blob`]), journal a `SignalIn`, echo to observers,
@@ -42,8 +40,7 @@ use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
 /// phone and scan; short enough that a leaked QR doesn't linger.
 const HANDOFF_TTL: Duration = Duration::from_secs(600);
 
-/// A conversation-scoped phone-upload grant. The phone reaches `/up/<token>` and
-/// `/api/up/<token>` with no `X-HI-Conversation` header; the token carries the conversation.
+/// A short-lived phone-upload grant.
 pub struct Handoff {
     pub expires: Instant,
 }
@@ -195,8 +192,7 @@ async fn drain_multipart(
 // Routes
 // -----------------------------------------------------------------------------
 
-/// `POST /api/in/file` — drag-drop / picker from the agent's own page. Conversation via
-/// the `X-HI-Conversation` header.
+/// `POST /api/in/file` — drag-drop / picker from the agent's own page.
 pub async fn post_file(
     State(state): State<Arc<AppState>>,
     mp: Multipart,
@@ -208,7 +204,7 @@ pub async fn post_file(
     }
 }
 
-/// `POST /api/handoff` — mint a conversation-scoped upload token and return the
+/// `POST /api/handoff` — mint a short-lived upload token and return the
 /// `/up/<token>` URL (absolute, built from the request's `Host`) for the built-in
 /// view to render as a QR. Reusable until it expires.
 pub async fn post_handoff(
@@ -232,7 +228,7 @@ pub async fn post_handoff(
 }
 
 /// `GET /up/{token}` — the phone's uploader page. A self-contained HTML form that
-/// posts to `POST /api/up/<token>`; the token carries the conversation.
+/// posts to `POST /api/up/<token>`.
 pub async fn get_up_page(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
     if !resolve_token(&state, &token) {
         return (StatusCode::GONE, Html(EXPIRED_PAGE.to_string())).into_response();
@@ -240,7 +236,7 @@ pub async fn get_up_page(State(state): State<Arc<AppState>>, Path(token): Path<S
     Html(upload_page(&token)).into_response()
 }
 
-/// `POST /api/up/{token}` — the phone uploads here; the token supplies the conversation.
+/// `POST /api/up/{token}` — the phone uploads here.
 pub async fn post_up(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -304,8 +300,8 @@ pub async fn get_qr(Query(q): Query<QrQuery>) -> Response {
 // Token helpers
 // -----------------------------------------------------------------------------
 
-/// Resolve a token to its conversation, dropping it if expired. Prunes other stale
-/// entries while holding the lock.
+/// Resolve a token, dropping it if expired. Prunes other stale entries while
+/// holding the lock.
 fn resolve_token(state: &AppState, token: &str) -> bool {
     let mut map = state.handoffs.lock().unwrap();
     prune_expired(&mut map);

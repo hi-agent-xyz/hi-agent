@@ -1,10 +1,11 @@
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
+import { fileURLToPath } from "node:url";
 
-// Resolve a path relative to this config file (ESM has no __dirname). Uses the
-// global URL (no node:url import) so it needs no @types/node.
-const r = (p: string) => new URL(p, import.meta.url).pathname;
+// Resolve a filesystem path relative to this config file. URL pathnames keep
+// percent-encoding (notably spaces), while Vite needs the decoded OS path.
+const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 // The shared-instance contract. Each shim entry (src/shared/*) re-exports a
 // dependency that BOTH host chrome and agent-authored view modules must share a

@@ -5,12 +5,12 @@
 //! "Streamable HTTP" transport to serve tools: a JSON-RPC *request* gets a single
 //! `application/json` response, a *notification* gets `202 Accepted`, and the GET
 //! SSE stream is declined (`405`) since we never push server-initiated messages.
-//! No session ids — each ACP session opens its own MCP connection and identifies
-//! its conversation/role/worker on every call via headers, so the transport stays
-//! stateless here.
+//! No MCP transport session ids — each ACP session opens its own connection and
+//! identifies its role and agent-session id on every call via headers, so the
+//! transport stays stateless here.
 //!
 //! This module is transport-free: it turns a parsed JSON-RPC message plus the
-//! routing identity (conversation/role/worker id from headers) into an [`McpReply`]. The
+//! routing identity (role/session id from headers) into an [`McpReply`]. The
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
 //! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
@@ -24,12 +24,12 @@ use std::sync::Mutex;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
-use crate::foundation::observatory::{EventKind, Observatory};
 use crate::body::capabilities::{image_gen, video_gen, view_render};
+use crate::body::reaction::{LoopControl, ToolOwner, ToolRegistry};
+use crate::foundation::observatory::{EventKind, Observatory};
 use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
-use crate::body::reaction::{LoopControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
 use crate::types::ViewTraits;
 
@@ -241,10 +241,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         .chain(generation_tools())
         .collect(),
         // The reflection ("sleep") surface: a voice-less session that consolidates
-        // the raw log into derived memory. One pass spans every recently-active
-        // conversation at once — the signals come grouped by conversation, each group numbered
-        // from 1 — so the conversation-specific tool (`record_episode`, `keep_and_fade`,
-        // `image-text-to-text`) names the conversation it acts on.
+        // the one raw frontier into derived memory.
         Some("reflection") => vec![
             send_message_tool(),
             create_worker_tool(),
@@ -253,11 +250,10 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             tool(
                 "record_episode",
                 "File one coherent event as an episode. You are shown the still-unconsolidated \
-                 signals as its own numbered list, oldest first, under a `# Conversation: <id>` header; `conversation` is \
-                 that id and `count` is how many signals from the TOP of THAT conversation's list this one episode \
-                 covers. Work one conversation at a time, in order, front to back — each call consumes that many \
-                 signals from the front of its conversation, so the next `count` for the same conversation starts after \
-                 them. STOP early (just don't cover the last few) when the most recent signals are an event \
+                 signals as one numbered list, oldest first. `count` is how many signals from the TOP \
+                 of the remaining list this episode covers. Work front to back — each call consumes \
+                 that many signals, so the next `count` starts after them. STOP early (just don't cover \
+                 the last few) when the most recent signals are an event \
                  still in progress; they'll come back next time. `gist` is the consolidated event in your own \
                  prose. `title` is a short handle for this event (a few words) — it becomes the episode's \
                  directory name, so make it specific and human-readable (e.g. \"Lunch plan with Alice\", \
@@ -267,13 +263,12 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 json!({
                     "type": "object",
                     "properties": {
-                        "conversation": { "type": "string", "description": "The conversation this episode belongs to — the id from its `# Conversation: <id>` group header." },
-                        "count": { "type": "integer", "minimum": 1, "description": "How many signals from the top of THAT conversation's unconsolidated list this episode covers." },
+                        "count": { "type": "integer", "minimum": 1, "description": "How many signals from the top of the remaining unconsolidated list this episode covers." },
                         "title": { "type": "string", "description": "A short, specific handle for this event (a few words); becomes the episode's directory name, e.g. \"Lunch plan with Alice\"." },
                         "gist": { "type": "string", "description": "The consolidated event, in prose — what happened, what mattered." },
                         "subjects": { "type": "array", "items": { "type": "string" }, "description": "The dimension/subject refs this episode touches, e.g. [\"people/alice\", \"projects/kyoto-trip\"]." },
                     },
-                    "required": ["conversation", "count", "title", "gist"],
+                    "required": ["count", "title", "gist"],
                 }),
             ),
             tool(
@@ -345,8 +340,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 "Let a cold day's media fade to the text, keeping only the moments worth keeping \
                  vivid. Use it on a day from the old-store list you're shown — one genuinely old and \
                  settled, heaviest first — when the raw bytes are vividness the words have outlived. \
-                 `conversation` is the conversation that day belongs to (the `# Conversation: <id>` group the old-store list \
-                 appeared under). `channel` is `audio` or `vision`, `date` the `YYYY-MM-DD` day. `keep` is \
+                 `channel` is `audio` or `vision`, `date` the `YYYY-MM-DD` day. `keep` is \
                  the spans to preserve, each `{start, end}` in RFC3339 — a vision keepsake is a still at \
                  `start`, an audio keepsake the clip `[start, end)`. Keep almost nothing: a frame or a few \
                  seconds, often none — pass `keep: []` to fade straight to text (which always remains). Keep \
@@ -356,7 +350,6 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 json!({
                     "type": "object",
                     "properties": {
-                        "conversation": { "type": "string", "description": "The conversation this day belongs to — the id from the `# Conversation: <id>` group its old-store list appeared under." },
                         "channel": { "type": "string", "enum": ["audio", "vision"], "description": "Which sense's media to fade for this day." },
                         "date": { "type": "string", "description": "The day to fade, YYYY-MM-DD (UTC), from the old-store list." },
                         "keep": {
@@ -372,7 +365,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                             },
                         },
                     },
-                    "required": ["conversation", "channel", "date"],
+                    "required": ["channel", "date"],
                 }),
             ),
             tool(
@@ -500,7 +493,6 @@ fn image_text_to_text_tool() -> Value {
             "properties": {
                 "ref": { "type": "string", "description": "The ⟨ref: …⟩ carried by the image's signal, e.g. 2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: what you want to know about the image (a question or focus). Omit to just look." },
-                "conversation": { "type": "string", "description": "Reflection only: the conversation shown next to the ref (its `# Conversation: <id>` group). Pass it so the still resolves. Omit in conversation." },
             },
             "required": ["ref"],
         }),
@@ -562,7 +554,6 @@ fn image_to_image_tool() -> Value {
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
                 "size": { "type": "string", "description": "Optional, vendor-specific output size." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
-                "conversation": { "type": "string", "description": "Reflection only: the conversation the ref belongs to. Omit in conversation." },
             },
             "required": ["ref", "prompt"],
         }),
@@ -608,7 +599,6 @@ fn image_to_video_tool() -> Value {
                 "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
                 "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
-                "conversation": { "type": "string", "description": "Reflection only: the conversation the ref belongs to. Omit in conversation." },
             },
             "required": ["ref"],
         }),
@@ -658,8 +648,8 @@ fn show_tool() -> Value {
     )
 }
 
-/// Handle one parsed JSON-RPC message. `conversation`/`role`/`worker_id` come from the
-/// request headers; `registry` routes tool calls to the owning reaction loop.
+/// Handle one parsed JSON-RPC message. `role` and `session_id` come from the
+/// request headers; `registry` routes loop-owned tool calls by role.
 pub async fn handle(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
@@ -711,7 +701,7 @@ pub async fn handle(
 
 /// Run one tool call, returning the MCP `tools/call` result shape (a content list
 /// with an `isError` flag). Tools are fire-and-forget: we forward the call to the
-/// conversation (its loop for side-effects, its sequencer for output) and ack
+/// owning loop (for side-effects or sequenced output) and ack
 /// immediately, never blocking on playback or on the worker a delegate spawns.
 async fn dispatch_tool(
     registry: &ToolRegistry,
@@ -736,11 +726,7 @@ async fn dispatch_tool(
     }
 
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
-    // the reaction loop (no sink), so handle them before the sink lookup. The
-    // consolidated reflection session spans the conversation, so the conversation-specific ones
-    // (`record_episode`/`keep_and_fade`/`image-text-to-text`) take their conversation from the args,
-    // not the (sentinel) header — `image-text-to-text` falls back to the header for the live
-    // reaction surface.
+    // a loop sink, so handle them before the sink lookup.
     match name {
         "record_episode" => return reflection_record_episode(data_dir, args).await,
         "read_facet" => return reflection_read_facet(data_dir, args).await,
@@ -933,18 +919,12 @@ async fn dispatch_tool(
             // tool surface identifies its caller by a header, so an id has to exist
             // before the protocol assigns one.
             let id = registry::mint();
-            // A worker must *run* somewhere: a loop to hold its handle and reap it. The
-            // caller's own header conversation is that loop — both rungs allowed here register a
-            // sink under their sentinel (`*cognition*`, `*consolidation*`), so this is a
-            // plain lookup with no fallback.
-            //
-            // There used to be one: `any_host()`, which lent the lowest-named live conversation
-            // when the lookup missed. It is gone, and its absence is the point — a
-            // borrowed conversation leaked straight into the worker's provenance (its
-            // ``, its prompt, and the conversation its report was journaled under).
-            let Some(sink) = registry.get().await else {
+            // A worker must run in the standing loop that created it. Role-specific
+            // slots keep Cognition and Reflection from replacing each other's route.
+            let owner_role = ToolOwner::from_role(role).expect("role guard above");
+            let Some(sink) = registry.get(owner_role).await else {
                 return tool_error(
-                    "the reaction loop is not up, so there is nowhere to run a worker",
+                    "the owning loop is not up, so there is nowhere to run a worker",
                 );
             };
             return match sink
@@ -961,8 +941,11 @@ async fn dispatch_tool(
         _ => {}
     }
 
-    let Some(sink) = registry.get().await else {
-        return tool_error("the reaction loop is not up");
+    let Some(owner) = ToolOwner::from_role(role) else {
+        return tool_error("this role has no loop-owned tools");
+    };
+    let Some(sink) = registry.get(owner).await else {
+        return tool_error("the owning loop is not up");
     };
 
     let outcome = match name {
@@ -1279,9 +1262,6 @@ fn parse_mods(v: Option<&Value>) -> Vec<crate::body::capabilities::input::Modifi
         .unwrap_or_default()
 }
 
-/// The conversation a reflection tool names explicitly in its args. The consolidated
-/// reflection session spans the conversation, so the conversation-writing tools carry the conversation
-/// they act on as an argument rather than reading the session's (sentinel) header.
 /// `record_episode`: file the first `count` unconsolidated signals as one episode
 /// (see [`crate::mind::memory::episodes::record_episode`]).
 /// Returns the episode ref for the session to cite when it updates a facet.
@@ -2053,7 +2033,7 @@ mod surface_tests {
     }
 
     #[test]
-    fn only_the__rungs_create_workers() {
+    fn only_the_standing_rungs_create_workers() {
         assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
         assert!(names(Some("cognition")).contains(&"create_worker".to_string()));
         for role in [Some("reaction"), Some("worker")] {
@@ -2158,7 +2138,7 @@ mod surface_tests {
     /// guard and is not one. A rung with an identity and no advertised `create_worker`
     /// could call it anyway.
     #[tokio::test]
-    async fn create_worker_is_refused_to_the_scene_rungs_at_dispatch() {
+    async fn create_worker_is_refused_to_non_owner_roles_at_dispatch() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
         let partial = Mutex::new(None);

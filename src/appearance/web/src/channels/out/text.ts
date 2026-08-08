@@ -18,17 +18,48 @@ export interface TextChunk {
   text: string;
 }
 
+export interface TextCursor {
+  /** The server process whose utterance id this belongs to. */
+  epoch: string;
+  /** The utterance id this reader will pass back as its next `after`. */
+  id: number;
+}
+
 export interface SubscribeOpts {
   /** Abort signal so the caller can cancel cleanly on unmount. */
   signal: AbortSignal;
   /**
-   * Id of the last utterance received in full, or null to start at the oldest
-   * the server still holds — which is what makes a reply produced before this
-   * client ever connected still arrive.
+   * Committed cursor, or null to start at the oldest the server still holds.
+   * A caller should commit only after the response body closes.
    */
-  after?: number | null;
-  /** Called with the id of the utterance this subscription carries. */
-  onUtterance?: (id: number) => void;
+  after?: TextCursor | null;
+  /** Called when response headers arrive, before the utterance body is complete. */
+  onUtterance?: (cursor: TextCursor) => void;
+}
+
+/** Parse the persisted cursor, resetting old numeric or malformed values. */
+export function parseTextCursor(raw: string | null): TextCursor | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { epoch?: unknown }).epoch === "string" &&
+      (value as { epoch: string }).epoch.length > 0 &&
+      Number.isSafeInteger((value as { id?: unknown }).id) &&
+      (value as { id: number }).id >= 0
+    ) {
+      return { epoch: (value as { epoch: string }).epoch, id: (value as { id: number }).id };
+    }
+  } catch {
+    // A malformed sessionStorage value is equivalent to no cursor.
+  }
+  return null;
+}
+
+export function serializeTextCursor(cursor: TextCursor): string {
+  return JSON.stringify(cursor);
 }
 
 /**
@@ -40,7 +71,12 @@ export interface SubscribeOpts {
 export async function* subscribeOutText(
   opts: SubscribeOpts,
 ): AsyncGenerator<TextChunk, void, void> {
-  const qs = opts.after == null ? "" : `?after=${opts.after}`;
+  const params = new URLSearchParams();
+  if (opts.after != null) {
+    params.set("epoch", opts.after.epoch);
+    params.set("after", String(opts.after.id));
+  }
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(`/api/out/text${qs}`, {
     method: "GET",
     headers: {
@@ -56,7 +92,10 @@ export async function* subscribeOutText(
   }
 
   const delivered = Number(res.headers.get("X-HI-Utterance"));
-  if (Number.isFinite(delivered)) opts.onUtterance?.(delivered);
+  const epoch = res.headers.get("X-HI-Text-Epoch");
+  if (Number.isSafeInteger(delivered) && delivered >= 0 && epoch) {
+    opts.onUtterance?.({ epoch, id: delivered });
+  }
 
   // Some servers (or proxies) may return a non-streaming body. fall through:
   if (!res.body) {

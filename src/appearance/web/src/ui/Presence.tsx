@@ -1,19 +1,30 @@
 export type ActivityState =
-  | "waking"
-  | "idle"
+  | "starting"
   | "listening"
-  | "thinking"
+  | "speaking"
   | "typing"
-  | "speaking";
+  | "working"
+  | "idle";
 
-export type CombinedState = Exclude<ActivityState, "idle"> | "rest";
-
-export function combineStatus(activity: ActivityState): CombinedState {
-  if (activity.endsWith("ing")) return activity as Exclude<ActivityState, "idle">;
-  return "rest";
+export interface ActivitySignals {
+  ready: boolean;
+  listening: boolean;
+  speaking: boolean;
+  reactionBusy: boolean;
+  delegatedBusy: boolean;
 }
 
-export function statusLabel(state: CombinedState): string {
+/** Project concurrent facts into the one status shown on the face. */
+export function projectActivityState(signals: ActivitySignals): ActivityState {
+  if (!signals.ready) return "starting";
+  if (signals.listening) return "listening";
+  if (signals.speaking) return "speaking";
+  if (signals.reactionBusy) return "typing";
+  if (signals.delegatedBusy) return "working";
+  return "idle";
+}
+
+export function statusLabel(state: ActivityState): string {
   return state.charAt(0).toUpperCase() + state.slice(1);
 }
 

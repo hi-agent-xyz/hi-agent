@@ -56,33 +56,31 @@ All paths are under `<data_dir>/memory/`. The soul is *not* here: it ships insid
 ```
 memory/
 ├── prompts/                          ← GENERATED system prompts — one per agent that needs state
-│   ├── conversation.md               ←   what the conversation carries forward (written by Deliberation)
-│   └── cognition.md                  ←   the  brain's
+│   ├── conversation.md               ←   what the shared stream carries forward (written by Deliberation)
+│   └── cognition.md                  ←   the brain's
 ├── tasks/<id>.md                     ← the one ledger of what is owed. Agent-written, precious
 │
 ├── raw/                              ← LOSSLESS TRUTH, by channel — append-only, never edited
-│   └── <conversation>/                      ← dir name = path-safe encoding of the conversation id
-│       ├── conversation.json                ← the true (un-encoded) id + created_at
-│       ├── text/
-│       │   └── 2026-06-11/text.jsonl ← the day's messages, both directions
-│       ├── audio/
-│       │   └── 2026-06-11/
-│       │       ├── audio.jsonl       ← surface log (transcripts), both directions
-│       │       ├── 09/16.mp3         ← input stream (mic) — default, bare, minute grid
-│       │       └── output/09/11.mp3  ← output stream (TTS)
-│       ├── vision/
-│       │   └── 2026-06-11/
-│       │       ├── vision.jsonl      ← surface log (captions)
-│       │       └── 10/15.mp4         ← camera; output/ holds generated frames
-│       ├── appearance/               ← the one STATE channel: screen-state history
-│       │   └── 2026-06-11/           ← whole-state snapshots; newest = current screen
-│       │       └── appearance-101502Z.json
-│       └── files/                    ← exchanged/produced artifacts (kept verbatim)
-│           └── 2026-06-11-trip-plan.pdf
+│   ├── text/
+│   │   └── 2026-06-11/text.jsonl     ← the day's messages, both directions
+│   ├── audio/
+│   │   └── 2026-06-11/
+│   │       ├── audio.jsonl           ← surface log (transcripts), both directions
+│   │       ├── 09/16.mp3             ← default input stream, minute grid
+│   │       └── output/09/11.mp3      ← output stream (TTS)
+│   ├── vision/
+│   │   └── 2026-06-11/
+│   │       ├── vision.jsonl          ← surface log (captions)
+│   │       └── 10/15.mp4             ← camera; output/ holds generated frames
+│   ├── appearance/                    ← the one STATE channel: screen-state history
+│   │   └── 2026-06-11/                ← whole-state snapshots; newest = current screen
+│   │       └── appearance-101502Z.json
+│   └── files/                         ← exchanged/produced artifacts (kept verbatim)
+│       └── 2026-06-11-trip-plan.pdf
 │
 ├── episodes/                         ← DERIVED event bundles (markdown + attachments)
 │   └── 2026-06-11-kyoto-trip-7a3f/
-│       ├── episode.md                ← gist + frontmatter (conversation, signal-id range, citations)
+│       ├── episode.md                ← gist + frontmatter (signal-id range, citations)
 │       └── <attachments>             ← refs into raw/ + genuinely-derived artifacts
 └── facets/                           ← DERIVED current-understanding (every claim cites)
     ├── people/<person>.md
@@ -101,8 +99,9 @@ memory/
 
 ### Organized by channel
 
-`raw/` is sliced **by channel** — there is one conversation and it has no name
-(`docs/arch/core.md#one-conversation`), so nothing above the channel level partitions it.
+`raw/` is sliced **by channel** — there is one shared conversation and it has no
+name (`docs/arch/core.md#one-conversation`), so nothing above the channel level
+partitions it.
 Every directory name here is a code-supplied constant, which is why no path in this tree
 percent-encodes a user string any more.
 
@@ -146,7 +145,7 @@ Media is not kept forever, and this is what bounds size. A signal has three dept
 **Forgetting is delegated judgment, not a timer.** "When is a memory ripe to fade, and which moments survive it" is a judgment, so it lives in a cognition session — an age-sweep in Rust would be the one hardcoded heuristic the rest of the subsystem refuses. So reflection grows a second, backward-looking faculty beyond consolidating the frontier — **tending the old store** — and does it by **delegating to a forgetting sub-agent**. Being a worker, that sub-agent is itself a conversation, so the run is inspectable like any other (§3 *Files and workers*). The split mirrors `record_episode` — soft judgment, exact hands:
 
 - **The sub-agent makes the soft calls.** Shown the *pressure* on a conversation — per-channel byte weight, age, consolidation status — it judges which cold windows are ripe to fade and, content-aware, which frame or seconds of each to keep. Informed by real pressure, never reduced to a rule.
-- **A deterministic tool does the cut.** `keep_and_fade(conversation, channel, window, spans_to_keep[])` slices the kept spans into clip files and unlinks the full bytes. The mind never reasons about byte offsets.
+- **A deterministic tool does the cut.** `keep_and_fade(channel, date, spans_to_keep[])` slices the kept spans into clip files and unlinks the full bytes. The mind never reasons about byte offsets.
 
 Slowness comes from the judgment, not a clock: reflection can dispatch the pass on its own cadence, and most runs it finds nothing ripe — a cheap near-no-op — so a given memory sheds its bytes **once**, when it has genuinely gone cold, not on every consolidation.
 
@@ -220,7 +219,7 @@ memory/prompts/<agent>.md  ← the working set: what this agent carries into eve
 
 ## 7. Reflection — the mind consolidating ("sleep")
 
-Consolidation is a **dedicated session of its own**, not the reaction turn loop and not the live mind — so cost never blocks speech and the reaction's context is never polluted. One pass settles **every recently-active conversation at once** — the single-mind analogue of a day filing across all its contexts in one sleep, rather than N independent by channel passes racing the shared stores. It **reads `raw/` directly** (not the conversation, not the swap briefing — those are lossy self-summaries; truth is the log): the signals after *that conversation's* cursor, presented **grouped by conversation** (a `# Conversation: <id>` header per group, each group numbered oldest-first from 1), seeded alongside the gist of the last episode or two (for continue-vs-new judgment) and **one global** index of subjects already modeled (so it reuses a subject rather than coining a near-duplicate — now across conversation, not just within one). It then segments by `record_episode(conversation, count, …)` and regenerates facets by `read_facet`/`update_facet`.
+Consolidation is a **dedicated session of its own**, not the reaction turn loop and not the live mind — so cost never blocks speech and the reaction's context is never polluted. One pass settles the shared frontier. It **reads `raw/` directly** (not a self-summary — truth is the log): the signals after the single consolidation cursor, numbered oldest-first, seeded alongside the gist of the last episode or two (for continue-vs-new judgment) and **one global** index of subjects already modeled. It then segments by `record_episode(count, …)` and regenerates facets by `read_facet`/`update_facet`.
 
 It is **triggered on its own clock**, decoupled from the compact hot-swap, so consolidation never waits on a reaction session crossing its context-pressure ceiling (the old coupling meant no compact → no reflection, so a quiet conversation never consolidated). **One adaptive clock** feeds a **single, process-wide reflection task** (`reaction::consolidated_reflection_loop`, spawned beside the dispatch/warm/rewarm tasks — no longer one timer per conversation loop), anchored on the **last completed pass** (or task start, before the first), reusing `reaction::next_reflection_at`:
 - **Fresh input** since that anchor (any conversation saw a signal, tracked by a global `last_signal_at`) → the next pass is due `HI_AGENT_REFLECT_EVERY` (the **base** cadence, default 1m) after it. Anchoring on the reflection rather than the last turn is what lets a continuously-busy system still consolidate ~once per base.

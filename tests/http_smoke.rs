@@ -40,8 +40,7 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
     (format!("http://{addr}"), dir, seams)
 }
 
-/// Read every per-channel `*.jsonl` under `memory/raw/` into typed entries
-/// (across all scenes, channels, and day-folders).
+/// Read every per-channel `*.jsonl` under `memory/raw/` into typed entries.
 fn read_journal(dir: &std::path::Path) -> Vec<JournalEntry> {
     let mut out = Vec::new();
     for log in walk_files(&dir.join("memory").join("raw")) {
@@ -115,30 +114,6 @@ async fn post_thought_accepts_and_journals() {
         JournalEntry::SignalIn { body, .. } => {
             assert_eq!(body, "hi");
         }
-        other => panic!("expected SignalIn, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn post_thought_without_scene_header_is_anonymous() {
-    //  is "recommended" per spec; we default missing/empty to a
-    // stable anonymous scene so per-scene routing still has a key.
-    let (base, dir, _seams) = spawn_server().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/api/in/text"))
-        .body("hi")
-        .send()
-        .await
-        .expect("send");
-    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let entries = read_journal(dir.path());
-    assert_eq!(entries.len(), 1);
-    match &entries[0] {
-        JournalEntry::SignalIn { .. } => {}
         other => panic!("expected SignalIn, got {other:?}"),
     }
 }
@@ -355,7 +330,7 @@ async fn vision_get_streams_camera_video() {
     tokio::time::sleep(Duration::from_millis(80)).await;
 
     let ws_url = format!(
-        "{}/api/in/vision/stream?scene=alice@phone&mime=video/webm",
+        "{}/api/in/vision/stream?mime=video/webm",
         base.replace("http://", "ws://")
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await.expect("ws connect");

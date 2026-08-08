@@ -4,7 +4,7 @@
 //
 // The empty state is the point of this view as much as the list is. gaps.md records the
 // agent reporting a watch as healthy while `GET /api/sessions` showed zero workers, and a
-// restart eating an in-flight report (`worker report dropped; scene loop gone`). "Nothing
+// restart eating an in-flight report (`worker report dropped; reaction loop gone`). "Nothing
 // is running" is a real, load-bearing answer here — so it is stated plainly rather than
 // rendered as an empty box that reads like a loading state.
 //
@@ -132,7 +132,6 @@ export default function Workers() {
                 <span style={{ ...S.dot, ...(w.busy ? S.dotBusy : {}) }} aria-hidden />
                 <span style={S.role}>{L.role[w.role] || w.role}</span>
                 <span style={S.task}>{w.task || L.noTask}</span>
-                {w.scene && <span style={S.scene}>{w.scene}</span>}
                 <span style={S.elapsed}>{elapsed(w.started)}</span>
               </div>
 
@@ -195,7 +194,6 @@ const S = {
   role: { fontSize: 11.5, fontWeight: 700, color: "var(--accent)", background: "var(--accent-wash)",
     padding: "3px 9px", borderRadius: 999, flex: "none" },
   task: { fontSize: 15, fontWeight: 620, letterSpacing: "-.01em", flex: 1, minWidth: 0 },
-  scene: { fontSize: 12.5, color: "var(--fg-mute)" },
   elapsed: { fontSize: 12.5, color: "var(--fg-mute)", fontWeight: 600 },
 
   stats: { display: "flex", gap: 14, marginTop: 9, fontSize: 12.5, color: "var(--fg-mute)" },

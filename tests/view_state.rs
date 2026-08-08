@@ -1,4 +1,4 @@
-//! /out/view as retained per-scene appearance state: a view shown with no
+//! /out/view as retained shared appearance state: a view shown with no
 //! client connected is served to any later GET (refresh, second device), and
 //! the state survives a server restart. The old `tokio::broadcast` delivered
 //! envelopes only to receivers that existed at send time, so every one of

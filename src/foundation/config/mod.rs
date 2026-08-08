@@ -155,13 +155,10 @@ pub mod tunables {
     }
 }
 
-/// HTTP headers a session's MCP attach carries on every tool call, so the `/mcp`
-/// server can route a call back to the right reaction loop and tool surface. Set
-/// when the session is opened (see `agent::AgentLayer::session`) and read by the
-/// MCP handler (see `crate::foundation::mcp`). The conversation is the isolation key; the role
-/// selects which tools are exposed; the worker id (workers only) names which
-/// working session raised an `ask`.
-pub const HEADER_SCENE: &str = "X-HI-Conversation";
+/// HTTP headers a session's MCP attach carries on every tool call. Set when the
+/// session is opened (see `agent::AgentLayer::session`) and read by the MCP
+/// handler (see `crate::foundation::mcp`). The role selects the tool surface and
+/// owning loop; the session id names the caller.
 pub const HEADER_ROLE: &str = "X-HI-Role";
 pub const HEADER_SESSION_ID: &str = "X-HI-Session-Id";
 

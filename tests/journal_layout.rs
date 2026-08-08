@@ -81,7 +81,6 @@ async fn legacy_reactor_origin_loads_as_reaction() {
         "id": "legacy",
         "ts": ts,
         "channel": "text",
-        "scene": "alice@phone",
         "body": "reply",
         "origin": "reactor",
     });

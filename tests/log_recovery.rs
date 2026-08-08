@@ -4,7 +4,7 @@
 //! tell what already happened without asking. That only works if the outbound half
 //! is there too: a reconstruction holding one side of the conversation will happily
 //! say the same thing again, and show the same view again. So this writes a mixed
-//! run of everything that can cross a scene — the person typing, the agent's worded
+//! run of everything that can cross the conversation — the person typing, the agent's worded
 //! reply, that reply going out as speech, a view put on screen, a pulse, cognition
 //! reporting back — and reads it out through the snapshot path a fresh session is
 //! actually opened with.

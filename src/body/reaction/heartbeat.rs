@@ -37,7 +37,7 @@
 //!
 //! What still bounds a session from out here is failure, not size: a turn that errors
 //! discards the session and the next one cold-opens (see the `Err` arms in
-//! [`super::scene_loop`] and [`super::cognition`]). The [log](super) remains the durable
+//! [`super::reaction_loop`] and [`super::cognition`]). The [log](super) remains the durable
 //! backstop either way.
 
 use std::collections::HashMap;
@@ -78,8 +78,7 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
         .count()
 }
 
-/// The gathered frontier and context for the consolidated pass — the input
-/// to one labelled group in [`build_consolidation_prompt`].
+/// The gathered frontier and context for the consolidated pass.
 struct Frontier {
     tail: Vec<JournalEntry>,
     prior: Vec<String>,
@@ -88,16 +87,11 @@ struct Frontier {
     pressure: Vec<decay::FadeDay>,
 }
 
-/// Consolidate every given conversation's unconsolidated frontier into episodes and facets
-/// in **one** "sleep" pass — the single-mind analogue of a day settling across all
-/// its contexts at once. Reads the raw log after its [`episodes::consolidation_cursor`],
-/// opens **one** dedicated reflection session (its own subprocess; never a reaction
-/// live session) spanning all of them, and drives it to completion; the session
-/// writes derived memory through its tools, naming the conversation on each call. Run from
-/// the global reflection clock (see [`super::reflection`]).
-/// Best-effort: the per-conversation cursors make it idempotent across runs and a crash
-/// just leaves each frontier for the next tick. A no-op when no conversation has enough
-/// unconsolidated signal to be worth a session.
+/// Consolidate the one conversation's unconsolidated frontier into episodes and
+/// facets in a dedicated "sleep" pass. Reads the raw log after its
+/// [`episodes::consolidation_cursor`], opens one reflection session, and drives
+/// it to completion. Run from the global reflection clock (see
+/// [`super::reflection`]). A crash leaves the frontier for the next tick.
 pub(super) async fn consolidate(reaction: &Reaction, id: registry::SessionId) {
     if let Err(err) = run_consolidation(reaction, id).await {
         // A pass already in flight when shutdown began fails because its child took
@@ -168,7 +162,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
     // itself, so it goes in (and back out through `update_proactivity`) like facets.
     let current_proactivity = crate::mind::memory::proactivity::read(data_dir).await.ok().flatten();
 
-    let prompt = build_consolidation_prompt(std::slice::from_ref(&frontier), &subjects, current_proactivity.as_deref());
+    let prompt = build_consolidation_prompt(&frontier, &subjects, current_proactivity.as_deref());
     // The same prompt a Reflection *mail* turn opens with — one self-contained file. It
     // was the role layer alone until `cd008a6`, then seed-plus-layer; it is now neither,
     // because `reflection.md` carries the whole thing.
@@ -182,10 +176,8 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
     // address that had already been dropped. The note that used to sit here said exactly
     // that and pointed at a later item; this is that item.
     //
-    // The MCP header stays the sentinel conversation while the registration carries `conversation:
-    // None`. Those are different facts: `docs/arch/agents.md` says the standing rungs
-    // have no conversation, and the header is a routing tag `/mcp` needs (see
-    // [`CONSOLIDATION_SCENE`]).
+    // The standing reflection session has no conversation identity. Its role
+    // header is enough for MCP routing.
     let session = reaction
         .inner
         .agent
@@ -217,28 +209,21 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
     Ok(())
 }
 
-/// Assemble the consolidated reflection prompt: the global subject index once, then
-/// one labelled group per conversation (see [`render_frontier`]). Each conversation's frontier
-/// is numbered oldest-first from 1 independently, so the `count` the mind hands back
-/// to `record_episode` is into *that conversation's* list; the conversation is named on the call.
+/// Assemble the consolidated reflection prompt: the global subject index, the
+/// prior episode context, the old-media pressure, and one numbered frontier.
 fn build_consolidation_prompt(
-    groups: &[Frontier],
+    frontier: &Frontier,
     subjects: &[String],
     current_proactivity: Option<&str>,
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
-    // The subject index is global — one block, shared across the conversation group, so a
-    // subject coined while consolidating one conversation is reused (not duplicated) in the
-    // next. The per-conversation "subjects you already model" is gone; this replaces it.
     if !subjects.is_empty() {
         s.push_str("## Subjects you already model (reuse these refs)\n");
         let _ = writeln!(s, "{}\n", subjects.join(", "));
     }
-    for g in groups {
-        render_frontier(&mut s, g);
-        s.push('\n');
-    }
+    render_frontier(&mut s, frontier);
+    s.push('\n');
     // The current proactivity read goes in so the pass regenerates it from
     // old-plus-new (it can't read the file itself — no cwd). What to do with it
     // lives in reflection.md; this just carries the data.
@@ -253,22 +238,18 @@ fn build_consolidation_prompt(
         _ => s.push_str("(none yet)\n\n"),
     }
     s.push_str(
-        "Consolidate these now — name the conversation on every `record_episode`, `keep_and_fade`, and \
-         `image-text-to-text`.",
+        "Consolidate these now. Use `count` against the single numbered frontier; \
+         `keep_and_fade` acts on the channel and day shown above; \
+         `image-text-to-text` takes the image ref shown beside a signal.",
     );
     s
 }
 
-/// Render one conversation's group into the consolidated prompt: its prior-episode context,
-/// its old-media list, then its unconsolidated frontier as a numbered, oldest-first
-/// list (the mind hands back a `count` into this conversation's list, never a raw id). Image
-/// signals are marked `⟨faces: <id>…⟩` when clustering placed faces (the ids the mind
-/// can name), else an `⟨image — `image-text-to-text` ref: …, conversation: …⟩` the mind can
-/// look at (the conversation is carried so the tool resolves the still without the session's
-/// header), else `⟨image⟩`. Audio clips are marked `⟨voice: <id>…⟩` when voiceprint
-/// clustering placed a speaker. A voice turn that overlapped a face on camera also
-/// carries a co-occurrence hint (see [`cooccurring_faces`]) — the legibility that lets the mind
-/// bind a voice to a face across senses.
+/// Render the prior-episode context, old-media list, and unconsolidated
+/// frontier as one numbered, oldest-first list. Image signals are marked
+/// `⟨faces: <id>…⟩` when clustering placed faces, else with the still ref the
+/// mind can inspect. Audio clips are marked `⟨voice: <id>…⟩` when voiceprint
+/// clustering placed a speaker.
 fn render_frontier(s: &mut String, g: &Frontier) {
     use std::fmt::Write as _;
     if !g.prior.is_empty() {
@@ -740,7 +721,7 @@ mod cooccur_tests {
         assert_eq!(c.get(&1).map(Vec::len), Some(1));
     }
 
-    fn group(conversation: &str, tail: Vec<JournalEntry>, face_ids: HashMap<usize, Vec<String>>) -> Frontier {
+    fn frontier(tail: Vec<JournalEntry>, face_ids: HashMap<usize, Vec<String>>) -> Frontier {
         Frontier {
             tail,
             prior: Vec::new(),
@@ -753,17 +734,16 @@ mod cooccur_tests {
     #[test]
     fn prompt_annotates_a_sole_co_occurring_face() {
         let tail = vec![vision(at(0), None), audio(at(1), None)];
-        let g = group("s", tail, faces(&[(0, "ff32ce3w")]));
-        let p = build_consolidation_prompt(std::slice::from_ref(&g), &[], None);
+        let g = frontier(tail, faces(&[(0, "ff32ce3w")]));
+        let p = build_consolidation_prompt(&g, &[], None);
         assert!(p.contains("⟨one face present: ff32ce3w⟩"), "prompt was:\n{p}");
     }
 
     #[test]
     fn global_subjects_appear_once_above_the_groups() {
-        let a = group("alpha", vec![audio(at(0), None), audio(at(1), None), audio(at(2), None), audio(at(3), None)], HashMap::new());
-        let p = build_consolidation_prompt(std::slice::from_ref(&a), &["people/alice".into(), "places/office".into()], None);
+        let a = frontier(vec![audio(at(0), None), audio(at(1), None), audio(at(2), None), audio(at(3), None)], HashMap::new());
+        let p = build_consolidation_prompt(&a, &["people/alice".into(), "places/office".into()], None);
         assert_eq!(p.matches("Subjects you already model").count(), 1, "prompt was:\n{p}");
         assert!(p.contains("people/alice, places/office"), "prompt was:\n{p}");
     }
 }
-

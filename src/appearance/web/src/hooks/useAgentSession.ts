@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { subscribeOutText } from "../channels/out/text";
-
-/** Where this browser has got to in the outbound text log (see `subscribeOutText`). */
-const TEXT_CURSOR_KEY = "hi-agent.out-text-cursor";
+import {
+  parseTextCursor,
+  serializeTextCursor,
+  subscribeOutText,
+  type TextCursor,
+} from "../channels/out/text";
 import { subscribeAudioTurns } from "../channels/out/audio";
+import { subscribeActivity, type AgentActivity } from "../channels/out/activity";
 import { postInText, subscribeInText } from "../channels/in/text";
 import { reportAttention, type WindowState } from "../channels/in/attention";
 import { AudioBus } from "../lib/audioBus";
@@ -14,8 +17,14 @@ import { PresenceStiller } from "../lib/presenceStiller";
 import { VoicePlayer } from "../lib/voicePlayer";
 import { SentenceBuffer, breakLongSentence } from "../lib/sentences";
 import { onNativeLifecycle } from "../lib/nativeBridge";
-import type { PresenceState } from "../ui/Presence";
+import {
+  projectActivityState,
+  type PresenceState,
+} from "../ui/Presence";
 import type { SpeechItem } from "../ui/SpeechText";
+
+/** Where this browser has got to in the outbound text log (see `subscribeOutText`). */
+const TEXT_CURSOR_KEY = "hi-agent.out-text-cursor";
 
 // How many of the agent's reply lines stay on screen at once. The reply rolls
 // as a calm caption (newest last), but it's windowed *on top of* the pinned
@@ -200,8 +209,7 @@ export function useAgentSession(): AgentSession {
   const [visionStream, setVisionStream] = useState<MediaStream | null>(null);
   const [audioOutput, setAudioOutput] = useState(prefsRef.current.audioOutput);
   const [textInput, setTextInput] = useState(prefsRef.current.textInput);
-  const [agentStreaming, setAgentStreaming] = useState(false);
-  const [awaiting, setAwaiting] = useState(false);
+  const [backendActivity, setBackendActivity] = useState<AgentActivity | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   // The user's speech as it's being recognized (cumulative rolling text), or
   // null when no utterance is in flight. Server-broadcast on /in/text, so every
@@ -270,6 +278,16 @@ export function useAgentSession(): AgentSession {
   const lastReportRef = useRef<{ state: WindowState; at: number } | null>(null);
   const enterWindowRef = useRef<((next: WindowState) => void) | null>(null);
 
+  // Backend activity is the authoritative source for Typing and Working.
+  // Losing the stream returns the face to Starting until a fresh snapshot arrives.
+  useEffect(
+    () =>
+      subscribeActivity(setBackendActivity, (live) => {
+        if (!live) setBackendActivity(null);
+      }),
+    [],
+  );
+
   const clearInterim = useCallback(() => {
     if (interimTimerRef.current !== null) {
       clearTimeout(interimTimerRef.current);
@@ -331,10 +349,9 @@ export function useAgentSession(): AgentSession {
     }
   }, []);
 
-  // Fold a settled user line into the timeline and mark the agent as thinking
-  // until its reply streams in. Every user line — typed or transcribed from
-  // speech — arrives settled on the /in/text observe loop and funnels here, so
-  // user speech and user text render identically.
+  // Fold a settled user line into the timeline. Every user line — typed or
+  // transcribed from speech — arrives settled on the /in/text observe loop and
+  // funnels here, so user speech and user text render identically.
   const finalizeUser = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -345,7 +362,6 @@ export function useAgentSession(): AgentSession {
     // A new user line opens a new exchange — drop the prior turn so this line
     // (and the reply about to stream) is what stays on screen.
     setSentences((prev) => dropPriorTurns([...prev, item]));
-    setAwaiting(true);
   }, [clearAgentQueue]);
 
   // ---- GET /out/text subscription loop (after wake) ----------------------
@@ -364,47 +380,38 @@ export function useAgentSession(): AgentSession {
     const buffer = new SentenceBuffer();
     // Where this reader has got to. Persisted so a reload continues the thread
     // instead of replaying whatever the server still holds.
-    let after: number | null = (() => {
-      const raw = sessionStorage.getItem(TEXT_CURSOR_KEY);
-      const n = raw == null ? NaN : Number(raw);
-      return Number.isFinite(n) ? n : null;
-    })();
+    let after: TextCursor | null = parseTextCursor(sessionStorage.getItem(TEXT_CURSOR_KEY));
 
     void (async () => {
       while (!cancelled) {
         try {
-          let gotChunk = false;
           // Render the agent's words as they arrive. The mind only streams a
           // reply once it has committed to speaking (the human yielded the
           // floor), so there are no superseded drafts to untangle here.
           for await (const chunk of subscribeOutText({
             signal: ctrl.signal,
             after,
-            onUtterance: (id) => {
-              after = id;
+            onUtterance: (cursor) => {
+              // Known gap: headers arrive before the streaming body completes.
+              // Advancing here can skip a partial utterance after an abort; moving
+              // this to EOF also requires replay to replace, not append to, a draft.
+              after = cursor;
               try {
-                sessionStorage.setItem(TEXT_CURSOR_KEY, String(id));
+                sessionStorage.setItem(TEXT_CURSOR_KEY, serializeTextCursor(cursor));
               } catch {
                 /* private mode — the cursor just won't survive a reload */
               }
             },
           })) {
             if (cancelled) break;
-            if (!gotChunk) {
-              gotChunk = true;
-              setAwaiting(false);
-              setAgentStreaming(true);
-            }
             // Pulse the field with this chunk; larger bursts lift it more.
             activityRef.current.bump(Math.min(1, chunk.text.length / 40));
             enqueueAgent(buffer.push(chunk.text));
           }
           enqueueAgent(buffer.flush()); // body closed → utterance complete
           buffer.reset();
-          setAgentStreaming(false);
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
-          setAgentStreaming(false);
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
@@ -595,7 +602,7 @@ export function useAgentSession(): AgentSession {
       // — the recognized text arrives on the /in/text observe loop above (the
       // server posts the transcript to the text channel), so even this client
       // reads its own words from there.
-      const streamer = await AudioStreamer.create(audioBus.ctx, micNode, {});
+      const streamer = await AudioStreamer.create(audioBus.ctx, micNode);
       if (superseded()) {
         // Disabled while we were acquiring — don't leave the socket open.
         streamer.stop();
@@ -826,7 +833,7 @@ export function useAgentSession(): AgentSession {
   // reopens". It wasn't: the band evicts past AGENT_REPLY_WINDOW as it reveals,
   // and it reveals on a timer that doesn't know whether anyone is watching, so a
   // long reply was already truncated by the time the window came back. The words
-  // wait in the server's per-conversation buffer now, whole, and arrive when there is
+  // wait in the server's retained text log now, whole, and arrive when there is
   // someone to read them. Inert in a browser tab (no native lifecycle events).
   useEffect(() => {
     return onNativeLifecycle((phase) => {
@@ -869,23 +876,18 @@ export function useAgentSession(): AgentSession {
       if (!trimmed) return;
       // The server echoes the line back on /in/text, where the observe loop folds
       // it into the timeline as a user line — so we don't add it locally.
-      setAwaiting(true);
-      postInText({ body: trimmed }).catch(() => setAwaiting(false));
+      void postInText({ body: trimmed }).catch(() => {});
     },
     [],
   );
 
-  const state: PresenceState = !woken
-    ? "waking"
-    : ttsPlaying
-      ? "speaking"
-      : agentStreaming
-        ? "typing"
-        : interim !== null
-          ? "listening"
-          : awaiting
-            ? "thinking"
-            : "idle";
+  const state: PresenceState = projectActivityState({
+    ready: woken && backendActivity?.reaction_ready === true,
+    listening: interim !== null,
+    speaking: ttsPlaying,
+    reactionBusy: backendActivity?.reaction_busy === true,
+    delegatedBusy: (backendActivity?.delegated_busy_count ?? 0) > 0,
+  });
 
   // Dots track the agent's voice while it plays.
   const reactive = state === "speaking" && ttsPlaying;

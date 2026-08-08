@@ -63,7 +63,7 @@ mod workers;
 
 pub use interrupts::InterruptRegistry;
 pub use outbound::OutboundSignal;
-pub use tools::{LoopControl, Spoken, ToolRegistry, ToolSink};
+pub use tools::{LoopControl, Spoken, ToolOwner, ToolRegistry, ToolSink};
 
 use chrono::Utc;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
@@ -609,7 +609,7 @@ mod reflection_schedule_tests {
     }
 
     #[test]
-    fn busy_scene_fires_base_after_the_last_reflection() {
+    fn busy_conversation_fires_base_after_the_last_reflection() {
         let t0 = Instant::now();
         // Reflected at t0+60s; a later turn keeps activity ahead of the anchor, so
         // the next pass is base after the *reflection*, not pushed out by activity.
@@ -651,7 +651,7 @@ const LOOP_QUEUE_CAPACITY: usize = 64;
 
 /// One item in the conversation's turn queue. Both a human utterance and a worker's
 /// report drive a reaction turn; they differ only in source. A human signal comes
-/// through [`Reaction::deliver_to_scene`]; a worker report is posted straight into
+/// through [`Reaction::deliver`]; a worker report is posted straight into
 /// the queue by the worker's drive task. Neither interrupts live speech — both
 /// wait their turn and are settled into one batch.
 enum LoopInput {
@@ -721,7 +721,7 @@ struct ReactionInner {
     /// reaction loop registers its sink here as it stands up; shared (cloneable)
     /// with the HTTP front. See [`tools`].
     tools: ToolRegistry,
-    /// Conversation→barge-in state. The STT relay reports recognized speech here; the
+    /// Process-wide barge-in state. The STT relay reports recognized speech here; the
     /// sequencer stamps each turn's voice span; `run_turn` drains the inferred
     /// "what went unheard" note into the next prompt. See [`interrupts`].
     interrupts: InterruptRegistry,
@@ -737,7 +737,7 @@ struct ReactionInner {
     /// each turn as one human-model presence sentence, so the mind knows which
     /// channels actually reach the person right now.
     presence: crate::body::presence::Presence,
-    /// The live per-conversation appearance state, shared (a cloneable handle) with the
+    /// The live appearance state, shared (a cloneable handle) with the
     /// HTTP front's view bus. Read into each turn as `## On screen now` so the agent
     /// can see what it has shown — the screen is its own presentation surface, and
     /// without this it dismisses/re-shows views by guessing ids from the transcript.
@@ -758,12 +758,12 @@ struct ReactionInner {
     /// end. (The client no longer needs it — turns are internal to the mind.)
     turn_seq: AtomicU64,
     voice: Mutex<Option<VoiceHandle>>,
-    /// Wall-monotonic time of the most recent inbound human signal across **all**
-    /// conversations — the global "fresh input" signal the single consolidated reflection
+    /// Wall-monotonic time of the most recent inbound human signal — the global
+    /// "fresh input" signal the single consolidated reflection
     /// clock reads to decide base-vs-backoff cadence (see [`reflection`]).
     /// Written in [`Reaction::deliver`]; read each reflection tick.
     last_signal_at: std::sync::Mutex<Instant>,
-    /// Wakes the consolidated reflection loop when fresh input lands, so a conversation
+    /// Wakes the consolidated reflection loop when fresh input lands, so activity
     /// that goes active after a long quiet doesn't wait out the backed-off gap
     /// before its first pass — the loop re-derives its deadline on every notify.
     reflect_wake: tokio::sync::Notify,
@@ -781,6 +781,7 @@ struct ReactionInner {
 }
 
 struct VoiceHandle {
+    id: registry::SessionId,
     inbound: mpsc::Sender<LoopInput>,
 }
 
@@ -908,10 +909,8 @@ pub async fn start(
         boot_reaction.ensure_voice().await;
     });
 
-    // Consolidated reflection ("sleep"): one pass over every recently-active conversation
-    // on a single global clock, replacing the old per-conversation timers. A single mind
-    // settles the whole day across contexts at once — so it can link across conversations
-    // and one writer (not N racing) touches the shared facet/people stores.
+    // Consolidated reflection ("sleep"): one pass over the shared frontier on
+    // one global clock. One writer touches the shared facet/people stores.
     // **Registered synchronously here**, like Cognition below and for the same reason:
     // the address must exist before anything can be told to use it. Reflection used to
     // register *inside* each pass, so between passes it resolved to nothing and during
@@ -1032,12 +1031,17 @@ impl Reaction {
         *self.inner.last_signal_at.lock().unwrap() = Instant::now();
         self.inner.reflect_wake.notify_one();
 
-        let sender = self.get_or_create_voice().await;
+        let (voice_id, sender) = self.get_or_create_voice().await;
+        // The signal is now accepted by the voice. Marking the Reaction
+        // session here closes the small gap between the final transcript and the
+        // loop's next receive; the loop owns the matching finish edge.
+        registry::global().start_turn(voice_id);
 
         // A new signal never cancels the in-flight prompt: the serial loop folds it
         // into the next turn (fix-forward), and the lightweight reaction decides per
         // turn whether to act or wait for the rest.
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
+            registry::global().finish_turn(voice_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
         }
     }
@@ -1049,10 +1053,10 @@ impl Reaction {
         let _ = self.get_or_create_voice().await;
     }
 
-    async fn get_or_create_voice(&self) -> mpsc::Sender<LoopInput> {
+    async fn get_or_create_voice(&self) -> (registry::SessionId, mpsc::Sender<LoopInput>) {
         let mut slot = self.inner.voice.lock().await;
         if let Some(handle) = slot.as_ref() {
-            return handle.inbound.clone();
+            return (handle.id, handle.inbound.clone());
         }
 
         // Register the stable voice address before any asynchronous startup work.
@@ -1066,8 +1070,12 @@ impl Reaction {
             "the voice".to_string(),
         );
 
+        let voice_id = voice.id();
         let (tx, rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
-        *slot = Some(VoiceHandle { inbound: tx.clone() });
+        *slot = Some(VoiceHandle {
+            id: voice_id,
+            inbound: tx.clone(),
+        });
         drop(slot);
 
         // The loop did not exist when the last process-wide edge was applied.
@@ -1093,13 +1101,16 @@ impl Reaction {
 
         self.inner
             .tools
-            .register(ToolSink {
-                control: control_tx.clone(),
-                mouth: Some(tools::Mouth {
-                    beats: beats_tx.clone(),
-                    presence: self.inner.presence.clone(),
-                }),
-            })
+            .register(
+                ToolOwner::Reaction,
+                ToolSink {
+                    control: control_tx.clone(),
+                    mouth: Some(tools::Mouth {
+                        beats: beats_tx.clone(),
+                        presence: self.inner.presence.clone(),
+                    }),
+                },
+            )
             .await;
 
         let task_reaction = self.clone();
@@ -1119,7 +1130,7 @@ impl Reaction {
             .await;
         });
 
-        tx
+        (voice_id, tx)
     }
 }
 
@@ -1172,7 +1183,7 @@ async fn reaction_loop(
     // TurnEnd brackets here; the `/mcp` handler sends the say/show beats
     // between them. The same sender is the keepalive for the sequencer task.
     beats: mpsc::Sender<sequencer::Beat>,
-    // Registered synchronously by `get_or_create_scene`, before this task is spawned,
+    // Registered synchronously by `ensure_voice`, before this task is spawned,
     // so recovery can already address the conversation while its warm-up runs. Held here so
     // every loop exit unregisters it by scope.
     voice: registry::Registration,
@@ -1299,7 +1310,7 @@ async fn reaction_loop(
                     }
                 }
                 Woke::Inbound(None) => {
-                    tracing::info!("per-conversation inbound closed; exiting loop");
+                    tracing::info!("reaction inbound closed; exiting loop");
                     return;
                 }
                 Woke::Shutdown => {
@@ -1333,7 +1344,7 @@ async fn reaction_loop(
                 // something next. A spurious wake (the notify raced a take) finds
                 // an empty inbox and simply goes back to waiting.
                 Woke::Mail => {
-                    if let Some(mail) = registry::global().take_pending(voice_id) {
+                    if let Some(mail) = registry::global().drain_pending(voice_id) {
                         enqueue(
                             &reaction,
                             &mut workers,
@@ -1341,7 +1352,6 @@ async fn reaction_loop(
                             LoopInput::Mail(mail),
                         )
                         .await;
-                        registry::global().finish_turn(voice_id);
                         if !down {
                             break 'wait;
                         }
@@ -1409,6 +1419,11 @@ async fn reaction_loop(
             continue;
         }
 
+        // A turn-driving reason has been accepted. Include the settle window in the
+        // turn: from the person's point of view the voice is already preparing its
+        // response, even though it is briefly collecting adjacent input.
+        registry::global().start_turn(voice_id);
+
         let was_down = reaction.inner.vendor.is_down();
 
         // Commit-after-quiet: wait for things to settle before replying. Skipped
@@ -1427,7 +1442,8 @@ async fn reaction_loop(
                 }
             };
             if closed {
-                tracing::info!("per-conversation inbound closed; exiting loop");
+                registry::global().finish_turn(voice_id);
+                tracing::info!("reaction inbound closed; exiting loop");
                 return;
             }
         }
@@ -1435,7 +1451,7 @@ async fn reaction_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
-        match run_reaction_turn(
+        let turn_result = run_reaction_turn(
             &reaction,
             &batch,
             &mut workers,
@@ -1443,8 +1459,10 @@ async fn reaction_loop(
             voice_id,
             &beats,
         )
-        .await
-        {
+        .await;
+        registry::global().finish_turn(voice_id);
+
+        match turn_result {
             Ok(added) => {
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)

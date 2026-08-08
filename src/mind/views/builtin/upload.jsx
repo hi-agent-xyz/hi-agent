@@ -4,7 +4,6 @@
 // the agent looks at — both doors post to the `file` channel, which wakes the
 // agent. Seeded at `_builtin/upload`; the agent may adapt it like any view.
 import { useState, useEffect, useRef } from "react";
-import { useScene } from "@hi/core";
 
 // Our content fills the frame; let the host dock the live words up top.
 export const captionAside = "top";
@@ -47,23 +46,22 @@ function words() {
 const L = words();
 
 export default function Upload() {
-  const scene = useScene();
   const [url, setUrl] = useState(null);
   const [items, setItems] = useState([]); // { key, name, state: sending|done|error }
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
 
-  // Mint a scene-scoped upload link for the phone QR.
+  // Mint an upload link for the phone QR.
   useEffect(() => {
     let alive = true;
-    fetch("/api/handoff", { method: "POST", headers: { "X-HI-Scene": scene } })
+    fetch("/api/handoff", { method: "POST" })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d) => alive && setUrl(d.url))
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [scene]);
+  }, []);
 
   async function send(files) {
     for (const file of files) {
@@ -72,7 +70,7 @@ export default function Upload() {
       try {
         const fd = new FormData();
         fd.append("file", file, file.name);
-        const r = await fetch("/api/in/file", { method: "POST", headers: { "X-HI-Scene": scene }, body: fd });
+        const r = await fetch("/api/in/file", { method: "POST", body: fd });
         setItems((xs) => xs.map((x) => (x.key === key ? { ...x, state: r.ok ? "done" : "error" } : x)));
       } catch {
         setItems((xs) => xs.map((x) => (x.key === key ? { ...x, state: "error" } : x)));

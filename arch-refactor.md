@@ -173,6 +173,65 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 
 ---
 
+## The wire changed: ACP + Claude Code → `codex app-server` · **built on `feat/codex-app-server`, 567 lib + 34 integration green, 0 new warnings — not pushed**
+
+**This is a design change, and `docs/arch/` was edited to match** (the ACP vocabulary in `arch.md`,
+`core.md`, `agents.md`, `surfaces.md`, `foundation.md` is now "the agent wire" / "one agent session").
+`agent-client-protocol`, the node adapter and the bundled `claude` are gone; `foundation/acp/` is
+deleted and `foundation/codex/` replaces it. The seam above it — `AgentLayer::session(role, id, opts)`
+→ prompt / cancel / `SessionUpdate::{Text,Thought,Frame}` — is unchanged, which is why the rungs
+needed renames and nothing else.
+
+**What the swap actually buys, in order of weight:**
+
+1. **A rung's prompt is now the session's system prompt.** `thread/start.baseInstructions` — verified
+   on the *upstream* wire as the request's `instructions` field. ACP had no system-prompt slot, so
+   every rung's character was first-user-turn content underneath Claude Code's coding-agent persona.
+   `vendors/anthropic_messages.rs` existed only to escape that, was never called, and is deleted.
+2. **No node between us and the model.** Node survives as esbuild's host, nothing more.
+3. **Structured turn errors** (`codexErrorInfo`, incl. `httpStatusCode`) instead of string-matching.
+   The 402 gate still reads the message text — the status is appended to it rather than replacing the
+   classifier, so the energy edge did not have to be rewritten in the same commit.
+4. `thread/resume` exists, and is deliberately **not taken** — threads open `ephemeral: true`, exactly
+   as the ACP path opened fresh sessions per boot. That is the obvious next thing if the resumption
+   work wants it.
+
+**What it costs, once:** codex has no `disableBuiltInTools`. `exec_command` / `apply_patch` are always
+in the schema, so the Reaction's tools-off voice is now soft — a `read-only` sandbox plus
+`speaking.md` as the real system prompt. The escape hatch, if the voice reaches for a shell in
+practice, is to take it off the agent process entirely (one direct Responses call, no `tools` array),
+not a hard rail. This is the one deliberate regression.
+
+**Four things only a live run could have found** (all fixed, all pinned by a test):
+
+- **MCP tool results carry images through to the model.** Spike-verified *on the upstream payload*
+  (`{"type":"input_image","image_url":"data:image/png;base64,…"}`), not by asking a model what it saw.
+  This was the gate for the whole change — `look`/`see`/`watch` depend on it.
+- **`turn/start` returns immediately**; the turn ends on the `turn/completed` notification. Reading
+  completion off the response, ACP-style, would have made every turn look instant and empty.
+- **A message that never streams still has to be spoken.** Only projecting text from
+  `item/agentMessage/delta` made a non-streaming upstream produce `reply_chars=0` on a turn that had
+  plainly succeeded. `item/completed` is now a fallback, de-duplicated against the deltas.
+- **Codex gates our own MCP tools, even under `approvalPolicy: "never"`** — and it asks via
+  `mcpServer/elicitation/request`, not an approval method. A blanket `{"decision":"accept"}` for every
+  server request drew `missing field 'action'`; declining the elicitation turned a `say` into "user
+  rejected MCP tool call" and the voice went silent. Now: `default_tools_approval_mode: "auto"` on our
+  server block, plus an answer *per request shape*, and **an error rather than a guess** for anything
+  unrecognised.
+
+**Verified live** on an isolated `--data-dir`, driving a real turn against a stand-in upstream (the
+broker's bootstrap is down — `parsing bootstrap response`, **identically on `origin/main`**, so
+managed credentials were unavailable to either build): text in → reaction turn → `say` over MCP →
+hi-agent's own tool answered. The per-rung tool surfaces come off one `/mcp` endpoint by header alone,
+observed on the wire: reaction `{say, send_message, show}`, cognition `{send_message}`. SIGTERM leaves
+**zero** orphaned `codex` processes.
+
+**Not verified, and named:** no real model has run a turn. Which models songguo serves on
+`/v1/responses`, and whether one is the tier cognition needs, is open — as is the broker bootstrap
+failure itself, which predates this and belongs to whoever owns the broker.
+
+---
+
 ## Next, in dependency order
 
 ### ~~N1 — Revive the soul seed~~ · **on `main`**
@@ -806,9 +865,9 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
 - **Ping-pong is possible.** Two long-lived agents can message each other indefinitely. Expected;
   guided by prompt, logged rather than blocked.
 - **A worker's `Bash` can read the auth token from its own env.** Non-hacker threat model.
-- **`_meta` tool restriction is vendor-specific.** ACP standardises none; maintainers closed the
-  nearest proposal on 2026-07-21 as belonging to a future orchestrator layer. Not a stopgap
-  awaiting a standard — this is the answer for the foreseeable future.
+- ~~**`_meta` tool restriction is vendor-specific.**~~ **Moot since the codex swap** — that hack was
+  ACP's, and ACP is gone. Codex offers no built-in-tool switch at all, so the Reaction's tools-off
+  voice is now soft guidance plus a read-only sandbox. See the wire-change entry above.
 - **Cross-scene ambient awareness is weaker** than the old global digest. Continuity routes
   through Cognition instead.
 - **No hand-edit lever.** Load-bearing — see `docs/arch/arch.md#character`.

@@ -63,16 +63,15 @@ def split_init(data: bytes):
 def collect_files(root: Path):
     """All vision .mp4 files under root, sorted chronologically.
 
-    Path shape: <scene>/vision/<YYYY-MM-DD>/<HH>/<MM>.mp4 — sort per scene by
-    (date, hour, minute) so each scene's session order is honoured.
+    Path shape: vision/<YYYY-MM-DD>/<HH>/<MM>.mp4.
     """
     files = []
-    for p in root.glob("*/vision/*/*/*.mp4"):
+    for p in root.glob("vision/*/*/*.mp4"):
         parts = p.parts
-        # .../<scene>/vision/<date>/<HH>/<MM>.mp4
-        scene, date, hh, mm = parts[-5], parts[-3], parts[-2], p.stem
-        files.append((scene, date, hh, mm, p))
-    files.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+        # .../vision/<date>/<HH>/<MM>.mp4
+        date, hh, mm = parts[-3], parts[-2], p.stem
+        files.append((date, hh, mm, p))
+    files.sort(key=lambda t: (t[0], t[1], t[2]))
     return files
 
 
@@ -90,13 +89,9 @@ def main():
         return 0
 
     current_moov = None
-    current_scene = None
     valid = repaired = skipped = unrepairable = 0
 
-    for scene, _date, _hh, _mm, path in files:
-        if scene != current_scene:
-            current_scene = scene
-            current_moov = None  # don't carry a moov across scenes
+    for _date, _hh, _mm, path in files:
         data = path.read_bytes()
         ftyp_end, moov, moof_start = split_init(data)
 

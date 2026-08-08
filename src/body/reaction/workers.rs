@@ -53,13 +53,12 @@ use super::{LoopInput, Reaction};
 /// Handle for one **agent session**, unique process-wide.
 ///
 /// It identifies a *session*, not a role: the same role has many sessions over a run,
-/// and two conversations' Deliberations are two sessions of one role. So this is never a
+/// and repeated Deliberation sessions are distinct instances of one role. So this is never a
 /// "worker id" — ownership, addressing and reporting all key on the session, which is
 /// the thing that is actually singular.
 ///
-/// Process-wide rather than per-conversation because ownership crosses conversations: a standing
-/// owner (Cognition, Reflection) holds sessions that no conversation counter could name
-/// without colliding.
+/// Process-wide because standing owners (Cognition, Reflection) and the voice
+/// all create sessions in the same address space.
 ///
 /// Minted before the ACP session is opened, because the MCP surface identifies its
 /// caller by this id in a request header — so it cannot be the id the adapter assigns.
@@ -152,11 +151,10 @@ struct Worker {
 /// switchboard already is the process-wide session pool. Do not "move the pool";
 /// delete it, whenever the code next comes through here.**
 ///
-/// It looked like the pool was per-conversation and had to be re-homed, because a worker
-/// belongs to Cognition or Reflection and neither has a conversation. But there is no pool to
-/// move — `registry::global()` is already keyed by `SessionId`, process-wide, and holds
-/// `task`, `busy`, `owner`, `conversation` and a bounded output tail. Everything in `Worker`
-/// except the `JoinHandle` is a second copy of that, and the copies can disagree.
+/// There is no pool to move: `registry::global()` is already keyed by `SessionId`,
+/// process-wide, and holds `task`, `busy`, `owner` and a bounded output tail.
+/// Everything in `Worker` except the `JoinHandle` is a second copy of that, and
+/// the copies can disagree.
 ///
 /// What the map is actually for, checked one by one:
 ///
@@ -177,22 +175,9 @@ struct Worker {
 /// So on-demand creation is fine: spawn, register, self-remove. What a spawn needs is
 /// *dependencies* (memory, agent layer, observatory, views dir), not a home.
 ///
-/// **The three provenance bugs this used to list are all fixed**, and the way the first
-/// one went is worth keeping, because it is the pattern:
-///
-/// 1. ~~`any_host()` lends an **arbitrary** conversation to host a standing-owned worker,~~
-///    which then became the worker's `X-HI-Conversation` (so `watch`/`see` resolved to a
-///    stranger's camera), the `{conversation}` in its prompt, and the conversation its report was
-///    journaled under — hosting used as provenance. **Fixed by deletion.** Both rungs
-///    that dispatch now register a sink under their own sentinel conversation, so the lookup
-///    succeeds and there is nothing to borrow. A rung that dispatches work hosts its own
-///    workers.
-/// 2. ~~`create_worker` answers "brief it with `send_message`" before `register` runs.~~
-///    **Fixed** — registration now precedes the session open, with `unregister` on the
-///    spawn-failure path.
-/// 3. ~~The `{conversation}` in `memory/raw/{conversation}/file/` is interpolated raw where the
-///    directory is percent-encoded.~~ **Fixed** — `{scene_dir}` is a separate
-///    substitution, because the word meant two different things in the two places.
+/// Worker ownership is now explicit: Cognition and Reflection have distinct tool
+/// sinks, registration precedes session open, and no user-supplied routing key is
+/// interpolated into worker prompts or data paths.
 pub(super) struct WorkerRegistry {
     /// A clone of the conversation's queue sender, handed to each worker's drive task so
     /// its reports land back in the same loop.
@@ -711,6 +696,7 @@ async fn drive_worker(
             return;
         }
         busy.store(true, Ordering::Relaxed);
+        registry::global().start_turn(id);
         // Paired with the "turn done" line below. Without both, a reader of the log
         // cannot tell a working session that is still building from one that finished
         // and went quiet — the two look identical, which is exactly the ambiguity the
@@ -730,6 +716,8 @@ async fn drive_worker(
                     worker = id,
                     "working session paused on 402; task and session held"
                 );
+                busy.store(false, Ordering::Relaxed);
+                registry::global().finish_turn(id);
                 energy_paused = true;
                 next_task = Some(task);
                 continue;
@@ -853,8 +841,8 @@ async fn run_worker(
                 // the whole life of every session.
                 //
                 // This is also the *only* live-progress mirror now: the observatory's
-                // per-conversation worker tail is gone, because a worker's progress is not a
-                // fact about a conversation. Whoever asked for the work can read it
+                // The voice-specific worker tail is gone, because a worker's
+                // progress belongs to its owner. Whoever asked for the work can read it
                 // here, keyed by the session id they were handed.
                 registry::global().record_output(id, &text);
             }
@@ -905,8 +893,8 @@ mod ownership_tests {
     }
 
 
-    /// Session ids are process-wide, not per registry — two conversations must never mint
-    /// the same id, or a report would be delivered into the wrong conversation.
+    /// Session ids are process-wide, not per registry, so ownership is
+    /// unambiguous across every role.
     #[test]
     fn session_ids_are_unique_across_registries() {
         let (a, b, c) = (mint_session_id(), mint_session_id(), mint_session_id());

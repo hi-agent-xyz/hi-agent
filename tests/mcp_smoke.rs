@@ -3,7 +3,7 @@
 //! Builds the axum router via [`hi_agent::foundation::server::build`] and exercises the
 //! hand-rolled MCP "Streamable HTTP" surface directly: the initialize handshake,
 //! role-gated `tools/list`, the `202` for notifications, the `405` for the GET
-//! SSE stream we decline, and a `tools/call` whose scene has no live loop.
+//! SSE stream we decline, and a `tools/call` with no live owning loop.
 
 use hi_agent::mind::memory::Memory;
 use hi_agent::foundation::server::{self, ServerSeams};
@@ -124,19 +124,16 @@ async fn tools_list_is_role_gated() {
     for gone in ["ask", "surface", "delegate"] {
         assert!(!names.contains(&gone.to_string()), "`{gone}` is retired; got {names:?}");
     }
-    // Only the sceneless rungs make workers.
+    // Only the standing owner roles make workers.
     assert!(!names.contains(&"create_worker".to_string()), "got {names:?}");
 }
 
-/// The switchboard is process-wide, so reaching it must not require a scene loop.
+/// The switchboard is process-wide, so reaching it must not require a tool sink.
 ///
-/// This is the shape that was wrong: `create_worker` belongs to the sceneless rungs,
-/// and every switchboard call sat *below* a per-scene sink lookup — so the one rung
-/// holding the tool ran under a sentinel scene with no loop and could never call it.
-/// A sceneless caller must get a real answer (even "no live session 9999"), never
-/// "no active scene loop".
+/// A standing caller must get a real answer (even "no live session 9999"),
+/// never fail because an unrelated owning loop is absent.
 #[tokio::test]
-async fn the_switchboard_needs_no_scene_loop() {
+async fn the_switchboard_needs_no_tool_sink() {
     let (base, _dir, _seams) = spawn_server().await;
     let client = reqwest::Client::new();
 
@@ -156,10 +153,7 @@ async fn the_switchboard_needs_no_scene_loop() {
         .await
         .expect("json");
         let text = serde_json::to_string(&resp).expect("serialize");
-        assert!(
-            !text.contains("no active scene loop"),
-            "a switchboard call must not need a scene: {text}"
-        );
+        assert!(!text.contains("owning loop is not up"), "switchboard call required a sink: {text}");
         assert!(text.contains("no live session 9999"), "expected a real answer: {text}");
     }
 }
@@ -192,7 +186,7 @@ async fn get_declines_sse_stream() {
 }
 
 #[tokio::test]
-async fn tool_call_for_unknown_scene_is_a_tool_error() {
+async fn tool_call_without_an_owning_loop_is_a_tool_error() {
     // No reaction loop is registered (server::build doesn't start one), so a
     // delegate call resolves to a tool error rather than a transport failure —
     // the JSON-RPC envelope still succeeds.

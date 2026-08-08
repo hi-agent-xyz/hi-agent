@@ -145,7 +145,7 @@ export interface EventStreamHandlers {
  * Subscribe to the lifecycle stream. Returns an unsubscribe fn. One SSE
  * connection carries two frame types: `session` lifecycle events (buffered
  * history replayed on connect, then live) and periodic `snapshot` frames (the
- * full per-conversation mirror). Reading conversation state from the snapshot frames here
+ * full live mirror). Reading conversation state from the snapshot frames here
  * means the dashboard polls nothing — it holds a single connection rather than
  * leaking a `/api/sessions` request per tick into a starved HTTP/1.1 pool.
  * EventSource auto-reconnects.

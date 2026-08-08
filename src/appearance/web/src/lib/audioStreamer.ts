@@ -27,9 +27,6 @@
 // module, which `addModule` fetches and evaluates in the audio thread.
 import workletUrl from "./pcmWorklet.js?url";
 
-export interface AudioStreamerOptions {
-}
-
 // Reconnect backoff: first retry is quick, then doubles to a ceiling so a server
 // that's down (e.g. a dev rebuild) isn't hammered. Reset once a socket opens.
 const RECONNECT_BASE_MS = 500;
@@ -68,13 +65,12 @@ export class AudioStreamer {
   static async create(
     ctx: AudioContext,
     source: AudioNode,
-    opts: AudioStreamerOptions,
   ): Promise<AudioStreamer> {
     await ensureWorklet(ctx);
-    return new AudioStreamer(ctx, source, opts);
+    return new AudioStreamer(ctx, source);
   }
 
-  private constructor(ctx: AudioContext, source: AudioNode, _opts: AudioStreamerOptions) {
+  private constructor(ctx: AudioContext, source: AudioNode) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     this.url = `${proto}://${location.host}/api/in/audio/stream`;
     this.open();

@@ -1,8 +1,6 @@
 import {
-  combineStatus,
   statusLabel,
   type ActivityState,
-  type CombinedState,
 } from "./Presence";
 
 interface StatusButtonProps {
@@ -10,24 +8,23 @@ interface StatusButtonProps {
 }
 
 export function StatusButton({ activity }: StatusButtonProps) {
-  const state = combineStatus(activity);
-  const label = statusLabel(state);
+  const label = statusLabel(activity);
 
   return (
     <button
       type="button"
-      className={`hi-channel hi-status-button hi-status-button--${state}`}
+      className={`hi-channel hi-status-button hi-status-button--${activity}`}
       title={label}
       aria-label={`agent status: ${label}`}
     >
-      <StatusGlyph state={state} />
+      <StatusGlyph state={activity} />
     </button>
   );
 }
 
-function StatusGlyph({ state }: { state: CombinedState }) {
-  if (state === "rest") {
-    return <span className="hi-status-glyph hi-status-glyph--rest" aria-hidden="true" />;
+function StatusGlyph({ state }: { state: ActivityState }) {
+  if (state === "idle") {
+    return <span className="hi-status-glyph hi-status-glyph--idle" aria-hidden="true" />;
   }
 
   return (

@@ -65,14 +65,14 @@ hi-agent-<version>-windows-x64.exe
 ### Verify it's alive
 
 ```sh
-curl -X POST http://127.0.0.1:12358/thought \
+curl -X POST http://127.0.0.1:12358/api/in/text \
   --data-binary 'hello'
 ```
 
 You should see `202 Accepted` and a fresh line in `data/journal.jsonl`. To watch the agent talk back, open a long-poll in another terminal first:
 
 ```sh
-curl -N http://127.0.0.1:12358/thought
+curl -N http://127.0.0.1:12358/api/out/text
 ```
 
 ## Curl recipes
@@ -80,18 +80,18 @@ curl -N http://127.0.0.1:12358/thought
 The most useful four:
 
 ```sh
-# Open a long-poll on /thought (Ctrl-C to close)
-curl -N http://127.0.0.1:12358/thought
+# Open a long-poll on /api/out/text (Ctrl-C to close)
+curl -N http://127.0.0.1:12358/api/out/text
 
-# Send a thought
+# Send text
 curl -X POST \
   --data-binary 'hey, are you there?' \
-  http://127.0.0.1:12358/thought
+  http://127.0.0.1:12358/api/in/text
 
 # Schedule a reminder (the router decides whether to call set_intent)
 curl -X POST \
   --data-binary 'remind me at 21:00 to call mom' \
-  http://127.0.0.1:12358/thought
+  http://127.0.0.1:12358/api/in/text
 
 # Approve a pending action (id comes from the /approval long-poll JSON)
 curl -X POST
@@ -102,21 +102,21 @@ curl -X POST
 
 ## Architecture
 
-One Rust process per agent. Inside it: an axum HTTP server, a reaction that owns per-conversation queues and a worker registry, a memory facade backed by two JSONL files, an in-process MCP hub the router/worker sessions reach over a Unix socket, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start spawns the ACP adapter (via that `node`) and creates one fresh ACP session per routing turn (and one per long-lived worker). The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
+One Rust process per agent. Inside it: an axum HTTP server, one reaction loop and a worker registry, a memory facade backed by channel logs, an in-process MCP hub that sessions reach over HTTP, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start opens the reaction and standing-rung sessions plus any long-lived workers. The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
 
 ```
-  conversation             hi-agent  (Rust process)              claude-code subprocess
- ───────            ──────────────────────────             ──────────────────────────
+  attached windows         hi-agent  (Rust process)              claude-code subprocess
+ ────────────────   ──────────────────────────             ──────────────────────────
 
-  alice ──POST /thought──┐
+  window A ──POST /api/in/text──┐
                          │   ┌─────────────────┐    ACP    ┌────────────────────┐
-   bob  ──POST /vision──▶├──▶│   axum server   │ ◀──stdio▶ │ session: router    │
+  window B ──POST /api/in/vision▶├──▶│   axum server   │ ◀──stdio▶ │ session: reaction │
                          │   └────────┬────────┘           │  (ephemeral)       │
-   bob  ◀──GET /thought──┘            │                    ├────────────────────┤
+  windows ◀──GET /api/out/text──┘     │                    ├────────────────────┤
                                       ▼                    │ session: worker A  │
                              ┌─────────────────┐           │  (long-lived task) │
                              │     Reaction     │           ├────────────────────┤
-                             │ per-conversation queue │           │ session: worker B  │
+                             │ shared input/output   │           │ session: worker B  │
                              │  worker reg.    │           │  (long-lived task) │
                              └────────┬────────┘           ├────────────────────┤
                                       │                    │ session: ...       │
@@ -135,18 +135,17 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 | Spec requirement | Status | Notes |
 |---|---|---|
 | `GET /` homepage | Y | Embedded Vite SPA, OG meta injected at request time |
-| `POST /thought` | Y | Body bytes are the signal; close-of-body ends the utterance; `X-HI-Conversation` names the conversation (defaults to anonymous when absent) |
-| `GET /thought` long-poll | Y | `X-HI-Conversation` names the conversation to receive on (400 if absent); per-conversation buffered delivery from the reaction |
+| `POST /api/in/text` | Y | Body bytes are the signal; optional `X-HI-Stream` names its source |
+| `GET /api/out/text` long-poll | Y | One retained outbound stream; each reader advances with an epoch-qualified cursor |
 | `POST /approval` | Y | JSON `{id, allow, reason?}`; reaction relays decision into ACP `session/request_permission` |
 | `GET /approval` long-poll | Y | JSON event; 5-minute timeout on the requesting side |
 | `POST /vision` | 501 | Per v0 scope; body describes the omission |
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |
 | `POST /touch`, `POST /smell`, `POST /taste` | 501 | Per v0 scope |
-| Per-conversation routing | Y | One ACP session per routing turn, scoped by `X-HI-Conversation` |
-| Workers (parallel ACP sessions) | Y | `spawn_worker` MCP tool; one session per worker; auto-stamp `X-HI-Conversation` |
+| One conversation | Y | All attached windows and channels share the same agent appearance and stream |
+| Workers (parallel ACP sessions) | Y | `create_worker` MCP tool; one process-wide session per worker |
 | Memory: `journal.jsonl` + `intents.jsonl` | Y | Append-only journal; intents file rewritten atomically on add/remove |
 | Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reaction |
-| `X-HI-Conversation` recorded | Y | Journaled before dispatch; defaults to anonymous when absent |
 | `Authorization: Bearer ...` | accepted/logged | Parsed and logged; not validated in v0 |
 | Cron / relative intents | deferred | Per `docs/impl.md` Scope |
 | Forgetting curve / significance / compaction | deferred | Per `docs/impl.md` Scope |
@@ -234,7 +233,7 @@ hi-agent/
 │   ├── lib.rs                              # `run(Config)` — wires everything
 │   ├── types.rs                            # Conversation, Channel, Signal, JournalEntry, Intent
 │   ├── server/                             # axum router + extractors + handlers
-│   ├── reaction.rs                          # per-conversation queues, worker registry, interruption
+│   ├── reaction.rs                          # shared queue, worker registry, interruption
 │   ├── acp/                                # ACP adapter subprocess + per-session helpers
 │   ├── mcp.rs                              # in-process MCP hub + the seven tools
 │   ├── memory/                             # journal, intents, snapshot builder
@@ -273,7 +272,7 @@ runtime for cognition to work.
 
 ## Risks and known unverified things
 
-See [`docs/risks.md`](docs/risks.md). The headline item: concurrent ACP sessions in the Claude Code runtime have not been measured under load. Validate the concurrency assumption (drive concurrent thoughts from several conversation and compare wall-clock) before trusting the architecture in production.
+See [`docs/risks.md`](docs/risks.md). The headline item: concurrent ACP sessions in the Claude Code runtime have not been measured under load. Validate the concurrency assumption (drive concurrent inputs from several windows and compare wall-clock) before trusting the architecture in production.
 
 ## License
 

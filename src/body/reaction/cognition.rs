@@ -65,22 +65,9 @@ use crate::foundation::observatory::{EventKind, SessionKind};
 use crate::foundation::registry::{self, Registration};
 use crate::mind::memory::snapshot;
 
-use super::tools::{LoopControl, ToolSink};
+use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, workers};
 
-/// The pseudo-conversation Cognition's sessions are opened under.
-///
-/// It exists for the two places that require *some* conversation and mean different things by
-/// it: the `X-HI-Conversation` header the `/mcp` dispatch routes by, and the label on a
-/// subprocess in the logs. It is never a conversation and never a data path — the `*…*`
-/// form marks that ([`Conversation::is_pseudo`]), and it cannot collide with a real conversation id.
-///
-/// **Nothing may journal under it.** The old percent-encoding of a sentinel id is
-/// `%2Acognition%2A`, which is a perfectly ordinary directory name to
-/// [`crate::mind::memory::layout::is_signal_dir`] and no longer looks pseudo to anything
-/// checking — so a single write into `memory/raw/` would manufacture a conversation that gets a
-/// full per-reaction loop, subprocess and pulse at the next boot. That is the bug `c085e29`
-/// fixed arriving by a different road. Cognition's durable record is the ledger, which is
 /// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
@@ -107,11 +94,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
 
-    // Its workers run under it. `create_worker` reaches the tool registry, so
-    // registering a sink here means the lookup succeeds and `any_host()`, which would
-    // have lent an arbitrary
-    // live conversation, is never reached. The per-conversation worker map is untouched: this is
-    // not that map moving, it is Cognition having its own.
+    // Its workers run under its own role-specific sink rather than the voice's.
     let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
     let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
     reaction
@@ -120,7 +103,10 @@ async fn run(reaction: Reaction, registration: Registration) {
         // `mouth: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
         // voices. That it *cannot* express is now a fact about the sink rather than an
         // agreement between the tool list and the role check at dispatch.
-        .register(ToolSink { control: control_tx, mouth: None })
+        .register(
+            ToolOwner::Cognition,
+            ToolSink { control: control_tx, mouth: None },
+        )
         .await;
 
     let mut workers = workers::WorkerRegistry::new(report_tx);
@@ -296,6 +282,9 @@ async fn run(reaction: Reaction, registration: Registration) {
             continue;
         }
 
+        // Timer wakes and worker reports bypass the switchboard inbox, so they
+        // have no `take_pending` edge to mark this standing session busy.
+        registry::global().start_turn(id);
         workers.reap();
 
         // **Keep serving `control_rx` while the turn runs.** `create_worker` is the one

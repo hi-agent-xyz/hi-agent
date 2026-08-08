@@ -35,12 +35,8 @@
 //!    is unreachable"; it is unreachable the way a room with no door is under-furnished.
 //! 2. **A drain.** Nothing read its inbox — the note this replaces said so outright. A
 //!    registered rung nobody reads is a mailbox that answers "delivered" and forgets.
-//! 3. **A host for its workers.** Without a sink of its own, `create_worker` fell through
-//!    to `any_host()`, which lent an arbitrary live conversation: the borrowed conversation
-//!    became the worker's `X-HI-Conversation` (so `watch` resolved to a stranger's camera), the
-//!    `{conversation}` in its prompt, and the conversation its report was journaled under — feeding
-//!    *that* conversation's episodes with work it never asked for. That function is gone as of
-//!    this commit, because this was its last caller.
+//! 3. **A host for its workers.** Reflection registers its own role-specific tool
+//!    sink, so work it creates returns to Reflection rather than the voice or Cognition.
 //! 4. **Two kinds of wake.** Reflection is the one rung driven by a clock *and* by mail.
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
 //!    which `docs/arch/core.md` is explicit is not what the (deferred) global clock is
@@ -61,7 +57,7 @@ use tokio::sync::mpsc;
 
 use crate::foundation::registry::{self, Registration};
 
-use super::tools::{LoopControl, ToolSink};
+use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
 
 /// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
@@ -86,7 +82,7 @@ pub(super) fn spawn(reaction: Reaction, registration: Registration) {
 /// Why this loop woke. Two sources, and they do different work — which is the one real
 /// difference from Cognition's loop, where every wake is a turn.
 enum Wake {
-    /// The backoff clock came due: sweep the recently-active conversations.
+    /// The backoff clock came due: sweep the shared frontier.
     Consolidate,
     /// Mail, or a worker of ours reporting. Drives an ordinary turn.
     Turn,
@@ -104,7 +100,10 @@ async fn run(reaction: Reaction, registration: Registration) {
     reaction
         .inner
         .tools
-        .register(ToolSink { control: control_tx, mouth: None })
+        .register(
+            ToolOwner::Reflection,
+            ToolSink { control: control_tx, mouth: None },
+        )
         .await;
 
     let mut workers = workers::WorkerRegistry::new(report_tx);
@@ -257,7 +256,9 @@ async fn run(reaction: Reaction, registration: Registration) {
                 last_reflection = Some(now);
 
                 workers.reap();
+                registry::global().start_turn(id);
                 heartbeat::consolidate(&reaction, id).await;
+                registry::global().finish_turn(id);
             }
             Wake::Turn => {}
         }
@@ -271,6 +272,9 @@ async fn run(reaction: Reaction, registration: Registration) {
             continue;
         }
 
+        // Worker reports bypass the switchboard inbox; mailbox turns are already
+        // busy here, and `start_turn` is deliberately idempotent.
+        registry::global().start_turn(id);
         workers.reap();
         match turn(&reaction, id, &pending).await {
             Ok(()) => pending.clear(),

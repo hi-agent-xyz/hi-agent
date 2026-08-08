@@ -3,9 +3,9 @@
 //! The mind (and its workers) express side-effects as MCP tool calls over the
 //! `/mcp` HTTP endpoint (see [`crate::foundation::mcp`]). Those calls arrive on a different
 //! task than the reaction loop, so they cannot touch the loop's private state
-//! directly. Instead the loop registers a [`ToolSink`] — a control-channel
-//! sender — into the shared [`ToolRegistry`]. The MCP handler takes the sink from
-//! there and forwards a [`LoopControl`]
+//! directly. Instead each owning loop registers a [`ToolSink`] — a control-channel
+//! sender — into the shared [`ToolRegistry`]. The MCP handler takes the sink for
+//! the caller's role from there and forwards a [`LoopControl`]
 //! the loop applies on its own turn, so the worker registry stays owned by the
 //! loop with no locking.
 
@@ -72,6 +72,29 @@ pub struct ToolSink {
 pub(super) struct Mouth {
     pub(super) beats: mpsc::Sender<Beat>,
     pub(super) presence: crate::body::presence::Presence,
+}
+
+/// The standing loop that owns a tool sink.
+///
+/// Deliberation and workers do not own loop state reached through MCP. Keeping
+/// this narrower than the session-role enum makes an accidental registration for
+/// either impossible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolOwner {
+    Reaction,
+    Cognition,
+    Reflection,
+}
+
+impl ToolOwner {
+    pub fn from_role(role: Option<&str>) -> Option<Self> {
+        match role {
+            Some("reaction") => Some(Self::Reaction),
+            Some("cognition") => Some(Self::Cognition),
+            Some("reflection") => Some(Self::Reflection),
+            _ => None,
+        }
+    }
 }
 
 /// What became of an utterance — the answer `say` hands back to Reaction.
@@ -177,11 +200,19 @@ impl ToolSink {
     }
 }
 
-/// The shared sink slot. Created once in `lib.rs`, shared (cloneable handle)
-/// between the HTTP front's `/mcp` handler and the reaction that registers sinks.
+/// The shared role-specific sink slots. Created once in `lib.rs`, shared
+/// (cloneable handle) between the HTTP front's `/mcp` handler and the loops that
+/// register sinks.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
-    inner: Arc<Mutex<Option<ToolSink>>>,
+    inner: Arc<Mutex<ToolSinks>>,
+}
+
+#[derive(Default)]
+struct ToolSinks {
+    reaction: Option<ToolSink>,
+    cognition: Option<ToolSink>,
+    reflection: Option<ToolSink>,
 }
 
 impl ToolRegistry {
@@ -189,25 +220,29 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Register (or replace) the sink. Called when the reaction loop is
-    /// created, before its session opens and can issue any tool call.
-    pub async fn register(&self, sink: ToolSink) {
-        *self.inner.lock().await = Some(sink);
+    /// Register (or replace) one role's sink. Called before that role's session
+    /// opens and can issue any tool call.
+    pub async fn register(&self, owner: ToolOwner, sink: ToolSink) {
+        let mut sinks = self.inner.lock().await;
+        match owner {
+            ToolOwner::Reaction => sinks.reaction = Some(sink),
+            ToolOwner::Cognition => sinks.cognition = Some(sink),
+            ToolOwner::Reflection => sinks.reflection = Some(sink),
+        }
     }
 
-    /// The registered sink, or `None` before the loop has stood itself up.
-    pub async fn get(&self) -> Option<ToolSink> {
-        self.inner.lock().await.clone()
+    /// The role's registered sink, or `None` before its loop has stood itself up.
+    pub async fn get(&self, owner: ToolOwner) -> Option<ToolSink> {
+        let sinks = self.inner.lock().await;
+        match owner {
+            ToolOwner::Reaction => sinks.reaction.clone(),
+            ToolOwner::Cognition => sinks.cognition.clone(),
+            ToolOwner::Reflection => sinks.reflection.clone(),
+        }
     }
 
-    // `any_host()` used to live here: "any live reaction loop, for work that must run
-    // somewhere". It is gone with the key it borrowed. It existed because a rung with
-    // no conversation of its own creating a worker had nowhere to run it, so it took
-    // the lowest-named live conversation. Borrowing was never only hosting: the lent conversation
-    // became the worker's `X-HI-Conversation` (so `watch`/`see` resolved to a stranger's
-    // camera), the `{conversation}` in its prompt, and the conversation its report was journaled
-    // under — which then fed *that* conversation's episodes with work it never asked for.
-    // With one conversation there is nothing to borrow and nothing to mislabel.
+    // There is intentionally no fallback slot. A missing role owner is an error;
+    // routing a call to another loop would transfer worker ownership silently.
 }
 
 #[cfg(test)]
@@ -233,6 +268,61 @@ mod tests {
         let _audio = p.connect(OutChannel::Audio);
         let (sink, _rx) = mouth(&p);
         assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::Voiced);
+    }
+
+    #[tokio::test]
+    async fn role_registrations_do_not_replace_each_other() {
+        fn sink() -> (ToolSink, mpsc::Receiver<LoopControl>) {
+            let (control, rx) = mpsc::channel(1);
+            (
+                ToolSink {
+                    control,
+                    mouth: None,
+                },
+                rx,
+            )
+        }
+
+        let registry = ToolRegistry::new();
+        let (reaction, mut reaction_rx) = sink();
+        let (cognition, mut cognition_rx) = sink();
+        let (reflection, mut reflection_rx) = sink();
+
+        registry.register(ToolOwner::Reaction, reaction).await;
+        registry.register(ToolOwner::Cognition, cognition).await;
+        registry.register(ToolOwner::Reflection, reflection).await;
+
+        for (owner, id) in [
+            (ToolOwner::Reaction, 1),
+            (ToolOwner::Cognition, 2),
+            (ToolOwner::Reflection, 3),
+        ] {
+            registry
+                .get(owner)
+                .await
+                .unwrap()
+                .send(LoopControl::CreateWorker {
+                    id,
+                    task: format!("task-{id}"),
+                    kind: crate::identity::WorkerType::default(),
+                    owner: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        assert!(matches!(
+            reaction_rx.recv().await,
+            Some(LoopControl::CreateWorker { id: 1, .. })
+        ));
+        assert!(matches!(
+            cognition_rx.recv().await,
+            Some(LoopControl::CreateWorker { id: 2, .. })
+        ));
+        assert!(matches!(
+            reflection_rx.recv().await,
+            Some(LoopControl::CreateWorker { id: 3, .. })
+        ));
     }
 
     #[tokio::test]

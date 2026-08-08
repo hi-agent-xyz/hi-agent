@@ -65,9 +65,9 @@
      idle is essentially none; the others warm the room a touch. */
   --glow-idle: rgba(122, 140, 106, 0);
   --glow-listening: rgba(122, 140, 106, 0.5); /* sage — human has the floor */
-  --glow-thinking: rgba(201, 144, 63, 0.5);   /* amber — cognition */
+  --glow-working: rgba(201, 144, 63, 0.5);    /* amber — delegated work */
   --glow-speaking: rgba(192, 106, 63, 0.55);  /* terracotta — agent voice */
-  --glow-waking: rgba(192, 106, 63, 0.3);
+  --glow-starting: rgba(192, 106, 63, 0.3);
 
   --font-display:
     "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -152,9 +152,9 @@
     /* light-on-dark glows read far stronger — keep them a whisper */
     --glow-idle: rgba(201, 160, 106, 0);
     --glow-listening: rgba(160, 178, 150, 0.16);
-    --glow-thinking: rgba(224, 180, 120, 0.16);
+    --glow-working: rgba(224, 180, 120, 0.16);
     --glow-speaking: rgba(224, 151, 90, 0.2);
-    --glow-waking: rgba(224, 151, 90, 0.12);
+    --glow-starting: rgba(224, 151, 90, 0.12);
   }
 }
 
@@ -190,9 +190,9 @@
   --selfview-veil: rgba(20, 18, 14, 0.4);
   --glow-idle: rgba(201, 160, 106, 0);
   --glow-listening: rgba(160, 178, 150, 0.16);
-  --glow-thinking: rgba(224, 180, 120, 0.16);
+  --glow-working: rgba(224, 180, 120, 0.16);
   --glow-speaking: rgba(224, 151, 90, 0.2);
-  --glow-waking: rgba(224, 151, 90, 0.12);
+  --glow-starting: rgba(224, 151, 90, 0.12);
 }
 
 /* Cross-fade the state-glow colour on state change (needs @property to animate a
@@ -747,8 +747,8 @@ button {
   background: var(--line);
 }
 
-.hi-status-button--waking,
-.hi-status-button--thinking,
+.hi-status-button--starting,
+.hi-status-button--working,
 .hi-status-button--typing,
 .hi-status-button--speaking {
   color: var(--accent);
@@ -766,7 +766,7 @@ button {
   height: 20px;
 }
 
-.hi-status-glyph--rest::before {
+.hi-status-glyph--idle::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -774,7 +774,7 @@ button {
   content: "";
 }
 
-.hi-status-glyph--waking::before,
+.hi-status-glyph--starting::before,
 .hi-status-glyph--listening::before {
   width: 9px;
   height: 9px;
@@ -783,22 +783,22 @@ button {
   content: "";
 }
 
-.hi-status-glyph--waking::before {
-  animation: hi-status-wake 1.2s var(--ease) infinite;
+.hi-status-glyph--starting::before {
+  animation: hi-status-start 1.2s var(--ease) infinite;
 }
 
 .hi-status-glyph--listening::before {
   animation: hi-status-listen 1.2s ease-in-out infinite;
 }
 
-.hi-status-glyph--thinking::before {
+.hi-status-glyph--working::before {
   width: 14px;
   height: 14px;
   border: 1.7px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
   content: "";
-  animation: hi-status-think 900ms linear infinite;
+  animation: hi-status-work 900ms linear infinite;
 }
 
 .hi-status-glyph--typing::before {
@@ -839,7 +839,7 @@ button {
   animation-delay: 220ms;
 }
 
-@keyframes hi-status-wake {
+@keyframes hi-status-start {
   0%, 100% {
     opacity: 0.55;
     transform: scale(0.88);
@@ -861,7 +861,7 @@ button {
   }
 }
 
-@keyframes hi-status-think {
+@keyframes hi-status-work {
   to { transform: rotate(360deg); }
 }
 

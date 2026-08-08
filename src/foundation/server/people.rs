@@ -14,7 +14,7 @@
 //! - `POST /api/people/split/preview` — propose an auto-regrouping (moves nothing).
 //! - `POST /api/people/split/apply` — commit an accepted regrouping.
 //!
-//! The people store is global (not conversation-scoped), so these take no `X-HI-Conversation`.
+//! The people store is global.
 //! Reads are cheap directory walks; writes are atomic file moves in `people_vectors`.
 
 use std::sync::Arc;

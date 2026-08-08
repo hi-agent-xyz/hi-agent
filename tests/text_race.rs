@@ -47,18 +47,49 @@ async fn emit_utterance(bus: &TextBus, chunks: &[&str]) {
     bus.end_utterance().await;
 }
 
-async fn get_out_text(base: &str, after: Option<u64>, budget: Duration) -> Result<String, ()> {
+#[derive(Clone, Debug)]
+struct TextCursor {
+    epoch: String,
+    id: u64,
+}
+
+async fn get_out_text(
+    base: &str,
+    after: Option<TextCursor>,
+    budget: Duration,
+) -> Result<(String, TextCursor), ()> {
     let client = reqwest::Client::new();
-    let qs = after.map(|a| format!("?after={a}")).unwrap_or_default();
+    let qs = after
+        .map(|cursor| format!("?epoch={}&after={}", cursor.epoch, cursor.id))
+        .unwrap_or_default();
     tokio::time::timeout(budget, async {
-        client
+        let response = client
             .get(format!("{base}/api/out/text{qs}"))
             .send()
             .await
-            .expect("send")
+            .expect("send");
+        let cursor = TextCursor {
+            epoch: response
+                .headers()
+                .get("X-HI-Text-Epoch")
+                .expect("epoch header")
+                .to_str()
+                .expect("epoch text")
+                .to_owned(),
+            id: response
+                .headers()
+                .get("X-HI-Utterance")
+                .expect("utterance header")
+                .to_str()
+                .expect("utterance text")
+                .parse()
+                .expect("utterance id"),
+        };
+        let body = response
             .text()
             .await
-            .expect("body")
+            .expect("body");
+        (body, cursor)
     })
     .await
     .map_err(|_| ())
@@ -73,7 +104,7 @@ async fn late_subscriber_still_gets_the_utterance() {
     emit_utterance(&seams.text_bus, &["Hey! What", "'s up?"]).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let body = get_out_text(&base, None, Duration::from_millis(500))
+    let (body, _) = get_out_text(&base, None, Duration::from_millis(500))
         .await
         .expect("late GET should receive the buffered utterance, not hang");
     assert_eq!(body, "Hey! What's up?");
@@ -94,7 +125,7 @@ async fn connected_subscriber_streams_live() {
     tokio::time::sleep(Duration::from_millis(80)).await;
     emit_utterance(&bus, &["live ", "stream"]).await;
 
-    let body = reader.await.expect("join").expect("should not hang");
+    let (body, _) = reader.await.expect("join").expect("should not hang");
     assert_eq!(body, "live stream");
 }
 
@@ -108,12 +139,12 @@ async fn sequential_gets_advance_by_cursor() {
     emit_utterance(&seams.text_bus, &["first"]).await;
     emit_utterance(&seams.text_bus, &["second"]).await;
 
-    let a = get_out_text(&base, None, Duration::from_millis(500))
+    let (a, cursor) = get_out_text(&base, None, Duration::from_millis(500))
         .await
         .expect("first GET");
     assert_eq!(a, "first");
 
-    let b = get_out_text(&base, Some(0), Duration::from_millis(500))
+    let (b, _) = get_out_text(&base, Some(cursor), Duration::from_millis(500))
         .await
         .expect("second GET");
     assert_eq!(b, "second");
@@ -129,10 +160,10 @@ async fn a_second_reader_receives_the_same_utterance() {
 
     emit_utterance(&seams.text_bus, &["shared"]).await;
 
-    let first = get_out_text(&base, None, Duration::from_millis(500))
+    let (first, _) = get_out_text(&base, None, Duration::from_millis(500))
         .await
         .expect("first reader");
-    let second = get_out_text(&base, None, Duration::from_millis(500))
+    let (second, _) = get_out_text(&base, None, Duration::from_millis(500))
         .await
         .expect("second reader");
     assert_eq!(first, "shared");
@@ -148,6 +179,9 @@ async fn a_caught_up_reader_parks() {
     emit_utterance(&seams.text_bus, &["only one"]).await;
     tokio::time::sleep(Duration::from_millis(30)).await;
 
-    let caught_up = get_out_text(&base, Some(0), Duration::from_millis(250)).await;
+    let (_, cursor) = get_out_text(&base, None, Duration::from_millis(500))
+        .await
+        .expect("initial read");
+    let caught_up = get_out_text(&base, Some(cursor), Duration::from_millis(250)).await;
     assert!(caught_up.is_err(), "should park, got {caught_up:?}");
 }

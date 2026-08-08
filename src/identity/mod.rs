@@ -199,13 +199,9 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 /// **This replaced a `const &str` in `reaction/workers.rs`** — the one role prompt that
 /// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
 ///
-/// Only the directory placeholders [`rung_prompt`] already expands are interpolated.
-/// There were two more — `{conversation}` for the `X-HI-Conversation` header a worker had to name,
-/// and `{scene_dir}` for the same id percent-encoded on disk — and both are gone with
-/// the key they named. The `{scene_dir}` one was a real bug's home: the raw form was
-/// substituted into a path whose directory was encoded, so for the conversation with an `@`
-/// in it the filing worker was pointed somewhere empty. A path with no user string in
-/// it cannot have that bug.
+/// Only the directory placeholders [`rung_prompt`] already expands are
+/// interpolated. Former routing and encoded-path placeholders are gone, so no
+/// user string can redirect a worker's data path.
 pub async fn worker_prompt(data_dir: &Path, kind: WorkerType) -> String {
     rung_prompt(data_dir, &format!("workers/{}", kind.as_str()), kind.base()).await
 }
@@ -311,7 +307,7 @@ pub async fn deliberation_prompt(data_dir: &Path) -> String {
 /// assistant. It carries the ledger pen — the instruction that lived in
 /// `deliberation.md` marked "for now, yours" until Cognition existed to take it back.
 ///
-/// Nothing is interpolated here, unlike Deliberation's `{scene_memory}`. What Cognition
+/// Nothing is interpolated here. What Cognition
 /// carries forward arrives in the **window** with the projected ledger
 /// ([`crate::mind::memory::snapshot::agent_window`]), not in this layer — the same
 /// content in both places would be one copy going stale against the other, and the window
@@ -593,10 +589,7 @@ mod soul_tests {
         assert!(prompt.starts_with(REACTION_BASE.trim()));
     }
 
-    /// Nothing in a worker prompt is interpolated from a user string any more. The
-    /// two placeholders that were — `{scene}` for a header, `{scene_dir}` for the same
-    /// id percent-encoded on disk — are gone with the key they named, and with them the
-    /// bug where the raw form was substituted into an encoded path.
+    /// Nothing in a worker prompt is interpolated from a user string.
     #[tokio::test]
     async fn no_user_string_is_interpolated_into_a_worker_prompt() {
         let dir = tempfile::tempdir().unwrap();

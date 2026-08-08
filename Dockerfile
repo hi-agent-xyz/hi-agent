@@ -9,6 +9,8 @@ RUN npm run build
 # Stage 2: build the Rust binary (embeds SPA)
 FROM rust:1-bookworm AS rust
 WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY --from=web /web/dist ./src/appearance/web/dist

@@ -22,10 +22,10 @@
 //!
 //! ## Concurrency
 //!
-//! Facets are **global**, not per-conversation — two conversations can both touch
-//! `people/alice.md`. A read-modify-write across conversations is **last-writer-wins, and
-//! that is fine**: a facet is a regenerable cache whose truth lives in the
-//! episodes, so the next reflection re-derives whatever a racing write dropped.
+//! Facets are process-wide derived state. A read-modify-write race is
+//! **last-writer-wins, and that is fine**: a facet is a regenerable cache whose
+//! truth lives in the episodes, so the next reflection re-derives whatever a
+//! racing write dropped.
 //! The only mechanical guarantee needed is that a reader never sees a half-written
 //! file, so [`update_facet`] writes to a temp sibling and atomically renames.
 

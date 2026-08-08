@@ -11,8 +11,8 @@
 //! them on the inbound-audio broadcast (so `GET /api/in/audio` can play the
 //! clip), transcribe via the configured STT capability
 //! ([`crate::body::capabilities::stt`]), and feed the transcript into the same
-//! per-conversation path that `POST /api/in/text` uses. The journal records a
-//! `SignalIn { channel: Text, body: <transcript>, media: Some(..) }` — the
+//! reaction path that `POST /api/in/text` uses. The journal records a
+//! `SignalIn { channel: Audio, body: <transcript>, media: Some(..) }` — the
 //! agent reads text, while the media reference (sharing the blob's id) links
 //! back to the audio this transcript was derived from.
 //!
@@ -325,11 +325,8 @@ pub async fn post_audio(
 
 #[derive(Debug, Deserialize)]
 pub struct StreamParams {
-    /// The streaming conversation. Browsers can't set `X-HI-Conversation` on a WebSocket
-    /// handshake, so the conversation rides in the query string instead.
-    /// The named stream within the conversation, same role as `X-HI-Stream` on the POST
-    /// path; absent/empty → the default stream. Rides the query string for the
-    /// same handshake reason as `conversation`.
+    /// The named source, same role as `X-HI-Stream` on the POST path.
+    /// Absent or empty means the default stream.
     stream: Option<String>,
 }
 
@@ -626,7 +623,8 @@ pub async fn ingest_pcm_stream(
 /// when present, land under `audio/`. The reaction reads `body` regardless. For a
 /// posted clip, `clip` carries the `(ts, id, media)` of the stored audio blob so
 /// the journal entry references it; the live mic passes `None` for now (its bytes
-/// aren't persisted yet — Phase 2), so the journal records no `media`.
+/// are persisted by wall-clock minute rather than per utterance), so the journal
+/// records no direct `media` ref.
 async fn deliver_transcript(
     state: &AppState,
     stream: Option<String>,
@@ -776,7 +774,7 @@ pub async fn get_in_audio(
     };
 
     // Stream this source's frames as a chunked body until its `End`. Frames from
-    // any other source or conversation are filtered out, so a response stays bound to the
+    // any other source are filtered out, so a response stays bound to the
     // single source it opened on.
     let stream = futures::stream::unfold((rx, turn), |(mut rx, turn)| async move {
         loop {
@@ -849,7 +847,7 @@ pub async fn get_out_audio(
     };
 
     // Stream this turn's frames as a chunked body until its `End`. Frames from
-    // any other turn or conversation are filtered out, so a response stays bound to the
+    // any other turn are filtered out, so a response stays bound to the
     // single turn it opened on.
     let stream = futures::stream::unfold(
         (rx, turn, false),

@@ -266,7 +266,6 @@ function Row({ task, busy, onStatus }) {
             <span className="hi-tasks__status-chip">{L.category[task.status] || task.status}</span>
             {task.createdAt && <span>{L.created(formatStamp(task.createdAt))}</span>}
             {closedAt && <span>{closedAt}</span>}
-            {task.reportTo && <span className="hi-tasks__scene">→ {task.reportTo}</span>}
             {due && <span data-warn={due.warn ? "true" : undefined}>{due.text}</span>}
             {health && <span data-warn={health.warn ? "true" : undefined}>{health.text}</span>}
           </span>
@@ -678,7 +677,6 @@ const CSS = `
     font-weight: 750;
   }
 
-  .hi-tasks__scene,
   .hi-tasks__row-meta span {
     white-space: nowrap;
   }

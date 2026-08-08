@@ -1,8 +1,8 @@
 //! Interruption semantics — placeholder, requires `claude-code`.
 //!
 //! Contract (see `src/reaction/mod.rs` § "Fix-forward, no reflexive cancel"):
-//! a new POST arriving for a scene whose queue is already running a turn does
-//! NOT cancel the in-flight ACP session. The per-scene loop is serial, so the
+//! a new POST arriving while the reaction queue is already running a turn does
+//! NOT cancel the in-flight ACP session. The reaction loop is serial, so the
 //! new signal simply queues and is folded into the next turn; the warm session
 //! remembers what it has already heard, so a thought spread across bursts
 //! reassembles across turns. The mind corrects course rather than being cut off
@@ -28,20 +28,19 @@
 //! after `cargo build --release && ./target/release/hi-agent`:
 //!
 //! ```sh
-//! # in one terminal, watch the scene's day-log
-//! tail -F data/memory/raw/*/text/*/text.jsonl
+//! # in one terminal, watch the text day-log
+//! tail -F data/memory/raw/text/*/text.jsonl
 //!
-//! # in another, fire two POSTs in rapid succession to the same scene
+//! # in another, fire two POSTs in rapid succession
 //! BASE=http://127.0.0.1:12358
-//! ME=alice@phone
-//! curl -X POST -H ": $ME" \
+//! curl -X POST \
 //!     --data-binary 'first thought, take your time' "$BASE/api/in/text" &
 //! sleep 0.2
-//! curl -X POST -H ": $ME" \
+//! curl -X POST \
 //!     --data-binary 'actually never mind, what time is it' "$BASE/api/in/text"
 //! ```
 //!
-//! Expected: tracing logs show NO "session/cancel" for this scene; the first
+//! Expected: tracing logs show NO "session/cancel"; the first
 //! turn runs to completion; the journal shows both SignalIn entries; and the
 //! second signal is folded into a later turn (the warm session already carries
 //! the first).

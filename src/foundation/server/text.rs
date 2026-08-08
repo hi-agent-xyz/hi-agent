@@ -90,9 +90,11 @@ pub async fn post_text(
     StatusCode::ACCEPTED.into_response()
 }
 
-/// Query for `GET /api/out/text`: where this readerhas got to.
+/// Query for `GET /api/out/text`: where this reader has got to.
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct OutTextQuery {
+    /// The text-log process epoch returned by the previous response.
+    pub epoch: Option<String>,
     /// The id of the last utterance this reader received in full. Absent means
     /// "start at the oldest still retained", so a client that has never connected
     /// still gets a reply produced before it arrived.
@@ -109,7 +111,13 @@ pub async fn get_out_text(
     Query(q): Query<OutTextQuery>,
     AuthBearer(auth): AuthBearer,
 ) -> Response {
-    tracing::info!(auth = ?auth, after = ?q.after, "GET /api/out/text long-poll opened");
+    let after = state.text_bus.normalize_after(q.epoch.as_deref(), q.after);
+    tracing::info!(
+        auth = ?auth,
+        requested_epoch = ?q.epoch,
+        after = ?after,
+        "GET /api/out/text long-poll opened"
+    );
 
     // Opening this long-poll is a presence signal: warm up so the process +
     // session + upstream cache are hot before the first utterance.
@@ -120,8 +128,8 @@ pub async fn get_out_text(
     // Resolved before the response head is written — the header has to be on the
     // response, and the body comes after it. Parks here if nothing is pending,
     // which is what makes this a long-poll rather than an empty 200.
-    let id = state.text_bus.next_id_after(q.after).await;
-    let stream = state.text_bus.subscribe(q.after).map(move |item| {
+    let id = state.text_bus.next_id_after(after).await;
+    let stream = state.text_bus.subscribe(after).map(move |item| {
         let _held = &presence;
         item
     });
@@ -129,7 +137,14 @@ pub async fn get_out_text(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header(crate::foundation::server::text_bus::UTTERANCE_HEADER, id.to_string())
+        .header(
+            crate::foundation::server::text_bus::TEXT_EPOCH_HEADER,
+            state.text_bus.epoch(),
+        )
+        .header(
+            crate::foundation::server::text_bus::UTTERANCE_HEADER,
+            id.to_string(),
+        )
         .body(Body::from_stream(stream))
         .unwrap()
 }

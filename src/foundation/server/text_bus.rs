@@ -32,10 +32,17 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use futures::stream::{Stream, unfold};
 use tokio::sync::{Mutex, Notify};
+use uuid::Uuid;
 
 /// Response header naming the utterance a `/out/text` body carries, so the
 /// client can pass it back as the next request's `after` cursor.
 pub const UTTERANCE_HEADER: &str = "X-HI-Utterance";
+
+/// Response/request value naming the current server process's text log.
+///
+/// Utterance ids intentionally restart at zero on every boot. A cursor from a
+/// previous process therefore has no meaning in the new log and must reset.
+pub const TEXT_EPOCH_HEADER: &str = "X-HI-Text-Epoch";
 
 /// Cap on retained utterances. Bounds growth when the agent produces output
 /// nobody ever connects to read; the oldest are evicted first. Turns are
@@ -43,9 +50,10 @@ pub const UTTERANCE_HEADER: &str = "X-HI-Utterance";
 const MAX_RETAINED: usize = 32;
 
 /// Outbound `/out/text` retained log. Cloneable handle over shared state.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TextBus {
     inner: Arc<Mutex<TextOut>>,
+    epoch: Arc<String>,
 }
 
 #[derive(Default)]
@@ -66,7 +74,19 @@ struct Utterance {
 
 impl TextBus {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(Mutex::new(TextOut::default())),
+            epoch: Arc::new(Uuid::now_v7().to_string()),
+        }
+    }
+
+    pub fn epoch(&self) -> &str {
+        self.epoch.as_str()
+    }
+
+    /// Discard a cursor unless it belongs to this process's retained log.
+    pub fn normalize_after(&self, epoch: Option<&str>, after: Option<u64>) -> Option<u64> {
+        (epoch == Some(self.epoch())).then_some(after).flatten()
     }
 
     /// Append a chunk of agent text. Starts a new utterance when the previous one
@@ -279,5 +299,20 @@ mod tests {
         }
         let out = bus.inner.lock().await;
         assert_eq!(out.log.len(), MAX_RETAINED);
+    }
+
+    #[test]
+    fn a_cursor_from_another_process_resets() {
+        let bus = TextBus::new();
+        assert_eq!(bus.normalize_after(Some("old-process"), Some(999)), None);
+        assert_eq!(bus.normalize_after(None, Some(999)), None);
+        assert_eq!(bus.normalize_after(Some(bus.epoch()), Some(7)), Some(7));
+    }
+
+    #[test]
+    fn each_process_gets_a_distinct_text_epoch() {
+        let first = TextBus::new();
+        let second = TextBus::new();
+        assert_ne!(first.epoch(), second.epoch());
     }
 }

@@ -1,10 +1,9 @@
 //! Live sessions — the switchboard read directly, so "what is running right now"
 //! stops being a question you answer by folding an event log.
 //!
-//! Nothing else on the wire answers it. `GET /api/sessions` is keyed by conversation and
+//! Nothing else on the wire answers it. `GET /api/sessions` is a summary mirror and
 //! carries no workers on purpose ([`AgentView`](crate::foundation::observatory::AgentView)
-//! states why: a working session belongs to whoever created it, and the rungs that
-//! create them — Cognition, Reflection — have no conversation). So worker lifecycle exists
+//! states why: a working session belongs to whoever created it). So worker lifecycle exists
 //! only as `worker_spawned` / `worker_resumed` / `worker_finished` frames on the
 //! `GET /api/sessions/events` SSE stream, and "is that watch still up?" means pairing
 //! spawns against finishes by hand. Both halves of that pairing have already been
@@ -60,10 +59,7 @@ use crate::foundation::registry::{self, Role, SessionId, Status};
 struct WorkerDto {
     id: String,
     role: &'static str,
-    /// The conversation this is hosted under, `null` for the standing rungs. May be a
-    /// pseudo-conversation (`*cognition*`, `*consolidation*`) — a routing tag that names no
-    /// conversation; it is passed through as-is rather than blanked, because that is
-    /// what the session's `X-HI-Conversation` actually says.
+    /// The live session that created this one, when it has an owner.
     owner: Option<String>,
     task: String,
     busy: bool,
@@ -125,8 +121,7 @@ pub async fn get_worker(Path(id): Path<String>) -> Response {
 /// briefly. That is fine for a debug surface at human polling rates and is the price of
 /// not keeping a second, drift-prone index of live sessions on this side.
 fn live_sessions() -> Vec<Status> {
-    let upper = registry::mint();
-    (1..upper).filter_map(|id| registry::global().status(id)).collect()
+    registry::global().statuses()
 }
 
 /// Busy first, then most recently started. What is running now is what the reader came
@@ -200,7 +195,7 @@ fn err(msg: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-        use chrono::{TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
 
     fn status(id: SessionId, busy: bool, minute: u32) -> Status {
         Status {

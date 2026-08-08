@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 
 
 /// Handle for one agent session, unique process-wide.
@@ -221,9 +221,19 @@ pub fn register_scoped(
 }
 
 /// The switchboard. One per process.
-#[derive(Default)]
 pub struct Registry {
     sessions: Mutex<HashMap<SessionId, Entry>>,
+    activity: watch::Sender<u64>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        let (activity, _) = watch::channel(0);
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            activity,
+        }
+    }
 }
 
 impl Registry {
@@ -241,21 +251,24 @@ impl Registry {
         task: String,
     ) -> std::sync::Arc<Notify> {
         let notify = std::sync::Arc::new(Notify::new());
-        let mut map = self.sessions.lock().unwrap();
-        map.insert(
-            id,
-            Entry {
-                role,
-                owner,
-                task,
-                busy: false,
-                turns: 0,
-                started: Utc::now(),
-                inbox: Inbox::default(),
-                output: String::new(),
-                notify: notify.clone(),
-            },
-        );
+        {
+            let mut map = self.sessions.lock().unwrap();
+            map.insert(
+                id,
+                Entry {
+                    role,
+                    owner,
+                    task,
+                    busy: false,
+                    turns: 0,
+                    started: Utc::now(),
+                    inbox: Inbox::default(),
+                    output: String::new(),
+                    notify: notify.clone(),
+                },
+            );
+        }
+        self.note_activity();
         notify
     }
 
@@ -263,8 +276,14 @@ impl Registry {
     /// honest outcome, and the sender was told `Delivered` about a mailbox, never about
     /// an outcome.
     pub fn unregister(&self, id: SessionId) {
-        if let Some(mut e) = self.sessions.lock().unwrap().remove(&id) {
+        let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(&id) {
             e.inbox.closed = true;
+            true
+        } else {
+            false
+        };
+        if removed {
+            self.note_activity();
         }
     }
 
@@ -285,25 +304,29 @@ impl Registry {
     /// there. Being told who is live, every turn, is strictly more information than being
     /// allowed to guess, and it turns this from a scan into a map lookup.
     pub fn send(&self, from: SessionId, to: SessionId, message: String) -> Delivery {
-        let mut map = self.sessions.lock().unwrap();
+        let delivery = {
+            let mut map = self.sessions.lock().unwrap();
 
-        // A worker answers to whoever asked, and to nobody else.
-        if let Some(sender) = map.get(&from)
-            && sender.role == Role::Worker
-            && sender.owner != Some(to)
-        {
-            return Delivery::NotPermitted;
-        }
+            // A worker answers to whoever asked, and to nobody else.
+            if let Some(sender) = map.get(&from)
+                && sender.role == Role::Worker
+                && sender.owner != Some(to)
+            {
+                return Delivery::NotPermitted;
+            }
 
-        let Some(entry) = map.get_mut(&to) else {
-            return Delivery::Unknown;
+            let Some(entry) = map.get_mut(&to) else {
+                return Delivery::Unknown;
+            };
+            if entry.inbox.closed {
+                return Delivery::Unknown;
+            }
+            entry.inbox.pending.push(Message { from: Some(from), text: message });
+            entry.notify.notify_one();
+            Delivery::Delivered
         };
-        if entry.inbox.closed {
-            return Delivery::Unknown;
-        }
-        entry.inbox.pending.push(Message { from: Some(from), text: message });
-        entry.notify.notify_one();
-        Delivery::Delivered
+        self.note_activity();
+        delivery
     }
 
     /// Who `asker` may reach right now, as `(label, id)` — the projection that replaced
@@ -366,29 +389,81 @@ impl Registry {
     /// is that session still able to take work, or has it closed and does this need a
     /// fresh one?
     pub fn post(&self, id: SessionId, text: String) -> Delivery {
-        let mut map = self.sessions.lock().unwrap();
-        let Some(entry) = map.get_mut(&id) else {
-            return Delivery::Unknown;
+        let delivery = {
+            let mut map = self.sessions.lock().unwrap();
+            let Some(entry) = map.get_mut(&id) else {
+                return Delivery::Unknown;
+            };
+            if entry.inbox.closed {
+                return Delivery::Unknown;
+            }
+            entry.inbox.pending.push(Message { from: None, text });
+            entry.notify.notify_one();
+            Delivery::Delivered
         };
-        if entry.inbox.closed {
-            return Delivery::Unknown;
+        self.note_activity();
+        delivery
+    }
+
+    /// Mark a session's turn as running.
+    ///
+    /// `take_pending` already performs this transition for mailbox-driven turns.
+    /// Directly-driven turns (Reaction's queue and a worker's initial task) use this
+    /// method so every status reader observes the same lifecycle.
+    pub fn start_turn(&self, id: SessionId) {
+        let changed = {
+            let mut map = self.sessions.lock().unwrap();
+            let Some(entry) = map.get_mut(&id) else {
+                return;
+            };
+            if entry.busy {
+                false
+            } else {
+                entry.busy = true;
+                entry.turns += 1;
+                true
+            }
+        };
+        if changed {
+            self.note_activity();
         }
-        entry.inbox.pending.push(Message { from: None, text });
-        entry.notify.notify_one();
-        Delivery::Delivered
     }
 
     /// Take everything queued for `id`, if anything is. Marks the session busy — it is
     /// about to take a turn, and an agent with a turn in flight is not idle.
     pub fn take_pending(&self, id: SessionId) -> Option<Vec<Message>> {
-        let mut map = self.sessions.lock().unwrap();
-        let entry = map.get_mut(&id)?;
-        if entry.inbox.pending.is_empty() {
-            return None;
-        }
-        entry.busy = true;
-        entry.turns += 1;
-        Some(std::mem::take(&mut entry.inbox.pending))
+        let batch = {
+            let mut map = self.sessions.lock().unwrap();
+            let entry = map.get_mut(&id)?;
+            if entry.inbox.pending.is_empty() {
+                return None;
+            }
+            if !entry.busy {
+                entry.busy = true;
+                entry.turns += 1;
+            }
+            std::mem::take(&mut entry.inbox.pending)
+        };
+        self.note_activity();
+        Some(batch)
+    }
+
+    /// Drain queued mail without opening a turn.
+    ///
+    /// Reaction folds this mailbox into its separate input queue, then starts one
+    /// combined turn after the settle window. Marking a turn here would create a
+    /// false busy/idle edge before that real turn begins.
+    pub fn drain_pending(&self, id: SessionId) -> Option<Vec<Message>> {
+        let batch = {
+            let mut map = self.sessions.lock().unwrap();
+            let entry = map.get_mut(&id)?;
+            if entry.inbox.pending.is_empty() {
+                return None;
+            }
+            std::mem::take(&mut entry.inbox.pending)
+        };
+        self.note_activity();
+        Some(batch)
     }
 
     /// Take everything queued for `id` — or, finding nothing, **close the inbox** and
@@ -400,17 +475,23 @@ impl Registry {
     /// a close, the message that lands between them is lost — silently, and only under
     /// load, which is the worst way to find out.
     pub fn take_pending_or_close(&self, id: SessionId) -> Option<Vec<Message>> {
-        let mut map = self.sessions.lock().unwrap();
-        let Some(entry) = map.get_mut(&id) else {
-            return None;
+        let batch = {
+            let mut map = self.sessions.lock().unwrap();
+            let Some(entry) = map.get_mut(&id) else {
+                return None;
+            };
+            if entry.inbox.pending.is_empty() {
+                entry.inbox.closed = true;
+                return None;
+            }
+            if !entry.busy {
+                entry.busy = true;
+                entry.turns += 1;
+            }
+            std::mem::take(&mut entry.inbox.pending)
         };
-        if entry.inbox.pending.is_empty() {
-            entry.inbox.closed = true;
-            return None;
-        }
-        entry.busy = true;
-        entry.turns += 1;
-        Some(std::mem::take(&mut entry.inbox.pending))
+        self.note_activity();
+        Some(batch)
     }
 
     /// The handle woken when mail lands for `id`, for a loop that wants to wait on its
@@ -421,8 +502,18 @@ impl Registry {
 
     /// Mark a turn finished.
     pub fn finish_turn(&self, id: SessionId) {
-        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
-            e.busy = false;
+        let changed = {
+            let mut map = self.sessions.lock().unwrap();
+            if let Some(e) = map.get_mut(&id) {
+                let changed = e.busy;
+                e.busy = false;
+                changed
+            } else {
+                false
+            }
+        };
+        if changed {
+            self.note_activity();
         }
     }
 
@@ -471,6 +562,31 @@ impl Registry {
         })
     }
 
+    /// Metadata for every live session, ordered by id.
+    pub fn statuses(&self) -> Vec<Status> {
+        let map = self.sessions.lock().unwrap();
+        let mut rows: Vec<Status> = map
+            .iter()
+            .map(|(&id, e)| Status {
+                id,
+                role: e.role,
+                owner: e.owner,
+                task: e.task.clone(),
+                busy: e.busy,
+                queued: !e.inbox.pending.is_empty(),
+                turns: e.turns,
+                started: e.started,
+            })
+            .collect();
+        rows.sort_by_key(|status| status.id);
+        rows
+    }
+
+    /// Subscribe to changes that can affect live activity projection.
+    pub fn subscribe_activity(&self) -> watch::Receiver<u64> {
+        self.activity.subscribe()
+    }
+
     /// Every session `owner` created, oldest id first.
     pub fn children(&self, owner: SessionId) -> Vec<SessionId> {
         let map = self.sessions.lock().unwrap();
@@ -491,6 +607,10 @@ impl Registry {
     pub fn has_live_children(&self, id: SessionId) -> bool {
         let map = self.sessions.lock().unwrap();
         map.values().any(|e| e.owner == Some(id))
+    }
+
+    fn note_activity(&self) {
+        self.activity.send_modify(|version| *version = version.wrapping_add(1));
     }
 }
 

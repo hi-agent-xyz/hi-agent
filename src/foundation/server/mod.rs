@@ -22,6 +22,7 @@ use crate::types::{Channel, Signal, ViewEnvelope};
 
 pub mod account;
 pub mod acp;
+pub mod activity;
 pub mod attention;
 pub mod audio;
 pub mod binder;
@@ -522,6 +523,7 @@ pub fn build(
         .route("/api/episodes", get(facets::get_episodes))
         .route("/api/workers", get(workers::get_workers))
         .route("/api/workers/{id}", get(workers::get_worker))
+        .route("/api/activity", get(activity::get_activity))
         .route("/api/tools", get(tools::get_tools))
         .route("/api/drive", get(drive::get_drive))
         .route("/api/drive/file/{*path}", get(drive::get_drive_file))

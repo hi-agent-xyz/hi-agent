@@ -1,10 +1,9 @@
-//! `GET /api/conversations/{conversation}/channels` — one conversation's channels, observed live.
+//! `GET /api/channels` — the shared channels, observed live.
 //!
 //! The inspect console's channel inspector wants a single window onto everything flowing
 //! through the conversation's senses and expressions. Each channel already fans out on
 //! its own broadcast in [`AppState`](crate::foundation::server::AppState); this handler
-//! subscribes to all of them, keeps only what belongs to the path conversation (plus
-//! un-targeted broadcasts, which reach the conversation), and merges them into one
+//! subscribes to all of them and merges them into one
 //! Server-Sent Events stream of uniform [`ChannelSignal`] frames.
 //!
 //! It is *presence*, not history: the underlying broadcasts are lossy with no
@@ -41,8 +40,8 @@ pub struct ChannelSignal {
     pub is_final: bool,
 }
 
-/// `GET /api/conversations/{conversation}/channels` — merged live presence across every
-/// channel of one conversation. No replay; keep-alive holds the connection open.
+/// Merged live presence across every channel. No replay; keep-alive holds the
+/// connection open.
 pub async fn get_channels(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -50,9 +49,8 @@ pub async fn get_channels(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Does an `Option<Conversation>` routing target reach `want`? A `None` target is an
-/// Subscribe to all per-channel broadcasts and merge the ones belonging to
-/// `conversation` into a single `ChannelSignal` stream. Uses `tokio::select!` so a
+/// Subscribe to all per-channel broadcasts and merge them into a single
+/// `ChannelSignal` stream. Uses `tokio::select!` so a
 /// channel with no traffic never blocks the others; lagged receivers resume from
 /// the live edge (dropped frames are presence we don't replay).
 fn merge_channels(
@@ -79,7 +77,7 @@ fn merge_channels(
     futures::stream::unfold(subs, |mut s| async move {
         loop {
             // Each branch resolves to `Option<ChannelSignal>`: `None` means the
-            // frame was filtered out (other conversation, audio frame body, lag) and we
+            // frame was filtered out (audio frame body or lag) and we
             // re-loop; `Some` is forwarded. A `Closed` receiver ends the stream.
             let sig: Option<ChannelSignal> = tokio::select! {
                 r = s.input.recv() => match r {

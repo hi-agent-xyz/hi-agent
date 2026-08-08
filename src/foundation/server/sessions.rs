@@ -4,7 +4,7 @@
 //!   session, workers, context budget, last turn).
 //! - `GET /api/sessions/events` — Server-Sent Events carrying two frame types:
 //!   `session` lifecycle events (replayed from the ring on connect, then live)
-//!   and periodic `snapshot` frames (the full per-conversation mirror). The dashboard
+//!   and periodic `snapshot` frames (the full live mirror). The dashboard
 //!   reads conversation state from the snapshot frames here rather than polling
 //!   `/api/sessions` — one less long-lived endpoint competing for the browser's
 //!   ~6 per-origin HTTP/1.1 connections (the channel streams already claim
@@ -33,7 +33,7 @@ use crate::foundation::server::AppState;
 /// poll cadence; the frame is ~1 KB so this is negligible on the wire.
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// `GET /api/sessions` — the live per-conversation snapshot as JSON.
+/// `GET /api/sessions` — the live agent snapshot as JSON.
 pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(state.observatory.snapshot().await)
 }
@@ -45,7 +45,7 @@ pub async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoRespon
 ///   stream as they happen. Replay and live are cut atomically by
 ///   [`Observatory::subscribe`](crate::foundation::observatory::Observatory::subscribe), so
 ///   no event is dropped or duplicated across the seam.
-/// - `snapshot` — the full per-conversation mirror, pushed every [`SNAPSHOT_INTERVAL`].
+/// - `snapshot` — the full live mirror, pushed every [`SNAPSHOT_INTERVAL`].
 ///   The first frame fires immediately, so a fresh subscriber has complete conversation
 ///   state at once without a separate poll.
 pub async fn get_sessions_events(

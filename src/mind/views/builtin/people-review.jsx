@@ -3,7 +3,7 @@
 // a cluster that's really several people. A calm Contacts-style grid; clicking a
 // card expands it in place (FLIP) into a review row — poster left, editable name +
 // per-modality clip strips right/below. Naming onto an existing name merges. Every
-// action posts to /api/people/*; the store is global, so no scene header is needed.
+// action posts to /api/people/*; the store is global.
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 
 export const captionAside = "top";

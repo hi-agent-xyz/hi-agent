@@ -192,7 +192,6 @@ function Episodes({ list }) {
           <div key={i} style={S.ep}>
             <span style={S.epAt}>{short(e.at)}</span>
             <span style={S.epGist}>{e.gist}</span>
-            {e.scene && <span style={S.epScene}>{e.scene}</span>}
           </div>
         ))}
       </div>
@@ -253,5 +252,4 @@ const S = {
     borderBottom: "1px solid var(--line)" },
   epAt: { fontSize: 11.5, color: "var(--fg-mute)", flex: "0 0 92px", fontWeight: 600 },
   epGist: { fontSize: 13, color: "var(--fg-dim)", flex: 1, minWidth: 0, lineHeight: 1.5 },
-  epScene: { fontSize: 11.5, color: "var(--fg-mute)", flex: "none" },
 };

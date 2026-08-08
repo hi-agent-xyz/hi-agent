@@ -15,8 +15,8 @@
 //! client-side — fragmented MP4 (hardware HEVC/H.264) where available, else WebM
 //! (software VP8/VP9) — and rides through as the source mime. Each chunk is
 //! republished on the `video_in` broadcast. Such a stream is only decodable from
-//! its first chunk (the initialization segment), so that chunk is cached per
-//! conversation ([`VideoSource`]) to let an observer join mid-stream.
+//! its first chunk (the initialization segment), so that chunk is cached to let
+//! an observer join mid-stream.
 //!
 //! Observe (`GET /api/in/vision`): the live video for the conversation, one camera
 //! session per chunked response — the visual twin of `GET /api/in/audio`. If a
@@ -463,11 +463,8 @@ async fn flush_video_minute(
 
 #[derive(Debug, Deserialize)]
 pub struct StreamParams {
-    /// The streaming conversation. Browsers can't set `X-HI-Conversation` on a WebSocket
-    /// handshake, so the conversation rides in the query string instead.
     /// The exact `MediaRecorder` mime (`video/webm;codecs=vp8`) — an observer
-    /// needs it verbatim to open a matching MediaSource buffer. Rides the query
-    /// string for the same handshake reason as `conversation`.
+    /// needs it verbatim to open a matching MediaSource buffer.
     mime: Option<String>,
 }
 

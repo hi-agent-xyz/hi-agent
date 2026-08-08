@@ -27,8 +27,7 @@ spawn per session — is tracked under "MCP attachment" below.
 Each session needs its tool surface. Rather than the stdio shim sketched
 originally, hi-agent attaches its own HTTP MCP endpoint (`/mcp`, served by the
 running axum app) through the ACP `mcp_servers` capability — `McpServer::Http`
-with conversation/role/worker-id carried as `X-HI-Conversation` / `X-HI-Role` /
-`X-HI-Worker-Id` headers, so one endpoint routes every session's calls. No
+with role/session identity carried as `X-HI-Role` / `X-HI-Session-Id` headers, so one endpoint routes every session's calls. No
 subprocess, no socket. The reaction's whole expression + side-effect contract
 rides these tools: `say` / `show` (output), `send_message` (the one verb).
 
@@ -53,7 +52,7 @@ journals the inbound, then sends to the reaction's mpsc, then the by channel
 task builds the snapshot. The snapshot read sees the just-written entry by
 construction.
 
-**Verify by:** sending a burst of POSTs to `/thought` for the same conversation
+**Verify by:** sending a burst of POSTs to `/api/in/text` from multiple windows
 under load, then inspecting `journal.jsonl` and the prompts emitted to the
 ACP session (trace logs show snapshot contents). Each subsequent prompt's
 `recent_journal` must contain every earlier signal in this batch.
@@ -70,7 +69,7 @@ by channel task observes the cancel via `SessionRun::next_update` returning a
 `Cancelled` variant, then re-prompts with the merged batch.
 
 **Verify by:** issuing two POSTs in rapid succession with
-`X-HI-Conversation: alice@phone` and observing the second prompt's snapshot
+without any window identifier and observing the second prompt's snapshot
 includes both signals.
 
 **Tests:** `tests/interruption.rs` is `#[ignore]`-d — exercising it would
@@ -113,27 +112,27 @@ issue is implementation-side, not docs-side.
 - [ ] `cargo check` passes
 - [ ] `cargo build --release` produces `./target/release/hi-agent`
 - [ ] `cargo test` passes (the `#[ignore]`-d tests stay ignored)
-- [ ] concurrent thoughts from three distinct conversation route with parallel
+- [ ] concurrent inputs from three attached windows route with parallel
       timing roughly equal to single-session timing (concurrency works —
       see "Concurrent ACP sessions" above)
 - [ ] `cd src/appearance/web && pnpm install && pnpm build` succeeds
 - [ ] `./target/release/hi-agent` starts; `curl http://127.0.0.1:12358/`
       returns the embedded SPA HTML (200, `text/html`)
-- [ ] `curl -X POST -H 'X-HI-Conversation: alice@phone' --data-binary 'hi'
-      http://127.0.0.1:12358/thought` returns 202 and writes a `SignalIn`
+- [ ] `curl -X POST --data-binary 'hi'
+      http://127.0.0.1:12358/api/in/text` returns 202 and writes a `SignalIn`
       line to `data/journal.jsonl`
-- [ ] A `GET /thought` long-poll opened beforehand receives the router's
-      reply on the same conversation
+- [ ] A `GET /api/out/text` long-poll opened beforehand receives the
+      reaction's reply
 - [ ] `set_intent` (via a router decision, e.g. "remind me in 2 minutes")
       followed by waiting two minutes fires the intent — observable as an
       `IntentFired` line in `journal.jsonl` and an outbound signal on the
       long-poll
 - [ ] `POST /vision` returns 501 with a body explaining "not implemented in v0"
-- [ ] `GET /thought` without `X-HI-Conversation` returns 400
+- [ ] Multiple `GET /api/out/text` long-polls all receive the same reply
 
 ## Items not in this register
 
 Items deferred per impl.md § Scope (no risk to flag, they were never in
-v0): cron / relative intents, forgetting curve / journal compaction, multi-conversation
-shared workspaces, authorization validation, handle discovery, federation,
+v0): cron / relative intents, forgetting curve / journal compaction,
+authorization validation, handle discovery, federation,
 end-to-end encryption beyond TLS, OS sleep/wake bridge for battery devices.

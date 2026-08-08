@@ -29,8 +29,7 @@
 //! Writes go through [`facets::update_facet`], which renames a temp sibling into place,
 //! so a reader never sees a torn file. Both path segments are checked for traversal and
 //! then [`facets::slug`]ged, so a request can only ever name a path inside
-//! `<data_dir>/memory/facets/`. The store is global, so like
-//! `/api/people` these take no `X-HI-Conversation`.
+//! `<data_dir>/memory/facets/`. The store is global.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -353,7 +352,7 @@ mod tests {
     /// Write an episode bundle the way `record_episode` does — same dir shape, same
     /// JSON-scalar frontmatter — so the parser is tested against the real on-disk form
     /// without standing up a journal.
-    async fn write_episode(data_dir: &Path, name: &str, conversation: &str, to_ts: &str, gist: &str) {
+    async fn write_episode(data_dir: &Path, name: &str, to_ts: &str, gist: &str) {
         let dir = layout::episodes_dir(data_dir).join(name);
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let body = format!(
@@ -446,9 +445,9 @@ mod tests {
         let d0 = "2026-08-01T09:00:00+00:00";
         let d1 = "2026-08-02T10:00:00+00:00";
         let d2 = "2026-08-04T11:00:00+00:00";
-        write_episode(d.path(), "2026-08-01-first", "boss", d0, "first").await;
-        write_episode(d.path(), "2026-08-04-third", "boss", d2, "third").await;
-        write_episode(d.path(), "2026-08-02-second", "alice@phone", d1, "second").await;
+        write_episode(d.path(), "2026-08-01-first", d0, "first").await;
+        write_episode(d.path(), "2026-08-04-third", d2, "third").await;
+        write_episode(d.path(), "2026-08-02-second", d1, "second").await;
 
         let eps = recent_episodes(d.path(), 50).await.unwrap();
         assert_eq!(
