@@ -286,12 +286,20 @@ Facts go to memory, procedures go here.
 ## `views/`
 
 The toolbox of built surfaces, named by *what they are* rather than by the task that made
-them — the name is what makes reuse possible.
+them, and each opening with a one-line `// purpose:` saying what it is for. The name and
+that line are what make reuse possible.
 
-**Nothing graduates out of the toolbox.** A view used recently leaves a trace in the
-[memory](#memoryprompts) because it mattered there — the same way anything else that
-mattered does, written by the same judgment. Everything else is read on demand: list the
-toolbox, against the guidelines for building views. Slow, and it always works.
+**Nothing graduates out of the toolbox, and nothing indexes it.** A view used recently
+leaves a trace in the [memory](#memoryprompts) because it mattered there — the same way
+anything else that mattered does, written by the same judgment. Everything else is read on
+demand: one scan of the toolbox's purpose lines, against the guidelines for building views.
+Slow, and it always works.
+
+Those lines live **in the files, never in an index beside them**. An index is bookkeeping,
+and bookkeeping kept by judgment drifts silently — a missed entry reads as "never built"
+while the file sits right there, so the toolbox would get less trustworthy the more it
+accumulated. Derived from the tree instead, a missing line degrades to a bare filename,
+which is merely where this started. It never becomes a confident wrong answer.
 
 ## Forgetting
 

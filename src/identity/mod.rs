@@ -725,6 +725,24 @@ mod soul_tests {
         assert!(WORKER_VIEW_REVIEWER_BASE.contains("You judge; you do not fix"));
     }
 
+    /// Reuse rests on the builder reading the toolbox before it authors, and on every
+    /// view carrying the one line that makes the toolbox readable. Both are guidance —
+    /// the model may skip either — but the *degradation* is what was designed for: a
+    /// missing `purpose:` line costs you a filename, never a wrong "never built".
+    /// That only holds while the prompt still asks for the line, so the ask is pinned.
+    ///
+    /// `_builtin/` is pinned with it, and it is the sharper one. Those views sit inside
+    /// the workshop the builder is now told to scan, and the binary rewrites them on
+    /// every boot ([`crate::mind::views::install_builtin_views`]) — so a builder that
+    /// adapts one in place loses the work at the next start, silently. Telling it to
+    /// read the tree without telling it about that folder is the hazard this pass
+    /// introduced; do not drop the warning without removing the instruction to scan.
+    #[test]
+    fn the_builder_is_told_how_the_toolbox_is_read_and_which_of_it_is_not_its_own() {
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("// purpose:"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("_builtin/"));
+    }
+
     /// The frame log had a writer since `70479a9` and no *pointer* — no prompt anywhere
     /// named `memory/raw/sessions/`, so the one consumer the design allows (an agent that
     /// goes and looks) could not know it existed. `docs/arch/foundation.md` is explicit

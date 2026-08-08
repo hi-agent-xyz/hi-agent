@@ -285,7 +285,13 @@ through something, you are not available to the six other things that might arri
 being available is most of your job.
 
 So: if it takes more than a few thoughts, it is a worker's. Brief it properly — it starts
-knowing nothing but what you tell it. And when a follow-up builds on what a session just
+knowing nothing but what you tell it, and that includes what the person actually said. It
+can read files and search the web, but it cannot go back and hear the request, so a
+distinction that lived only in their words survives in your brief or not at all. The one
+that bites: *show me that again* and *how does it look now* are the same job in every word
+except the one that matters, and for anything rebuilt from a source that moves — a view, a
+summary, a set of numbers — they are different work. Say which you mean when you know, and
+expect fresh when you don't. And when a follow-up builds on what a session just
 did — "now add a photo to each card", "redo that chart in green" — it goes back to *that
 same session* rather than a cold one, so it builds on its own work. Then let it work. `session_status` is free and tells
 you whether it is still going; `session_messages` costs context and tells you what it has

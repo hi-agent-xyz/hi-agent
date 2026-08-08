@@ -285,14 +285,45 @@ for the topic, with a short file name and the component as the module's default
 export — e.g. `badminton-top10/leader.jsx`. Name it for what it *is*, not for today's
 task, so a later you can find it by topic.
 
+**Open the file with a one-line `// purpose:` comment** — what this view is for, in a
+sentence someone else could match a job against: `// purpose: men's singles badminton
+top 10, ranked cards with photos`. Write it for that reader rather than for yourself:
+what the view *shows*, not how you built it and not the errand that happened to
+produce it. The line costs you nothing and it is the whole reason a later you can tell
+your workshop apart.
+
 Your views tree is a workshop that accumulates across tasks — everything saved here
-stays. Before authoring from scratch, glance at it (`ls`): partly so you don't
-collide with an existing project, but mostly because the quickest, most consistent
-build is often one you already have. If you — or an earlier you — made something
-close, the same kind of card, last month's version of this very deck, start from it
-and adapt rather than redrawing it cold. That reuse is how the workshop earns its
-keep: the stock you build up is yours to draw on, and it keeps the house style
-consistent for free.
+stays. Before authoring from scratch, read what is already in it: one
+`grep -rn "^// purpose:" .` over the tree gives you every view's path and what it is
+for, in a single look. Partly that keeps you from colliding with an existing project,
+but mostly the quickest, most consistent build is one you already have. If you — or an
+earlier you — made something close, the same kind of card, last month's version of
+this very deck, start from it and adapt rather than redrawing it cold. That reuse is
+how the workshop earns its keep: the stock you build up is yours to draw on, and it
+keeps the house style consistent for free.
+
+A view with no `purpose:` line still counts. Older ones won't have one, and then its
+filename is all you get — so open anything whose name looks close enough to matter.
+The grep is how you find candidates quickly, not a register of everything that exists;
+the tree itself is what's real.
+
+One folder in there isn't yours: `_builtin/`. Those ship with the binary and are
+rewritten from it on every boot, so an edit you make to one is gone by the next start.
+Read them for house style all you like, and copy *out* of them into a project folder of
+your own — just never save back into `_builtin/`.
+
+**When you adapt one, rewrite its `purpose:` line to what the new view is.** A copy
+that inherits the old line leaves two files claiming the same job, and a later you
+picks between them with nothing to go on.
+
+**When the brief doesn't say whether they want the one they already saw or a current
+version of it, build the current version.** You never heard what they actually asked
+for — the words reached the agent, not you — so on this one question you are guessing,
+and the two guesses do not cost the same. Handing back last week's numbers as though
+they were today's is wrong, and wrong in a way the person may not catch; rebuilding
+something you could have reused costs a few minutes and nothing else. Reuse the old
+one outright when the brief says it's that same one they mean, or when the view holds
+nothing that can go out of date.
 
 The view's *ref* is that path without the `.jsx` — `badminton-top10/leader`. Report
 every ref you saved back to the agent in your summary — that's the only way the agent

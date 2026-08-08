@@ -67,7 +67,7 @@ What "done" looks like, and how the user knows it worked.
 - [17 · 播放音乐(开 app → 搜放 → 投屏 → 记住偏好)](17-play-music.md) — 随口点歌:有 app 就用、没有先请示装;搜到真放出来;播放界面投成 view,可收起转后台(收画面≠停播);第二次记住用哪个 app、怎么搜放、投屏与否,更省事。
 - [18 · 我要传你点东西,怎么弄(摆出上传入口:拖拽区 + 二维码)](18-send-files-to-agent.md) — 最基础常用的一步:把东西递给它。优先**直接摆两个 view**(拖拽区 + 手机扫码上传页)而非口述选项;入口绑 conversation。文件 = 递来的物件按引用,不走 vision 感官。行为靠 show 已有,carrier(上传端点 + 手机页 + 二维码)未建。
 - [19 · 直接传一张护照照片(收下 → 看懂 → 存进 drive → 妥帖回话)](19-upload-passport.md) — 把文件当**物件**收下:原件逐字进 drive、认识带出处进脑子(不是当"看到一幅画"配字幕);看懂是什么/属于谁,妥帖回话,敏感件确认意图、默认私密;日后"我要护照"找得回。carrier/drive/解析未建。
-- [20 · 重复用到的 view 越用越快(完全相同必复用 / 同形换数据软引导)](20-reuse-built-views.md) — 像人用工具箱:完全相同→直接 `show(ref)` 必复用(近零成本、画面一致);同形换数据→builder 看工具箱按重复/新增比例软引导(改旧件 / 以旧为起点 / 从头)。复用分三层:in-session 上下文里、跨 session 靠 reflection 沉成 `facets/views/`→`hot.md`、builder `ls` 兜底;hot.md 策展与参数化 view 待建。
+- [20 · 重复用到的 view 越用越快(手上还有就直接 show / 其余翻工具箱)](20-reuse-built-views.md) — 像人用工具箱:ref 还在手上→直接 `show(ref)`;其余一律 delegate,由 builder `grep "^// purpose:"` 翻全树,翻到就改旧件、翻不到才从头。每个 view 第一行自带用途,所以"索引"永远从树上扫出来、不另立第二真相源;意图没随 brief 传到时**默认重做**(给旧快照是错,重做只是慢)。跨 session 常驻索引 **2026-08-08 明确不做**;参数化 view 待建。
 - [21 · 把一坨数据交给它(Apple Health 导出 / Claude Code 会话)](21-hand-over-bulk-data.md) — 大宗/结构化数据不是 ETL"导入":先落 raw(落即 precious、不丢),值得留的逐字进 drive、能理解的化进 facets。两扇门:明确"存好"→ live 当场委托 worker;"发现值得留"→ reflection 像 view 那样毕业。工作记录贴近 episodes/facets;量化时序留 drive + 交独立 apple-health skill,不硬塞记忆。坑:大字节别穿 raw 再复制进 drive(两棵都 synced)。drive/毕业/增量合并待建。
 
 > **像人一样攒能力的三条反射(22–24)**:不是塞一个大知识库,而是按 decay-rate 配上**获取反射** + 元心态。研究反射(开工前别拿陈货)→ 批判反射(收工前别交 dumb)→ 技能沉淀(把贵经历存成起点,且会重新核当下)。研究/批判主体是 soft-guidance;技能沉淀要一个 `skills/` 工坊 + reflection 多策展一类。
