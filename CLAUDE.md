@@ -50,7 +50,7 @@ The app targets two install shapes:
 1. **Docker on a server** — `make docker` builds the image; users run it server-side.
 2. **Bundled desktop app** (e.g. macOS) — a packaged native install for the desktop. _Desktop bundling is not wired up in-repo yet (no Tauri/Electron)._
 
-The managed runtime (Node + ACP adapter + claude + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. On a dev box with `node` + `claude-agent-acp` + `claude` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)).
+The managed runtime (Node + codex + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. On a dev box with `node` + `codex` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)). Node is only esbuild's host: the agent is `codex app-server`, a native binary hi-agent talks JSON-RPC to over stdio.
 
 ## macOS entry shape (tray vs. headless)
 
@@ -66,7 +66,7 @@ This is not a new mode: the headless engine is *exactly the shape the app alread
 
 ### The three parts, by what each *is*
 
-1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, the reflex recognizer, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `name_person`/`merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the node/claude ACP runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
+1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, the reflex recognizer, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `name_person`/`merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the codex runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
 2. **Web face (webview in the shell).** The main content-heavy, fast-moving UI. Talks to the engine over the local API. Write-once cross-platform. (Precedent: the popover face is a `WKWebView`; native and web chat were both tried and rejected in its favor.)
 3. **Native shell (per platform).** Owns the process and everything needing the OS session, in two roles:
    - **App-shell primitives** — run loop, tray, global hotkey tap, native windows, popover. Move to the shell.
@@ -93,7 +93,7 @@ The engine's outbound API grows from config CRUD into a **bidirectional perceive
 
 - **Engine = POSIX-only, no TCC.** Runs as the same UID as the shell, so it inherits plain file access (its data dir, user-chosen paths) for free. It requires *nothing* TCC-gated — the split is load-bearing, TCC inheritance is not.
 - **Shell holds all TCC grants** (Screen Recording, Accessibility, Camera, Microphone, protected folders) and brokers them over the API.
-- **Bundle + co-sign the engine inside the `.app`** (same pattern already used for node/claude/ffmpeg; mandatory for Developer-ID notarization anyway). Spawn it by **bundle-relative path** (not the OS-cache auto-install path the runtime uses) so it launches under the app's responsible-process — free TCC inheritance *if ever needed*, as a safety margin, not a dependency.
+- **Bundle + co-sign the engine inside the `.app`** (same pattern already used for node/codex/ffmpeg; mandatory for Developer-ID notarization anyway). Spawn it by **bundle-relative path** (not the OS-cache auto-install path the runtime uses) so it launches under the app's responsible-process — free TCC inheritance *if ever needed*, as a safety margin, not a dependency.
 - **Mic capture → shell** (resolves the one open item): keeps the engine 100% TCC-free rather than dragging a Microphone grant into it. `cpal`-in-engine was the only capability that could have stayed; the permission story tips it to the shell.
 
 ### Sequencing — two phases, don't flip ownership first
@@ -120,7 +120,7 @@ Talk to it over the text channel — Claude plays the boss; the human is only pu
 Method — the parts that keep the test honest:
 
 - **Don't lead the witness.** Speak like a terse, normal boss; never script journey-expected behaviors into the prompt. Test recovery by *creating the situation* (kill its processes, restart the host, plant a failure) and watching — not by mentioning it.
-- **Trust but verify every claim.** Ground truth lives outside the conversation: `server.log`, `GET /api/sessions`, the session transcripts (`data/claude-config/projects/*/<session>.jsonl` — `tool_use` entries show what it actually ran), and its workspace artifacts/ledgers.
+- **Trust but verify every claim.** Ground truth lives outside the conversation: `server.log`, `GET /api/sessions`, the raw wire frames (`GET /api/wire/frames/events`, kept per session under `data/memory/raw/`— every JSON-RPC line in both directions, so a tool call shows what it actually ran), and its workspace artifacts/ledgers.
 - **Keep the harness out of the experiment.** A watcher whose own command line contains the probe string becomes a decoy (`pgrep -f "[f]oo"` avoids self-match); a long-poll `--max-time` that aborts mid-utterance triggers at-least-once redelivery on the next poll.
 - To speed pulses up for a test session, set the `pulse` tunable in the config store (`sqlite3 data/config.db "INSERT INTO app_settings(key,value) VALUES('pulse','120') ON CONFLICT(key) DO UPDATE SET value='120'"`) or the Agent section of Settings; reset it afterwards (default 30m).
 - Findings go back into the journey doc (实测缺口 / 复测 sections). When behavior and journey disagree, that's a bug in one or the other — resolve explicitly.

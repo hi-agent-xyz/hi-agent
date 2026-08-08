@@ -89,8 +89,8 @@ few megabytes duplicated; the alternative is a promise quietly broken.
 
 ## Carriers
 
-The agent reaches these channels over ACP, which has no concept of a channel. One rule
-covers every direction:
+The agent reaches these channels over the agent wire, which has no concept of a channel.
+One rule covers every direction:
 
 > **Everything outbound is a tool call.** Looking, acting, showing — and speaking.
 

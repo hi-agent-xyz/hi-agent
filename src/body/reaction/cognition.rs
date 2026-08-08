@@ -59,7 +59,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
-use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
+use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, SessionKind};
 use crate::foundation::registry::{self, Registration};
@@ -144,7 +144,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     //
     // Startup opens and primes this eagerly once `/mcp` is live. `None` remains the
     // cold-open fallback when warming failed or a later turn discarded the session.
-    let mut session: Option<Arc<AcpSession>> = None;
+    let mut session: Option<Arc<AgentSession>> = None;
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
@@ -462,7 +462,7 @@ mod tests {
 async fn warm_session(
     reaction: &Reaction,
     id: registry::SessionId,
-    held: &mut Option<Arc<AcpSession>>,
+    held: &mut Option<Arc<AgentSession>>,
 ) {
     if held.is_some() {
         return;
@@ -484,40 +484,18 @@ async fn warm_session(
         }
     };
 
-    let warmed = match session.warm().await {
-        Ok(Some(run)) => run.wait().await.map(|_| ()),
-        Ok(None) => Ok(()),
-        Err(err) => Err(err),
-    };
-    match warmed {
-        Ok(()) => {
-            tracing::info!(cognition = id, "cognition session warmed");
-            *held = Some(session);
-        }
-        Err(err) => {
-            tracing::warn!(
-                cognition = id,
-                error = %err,
-                "cognition warm-up failed; first turn will cold-start"
-            );
-            reaction
-                .inner
-                .observatory
-                .record(
-                    EventKind::SessionClosed {
-                        kind: SessionKind::Cognition,
-                        id: session.id().0.to_string(),
-                    },
-                )
-                .await;
-        }
-    }
+    // Opening the thread *is* the warm-up: `baseInstructions` carries the prompt on
+    // `thread/start`, so by the time we hold this session the soul is already in place.
+    // The ACP path had to spend a whole turn pre-sending it, because there was nowhere
+    // else to put a system prompt.
+    tracing::info!(cognition = id, "cognition session warmed");
+    *held = Some(session);
 }
 
 async fn open_session(
     reaction: &Reaction,
     id: registry::SessionId,
-) -> anyhow::Result<Arc<AcpSession>> {
+) -> anyhow::Result<Arc<AgentSession>> {
     let data_dir = reaction.inner.memory.data_dir();
     let system_prompt = crate::identity::cognition_prompt(data_dir).await;
     let opened = Arc::new(
@@ -534,7 +512,7 @@ async fn open_session(
                     cwd: Some(data_dir.to_path_buf()),
                     // Left at the adapter's defaults so Cognition can read and write its
                     // ledger. Delegation remains prompt guidance rather than a tool rail.
-                    builtin_tools: None,
+                    ..Default::default()
                 },
             )
             .await?,
@@ -546,7 +524,7 @@ async fn open_session(
         .record(
             EventKind::SessionOpened {
                 kind: SessionKind::Cognition,
-                id: opened.id().0.to_string(),
+                id: opened.id().to_string(),
             },
         )
         .await;
@@ -566,7 +544,7 @@ async fn turn(
     reaction: &Reaction,
     id: registry::SessionId,
     pending: &[String],
-    held: &mut Option<Arc<AcpSession>>,
+    held: &mut Option<Arc<AgentSession>>,
 ) -> anyhow::Result<()> {
     // Reuse the held session; open one only when there isn't one — first turn after
     // start, or after a failure/wedge dropped it.

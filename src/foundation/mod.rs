@@ -2,7 +2,7 @@
 //! beneath the faculties (`identity`/`mind`/`body`); nothing here imports a
 //! faculty, faculties are built on it.
 //!
-//! - LLM/agent gateway: `acp` (JSON-RPC wire + sessions), `agent` (one subprocess
+//! - LLM/agent gateway: `codex` (JSON-RPC wire + threads), `agent` (one subprocess
 //!   per session), `mcp` (tool transport).
 //! - Transport + serving: `server` (HTTP front, channels, carriers).
 //! - Vendor adapters: `vendors` (macOS, doubao, volcengine, ffmpeg, onnx fronts).
@@ -18,7 +18,7 @@
 //! - `types` — shared cross-faculty vocabulary (Channel/Conversation/Signal/…); domain
 //!   data crossing every boundary, not engine machinery.
 
-pub mod acp;
+pub mod codex;
 pub mod agent;
 pub mod auth;
 pub mod broker;

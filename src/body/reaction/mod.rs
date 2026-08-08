@@ -69,7 +69,7 @@ use chrono::Utc;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until, timeout};
 
-use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
+use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::{AgentLayer, SessionRole};
 use crate::foundation::config;
 use crate::foundation::registry;
@@ -1194,7 +1194,7 @@ async fn reaction_loop(
     // turn fails: the `Err` arm below discards the possibly-wedged session and the next
     // turn cold-opens. Size is not a reason to replace it — the underlying agent
     // compacts its own context (see [`heartbeat`]).
-    let mut reaction_session: Option<Arc<AcpSession>> = None;
+    let mut reaction_session: Option<Arc<AgentSession>> = None;
     // What the live session has accumulated, for the observatory readout only. Reset
     // when the session is replaced, so the number always describes the session on air.
     let mut session_chars: usize = 0;
@@ -1561,7 +1561,7 @@ async fn run_reaction_turn(
     reaction: &Reaction,
     batch: &[LoopInput],
     workers: &mut workers::WorkerRegistry,
-    reaction_session: &mut Option<Arc<AcpSession>>,
+    reaction_session: &mut Option<Arc<AgentSession>>,
     voice_id: registry::SessionId,
     beats: &mpsc::Sender<sequencer::Beat>,
 ) -> anyhow::Result<usize> {
@@ -1806,7 +1806,7 @@ mod turn_context_tests {
 async fn warm_sessions(
     reaction: &Reaction,
     voice_id: registry::SessionId,
-    reaction_session: &mut Option<Arc<AcpSession>>,
+    reaction_session: &mut Option<Arc<AgentSession>>,
     workers: &mut workers::WorkerRegistry,
 ) -> bool {
     let blocked_before = crate::foundation::energy_state::is_out();
@@ -1840,7 +1840,7 @@ async fn warm_sessions(
 async fn warm_reaction_session(
     reaction: &Reaction,
     voice_id: registry::SessionId,
-    held: &mut Option<Arc<AcpSession>>,
+    held: &mut Option<Arc<AgentSession>>,
 ) {
     if held.is_some() {
         return;
@@ -1861,29 +1861,16 @@ async fn warm_reaction_session(
         }
     };
 
-    let warmed = match session.warm().await {
-        Ok(Some(run)) => run.wait().await.map(|_| ()),
-        Ok(None) => Ok(()),
-        Err(err) => Err(err),
-    };
-    match warmed {
-        Ok(()) => {
-            tracing::info!("reaction session warmed");
-            *held = Some(session);
-        }
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "reaction warm-up failed; first turn will cold-start"
-            );
-            record_reaction_session_closed(reaction, &session).await;
-        }
-    }
+    // Opening the thread *is* the warm-up: `speaking.md` rides `baseInstructions` on
+    // `thread/start`, so the voice is ready as soon as the session exists. Under ACP
+    // this cost a turn, because a system prompt had nowhere to go but the first message.
+    tracing::info!("reaction session warmed");
+    *held = Some(session);
 }
 
 async fn record_reaction_session_closed(
     reaction: &Reaction,
-    session: &AcpSession,
+    session: &AgentSession,
 ) {
     reaction
         .inner
@@ -1891,7 +1878,7 @@ async fn record_reaction_session_closed(
         .record(
             EventKind::SessionClosed {
                 kind: SessionKind::Reaction,
-                id: session.id().0.to_string(),
+                id: session.id().to_string(),
             },
         )
         .await;
@@ -1910,7 +1897,7 @@ async fn record_reaction_session_closed(
 async fn open_reaction_session(
     reaction: &Reaction,
     voice_id: registry::SessionId,
-) -> anyhow::Result<Arc<AcpSession>> {
+) -> anyhow::Result<Arc<AgentSession>> {
     let session = Arc::new(
         reaction
             .inner
@@ -1929,7 +1916,7 @@ async fn open_reaction_session(
                     // `say` and `show`, and nothing else — enforced, not requested.
                     // The rung is fast because it *cannot* wait on anything, and that
                     // argument is worth nothing if it can quietly open a file.
-                    builtin_tools: Some(Vec::new()),
+                    ..Default::default()
                 },
             )
             .await?,
@@ -1940,7 +1927,7 @@ async fn open_reaction_session(
         .record(
             EventKind::SessionOpened {
                 kind: SessionKind::Reaction,
-                id: session.id().0.to_string(),
+                id: session.id().to_string(),
             },
         )
         .await;
@@ -1953,7 +1940,7 @@ async fn open_reaction_session(
 /// loop just keeps streaming speech past them, exactly like a worker's loop; `wait()`
 /// then parks the session and surfaces any real prompt error (a gateway 402/429, a
 /// transport reset) to the caller's classifier.
-async fn drive_voice(session: &AcpSession, context: String) -> anyhow::Result<String> {
+async fn drive_voice(session: &AgentSession, context: String) -> anyhow::Result<String> {
     let mut run = session.prompt(context).await?;
     let mut text = String::new();
     while let Some(update) = run.next_update().await {

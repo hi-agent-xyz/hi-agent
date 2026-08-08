@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { selectedUnder, usePath } from "./router";
-import { subscribeAcpFrames, type AcpDir, type RawFrame } from "./api";
+import { subscribeWireFrames, type WireDir, type RawFrame } from "./api";
 
 const BASE = "/inspect/sessions";
 const MAX_FRAMES = 5000;
@@ -17,7 +17,7 @@ function time(iso: string): string {
 // Direction from the *session's* point of view (this is the sessions page): a
 // frame hi-agent sends is `in`coming to the session; one the subprocess emits is
 // `out`going from it; `err` is what it wrote to stderr.
-function dirLabel(dir: AcpDir): string {
+function dirLabel(dir: WireDir): string {
   return dir === "send" ? "in" : dir === "recv" ? "out" : "err";
 }
 
@@ -29,58 +29,58 @@ function preview(raw: string): string {
 }
 
 // A readable view for the Frame column. Some payloads carry content worth
-// reading at a glance: `usage_update` becomes `usage_update 45140 / 200000, 23%`,
-// and a `session/prompt` renders each prompt part as a stacked text block.
-// Everything else falls back to a one-line `preview`.
+// reading at a glance: streamed message and reasoning deltas become their text, a
+// completed item names what it was, and `turn/start` renders each input part as a
+// stacked text block. Everything else falls back to a one-line `preview`.
 function frameSummary(raw: string): ReactNode {
   try {
     const msg = JSON.parse(raw);
-    const update = msg?.params?.update;
-    if (update?.sessionUpdate === "usage_update") {
-      const { used, size } = update;
-      if (typeof used === "number" && typeof size === "number") {
-        const pct = size > 0 ? Math.round((used / size) * 100) : 0;
-        return `usage_update: ${used} / ${size}, ${pct}%`;
+    const params = msg?.params;
+
+    if (msg?.method === "item/agentMessage/delta" && typeof params?.delta === "string") {
+      return `agentMessage: "${params.delta}"`;
+    }
+    if (msg?.method === "item/reasoning/summaryTextDelta" && typeof params?.delta === "string") {
+      return `reasoning: "${params.delta}"`;
+    }
+    if (msg?.method === "item/started" || msg?.method === "item/completed") {
+      const item = params?.item;
+      if (item?.type === "mcpToolCall") {
+        return `${item.type}: ${item.server}/${item.tool}, ${item.status}`;
+      }
+      if (item?.type === "commandExecution") {
+        return `${item.type}: ${item.command}, ${item.status}`;
+      }
+      if (item?.type) return `${item.type}${item.status ? `: ${item.status}` : ""}`;
+    }
+    if (msg?.method === "turn/completed") {
+      const turn = params?.turn;
+      const err = turn?.error?.message;
+      return `turn ${turn?.status}${err ? `: ${err}` : ""}`;
+    }
+    if (msg?.method === "thread/tokenUsage/updated") {
+      const u = params?.usage ?? params;
+      if (typeof u?.inputTokens === "number" && typeof u?.outputTokens === "number") {
+        return `tokenUsage: ${u.inputTokens} in / ${u.outputTokens} out`;
       }
     }
-    if (update?.sessionUpdate === "agent_thought_chunk") {
-      const text = update.content?.text;
-      if (typeof text === "string") return `agent_thought_chunk: "${text}"`;
-    }
-    if (update?.sessionUpdate === "agent_message_chunk") {
-      const text = update.content?.text;
-      if (typeof text === "string") return `agent_message_chunk: "${text}"`;
-    }
-    if (update?.sessionUpdate === "available_commands_update") {
-      return "available_commands_update";
-    }
-    if (update?.sessionUpdate === "tool_call") {
-      const name = update._meta?.claudeCode?.toolName ?? update.title ?? update.kind;
-      return `tool_call: ${name}, ${update.status}`;
-    }
-    if (update?.sessionUpdate === "tool_call_update") {
-      const name = update._meta?.claudeCode?.toolName ?? update.title ?? update.kind;
-      const input = update.rawInput;
-      const detail = typeof input?.text === "string" ? `"${input.text}"` : JSON.stringify(input ?? {});
-      return `tool_call_update: ${name}, ${detail}`;
-    }
-    if (Array.isArray(msg?.result?.configOptions)) {
-      const names = msg.result.configOptions.map((o: { name?: string }) => o?.name).filter(Boolean);
-      return `configOptions: ${names.join(", ")}`;
-    }
-    if (msg?.method === "session/request_permission") {
-      const title = msg.params?.toolCall?.title;
-      if (typeof title === "string") return title;
-    }
-    if (msg?.method === "session/prompt" && Array.isArray(msg?.params?.prompt)) {
-      const parts = msg.params.prompt;
+    if (msg?.method === "turn/start" && Array.isArray(params?.input)) {
       return (
         <div className="frprompt">
-          {parts.map((p: { text?: string }, i: number) => (
+          {params.input.map((p: { text?: string }, i: number) => (
             <div key={i} className="frprompt-block">
               {typeof p?.text === "string" ? p.text : JSON.stringify(p)}
             </div>
           ))}
+        </div>
+      );
+    }
+    // The system prompt now arrives as `baseInstructions` on thread/start, where ACP
+    // had to smuggle it into the first prompt — worth showing in full, same as one.
+    if (msg?.method === "thread/start" && typeof params?.baseInstructions === "string") {
+      return (
+        <div className="frprompt">
+          <div className="frprompt-block">{params.baseInstructions}</div>
         </div>
       );
     }
@@ -112,12 +112,12 @@ function frameLabel(f: RawFrame): string {
 
 // One group of frames the inspector renders as a "session": all the frames of a
 // single subprocess connection. One subprocess hosts one session, so a group's
-// `initialize`/`session/new` frames (which precede, and so lack, a sessionId)
+// `initialize`/`thread/start` frames (which precede, and so lack, a threadId)
 // belong to the same session as the rest — there is no separate handshake bucket.
 interface Group {
   key: string; // URL key + dedup key
   conn: number;
-  sessionId: string | null; // adopted from the session/new response; null until then
+  sessionId: string | null; // adopted from the thread/start response; null until then
   frames: RawFrame[];
 }
 
@@ -130,10 +130,10 @@ function group(frames: RawFrame[]): Group[] {
   for (const f of frames) {
     let g = map.get(f.conn);
     if (!g) {
-      g = { key: `c::${f.conn}`, conn: f.conn, sessionId: f.session_id, frames: [] };
+      g = { key: `c::${f.conn}`, conn: f.conn, sessionId: f.thread_id, frames: [] };
       map.set(f.conn, g);
     }
-    if (!g.sessionId && f.session_id) g.sessionId = f.session_id;
+    if (!g.sessionId && f.thread_id) g.sessionId = f.thread_id;
     g.frames.push(f);
   }
   return [...map.values()];
@@ -149,7 +149,7 @@ export function SessionsView() {
   // connect then live. The session list and each detail pane are derived from
   // this single stream; no polling, no per-session endpoint.
   useEffect(() => {
-    return subscribeAcpFrames(
+    return subscribeWireFrames(
       (f) =>
         setFrames((prev) => {
           const next = prev.length >= MAX_FRAMES ? prev.slice(prev.length - MAX_FRAMES + 1) : prev;

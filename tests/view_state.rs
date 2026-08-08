@@ -22,7 +22,7 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
         memory,
         dir.to_path_buf(),
         observatory,
-        hi_agent::foundation::acp::AcpTap::new(),
+        hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
         hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::presence::Presence::new(),

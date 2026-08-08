@@ -43,8 +43,7 @@ fn version_string() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
         " (node ", env!("HI_AGENT_NODE_VERSION"),
-        "; adapter ", env!("HI_AGENT_ADAPTER_VERSION"),
-        "; claude ", env!("HI_AGENT_CLAUDE_VERSION"),
+        "; codex ", env!("HI_AGENT_CODEX_VERSION"),
         "; chrome ", env!("HI_AGENT_CHROME_VERSION"), ")"
     )
 }

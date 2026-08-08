@@ -1,19 +1,20 @@
-//! Raw ACP wire tap — a business-logic-agnostic mirror of the JSON-RPC frames
-//! flowing between hi-agent and every session's ACP subprocess.
+//! Raw wire tap — a business-logic-agnostic mirror of the JSON-RPC frames flowing
+//! between hi-agent and every session's `codex app-server` subprocess.
 //!
 //! The [`Observatory`](crate::foundation::observatory::Observatory) renders the *reaction's*
 //! view of a session (turns, context budget, hot-swaps). This is the
 //! opposite: the rawest possible window, knowing nothing about the reaction. It
-//! taps the one place every frame transits — the `with_debug` hook on the ACP
-//! connection (see [`crate::foundation::acp::process`]) — and records each line verbatim,
-//! tagged with a per-connection id (one subprocess hosts one session, so this
+//! taps the one place every frame transits — the reader and writer tasks of the
+//! connection (see [`crate::foundation::codex::process`]) — and records each line verbatim,
+//! tagged with a per-connection id (one subprocess hosts one thread, so this
 //! groups a session's frames together), the rung's role, the direction, and whatever
-//! `sessionId`/`method`/`id` can be parsed out of the JSON.
+//! `threadId`/`method`/`id` can be parsed out of the JSON.
 //!
 //! It mirrors the observatory's ring+broadcast shape so the SSE handler reads it
-//! the same way (replay-then-live), but its [`record`](AcpTap::record) is
-//! **synchronous** — the `with_debug` hook is a plain `Fn`, so the tap cannot
-//! await. A `std::sync::Mutex` guards a short, IO-free critical section.
+//! the same way (replay-then-live), but its [`record`](WireTap::record) is
+//! **synchronous**, so it can be called from the I/O tasks without an await point
+//! in the middle of a line. A `std::sync::Mutex` guards a short, IO-free critical
+//! section.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -56,7 +57,7 @@ pub struct RawFrame {
     pub conn: u64,
     /// hi-agent's own session id for that connection, when it has one.
     ///
-    /// Distinct from [`session_id`](Self::session_id), which is the *protocol's* id
+    /// Distinct from [`thread_id`](Self::thread_id), which is the *protocol's* id
     /// parsed off the line and absent during the handshake. This one is minted by the
     /// host before the subprocess starts, so it names every frame including the first —
     /// which is what makes a durable per-session file possible at all.
@@ -64,10 +65,10 @@ pub struct RawFrame {
     /// The rung this subprocess hosts (`reaction`, `deliberation`, `worker`, …).
     pub role: String,
     pub dir: Dir,
-    /// `sessionId` parsed from `params`/`result`, when present. The `initialize`
-    /// handshake and the `session/new` request carry `None` (the id doesn't exist
+    /// `threadId` parsed from `params`/`result`, when present. The `initialize`
+    /// handshake and the `thread/start` request carry `None` (the id doesn't exist
     /// yet); they still group with the session via `conn`.
-    pub session_id: Option<String>,
+    pub thread_id: Option<String>,
     /// The JSON-RPC `method`, for requests and notifications.
     pub method: Option<String>,
     /// The JSON-RPC `id`, for request/response correlation (number or string).
@@ -78,7 +79,7 @@ pub struct RawFrame {
 
 /// Cloneable handle over the shared raw-frame ring + live broadcast.
 #[derive(Clone)]
-pub struct AcpTap {
+pub struct WireTap {
     inner: Arc<Inner>,
 }
 
@@ -100,7 +101,7 @@ struct State {
     ring: VecDeque<RawFrame>,
 }
 
-impl AcpTap {
+impl WireTap {
     /// An inspector-only tap: the in-memory ring and the live broadcast, nothing on
     /// disk. For tests and for anything that has no data dir yet.
     pub fn new() -> Self {
@@ -115,12 +116,11 @@ impl AcpTap {
     }
 
     /// A tap that also **keeps** what it sees, under
-    /// [`acp_frames_path`](crate::mind::memory::layout::acp_frames_path).
+    /// [`session_frames_path`](crate::mind::memory::layout::session_frames_path).
     ///
     /// Spawns one writer task; [`record`](Self::record) hands frames to it and never
-    /// touches the filesystem itself, because it runs inside the ACP debug callback on
-    /// the subprocess's own I/O path — a blocking write there would stall the agent
-    /// mid-turn.
+    /// touches the filesystem itself, because it runs on the subprocess's own I/O path —
+    /// a blocking write there would stall the agent mid-turn.
     pub fn with_durable_log(data_dir: PathBuf) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAP);
         let (dtx, drx) = mpsc::unbounded_channel();
@@ -140,7 +140,7 @@ impl AcpTap {
     /// tap is a convenience, never load-bearing. `conn` identifies the emitting
     /// subprocess so the inspector can group one session's frames together.
     pub fn record(&self, conn: u64, agent_session: Option<u64>, role: &str, dir: Dir, line: &str) {
-        let (session_id, method, id) = parse_meta(line);
+        let (thread_id, method, id) = parse_meta(line);
         let mut state = match self.inner.state.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -153,7 +153,7 @@ impl AcpTap {
             agent_session,
             role: role.to_string(),
             dir,
-            session_id,
+            thread_id,
             method,
             id,
             raw: line.to_string(),
@@ -165,7 +165,7 @@ impl AcpTap {
             && frame.agent_session.is_some()
             && durable.send(frame.clone()).is_err()
         {
-            tracing::warn!(seq = frame.seq, "acp frame log writer is gone; frame not kept");
+            tracing::warn!(seq = frame.seq, "frame log writer is gone; frame not kept");
         }
         state.ring.push_back(frame.clone());
         while state.ring.len() > RING_CAP {
@@ -191,7 +191,7 @@ impl AcpTap {
     }
 }
 
-impl Default for AcpTap {
+impl Default for WireTap {
     fn default() -> Self {
         Self::new()
     }
@@ -204,17 +204,18 @@ fn parse_meta(line: &str) -> (Option<String>, Option<String>, Option<Value>) {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return (None, None, None);
     };
-    // ACP rides JSON-RPC, so the session id lives under `params` (requests and
-    // notifications) or `result` (the `session/new` response), camelCased.
-    let session_id = v
+    // The thread id rides `params` (requests and notifications), `result.thread.id`
+    // (the `thread/start` response), or `params.thread.id` (`thread/started`).
+    let thread_id = v
         .get("params")
-        .and_then(|p| p.get("sessionId"))
-        .or_else(|| v.get("result").and_then(|r| r.get("sessionId")))
+        .and_then(|p| p.get("threadId"))
+        .or_else(|| v.get("params").and_then(|p| p.get("thread")).and_then(|t| t.get("id")))
+        .or_else(|| v.get("result").and_then(|r| r.get("thread")).and_then(|t| t.get("id")))
         .and_then(|s| s.as_str())
         .map(str::to_string);
     let method = v.get("method").and_then(|m| m.as_str()).map(str::to_string);
     let id = v.get("id").cloned();
-    (session_id, method, id)
+    (thread_id, method, id)
 }
 
 #[cfg(test)]
@@ -224,14 +225,14 @@ mod tests {
     /// The whole point: what crossed the wire is still there afterwards, byte for byte.
     ///
     /// Asserts on a **tool-call payload**, because that is precisely what the old
-    /// modelling threw away — `raw_input`/`raw_output` were reduced to the string
+    /// modelling threw away — a call's arguments and result were reduced to the string
     /// `"tool_call"` — and it is what verification has to read.
     #[tokio::test]
     async fn frames_are_kept_verbatim_on_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
+        let tap = WireTap::with_durable_log(dir.path().to_path_buf());
 
-        let tool_call = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"Read","kind":"read","status":"completed","rawInput":{"path":"/etc/hosts"},"rawOutput":{"content":"127.0.0.1"}}}}"#;
+        let tool_call = r#"{"method":"item/completed","params":{"threadId":"s1","item":{"type":"mcpToolCall","id":"tc-1","server":"hi-agent","tool":"read","status":"completed","arguments":{"path":"/etc/hosts"},"result":{"content":"127.0.0.1"}}}}"#;
         tap.record(1, Some(42), "reaction", Dir::Recv, tool_call);
         tap.record(1, Some(42), "reaction", Dir::Stderr, "a warning from the subprocess");
         // A different session must not land in the same file.
@@ -258,12 +259,12 @@ mod tests {
         let first: Value = serde_json::from_str(lines[0]).expect("a json object per line");
         assert_eq!(first["role"], "reaction");
         assert_eq!(first["dir"], "recv");
-        assert_eq!(first["session_id"], "s1", "grouping metadata is parsed out beside the line");
+        assert_eq!(first["thread_id"], "s1", "grouping metadata is parsed out beside the line");
         // ...and the line itself is untouched, payload and all.
         assert_eq!(first["raw"].as_str().unwrap(), tool_call);
         let inner: Value = serde_json::from_str(first["raw"].as_str().unwrap()).unwrap();
-        assert_eq!(inner["params"]["update"]["rawInput"]["path"], "/etc/hosts");
-        assert_eq!(inner["params"]["update"]["rawOutput"]["content"], "127.0.0.1");
+        assert_eq!(inner["params"]["item"]["arguments"]["path"], "/etc/hosts");
+        assert_eq!(inner["params"]["item"]["result"]["content"], "127.0.0.1");
 
         let second: Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["dir"], "stderr");
@@ -280,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn a_frame_with_no_session_is_seen_but_not_filed() {
         let dir = tempfile::tempdir().unwrap();
-        let tap = AcpTap::with_durable_log(dir.path().to_path_buf());
+        let tap = WireTap::with_durable_log(dir.path().to_path_buf());
         tap.record(9, None, "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
@@ -293,38 +294,48 @@ mod tests {
     /// A tap with nowhere to write must not pretend, and must not panic.
     #[test]
     fn an_inspector_only_tap_keeps_nothing() {
-        let tap = AcpTap::new();
+        let tap = WireTap::new();
         tap.record(1, Some(1), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         let (backlog, _live) = tap.subscribe();
         assert_eq!(backlog.len(), 1, "still an inspector window");
     }
 
     #[test]
-    fn parses_session_id_from_params() {
-        let line = r#"{"jsonrpc":"2.0","method":"session/prompt","id":3,"params":{"sessionId":"sess-abc","prompt":[]}}"#;
-        let (sid, method, id) = parse_meta(line);
-        assert_eq!(sid.as_deref(), Some("sess-abc"));
-        assert_eq!(method.as_deref(), Some("session/prompt"));
+    fn parses_thread_id_from_params() {
+        let line = r#"{"id":3,"method":"turn/start","params":{"threadId":"thr-abc","input":[]}}"#;
+        let (tid, method, id) = parse_meta(line);
+        assert_eq!(tid.as_deref(), Some("thr-abc"));
+        assert_eq!(method.as_deref(), Some("turn/start"));
         assert_eq!(id, Some(serde_json::json!(3)));
     }
 
+    /// The id first exists in `thread/start`'s response, where it is nested under
+    /// `thread` rather than sitting flat like the request's `threadId`.
     #[test]
-    fn parses_session_id_from_new_session_result() {
-        let line = r#"{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess-xyz"}}"#;
-        let (sid, method, _) = parse_meta(line);
-        assert_eq!(sid.as_deref(), Some("sess-xyz"));
+    fn parses_thread_id_from_the_thread_start_result() {
+        let line = r#"{"id":1,"result":{"thread":{"id":"thr-xyz","ephemeral":true}}}"#;
+        let (tid, method, _) = parse_meta(line);
+        assert_eq!(tid.as_deref(), Some("thr-xyz"));
         assert_eq!(method, None, "responses carry no method");
     }
 
     #[test]
+    fn parses_thread_id_from_a_thread_started_notification() {
+        let line = r#"{"method":"thread/started","params":{"thread":{"id":"thr-n"}}}"#;
+        let (tid, method, _) = parse_meta(line);
+        assert_eq!(tid.as_deref(), Some("thr-n"));
+        assert_eq!(method.as_deref(), Some("thread/started"));
+    }
+
+    #[test]
     fn non_json_line_is_all_none_but_still_recordable() {
-        let (sid, method, id) = parse_meta("Unexpected case: whatever");
-        assert!(sid.is_none() && method.is_none() && id.is_none());
+        let (tid, method, id) = parse_meta("thread 'main' panicked at whatever");
+        assert!(tid.is_none() && method.is_none() && id.is_none());
     }
 
     #[tokio::test]
     async fn subscribe_replays_then_streams_live() {
-        let tap = AcpTap::new();
+        let tap = WireTap::new();
         tap.record(0, Some(7), "deliberation", Dir::Send, r#"{"method":"initialize","id":0}"#);
         let (replay, mut rx) = tap.subscribe();
         assert_eq!(replay.len(), 1);
@@ -371,7 +382,7 @@ async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFram
                     buf.push('\n');
                 }
                 Err(err) => {
-                    tracing::error!(error = %err, seq = frame.seq, "acp frame would not serialize");
+                    tracing::error!(error = %err, seq = frame.seq, "frame would not serialize");
                 }
             }
         }

@@ -42,7 +42,7 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::foundation::acp::{AcpSession, SessionOpts, SessionUpdate};
+use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
 use crate::identity::WorkerType;
@@ -228,16 +228,6 @@ impl WorkerRegistry {
             )
             .await?;
 
-        let warmed = match session.warm().await {
-            Ok(Some(run)) => run.wait().await.map(|_| ()),
-            Ok(None) => Ok(()),
-            Err(err) => Err(err),
-        };
-        if let Err(err) = warmed {
-            registry::global().unregister(id);
-            return Err(err);
-        }
-
         reaction
             .inner
             .observatory
@@ -366,7 +356,7 @@ impl WorkerRegistry {
         kind: WorkerType,
         is_deliberation: bool,
         owner: Option<SessionId>,
-    ) -> anyhow::Result<(Arc<AcpSession>, Arc<Notify>)> {
+    ) -> anyhow::Result<(Arc<AgentSession>, Arc<Notify>)> {
         // Deliberation gets one self-contained role prompt; ordinary workers get the
         // prompt for their requested specialism.
         let system_prompt = if is_deliberation {
@@ -399,7 +389,7 @@ impl WorkerRegistry {
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     cwd: Some(reaction.inner.views_dir.clone()),
-                    builtin_tools: None,
+                    ..Default::default()
                 },
             )
             .await;
@@ -661,7 +651,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 async fn drive_worker(
     id: SessionId,
     initial_task: Option<String>,
-    session: Arc<AcpSession>,
+    session: Arc<AgentSession>,
     transcript: Arc<Mutex<String>>,
     inbound: mpsc::Sender<LoopInput>,
     observatory: Observatory,
@@ -824,7 +814,7 @@ async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
 async fn run_worker(
     id: SessionId,
     task: &str,
-    session: &AcpSession,
+    session: &AgentSession,
     transcript: &Arc<Mutex<String>>,
 ) -> anyhow::Result<String> {
     let mut run = session.prompt(task.to_string()).await?;

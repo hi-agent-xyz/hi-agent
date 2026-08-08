@@ -45,7 +45,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::foundation::acp::SessionOpts;
+use crate::foundation::codex::SessionOpts;
 use crate::foundation::agent::SessionRole;
 use crate::body::capabilities::{face, voiceprint};
 use crate::mind::memory::journal::after_cursor;
@@ -184,7 +184,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
         .session(
             SessionRole::Reflection,
             Some(id),
-            SessionOpts { system_prompt: Some(system_prompt), cwd: None, builtin_tools: None },
+            SessionOpts { system_prompt: Some(system_prompt), ..Default::default() },
         )
         .await?;
     reaction
@@ -193,7 +193,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
         .record(
             EventKind::SessionOpened {
                 kind: crate::foundation::observatory::SessionKind::Reflection,
-                id: session.id().0.to_string(),
+                id: session.id().to_string(),
             },
         )
         .await;

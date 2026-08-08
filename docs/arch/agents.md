@@ -4,7 +4,7 @@
 
 Be responsive and thorough at the same time, by refusing to make one layer do both.
 
-Every agent here is the same thing — a general agent on an ACP session. They differ only in
+Every agent here is the same thing — a general agent on one session. They differ only in
 **system prompt** and **tool surface**. That uniformity is deliberate: a new role is a new
 prompt, not new machinery.
 

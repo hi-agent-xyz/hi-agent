@@ -37,7 +37,7 @@ so an upgrade replaces one and never the other.
 | | |
 |---|---|
 | Runtime | process management, the bundled toolchain |
-| ACP / MCP | the agent wire and the tool surface, routed by session id |
+| Agent wire / MCP | the agent wire and the tool surface, routed by session id |
 | Gateway + vendors | model access, credentials, energy accounting |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |

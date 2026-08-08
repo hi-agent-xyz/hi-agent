@@ -1,52 +1,41 @@
-//! Cognition config → child env + settings.json. The LLM credential (base URL,
-//! key, model) and the cognition tunables (effort, permission mode, pulse,
-//! reflection cadence, …) all come from the config store (Settings). The tunables
-//! are read via [`tunables`] (a startup snapshot for the reaction's argless helpers)
-//! or [`crate::foundation::credentials::get_setting`] directly where a data dir is
-//! in scope. Only infra vars (e.g. the server base URL) remain env-driven.
+//! Cognition config → a thread's codex config + the child's env. The LLM credential
+//! (base URL, key, model) and the cognition tunables (effort, pulse, reflection cadence,
+//! …) all come from the config store (Settings). The tunables are read via [`tunables`]
+//! (a startup snapshot for the reaction's argless helpers) or
+//! [`crate::foundation::credentials::get_setting`] directly where a data dir is in scope.
+//! Only infra vars (e.g. the server base URL) remain env-driven.
+//!
+//! The split that matters: **everything the model wire needs rides the thread config**
+//! ([`AgentConfig::thread_config`], sent on `thread/start`), and **only the secret and
+//! the scratch dir ride the environment** ([`AgentConfig::child_env`] /
+//! [`AgentConfig::auth_child_env`]). Codex reads a key by env-var *name*, so that split
+//! falls out of the protocol rather than being a convention we impose.
 
 use std::path::Path;
 
-use anyhow::Context;
-
 /// Default upstream base URL when the stored LLM base URL is empty.
-pub const DEFAULT_AI_API_BASE: &str = "https://api.anthropic.com";
+///
+/// Codex speaks the OpenAI **Responses** wire, so this is a `/v1` provider root, not a
+/// host root: the client appends `/responses` to it. In managed mode the broker supplies
+/// the songguo base instead (see [`crate::foundation::broker`]).
+pub const DEFAULT_AI_API_BASE: &str = "https://api.openai.com/v1";
 
-/// The ACP-backed coding agent used for cognition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LlmWire {
-    #[default]
-    Claude,
-    Codex,
-}
+/// The provider id hi-agent registers with codex for whatever endpoint the credential
+/// store names. Codex selects a provider by id, so the id and the block that defines it
+/// have to agree; both are produced by [`AgentConfig::thread_config`].
+const PROVIDER_ID: &str = "hi-agent-gateway";
 
-impl LlmWire {
-    pub fn from_opt(value: Option<&str>) -> Self {
-        match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-            Some("codex") => Self::Codex,
-            _ => Self::Claude,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-        }
-    }
-}
-
-/// The LLM wire options offered in Settings. Codex remains an internal managed
-/// wire selected by the broker response, but is not exposed as a client toggle.
-pub const LLM_WIRES: &[(&str, &str)] = &[("claude", "Claude Code")];
+/// Env var carrying the upstream key. Codex reads the key by *name* — a provider block
+/// says `env_key = "…"` and the process env supplies the value — which is why the
+/// credential never appears in the thread config we send over the wire.
+pub const ENV_LLM_KEY: &str = "HI_AGENT_LLM_KEY";
 
 // Keys under which the cognition tunables live in the config store's `app_settings`
 // table. Shared by the readers (reaction, `resolve`) and the settings handler so the
 // names can't drift. Each is optional; an absent key → the built-in default.
-/// Adapter `effortLevel` in settings.json (e.g. low | medium | high).
+/// Reasoning effort for a thread's turns (e.g. low | medium | high), passed through as
+/// codex's `model_reasoning_effort`.
 pub const KEY_EFFORT: &str = "effort";
-/// Adapter `permissions.defaultMode` in settings.json (e.g. acceptEdits).
-pub const KEY_PERMISSION_MODE: &str = "permission_mode";
 /// Idle interval between host pulses. Duration grammar (`90s`/`30m`/`1h`);
 /// `0`/`off` disables pulses; unset / unparseable → the built-in default.
 pub const KEY_PULSE: &str = "pulse";
@@ -162,49 +151,15 @@ pub mod tunables {
 pub const HEADER_ROLE: &str = "X-HI-Role";
 pub const HEADER_SESSION_ID: &str = "X-HI-Session-Id";
 
-/// Models that serve a 1M-token context window. The ACP child (the Claude CLI)
-/// only requests the larger window when the model id carries a `[1m]` suffix;
-/// without it a session is capped at the 200K default. The suffix is a CLI-side
-/// convention — the CLI strips it before calling the gateway — so it is the
-/// child, never hi-agent, that talks to the vendor. We tag only ids we know serve
-/// 1M through the gateway; any BYOK / custom / unrecognized model is left bare,
-/// since requesting 1M from an endpoint that can't serve it would error.
-///
-/// Keep in sync when a new 1M model is offered. A missing entry only means that
-/// model runs at 200K (degraded, not broken); a wrong entry is the loud failure,
-/// so the set stays conservative — known 1M ids only.
-const ONE_M_MODELS: &[&str] = &[
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "glm-5.2",
-    "deepseek-v4-pro",
-    "deepseek-v4-flash",
-];
-
-/// Apply the `[1m]` context-window suffix when `model` is a known 1M-capable id,
-/// otherwise return it unchanged. Idempotent: an id that already carries the
-/// suffix is normalized to its bare form and re-tagged at most once.
-fn with_context_window(model: &str) -> String {
-    let base = model.strip_suffix("[1m]").unwrap_or(model);
-    if ONE_M_MODELS.contains(&base) {
-        format!("{base}[1m]")
-    } else {
-        model.to_string()
-    }
-}
-
-/// Dev-managed cognition parameters. Everything comes from the environment
-/// (loaded from `.env` in dev); the upstream credential never lives in git.
+/// Cognition parameters, resolved from the credential store. The upstream credential
+/// never lives in git and never rides the thread config — only the env var that names it.
 #[derive(Clone)]
 pub struct AgentConfig {
-    pub wire: LlmWire,
     pub upstream_base_url: String,
     pub model: Option<String>,
-    /// Companion model for the background "haiku" slot (`ANTHROPIC_DEFAULT_HAIKU_MODEL`);
-    /// `None` → reuse `model`.
+    /// Companion model for cheap background work; `None` → reuse `model`.
     pub small: Option<String>,
     pub effort: Option<String>,
-    pub permission_mode: Option<String>,
     pub upstream_key: String,
 }
 
@@ -214,11 +169,9 @@ impl std::fmt::Debug for AgentConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentConfig")
             .field("upstream_base_url", &self.upstream_base_url)
-            .field("wire", &self.wire)
             .field("model", &self.model)
             .field("small", &self.small)
             .field("effort", &self.effort)
-            .field("permission_mode", &self.permission_mode)
             .field("upstream_key", &"<redacted>")
             .finish()
     }
@@ -235,7 +188,6 @@ impl AgentConfig {
     pub fn resolve(data_dir: &Path) -> Self {
         let store = crate::foundation::credentials::Credentials::load(data_dir);
         let llm = store.effective().map(|e| e.llm.clone()).unwrap_or_default();
-        let wire = LlmWire::from_opt(llm.wire_opt());
         let model = llm
             .model
             .map(|m| m.trim().to_string())
@@ -246,11 +198,9 @@ impl AgentConfig {
             .filter(|m| !m.is_empty());
         use crate::foundation::credentials::get_setting;
         Self::new(
-            wire,
             model,
             small,
             get_setting(data_dir, KEY_EFFORT),
-            get_setting(data_dir, KEY_PERMISSION_MODE),
             llm.base_url,
             llm.api_key,
         )
@@ -266,11 +216,9 @@ impl AgentConfig {
     /// [`DEFAULT_AI_API_BASE`] when unset; an empty key is allowed (the
     /// **unconfigured** state — BYOK before the user has pasted a key).
     pub fn new(
-        wire: LlmWire,
         model: Option<String>,
         small: Option<String>,
         effort: Option<String>,
-        permission_mode: Option<String>,
         upstream_base_url: String,
         upstream_key: String,
     ) -> Self {
@@ -280,36 +228,46 @@ impl AgentConfig {
             upstream_base_url
         };
         Self {
-            wire,
             upstream_base_url,
             model,
             small,
             effort,
-            permission_mode,
             upstream_key,
         }
     }
 
-    /// Write a managed `settings.json` into `config_dir` (the adapter's
-    /// `CLAUDE_CONFIG_DIR`). Only fields that are set are emitted.
-    pub fn render_settings_json(&self, config_dir: &Path) -> anyhow::Result<()> {
-        std::fs::create_dir_all(config_dir)
-            .with_context(|| format!("creating config dir {}", config_dir.display()))?;
-        let mut root = serde_json::Map::new();
+    /// The codex config overrides a thread should open with: which model, over which
+    /// provider, at what reasoning effort.
+    ///
+    /// These ride `thread/start`'s `config` map — codex's session-flags layer, the same
+    /// one `codex -c key=value` writes — so they apply per thread and leave the user's
+    /// own `config.toml` alone. Nothing is written to disk, and **the key is not in
+    /// here**: the provider block names an env var ([`ENV_LLM_KEY`]) and the value
+    /// arrives on the child's environment, so a thread config can be logged verbatim.
+    ///
+    /// Verified against `codex app-server` 0.144: a thread opened with these overrides
+    /// and an otherwise empty `CODEX_HOME` reaches the configured endpoint.
+    pub fn thread_config(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut config = serde_json::Map::new();
+        if let Some(model) = &self.model {
+            config.insert("model".into(), serde_json::json!(model));
+        }
         if let Some(effort) = &self.effort {
-            root.insert("effortLevel".into(), serde_json::json!(effort));
+            config.insert("model_reasoning_effort".into(), serde_json::json!(effort));
         }
-        if let Some(mode) = &self.permission_mode {
-            root.insert(
-                "permissions".into(),
-                serde_json::json!({ "defaultMode": mode }),
-            );
-        }
-        let value = serde_json::Value::Object(root);
-        let path = config_dir.join("settings.json");
-        std::fs::write(&path, serde_json::to_vec_pretty(&value)?)
-            .with_context(|| format!("writing {}", path.display()))?;
-        Ok(())
+        config.insert("model_provider".into(), serde_json::json!(PROVIDER_ID));
+        config.insert(
+            "model_providers".into(),
+            serde_json::json!({
+                PROVIDER_ID: {
+                    "name": "hi-agent gateway",
+                    "base_url": self.upstream_base_url,
+                    "env_key": ENV_LLM_KEY,
+                    "wire_api": "responses",
+                }
+            }),
+        );
+        config
     }
 
     /// The **volatile** env vars — the upstream endpoint + key + model — that the
@@ -329,148 +287,62 @@ impl AgentConfig {
     /// pointing at Anthropic's *native* endpoint (which wants `x-api-key`) would
     /// need this revisited — today every path goes through a Bearer gateway.
     pub fn auth_child_env(&self) -> Vec<(String, String)> {
-        match self.wire {
-            LlmWire::Claude => {
-                let mut env = vec![
-                    (
-                        "ANTHROPIC_BASE_URL".to_string(),
-                        self.upstream_base_url.clone(),
-                    ),
-                    (
-                        "ANTHROPIC_AUTH_TOKEN".to_string(),
-                        self.upstream_key.clone(),
-                    ),
-                ];
-                if let Some(model) = &self.model {
-                    env.push(("ANTHROPIC_MODEL".to_string(), with_context_window(model)));
-                }
-                // The background "haiku" slot: the broker-supplied `small` companion when
-                // present, otherwise the main model (so the fast slot never falls back to the
-                // CLI's built-in Anthropic haiku through our gateway). Same `[1m]` handling.
-                if let Some(haiku) = self.small.as_ref().or(self.model.as_ref()) {
-                    env.push((
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
-                        with_context_window(haiku),
-                    ));
-                }
-                env
-            }
-            LlmWire::Codex => {
-                let mut env = Vec::new();
-                if !self.upstream_key.trim().is_empty() {
-                    env.push(("CODEX_API_KEY".to_string(), self.upstream_key.clone()));
-                    env.push((
-                        "DEFAULT_AUTH_REQUEST".to_string(),
-                        serde_json::json!({
-                            "methodId": "api-key",
-                            "_meta": { "api-key": { "apiKey": self.upstream_key } }
-                        })
-                        .to_string(),
-                    ));
-                }
-
-                let mut codex = serde_json::Map::new();
-                if let Some(model) = &self.model {
-                    codex.insert("model".into(), serde_json::json!(model));
-                }
-                let base = self.upstream_base_url.trim();
-                if !base.is_empty() && base != DEFAULT_AI_API_BASE {
-                    codex.insert(
-                        "model_provider".into(),
-                        serde_json::json!("hi-agent-gateway"),
-                    );
-                    codex.insert(
-                        "model_providers".into(),
-                        serde_json::json!({
-                            "hi-agent-gateway": {
-                                "name": "hi-agent gateway",
-                                "base_url": base,
-                                "env_key": "CODEX_API_KEY",
-                                "wire_api": "responses"
-                            }
-                        }),
-                    );
-                    env.push(("MODEL_PROVIDER".to_string(), "hi-agent-gateway".to_string()));
-                }
-                if !codex.is_empty() {
-                    env.push((
-                        "CODEX_CONFIG".to_string(),
-                        serde_json::Value::Object(codex).to_string(),
-                    ));
-                }
-                env
-            }
-        }
+        vec![(ENV_LLM_KEY.to_string(), self.upstream_key.clone())]
     }
 
     /// The model the **reaction** (the conversational voice) should run: the **main,
     /// smart** model, same as cognition. The reaction's core skill is judging the edge
     /// of what it already holds — "can I answer from my prepared context, or must I
     /// hand this to cognition?" — which is a smart-model job, not a small-model one.
-    /// Its speed comes from a *single tools-off generation* over a bounded prepared
-    /// context (no fetch, no tool loop), not from a lighter model. So it takes `model`,
-    /// falling back to `small` only when no main model is configured. Context-window
-    /// normalized like the others. `None` (Codex, or nothing configured) → no override;
-    /// the reaction keeps whatever `auth_child_env` set.
+    /// Its speed comes from a *single bounded generation* over a prepared context (no
+    /// fetch, no tool loop), not from a lighter model. So it takes `model`, falling back
+    /// to `small` only when no main model is configured.
     ///
     /// (Historically this pinned the reaction to the *small* slot — that was from a spell
-    /// when the reaction had accidentally inherited Opus *and* rode a hang-zone adapter,
-    /// and the small model was a workaround for a ~7-min turn. The adapter is pinned now;
-    /// the workaround is retired in favour of the smart model the contract calls for. See
-    /// docs/arch/agents.md.)
+    /// when the reaction had accidentally inherited Opus *and* rode a hang-zone ACP
+    /// adapter, and the small model was a workaround for a ~7-min turn. Both the adapter
+    /// and the protocol are gone; the workaround is retired in favour of the smart model
+    /// the contract calls for. See docs/arch/agents.md.)
     pub fn reaction_model(&self) -> Option<String> {
-        match self.wire {
-            LlmWire::Claude => self
-                .model
-                .as_ref()
-                .or(self.small.as_ref())
-                .map(|m| with_context_window(m)),
-            LlmWire::Codex => None,
-        }
+        self.model.as_ref().or(self.small.as_ref()).cloned()
     }
 
-    /// Build the **static** env var pairs for the ACP child process — everything
-    /// fixed for the process lifetime (resolved runtime paths, config dir, the
-    /// server URL). The volatile upstream credential vars come from
-    /// [`auth_child_env`](Self::auth_child_env), re-resolved per spawn and merged in
-    /// by the agent layer.
+    /// Build the **static** env var pairs for the codex child process — everything fixed
+    /// for the process lifetime (the server URL, codex's home, PATH). The volatile
+    /// upstream credential comes from [`auth_child_env`](Self::auth_child_env),
+    /// re-resolved per spawn and merged in by the agent layer, so a fresh child never
+    /// carries a stale key.
     ///
     /// `server_port` is hi-agent's own HTTP port (handed to the child as
-    /// `HI_AGENT_BASE_URL` so a session can reach the channels); `config_dir` is the
-    /// managed Claude config dir when the Claude wire is selected; `node_bin_dir`
-    /// is the directory containing the resolved `node`; `agent_bin` is the resolved
-    /// Claude or Codex executable.
+    /// `HI_AGENT_BASE_URL` so a session can reach the channels); `codex_home` is the
+    /// scratch dir codex keeps its own state in; `node_bin_dir` is the directory holding
+    /// the managed `node`.
+    ///
+    /// Nothing about the model or provider is here any more — that all rides
+    /// [`thread_config`](Self::thread_config) on `thread/start`. The env carries exactly
+    /// two things the wire cannot: the secret, and where codex may scribble.
     pub fn child_env(
         &self,
         server_port: u16,
-        config_dir: &Path,
+        codex_home: &Path,
         node_bin_dir: &Path,
-        agent_bin: &Path,
     ) -> Vec<(String, String)> {
-        let mut env = vec![(
-            ENV_SERVER_BASE_URL.to_string(),
-            format!("http://127.0.0.1:{server_port}"),
-        )];
-        match self.wire {
-            LlmWire::Claude => {
-                env.push((
-                    "CLAUDE_CONFIG_DIR".to_string(),
-                    config_dir.to_string_lossy().into_owned(),
-                ));
-                env.push((
-                    "CLAUDE_CODE_EXECUTABLE".to_string(),
-                    agent_bin.to_string_lossy().into_owned(),
-                ));
-            }
-            LlmWire::Codex => {
-                env.push((
-                    "CODEX_PATH".to_string(),
-                    agent_bin.to_string_lossy().into_owned(),
-                ));
-                env.push(("NO_BROWSER".to_string(), "1".to_string()));
-            }
-        }
-        // Prepend the resolved node dir to PATH so the adapter resolves `node`.
+        let mut env = vec![
+            (
+                ENV_SERVER_BASE_URL.to_string(),
+                format!("http://127.0.0.1:{server_port}"),
+            ),
+            (
+                "CODEX_HOME".to_string(),
+                codex_home.to_string_lossy().into_owned(),
+            ),
+            // Nothing here may open a browser: an agent process that pops Safari during
+            // an OAuth path would be a surprise on someone's desktop.
+            ("NO_BROWSER".to_string(), "1".to_string()),
+        ];
+        // Prepend the managed node dir to PATH. The agent no longer needs node to *run*
+        // — codex is a native binary — but a worker that writes and runs a script still
+        // benefits from a node being there, and it is the one we control.
         let sep = if cfg!(windows) { ';' } else { ':' };
         let existing = std::env::var("PATH").unwrap_or_default();
         env.push((
@@ -506,43 +378,31 @@ mod tests {
         assert_eq!(LANGUAGES.first().map(|(v, _)| *v), Some("system"));
     }
 
+
     #[test]
     fn takes_all_parts_from_args() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            Some("claude-opus-4-8".to_string()),
+            Some("gpt-5.1-codex".to_string()),
             None,
             Some("high".to_string()),
-            Some("acceptEdits".to_string()),
             "https://upstream.example/v1".to_string(),
             "secret-key".to_string(),
         );
         assert_eq!(cfg.upstream_base_url, "https://upstream.example/v1");
-        assert_eq!(cfg.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.1-codex"));
         assert_eq!(cfg.effort.as_deref(), Some("high"));
-        assert_eq!(cfg.permission_mode.as_deref(), Some("acceptEdits"));
         assert_eq!(cfg.upstream_key, "secret-key");
     }
 
     #[test]
     fn empty_base_url_falls_back_to_default() {
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "".to_string(),
-            "k".to_string(),
-        );
+        let cfg = AgentConfig::new(None, None, None, String::new(), "k".to_string());
         assert_eq!(cfg.upstream_base_url, DEFAULT_AI_API_BASE);
     }
 
     #[test]
     fn debug_redacts_the_upstream_key() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
             None,
             None,
             None,
@@ -550,99 +410,64 @@ mod tests {
             "super-secret-key".to_string(),
         );
         let rendered = format!("{cfg:?}");
-        assert!(
-            !rendered.contains("super-secret-key"),
-            "key leaked: {rendered}"
-        );
+        assert!(!rendered.contains("super-secret-key"), "key leaked: {rendered}");
         assert!(rendered.contains("<redacted>"));
     }
 
     #[test]
     fn empty_key_means_unconfigured() {
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "https://x/v1".to_string(),
-            "".to_string(),
-        );
+        let cfg = AgentConfig::new(None, None, None, "https://x/v1".to_string(), String::new());
         assert!(!cfg.is_configured());
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "https://x/v1".to_string(),
-            "k".to_string(),
-        );
+        let cfg = AgentConfig::new(None, None, None, "https://x/v1".to_string(), "k".to_string());
         assert!(cfg.is_configured());
     }
 
     #[test]
     fn unset_optionals_default_to_none() {
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "https://x/v1".to_string(),
-            "k".to_string(),
-        );
+        let cfg = AgentConfig::new(None, None, None, "https://x/v1".to_string(), "k".to_string());
         assert!(cfg.model.is_none());
         assert!(cfg.effort.is_none());
-        assert!(cfg.permission_mode.is_none());
     }
 
     #[test]
-    fn renders_settings_json_with_set_fields() {
-        let dir = tempfile::tempdir().unwrap();
+    fn thread_config_points_codex_at_the_gateway() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
+            Some("gpt-5.1-codex".to_string()),
             None,
             Some("high".to_string()),
-            Some("acceptEdits".to_string()),
-            "https://x/v1".to_string(),
-            "k".to_string(),
+            "https://gateway.example/v1".to_string(),
+            "sk-secret".to_string(),
         );
-        cfg.render_settings_json(dir.path()).unwrap();
-        let written = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&written).unwrap();
-        assert_eq!(v["effortLevel"], "high");
-        assert_eq!(v["permissions"]["defaultMode"], "acceptEdits");
+        let config = serde_json::Value::Object(cfg.thread_config());
+        assert_eq!(config["model"], "gpt-5.1-codex");
+        assert_eq!(config["model_reasoning_effort"], "high");
+        assert_eq!(config["model_provider"], PROVIDER_ID);
+        let provider = &config["model_providers"][PROVIDER_ID];
+        assert_eq!(provider["base_url"], "https://gateway.example/v1");
+        assert_eq!(provider["wire_api"], "responses");
+        // The provider names the key's env var; the key itself must never be in here,
+        // because a thread config is logged and tapped verbatim.
+        assert_eq!(provider["env_key"], ENV_LLM_KEY);
+        assert!(
+            !config.to_string().contains("sk-secret"),
+            "the credential leaked into the thread config: {config}"
+        );
     }
 
     #[test]
-    fn omits_unset_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "https://x/v1".to_string(),
-            "k".to_string(),
-        );
-        cfg.render_settings_json(dir.path()).unwrap();
-        let v: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(dir.path().join("settings.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(v.get("effortLevel").is_none());
-        assert!(v.get("permissions").is_none());
+    fn thread_config_omits_what_is_unset() {
+        let cfg = AgentConfig::new(None, None, None, "https://x/v1".to_string(), "k".to_string());
+        let config = cfg.thread_config();
+        assert!(!config.contains_key("model"), "no model → let codex choose");
+        assert!(!config.contains_key("model_reasoning_effort"));
+        // The provider is not optional: without it codex would talk to OpenAI directly.
+        assert!(config.contains_key("model_provider"));
     }
 
     #[test]
-    fn child_env_sets_static_vars() {
+    fn child_env_sets_static_vars_only() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            Some("claude-opus-4-8".to_string()),
-            None,
+            Some("gpt-5.1-codex".to_string()),
             None,
             None,
             "https://x/v1".to_string(),
@@ -650,132 +475,38 @@ mod tests {
         );
         let env = cfg.child_env(
             8080,
-            std::path::Path::new("/cache/config"),
+            std::path::Path::new("/data/codex-home"),
             std::path::Path::new("/cache/runtime/node/bin"),
-            std::path::Path::new("/cache/runtime/claude"),
         );
         let map: std::collections::HashMap<_, _> = env.into_iter().collect();
         assert_eq!(map["HI_AGENT_BASE_URL"], "http://127.0.0.1:8080");
-        assert_eq!(map["CLAUDE_CONFIG_DIR"], "/cache/config");
-        assert_eq!(map["CLAUDE_CODE_EXECUTABLE"], "/cache/runtime/claude");
+        assert_eq!(map["CODEX_HOME"], "/data/codex-home");
+        assert_eq!(map["NO_BROWSER"], "1");
         assert!(map["PATH"].starts_with("/cache/runtime/node/bin"));
-        // The volatile credential vars are NOT frozen into the static env — they
-        // come from `auth_child_env`, re-resolved per session spawn.
-        assert!(!map.contains_key("ANTHROPIC_AUTH_TOKEN"));
-        assert!(!map.contains_key("ANTHROPIC_BASE_URL"));
-        assert!(!map.contains_key("ANTHROPIC_MODEL"));
+        // The volatile credential is NOT frozen into the static env — it comes from
+        // `auth_child_env`, re-resolved per session spawn.
+        assert!(!map.contains_key(ENV_LLM_KEY));
     }
 
     #[test]
-    fn auth_child_env_carries_the_upstream_credential() {
+    fn reaction_runs_the_smart_model_and_falls_back_to_small() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            Some("claude-opus-4-8".to_string()),
-            None,
-            None,
+            Some("gpt-5.1-codex".to_string()),
+            Some("gpt-5-mini".to_string()),
             None,
             "https://x/v1".to_string(),
             "k".to_string(),
         );
-        let map: std::collections::HashMap<_, _> = cfg.auth_child_env().into_iter().collect();
-        // The child talks to the upstream directly — no local proxy in between.
-        assert_eq!(map["ANTHROPIC_BASE_URL"], "https://x/v1");
-        // Key rides AUTH_TOKEN (→ `Authorization: Bearer`), not API_KEY (→ x-api-key).
-        assert_eq!(map["ANTHROPIC_AUTH_TOKEN"], "k");
-        assert!(!map.contains_key("ANTHROPIC_API_KEY"));
-        // A known 1M model is tagged so the CLI requests the larger window.
-        assert_eq!(map["ANTHROPIC_MODEL"], "claude-opus-4-8[1m]");
-        // With no `small`, the background haiku slot mirrors the main model.
-        assert_eq!(map["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-opus-4-8[1m]");
-    }
+        assert_eq!(cfg.reaction_model().as_deref(), Some("gpt-5.1-codex"));
 
-    #[test]
-    fn auth_child_env_uses_small_for_the_haiku_slot() {
         let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            Some("claude-opus-4-8".to_string()),
-            Some("claude-haiku-4-5-20251001".to_string()),
             None,
+            Some("gpt-5-mini".to_string()),
             None,
             "https://x/v1".to_string(),
             "k".to_string(),
         );
-        let map: std::collections::HashMap<_, _> = cfg.auth_child_env().into_iter().collect();
-        assert_eq!(map["ANTHROPIC_MODEL"], "claude-opus-4-8[1m]");
-        // The companion drives the haiku slot; it isn't a 1M id, so it's untagged.
-        assert_eq!(
-            map["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
-            "claude-haiku-4-5-20251001"
-        );
-    }
-
-    #[test]
-    fn auth_child_env_omits_model_when_unset() {
-        let cfg = AgentConfig::new(
-            LlmWire::Claude,
-            None,
-            None,
-            None,
-            None,
-            "https://x/v1".to_string(),
-            "k".to_string(),
-        );
-        let map: std::collections::HashMap<_, _> = cfg.auth_child_env().into_iter().collect();
-        assert!(!map.contains_key("ANTHROPIC_MODEL"));
-        // No model and no small → the haiku slot is left to the CLI default too.
-        assert!(!map.contains_key("ANTHROPIC_DEFAULT_HAIKU_MODEL"));
-    }
-
-    #[test]
-    fn codex_auth_env_carries_key_model_and_gateway_config() {
-        let cfg = AgentConfig::new(
-            LlmWire::Codex,
-            Some("gpt-5-codex".to_string()),
-            None,
-            None,
-            None,
-            "https://gateway.example/v1".to_string(),
-            "sk-codex".to_string(),
-        );
-        let map: std::collections::HashMap<_, _> = cfg.auth_child_env().into_iter().collect();
-        assert_eq!(map["CODEX_API_KEY"], "sk-codex");
-        assert!(!map.contains_key("ANTHROPIC_AUTH_TOKEN"));
-        assert_eq!(map["MODEL_PROVIDER"], "hi-agent-gateway");
-
-        let config: serde_json::Value = serde_json::from_str(&map["CODEX_CONFIG"]).unwrap();
-        assert_eq!(config["model"], "gpt-5-codex");
-        assert_eq!(config["model_provider"], "hi-agent-gateway");
-        assert_eq!(
-            config["model_providers"]["hi-agent-gateway"]["base_url"],
-            "https://gateway.example/v1"
-        );
-
-        let auth: serde_json::Value = serde_json::from_str(&map["DEFAULT_AUTH_REQUEST"]).unwrap();
-        assert_eq!(auth["methodId"], "api-key");
-        assert_eq!(auth["_meta"]["api-key"]["apiKey"], "sk-codex");
-    }
-
-    #[test]
-    fn context_window_tags_only_known_1m_models() {
-        // Known 1M ids get the suffix (Anthropic and non-Anthropic alike).
-        assert_eq!(
-            with_context_window("claude-opus-4-8"),
-            "claude-opus-4-8[1m]"
-        );
-        assert_eq!(
-            with_context_window("deepseek-v4-pro"),
-            "deepseek-v4-pro[1m]"
-        );
-        assert_eq!(with_context_window("glm-5.2"), "glm-5.2[1m]");
-        // Unlisted / BYOK / custom ids pass through untouched (tagging one would
-        // break an endpoint that can't serve 1M).
-        assert_eq!(with_context_window("claude-haiku-4-5"), "claude-haiku-4-5");
-        assert_eq!(with_context_window("gpt-4o"), "gpt-4o");
-        // Idempotent: an already-tagged id is not doubled.
-        assert_eq!(
-            with_context_window("claude-opus-4-8[1m]"),
-            "claude-opus-4-8[1m]"
-        );
+        assert_eq!(cfg.reaction_model().as_deref(), Some("gpt-5-mini"));
     }
 
     #[test]
@@ -800,7 +531,7 @@ mod tests {
             .auth_child_env()
             .into_iter()
             .collect();
-        assert_eq!(a["ANTHROPIC_AUTH_TOKEN"], "key-A");
+        assert_eq!(a[ENV_LLM_KEY], "key-A");
 
         // Rotate the stored key; a fresh resolve must carry the new one.
         store.llm.api_key = "key-B".into();
@@ -809,6 +540,6 @@ mod tests {
             .auth_child_env()
             .into_iter()
             .collect();
-        assert_eq!(b["ANTHROPIC_AUTH_TOKEN"], "key-B");
+        assert_eq!(b[ENV_LLM_KEY], "key-B");
     }
 }

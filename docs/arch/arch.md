@@ -88,13 +88,13 @@ Below the ladder sit **workers** — where the actual jobs get done.
   AGENTS       the voice:  Reaction ⟷ Deliberation
                the brain:  Cognition · Reflection
                workers:    general · view builder · view reviewer · decision maker
-               all of the above = one ACP session, differing only by prompt + tools
+               all of the above = one agent session, differing only by prompt + tools
   ─────────────────────────────────────────────────────────────────────────────
   data/        memory (raw = the log · episodes · facets · tasks ·
                        prompts = generated, one per agent that needs state) ·
                prompts (bundled) · drive · skills · views
   ─────────────────────────────────────────────────────────────────────────────
-  FOUNDATION   engine   runtime · ACP/MCP · gateway · config · store I/O · build ·
+  FOUNDATION   engine   runtime · agent wire/MCP · gateway · config · store I/O · build ·
                         observatory · energy
                tools    bundled · user-added · agent-learnt (devices are just tools)
 ```
@@ -151,7 +151,7 @@ Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
 ## Legacy
 
 - [`legacy/runtime-dataflow.md`](legacy/runtime-dataflow.md) — the previous runtime contract.
-  Its continuous-vs-batch rule and the ACP carrier vocabulary still hold and are restated in
+  Its continuous-vs-batch rule and the carrier vocabulary still hold and are restated in
   `surfaces.md`.
 - [`legacy/faculties.md`](legacy/faculties.md) — the built-vs-grown organization. Its
   placement test survives as the authorship rule above.

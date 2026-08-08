@@ -56,7 +56,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     run_with_shutdown(config, Arc::new(Notify::new())).await
 }
 
-/// Build the axum app, spawn the ACP subprocess + reaction, bind, and serve until
+/// Build the axum app, spawn the codex subprocess + reaction, bind, and serve until
 /// the process is terminated by an OS signal **or** `shutdown` is notified. The
 /// notify is the macOS tray's "Quit" path ([`run_with_tray`]); everywhere else it
 /// is a no-op trigger handed in by [`run`].
@@ -148,16 +148,16 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // filling it is the agent's job. (Verbatim annex of memory; see data-dir-layout.)
     std::fs::create_dir_all(config.data_dir.join("drive")).context("creating drive dir")?;
 
-    // Structured visibility into the ACP session lifecycle. The agent layer,
+    // Structured visibility into the session lifecycle. The agent layer,
     // reaction, workers and heartbeat feed it; `GET /api/sessions` reads the live
     // mirror and `GET /api/sessions/events` streams the history over SSE.
     let observatory =
         foundation::observatory::Observatory::new(Some(config.data_dir.join("sessions.jsonl")));
 
-    // Raw ACP wire tap — every JSON-RPC frame, business-logic agnostic. The agent
-    // layer hands it to each rung's subprocess; `GET /api/acp/frames/events`
-    // streams it to the raw session inspector.
-    let acp_tap = foundation::acp::AcpTap::with_durable_log(config.data_dir.clone());
+    // Raw wire tap — every JSON-RPC frame, business-logic agnostic. The agent layer
+    // hands it to each rung's subprocess; `GET /api/wire/frames/events` streams it to
+    // the raw session inspector.
+    let wire_tap = foundation::codex::WireTap::with_durable_log(config.data_dir.clone());
 
     // Resolve all keyed capabilities BYOK-first: each vendor's key from the
     // credential store (`<data_dir>/credentials.json`) wins, else its `.env` key.
@@ -201,7 +201,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         memory.clone(),
         config.data_dir.clone(),
         observatory.clone(),
-        acp_tap.clone(),
+        wire_tap.clone(),
         tool_registry.clone(),
         interrupts.clone(),
         presence.clone(),
@@ -209,26 +209,24 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     );
 
     // Resolve the runtime: prefer system tools on PATH, else install on first run.
-    let runtime = runtime::ensure(config.agent.wire).await?;
-    tracing::info!(
-        origin = runtime.origin,
-        wire = runtime.wire.as_str(),
-        "runtime resolved"
-    );
+    let runtime = runtime::ensure().await?;
+    tracing::info!(origin = runtime.origin, "runtime resolved");
 
-    // Render the managed settings.json into a hi-agent-owned config dir. Claude
-    // reads it via `CLAUDE_CONFIG_DIR`; Codex ignores it. Absolutize it because
-    // child processes may run with a different cwd than us.
-    let claude_config_dir = {
-        let dir = config.data_dir.join("claude-config");
+    // Codex keeps its own state (logs, sqlite, caches) under CODEX_HOME. Give it one
+    // inside our data dir rather than letting it write to `~/.codex`, so a hi-agent
+    // install never collides with the user's own codex. Absolutized because child
+    // processes may run with a different cwd than us.
+    let codex_home = {
+        let dir = config.data_dir.join("codex-home");
         if dir.is_absolute() {
             dir
         } else {
             std::env::current_dir()
-                .context("resolving cwd to absolutize claude config dir")?
+                .context("resolving cwd to absolutize the codex home")?
                 .join(dir)
         }
     };
+    std::fs::create_dir_all(&codex_home).context("creating the codex home")?;
     if !config.agent.is_configured() {
         tracing::warn!(
             "no LLM credentials configured — the broker (xiaoyuanzhu) should mint them \
@@ -236,71 +234,55 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
              prompts fail until a key is set"
         );
     }
-    config.agent.render_settings_json(&claude_config_dir)?;
 
     // Spawn config for the agent session layer. The subprocess itself is spawned
-    // lazily, one per conversation, on that conversation's first session (Chrome-style isolation);
-    // the pinned runtime and managed env are shared by all. The child reaches the
-    // upstream LLM directly (no local proxy).
-    let mut child_env = config.agent.child_env(
-        config.port,
-        &claude_config_dir,
-        runtime.node_bin_dir(),
-        &runtime.agent_bin,
-    );
+    // lazily, one per session (Chrome-style isolation); the pinned runtime and managed
+    // env are shared by all. The child reaches the upstream LLM directly (no local
+    // proxy), over the provider its thread config names.
+    let mut child_env =
+        config
+            .agent
+            .child_env(config.port, &codex_home, runtime.node_bin_dir());
     // Sessions read their own prompt back from <prompts>/ at open; hand them the
     // absolute dir the same way workers already get HI_AGENT_BASE_URL.
     child_env.push((
         "HI_AGENT_PROMPTS_DIR".to_string(),
         prompts_dir.display().to_string(),
     ));
-    // Diagnostic: surface exactly what differs between launchers (terminal vs.
-    // cmux etc.) — cwd, the resolved runtime binaries, the adapter config dir,
-    // and the upstream key's fingerprint. The upstream credential vars
-    // are no longer frozen into `child_env` (they're re-resolved per session
-    // spawn), so read them from a fresh `auth_child_env` for this snapshot.
+    // Diagnostic: surface exactly what differs between launchers (terminal vs. cmux
+    // etc.) — cwd, the resolved codex binary, its home, and the upstream key's
+    // fingerprint. The credential is not frozen into `child_env` (it is re-resolved per
+    // session spawn), so read it from a fresh `auth_child_env` for this snapshot.
     {
         let auth_env = config.agent.auth_child_env();
-        let get_in = |env: &[(String, String)], k: &str| {
-            env.iter()
-                .find(|(n, _)| n == k)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_else(|| "<unset>".to_string())
-        };
-        let get = |k: &str| get_in(&child_env, k);
-        let key = get_in(&auth_env, "ANTHROPIC_AUTH_TOKEN");
-        let fp = key[key.len().saturating_sub(20)..].to_string();
+        let key = auth_env
+            .iter()
+            .find(|(n, _)| n == foundation::config::ENV_LLM_KEY)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_default();
         tracing::info!(
             cwd = ?std::env::current_dir().ok(),
-            config_dir = %claude_config_dir.display(),
-            config_dir_abs = ?std::fs::canonicalize(&claude_config_dir).ok(),
             runtime_origin = runtime.origin,
-            agent_wire = runtime.wire.as_str(),
-            agent_bin = %runtime.agent_bin.display(),
+            codex_bin = %runtime.codex_bin.display(),
             node_bin = %runtime.node_bin.display(),
-            anthropic_base_url = get_in(&auth_env, "ANTHROPIC_BASE_URL"),
-            claude_config_dir_env = get("CLAUDE_CONFIG_DIR"),
-            claude_code_executable = get("CLAUDE_CODE_EXECUTABLE"),
-            codex_path = get("CODEX_PATH"),
-            auth_token_fp = fp,
-            path_head = child_env.iter().find(|(n,_)| n == "PATH").map(|(_,v)| v.split(':').next().unwrap_or("")).unwrap_or(""),
+            codex_home = %codex_home.display(),
+            upstream_base_url = %config.agent.upstream_base_url,
+            model = ?config.agent.model,
+            // A tail, not the key: enough to tell two credentials apart in a log.
+            auth_token_fp = &key[key.len().saturating_sub(20)..],
+            path_head = child_env.iter().find(|(n, _)| n == "PATH").map(|(_, v)| v.split(':').next().unwrap_or("")).unwrap_or(""),
             "child auth/runtime env resolved"
         );
     }
 
-    let adapter_entry = runtime
-        .adapter_entry
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("adapter path not UTF-8"))?
-        .to_string();
     let agent = foundation::agent::AgentLayer::new(
         foundation::agent::SpawnConfig {
-            program: runtime.node_bin.clone(),
-            args: vec![adapter_entry],
+            program: runtime.codex_bin.clone(),
+            args: vec!["app-server".to_string(), "--stdio".to_string()],
             env: child_env,
         },
         config.data_dir.clone(),
-        acp_tap,
+        wire_tap,
         format!("http://127.0.0.1:{}", config.port),
     );
     tracing::info!("agent session layer ready (one subprocess spawns per session)");
@@ -334,7 +316,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     );
     // The reaction's shutdown signal: triggered below the moment a signal / Quit is
     // observed, so its reaction loops, reflection, and drive retries wind down instead
-    // of restarting ACP sessions into a process group that's already terminating.
+    // of restarting agent sessions into a process group that's already terminating.
     let reaction_shutdown = foundation::shutdown::Shutdown::new();
     // Eager sessions attach to `/mcp` during `session/new`. The reaction starts before
     // the listener below, so retain one readiness edge that every startup warm-up can
@@ -417,7 +399,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         _ = shutdown_requested(shutdown.clone()) => {
             // Quiesce the reaction *first*, before the drain: for the whole drain
             // window it must not restart a session or open a reflection pass, or a
-            // freshly spawned child would race the ACP reap below and outlive us.
+            // freshly spawned child would race the reap below and outlive us.
             reaction_shutdown.trigger();
             tracing::info!(grace = ?SHUTDOWN_GRACE, "shutdown requested; draining in-flight requests");
             match tokio::time::timeout(SHUTDOWN_GRACE, &mut server).await {
@@ -437,13 +419,13 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // respawning sessions while we reap. No-op on the shutdown path (already fired).
     reaction_shutdown.trigger();
 
-    // Reap every ACP subprocess (one `node` + `claude` per live session) so none
+    // Reap every codex subprocess (one per live session) so none
     // are orphaned. Bounded so a stuck child can't hang exit.
     if tokio::time::timeout(SHUTDOWN_GRACE, agent_for_shutdown.shutdown())
         .await
         .is_err()
     {
-        tracing::warn!("ACP subprocess reaping timed out");
+        tracing::warn!("codex subprocess reaping timed out");
     }
 
     tracing::info!("hi-agent shut down");
@@ -463,7 +445,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 /// — the app stays up so the user can read the problem and fix it.
 ///
 /// The tray's "Quit" notifies `shutdown`; the server thread observes it, runs the
-/// normal graceful drain + ACP reap, then exits the process — which also tears
+/// normal graceful drain + subprocess reap, then exits the process — which also tears
 /// down the main-thread AppKit loop. If the status item can't be created (e.g. no
 /// window-server session), the agent falls back to running headless rather than
 /// failing.
@@ -511,7 +493,7 @@ pub fn run_with_tray(
                 }
             };
             match rt.block_on(run_with_shutdown(config, server_shutdown.clone())) {
-                // Graceful shutdown completed (drained + ACP subprocesses reaped).
+                // Graceful shutdown completed (drained + codex subprocesses reaped).
                 // Exit the process, which also stops the main-thread AppKit loop.
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
@@ -535,7 +517,7 @@ pub fn run_with_tray(
 }
 
 /// How long in-flight HTTP requests get to finish after a shutdown signal — and,
-/// separately, the budget for reaping ACP subprocesses — before we stop waiting
+/// separately, the budget for reaping codex subprocesses — before we stop waiting
 /// and exit anyway.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 

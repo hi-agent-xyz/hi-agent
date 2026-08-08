@@ -15,13 +15,12 @@ use tokio::sync::{broadcast, mpsc};
 use tower_http::trace::TraceLayer;
 
 use crate::mind::memory::Memory;
-use crate::foundation::acp::AcpTap;
+use crate::foundation::codex::WireTap;
 use crate::foundation::observatory::Observatory;
 use crate::body::reaction::{InterruptRegistry, OutboundSignal, ToolRegistry};
 use crate::types::{Channel, Signal, ViewEnvelope};
 
 pub mod account;
-pub mod acp;
 pub mod activity;
 pub mod attention;
 pub mod audio;
@@ -48,6 +47,7 @@ pub mod tools;
 pub mod view;
 pub mod view_bus;
 pub mod vision;
+pub mod wire;
 pub mod workers;
 
 pub use text_bus::TextBus;
@@ -307,8 +307,8 @@ pub struct AppState {
     pub observatory: Observatory,
 
     /// Raw JSON-RPC wire tap — every ACP frame, business-logic agnostic. Served
-    /// read-only by `GET /api/acp/frames/events` for the raw session inspector.
-    pub acp_tap: AcpTap,
+    /// read-only by `GET /api/wire/frames/events` for the raw session inspector.
+    pub wire_tap: WireTap,
 
     /// Where blob media lives. POST /api/in/audio and POST /api/in/vision write
     /// incoming bytes here before journaling the reference.
@@ -378,7 +378,7 @@ pub fn build(
     memory: Memory,
     data_dir: PathBuf,
     observatory: Observatory,
-    acp_tap: AcpTap,
+    wire_tap: WireTap,
     tool_registry: ToolRegistry,
     interrupts: InterruptRegistry,
     presence: crate::body::presence::Presence,
@@ -434,7 +434,7 @@ pub fn build(
         output_echo: output_echo_tx.clone(),
         memory,
         observatory,
-        acp_tap,
+        wire_tap,
         data_dir,
         auth: auth.clone(),
         tool_registry,
@@ -492,7 +492,7 @@ pub fn build(
         .route("/api/sessions/events", get(sessions::get_sessions_events))
         // The raw ACP wire feed — every JSON-RPC frame, business-logic agnostic.
         // Backs the raw session inspector at `/inspect/sessions`.
-        .route("/api/acp/frames/events", get(acp::get_acp_frames_events))
+        .route("/api/wire/frames/events", get(wire::get_wire_frames_events))
         // The MCP tool endpoint a session's `mcp_servers` attach connects to. The
         // mind drives output and side-effects by calling tools here; routing is by
         // the X-HI-Role header the attach carries.

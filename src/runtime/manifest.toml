@@ -1,19 +1,18 @@
 # Pinned runtime versions, read at build time by build.rs and stamped into the
 # binary as the HI_AGENT_* env vars (surfaced by `--version`). The Node download
-# URL is derived from node_version in src/runtime/mod.rs; the adapter/claude tree
-# is pinned by the committed package.json + package-lock.json alongside this file.
+# URL is derived from node_version in src/runtime/mod.rs; the codex tree is pinned
+# by the committed package.json + package-lock.json alongside this file.
 #
 # The install dir is keyed by `runtime_fingerprint()` (node_version + the
 # lockfile), so bumping a pin lands in a fresh dir, reinstalls on next run, and
 # sweeps the previous pin's dir away — no manual cleanup needed.
 node_version    = "22.14.0"
-adapter_version = "0.65.0"
+# The `codex` CLI, whose `app-server` subcommand is the agent wire. Bumping this is
+# a protocol change, not a patch: 0.144 rejects the camelCase sandbox spelling that
+# later docs show, so re-run the app-server spike before moving it.
+codex_version   = "0.144.1"
 # Headless browser for the view render pipeline (see src/runtime/browser.rs). A
 # Chrome-for-Testing `chrome-headless-shell` build, downloaded per-host from
 # storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/. Only
 # used when the host has no system Chrome/Chromium/Edge.
 chrome_version  = "151.0.7922.47"
-# claude_version is resolved by `npm ci` from the lockfile; recorded here for
-# the `--version` stamp only. Keep it in step with adapter_version — the bundled
-# CLI is what actually runs, and it is not the `claude` on PATH.
-claude_version  = "2.1.220"

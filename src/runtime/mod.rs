@@ -1,22 +1,29 @@
-//! Node + ACP adapter + claude CLI runtime resolution.
+//! Codex + Node runtime resolution.
 //!
-//! We **prefer what the system already offers**: if `node`, the ACP adapter
-//! (`claude-agent-acp`), and the `claude` CLI are all on `PATH`, we use them
-//! directly and download nothing. Having those tools on `PATH` is also how you
-//! point hi-agent at your own runtime for local development.
+//! Two tools, for two unrelated jobs. **`codex`** is the agent: hi-agent drives
+//! `codex app-server` over stdio, and it is a native binary with no interpreter under
+//! it. **`node`** is only the view compiler's host — esbuild ships as a native binary
+//! inside an npm package, and npm is how we get it.
 //!
-//! Only when the system *doesn't* offer the full set do we fall back to a
-//! self-contained install: download the pinned Node release and `npm ci` the
-//! adapter (which carries the `claude` binary as a platform dep) into a single
-//! fixed directory ([`runtime_dir`]), then resolve the node/adapter/claude paths.
-//! Subsequent runs reuse that directory via a `.complete` marker, so the install
-//! cost is paid once.
+//! That is a change from the ACP era, when node sat *between* hi-agent and the model
+//! (`node` → `claude-agent-acp` → `claude`) and a version skew between the adapter and
+//! the CLI could wedge a turn for minutes. Nothing runs between us and codex now.
+//!
+//! We **prefer what the system already offers**: if `node` and `codex` are both on
+//! `PATH`, we use them directly and download nothing. That is also how you point
+//! hi-agent at your own runtime for local development.
+//!
+//! Only when the system *doesn't* offer both do we fall back to a self-contained
+//! install: download the pinned Node release and `npm ci` the pinned `@openai/codex`
+//! (which carries the native binary as a platform dep) into a single fixed directory
+//! ([`runtime_dir`]), then resolve the node/codex paths. Subsequent runs reuse that
+//! directory via a `.complete` marker, so the install cost is paid once.
 //!
 //! The pins come from `src/runtime/manifest.toml` + the committed lockfile, so a
 //! managed install stays reproducible — we just fetch at first run instead of at
 //! build time. The install dir is **content-addressed** by a fingerprint of those
 //! pins ([`runtime_fingerprint`]): the Node version plus the lockfile bytes. Bump
-//! any pin — Node, the adapter, or a transitive dep like esbuild — and the
+//! any pin — Node, codex, or a transitive dep like esbuild — and the
 //! fingerprint changes, so the next run installs into a fresh subdir instead of
 //! silently reusing a stale one. That is the whole auto-update story for the
 //! managed runtime: an app update that changes the lockfile heals the runtime on
@@ -24,7 +31,7 @@
 //! prior pins are pruned best-effort once the current one is ready.
 //!
 //! Detection is all-or-nothing: a partial system set (e.g. `node` but no
-//! `claude`) falls back to the managed install so we never mix a system tool with
+//! `codex`) falls back to the managed install so we never mix a system tool with
 //! a managed one. Prototype scope for the install path: macOS, Linux, and Windows
 //! on x86_64/aarch64, extraction via the system `tar` (bsdtar on Windows 10+,
 //! which auto-detects the `.zip` Node ships there), and no SHA-256 verification of
@@ -36,8 +43,6 @@ use std::time::Duration;
 use anyhow::{Context, anyhow, bail};
 use tokio::process::Command;
 
-use crate::foundation::config::LlmWire;
-
 /// The headless browser the view render pipeline drives. Same system-first,
 /// managed-fallback shape as the tools above; provisioned lazily on first render.
 pub mod browser;
@@ -45,11 +50,13 @@ pub mod browser;
 /// Pinned Node version (no leading `v`), stamped from `src/runtime/manifest.toml`.
 const NODE_VERSION: &str = env!("HI_AGENT_NODE_VERSION");
 
-/// Pinned ACP adapter version, stamped from `src/runtime/manifest.toml` (kept in
-/// sync with `package.json`). Used to reject a *different* `claude-agent-acp` found
-/// on `PATH` — a stray global install (e.g. the 0.55.x hang-zone) silently
-/// overriding the pin is exactly what wedged reaction turns for minutes.
-const ADAPTER_VERSION: &str = env!("HI_AGENT_ADAPTER_VERSION");
+/// Pinned `@openai/codex` version, stamped from `src/runtime/manifest.toml` (kept in
+/// sync with `package.json`). Used to reject a *different* `codex` found on `PATH`: a
+/// stray global install silently shadowing the pin is exactly the failure mode that
+/// wedged turns for minutes in the ACP era, and the protocol still moves fast enough
+/// that a version we did not test is a real hazard (0.144 spells its sandbox modes
+/// kebab-case; the published docs for a later build show camelCase).
+const CODEX_VERSION: &str = env!("HI_AGENT_CODEX_VERSION");
 
 /// The committed pin files, embedded so `npm ci` reproduces the exact tree
 /// without needing the repo on disk. Tiny (text), unlike the runtime itself.
@@ -62,20 +69,22 @@ const PACKAGE_LOCK: &str = include_str!(concat!(
     "/src/runtime/package-lock.json"
 ));
 
-/// Path of each adapter entry relative to the install dir, after `npm ci`.
-const CLAUDE_ADAPTER_REL: &str =
-    "adapter/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js";
-const CODEX_ADAPTER_REL: &str = "adapter/node_modules/@agentclientprotocol/codex-acp/dist/index.js";
+/// Where `npm ci` puts the tree, relative to the install dir.
+const NODE_MODULES_REL: &str = "adapter/node_modules";
 
 /// Absolute paths to the resolved runtime components.
 #[derive(Debug, Clone)]
 pub struct ResolvedRuntime {
-    pub wire: LlmWire,
     pub node_bin: PathBuf,
-    pub adapter_entry: PathBuf,
-    pub agent_bin: PathBuf,
-    /// Where these came from — `"system"` (found on `PATH`) or `"managed"`
-    /// (downloaded/installed into the cache). For logging only.
+    /// The `codex` executable hi-agent drives as `codex app-server --stdio`.
+    pub codex_bin: PathBuf,
+    /// The `node_modules` this runtime was installed into, when it has one. `None`
+    /// for a system runtime, which resolved its tools from `PATH` and so has no tree
+    /// of ours to borrow esbuild from.
+    pub node_modules: Option<PathBuf>,
+    /// Where these came from — `"system"` (found on `PATH`), `"managed"`
+    /// (downloaded/installed into the cache), or `"bundled"` (shipped in a `.app`).
+    /// For logging only.
     pub origin: &'static str,
 }
 
@@ -88,22 +97,22 @@ impl ResolvedRuntime {
 
 /// Resolve the runtime: prefer one bundled inside a packaged `.app`, else the
 /// system tools if all are present, else install on first run and reuse after.
-pub async fn ensure(wire: LlmWire) -> anyhow::Result<ResolvedRuntime> {
+pub async fn ensure() -> anyhow::Result<ResolvedRuntime> {
     // A shipped `.app` carries a complete managed runtime under its Resources;
     // use it so the packaged app runs with no download and is unaffected by
-    // whatever node/claude happen to be on the user's PATH. Absent (dev/Docker/
+    // whatever node/codex happen to be on the user's PATH. Absent (dev/Docker/
     // Linux), this is `None` and we fall through to the existing tiers.
     if let Some(res) = crate::bundle::resources_dir() {
         let rt = res.join("runtime");
         if rt.join(".complete").exists() {
             tracing::debug!(path = %rt.display(), "using bundled runtime");
-            return resolve_bundled(&rt, wire);
+            return resolve_bundled(&rt);
         }
     }
 
     // Prefer what the system already offers — no download when the user has
-    // node + the ACP adapter + claude on PATH.
-    if let Some(system) = resolve_system(wire) {
+    // node + codex on PATH.
+    if let Some(system) = resolve_system() {
         return Ok(system);
     }
 
@@ -114,9 +123,9 @@ pub async fn ensure(wire: LlmWire) -> anyhow::Result<ResolvedRuntime> {
     // was built from *these* pins — a changed lockfile lands on a different path.
     let runtime = if target.join(".complete").exists() {
         tracing::debug!(path = %target.display(), "runtime already installed");
-        resolve(&target, wire)?
+        resolve(&target)?
     } else {
-        install(&target, wire).await?
+        install(&target).await?
     };
 
     // Now that a current runtime is ready, prune installs left by older pins so
@@ -155,21 +164,21 @@ fn gc_stale_runtimes(current: &Path) {
 }
 
 /// esbuild version for the view toolchain. Keep in sync with the `esbuild` pin
-/// in `src/runtime/package.json` — the managed adapter install carries the same
-/// one; this is the version we install standalone when the runtime came from the
-/// system PATH (and so has no adapter-adjacent esbuild).
+/// in `src/runtime/package.json` — the managed install carries the same one; this is
+/// the version we install standalone when the runtime came from the system PATH (and
+/// so has no `node_modules` of ours to borrow from).
 const ESBUILD_VERSION: &str = "0.28.1";
 
 /// Resolve an esbuild native binary for the view compiler, guaranteeing one
 /// exists regardless of where the runtime came from. esbuild is *hi-agent's* own
-/// tool for compiling agent views — it is unrelated to the ACP adapter and must
-/// not be assumed to live next to it. A **managed** runtime happens to carry
-/// esbuild in its `node_modules`, so we reuse that; a **system** runtime (local
-/// dev with node/adapter/claude on PATH) has none, so we install a standalone
-/// copy once into a hi-agent-owned cache dir.
+/// tool for compiling agent views — nothing to do with the agent itself. A
+/// **managed** runtime carries esbuild in its `node_modules`, so we reuse that; a
+/// **system** runtime (local dev with node/codex on PATH) has no tree of ours, so we
+/// install a standalone copy once into a hi-agent-owned cache dir.
 pub async fn ensure_view_esbuild(runtime: &ResolvedRuntime) -> anyhow::Result<PathBuf> {
-    let adjacent = esbuild_binary(&runtime.adapter_entry);
-    if adjacent.exists() {
+    if let Some(adjacent) = runtime.node_modules.as_deref().and_then(esbuild_binary)
+        && adjacent.exists()
+    {
         tracing::debug!(path = %adjacent.display(), "using esbuild bundled with the runtime");
         return Ok(adjacent);
     }
@@ -256,31 +265,12 @@ async fn ensure_standalone_esbuild(node_bin: &Path) -> anyhow::Result<PathBuf> {
     Ok(bin)
 }
 
-/// Locate the esbuild native binary in the same `node_modules` a runtime was
-/// installed into (the managed install carries it). Returns a non-existent
-/// sentinel if the layout is unfamiliar or the host platform is unsupported, so
-/// the caller's `.exists()` check falls through to a standalone install.
-fn esbuild_binary(adapter_entry: &Path) -> PathBuf {
-    let (os, arch) = match node_target() {
-        Ok(t) => t,
-        Err(_) => return PathBuf::from("esbuild-unsupported-platform"),
-    };
-    match node_modules_ancestor(adapter_entry) {
-        Some(nm) => nm.join(esbuild_rel_in_node_modules(os, arch)),
-        None => PathBuf::from("esbuild-unresolved"),
-    }
-}
-
-/// The nearest ancestor of `p` that is a `node_modules` directory.
-fn node_modules_ancestor(p: &Path) -> Option<PathBuf> {
-    let mut cur = p;
-    while let Some(parent) = cur.parent() {
-        if parent.file_name().is_some_and(|n| n == "node_modules") {
-            return Some(parent.to_path_buf());
-        }
-        cur = parent;
-    }
-    None
+/// Locate the esbuild native binary in the `node_modules` a runtime was installed
+/// into (the managed install carries it). `None` when the host platform is
+/// unsupported, so the caller falls through to a standalone install.
+fn esbuild_binary(node_modules: &Path) -> Option<PathBuf> {
+    let (os, arch) = node_target().ok()?;
+    Some(node_modules.join(esbuild_rel_in_node_modules(os, arch)))
 }
 
 /// Cache dir for the standalone view-toolchain esbuild, keyed by version + host
@@ -333,7 +323,7 @@ fn runtime_fingerprint() -> String {
 /// cache as [`ensure`]'s auto-install tier, so a repeat `make dmg` (or a prior
 /// `make dev`) downloads nothing; only a cold cache pays the Node + `npm ci` cost.
 /// Unlike [`ensure`] it never short-circuits to a system runtime on `PATH` — the
-/// packaging host (a dev Mac with node/claude installed) would otherwise stage
+/// packaging host (a dev Mac with node/codex installed) would otherwise stage
 /// nothing. The bundle gets a *copy* of the cache, not a link: `make dmg` codesigns
 /// the bundle's Mach-O in place, which must never reach back into the shared cache.
 pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
@@ -341,7 +331,7 @@ pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
     if cache.join(".complete").exists() {
         tracing::debug!(path = %cache.display(), "reusing cached runtime for the bundle");
     } else {
-        install(&cache, LlmWire::Claude).await?;
+        install(&cache).await?;
     }
     copy_tree(&cache, dir)
         .await
@@ -356,7 +346,7 @@ pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Recursively copy `src` to `dst` via the system `cp -Rp`, preserving symlinks
-/// (npm's `.bin/*`) and the execute bits on `node`/`claude`. `dst` is removed first
+/// (npm's `.bin/*`) and the execute bits on `node`/`codex`. `dst` is removed first
 /// so `cp` creates it as an exact copy rather than nesting `src` inside an existing
 /// dir. Used to stamp a bundle's runtime from the shared cache.
 async fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -379,10 +369,10 @@ async fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Install the pinned Node + adapter into `target`. Builds in a sibling temp dir
+/// Install the pinned Node + codex into `target`. Builds in a sibling temp dir
 /// and atomically renames into place, so concurrent or interrupted starts never
 /// observe a half-installed runtime.
-async fn install(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRuntime> {
+async fn install(target: &Path) -> anyhow::Result<ResolvedRuntime> {
     let parent = target
         .parent()
         .ok_or_else(|| anyhow!("runtime dir {} has no parent", target.display()))?;
@@ -400,19 +390,15 @@ async fn install(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRuntime
     let node_bin = fetch_node(&tmp)
         .await
         .context("installing the Node runtime")?;
-    // 2. Adapter + claude — npm ci against the committed lockfile into <tmp>/adapter.
+    // 2. codex (+ esbuild) — npm ci against the committed lockfile into <tmp>/adapter.
     npm_ci(&node_bin, &tmp)
         .await
-        .context("installing the ACP adapter")?;
+        .context("installing the codex runtime")?;
 
     // Fail loudly if the install didn't produce the paths we expect, before we
     // publish anything (a corrupt cache dir is worse than a clear error).
-    let staged = resolve(&tmp, wire)?;
-    for (label, p) in [
-        ("node", &staged.node_bin),
-        ("adapter", &staged.adapter_entry),
-        (wire.as_str(), &staged.agent_bin),
-    ] {
+    let staged = resolve(&tmp)?;
+    for (label, p) in [("node", &staged.node_bin), ("codex", &staged.codex_bin)] {
         if !p.exists() {
             bail!(
                 "runtime installed but the {label} entry is missing at {} \
@@ -442,52 +428,66 @@ async fn install(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRuntime
     }
 
     hint("runtime ready.");
-    resolve(target, wire)
+    resolve(target)
 }
 
 /// Build absolute paths from an installed (or reused) target dir.
-fn resolve(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRuntime> {
-    let (os, arch) = node_target()?;
-    let exe = if cfg!(target_os = "windows") {
-        ".exe"
-    } else {
-        ""
-    };
-    let (adapter_rel, agent_rel) = match wire {
-        LlmWire::Claude => {
-            // The `claude` CLI ships as a native binary inside a platform-specific
-            // package `@anthropic-ai/claude-agent-sdk-<os>-<arch>` (an optional dep of
-            // the SDK; npm installs only the one matching this host).
-            let rel = format!(
-                "adapter/node_modules/@anthropic-ai/claude-agent-sdk-{os}-{arch}/claude{exe}"
-            );
-            (CLAUDE_ADAPTER_REL, rel)
-        }
-        LlmWire::Codex => {
-            // The Codex ACP adapter carries `@openai/codex`; its JS bin delegates to
-            // the platform-native optional package installed for this host.
-            let rel = if cfg!(target_os = "windows") {
-                "adapter/node_modules/@openai/codex/bin/codex.js".to_string()
-            } else {
-                "adapter/node_modules/.bin/codex".to_string()
-            };
-            (CODEX_ADAPTER_REL, rel)
-        }
-    };
+fn resolve(target: &Path) -> anyhow::Result<ResolvedRuntime> {
+    let node_modules = target.join(NODE_MODULES_REL);
     Ok(ResolvedRuntime {
-        wire,
         node_bin: node_bin_in(&target.join("node")),
-        adapter_entry: target.join(adapter_rel),
-        agent_bin: target.join(agent_rel),
+        codex_bin: codex_bin_in(&node_modules),
+        node_modules: Some(node_modules),
         origin: "managed",
     })
+}
+
+/// The native `codex` inside an installed `node_modules`.
+///
+/// `@openai/codex` is a thin JS launcher; the executable lives in a platform package
+/// (`@openai/codex-darwin-arm64`) under `vendor/<rust-target>/bin/codex`. We spawn the
+/// native binary rather than the launcher: it saves a node startup on every session
+/// spawn, and it keeps `codex` working regardless of what `node` the child's PATH
+/// happens to resolve.
+///
+/// The two directory names use *different* naming schemes — npm's `darwin-arm64` and
+/// Rust's `aarch64-apple-darwin` — so both are found by search rather than by a mapping
+/// table we would have to keep correct for five platforms. `npm ci` honours `os`/`cpu`
+/// and installs exactly the one platform package for this host, so the search has one
+/// candidate by construction. Falls back to the launcher path if the layout is
+/// unfamiliar, so the caller's existence check reports a real path.
+fn codex_bin_in(node_modules: &Path) -> PathBuf {
+    let exe = if cfg!(target_os = "windows") { "codex.exe" } else { "codex" };
+    let launcher = node_modules.join("@openai/codex/bin/codex.js");
+
+    let Ok(entries) = std::fs::read_dir(node_modules.join("@openai")) else {
+        return launcher;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("codex-") {
+            continue;
+        }
+        let vendor = entry.path().join("vendor");
+        let Ok(targets) = std::fs::read_dir(&vendor) else {
+            continue;
+        };
+        for target in targets.flatten() {
+            let candidate = target.path().join("bin").join(exe);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    launcher
 }
 
 /// Same as [`resolve`] but stamped `origin = "bundled"` — the layout of a
 /// provisioned `.app` runtime is identical to a managed-cache one (it was built
 /// by the same [`install`]), so only the origin label differs (for logging).
-fn resolve_bundled(target: &Path, wire: LlmWire) -> anyhow::Result<ResolvedRuntime> {
-    let mut r = resolve(target, wire)?;
+fn resolve_bundled(target: &Path) -> anyhow::Result<ResolvedRuntime> {
+    let mut r = resolve(target)?;
     r.origin = "bundled";
     Ok(r)
 }
@@ -586,7 +586,7 @@ async fn npm_ci(node_bin: &Path, dir: &Path) -> anyhow::Result<()> {
     let npm_cli = npm_cli_for(node_bin)
         .with_context(|| format!("locating npm bundled with {}", node_bin.display()))?;
 
-    hint("first run — installing the ACP adapter (this can take a minute)…");
+    hint("first run — installing the codex runtime (this can take a minute)…");
     let mut cmd = Command::new(node_bin);
     cmd.arg(&npm_cli)
         .arg("ci")
@@ -640,9 +640,9 @@ async fn run_with_heartbeat(
 }
 
 /// Map the host to the **npm platform-package** naming used by the deps we
-/// resolve: the esbuild platform package (`@esbuild/<os>-<arch>`) and the claude
-/// binary package (`@anthropic-ai/claude-agent-sdk-<os>-<arch>`) — see
-/// `crate::mind::views`. `Err` on platforms we don't auto-install.
+/// resolve: the esbuild platform package (`@esbuild/<os>-<arch>`) and codex's
+/// (`@openai/codex-<os>-<arch>`) — see `crate::mind::views`. `Err` on platforms we
+/// don't auto-install.
 ///
 /// nodejs.org's *download* naming agrees with this except on Windows, where the
 /// npm token is `win32` but the Node release archive uses `win`; [`node_dist_os`]
@@ -654,8 +654,7 @@ pub(crate) fn node_target() -> anyhow::Result<(&'static str, &'static str)> {
         "windows" => "win32",
         other => bail!(
             "runtime auto-install supports macOS, Linux, and Windows only (OS `{other}`). \
-             Install node, claude-agent-acp, and claude on your PATH to use the \
-             system runtime instead."
+             Install node and codex on your PATH to use the system runtime instead."
         ),
     };
     let arch = match std::env::consts::ARCH {
@@ -663,8 +662,7 @@ pub(crate) fn node_target() -> anyhow::Result<(&'static str, &'static str)> {
         "aarch64" => "arm64",
         other => bail!(
             "runtime auto-install supports x86_64 and aarch64 only (arch `{other}`). \
-             Install node, claude-agent-acp, and claude on your PATH to use the \
-             system runtime instead."
+             Install node and codex on your PATH to use the system runtime instead."
         ),
     };
     Ok((os, arch))
@@ -718,75 +716,61 @@ pub(crate) fn is_executable(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
 }
 
-/// Use the system's tools when it offers the full set: `node`, the ACP adapter
-/// (`claude-agent-acp`), and the `claude` CLI all on `PATH`. All-or-nothing —
-/// returns `None` if any is missing, so we never pair a system tool with a
-/// managed one. The adapter bin is a JS entry (it has a `node` shebang), so we
-/// keep running it as `node <entry>` exactly like the managed adapter.
-fn resolve_system(wire: LlmWire) -> Option<ResolvedRuntime> {
+/// Use the system's tools when it offers both: `node` and `codex` on `PATH`.
+/// All-or-nothing — returns `None` if either is missing, so we never pair a system
+/// tool with a managed one.
+fn resolve_system() -> Option<ResolvedRuntime> {
     let node_bin = find_on_path("node")?;
-    let (adapter_name, agent_bin) = match wire {
-        LlmWire::Claude => ("claude-agent-acp", resolve_claude_bin()?),
-        LlmWire::Codex => ("codex-acp", resolve_codex_bin()?),
-    };
-    let adapter_entry = find_on_path(adapter_name)?;
+    let codex_bin = resolve_codex_bin()?;
 
-    // A `claude-agent-acp` on `PATH` whose version differs from our pin is a trap:
-    // it can be a known-bad release (0.55.x hangs every ACP prompt for minutes) that
-    // silently shadows the managed/bundled adapter. Only Claude ships this pin, so
-    // check it for `LlmWire::Claude`; on a definite mismatch, skip the system runtime
-    // and fall through to the managed install of the pinned version. A version we
-    // can't read is accepted (don't break unusual-but-valid setups).
-    if let LlmWire::Claude = wire {
-        if let Some(found) = adapter_version_on_path(&adapter_entry) {
-            if found != ADAPTER_VERSION {
-                tracing::warn!(
-                    found = %found,
-                    pinned = %ADAPTER_VERSION,
-                    adapter = %adapter_entry.display(),
-                    "ignoring PATH claude-agent-acp: version != pinned; using the managed runtime instead",
-                );
-                return None;
-            }
-        }
+    // A `codex` on `PATH` whose version differs from our pin is a trap: the app-server
+    // protocol is still moving (0.144 rejects the camelCase sandbox spelling that a
+    // later build's docs show), so an unpinned global install can fail in ways that look
+    // like our bug. On a definite mismatch, skip the system runtime and fall through to
+    // the managed install of the pinned version. A version we can't read is accepted —
+    // don't break unusual-but-valid setups.
+    if let Some(found) = codex_version_on_path(&codex_bin)
+        && found != CODEX_VERSION
+    {
+        tracing::warn!(
+            found = %found,
+            pinned = %CODEX_VERSION,
+            codex = %codex_bin.display(),
+            "ignoring PATH codex: version != pinned; using the managed runtime instead",
+        );
+        return None;
     }
 
     tracing::debug!(
-        wire = wire.as_str(),
         node = %node_bin.display(),
-        adapter = %adapter_entry.display(),
-        agent = %agent_bin.display(),
+        codex = %codex_bin.display(),
         "using system runtime from PATH",
     );
     Some(ResolvedRuntime {
-        wire,
         node_bin,
-        adapter_entry,
-        agent_bin,
+        codex_bin,
+        node_modules: None,
         origin: "system",
     })
 }
 
-/// Best-effort read of the `version` from the `claude-agent-acp` package that a
-/// `PATH` entry resolves to. Follows symlinks (the npm bin is a symlink into the
-/// package's `dist/`), then walks up to the nearest `package.json` — the package
-/// root — and parses its `version`. Returns `None` if anything can't be read, so
-/// the caller treats "unknown" as "don't reject".
-fn adapter_version_on_path(entry: &Path) -> Option<String> {
-    let real = entry.canonicalize().ok()?;
-    let pkg = real
-        .ancestors()
-        .map(|dir| dir.join("package.json"))
-        .find(|p| p.is_file())?;
-    let text = std::fs::read_to_string(&pkg).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    json.get("version")?.as_str().map(str::to_string)
+/// Best-effort `codex --version`, reduced to the bare version string.
+///
+/// The CLI prints `codex-cli 0.144.1`. Returns `None` if it can't be run or parsed, so
+/// the caller treats "unknown" as "don't reject". Blocking on purpose — this runs once
+/// during startup resolution, before the async runtime has any work to do.
+fn codex_version_on_path(codex_bin: &Path) -> Option<String> {
+    let out = std::process::Command::new(codex_bin).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().last().map(str::to_string)
 }
 
 /// Find an executable named `name` on `PATH`, returning the first match. On
 /// Windows, where executables carry an extension, each `PATHEXT` suffix is also
-/// tried, so a bare `node` finds `node.exe` and `claude-agent-acp` finds its
-/// `.cmd` shim.
+/// tried, so a bare `node` finds `node.exe` and `codex` finds `codex.cmd`.
 pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -809,26 +793,29 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Locate a *usable* `claude` CLI, resisting launcher shims.
+/// Locate a *usable* `codex` CLI, resisting launcher shims.
 ///
-/// Priority: `HI_AGENT_CLAUDE_BIN` override → first non-shim `claude` on PATH →
-/// canonical install locations (in case the launcher's PATH omits them). A
-/// "shim" is any candidate inside a macOS `.app` bundle — the pattern used by
-/// GUI launchers like cmux, whose `claude` only works in their own auth
-/// sandbox. Returns `None` when only a shim exists, so the caller falls back to
-/// the managed runtime instead of a `claude` that will fail at prompt time.
-fn resolve_claude_bin() -> Option<PathBuf> {
-    if let Some(raw) = std::env::var_os("HI_AGENT_CLAUDE_BIN") {
+/// Priority: `HI_AGENT_CODEX_BIN` override → first non-shim `codex` on PATH →
+/// canonical install locations (in case the launcher's PATH omits them). A "shim" is
+/// any candidate inside a macOS `.app` bundle — the pattern used by GUI launchers like
+/// cmux, whose binary only works in their own auth sandbox. Returns `None` when only a
+/// shim exists, so the caller falls back to the managed runtime instead of a `codex`
+/// that will fail at prompt time.
+///
+/// (This resistance was learnt the hard way with `claude` under ACP, and it transfers
+/// unchanged: the trap is the launcher, not the vendor.)
+fn resolve_codex_bin() -> Option<PathBuf> {
+    if let Some(raw) = std::env::var_os("HI_AGENT_CODEX_BIN") {
         let p = PathBuf::from(raw);
         if is_executable(&p) {
             return Some(p);
         }
-        tracing::warn!(path = %p.display(), "HI_AGENT_CLAUDE_BIN is not executable; ignoring");
+        tracing::warn!(path = %p.display(), "HI_AGENT_CODEX_BIN is not executable; ignoring");
     }
 
     let mut shim: Option<PathBuf> = None;
     if let Some(path) = std::env::var_os("PATH") {
-        for cand in std::env::split_paths(&path).map(|dir| dir.join("claude")) {
+        for cand in std::env::split_paths(&path).map(|dir| dir.join("codex")) {
             if !is_executable(&cand) {
                 continue;
             }
@@ -842,7 +829,7 @@ fn resolve_claude_bin() -> Option<PathBuf> {
 
     // PATH yielded only a shim (or nothing). Try canonical install locations the
     // launcher's PATH may have dropped, before giving up.
-    for cand in canonical_claude_paths() {
+    for cand in canonical_codex_paths() {
         if is_executable(&cand) && !is_app_bundle_path(&cand) {
             return Some(cand);
         }
@@ -851,40 +838,11 @@ fn resolve_claude_bin() -> Option<PathBuf> {
     if let Some(shim) = &shim {
         tracing::warn!(
             path = %shim.display(),
-            "the only `claude` on PATH is an app-bundle shim (e.g. a GUI launcher's); \
-             falling back to the managed runtime — set HI_AGENT_CLAUDE_BIN to override",
+            "the only `codex` on PATH is an app-bundle shim (e.g. a GUI launcher's); \
+             falling back to the managed runtime — set HI_AGENT_CODEX_BIN to override",
         );
     }
     None
-}
-
-/// Locate a Codex CLI for `CODEX_PATH`. The system `codex-acp` package can run its
-/// own bundled `@openai/codex`, so this is best-effort; if absent the adapter still
-/// starts without `CODEX_PATH`.
-fn resolve_codex_bin() -> Option<PathBuf> {
-    if let Some(raw) = std::env::var_os("HI_AGENT_CODEX_BIN") {
-        let p = PathBuf::from(raw);
-        if is_executable(&p) {
-            return Some(p);
-        }
-        tracing::warn!(path = %p.display(), "HI_AGENT_CODEX_BIN is not executable; ignoring");
-    }
-    find_on_path("codex").or_else(|| {
-        canonical_codex_paths()
-            .into_iter()
-            .find(|p| is_executable(p))
-    })
-}
-
-/// Standard places the official installer / package managers put `claude`.
-fn canonical_claude_paths() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        out.push(PathBuf::from(&home).join(".local/bin/claude"));
-    }
-    out.push(PathBuf::from("/opt/homebrew/bin/claude"));
-    out.push(PathBuf::from("/usr/local/bin/claude"));
-    out
 }
 
 /// Standard places the official installer / package managers put `codex`.
@@ -945,70 +903,59 @@ mod tests {
 
     #[test]
     fn resolve_builds_expected_paths() {
-        let r = resolve(Path::new("/cache/runtimeX"), LlmWire::Claude).unwrap();
-        assert!(r.adapter_entry.ends_with("claude-agent-acp/dist/index.js"));
-        assert!(
-            r.agent_bin
-                .to_string_lossy()
-                .contains("@anthropic-ai/claude-agent-sdk-"),
-            "claude path should point at a platform package: {}",
-            r.agent_bin.display()
-        );
+        let r = resolve(Path::new("/cache/runtimeX")).unwrap();
         assert_eq!(r.origin, "managed");
-        assert_eq!(r.wire, LlmWire::Claude);
+        assert_eq!(
+            r.node_modules.as_deref(),
+            Some(Path::new("/cache/runtimeX/adapter/node_modules"))
+        );
 
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(r.node_bin, Path::new("/cache/runtimeX/node/bin/node"));
-            assert!(r.agent_bin.ends_with("claude"));
             assert_eq!(r.node_bin_dir(), Path::new("/cache/runtimeX/node/bin"));
         }
         #[cfg(target_os = "windows")]
         {
             assert!(r.node_bin.ends_with("node/node.exe"));
-            assert!(r.agent_bin.ends_with("claude.exe"));
             assert!(r.node_bin_dir().ends_with("runtimeX/node"));
         }
     }
 
+    /// With no installed tree to search, the codex path falls back to the JS launcher
+    /// rather than to a plausible-looking path that does not exist. The caller checks
+    /// existence and reports it, so a wrong-but-real path is the honest answer.
     #[test]
-    fn resolve_builds_codex_paths() {
-        let r = resolve(Path::new("/cache/runtimeX"), LlmWire::Codex).unwrap();
-        assert!(r.adapter_entry.ends_with("codex-acp/dist/index.js"));
-        assert_eq!(r.origin, "managed");
-        assert_eq!(r.wire, LlmWire::Codex);
+    fn codex_path_falls_back_to_the_launcher_when_the_tree_is_absent() {
+        let bin = codex_bin_in(Path::new("/cache/runtimeX/adapter/node_modules"));
+        assert!(bin.ends_with("@openai/codex/bin/codex.js"), "{}", bin.display());
+    }
 
-        #[cfg(not(target_os = "windows"))]
-        assert!(r.agent_bin.ends_with("adapter/node_modules/.bin/codex"));
-        #[cfg(target_os = "windows")]
-        assert!(
-            r.agent_bin
-                .ends_with("adapter/node_modules/@openai/codex/bin/codex.js")
-        );
+    /// The native binary sits two differently-named directories deep — npm's
+    /// `codex-darwin-arm64` and Rust's `aarch64-apple-darwin` — which is exactly why it
+    /// is found by search instead of a per-platform mapping table.
+    #[test]
+    fn codex_path_finds_the_native_binary_in_a_platform_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let nm = dir.path().join("node_modules");
+        let exe = if cfg!(target_os = "windows") { "codex.exe" } else { "codex" };
+        let vendor = nm.join("@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join(exe), b"").unwrap();
+        // A sibling launcher package exists too, and must not win.
+        std::fs::create_dir_all(nm.join("@openai/codex/bin")).unwrap();
+        std::fs::write(nm.join("@openai/codex/bin/codex.js"), b"").unwrap();
+
+        assert_eq!(codex_bin_in(&nm), vendor.join(exe));
     }
 
     #[test]
     fn app_bundle_paths_are_recognized_as_shims() {
         assert!(is_app_bundle_path(Path::new(
-            "/Applications/cmux.app/Contents/Resources/bin/claude"
+            "/Applications/cmux.app/Contents/Resources/bin/codex"
         )));
-        assert!(!is_app_bundle_path(Path::new(
-            "/Users/me/.local/bin/claude"
-        )));
-        assert!(!is_app_bundle_path(Path::new("/opt/homebrew/bin/claude")));
-    }
-
-    #[test]
-    fn finds_node_modules_ancestor() {
-        let entry = Path::new("/r/adapter/node_modules/@scope/pkg/dist/index.js");
-        assert_eq!(
-            node_modules_ancestor(entry),
-            Some(PathBuf::from("/r/adapter/node_modules"))
-        );
-        assert_eq!(
-            node_modules_ancestor(Path::new("/usr/local/bin/tool")),
-            None
-        );
+        assert!(!is_app_bundle_path(Path::new("/Users/me/.local/bin/codex")));
+        assert!(!is_app_bundle_path(Path::new("/opt/homebrew/bin/codex")));
     }
 
     #[test]

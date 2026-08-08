@@ -1,11 +1,10 @@
-//! First-run runtime install: download the pinned Node + `npm ci` the adapter,
-//! then reuse on a second call.
+//! First-run runtime install: download the pinned Node + `npm ci` codex, then reuse
+//! on a second call.
 //!
 //! Gated behind `RUN_INTEGRATION_TESTS` because it hits the network (downloads
 //! ~30 MB of Node and runs `npm ci`). The fast, network-free checks for path
 //! resolution / target mapping live as unit tests in `src/runtime/mod.rs`.
 
-use hi_agent::foundation::config::LlmWire;
 use hi_agent::runtime;
 
 #[tokio::test]
@@ -22,7 +21,7 @@ async fn installs_then_reuses() {
         std::env::set_var("HI_AGENT_RUNTIME_DIR", cache.path());
     }
 
-    let r1 = runtime::ensure(LlmWire::Claude)
+    let r1 = runtime::ensure()
         .await
         .expect("first-run install should succeed");
     assert!(
@@ -30,22 +29,22 @@ async fn installs_then_reuses() {
         "node missing: {}",
         r1.node_bin.display()
     );
+    // The codex path is resolved by searching the installed tree for the platform
+    // package's native binary, so this also pins that the layout is what we expect.
     assert!(
-        r1.adapter_entry.exists(),
-        "adapter missing: {}",
-        r1.adapter_entry.display()
+        r1.codex_bin.exists(),
+        "codex missing: {}",
+        r1.codex_bin.display()
     );
     assert!(
-        r1.agent_bin.exists(),
-        "claude missing: {}",
-        r1.agent_bin.display()
+        !r1.codex_bin.extension().is_some_and(|e| e == "js"),
+        "resolved the JS launcher rather than the native binary: {}",
+        r1.codex_bin.display()
     );
 
     // Second call reuses the install (`.complete` marker present).
-    let r2 = runtime::ensure(LlmWire::Claude)
-        .await
-        .expect("reuse should succeed");
+    let r2 = runtime::ensure().await.expect("reuse should succeed");
     assert_eq!(r1.node_bin, r2.node_bin);
-    assert_eq!(r1.adapter_entry, r2.adapter_entry);
-    assert_eq!(r1.agent_bin, r2.agent_bin);
+    assert_eq!(r1.codex_bin, r2.codex_bin);
+    assert_eq!(r1.node_modules, r2.node_modules);
 }

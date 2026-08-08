@@ -15,7 +15,6 @@ use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::foundation::config::LlmWire;
 use crate::foundation::credentials::{Credentials, Energy, Identity, LlmCredentials, Managed, Mode, Tokens, VendorKey};
 
 /// Env override for the broker base URL (default [`DEFAULT_BROKER_URL`]).
@@ -172,49 +171,37 @@ fn pick_wire(
     Some((wire.clone(), w.url.trim().to_string(), w.api_key.clone(), model, small))
 }
 
-fn broker_llm_wire(wire: LlmWire) -> &'static str {
-    match wire {
-        LlmWire::Claude => "anthropic-messages",
-        LlmWire::Codex => "openai-responses",
-    }
-}
+/// The broker's name for the wire the agent speaks. Codex drives the OpenAI
+/// **Responses** API, and the broker already mints this wire alongside the others, so
+/// the swap away from Claude Code needed no broker change — only that the client stop
+/// asking for `anthropic-messages`.
+const BROKER_LLM_WIRE: &str = "openai-responses";
 
+/// Reduce the broker's full endpoint (`…/v1/responses`) to the provider *base* codex
+/// wants (`…/v1`), which its `wire_api = "responses"` appends `/responses` to. Only the
+/// endpoint leaf is stripped — the `/v1` prefix is part of the base.
 fn openai_responses_base(url: &str) -> String {
     let u = url.trim().trim_end_matches('/');
     u.strip_suffix("/responses").unwrap_or(u).to_string()
 }
 
-fn llm_base_url(wire: LlmWire, endpoint: &str) -> String {
-    match wire {
-        // Claude Code wants ANTHROPIC_BASE_URL; the CLI appends /v1/messages.
-        LlmWire::Claude => origin_of(endpoint),
-        // Codex wants an OpenAI provider base; the adapter's wire_api = responses
-        // appends /responses. Preserve the broker's /v1 prefix and strip only the
-        // endpoint leaf from the full /v1/responses URL.
-        LlmWire::Codex => openai_responses_base(endpoint),
-    }
-}
-
-fn pick_llm_wire(c: &ConfigsDto) -> Option<(LlmWire, String, String, Option<String>, Option<String>)> {
+/// The LLM wire from the broker's menu, or `None` when it offers none we can drive.
+///
+/// The broker controls the agent by choosing which wires it returns; the client sends
+/// no preference. It still lists `anthropic-messages` for older installs, and we now
+/// ignore that one outright rather than preferring it.
+fn pick_llm_wire(c: &ConfigsDto) -> Option<(String, String, Option<String>, Option<String>)> {
     let wires = c.get("text-generation")?;
-    // Broker controls the agent by choosing which wires it returns. If multiple
-    // are available, prefer Claude Code for today's default behavior; otherwise
-    // use the available Codex wire. The client does not send a preference.
-    if let Some((_wire, url, api_key, model, small)) = pick_wire(wires, Some(broker_llm_wire(LlmWire::Claude))) {
-        return Some((LlmWire::Claude, url, api_key, model, small));
-    }
-    if let Some((_wire, url, api_key, model, small)) = pick_wire(wires, Some(broker_llm_wire(LlmWire::Codex))) {
-        return Some((LlmWire::Codex, url, api_key, model, small));
-    }
-    None
+    let (_wire, url, api_key, model, small) = pick_wire(wires, Some(BROKER_LLM_WIRE))?;
+    Some((openai_responses_base(&url), api_key, model, small))
 }
 
 /// Collapse the broker menu into the internal per-slot [`Managed`], selecting the
 /// best-quality model per task.
 ///
 /// Our code treats the broker's **full endpoint URL** as the source of truth. Most
-/// capabilities use it verbatim. LLM adapters strip only what their child CLI
-/// expects: Claude Code keeps the origin, while Codex keeps the OpenAI /v1 base.
+/// capabilities use it verbatim; the LLM wire strips only the endpoint leaf, keeping
+/// the OpenAI `/v1` base that codex's provider block wants.
 fn managed_from(c: &ConfigsDto) -> Managed {
     fn resolve(
         c: &ConfigsDto,
@@ -231,9 +218,9 @@ fn managed_from(c: &ConfigsDto) -> Managed {
             .unwrap_or_default()
     };
     let llm = pick_llm_wire(c)
-        .map(|(wire, endpoint, api_key, model, small)| LlmCredentials {
-            wire: wire.as_str().to_string(),
-            base_url: llm_base_url(wire, &endpoint),
+        .map(|(base_url, api_key, model, small)| LlmCredentials {
+            wire: BROKER_LLM_WIRE.to_string(),
+            base_url,
             api_key,
             model,
             small,
@@ -684,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_from_uses_codex_when_that_is_the_available_wire() {
+    fn managed_from_takes_the_responses_wire() {
         let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
             "text-generation": {
                 "openai-responses": {
@@ -700,25 +687,30 @@ mod tests {
         .unwrap();
 
         let managed = managed_from(&configs);
-        assert_eq!(managed.llm.wire, "codex");
+        assert_eq!(managed.llm.wire, "openai-responses");
+        // The endpoint leaf is stripped; the `/v1` prefix is part of the provider base
+        // codex appends `/responses` to.
         assert_eq!(managed.llm.base_url, "https://songguo.example/v1");
         assert_eq!(managed.llm.api_key, "tok");
         assert_eq!(managed.llm.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(managed.llm.small, None);
     }
 
+    /// The broker still lists `anthropic-messages` for installs that used to drive
+    /// Claude Code. We drive codex now, so that wire is ignored rather than preferred.
     #[test]
-    fn managed_from_prefers_claude_when_multiple_wires_are_available() {
+    fn managed_from_ignores_the_anthropic_wire() {
         let managed = managed_from(&text_generation_configs());
-        assert_eq!(managed.llm.wire, "claude");
-        assert_eq!(managed.llm.base_url, "https://songguo.example");
-        assert_eq!(managed.llm.api_key, "tok");
-        assert_eq!(managed.llm.model.as_deref(), Some("claude-opus-4-8"));
-        assert_eq!(managed.llm.small.as_deref(), Some("claude-haiku-4-5-20251001"));
+        assert_eq!(managed.llm.wire, "openai-responses");
+        assert_eq!(managed.llm.base_url, "https://songguo.example/v1");
+        assert_eq!(managed.llm.model.as_deref(), Some("gpt-5.5"));
     }
 
+    /// A broker old enough to offer *only* the Anthropic wire leaves the agent
+    /// unconfigured, which is the honest outcome: there is nothing here codex can speak,
+    /// and booting against it would fail at the first turn instead of at startup.
     #[test]
-    fn managed_from_uses_claude_for_older_brokers() {
+    fn an_anthropic_only_broker_leaves_the_llm_unconfigured() {
         let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
             "text-generation": {
                 "anthropic-messages": {
@@ -731,8 +723,7 @@ mod tests {
         .unwrap();
 
         let managed = managed_from(&configs);
-        assert_eq!(managed.llm.wire, "claude");
-        assert_eq!(managed.llm.base_url, "https://songguo.example");
-        assert_eq!(managed.llm.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(managed.llm.wire, "");
+        assert_eq!(managed.llm.api_key, "");
     }
 }

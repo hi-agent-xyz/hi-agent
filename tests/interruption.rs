@@ -22,7 +22,7 @@
 //!   (a) A live `claude-code` subprocess responsive to ACP. Tests would
 //!       become integration-grade: slow, flaky, machine-dependent.
 //!   (b) A mock ACP backend swapped in via a trait. That's a v1-grade
-//!       refactor of `src/acp/` — too much surgery for a docs/tests step.
+//!       refactor of `src/foundation/codex/` — too much surgery for a docs/tests step.
 //!
 //! We pick neither. The shell-equivalent verification is below; run it by hand
 //! after `cargo build --release && ./target/release/hi-agent`:

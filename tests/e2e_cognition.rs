@@ -9,7 +9,7 @@ async fn thought_round_trips_through_runtime() {
         return;
     }
     // A real run requires:
-    //   - node + claude-agent-acp + claude on PATH, or a populated runtime cache
+    //   - `codex` on PATH, or a populated runtime cache
     //     (first run installs the pinned set automatically),
     //   - AI_API_KEY set,
     //   - AI_API_BASE pointing at a reachable Anthropic-compatible endpoint

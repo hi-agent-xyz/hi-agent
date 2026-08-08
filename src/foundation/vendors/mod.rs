@@ -6,7 +6,6 @@
 //! parameter, so they stay pure and unit-testable without touching any global.
 //! The matching `crate::body::capabilities` module selects and dispatches to them.
 
-pub mod anthropic_messages;
 pub mod campplus;
 pub mod chrome_headless;
 pub mod doubao_image_gen;

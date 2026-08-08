@@ -305,7 +305,7 @@ async fn turn(
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
 
-    use crate::foundation::acp::{SessionOpts, SessionUpdate};
+    use crate::foundation::codex::{SessionOpts, SessionUpdate};
     use crate::foundation::agent::SessionRole;
     use crate::foundation::observatory::{EventKind, SessionKind};
     use crate::mind::memory::snapshot;
@@ -325,7 +325,7 @@ async fn turn(
                     system_prompt: Some(system_prompt),
                     // The data dir: its whole job is the tree under it.
                     cwd: Some(data_dir.to_path_buf()),
-                    builtin_tools: None,
+                    ..Default::default()
                 },
             )
             .await?,
@@ -337,7 +337,7 @@ async fn turn(
         .record(
             EventKind::SessionOpened {
                 kind: SessionKind::Reflection,
-                id: session.id().0.to_string(),
+                id: session.id().to_string(),
             },
         )
         .await;

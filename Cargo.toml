@@ -26,7 +26,7 @@ thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
-uuid = { version = "1.10", features = ["v7", "serde"] }
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 async-trait = "0.1"
@@ -34,7 +34,6 @@ rust-embed = "8"
 # ACP client. Bumped 0.12 -> 1.x (2026-07); this crossed a major, so the
 # session/notification surface in src/foundation/acp/ likely needs an audit.
 # Kept in lockstep with the node adapters in src/runtime/package.json.
-agent-client-protocol = { version = "1.2", features = ["unstable_end_turn_token_usage"] }
 
 # Voice capabilities (Step 11): HTTP client for STT/TTS providers and helpers
 # for the audio bytes flowing through them. `bytes` is also re-exported via

@@ -24,7 +24,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::foundation::config::{
-    self, KEY_GESTURES, KEY_LANGUAGE, KEY_THEME, LANGUAGES, LLM_WIRES, THEMES,
+    self, KEY_GESTURES, KEY_LANGUAGE, KEY_THEME, LANGUAGES, THEMES,
 };
 use crate::foundation::credentials::{self, Credentials, Energy, Mode};
 use crate::foundation::energy_state;
@@ -388,11 +388,10 @@ fn feature_status(creds: &Credentials, feature: &str) -> Option<FeatureStatus> {
         feature: feature.to_string(),
         configured: !api_key.trim().is_empty(),
         wire: non_empty(wire),
-        wires: if feature == "llm" {
-            choices(LLM_WIRES)
-        } else {
-            Vec::new()
-        },
+        // No feature offers a wire choice any more: the agent speaks one wire (codex
+        // over the OpenAI Responses API) and every other capability's wire is the
+        // vendor's, not a preference. Kept in the DTO because the client renders it.
+        wires: Vec::new(),
         base_url: non_empty(base_url),
         model: model.as_deref().and_then(non_empty),
     })
@@ -608,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn llm_wire_write_persists() {
+    fn llm_wire_write_persists_but_offers_no_choice() {
         let dir = tempfile::tempdir().unwrap();
         let status = set_feature(
             dir.path(),
@@ -621,8 +620,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(status.wire.as_deref(), Some("codex"));
-        assert_eq!(status.wires.len(), 1);
-        assert_eq!(status.wires[0].value, "claude");
+        assert!(status.wires.is_empty(), "there is only one agent wire now");
 
         let stored = Credentials::load(dir.path());
         assert_eq!(stored.llm.wire_opt(), Some("codex"));

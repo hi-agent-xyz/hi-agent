@@ -69,8 +69,8 @@ walking into the room does not start a second conversation.
 ### Channel mux
 
 Fans N input channels into one prompt, and fans one output stream back out to N channels
-by the carrier rules. This is a consequence of ACP carrying a single conversation, not a
-goal in itself.
+by the carrier rules. This is a consequence of a session carrying a single conversation,
+not a goal in itself.
 
 ### The social layer lives in Reaction, not here
 
@@ -201,9 +201,13 @@ handled at two very different speeds, which is why the reflex is drawn separatel
 
 ### Session layer
 
-Exposes each ACP session as an independent handle — prompt it, read its updates, drop it to
-close. One subprocess per session, so one session's crash cannot touch another. A warm pool
-absorbs spawn latency for the sessions that are created per delegation.
+Exposes each agent session as an independent handle — prompt it, read its updates, drop it
+to close. One subprocess per session, so one session's crash cannot touch another. A warm
+pool absorbs spawn latency for the sessions that are created per delegation.
+
+**A rung's prompt is the session's system prompt**, set when the session is opened. Not a
+first message, not a preamble the agent's own persona frames — the system prompt. Anything
+less means the rung's character is advice layered over somebody else's.
 
 **Every thinking rung holds one long-lived session, from the moment it is created.** Reaction,
 Deliberation and Cognition each keep a single session across turns rather than opening one per
