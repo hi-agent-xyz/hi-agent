@@ -38,6 +38,7 @@ pub mod reflex;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
+pub mod stage;
 pub mod stubs;
 pub mod tasks;
 pub mod text;
@@ -468,6 +469,11 @@ pub fn build(
         // The attention lane: the web face reports its own window coming forward
         // (visibility/focus) — the "they're checking on you" signal for presence.
         .route("/api/in/attention", post(attention::post_attention))
+        // The stage lane: the desktop window reports the frame it is showing, so
+        // `review_view` renders a view at the size the person actually has rather
+        // than at a constant matching no window. Not `/api/in/*` — a frame size is
+        // a rendering parameter, not something the agent perceives.
+        .route("/api/stage", post(stage::post_stage))
         // The file channel — handing the agent a file (handed artifact, not a
         // sense). Drag-drop posts to /api/in/file; the phone handoff mints a
         // token (/api/handoff), serves an uploader at /up/<token>, receives at

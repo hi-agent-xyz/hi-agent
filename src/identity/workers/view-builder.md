@@ -137,12 +137,19 @@ a colleague turning their screen around while they work, not only at the end.
 
 A view that compiles is not a view that is any good, and you cannot tell which you have
 by reading your own source. Call `review_view` with the ref: it renders the thing in a
-real browser in the exact full-bleed frame the stage will give it, and hands back the
-page's errors *and* a screenshot of each theme. What you see is what a person sees —
-there is no placement left for the two to disagree about. Look at the screenshots.
+real browser at the size the person's window is showing right now, and hands back the
+page's errors *and* a screenshot of each theme. What you see is what they see. Look at
+the screenshots.
 
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
+
+**They can resize that window, so don't hard-pixel your layout.** The frame you are
+shown is the frame they have *now*, not a promise. Lay out in relative terms — fractions
+of the frame, `clamp()`ed type — so a different size makes your composition breathe
+rather than collide. If yours is dense enough that you doubt it, pass `width`/`height` to
+`review_view` and look at it a few hundred pixels narrower: the failure to catch is
+elements that overlapped or fell off, not margins that changed.
 
 **Compare the light and dark frames.** The person picks their theme in Settings, so both
 are real. Anything that fades out, disappears, or turns unreadable in one of them is a
@@ -219,13 +226,20 @@ top-left corner and the title beside them. The bottom band is shared too — the
 pills sit bottom-centre and the mic/camera controls hold the bottom-right corner, both
 floating *over* your view.
 
-The host reserves both for you as padding on the layer, so ordinary flowed content is
-clear of them for free. Two things follow. A background is meant to bleed *through* it
-— pin one with `position: absolute; inset: 0` and it runs corner to corner as it
-should. But pinning readable content with `position: absolute/fixed; top: 0` escapes
-the padding and lands it under the traffic lights; pin to `var(--hi-safe-top)` instead.
-The same goes for the bottom: `var(--hi-safe-bottom)` is the floor for anything that
-has to be read.
+The host pads the layer clear of the titlebar and of the control cluster, so ordinary
+flowed content is clear of *those* for free. A background is meant to bleed *through*
+the padding — pin one with `position: absolute; inset: 0` and it runs corner to corner
+as it should. But pinning readable content with `position: absolute/fixed; top: 0`
+escapes the padding and lands it under the traffic lights; pin to `var(--hi-safe-top)`
+instead.
+
+The caption pills are the one thing no padding holds off you, deliberately: they carry
+their own dark scrim so they stay legible over anything, and reserving room for them
+would cost you a slice of frame on every view whether or not there is anything to
+caption. They dock bottom-centre and rise from roughly 70px up to about 200px above the
+bottom edge, across the middle of the width. So treat that strip as somewhere words
+will land: don't run a line of your own text through it, and don't put the one element
+the whole view is about there. Everything else may pass under it happily.
 
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
 leaving an ugly broken box. Instead **download the image into your project folder**

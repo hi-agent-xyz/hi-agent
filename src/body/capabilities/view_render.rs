@@ -53,12 +53,63 @@ use anyhow::Context;
 
 use crate::foundation::vendors::chrome_headless;
 
-/// The default review viewport: a comfortable desktop stage at retina density,
-/// which is the shape a view is actually composed for and the density anything
-/// reading the PNG back (a person, or a model) needs to judge type.
+/// The fallback review viewport, used only when no face has reported its frame:
+/// a comfortable desktop stage at retina density. Nothing composes *for* this —
+/// it is what a review falls back to when the app is headless (Docker, a test,
+/// a tool call made before any window opened), so it is a plausible desktop
+/// shape rather than a chosen canvas.
 pub const DEFAULT_WIDTH: u32 = 1280;
 pub const DEFAULT_HEIGHT: u32 = 800;
 pub const DEFAULT_SCALE: f64 = 2.0;
+
+/// Bounds on a reported frame. A browser can report a window a few pixels tall
+/// mid-drag, and a bogus report is worse than no report: it silently moves the
+/// frame every view is built and judged against. Anything outside this is
+/// ignored, keeping the last good frame.
+const MIN_STAGE: u32 = 320;
+const MAX_STAGE: u32 = 16_384;
+
+/// The frame the desktop window is showing **right now**, as the face last
+/// reported it.
+///
+/// This is the whole answer to "what size does a view get built for". A view is
+/// composed edge to edge for one landscape frame, so a builder composing against
+/// a constant that matches no real window — and a reviewer signing off on that
+/// same constant — is the defect: the person's cards collide at a size neither
+/// of them ever saw. The face knows the number without any OS call, so it
+/// reports it and this holds the latest.
+///
+/// `RwLock` rather than a `OnceLock`, because unlike the compiler and base URL
+/// published beside it in `mind::views`, this one legitimately changes: the
+/// person drags the window, and the next review should use the new size.
+static STAGE: std::sync::RwLock<Option<Viewport>> = std::sync::RwLock::new(None);
+
+/// Record the frame the desktop window is showing. Out-of-range reports are
+/// dropped rather than stored (see [`MIN_STAGE`]).
+///
+/// Deliberately fed by the **desktop window only**. The same page also runs in
+/// the menu-bar popover (380×540, portrait) and in a plain browser tab, and a
+/// review rendered at the popover's frame would be a review of something nobody
+/// is composing for. The client gates on the same `chrome=titlebar` flag the
+/// window already sets to claim its titlebar strip.
+pub fn set_stage_frame(width: u32, height: u32, scale: f64) -> bool {
+    if !(MIN_STAGE..=MAX_STAGE).contains(&width) || !(MIN_STAGE..=MAX_STAGE).contains(&height) {
+        return false;
+    }
+    // A device pixel ratio outside this is not a display we can render for; clamp
+    // rather than reject, since the frame itself is still good.
+    let scale = if scale.is_finite() { scale.clamp(1.0, 4.0) } else { DEFAULT_SCALE };
+    if let Ok(mut slot) = STAGE.write() {
+        *slot = Some(Viewport { width, height, scale });
+    }
+    true
+}
+
+/// The frame a review should render into: what the window last reported, or the
+/// fallback when nothing has.
+pub fn stage_frame() -> Viewport {
+    STAGE.read().ok().and_then(|s| *s).unwrap_or_default()
+}
 
 /// How long the page gets to mount, settle fonts, and resolve its images.
 const DEFAULT_SETTLE: Duration = Duration::from_secs(15);
@@ -104,7 +155,13 @@ impl Default for Viewport {
 }
 
 impl RenderRequest {
-    /// A request for `module_url` at the default review viewport.
+    /// A request for `module_url` at the frame the desktop window is currently
+    /// showing — [`stage_frame`], which falls back to [`Viewport::default`] when
+    /// no window has reported one.
+    ///
+    /// This is what makes the review honest. Both worker prompts tell their
+    /// session that the screenshot *is* what the person sees; that is only true
+    /// if the frame it renders into is the frame the window is actually showing.
     pub fn new(base_url: impl Into<String>, module_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -112,7 +169,7 @@ impl RenderRequest {
             owns_captions: false,
             theme: None,
             lang: None,
-            viewport: Viewport::default(),
+            viewport: stage_frame(),
         }
     }
 
@@ -305,6 +362,42 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reported frame is what a review renders into — the point of the whole
+    /// lane. Asserted through `RenderRequest::new` rather than against the store
+    /// directly, because a store nothing reads would pass its own test and still
+    /// leave every review at the fallback.
+    ///
+    /// One test, not four: `STAGE` is a process-global and `cargo test` runs the
+    /// cases in this binary concurrently, so separate tests would race each other
+    /// through it.
+    #[test]
+    fn the_reported_frame_is_what_a_review_renders_into() {
+        let frame = || {
+            let v = RenderRequest::new("http://h:1", "/m.mjs").viewport;
+            (v.width, v.height)
+        };
+
+        assert!(set_stage_frame(1920, 1080, 2.0));
+        assert_eq!(frame(), (1920, 1080));
+
+        // A resize is just the next report; the newest frame wins.
+        assert!(set_stage_frame(1000, 720, 2.0));
+        assert_eq!(frame(), (1000, 720));
+
+        // A window mid-drag can report a sliver, and a stored sliver would
+        // silently become the frame every view is built and judged against.
+        assert!(!set_stage_frame(4, 3, 2.0));
+        assert!(!set_stage_frame(99_999, 720, 2.0));
+        assert_eq!(frame(), (1000, 720), "a rejected report keeps the last good frame");
+
+        // A nonsense DPR still carries a usable frame, so clamp the scale rather
+        // than throw the report away.
+        assert!(set_stage_frame(1000, 720, f64::NAN));
+        assert_eq!(stage_frame().scale, DEFAULT_SCALE);
+        assert!(set_stage_frame(1000, 720, 99.0));
+        assert_eq!(stage_frame().scale, 4.0);
+    }
 
     fn rendered(problems: Vec<&str>, blank: bool) -> RenderedView {
         RenderedView {

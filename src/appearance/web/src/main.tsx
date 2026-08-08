@@ -6,6 +6,7 @@ import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
 import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
+import { installStageReport } from "./lib/stageReport";
 import "./ui/global.css";
 
 // If the login gate is on, a 401 (session expired) bounces the tab to sign-in.
@@ -15,6 +16,13 @@ installAuthGate();
 // Native chrome the page has to keep clear of (the desktop window's titlebar).
 // Read before the first render so nothing paints in the strip and then jumps.
 applyHostChrome();
+
+// Tell the backend how big this window is, so `review_view` renders a view at the
+// frame the person actually has. Gated on the titlebar flag `applyHostChrome` just
+// hoisted, so only the desktop window reports — hence the ordering. Installed here
+// rather than in a component effect: it's a fact about the window, not about
+// anything React mounts, and StrictMode would double-invoke an effect.
+installStageReport();
 
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
 // serves the page in prod; this only covers the dev seam, where Vite serves index.html

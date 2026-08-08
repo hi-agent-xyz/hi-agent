@@ -376,3 +376,43 @@ async fn vision_get_streams_camera_video() {
     expected.extend_from_slice(&frame);
     assert_eq!(body.as_ref(), expected.as_slice(), "GET body is the streamed chunks");
 }
+
+/// The stage lane, end to end over HTTP: a frame the window posts is the frame a
+/// review renders into.
+///
+/// The unit tests either side of this prove the store's semantics and the
+/// handler's validation; what only a routed request can show is that the two are
+/// actually wired to each other — a `/api/stage` that answered 202 and updated
+/// nothing would pass both of them and still leave every review at the fallback
+/// size, which is the exact defect this lane exists to remove.
+#[tokio::test]
+async fn a_posted_window_frame_becomes_the_review_viewport() {
+    use hi_agent::body::capabilities::view_render;
+
+    let (base, _dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/stage"))
+        .json(&serde_json::json!({ "width": 1728, "height": 1080, "scale": 2.0 }))
+        .send()
+        .await
+        .expect("post stage");
+    assert_eq!(resp.status(), 202, "a good frame is accepted");
+    assert_eq!(
+        (view_render::stage_frame().width, view_render::stage_frame().height),
+        (1728, 1080),
+        "the reported frame is what a review will render into",
+    );
+
+    // A frame no window has is refused, and the last good one stands — a resize
+    // drag must not be able to leave reviews rendering at a sliver.
+    let resp = client
+        .post(format!("{base}/api/stage"))
+        .json(&serde_json::json!({ "width": 2, "height": 1 }))
+        .send()
+        .await
+        .expect("post bad stage");
+    assert_eq!(resp.status(), 400);
+    assert_eq!(view_render::stage_frame().width, 1728, "the last good frame survives");
+}

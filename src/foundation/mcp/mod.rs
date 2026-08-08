@@ -169,21 +169,29 @@ fn session_messages_tool() -> Value {
 /// Deliberately returns the problems *and* the pixels. The commonest real defect is a
 /// view that "renders" as a blank white page because an import failed to resolve, and
 /// pixels alone report that as success.
+///
+/// Renders at the frame the desktop window is currently showing
+/// ([`view_render::stage_frame`]). `width`/`height` override it, for the one honest
+/// reason a builder has to ask for another size: the person can resize the window, so a
+/// composition that only holds at one frame is worth catching before it ships.
 fn review_view_tool() -> Value {
     tool(
         "review_view",
         "Render a saved view in a real browser and look at it. Returns a verdict, any \
          errors the page reported, and a screenshot of each theme — so you can see what \
-         you actually made rather than trusting that it compiled. Use it on anything you \
-         are about to hand over as a view, and again after a fix. Compare the light and \
-         dark frames: anything that vanishes or turns unreadable in one of them is a \
-         colour that only works in the other.",
+         you actually made rather than trusting that it compiled. It renders at the size \
+         the person's window is showing right now, so the screenshot is the frame they \
+         have. Use it on anything you are about to hand over as a view, and again after a \
+         fix. Compare the light and dark frames: anything that vanishes or turns \
+         unreadable in one of them is a colour that only works in the other.",
         json!({
             "type": "object",
             "properties": {
                 "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
                 "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render only this theme. Omit to get both, which is what you want unless you are re-checking one." },
                 "lang": { "type": "string", "description": "Optional: render as if the person's language were this (e.g. `en`, `zh-Hans`). Only matters for a view that ships copy in more than one language." },
+                "width": { "type": "integer", "description": "Optional: render at this width in CSS pixels instead of the person's current window. They can resize, so check a narrower and a wider frame if your composition might not survive one." },
+                "height": { "type": "integer", "description": "Optional: render at this height in CSS pixels instead of the person's current window." },
             },
             "required": ["ref"],
         }),
@@ -1062,8 +1070,30 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     // the review page shows the view at exactly the frame it will occupy on the stage.
     // That equivalence is the whole point of the review — it used to be conditional on
     // the reviewer and the sidecar agreeing about a region.
+    //
+    // Size is the half of that equivalence placement never covered. `RenderRequest::new`
+    // takes the frame the window last reported, so "exactly the frame" now means the
+    // person's actual window rather than a constant that matched none of them.
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
         .with_captions(traits.is_some_and(|t| t.owns_captions));
+
+    // An explicit size is a deliberate second look at another frame, so it overrides one
+    // axis at a time: asking for a narrower width alone should not also snap the height
+    // back to a default the person's window never had.
+    if let Some(w) = args.get("width").and_then(Value::as_u64) {
+        req.viewport.width = w as u32;
+    }
+    if let Some(h) = args.get("height").and_then(Value::as_u64) {
+        req.viewport.height = h as u32;
+    }
+    if !(320..=16_384).contains(&req.viewport.width)
+        || !(320..=16_384).contains(&req.viewport.height)
+    {
+        return tool_error(
+            "`width`/`height` are CSS pixels and must be between 320 and 16384 — a frame \
+             outside that is not a window anyone is looking at",
+        );
+    }
 
     // **Both skins, unless the caller pinned one.** Theme is a live setting the person
     // controls (Settings ▸ General ▸ Theme), so "it rendered" is only true once it has
