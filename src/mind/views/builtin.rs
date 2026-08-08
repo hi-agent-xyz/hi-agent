@@ -47,20 +47,17 @@ use std::path::Path;
 /// The file-handoff view shown when the user wants to hand the agent a file.
 /// Ref: `_builtin/upload` (the agent puts it on screen via `show`).
 const UPLOAD: &str = include_str!("builtin/upload.jsx");
-const UPLOAD_GEOM: &str = include_str!("builtin/upload.geom.json");
 
 /// The "认识的人" review surface — review stored faces/voices, name the unknown
 /// ones, eject a mis-clustered clip, or auto-regroup a mixed cluster. Reads and
 /// writes the `/api/people/*` endpoints. Ref: `_builtin/people-review`.
 const PEOPLE_REVIEW: &str = include_str!("builtin/people-review.jsx");
-const PEOPLE_REVIEW_GEOM: &str = include_str!("builtin/people-review.geom.json");
 /// The first-hello a brand-new person meets — a first *impression*, not a tutorial.
 /// The agent puts it on screen (ref `_builtin/welcome`) the once, on a genuine first
 /// meeting (see [`crate::identity::reaction_system_prompt`] + `reaction.md`), while it speaks the
 /// same idea in its own voice. Ships with a `.geom.json` sidecar and owns the canvas
 /// like every other bundled system surface.
 const WELCOME: &str = include_str!("builtin/welcome.jsx");
-const WELCOME_GEOM: &str = include_str!("builtin/welcome.geom.json");
 /// The real, sealed "hi" mark (red h + blue i, white die-cut, soft shadow) the welcome
 /// poster shows — the exact app icon, served from the views tree at
 /// `/views/_builtin/hi-mark.svg`, never re-typed in a system font.
@@ -87,13 +84,13 @@ const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json")
 /// honour: tasks change status, a skill deletes, a facet is rewritten; workers, tools and
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
-const REVIEW_VIEWS: &[(&str, &str, &str)] = &[
-    ("tasks", include_str!("builtin/tasks.jsx"), include_str!("builtin/tasks.geom.json")),
-    ("skills", include_str!("builtin/skills.jsx"), include_str!("builtin/skills.geom.json")),
-    ("memories", include_str!("builtin/memories.jsx"), include_str!("builtin/memories.geom.json")),
-    ("workers", include_str!("builtin/workers.jsx"), include_str!("builtin/workers.geom.json")),
-    ("tools", include_str!("builtin/tools.jsx"), include_str!("builtin/tools.geom.json")),
-    ("drive", include_str!("builtin/drive.jsx"), include_str!("builtin/drive.geom.json")),
+const REVIEW_VIEWS: &[(&str, &str)] = &[
+    ("tasks", include_str!("builtin/tasks.jsx")),
+    ("skills", include_str!("builtin/skills.jsx")),
+    ("memories", include_str!("builtin/memories.jsx")),
+    ("workers", include_str!("builtin/workers.jsx")),
+    ("tools", include_str!("builtin/tools.jsx")),
+    ("drive", include_str!("builtin/drive.jsx")),
 ];
 
 /// The ref and the sequencer id the host shows it under. One id, reused, so the
@@ -117,17 +114,14 @@ pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
     let dir = data_dir.join("views").join("_builtin");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("upload.jsx"), UPLOAD)?;
-    std::fs::write(dir.join("upload.geom.json"), UPLOAD_GEOM)?;
     std::fs::write(dir.join("people-review.jsx"), PEOPLE_REVIEW)?;
-    std::fs::write(dir.join("people-review.geom.json"), PEOPLE_REVIEW_GEOM)?;
     std::fs::write(dir.join("welcome.jsx"), WELCOME)?;
-    std::fs::write(dir.join("welcome.geom.json"), WELCOME_GEOM)?;
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
     std::fs::write(dir.join("vendor-outage.jsx"), OUT_OF_ENERGY)?;
+    // The only sidecar left anywhere: this view renders the words itself.
     std::fs::write(dir.join("vendor-outage.geom.json"), OUT_OF_ENERGY_GEOM)?;
-    for (name, source, geom) in REVIEW_VIEWS {
+    for (name, source) in REVIEW_VIEWS {
         std::fs::write(dir.join(format!("{name}.jsx")), source)?;
-        std::fs::write(dir.join(format!("{name}.geom.json")), geom)?;
     }
     Ok(())
 }
@@ -148,7 +142,10 @@ mod tests {
 
         let (source, geom) = out_of_energy_view();
         assert_eq!(source, std::fs::read_to_string(builtin.join("vendor-outage.jsx")).unwrap());
-        assert!(serde_json::from_str::<serde_json::Value>(geom).is_ok(), "the placement must parse");
+        assert!(
+            serde_json::from_str::<crate::types::ViewTraits>(geom).is_ok(),
+            "the declared traits must parse"
+        );
 
         assert!(source.contains("Your energy is used up"));
         assert!(source.contains("hi-agent.xyz"));
@@ -156,69 +153,63 @@ mod tests {
     }
 
     #[test]
-    fn seeds_the_welcome_hero_and_its_geom() {
+    fn seeds_the_welcome_hero_and_its_mark() {
         let dir = tempfile::tempdir().unwrap();
         install_builtin_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("_builtin");
-        // The first-hello view and its placement sidecar both land, so `show`
-        // with ref `_builtin/welcome` resolves and the host knows where to float it.
+        // The first-hello view and its mark land, so `show` with ref
+        // `_builtin/welcome` resolves. No sidecar: it gets the full canvas like
+        // everything else, and it does not render the words itself.
         assert!(builtin.join("welcome.jsx").is_file());
-        assert!(builtin.join("welcome.geom.json").is_file());
+        assert!(!builtin.join("welcome.geom.json").exists());
         assert!(builtin.join("hi-mark.svg").is_file());
         // Reseeding is idempotent (overwrite, not append) — a second boot is clean.
         install_builtin_views(dir.path()).unwrap();
         assert_eq!(std::fs::read_to_string(builtin.join("welcome.jsx")).unwrap(), WELCOME);
     }
 
-    /// Every review surface lands with its placement, and every one of them declares a
-    /// placement that parses — a `show` on a ref whose sidecar is malformed puts up
-    /// a view the host cannot position.
     #[test]
-    fn seeds_every_review_surface_with_a_valid_placement() {
+    fn seeds_every_review_surface() {
         let dir = tempfile::tempdir().unwrap();
         install_builtin_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("_builtin");
-        for (name, source, _) in REVIEW_VIEWS {
+        for (name, source) in REVIEW_VIEWS {
             let jsx = builtin.join(format!("{name}.jsx"));
-            let geom = builtin.join(format!("{name}.geom.json"));
             assert!(jsx.is_file(), "{name}.jsx was not seeded");
             assert_eq!(&std::fs::read_to_string(&jsx).unwrap(), source);
-            let raw = std::fs::read_to_string(&geom).unwrap();
+        }
+    }
+
+    /// Full-bleed is the frame every view gets, so owning the canvas is no longer
+    /// something a view declares — and a sidecar that exists only to say "fill" is
+    /// a file that can be forgotten. What this keeps is that none of them carries
+    /// one: any sidecar left behind here would be a placement the host no longer reads.
+    #[test]
+    fn no_bundled_view_declares_a_placement() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome"];
+        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
+        for name in names {
             assert!(
-                serde_json::from_str::<serde_json::Value>(&raw).is_ok(),
-                "{name}.geom.json must parse"
+                !builtin.join(format!("{name}.geom.json")).exists(),
+                "{name} must not carry a sidecar"
             );
         }
     }
 
+    /// The single exception, and the reason the sidecar mechanism still exists at
+    /// all: the outage view renders the conversation's words itself, so the host's
+    /// caption pills have to stand down behind it.
     #[test]
-    fn all_bundled_system_views_own_the_full_canvas() {
-        let assert_full = |name: &str, geom: &str| {
-            let parsed: serde_json::Value = serde_json::from_str(geom).unwrap();
-            assert_eq!(parsed["region"], "fill", "{name}");
-            assert_eq!(parsed["size"], "fill", "{name}");
-        };
-
-        assert_full("upload", UPLOAD_GEOM);
-        assert_full("people-review", PEOPLE_REVIEW_GEOM);
-        assert_full("welcome", WELCOME_GEOM);
-        assert_full("vendor-outage", OUT_OF_ENERGY_GEOM);
-        for (name, _, geom) in REVIEW_VIEWS {
-            assert_full(name, geom);
-        }
-    }
-
-    #[test]
-    fn seeds_geometry_for_the_standalone_builtins() {
+    fn only_the_outage_view_declares_traits_and_it_owns_the_captions() {
         let dir = tempfile::tempdir().unwrap();
         install_builtin_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("_builtin");
-        for name in ["upload", "people-review", "welcome", "vendor-outage"] {
-            let raw = std::fs::read_to_string(builtin.join(format!("{name}.geom.json"))).unwrap();
-            let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-            assert_eq!(parsed["region"], "fill", "{name}");
-            assert_eq!(parsed["size"], "fill", "{name}");
-        }
+        let raw = std::fs::read_to_string(builtin.join("vendor-outage.geom.json")).unwrap();
+        let parsed: crate::types::ViewTraits = serde_json::from_str(&raw).unwrap();
+        assert!(parsed.owns_captions);
     }
 
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint

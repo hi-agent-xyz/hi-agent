@@ -36,12 +36,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
 use crate::mind::memory::layout;
-use crate::types::{Geometry, Scene, ViewEnvelope, ViewOp};
-
-/// Cap on active views per scene. Bounds growth if the agent keeps showing
-/// distinct ids without dismissing; the oldest (bottom of the z-order) are
-/// evicted first.
-const MAX_ACTIVE_VIEWS_PER_SCENE: usize = 16;
+use crate::types::{Scene, ViewEnvelope, ViewOp, ViewTraits};
 
 /// Per-scene appearance state, keyed by scene. Cloneable handle over shared
 /// state.
@@ -52,36 +47,67 @@ pub struct ViewBus {
     data_dir: PathBuf,
 }
 
+/// A scene's screen: two fixed slots, not a stack.
+///
+/// The screen used to be an open z-ordered list any `show` could push onto, and
+/// it accumulated exactly as you'd expect — the appearance history has states
+/// fourteen views deep, a dozen unrelated topics piled up because nothing ever
+/// dismissed them, all rendered on top of each other in the same centre of the
+/// screen. Meanwhile the composition that list was there to allow was never once
+/// used deliberately in the entire recorded history.
+///
+/// So the list is gone and what's left is the one layering that was ever real:
+/// the agent's content, and the host's condition notice over it. They are separate
+/// slots because they have separate lifetimes and separate owners — an outage
+/// arriving must not evict the content it covers, and clearing when the outage
+/// lifts must reveal that content again rather than leave a blank screen. Which
+/// slot a write lands in is decided by *how* it was written, not by anything on
+/// the wire: [`apply`](ViewBus::apply) is the agent's path and owns `content`,
+/// [`reconcile`](ViewBus::reconcile) is the process's level-driven path and owns
+/// `condition`.
 #[derive(Default)]
 struct SceneAppearance {
-    /// Active views in z-order (first = bottom).
-    views: Vec<RetainedView>,
+    /// The one agent-shown view, filling the screen. `None` = the empty room.
+    content: Option<RetainedView>,
+    /// The host's condition layer over the content (e.g. a vendor outage).
+    condition: Option<RetainedView>,
     /// Bumped on every state change; the long-poll's `since` compares against it.
     version: u64,
     /// Pulsed whenever `version` bumps so parked readers re-check.
     notify: Arc<Notify>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RetainedView {
     id: String,
     module_url: String,
-    /// Where/how this view sits on the stage. `#[serde(default)]` is the
-    /// back-compat lever: snapshots written before geometry existed reload as
-    /// `None` → the host's floor layout.
+    /// What the view declared about itself. `#[serde(default)]` is the back-compat
+    /// lever: snapshots written before this field existed reload as `None` →
+    /// host-owned captions.
     #[serde(default)]
-    geometry: Option<Geometry>,
+    traits: Option<ViewTraits>,
 }
 
 /// On-disk whole-state snapshot of one scene's appearance at a moment. Carries
 /// the true scene id (the path is its percent-encoding, never decoded back) and
 /// `as_of` so the history reads as a step-function of what was on screen.
+///
+/// `legacy_views` reads the flat z-ordered list snapshots carried before the two
+/// slots existed. Those states are exactly the pile-ups the slots abolished, so
+/// they restore as the top-most view alone — the one the person was actually
+/// looking at — rather than resurrecting a stack that can no longer be
+/// represented.
 #[derive(Serialize, Deserialize)]
 struct SceneSnapshot {
     scene: Scene,
     version: u64,
     as_of: DateTime<Utc>,
-    views: Vec<RetainedView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content: Option<RetainedView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    condition: Option<RetainedView>,
+    #[serde(default, rename = "views", skip_serializing_if = "Vec::is_empty")]
+    legacy_views: Vec<RetainedView>,
 }
 
 /// One active view as delivered to the browser.
@@ -89,13 +115,16 @@ struct SceneSnapshot {
 pub struct WireView {
     pub id: String,
     pub module_url: String,
-    /// Where/how the view sits; absent = the client's floor layout (centered card).
+    /// What the view declared about itself; absent = host-owned captions.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub geometry: Option<Geometry>,
+    pub traits: Option<ViewTraits>,
 }
 
 /// A scene's full appearance state — the body of one `GET /api/out/view`
-/// response. `views` is in z-order (first = bottom).
+/// response. `views` is in z-order (first = bottom), so it is at most the
+/// content view followed by the host's condition layer. The wire shape is
+/// unchanged — an ordered list of full-bleed layers — only what can appear in it
+/// is now bounded.
 #[derive(Debug, Clone, Serialize)]
 pub struct ViewState {
     pub version: u64,
@@ -112,10 +141,14 @@ impl ViewBus {
             for scene_ent in scenes.flatten() {
                 let app_dir = scene_ent.path().join("appearance");
                 if let Some(snap) = newest_snapshot(&app_dir) {
+                    // A legacy flat list restores as its top-most view only; see
+                    // `SceneSnapshot::legacy_views`.
+                    let content = snap.content.or_else(|| snap.legacy_views.last().cloned());
                     map.insert(
                         snap.scene,
                         SceneAppearance {
-                            views: snap.views,
+                            content,
+                            condition: snap.condition,
                             version: snap.version,
                             notify: Arc::new(Notify::new()),
                         },
@@ -129,93 +162,54 @@ impl ViewBus {
         }
     }
 
-    /// Fold one reaction-emitted envelope into the scene's appearance: `show`
-    /// upserts and raises to the top of the z-order, `replace` swaps in place
-    /// (falling back to show for an unknown id), `dismiss` removes. Bumps the
-    /// version, appends a snapshot, and wakes parked readers.
+    /// Fold one reaction-emitted envelope into the scene's **content** slot.
+    ///
+    /// `show` and `replace` both put this view on the screen in place of whatever
+    /// was there — the difference is only the id the client keys the slot by, which
+    /// is what decides whether a re-render animates or remounts. `dismiss` clears
+    /// the slot when it holds the named id.
+    ///
+    /// Showing is therefore *how the screen changes*, not how it grows: there is no
+    /// z-order to raise into and no way for two topics to end up stacked, so the
+    /// agent walking someone through a sequence never has to dismiss between beats.
+    ///
+    /// A write that changes nothing is dropped, so a repeated `show` of what is
+    /// already up costs no version bump, no client re-render and no snapshot.
     pub async fn apply(&self, scene: &Scene, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
         let entry = map.entry(scene.clone()).or_default();
-
-        match envelope.op {
-            ViewOp::Dismiss => {
-                entry.views.retain(|v| v.id != envelope.id);
-            }
-            ViewOp::Show | ViewOp::Replace => {
-                let Some(module_url) = envelope.module_url else {
-                    tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
-                    return;
-                };
-                let view = RetainedView {
-                    id: envelope.id.clone(),
-                    module_url,
-                    geometry: envelope.geometry,
-                };
-                let pos = entry.views.iter().position(|v| v.id == envelope.id);
-                match (envelope.op, pos) {
-                    (ViewOp::Replace, Some(i)) => entry.views[i] = view,
-                    (_, Some(i)) => {
-                        entry.views.remove(i);
-                        entry.views.push(view);
-                    }
-                    (_, None) => entry.views.push(view),
-                }
-                while entry.views.len() > MAX_ACTIVE_VIEWS_PER_SCENE {
-                    entry.views.remove(0);
-                }
-            }
+        let Some(next) = resolve_slot(&entry.content, envelope) else {
+            return;
+        };
+        if entry.content == next {
+            return;
         }
+        entry.content = next;
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, scene, entry).await;
     }
 
-    /// Reconcile a host-owned view against the desired level without producing
-    /// redundant versions or snapshots. Unlike [`apply`](Self::apply), a dismiss
-    /// of an absent id and a show/replace that already has identical content are
-    /// no-ops. This is the right write path for process conditions whose current
-    /// level is repeatedly re-applied at startup, after lag, and while polling.
+    /// Reconcile the host-owned **condition** layer against the desired level.
+    ///
+    /// This is the right write path for process conditions whose current level is
+    /// repeatedly re-applied at startup, after lag, and while polling: a dismiss of
+    /// an absent condition and a show of one already displayed are both no-ops.
+    ///
+    /// It writes its own slot, above the content and independent of it. That
+    /// separation is the whole reason two slots exist: an outage arriving must not
+    /// evict the view it covers, and lifting must reveal that view again rather
+    /// than leaving the person on a blank screen.
     pub async fn reconcile(&self, scene: &Scene, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
         let entry = map.entry(scene.clone()).or_default();
-
-        let changed = match envelope.op {
-            ViewOp::Dismiss => {
-                let before = entry.views.len();
-                entry.views.retain(|v| v.id != envelope.id);
-                entry.views.len() != before
-            }
-            ViewOp::Show | ViewOp::Replace => {
-                let Some(module_url) = envelope.module_url else {
-                    tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
-                    return;
-                };
-                let view = RetainedView {
-                    id: envelope.id.clone(),
-                    module_url,
-                    geometry: envelope.geometry,
-                };
-                let existing = entry.views.iter().position(|v| v.id == view.id);
-                if existing.is_some_and(|i| {
-                    let current = &entry.views[i];
-                    i + 1 == entry.views.len()
-                        && current.module_url == view.module_url
-                        && current.geometry == view.geometry
-                }) {
-                    false
-                } else {
-                    entry.views.retain(|v| v.id != view.id);
-                    entry.views.push(view);
-                    while entry.views.len() > MAX_ACTIVE_VIEWS_PER_SCENE {
-                        entry.views.remove(0);
-                    }
-                    true
-                }
-            }
+        let Some(next) = resolve_slot(&entry.condition, envelope) else {
+            return;
         };
-        if !changed {
+        if entry.condition == next {
             return;
         }
+        entry.condition = next;
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, scene, entry).await;
@@ -228,34 +222,43 @@ impl ViewBus {
         self.inner.lock().await.keys().cloned().collect()
     }
 
-    /// Clear the scene's appearance — remove all views, back to the default
-    /// empty room. A user control: the screen is the agent's presentation, but
-    /// the user can reclaim it. Bumps the version and persists the empty
-    /// snapshot so every device + a refresh converge on the cleared screen (and
-    /// the appearance history records it). No-op when already empty, so it
-    /// doesn't churn the version or write a redundant snapshot.
+    /// Clear the scene's content — back to the default empty room. A user control:
+    /// the screen is the agent's presentation, but the user can reclaim it. Bumps
+    /// the version and persists the empty snapshot so every device + a refresh
+    /// converge on the cleared screen (and the appearance history records it).
+    /// No-op when already empty, so it doesn't churn the version or write a
+    /// redundant snapshot.
+    ///
+    /// The condition layer is deliberately left alone: it reflects a live process
+    /// state rather than anything the person put there, so clearing it would only
+    /// have it reconciled straight back.
     pub async fn clear(&self, scene: &Scene) {
         let mut map = self.inner.lock().await;
         let entry = map.entry(scene.clone()).or_default();
-        if entry.views.is_empty() {
+        if entry.content.is_none() {
             return;
         }
-        entry.views.clear();
+        entry.content = None;
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, scene, entry).await;
     }
 
-    /// The ids currently on screen for a scene, in z-order (last = top-most). The
-    /// reaction reads this into each turn so the agent can *see* its own presentation
-    /// surface — what it has shown — instead of guessing ids from the transcript. This
-    /// is the read side of the same authoritative state [`apply`](Self::apply) writes,
-    /// so a view dismissed last turn is gone from this list the next, giving the agent
-    /// the confirmation it otherwise lacks. Empty when nothing is shown.
+    /// The id currently on screen for a scene, if any. The reaction reads this into
+    /// each turn so the agent can *see* its own presentation surface — what it has
+    /// shown — instead of guessing ids from the transcript. This is the read side of
+    /// the same authoritative state [`apply`](Self::apply) writes, so a view
+    /// dismissed last turn is gone from this list the next, giving the agent the
+    /// confirmation it otherwise lacks.
+    ///
+    /// Reports the content slot only. The condition layer is the host's, not the
+    /// agent's to dismiss, and listing an id it cannot act on would only invite it
+    /// to try.
     pub async fn on_screen(&self, scene: &Scene) -> Vec<String> {
         let map = self.inner.lock().await;
         map.get(scene)
-            .map(|a| a.views.iter().map(|v| v.id.clone()).collect())
+            .and_then(|a| a.content.as_ref())
+            .map(|v| vec![v.id.clone()])
             .unwrap_or_default()
     }
 
@@ -270,13 +273,14 @@ impl ViewBus {
             if since.is_none_or(|s| entry.version > s) {
                 return ViewState {
                     version: entry.version,
-                    views: entry
-                        .views
-                        .iter()
+                    // z-order: content first, the condition layer over it.
+                    views: [entry.content.as_ref(), entry.condition.as_ref()]
+                        .into_iter()
+                        .flatten()
                         .map(|v| WireView {
                             id: v.id.clone(),
                             module_url: v.module_url.clone(),
-                            geometry: v.geometry,
+                            traits: v.traits,
                         })
                         .collect(),
                 };
@@ -290,6 +294,40 @@ impl ViewBus {
             notified.as_mut().enable();
             drop(map);
             notified.await;
+        }
+    }
+}
+
+/// What one slot should hold after `envelope` is folded into its `current`
+/// occupant. `None` means the envelope was malformed and should be dropped
+/// without touching the slot — distinct from `Some(None)`, which empties it.
+///
+/// The whole fold is this small because a slot holds one view: `show` and
+/// `replace` both simply put the new view there, and `dismiss` empties it only
+/// when it holds the id being dismissed (so a stale dismiss aimed at something
+/// already gone can't blank the screen out from under whatever replaced it).
+fn resolve_slot(
+    current: &Option<RetainedView>,
+    envelope: ViewEnvelope,
+) -> Option<Option<RetainedView>> {
+    match envelope.op {
+        ViewOp::Dismiss => {
+            if current.as_ref().is_some_and(|v| v.id == envelope.id) {
+                Some(None)
+            } else {
+                Some(current.clone())
+            }
+        }
+        ViewOp::Show | ViewOp::Replace => {
+            let Some(module_url) = envelope.module_url else {
+                tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
+                return None;
+            };
+            Some(Some(RetainedView {
+                id: envelope.id,
+                module_url,
+                traits: envelope.traits,
+            }))
         }
     }
 }
@@ -337,7 +375,9 @@ async fn persist(data_dir: &Path, scene: &Scene, entry: &SceneAppearance) {
         scene: scene.clone(),
         version: entry.version,
         as_of: now,
-        views: entry.views.clone(),
+        content: entry.content.clone(),
+        condition: entry.condition.clone(),
+        legacy_views: Vec::new(),
     };
     let bytes = match serde_json::to_vec_pretty(&snap) {
         Ok(bytes) => bytes,
@@ -359,7 +399,11 @@ async fn persist(data_dir: &Path, scene: &Scene, entry: &SceneAppearance) {
         }
         slot += Duration::seconds(1);
     };
-    let tmp = dir.join(format!(".tmp.{}.{}", std::process::id(), slot.format("%H%M%S")));
+    let tmp = dir.join(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        slot.format("%H%M%S")
+    ));
     let result = async {
         tokio::fs::write(&tmp, &bytes).await?;
         tokio::fs::rename(&tmp, &path).await
@@ -383,7 +427,16 @@ mod tests {
             id: id.into(),
             op: ViewOp::Show,
             module_url: Some(url.into()),
-            geometry: None,
+            traits: None,
+        }
+    }
+
+    fn dismiss(id: &str) -> ViewEnvelope {
+        ViewEnvelope {
+            id: id.into(),
+            op: ViewOp::Dismiss,
+            module_url: None,
+            traits: None,
         }
     }
 
@@ -432,7 +485,81 @@ mod tests {
             .expect("waiter should wake")
             .unwrap();
         assert_eq!(state.version, v + 1);
-        assert_eq!(ids(&state), vec!["a", "b"]);
+        assert_eq!(ids(&state), vec!["b"]);
+    }
+
+    /// The core of the redesign: the screen holds one agent view, so showing a
+    /// second topic *replaces* the first instead of stacking on it. This is the
+    /// case that used to pile up — the appearance history has states fourteen
+    /// views deep, every one of them an unrelated topic nobody dismissed.
+    #[tokio::test]
+    async fn showing_replaces_rather_than_stacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.apply(&s, show("tasks", "/m/tasks.mjs")).await;
+        bus.apply(&s, show("bj01", "/m/bj01.mjs")).await;
+
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(
+            ids(&state),
+            vec!["bj01"],
+            "the older topic is gone, not stacked under"
+        );
+        assert_eq!(state.views.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn replace_swaps_the_module_under_a_kept_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.apply(&s, show("deck", "/m/v1.mjs")).await;
+        bus.apply(
+            &s,
+            ViewEnvelope {
+                id: "deck".into(),
+                op: ViewOp::Replace,
+                module_url: Some("/m/v2.mjs".into()),
+                traits: None,
+            },
+        )
+        .await;
+
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(ids(&state), vec!["deck"]);
+        assert_eq!(state.views[0].module_url, "/m/v2.mjs");
+    }
+
+    #[tokio::test]
+    async fn dismiss_clears_only_the_id_it_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.apply(&s, show("current", "/m/c.mjs")).await;
+
+        // A stale dismiss aimed at something already replaced must not blank the
+        // screen out from under whatever took its place.
+        bus.apply(&s, dismiss("long-gone")).await;
+        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["current"]);
+
+        bus.apply(&s, dismiss("current")).await;
+        assert!(bus.wait_state(&s, None).await.views.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_identical_show_is_a_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.apply(&s, show("a", "/m/a.mjs")).await;
+        let v = bus.wait_state(&s, None).await.version;
+        bus.apply(&s, show("a", "/m/a.mjs")).await;
+        assert_eq!(
+            bus.wait_state(&s, None).await.version,
+            v,
+            "re-showing what is already up must not churn the version"
+        );
     }
 
     #[tokio::test]
@@ -446,7 +573,6 @@ mod tests {
         assert_eq!(bus.wait_state(&s, None).await.version, 0);
 
         bus.apply(&s, show("a", "/m/a.mjs")).await;
-        bus.apply(&s, show("b", "/m/b.mjs")).await;
         let v = bus.wait_state(&s, None).await.version;
 
         // A parked reader wakes on the clear with the empty, version-bumped state.
@@ -465,161 +591,73 @@ mod tests {
         assert!(state.views.is_empty());
     }
 
+    /// The one layering that was ever real, and the reason there are two slots
+    /// rather than one: an outage lands *over* the content without evicting it,
+    /// and lifting reveals what was underneath instead of a blank screen.
     #[tokio::test]
-    async fn show_raises_replace_keeps_position_dismiss_removes() {
+    async fn condition_layers_over_content_and_restores_it() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         let s = scene();
-        bus.apply(&s, show("a", "/m/a1.mjs")).await;
-        bus.apply(&s, show("b", "/m/b.mjs")).await;
-        bus.apply(&s, show("c", "/m/c.mjs")).await;
-
-        // Replace keeps a's z-position at the bottom.
-        bus.apply(
-            &s,
-            ViewEnvelope {
-                id: "a".into(),
-                op: ViewOp::Replace,
-                module_url: Some("/m/a2.mjs".into()),
-                geometry: None,
-            },
-        )
-        .await;
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(ids(&state), vec!["a", "b", "c"]);
-        assert_eq!(state.views[0].module_url, "/m/a2.mjs");
-
-        // Re-show raises a to the top.
-        bus.apply(&s, show("a", "/m/a3.mjs")).await;
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(ids(&state), vec!["b", "c", "a"]);
-
-        // Replace of an unknown id falls back to show (appends on top).
-        bus.apply(
-            &s,
-            ViewEnvelope {
-                id: "d".into(),
-                op: ViewOp::Replace,
-                module_url: Some("/m/d.mjs".into()),
-                geometry: None,
-            },
-        )
-        .await;
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(ids(&state), vec!["b", "c", "a", "d"]);
-
-        bus.apply(
-            &s,
-            ViewEnvelope {
-                id: "b".into(),
-                op: ViewOp::Dismiss,
-                module_url: None,
-                geometry: None,
-            },
-        )
-        .await;
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(ids(&state), vec!["c", "a", "d"]);
-    }
-
-    #[tokio::test]
-    async fn cap_evicts_oldest() {
-        let tmp = tempfile::tempdir().unwrap();
-        let bus = ViewBus::load(tmp.path());
-        let s = scene();
-        for i in 0..=MAX_ACTIVE_VIEWS_PER_SCENE {
-            bus.apply(&s, show(&format!("v{i}"), "/m/x.mjs")).await;
-        }
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(state.views.len(), MAX_ACTIVE_VIEWS_PER_SCENE);
-        assert_eq!(state.views[0].id, "v1"); // v0 evicted from the bottom
-    }
-
-    #[tokio::test]
-    async fn persists_and_reloads_across_restart() {
-        let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
-        let version = {
-            let bus = ViewBus::load(tmp.path());
-            bus.apply(&s, show("a", "/m/a.mjs")).await;
-            bus.apply(&s, show("b", "/m/b.mjs")).await;
-            bus.wait_state(&s, None).await.version
-        };
-
-        // "Restart": a fresh bus over the same data dir restores the newest snapshot.
-        let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(state.version, version);
-        assert_eq!(ids(&state), vec!["a", "b"]);
-        assert_eq!(state.views[1].module_url, "/m/b.mjs");
-    }
-
-    #[tokio::test]
-    async fn reload_handles_unsafe_scene_ids() {
-        let tmp = tempfile::tempdir().unwrap();
-        let s = Scene("alice@phone/1".into());
-        {
-            let bus = ViewBus::load(tmp.path());
-            bus.apply(&s, show("keep", "/m/k.mjs")).await;
-        }
-        // A fresh bus restores the path-unsafe scene from its snapshot.
-        let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(ids(&state), vec!["keep"]);
-    }
-
-    #[tokio::test]
-    async fn loads_pre_geometry_snapshot_as_floor() {
-        // A snapshot written before geometry existed has no `geometry` key in its
-        // views; `#[serde(default)]` must reload it as None (the floor layout)
-        // rather than failing the whole snapshot parse.
-        let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
-        let dir = layout::appearance_day_dir(tmp.path(), &s, Utc::now());
-        std::fs::create_dir_all(&dir).unwrap();
-        let old = r#"{"scene":"boss","version":3,"as_of":"2026-06-21T12:00:00Z","views":[{"id":"a","module_url":"/m/a.mjs"}]}"#;
-        std::fs::write(dir.join("appearance-120000Z.json"), old).unwrap();
-
-        let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(&s, None).await;
-        assert_eq!(state.version, 3);
-        assert_eq!(ids(&state), vec!["a"]);
-        assert!(state.views[0].geometry.is_none());
-    }
-
-    #[tokio::test]
-    async fn apply_carries_geometry_through_wire_and_reload() {
-        use crate::types::{Region, SizeClass};
-        let tmp = tempfile::tempdir().unwrap();
-        let s = scene();
-        let geo = Geometry {
-            region: Region::Right,
-            size: SizeClass::Wide,
-            owns_captions: true,
-        };
-
-        let version = {
-            let bus = ViewBus::load(tmp.path());
-            bus.apply(
-                &s,
-                ViewEnvelope {
-                    id: "g".into(),
-                    op: ViewOp::Show,
-                    module_url: Some("/m/g.mjs".into()),
-                    geometry: Some(geo),
-                },
-            )
+        bus.apply(&s, show("feishu-board", "/m/board.mjs")).await;
+        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
             .await;
-            let state = bus.wait_state(&s, None).await;
-            assert_eq!(state.views[0].geometry, Some(geo));
-            state.version
-        };
 
-        // Geometry rides the snapshot, so it survives a restart.
-        let bus = ViewBus::load(tmp.path());
         let state = bus.wait_state(&s, None).await;
-        assert_eq!(state.version, version);
-        assert_eq!(state.views[0].geometry, Some(geo));
+        assert_eq!(
+            ids(&state),
+            vec!["feishu-board", "vendor-outage"],
+            "content first, the condition layer over it"
+        );
+
+        bus.reconcile(&s, dismiss("vendor-outage")).await;
+        assert_eq!(
+            ids(&bus.wait_state(&s, None).await),
+            vec!["feishu-board"],
+            "lifting the outage reveals the content it covered"
+        );
+    }
+
+    /// The two slots are independent: the agent showing a new topic must not
+    /// disturb a live outage, and clearing the screen must not either.
+    #[tokio::test]
+    async fn content_writes_leave_the_condition_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+            .await;
+
+        bus.apply(&s, show("a", "/m/a.mjs")).await;
+        bus.apply(&s, show("b", "/m/b.mjs")).await;
+        assert_eq!(
+            ids(&bus.wait_state(&s, None).await),
+            vec!["b", "vendor-outage"]
+        );
+
+        bus.apply(&s, dismiss("b")).await;
+        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["vendor-outage"]);
+
+        bus.apply(&s, show("c", "/m/c.mjs")).await;
+        bus.clear(&s).await;
+        assert_eq!(
+            ids(&bus.wait_state(&s, None).await),
+            vec!["vendor-outage"],
+            "a user clear reclaims the content, not the live condition"
+        );
+    }
+
+    /// An agent `dismiss` naming the condition's id must not reach it — the two
+    /// slots are addressed by write path, not by id.
+    #[tokio::test]
+    async fn the_agent_cannot_dismiss_the_condition_layer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        let s = scene();
+        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+            .await;
+        bus.apply(&s, dismiss("vendor-outage")).await;
+        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["vendor-outage"]);
     }
 
     #[tokio::test]
@@ -641,26 +679,12 @@ mod tests {
             "re-applying the same condition must be a no-op"
         );
 
-        bus.apply(&s, show("later", "/m/later.mjs")).await;
-        let before_raise = bus.wait_state(&s, None).await.version;
-        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
-            .await;
-        let raised = bus.wait_state(&s, None).await;
-        assert_eq!(raised.version, before_raise + 1);
-        assert_eq!(ids(&raised), vec!["later", "vendor-outage"]);
-
-        let dismiss = ViewEnvelope {
-            id: "vendor-outage".into(),
-            op: ViewOp::Dismiss,
-            module_url: None,
-            geometry: None,
-        };
-        bus.reconcile(&s, dismiss.clone()).await;
+        bus.reconcile(&s, dismiss("vendor-outage")).await;
         let hidden = bus.wait_state(&s, None).await;
-        assert_eq!(hidden.version, raised.version + 1);
-        assert_eq!(ids(&hidden), vec!["later"]);
+        assert_eq!(hidden.version, shown.version + 1);
+        assert!(hidden.views.is_empty());
 
-        bus.reconcile(&s, dismiss).await;
+        bus.reconcile(&s, dismiss("vendor-outage")).await;
         assert_eq!(
             bus.wait_state(&s, None).await.version,
             hidden.version,
@@ -669,24 +693,113 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn available_reconciliation_removes_only_the_energy_view() {
+    async fn persists_and_reloads_across_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = scene();
+        let version = {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(&s, show("a", "/m/a.mjs")).await;
+            bus.apply(&s, show("b", "/m/b.mjs")).await;
+            bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+                .await;
+            bus.wait_state(&s, None).await.version
+        };
+
+        // "Restart": a fresh bus over the same data dir restores the newest
+        // snapshot, both slots intact.
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(state.version, version);
+        assert_eq!(ids(&state), vec!["b", "vendor-outage"]);
+        assert_eq!(state.views[0].module_url, "/m/b.mjs");
+    }
+
+    #[tokio::test]
+    async fn reload_handles_unsafe_scene_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = Scene("alice@phone/1".into());
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(&s, show("keep", "/m/k.mjs")).await;
+        }
+        // A fresh bus restores the path-unsafe scene from its snapshot.
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(ids(&state), vec!["keep"]);
+    }
+
+    /// Every workshop on disk has snapshots in the old flat-list shape, most of
+    /// them pile-ups. They must load — as the top-most view alone, the one the
+    /// person was actually looking at — rather than failing the parse or
+    /// resurrecting a stack the slots can no longer represent.
+    #[tokio::test]
+    async fn loads_legacy_stacked_snapshot_as_its_topmost_view() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = scene();
+        let dir = layout::appearance_day_dir(tmp.path(), &s, Utc::now());
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"{"scene":"boss","version":3423,"as_of":"2026-08-07T09:05:30Z","views":[
+            {"id":"tasks","module_url":"/m/tasks.mjs","geometry":{"region":"center","size":"wide"}},
+            {"id":"bj01","module_url":"/m/bj01.mjs","geometry":{"region":"center","size":"auto"}}
+        ]}"#;
+        std::fs::write(dir.join("appearance-090530Z.json"), old).unwrap();
+
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(state.version, 3423);
+        assert_eq!(ids(&state), vec!["bj01"]);
+        assert!(
+            state.views[0].traits.is_none(),
+            "retired geometry keys are ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_carries_traits_through_wire_and_reload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = scene();
+        let traits = ViewTraits {
+            owns_captions: true,
+        };
+
+        let version = {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(
+                &s,
+                ViewEnvelope {
+                    id: "g".into(),
+                    op: ViewOp::Show,
+                    module_url: Some("/m/g.mjs".into()),
+                    traits: Some(traits),
+                },
+            )
+            .await;
+            let state = bus.wait_state(&s, None).await;
+            assert_eq!(state.views[0].traits, Some(traits));
+            state.version
+        };
+
+        // Traits ride the snapshot, so they survive a restart.
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(&s, None).await;
+        assert_eq!(state.version, version);
+        assert_eq!(state.views[0].traits, Some(traits));
+    }
+
+    #[tokio::test]
+    async fn on_screen_reports_the_content_slot_only() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         let s = scene();
-        bus.apply(&s, show("keep", "/m/keep.mjs")).await;
-        bus.apply(&s, show("vendor-outage", "/m/energy.mjs")).await;
+        assert!(bus.on_screen(&s).await.is_empty());
 
-        bus.reconcile(
-            &s,
-            ViewEnvelope {
-                id: "vendor-outage".into(),
-                op: ViewOp::Dismiss,
-                module_url: None,
-                geometry: None,
-            },
-        )
-        .await;
-
-        assert_eq!(ids(&bus.wait_state(&s, None).await), vec!["keep"]);
+        bus.apply(&s, show("a", "/m/a.mjs")).await;
+        bus.reconcile(&s, show("vendor-outage", "/m/energy.mjs"))
+            .await;
+        assert_eq!(
+            bus.on_screen(&s).await,
+            vec!["a".to_string()],
+            "the agent is told what it can act on, not the host's layer"
+        );
     }
 }

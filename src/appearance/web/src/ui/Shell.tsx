@@ -21,9 +21,10 @@ import { HandoffOverlay } from "./HandoffOverlay";
  *   Atmosphere · Presence (the agent) · SpeechText (its words) · ViewSlot
  *   (agent-authored views) · the channel controls / input line.
  *
- * Placement is one job: every participant — the agent views, the live captions,
- * and the camera self-view — is laid out by a single `floorLayout` pass. But that
- * unifies *placement*, never *lifecycle*: the captions `<div>` and `<CameraPreview>`
+ * Placement is one job: the live captions and the camera self-view are arranged
+ * by a single `floorLayout` pass around whatever the agent has on screen (the
+ * views themselves fill the frame and are not placed). That pass decides
+ * *placement*, never *lifecycle*: the captions `<div>` and `<CameraPreview>`
  * are mounted ONCE here, above the swappable `ViewSlot`, and the layout only flips
  * their props/classes. They must never move into `ViewSlot` or a participant
  * `.map()` — re-mounting `<CameraPreview>` re-acquires the camera and blacks out
@@ -35,7 +36,7 @@ export function Shell() {
   const sentences = useSpeech();
   const ch = useChannels();
   const sendText = useSendText();
-  const { views, meta, clear } = useViews();
+  const { views, clear } = useViews();
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -50,15 +51,14 @@ export function Shell() {
     pasteIntoTextInput,
   });
 
-  // Everything on screen is a participant. Views carry their declared geometry
-  // (wire-authoritative; a module-self-declared fallback fills in for inline
-  // `source` views with no wire geometry). The captions are always a participant;
-  // the camera joins only while its stream is live.
+  // Everything on screen is a participant. A view brings only what it declared
+  // about itself — it fills the frame regardless. The captions are always a
+  // participant; the camera joins only while its stream is live.
   const participants: Participant[] = [
     ...views.map((v) => ({
       id: v.id,
       kind: "view" as const,
-      geometry: v.geometry ?? meta.get(v.id)?.geometry,
+      ownsCaptions: v.traits?.owns_captions,
     })),
     { id: CAPTIONS_ID, kind: "captions" as const },
     ...(ch.visionStream ? [{ id: CAMERA_ID, kind: "camera" as const }] : []),
@@ -102,7 +102,7 @@ export function Shell() {
         </div>
       )}
 
-      <ViewSlot placements={placements} />
+      <ViewSlot />
 
       {/* The lower cluster starts with the activity status, then keeps every
           channel available. Managed energy is represented only by the

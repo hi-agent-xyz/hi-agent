@@ -49,7 +49,7 @@ async fn emit_view(seams: &ServerSeams, scene: &str, id: &str, op: ViewOp, url: 
                 id: id.to_string(),
                 op,
                 module_url: url.map(str::to_string),
-                geometry: None,
+                traits: None,
             },
         })
         .await
@@ -160,6 +160,10 @@ async fn appearance_is_per_scene() {
 
 /// The whole point: the appearance survives a server restart. A fresh server
 /// over the same data dir serves the same state (version included).
+///
+/// The second `show` here also pins the screen's one-at-a-time rule end to end:
+/// `b` takes the screen from `a` rather than stacking on it, and it is that
+/// single view — not a pile — that comes back after the restart.
 #[tokio::test]
 async fn appearance_survives_restart() {
     let dir = tempdir().expect("tempdir");
@@ -172,7 +176,7 @@ async fn appearance_survives_restart() {
             .await
             .expect("GET before restart")
     };
-    assert_eq!(ids(&before), vec!["a", "b"]);
+    assert_eq!(ids(&before), vec!["b"]);
 
     // "Restart": a second server over the same data dir.
     let (base, _seams) = spawn_server_at(dir.path()).await;

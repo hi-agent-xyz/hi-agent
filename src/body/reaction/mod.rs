@@ -77,7 +77,7 @@ use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
 use crate::mind::memory::{Memory, layout, snapshot};
 use crate::foundation::observatory::{EventKind, Observatory, SessionKind};
-use crate::types::{Channel, Geometry, JournalEntry, Origin, Scene, Signal, ViewEnvelope, ViewOp};
+use crate::types::{Channel, JournalEntry, Origin, Scene, Signal, ViewEnvelope, ViewOp, ViewTraits};
 use bytes::Bytes;
 use uuid::Uuid;
 
@@ -816,9 +816,8 @@ pub async fn start(
                 .await
                 .context("compiling the built-in out-of-energy view")?,
         ),
-        geometry: Some(
-            serde_json::from_str(geom)
-                .context("parsing the built-in out-of-energy geometry")?,
+        traits: Some(
+            serde_json::from_str(geom).context("parsing the built-in out-of-energy traits")?,
         ),
     };
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
@@ -1269,7 +1268,7 @@ impl Reaction {
                 id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
                 op: ViewOp::Dismiss,
                 module_url: None,
-                geometry: None,
+                traits: None,
             }
         };
         self.inner.views.reconcile(scene, envelope).await;
@@ -2374,8 +2373,8 @@ async fn perform(
                 let _ = tx.send(sentence).await;
             }
         }
-        interleave::Emit::Show { id, op, source, geometry } => {
-            emit_view(reaction, scene, id, op, source, geometry).await
+        interleave::Emit::Show { id, op, source, traits } => {
+            emit_view(reaction, scene, id, op, source, traits).await
         }
     }
 }
@@ -2620,7 +2619,7 @@ async fn emit_view(
     id: String,
     op: ViewOp,
     source: String,
-    geometry: Option<Geometry>,
+    traits: Option<ViewTraits>,
 ) {
     let module_url = if op == ViewOp::Dismiss {
         None
@@ -2653,7 +2652,7 @@ async fn emit_view(
         .out
         .send(OutboundSignal::View {
             scene: scene.clone(),
-            envelope: ViewEnvelope { id, op, module_url, geometry },
+            envelope: ViewEnvelope { id, op, module_url, traits },
         })
         .await;
 }

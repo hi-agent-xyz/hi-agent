@@ -72,11 +72,11 @@ pub struct RenderRequest {
     /// The compiled module's served URL — `/views/_compiled/<hash>.mjs`, as
     /// returned by [`crate::mind::views::ViewCompiler::compile`].
     pub module_url: String,
-    /// The placement to render under, matching the view's `.geom.json` sidecar.
-    /// `None` renders under the host's floor (a centered `auto` card), which is
-    /// what a view with no sidecar gets on the real stage.
-    pub region: Option<String>,
-    pub size: Option<String>,
+    /// Whether this view renders the conversation's live words itself, so the
+    /// review page's caption pills stand down — the view's one declared trait.
+    /// There is no placement to pass: the stage frame is full-bleed and the review
+    /// renders into that same frame, always.
+    pub owns_captions: bool,
     /// Force the light or dark skin; `None` uses the page default (light).
     pub theme: Option<String>,
     /// Force the language a bundled view selects its copy with (`en`, `zh-Hans`, …),
@@ -109,22 +109,17 @@ impl RenderRequest {
         Self {
             base_url: base_url.into(),
             module_url: module_url.into(),
-            region: None,
-            size: None,
+            owns_captions: false,
             theme: None,
             lang: None,
             viewport: Viewport::default(),
         }
     }
 
-    /// Render under a declared placement (the view's `.geom.json`).
-    pub fn with_geometry(
-        mut self,
-        region: Option<String>,
-        size: Option<String>,
-    ) -> Self {
-        self.region = region;
-        self.size = size;
+    /// Render with the view owning the live words (its `.geom.json` said so), so
+    /// the page's own caption pills stand down and don't double up.
+    pub fn with_captions(mut self, owns_captions: bool) -> Self {
+        self.owns_captions = owns_captions;
         self
     }
 
@@ -141,12 +136,10 @@ impl RenderRequest {
             self.base_url.trim_end_matches('/'),
             urlencode(&self.module_url)
         );
-        for (key, value) in [
-            ("region", self.region.as_deref()),
-            ("size", self.size.as_deref()),
-            ("theme", self.theme.as_deref()),
-            ("lang", self.lang.as_deref()),
-        ] {
+        if self.owns_captions {
+            url.push_str("&owns_captions=1");
+        }
+        for (key, value) in [("theme", self.theme.as_deref()), ("lang", self.lang.as_deref())] {
             if let Some(v) = value {
                 url.push_str(&format!("&{key}={}", urlencode(v)));
             }
@@ -324,16 +317,24 @@ mod tests {
     }
 
     #[test]
-    fn page_url_carries_the_module_and_geometry() {
+    fn page_url_carries_the_module_and_declared_traits() {
         let req = RenderRequest::new("http://127.0.0.1:12358/", "/views/_compiled/ab12.mjs")
-            .with_geometry(Some("fill".into()), Some("wide".into()));
+            .with_captions(true);
         let url = req.page_url();
         assert!(url.starts_with("http://127.0.0.1:12358/render/view?"), "{url}");
         assert!(url.contains("module=%2Fviews%2F_compiled%2Fab12.mjs"), "{url}");
-        assert!(url.contains("&region=fill"), "{url}");
-        assert!(url.contains("&size=wide"), "{url}");
+        assert!(url.contains("&owns_captions=1"), "{url}");
         assert!(url.contains("&chrome=titlebar"), "the review reserves the titlebar: {url}");
         assert!(!url.contains("theme="), "an unset theme is not sent: {url}");
+        // No placement on the wire: the review frame is the stage frame.
+        assert!(!url.contains("region="), "{url}");
+        assert!(!url.contains("size="), "{url}");
+    }
+
+    #[test]
+    fn page_url_omits_captions_when_the_host_owns_them() {
+        let url = RenderRequest::new("http://h:1", "/m.mjs").page_url();
+        assert!(!url.contains("owns_captions"), "{url}");
     }
 
     #[test]

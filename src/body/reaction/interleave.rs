@@ -11,7 +11,7 @@
 use std::time::Instant;
 
 use crate::foundation::segment::{Segmenter, Terminator};
-use crate::types::{Geometry, ViewOp};
+use crate::types::{ViewOp, ViewTraits};
 
 /// One release action the policy decides on. `Speak` goes to TTS only (the raw
 /// chunk is mirrored to /thought separately by the sequencer); `Show` is
@@ -19,7 +19,7 @@ use crate::types::{Geometry, ViewOp};
 #[derive(Debug)]
 pub(super) enum Emit {
     Speak(String),
-    Show { id: String, op: ViewOp, source: String, geometry: Option<Geometry> },
+    Show { id: String, op: ViewOp, source: String, traits: Option<ViewTraits> },
 }
 
 /// Coalesce spoken text into sentences for TTS. Pure: no side-effects, so the
@@ -41,13 +41,13 @@ pub(super) fn view_emits(
     id: String,
     op: ViewOp,
     source: String,
-    geometry: Option<Geometry>,
+    traits: Option<ViewTraits>,
 ) -> Vec<Emit> {
     let mut out = Vec::new();
     if let Some(tail) = splitter.flush() {
         out.push(Emit::Speak(tail));
     }
-    out.push(Emit::Show { id, op, source, geometry });
+    out.push(Emit::Show { id, op, source, traits });
     out
 }
 
@@ -68,15 +68,14 @@ mod release_tests {
 
     #[test]
     fn view_is_paced_to_its_following_sentence() {
-        use crate::types::{Region, SizeClass};
         // The core race fix: view1, narrate one, view2, narrate two — each view
         // emitted before its sentence, never both up front. Trailing spaces mirror
         // real LLM output so each sentence cuts cleanly on its terminator.
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = Vec::new();
-        let geo = Some(Geometry { region: Region::Right, size: SizeClass::Wide, owns_captions: false });
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), geo));
+        let declared = Some(ViewTraits { owns_captions: true });
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), declared));
         emits.extend(speak_emits("Narrate one. ", &mut sp, now));
         emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None));
         emits.extend(speak_emits("Narrate two. ", &mut sp, now));
@@ -87,16 +86,16 @@ mod release_tests {
             trace(&emits),
             vec!["show:c1", "speak:Narrate one.", "show:c2", "speak:Narrate two."]
         );
-        // The declared geometry rides the emit untouched (and an undeclared view
-        // stays None — the floor).
-        let geom_of = |want: &str| {
+        // What the view declared rides the emit untouched (and a view that
+        // declared nothing stays None — host-owned captions).
+        let traits_of = |want: &str| {
             emits.iter().find_map(|e| match e {
-                Emit::Show { id, geometry, .. } if id == want => Some(*geometry),
+                Emit::Show { id, traits, .. } if id == want => Some(*traits),
                 _ => None,
             })
         };
-        assert_eq!(geom_of("a"), Some(geo));
-        assert_eq!(geom_of("b"), Some(None));
+        assert_eq!(traits_of("a"), Some(declared));
+        assert_eq!(traits_of("b"), Some(None));
     }
 
     #[test]

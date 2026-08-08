@@ -137,8 +137,9 @@ a colleague turning their screen around while they work, not only at the end.
 
 A view that compiles is not a view that is any good, and you cannot tell which you have
 by reading your own source. Call `review_view` with the ref: it renders the thing in a
-real browser at its declared placement and hands back the page's errors *and* a
-screenshot of each theme. Look at the screenshots.
+real browser in the exact full-bleed frame the stage will give it, and hands back the
+page's errors *and* a screenshot of each theme. What you see is what a person sees —
+there is no placement left for the two to disagree about. Look at the screenshots.
 
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
@@ -195,42 +196,36 @@ is one idea — not a whole list crammed onto one slide. If the brief is a seque
 (a ranking, a timeline), build one view per item so the agent can walk them one at a
 time; give each its own id.
 
-**You declare where your content sits; the host places it.** You don't lay out the
-whole screen. Everything on the stage — your view, the live caption words, the camera
-self-view — is a *participant* the host arranges together so none sits on top of
-another. Your part is to declare two things about your content and let the host place
-it. Write them as a small `<name>.geom.json` beside your saved view (same base name as
-the `.jsx`):
+**You get the whole screen. Fill it.** Your view is the only one on it — the host
+puts up one view at a time, edge to edge, and paints nothing behind you. There is no
+card, no frame and no width cap to design around, and nothing to declare about
+placement: you own the background, the layout, and every pixel of a landscape frame.
 
-```
-{ "region": "center", "size": "auto" }
-```
+So compose for a full screen, not for a box that happens to be big. A page laid out as
+though it were still a card — a column of content stranded mid-screen with dead margins
+either side — is the one failure this frame makes easy. Let the composition reach the
+edges: a full-bleed image, a background that goes corner to corner, type at a scale the
+frame can carry.
 
-- **`region`** — where your content sits: `center` (the default), an edge (`top` /
-  `bottom` / `left` / `right`), a corner (`top_left` / `top_right` / `bottom_left` /
-  `bottom_right`), or `fill` (you own the whole frame and its own background — a photo,
-  a map, a dark composition).
-- **`size`** — how wide your content wants to be: `compact`, `auto` (a comfortable
-  default card), `wide`, or `fill`. Choose what makes *this* content look best — the
-  host no longer caps every view at one width.
-
-Return your content directly (a `Stack`, a `Card`, your own elements). For anything but
-`fill`, don't reach for the viewport, full-screen backgrounds, or absolute positioning
-to place yourself — that fights the frame. For `fill` the host steps back to a bare
-full-screen layer and you own the background and layout. No sidecar at all is fine too
-— you just get the centered default card.
+**Little content is a poster, not a lonely sentence.** When the brief is one number,
+one line, one fact, the answer is *not* to shrink it into the middle and leave the rest
+empty. Set it large and compose the whole frame around it — that is what a designer
+would do with a wall, and this is a wall. Scale the treatment to the content: a lot of
+content earns density, a little earns drama.
 
 **The screen has edges that aren't yours.** The face runs in a desktop window, and the
 window's own chrome floats over the top of the page: the three system buttons in the
-top-left corner and the title beside them. The host already holds every view clear of
-that strip — a `fill` layer is padded by `var(--hi-safe-top)`, the framed regions more —
-so you get it for free *unless you take it back*: pinning your own header with
-`position: absolute/fixed; top: 0` escapes the padding and lands it under the buttons.
-Pin to `var(--hi-safe-top)` instead (a background pinned at `top: 0` is fine and even
-wanted — it's readable content that must stay out). The bottom band is shared too: the
-caption pills sit bottom-centre and the mic/camera controls hold the bottom-right
-corner, both floating *over* your view — so leave those two zones quiet rather than
-running a line of text through them.
+top-left corner and the title beside them. The bottom band is shared too — the caption
+pills sit bottom-centre and the mic/camera controls hold the bottom-right corner, both
+floating *over* your view.
+
+The host reserves both for you as padding on the layer, so ordinary flowed content is
+clear of them for free. Two things follow. A background is meant to bleed *through* it
+— pin one with `position: absolute; inset: 0` and it runs corner to corner as it
+should. But pinning readable content with `position: absolute/fixed; top: 0` escapes
+the padding and lands it under the traffic lights; pin to `var(--hi-safe-top)` instead.
+The same goes for the bottom: `var(--hi-safe-bottom)` is the floor for anything that
+has to be read.
 
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
 leaving an ugly broken box. Instead **download the image into your project folder**
@@ -240,19 +235,23 @@ views tree is served at `/views/<the same relative path>`, so a file you write t
 `badminton-top10/leader.jpg` is `<img src="/views/badminton-top10/leader.jpg">`.
 That path always loads and keeps your source small.
 
-**The words are a participant too.** While your view is on stage the host keeps
-showing the conversation's words — the person's speech and the agent's lines — as
-small caption pills, and it places them on whatever edge your `region` leaves freest,
-clear of your content (you don't render them). If you'd rather fold the words into the
-composition yourself, declare it in the sidecar and render them with `useSpeech()`
-from `@hi/core`:
+**The words share the screen with you.** While your view is on stage the host keeps
+showing the conversation's words — the person's speech and the agent's lines — as small
+caption pills docked bottom-centre, floating over your view (you don't render them). So
+leave that strip quiet rather than running a line of text through it.
+
+If you'd rather fold the words into the composition yourself, render them with
+`useSpeech()` from `@hi/core` and say so in a small `<name>.geom.json` beside your
+saved view (same base name as the `.jsx`):
 
 ```
-{ "region": "fill", "owns_captions": true }
+{ "owns_captions": true }
 ```
 
-With `owns_captions` the host's caption pills stand down. Only declare it if you
-actually render the words — otherwise the person's speech goes invisible.
+That is the *only* thing a sidecar declares, and the only reason to write one — no
+sidecar is the normal case. With `owns_captions` the host's caption pills stand down,
+so only declare it if you actually render the words; otherwise the person's speech goes
+invisible.
 
 **It's theirs the moment they reach for it.** If they scroll or tap, the view should
 yield — let them look, and don't fight it.

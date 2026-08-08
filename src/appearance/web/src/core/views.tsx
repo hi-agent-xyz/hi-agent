@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { subscribeViewState, clearViewState, type Geometry } from "../channels/out/view";
+import { subscribeViewState, clearViewState, type ViewTraits } from "../channels/out/view";
 import { usePresence, useScene, useWake } from "./session";
 
 // How long a newly appearing view waits for the voice before showing anyway.
@@ -19,37 +19,25 @@ import { usePresence, useScene, useWake } from "./session";
 // shows the view promptly rather than stalling on a beat that never sounds.
 const VOICE_GATE_FALLBACK_MS = 1000;
 
-/** One mounted agent view: a stable id, the compiled module URL to import, and
- * the placement the server delivered with it (absent = floor layout). */
+/** One mounted layer: a stable id, the compiled module URL to import, and what
+ * the view declared about itself. Every layer is full-bleed — there is no
+ * placement here because there is no longer any placement to carry. */
 export interface ActiveView {
   id: string;
   moduleUrl: string;
-  geometry?: Geometry;
-}
-
-/** What a view's module declared about itself, known only after import — a
- * fallback `Geometry` for inline `source` views that carry no wire geometry or
- * sidecar. The wire geometry, when present, wins over this. */
-export interface ViewMeta {
-  geometry?: Geometry;
+  traits?: ViewTraits;
 }
 
 interface ViewsValue {
   views: ActiveView[];
-  /** Module-declared meta keyed by view id; absent until the module loads. */
-  meta: ReadonlyMap<string, ViewMeta>;
-  /** Called by the view mount once a module is imported (or re-imported). */
-  reportMeta: (id: string, meta: ViewMeta) => void;
-  /** Close all views — clears the scene's appearance back to the default empty
-   * room. Server-side, so every device + a refresh converge on the cleared
-   * screen; the empty state arrives via the same long-poll. */
+  /** Clear the screen back to the default empty room. Server-side, so every
+   * device + a refresh converge on the cleared screen; the empty state arrives
+   * via the same long-poll. */
   clear: () => void;
 }
 
 const ViewsContext = createContext<ViewsValue>({
   views: [],
-  meta: new Map(),
-  reportMeta: () => {},
   clear: () => {},
 });
 
@@ -71,10 +59,9 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const { reactive } = usePresence();
   const playingRef = useRef(false);
   const voiceWaitersRef = useRef<Set<() => void>>(new Set());
-  const [views, setViews] = useState<Map<string, { moduleUrl: string; geometry?: Geometry }>>(
+  const [views, setViews] = useState<Map<string, { moduleUrl: string; traits?: ViewTraits }>>(
     new Map(),
   );
-  const [meta, setMeta] = useState<Map<string, ViewMeta>>(new Map());
 
   useEffect(() => {
     playingRef.current = reactive;
@@ -84,10 +71,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       waiters.forEach((wake) => wake());
     }
   }, [reactive]);
-
-  const reportMeta = useCallback((id: string, m: ViewMeta) => {
-    setMeta((prev) => new Map(prev).set(id, m));
-  }, []);
 
   const clear = useCallback(() => {
     void clearViewState(scene);
@@ -140,19 +123,12 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
             applied.clear();
             for (const v of state.views) applied.add(v.id);
             // Mirror the snapshot wholesale: array order = z-order. ViewSlot
-            // keys by id, so unchanged views keep their mounted component. The
-            // geometry rides along so the compositor places each view; an absent
-            // one reads as the floor layout.
+            // keys by id, so unchanged views keep their mounted component.
             setViews(
               new Map(
-                state.views.map((v) => [v.id, { moduleUrl: v.module_url, geometry: v.geometry }]),
+                state.views.map((v) => [v.id, { moduleUrl: v.module_url, traits: v.traits }]),
               ),
             );
-            const live = new Set(state.views.map((v) => v.id));
-            setMeta((prev) => {
-              if (![...prev.keys()].some((id) => !live.has(id))) return prev;
-              return new Map([...prev].filter(([id]) => live.has(id)));
-            });
           }
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
@@ -169,17 +145,15 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ViewsValue>(
     () => ({
-      views: [...views].map(([id, v]) => ({ id, moduleUrl: v.moduleUrl, geometry: v.geometry })),
-      meta,
-      reportMeta,
+      views: [...views].map(([id, v]) => ({ id, moduleUrl: v.moduleUrl, traits: v.traits })),
       clear,
     }),
-    [views, meta, reportMeta, clear],
+    [views, clear],
   );
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 
-/** The currently mounted agent views, in insertion (z-) order. */
+/** The currently mounted layers, in z-order (content first, condition over it). */
 export function useViews(): ViewsValue {
   return useContext(ViewsContext);
 }

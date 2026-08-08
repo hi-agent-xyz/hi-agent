@@ -599,93 +599,29 @@ button {
   color: var(--caption-user);
 }
 
-/* --- View stage (host frame around an agent view) --------------------
-   A view that declares no layout of its own still lands placed and legible: the
-   host positions its content per the view's `region` (the floor default is
-   centered) in a safe-area kept clear of the camera pip (bottom-left, z55) and the
-   channel controls / keyboard (bottom corners + bottom-center, z60), and paints a
-   surface behind it so it reads over the live, variable backdrop. A `region:"fill"`
-   view skips this frame entirely — the bare full-bleed layer (ViewSlot), owning its
-   own background and layout. */
-.hi-view-frame {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* The empty margins fall through to the room behind — only the surface itself
-     takes pointer events (set below). */
-  pointer-events: none;
-  /* Base safe-area: clear the window's titlebar strip at the top (the traffic
-     lights and our centred title float there — `--hi-safe-top`), and the bottom
-     bar — camera pip / controls / keyboard, and the caption dock, which now
-     always sits bottom-centre regardless of the view's own region. */
-  padding: calc(var(--hi-safe-top) + 24px)
-    max(24px, var(--hi-safe-right) + 16px)
-    calc(var(--hi-safe-bottom) + 140px)
-    max(24px, var(--hi-safe-left) + 16px);
-}
+/* --- View stage -------------------------------------------------------
+   Every view owns the whole frame. There is no host card and no region: the
+   server hands over at most two layers (the agent's content, then the host's
+   condition notice) and each gets this same bare full-bleed surface, owning its
+   own background and layout.
 
-/* The view sits where it declared (center is the base center/center). */
-.hi-view-frame[data-region="top"] { align-items: flex-start; }
-.hi-view-frame[data-region="bottom"] { align-items: flex-end; }
-.hi-view-frame[data-region="left"] { justify-content: flex-start; }
-.hi-view-frame[data-region="right"] { justify-content: flex-end; }
-.hi-view-frame[data-region="top_left"] { align-items: flex-start; justify-content: flex-start; }
-.hi-view-frame[data-region="top_right"] { align-items: flex-start; justify-content: flex-end; }
-.hi-view-frame[data-region="bottom_left"] { align-items: flex-end; justify-content: flex-start; }
-.hi-view-frame[data-region="bottom_right"] { align-items: flex-end; justify-content: flex-end; }
-
-/* A `region:"fill"` view owns the whole frame — the host paints nothing behind it
-   and lays out nothing inside it. It still doesn't own the titlebar strip, so the
-   layer carries the one inset that isn't negotiable: its content starts below the
-   traffic lights. The inset is padding, not a smaller box, so a background the
-   view pins with `position:absolute; inset:0` still bleeds up under the bar the
-   way the seamless window wants — only the flowed content is held clear. (A view
-   that absolutely-positions its *content* at `top:0` opts back out of this; the
-   view-builder guide says to place with `var(--hi-safe-top)` instead.) */
+   The one thing the layer still supplies is the safe area, because those insets
+   are not the view's to know: the window's own chrome floats over the top strip
+   (traffic lights + centred title) and the bottom band is shared with the caption
+   dock, the camera pip and the channel controls, all of which sit ABOVE the view
+   at z55/z60. Padding — not a smaller box — is what reserves them, so a
+   background the view pins with `position:absolute; inset:0` still bleeds to
+   every edge the way the seamless window wants, while flowed content stays clear
+   of the chrome. A view that absolutely-positions its *content* at `top:0` opts
+   back out of this; the view-builder guide says to place with `var(--hi-safe-top)`
+   instead. */
 .hi-view-fill {
   position: absolute;
   inset: 0;
-  padding-top: var(--hi-safe-top);
-}
-
-.hi-view-surface {
-  pointer-events: auto;
-  width: 100%;
-  /* Width follows the view's declared size class (set per data-size below); this
-     is the `auto` default — the same ≤680 card the host always framed. */
-  max-width: min(680px, 100%);
-  max-height: 100%;
-  overflow: auto;
-  color: var(--fg);
-  /* The default surface — a warm card legible over the paper. This is the
-     floor; a view can still paint its own on top. */
-  padding: 24px;
-  border-radius: 24px;
-  background: var(--surface-strong);
-  border: 1px solid var(--surface-border);
-  box-shadow: 0 18px 60px var(--shadow-strong);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
-}
-
-/* Until the module resolves, the surface holds nothing — don't flash an empty
-   card before the view paints. */
-.hi-view-surface:empty {
-  display: none;
-}
-
-/* Size class the builder declared — how wide the content wants to be. `auto` is
-   the base ≤680 above; the host no longer caps every view at one width. */
-.hi-view-surface[data-size="compact"] {
-  max-width: min(420px, 100%);
-}
-.hi-view-surface[data-size="wide"] {
-  max-width: min(1040px, 100%);
-}
-.hi-view-surface[data-size="fill"] {
-  max-width: 100%;
+  padding: var(--hi-safe-top)
+    max(20px, var(--hi-safe-right))
+    calc(var(--hi-safe-bottom) + 76px)
+    max(20px, var(--hi-safe-left));
 }
 
 /* --- Keyboard fallback ------------------------------------------------
@@ -1120,9 +1056,8 @@ button {
   .hi-stage--captions .hi-sentence {
     font-size: clamp(14px, 4.4vw, 22px);
   }
-  .hi-view-frame {
-    padding: calc(var(--hi-safe-top) + 14px) 14px
-      calc(var(--hi-safe-bottom) + 64px) 14px;
+  .hi-view-fill {
+    padding: var(--hi-safe-top) 12px calc(var(--hi-safe-bottom) + 60px) 12px;
   }
   .hi-channels {
     right: max(12px, var(--hi-safe-right));

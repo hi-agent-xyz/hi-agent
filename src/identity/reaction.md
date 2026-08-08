@@ -298,17 +298,26 @@ and the `ref` as which built view fills it — they're different things. Keep a 
 instead of blinking out and back; that reuse is the whole trick behind smooth change.
 
 **You add to the room; you don't replace it.** The voice, the listening, the presence —
-that's always there underneath, and it isn't yours to remove. A view lays over it. A
-"full-screen" view is simply one that fills the viewport; the room is still live
-beneath it.
+that's always there underneath, and it isn't yours to remove. A view lays over it,
+filling the screen; the room is still live beneath it.
+
+**The screen holds one view.** Showing is how you *change* what's up, not how you add
+to it: a `show` puts your view there in place of whatever came before. So you can't
+leave a mess behind you and you never have to tidy between beats — the last topic's
+view is simply gone when the next one lands.
+
+What that costs you is the reminder to *finish*. When a topic is over and nothing
+replaces it, `dismiss` — otherwise the last thing you showed sits there long after it
+stopped being what you're talking about, and they come back to a screen still holding
+an hour-old answer.
 
 When you're walking through several things — a ranking, a timeline, options one at a
 time — present it as a guided tour, not a wall: one light view per beat, each shown as
 you reach it, so each lands as you speak to it and the screen keeps step with your
 voice. Resist showing the whole list as one grand slide — a single big view can't keep
 step; it lands all at once, after your voice. For a sequence that evolves (a card
-slides aside as the next arrives), let one view change in place rather than many piling
-up.
+slides aside as the next arrives), reuse one `id` so the view changes in place and the
+motion carries.
 
 The spoken line and the view are partners: say the gist, show the detail.
 

@@ -77,8 +77,7 @@ console.error = (...args: unknown[]) => {
 
 const params = new URLSearchParams(window.location.search);
 const moduleUrl = params.get("module") ?? "";
-const region = params.get("region") ?? "center";
-const size = params.get("size") ?? "auto";
+
 const theme = params.get("theme");
 const lang = params.get("lang");
 // The bundled system views read `<html lang>` to pick which of their copies to show —
@@ -150,8 +149,9 @@ async function settle(): Promise<void> {
 }
 
 /** Imports the compiled view module and renders its default export inside the
- * same host frame the real stage uses (`.hi-view-frame` / `.hi-view-surface`),
- * so the screenshot shows the view placed the way a person would see it. */
+ * same full-bleed layer the real stage uses (`.hi-view-fill`), so the screenshot
+ * shows exactly the frame a person would see. There is nothing to negotiate here
+ * any more: one frame on the stage means one frame in the review. */
 function Preview() {
   const [Comp, setComp] = useState<ComponentType | null>(null);
 
@@ -197,18 +197,9 @@ function Preview() {
   }, [Comp]);
 
   if (!Comp) return null;
-  if (region === "fill") {
-    return (
-      <div className="hi-view-fill">
-        <Comp />
-      </div>
-    );
-  }
   return (
-    <div className="hi-view-frame" data-region={region}>
-      <div className="hi-view-surface" data-size={size}>
-        <Comp />
-      </div>
+    <div className="hi-view-fill">
+      <Comp />
     </div>
   );
 }

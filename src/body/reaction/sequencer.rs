@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::body::capabilities::tts::{self, TtsStream};
 use crate::foundation::segment::{Segmenter, Terminator};
-use crate::types::{Channel, Geometry, Scene, ViewOp};
+use crate::types::{Channel, Scene, ViewOp, ViewTraits};
 
 use super::{OutboundSignal, Reaction, interleave};
 
@@ -40,7 +40,7 @@ const UTTERANCE_QUIET_CLOSE: Duration = Duration::from_secs(3);
 pub(super) enum Beat {
     TurnStart { turn: u64 },
     Say(String),
-    Show { id: Option<String>, op: String, source: String, geometry: Option<Geometry> },
+    Show { id: Option<String>, op: String, source: String, traits: Option<ViewTraits> },
     TurnEnd { done: oneshot::Sender<String> },
 }
 
@@ -126,7 +126,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                 super::emit_thought_chunk(&reaction, &scene, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
-            Beat::Show { id, op, source, geometry } => {
+            Beat::Show { id, op, source, traits } => {
                 let (id, op) = resolve_view(id, &op);
                 if !armed {
                     continue;
@@ -134,7 +134,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, scene: Scene, mut beats: m
                 if reaction.inner.interrupts.should_skip(&scene, turn).await {
                     continue;
                 }
-                for emit in interleave::view_emits(&mut splitter, id, op, source, geometry) {
+                for emit in interleave::view_emits(&mut splitter, id, op, source, traits) {
                     super::perform(emit, &synth_tx, &reaction, &scene).await;
                 }
             }

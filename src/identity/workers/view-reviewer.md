@@ -66,11 +66,16 @@ every time.
 
 - **Does it say the thing?** A person glancing at this for two seconds — do they get
   the point? If the point is buried under chrome, that is the finding.
-- **Does it fit the frame it will appear in?** You are reviewing it at its declared
-  placement. Clipped text, a scrollbar where there should not be one, content hugging
-  one corner of a wide strip — all real. The render reserves the same top strip the
-  desktop window's system buttons and title float in, so anything the view pinned into
-  that strip anyway shows up here — call it.
+- **Does it fill the frame it will appear in?** Every view gets the whole landscape
+  screen, and you are reviewing it in exactly that frame — so the screenshot is the
+  thing itself, not an approximation. Clipped text and a scrollbar where there should
+  not be one are real findings. So is the opposite, and it is the common one here: a
+  page laid out as though it were still a card, its content stranded in a column
+  mid-screen with dead margins either side. A little content should read as a poster —
+  set large, composed across the frame — not as a lonely sentence in an empty field.
+  The render reserves the same top strip the desktop window's system buttons and title
+  float in, and the bottom band the captions and controls float in, so anything the
+  view pinned into either strip anyway shows up here — call it.
 - **Is anything empty that should not be?** A section rendered with no content, a
   placeholder that survived, a zero where a number was meant to land.
 - **Does it read at a glance in both themes?** If contrast is the doubt, review it

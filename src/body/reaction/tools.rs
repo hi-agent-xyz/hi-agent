@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use tokio::sync::{Mutex, mpsc};
 
-use crate::types::{Geometry, Scene};
+use crate::types::{Scene, ViewTraits};
 
 use super::sequencer::Beat;
 
@@ -156,8 +156,8 @@ impl ToolSink {
 
     /// Show a view (the `show` tool): queue it onto the sequencer, which
     /// paces it to the surrounding narration. `op` is `show`/`replace`/`dismiss`;
-    /// `id` may be omitted (one is synthesized). `geometry` is the view's declared
-    /// placement (or `None` for the host's floor layout).
+    /// `id` may be omitted (one is synthesized). `traits` is what the view declared
+    /// about itself (or `None` — host-owned captions).
     ///
     /// Unlike speech this is never gated: a view is retained scene state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
@@ -167,13 +167,13 @@ impl ToolSink {
         id: Option<String>,
         op: String,
         source: String,
-        geometry: Option<Geometry>,
+        traits: Option<ViewTraits>,
     ) -> anyhow::Result<()> {
         self.mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?
             .beats
-            .send(Beat::Show { id, op, source, geometry })
+            .send(Beat::Show { id, op, source, traits })
             .await
             .map_err(|_| anyhow::anyhow!("scene sequencer gone; show dropped"))
     }

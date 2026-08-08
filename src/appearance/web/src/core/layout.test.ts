@@ -1,17 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { floorLayout, CAPTIONS_ID, CAMERA_ID, type Participant } from "./layout";
-import type { Geometry } from "../channels/out/view";
 
-// The floor is the no-regression contract: with no view declaring geometry, it
-// must reproduce the host's prior hand-written placement (Shell's old
-// overlaid/docked/aside/pip/demote logic) exactly. These five cases lock that.
+// The compositor arranges the host's own surfaces — the words and the camera —
+// around whatever is on screen. It does not place views: those fill the frame,
+// one at a time, so the only thing a view contributes here is whether it renders
+// the words itself.
 
 const captions = (): Participant => ({ id: CAPTIONS_ID, kind: "captions" });
 const camera = (): Participant => ({ id: CAMERA_ID, kind: "camera" });
-const view = (id: string, geometry?: Geometry): Participant => ({ id, kind: "view", geometry });
+const view = (id: string, ownsCaptions?: boolean): Participant => ({
+  id,
+  kind: "view",
+  ownsCaptions,
+});
 
 describe("floorLayout", () => {
-  it("(a) no views, camera off → captions centered, full list, presence undimmed", () => {
+  it("no views, camera off → captions centered, presence undimmed", () => {
     const { demote, placements } = floorLayout([captions()]);
     expect(demote).toBe(0);
     const cap = placements.get(CAPTIONS_ID)!;
@@ -20,7 +24,7 @@ describe("floorLayout", () => {
     expect(cap.hidden).toBe(false);
   });
 
-  it("(b) no views, camera on → camera fills, captions dock bottom-center", () => {
+  it("no views, camera on → camera fills, captions dock bottom-center", () => {
     const { demote, placements } = floorLayout([captions(), camera()]);
     expect(demote).toBe(0);
     const cam = placements.get(CAMERA_ID)!;
@@ -31,12 +35,9 @@ describe("floorLayout", () => {
     expect(cap.docked).toBe(true);
   });
 
-  it("(c) one undeclared view → centered card, captions dock bottom, demote 0.72, camera→pip", () => {
+  it("a view on screen → captions dock bottom, demote 0.72, camera→pip", () => {
     const { demote, placements } = floorLayout([view("v1"), captions(), camera()]);
     expect(demote).toBe(0.72);
-    const v = placements.get("v1")!;
-    expect(v.region).toBe("center");
-    expect(v.size).toBe("auto");
     const cap = placements.get(CAPTIONS_ID)!;
     expect(cap.region).toBe("bottom");
     expect(cap.docked).toBe(true);
@@ -46,26 +47,25 @@ describe("floorLayout", () => {
     expect(cam.region).toBe("bottom_left");
   });
 
-  it("(d) view region:fill → bare full-bleed layer (old surface:none)", () => {
-    const { placements } = floorLayout([view("v1", { region: "fill", size: "fill" }), captions()]);
-    const v = placements.get("v1")!;
-    expect(v.region).toBe("fill");
-    expect(v.size).toBe("fill");
-    // Captions still land clear of a full-bleed view, at the bottom.
-    expect(placements.get(CAPTIONS_ID)!.region).toBe("bottom");
+  it("views are not placed — the compositor only arranges the host surfaces", () => {
+    const { placements } = floorLayout([view("v1"), captions()]);
+    expect(placements.has("v1")).toBe(false);
+    expect([...placements.keys()]).toEqual([CAPTIONS_ID]);
   });
 
-  it("(e) view owns_captions → host captions stand down (old selfHosted)", () => {
-    const { placements } = floorLayout([view("v1", { owns_captions: true }), captions()]);
+  it("a view that owns the captions makes the host's pills stand down", () => {
+    const { placements } = floorLayout([view("v1", true), captions()]);
     expect(placements.get(CAPTIONS_ID)!.hidden).toBe(true);
   });
 
-  it("places a declared view at its region/size; captions still dock bottom-center", () => {
-    const { placements } = floorLayout([view("v1", { region: "left", size: "wide" }), captions()]);
-    const v = placements.get("v1")!;
-    expect(v.region).toBe("left");
-    expect(v.size).toBe("wide");
-    // The words no longer follow the view to a free edge — one fixed bottom dock.
-    expect(placements.get(CAPTIONS_ID)!.region).toBe("bottom");
+  // The condition layer (a vendor outage) is the only thing that ever sits over
+  // the content, and it renders the words itself. Whoever is on top decides.
+  it("the top-most layer decides who owns the captions", () => {
+    const overContent = floorLayout([view("content"), view("vendor-outage", true), captions()]);
+    expect(overContent.placements.get(CAPTIONS_ID)!.hidden).toBe(true);
+
+    // ...and the reverse: a caption-owning view underneath does not hide them.
+    const underContent = floorLayout([view("vendor-outage", true), view("content"), captions()]);
+    expect(underContent.placements.get(CAPTIONS_ID)!.hidden).toBe(false);
   });
 });

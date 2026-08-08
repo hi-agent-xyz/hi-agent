@@ -32,7 +32,7 @@ use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
 use crate::body::reaction::{SceneControl, ToolRegistry};
 use crate::foundation::server::PartialMinute;
-use crate::types::{Geometry, Region, Scene};
+use crate::types::{Scene, ViewTraits};
 
 /// MCP protocol version we advertise when the client doesn't pin one. We echo the
 /// client's requested version when present, so this is only the fallback.
@@ -185,8 +185,6 @@ fn review_view_tool() -> Value {
                 "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
                 "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render only this theme. Omit to get both, which is what you want unless you are re-checking one." },
                 "lang": { "type": "string", "description": "Optional: render as if the person's language were this (e.g. `en`, `zh-Hans`). Only matters for a view that ships copy in more than one language." },
-                "region": { "type": "string", "enum": ["center", "top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "fill"], "description": "Optional: review it under this placement instead of the one its `.geom.json` declares." },
-                "size": { "type": "string", "enum": ["compact", "auto", "wide", "fill"], "description": "Optional: review it at this size class instead of its declared one." },
             },
             "required": ["ref"],
         }),
@@ -625,25 +623,28 @@ fn show_tool() -> Value {
         "Put a view on the screen. Normally you show a view a builder made for you: \
          delegate the build, then pass the `ref` it reported back (like `project/view`) here. \
          Interleave show and say calls in the order you want them experienced (say, \
-         then show) so each view lands as you speak to it. Reuse an `id` with op=replace \
-         to evolve a view in place; op=dismiss takes one down. The screen is persistent \
-         state: whatever you've shown stays up — across page refreshes, other devices in \
-         the scene, even restarts — until you dismiss or replace it, so never re-show \
-         something that's already on screen. What is up right now is listed for you \
-         under `## On screen now` in your context — trust that list, don't guess: dismiss \
-         or replace an id that appears there, and don't re-show one that's already listed \
-         (re-showing an existing id just raises it). If that section says the room is \
-         clear, there is nothing to dismiss — don't fire dismisses at remembered ids. \
-         For a trivial one-off you may pass raw `source` JSX instead of \
-         a ref.",
+         then show) so each view lands as you speak to it. \
+         The screen holds ONE view at a time, filling it edge to edge. Showing is \
+         therefore how you *change* the screen, not how you add to it: a show under a \
+         new id replaces whatever was up, so walking someone through a sequence is just \
+         show, say, show, say — you never need to dismiss between beats, and there is no \
+         way to end up with two things piled on screen. Reuse an `id` with op=replace to \
+         evolve one view in place (the slot is kept, so a motion-tagged element animates \
+         rather than blinking); op=dismiss clears the screen back to the empty room, which \
+         is what you want when the topic is over and nothing replaces it. \
+         The screen is persistent state: what you've shown stays up across page refreshes, \
+         other devices in the scene, even restarts, until something replaces it or you \
+         dismiss it. What is up right now is listed under `## On screen now` in your \
+         context — trust that list, don't guess. If it says the room is clear, there is \
+         nothing to dismiss; don't fire dismisses at remembered ids. \
+         For a trivial one-off you may pass raw `source` JSX instead of a ref.",
         json!({
             "type": "object",
             "properties": {
-                "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show mounts; replace swaps the same id in place; dismiss removes it." },
+                "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show puts this view up, replacing whatever was on screen; replace swaps the same id in place, keeping the slot so motion animates; dismiss clears the screen." },
                 "id": { "type": "string", "description": "A stable name for this on-screen slot, so replace/dismiss can target it. Omit to auto-generate." },
                 "ref": { "type": "string", "description": "A view ref a builder reported (e.g. `project/view`) — the usual way to show a built view. Omit for dismiss." },
                 "source": { "type": "string", "description": "Raw JSX (default-exported component) for a trivial inline view, when not using a ref. Omit for dismiss." },
-                "region": { "type": "string", "enum": ["center", "top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "fill"], "description": "Optional: where on the stage to place this view. Omit to use the placement the builder chose — only set it to override, e.g. when arranging several views at once." },
             },
             "required": ["op"],
         }),
@@ -982,24 +983,17 @@ async fn dispatch_tool(
             // A view is normally shown by ref (one a worker built); resolve it to
             // source HERE, server-side, so the JSX never enters the mind's context.
             // Inline `source` stays as a trivial-one-off escape hatch. The ref may
-            // carry a `.geom.json` sidecar — the placement the builder chose.
-            let (source, sidecar_geom) = match arg_opt("ref") {
+            // carry a `.geom.json` sidecar — what the builder declared about it.
+            // There is no placement to override here any more: views are full-bleed,
+            // one at a time, so the mind decides *what* is on screen and never where.
+            let (source, traits) = match arg_opt("ref") {
                 Some(r) if !r.trim().is_empty() => match resolve_view_ref(data_dir, &r).await {
                     Ok(resolved) => resolved,
                     Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
                 },
                 _ => (arg_str("source"), None),
             };
-            // The mind may override where it goes (when arranging several at once);
-            // otherwise the builder's declared geometry stands. Absent both = floor.
-            let region_override = arg_opt("region").as_deref().and_then(parse_region);
-            let geometry = match (sidecar_geom, region_override) {
-                (Some(g), Some(region)) => Some(Geometry { region, ..g }),
-                (Some(g), None) => Some(g),
-                (None, Some(region)) => Some(Geometry { region, ..Default::default() }),
-                (None, None) => None,
-            };
-            sink.show(arg_opt("id"), op, source, geometry).await.map(|()| "shown")
+            sink.show(arg_opt("id"), op, source, traits).await.map(|()| "shown")
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
@@ -1051,16 +1045,16 @@ async fn do_look() -> Value {
 /// [`view_render::render`], which owns the browser, the viewport policy and the blank
 /// detection.
 ///
-/// **Placement comes from the view's own `.geom.json` unless the caller overrides it**,
-/// so a review renders the thing the way `show` would put it up. Reviewing a
-/// bottom-strip view in a centred square would fail it for a defect that only the
-/// review introduced.
+/// **The review frame IS the stage frame** — full-bleed, the only frame there is — so
+/// a review renders the thing exactly the way `show` will put it up. This used to be a
+/// negotiation between the caller's override and the sidecar's declared region, and
+/// getting it wrong failed a view for a defect the review itself introduced.
 async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     let view_ref = args.get("ref").and_then(Value::as_str).unwrap_or_default().trim().to_string();
     if view_ref.is_empty() {
         return tool_error("review_view requires a `ref`");
     }
-    let (source, geometry) = match resolve_view_ref(data_dir, &view_ref).await {
+    let (source, traits) = match resolve_view_ref(data_dir, &view_ref).await {
         Ok(v) => v,
         Err(e) => return tool_error(&e),
     };
@@ -1074,17 +1068,12 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
         Err(e) => return tool_error(&format!("the view did not compile: {e}")),
     };
 
-    // Serde is the single source of truth for these spellings — the same strings the
-    // `/render/view` page reads and the tool schema advertises. Writing a second
-    // match here is how the two drift.
-    let as_str = |v: Value| v.as_str().map(str::to_owned);
-    let declared_region = geometry.as_ref().and_then(|g| serde_json::to_value(g.region).ok()).and_then(as_str);
-    let declared_size = geometry.as_ref().and_then(|g| serde_json::to_value(g.size).ok()).and_then(as_str);
-    let region = args.get("region").and_then(Value::as_str).map(str::to_owned).or(declared_region);
-    let size = args.get("size").and_then(Value::as_str).map(str::to_owned).or(declared_size);
-
+    // Every view renders full-bleed, so there is no placement to resolve or override:
+    // the review page shows the view at exactly the frame it will occupy on the stage.
+    // That equivalence is the whole point of the review — it used to be conditional on
+    // the reviewer and the sidecar agreeing about a region.
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
-        .with_geometry(region, size);
+        .with_captions(traits.is_some_and(|t| t.owns_captions));
 
     // **Both skins, unless the caller pinned one.** Theme is a live setting the person
     // controls (Settings ▸ General ▸ Theme), so "it rendered" is only true once it has
@@ -1717,32 +1706,17 @@ fn valid_view_ref(view_ref: &str) -> bool {
         })
 }
 
-/// Parse a `region` tool argument into a [`Region`]; unknown strings yield `None`.
-fn parse_region(s: &str) -> Option<Region> {
-    Some(match s {
-        "center" => Region::Center,
-        "top" => Region::Top,
-        "bottom" => Region::Bottom,
-        "left" => Region::Left,
-        "right" => Region::Right,
-        "top_left" => Region::TopLeft,
-        "top_right" => Region::TopRight,
-        "bottom_left" => Region::BottomLeft,
-        "bottom_right" => Region::BottomRight,
-        "fill" => Region::Fill,
-        _ => return None,
-    })
-}
-
-/// Resolve a view ref to its stored JSX source (and the builder's declared
-/// placement, if any), read from the views tree. The agent passes only the tiny
-/// ref through `show`; this reads the component back, plus an optional
+/// Resolve a view ref to its stored JSX source (and what the builder declared
+/// about it, if anything), read from the views tree. The agent passes only the
+/// tiny ref through `show`; this reads the component back, plus an optional
 /// `<ref>.geom.json` sidecar the builder wrote next to it. A missing or
-/// unparseable sidecar is not an error — it just means the floor layout.
+/// unparseable sidecar is not an error — it just means host-owned captions, which
+/// is the safe default. The sidecar no longer carries placement: every view is
+/// full-bleed, so `owns_captions` is the only thing left to declare.
 async fn resolve_view_ref(
     data_dir: &std::path::Path,
     view_ref: &str,
-) -> Result<(String, Option<Geometry>), String> {
+) -> Result<(String, Option<ViewTraits>), String> {
     let view_ref = view_ref.trim();
     if !valid_view_ref(view_ref) {
         return Err(format!("invalid ref `{view_ref}` (names and `/` only, no dots)"));
@@ -1751,11 +1725,11 @@ async fn resolve_view_ref(
     let source = tokio::fs::read_to_string(views.join(format!("{view_ref}.jsx")))
         .await
         .map_err(|e| format!("no such view ({e})"))?;
-    let geometry = match tokio::fs::read(views.join(format!("{view_ref}.geom.json"))).await {
-        Ok(bytes) => serde_json::from_slice::<Geometry>(&bytes).ok(),
+    let traits = match tokio::fs::read(views.join(format!("{view_ref}.geom.json"))).await {
+        Ok(bytes) => serde_json::from_slice::<ViewTraits>(&bytes).ok(),
         Err(_) => None,
     };
-    Ok((source, geometry))
+    Ok((source, traits))
 }
 
 #[cfg(test)]
@@ -1781,38 +1755,43 @@ mod view_store_tests {
         let proj = dir.path().join("views").join("deck");
         tokio::fs::create_dir_all(&proj).await.unwrap();
         tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        let (source, geometry) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
+        let (source, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
         assert_eq!(source, "export default () => 1");
-        // No sidecar written → floor layout.
-        assert!(geometry.is_none());
+        // No sidecar written → host-owned captions.
+        assert!(traits.is_none());
     }
 
     #[tokio::test]
-    async fn resolve_reads_geometry_sidecar() {
+    async fn resolve_reads_traits_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("views").join("deck");
+        tokio::fs::create_dir_all(&proj).await.unwrap();
+        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
+        tokio::fs::write(proj.join("leader.geom.json"), r#"{"owns_captions":true}"#)
+            .await
+            .unwrap();
+        let (_, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
+        assert!(traits.expect("sidecar traits").owns_captions);
+    }
+
+    /// Sidecars written under the old placement schema are still on disk in every
+    /// existing workshop. They must degrade to the default rather than failing the
+    /// show: the unknown `region`/`size` keys are ignored and `owns_captions` — the
+    /// one field that survived — is read straight through.
+    #[tokio::test]
+    async fn resolve_ignores_retired_placement_keys() {
         let dir = tempfile::tempdir().unwrap();
         let proj = dir.path().join("views").join("deck");
         tokio::fs::create_dir_all(&proj).await.unwrap();
         tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
         tokio::fs::write(
             proj.join("leader.geom.json"),
-            r#"{"region":"right","size":"wide"}"#,
+            r#"{"region":"right","size":"wide","owns_captions":true}"#,
         )
         .await
         .unwrap();
-        let (_, geometry) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
-        let g = geometry.expect("sidecar geometry");
-        assert_eq!(g.region, Region::Right);
-        assert_eq!(g.size, crate::types::SizeClass::Wide);
-        assert!(!g.owns_captions); // defaulted field absent from the sidecar
-    }
-
-    #[test]
-    fn parse_region_reads_names_and_rejects_garbage() {
-        assert_eq!(parse_region("center"), Some(Region::Center));
-        assert_eq!(parse_region("bottom_left"), Some(Region::BottomLeft));
-        assert_eq!(parse_region("fill"), Some(Region::Fill));
-        assert_eq!(parse_region("middle"), None);
-        assert_eq!(parse_region(""), None);
+        let (_, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
+        assert!(traits.expect("sidecar traits").owns_captions);
     }
 
     #[tokio::test]
