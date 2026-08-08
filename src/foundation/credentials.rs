@@ -65,7 +65,7 @@ fn parse_mode(s: &str) -> Option<Mode> {
 }
 
 /// How the agent obtains its credentials.
-/// - `xiaoyuanzhu`: a broker account (`hi.xiaoyuanzhu.com`) — the default, so a
+/// - `xiaoyuanzhu`: a broker account (`hi-agent.xyz`) — the default, so a
 ///   fresh install works with no setup. Anonymous device bootstrap yields the
 ///   `free` tier; a signed-in account.xiaoyuanzhu.com session yields `sub`.
 /// - `byok`: the user's own keys (the flat fields below).

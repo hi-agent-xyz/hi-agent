@@ -1,5 +1,5 @@
 //! Broker client — bootstrap a xiaoyuanzhu account and fetch configs + energy from
-//! the broker (hi.xiaoyuanzhu.com).
+//! the broker (hi-agent.xyz).
 //!
 //! Xiaoyuanzhu mode: the `device_id` seeds a one-time **bootstrap** that
 //! auto-creates the account at the broker and returns OAuth tokens; thereafter the
@@ -20,7 +20,7 @@ use crate::foundation::credentials::{Credentials, Energy, Identity, LlmCredentia
 
 /// Env override for the broker base URL (default [`DEFAULT_BROKER_URL`]).
 const ENV_BROKER_URL: &str = "HI_AGENT_BROKER_URL";
-const DEFAULT_BROKER_URL: &str = "https://hi.xiaoyuanzhu.com";
+const DEFAULT_BROKER_URL: &str = "https://hi-agent.xyz";
 /// Public account site. Kept separate from the broker API origin so account links
 /// can move without redirecting credential and energy traffic.
 const ENV_PUBLIC_URL: &str = "HI_AGENT_PUBLIC_URL";
@@ -55,6 +55,19 @@ pub fn public_base_url() -> String {
 fn http() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
+        // Never follow a redirect on the broker API. A 3xx here is always a
+        // misconfiguration — a moved origin, a stale constant — and following it
+        // makes that misconfiguration *quiet* in the one case that matters. On a
+        // 301, reqwest downgrades POST to GET and drops the body (browser
+        // semantics), so a `POST /api/agent/bootstrap` arrives as a GET, misses
+        // the POST-only route, falls through to the site's SPA handler, and comes
+        // back `200 text/html`. That sails past the status check and dies at
+        // `resp.json()` as "parsing bootstrap response" — an error naming nothing
+        // that is wrong. The GET endpoints (`/configs`, `/energy`) meanwhile
+        // follow the redirect and keep working, so the origin looks healthy while
+        // every POST is silently destroyed. Refusing the redirect surfaces the
+        // 301 itself, whose `Location` says exactly where the broker went.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("building broker http client")
 }
