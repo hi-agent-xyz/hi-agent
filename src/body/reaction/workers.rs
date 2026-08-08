@@ -60,7 +60,7 @@ use super::{LoopInput, Reaction};
 /// Process-wide because standing owners (Cognition, Reflection) and the voice
 /// all create sessions in the same address space.
 ///
-/// Minted before the ACP session is opened, because the MCP surface identifies its
+/// Minted before the agent session is opened, because the MCP surface identifies its
 /// caller by this id in a request header — so it cannot be the id the adapter assigns.
 pub(super) type SessionId = u64;
 
@@ -70,7 +70,7 @@ fn mint_session_id() -> SessionId {
     registry::mint()
 }
 
-/// How long a finished working session stays warm — its ACP session held open and
+/// How long a finished working session stays warm — its agent session held open and
 /// resumable via `delegate worker:<id>` — before it closes itself to free the
 /// subprocess context. A refinement arriving within this window continues the same
 /// session with full context; a later one falls back to a fresh worker.
@@ -681,7 +681,7 @@ async fn drive_worker(
 
         // Workers follow the same reactive contract as every other rung: no balance
         // preflight, hold the current task after a managed 402, then rerun that exact
-        // task when the balance broadcasts Resume. The ACP session stays alive.
+        // task when the balance broadcasts Resume. The agent session stays alive.
         if !wait_for_energy_resume(&mut energy, &mut energy_paused).await {
             return;
         }

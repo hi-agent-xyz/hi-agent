@@ -1,8 +1,8 @@
-//! Interruption semantics — placeholder, requires `claude-code`.
+//! Interruption semantics — placeholder, requires a live `codex app-server`.
 //!
 //! Contract (see `src/reaction/mod.rs` § "Fix-forward, no reflexive cancel"):
 //! a new POST arriving while the reaction queue is already running a turn does
-//! NOT cancel the in-flight ACP session. The reaction loop is serial, so the
+//! NOT interrupt the in-flight turn. The reaction loop is serial, so the
 //! new signal simply queues and is folded into the next turn; the warm session
 //! remembers what it has already heard, so a thought spread across bursts
 //! reassembles across turns. The mind corrects course rather than being cut off
@@ -19,9 +19,9 @@
 //!
 //! Driving this for real requires either:
 //!
-//!   (a) A live `claude-code` subprocess responsive to ACP. Tests would
+//!   (a) A live `codex app-server` subprocess. Tests would
 //!       become integration-grade: slow, flaky, machine-dependent.
-//!   (b) A mock ACP backend swapped in via a trait. That's a v1-grade
+//!   (b) A mock wire backend swapped in via a trait. That's a v1-grade
 //!       refactor of `src/foundation/codex/` — too much surgery for a docs/tests step.
 //!
 //! We pick neither. The shell-equivalent verification is below; run it by hand
@@ -40,13 +40,13 @@
 //!     --data-binary 'actually never mind, what time is it' "$BASE/api/in/text"
 //! ```
 //!
-//! Expected: tracing logs show NO "session/cancel"; the first
+//! Expected: tracing logs show NO `turn/interrupt`; the first
 //! turn runs to completion; the journal shows both SignalIn entries; and the
 //! second signal is folded into a later turn (the warm session already carries
 //! the first).
 
 #[tokio::test]
-#[ignore = "requires claude-code on PATH; see file header for the shell-equivalent recipe"]
+#[ignore = "requires codex on PATH; see file header for the shell-equivalent recipe"]
 async fn new_post_does_not_cancel_in_flight_turn() {
     // Stub: see file header.
 }

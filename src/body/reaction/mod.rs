@@ -1,7 +1,7 @@
 //! Reaction — the *mind*. Per-conversation queues + one persistent session per conversation.
 //!
 //! One mpsc per conversation, one task per conversation; turns run serially against a single
-//! Reaction ACP session that is opened and primed when the conversation stands up, then
+//! Reaction agent session that is opened and primed when the conversation stands up, then
 //! reused as the conversation's continuous voice. Deliberation has its own prewarmed
 //! session and runs off the floor; Reaction never blocks on it.
 //!
@@ -771,11 +771,11 @@ struct ReactionInner {
     /// moment a SIGINT/SIGTERM or the tray's Quit is observed. Read by the conversation
     /// loop, the reflection loop, and the drive retry path so that, once shutdown
     /// begins, an idle loop winds down promptly and a failed prompt does **not**
-    /// restart an ACP session — the children just received the same signal, and a
+    /// restart an agent session — the children just received the same signal, and a
     /// respawn here would race the subprocess reap and could orphan a child.
     shutdown: Shutdown,
     /// Becomes true after the HTTP server has been spawned on its bound listener.
-    /// Eager ACP sessions attach to our `/mcp` endpoint during `session/new`, so
+    /// Eager agent sessions attach to our `/mcp` endpoint at `thread/start`, so
     /// startup warming waits on this structural edge instead of racing the server.
     server_ready: watch::Receiver<bool>,
 }
@@ -887,7 +887,7 @@ pub async fn start(
     });
 
     // Warm-up requests: a presence GET (a client opening a `/api/out/*` long-poll)
-    // asks us to stand the voice up now, so its subprocess and ACP session are open
+    // asks us to stand the voice up now, so its subprocess and agent session are open
     // before the first utterance lands. `ensure_voice` is idempotent — repeated GETs
     // against an already-live loop are no-ops.
     let warm_reaction = reaction.clone();
@@ -898,7 +898,7 @@ pub async fn start(
         tracing::warn!("reaction warm channel closed; warm-up loop exiting");
     });
 
-    // Stand the voice up at boot so its subprocess and ACP session are open before
+    // Stand the voice up at boot so its subprocess and agent session are open before
     // anything arrives — the same warm-up a presence GET asks for, just not waiting
     // for one. There is nothing to *select* here any more: the machinery this
     // replaced picked which of N conversations were worth re-warming, at the cost of a
@@ -933,7 +933,7 @@ pub async fn start(
     // rather than making it merely unlikely.
     //
     // The registration is the address and lives as long as the process; Cognition opens
-    // and primes its long-lived ACP session as soon as the HTTP/MCP server is ready.
+    // and primes its long-lived agent session as soon as the HTTP/MCP server is ready.
     let cognition_reg = registry::register_scoped(
         registry::mint(),
         registry::Role::Cognition,
@@ -1002,7 +1002,7 @@ impl Reaction {
         }
     }
 
-    /// Wait until eager ACP sessions can attach to the live `/mcp` endpoint.
+    /// Wait until eager agent sessions can attach to the live `/mcp` endpoint.
     ///
     /// A watch channel is used because every startup conversation waits independently and all
     /// of them must observe the same retained edge. Shutdown wins so a failed startup
@@ -1060,7 +1060,7 @@ impl Reaction {
         }
 
         // Register the stable voice address before any asynchronous startup work.
-        // Cognition's boot recovery may need to deliver here while the ACP subprocess
+        // Cognition's boot recovery may need to deliver here while the codex subprocess
         // is still opening/warming; the mailbox can safely queue that message until
         // the loop reaches its wait.
         let voice = registry::register_scoped(
@@ -1212,7 +1212,7 @@ async fn reaction_loop(
     tracing::info!(voice = voice_id, "reaction per-reaction loop up");
 
     // Pull both the voice's rungs' cold starts ahead of the person's first message. Reaction
-    // and Deliberation each open a subprocess, initialize ACP/MCP, and pre-send their
+    // and Deliberation each open a subprocess, initialize the wire + MCP, and pre-send their
     // system prompt. Input and recovery mail queue while the two independent warm-ups
     // run in parallel.
     let mut startup_warm_pending = false;
@@ -1541,7 +1541,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
-/// A reaction turn: the single fast conversational voice. An ACP session
+/// A reaction turn: the single fast conversational voice. An agent session
 /// ([`SessionRole::Reaction`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
 /// switched off at session open. A turn is a single quick generation: it speaks by
@@ -1647,7 +1647,7 @@ async fn run_reaction_turn(
                     tracing::warn!("session fault; reopening cold (vendor untouched)");
                 }
                 // Out of quota, credit, or credentials. A managed 402 has already
-                // raised the durable energy level from the common ACP boundary. Apply
+                // raised the durable energy level from the common wire boundary. Apply
                 // its scheduling hold synchronously so this failed turn cannot drop its
                 // mail before the global gate task receives the edge. Other permanent
                 // failures retain their own pause reason and have no energy UI.

@@ -5,7 +5,7 @@
 #
 # This is the "it runs" tier: the installer carries only the binary (+ icon).
 # On first launch hi-agent.exe auto-provisions its managed runtime (Node +
-# claude + esbuild + ffmpeg + recognition models) into the OS cache. A fully
+# codex + esbuild + ffmpeg + recognition models) into the OS cache. A fully
 # hermetic, offline-from-first-launch installer (the .dmg's bundling parity) is
 # a later increment that needs a real Windows host to stage + verify.
 #

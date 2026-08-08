@@ -25,7 +25,7 @@ function payload(e: SessionEvent): Record<string, unknown> {
 }
 
 // A readable one-line summary per event kind, with the full payload still one click
-// away in the JSON column. Same division `SessionsView` uses for ACP frames: read
+// away in the JSON column. Same division `SessionsView` uses for wire frames: read
 // the shape at a glance, expand for ground truth.
 function summary(e: SessionEvent): ReactNode {
   const s = (k: string): string => (typeof e[k] === "string" ? (e[k] as string) : "");
@@ -75,7 +75,7 @@ function summary(e: SessionEvent): ReactNode {
  * `onEvent` callback since it was written and nothing subscribed to it, so every
  * event the host recorded was reachable only by curl. In particular no surface showed
  * **agent-to-agent messages**, which is the one thing you cannot infer from the other
- * two tabs: `Conversation` shows the live channels and `Sessions` shows raw ACP wire traffic,
+ * two tabs: `Conversation` shows the live channels and `Sessions` shows raw wire traffic,
  * and an edge between two agents is neither.
  *
  * Deliberately unaggregated. Per `docs/arch/foundation.md#debug-surfaces` a debug
@@ -102,7 +102,7 @@ export function EventsView() {
   const shown = only ? events.filter((e) => e.event === only) : events;
 
   return (
-    <div className="acp-detail">
+    <div className="wire-detail">
       <div className="detail-head">
         <div className="dh-title">
           <b>lifecycle events</b>
@@ -130,7 +130,7 @@ export function EventsView() {
             agent messages another.
           </div>
         ) : (
-          <div className="acp-events">
+          <div className="wire-events">
             <table className="evtable frtable">
               <thead>
                 <tr>

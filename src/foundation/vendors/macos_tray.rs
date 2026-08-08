@@ -84,7 +84,7 @@ define_class!(
         }
 
         /// "Quit hi-agent" → make the UI vanish now, then ask the server to shut down.
-        /// Cleanup is worth doing properly (drain in-flight requests, reap every ACP
+        /// Cleanup is worth doing properly (drain in-flight requests, reap every codex
         /// subprocess), but it shouldn't be something the user waits on *looking at* —
         /// so we hide the face window and the menu-bar icon this instant, on the main
         /// thread, and let the server thread run the graceful drain + reap in the
@@ -299,7 +299,7 @@ static STATUS_ITEM: OnceLock<StatusItemPtr> = OnceLock::new();
 
 /// Hide the menu-bar status item immediately. Called from `quit:` (on the main
 /// thread) so the icon vanishes the instant Quit is chosen, before the server
-/// thread's graceful drain + ACP reap runs. A no-op if the item isn't up yet.
+/// thread's graceful drain + codex reap runs. A no-op if the item isn't up yet.
 ///
 /// Uses `removeStatusItem:` rather than `setVisible:false` on purpose: the `visible`
 /// property is autosaved to user defaults, so hiding it that way makes macOS restore

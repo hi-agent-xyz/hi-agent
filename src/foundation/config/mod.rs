@@ -278,14 +278,16 @@ impl AgentConfig {
     /// [`crate::foundation::agent`]) so a fresh child never carries a stale key,
     /// rather than freezing them at boot.
     ///
-    /// The key rides `ANTHROPIC_AUTH_TOKEN`, which the CLI sends as
-    /// `Authorization: Bearer <key>` — the standard scheme for any custom gateway
-    /// in front of the Anthropic wire (a proxy authenticates the caller with a
-    /// bearer token). We deliberately do *not* set `ANTHROPIC_API_KEY` (which would
-    /// send Anthropic's native `x-api-key` header): a gateway expects the bearer
-    /// header, not the vendor's native key header. The trade-off: a BYOK user
-    /// pointing at Anthropic's *native* endpoint (which wants `x-api-key`) would
-    /// need this revisited — today every path goes through a Bearer gateway.
+    /// The key rides [`ENV_LLM_KEY`] and *only* there: the model provider we render
+    /// into the thread config names it via `env_key`, so codex reads the secret out
+    /// of the child's environment itself. That is the whole reason this is an env
+    /// var rather than a config field — a credential in the thread config would be
+    /// a credential on the wire, and in the frame log the wire tap keeps. The test
+    /// at the bottom of this module asserts the key never appears in that config.
+    ///
+    /// Only the key is volatile enough to belong here. The endpoint and model are
+    /// per-thread config (see [`thread_config`](Self::thread_config)), because codex
+    /// takes them as `thread/start` params rather than from the environment.
     pub fn auth_child_env(&self) -> Vec<(String, String)> {
         vec![(ENV_LLM_KEY.to_string(), self.upstream_key.clone())]
     }

@@ -1,5 +1,5 @@
-//! Full-stack smoke: real ACP adapter ↔ stub upstream (the child talks to the
-//! upstream LLM directly via `ANTHROPIC_BASE_URL`).
+//! Full-stack smoke: real `codex app-server` ↔ stub upstream (the child talks to the
+//! upstream LLM directly, via the provider base in its thread config).
 //! Opt-in: `RUN_E2E=1 cargo test --test e2e_cognition -- --nocapture`.
 
 #[tokio::test]
@@ -12,8 +12,8 @@ async fn thought_round_trips_through_runtime() {
     //   - `codex` on PATH, or a populated runtime cache
     //     (first run installs the pinned set automatically),
     //   - AI_API_KEY set,
-    //   - AI_API_BASE pointing at a reachable Anthropic-compatible endpoint
-    //     (or a local stub that returns a canned Messages SSE stream).
+    //   - AI_API_BASE pointing at a reachable OpenAI Responses-compatible endpoint
+    //     (or a local stub that returns a canned Responses SSE stream).
     // Build a Config, call hi_agent::run on a random port in a task, POST a
     // /thought, and assert a journal line / thought-bus emission appears. (HTTP path: POST /api/in/text)
     // (Left as the single heavy integration check; keep it deterministic by

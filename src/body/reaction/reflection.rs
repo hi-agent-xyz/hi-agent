@@ -131,7 +131,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     tracing::info!(reflection = id, "reflection up");
 
     loop {
-        // Reflection does not preflight the account. A managed 402 from any ACP
+        // Reflection does not preflight the account. A managed 402 from any agent
         // session flips the shared state; this rung simply parks until the positive
         // balance sends Resume, keeping its pending mail intact.
         if energy_paused {

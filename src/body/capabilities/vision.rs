@@ -129,7 +129,7 @@ pub async fn image_text_to_text(
 
 /// `video-text-to-text` — a clip plus an instruction in, text out.
 ///
-/// Always a vendor call: no model reached through the ACP adapter takes video, so
+/// Always a vendor call: no model reached through the agent wire takes video, so
 /// unlike [`image_text_to_text`] this one has no native path to fall back to.
 pub async fn video_text_to_text(
     bytes: Bytes,

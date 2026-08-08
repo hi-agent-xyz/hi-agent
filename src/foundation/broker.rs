@@ -132,10 +132,11 @@ struct WireDto {
 /// endpoint. Collapsed into the internal per-slot [`Managed`] by [`managed_from`].
 type ConfigsDto = std::collections::HashMap<String, std::collections::HashMap<String, WireDto>>;
 
-/// The `scheme://host[:port]` origin of a full URL, dropping the path. The LLM CLI
-/// (`ANTHROPIC_BASE_URL`) and the vendor adapters re-append their own paths, so the
-/// internal `base_url` stays a bare origin — matching what the broker sent before
-/// it moved to full per-wire URLs. Falls back to the input if it isn't URL-shaped.
+/// The `scheme://host[:port]` origin of a full URL, dropping the path. The vendor
+/// adapters re-append their own paths, so the internal `base_url` stays a bare origin
+/// — matching what the broker sent before it moved to full per-wire URLs. Falls back
+/// to the input if it isn't URL-shaped. (The LLM slot does *not* use this: codex wants
+/// the provider base *with* its `/v1` prefix, which [`openai_responses_base`] keeps.)
 fn origin_of(url: &str) -> String {
     let u = url.trim();
     if let Some(after) = u.find("://").map(|i| i + 3) {

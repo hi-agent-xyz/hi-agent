@@ -40,8 +40,8 @@ function time(iso: string): string {
 
 export function ConversationView() {
   return (
-    <div className="acp">
-      <section className="acp-detail">
+    <div className="wire">
+      <section className="wire-detail">
         <Channels />
       </section>
     </div>

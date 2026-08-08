@@ -4,7 +4,7 @@
 //! local ONNX models. Rather than make the operator hand-place model files and
 //! point env vars at them, we **fetch the pinned models on first run** into the
 //! OS cache — the same managed philosophy as [`crate::runtime`] (which downloads
-//! Node + the ACP adapter): a bundled app needs no separate model install, and
+//! Node + the codex CLI): a bundled app needs no separate model install, and
 //! `make dev` just works with recognition on.
 //!
 //! Each model is pinned by URL + SHA-256 + byte length. The cache file is

@@ -124,7 +124,7 @@ interface Group {
 // Fold the flat frame stream into per-connection groups, preserving first-seen
 // order. Every frame of one subprocess shares its `conn`, so the handshake frames
 // group with their session; the sessionId is adopted as soon as a frame reveals
-// it. Knows nothing about the reaction — pure ACP.
+// it. Knows nothing about the reaction — pure wire.
 function group(frames: RawFrame[]): Group[] {
   const map = new Map<number, Group>();
   for (const f of frames) {
@@ -145,7 +145,7 @@ export function SessionsView() {
   const [frames, setFrames] = useState<RawFrame[]>([]);
   const [live, setLive] = useState(false);
 
-  // One SSE connection feeds the entire view — every raw ACP frame, replayed on
+  // One SSE connection feeds the entire view — every raw wire frame, replayed on
   // connect then live. The session list and each detail pane are derived from
   // this single stream; no polling, no per-session endpoint.
   useEffect(() => {
@@ -163,14 +163,14 @@ export function SessionsView() {
   const current = groups.find((g) => g.key === selected) ?? null;
 
   return (
-    <div className="acp">
-      <aside className="acp-list">
-        <div className="acp-list-head">
-          <span>ACP sessions</span>
+    <div className="wire">
+      <aside className="wire-list">
+        <div className="wire-list-head">
+          <span>Agent sessions</span>
           <span className={`live-dot ${live ? "on" : ""}`} title={live ? "frame stream live" : "reconnecting"} />
         </div>
         {groups.length === 0 ? (
-          <div className="muted pad">No ACP frames yet. They appear on the first contact with an agent session.</div>
+          <div className="muted pad">No wire frames yet. They appear on the first contact with an agent session.</div>
         ) : (
           <ul>
             {groups.map((g) => (
@@ -190,9 +190,9 @@ export function SessionsView() {
         )}
       </aside>
 
-      <section className="acp-detail">
+      <section className="wire-detail">
         {!current ? (
-          <div className="muted pad">Select a session to see its raw ACP frames.</div>
+          <div className="muted pad">Select a session to see its raw wire frames.</div>
         ) : (
           <FrameLog group={current} />
         )}
@@ -211,7 +211,7 @@ function FrameLog({ group: g }: { group: Group }) {
         </span>
       </div>
 
-      <div className="acp-events">
+      <div className="wire-events">
         <table className="evtable frtable">
           <thead>
             <tr>

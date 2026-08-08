@@ -4,7 +4,7 @@
 //! a late observer still sees it. Two ways to observe it:
 //! - [`Shutdown::is_triggered`] — a synchronous level check, for hot paths that
 //!   must not spawn fresh work mid-shutdown (e.g. the reaction's retry loop, before
-//!   it would restart an ACP session into a dying process group).
+//!   it would restart an agent session into a dying process group).
 //! - [`Shutdown::cancelled`] — an await point for `select!` arms, so an idle loop
 //!   wakes and winds down promptly instead of holding the process open.
 //!

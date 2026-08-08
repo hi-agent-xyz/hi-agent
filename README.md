@@ -1,6 +1,6 @@
 # hi-agent
 
-A reference implementation of the [human-interface](../human-interface/docs/human-interface.md) spec — a small Rust agent that talks over HTTP channels, delegates cognition to a Claude Code runtime (installed on first run) over ACP, and persists everything to JSONL.
+A reference implementation of the [human-interface](../human-interface/docs/human-interface.md) spec — a small Rust agent that talks over HTTP channels, delegates cognition to a `codex app-server` runtime (installed on first run) over JSON-RPC, and persists everything to JSONL.
 
 ## Status
 
@@ -11,13 +11,14 @@ design v0.1 · 2026-05-28 · v0 implementation complete · not load-tested.
 ### Prerequisites
 
 - Rust toolchain (2024 edition — `rustc` 1.85 or newer)
-- hi-agent prefers the runtime your system already offers: if `node`, the ACP
-  adapter (`claude-agent-acp`), and the `claude` CLI are all on your `PATH`, it
-  uses them directly and downloads nothing. Installing those tools globally is
-  also how you point hi-agent at your own runtime (e.g. to develop offline).
+- hi-agent prefers the runtime your system already offers: if `node` and the
+  `codex` CLI are both on your `PATH`, it uses them directly and downloads
+  nothing. Installing those tools globally is also how you point hi-agent at your
+  own runtime (e.g. to develop offline). Node is only esbuild's host — the agent
+  itself is `codex app-server`, a native binary.
 - If the system doesn't offer the full set, hi-agent falls back to a
   self-contained install: on first run it downloads the pinned Node and `npm ci`s
-  the ACP adapter + `claude` CLI into an OS cache dir, then reuses that install on
+  the pinned `codex` CLI into an OS cache dir, then reuses that install on
   every subsequent start. That first run needs network access and the system
   `tar`; later runs are offline. macOS and Linux on x86_64/aarch64 are supported
   for auto-install.
@@ -102,14 +103,14 @@ curl -X POST
 
 ## Architecture
 
-One Rust process per agent. Inside it: an axum HTTP server, one reaction loop and a worker registry, a memory facade backed by channel logs, an in-process MCP hub that sessions reach over HTTP, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the ACP adapter + `claude` CLI into an OS cache dir), then on every start opens the reaction and standing-rung sessions plus any long-lived workers. The adapter talks to a local Anthropic-compatible proxy that injects the real upstream credential, so the key never lands in any on-disk adapter config.
+One Rust process per agent. Inside it: an axum HTTP server, one reaction loop and a worker registry, a memory facade backed by channel logs, an in-process MCP hub that sessions reach over HTTP, and a heartbeat that injects synthetic signals when intents come due. Cognition is delegated: on first run hi-agent installs its runtime (downloading the pinned Node and `npm ci`-ing the pinned `codex` CLI into an OS cache dir), then on every start opens the reaction and standing-rung sessions plus any long-lived workers. Each session is one `codex app-server` subprocess spoken to over stdio JSON-RPC; the upstream credential rides a single env var that the thread's `model_providers` entry names via `env_key`, so the key never appears in the thread config — and so never in the wire frames the tap records.
 
 ```
-  attached windows         hi-agent  (Rust process)              claude-code subprocess
+  attached windows         hi-agent  (Rust process)              codex app-server subproc.
  ────────────────   ──────────────────────────             ──────────────────────────
 
   window A ──POST /api/in/text──┐
-                         │   ┌─────────────────┐    ACP    ┌────────────────────┐
+                         │   ┌─────────────────┐  JSON-RPC ┌────────────────────┐
   window B ──POST /api/in/vision▶├──▶│   axum server   │ ◀──stdio▶ │ session: reaction │
                          │   └────────┬────────┘           │  (ephemeral)       │
   windows ◀──GET /api/out/text──┘     │                    ├────────────────────┤
@@ -137,13 +138,12 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 | `GET /` homepage | Y | Embedded Vite SPA, OG meta injected at request time |
 | `POST /api/in/text` | Y | Body bytes are the signal; optional `X-HI-Stream` names its source |
 | `GET /api/out/text` long-poll | Y | One retained outbound stream; each reader advances with an epoch-qualified cursor |
-| `POST /approval` | Y | JSON `{id, allow, reason?}`; reaction relays decision into ACP `session/request_permission` |
 | `GET /approval` long-poll | Y | JSON event; 5-minute timeout on the requesting side |
 | `POST /vision` | 501 | Per v0 scope; body describes the omission |
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |
 | `POST /touch`, `POST /smell`, `POST /taste` | 501 | Per v0 scope |
 | One conversation | Y | All attached windows and channels share the same agent appearance and stream |
-| Workers (parallel ACP sessions) | Y | `create_worker` MCP tool; one process-wide session per worker |
+| Workers (parallel agent sessions) | Y | `create_worker` MCP tool; one process-wide session per worker |
 | Memory: `journal.jsonl` + `intents.jsonl` | Y | Append-only journal; intents file rewritten atomically on add/remove |
 | Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reaction |
 | `Authorization: Bearer ...` | accepted/logged | Parsed and logged; not validated in v0 |
@@ -157,9 +157,9 @@ Env vars consulted at startup:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AI_API_KEY` | — | Upstream LLM credential, handed to the bundled Claude adapter (`ANTHROPIC_API_KEY`). Optional — set here or via Settings (BYOK); without either the agent boots unconfigured. |
-| `AI_API_BASE` | `https://api.anthropic.com` | Upstream LLM base URL the adapter talks to (`ANTHROPIC_BASE_URL`). |
-| `HI_AGENT_MODEL` | adapter default | Model handed to the bundled Claude adapter (`ANTHROPIC_MODEL`) |
+| `AI_API_KEY` | — | Upstream LLM credential. Optional — set here or via Settings (BYOK); without either the agent boots unconfigured. |
+| `AI_API_BASE` | `https://api.openai.com/v1` | Upstream provider base; codex appends `/responses` to it. |
+| `HI_AGENT_MODEL` | codex default | Model named on each `thread/start` |
 | `HI_AGENT_EFFORT` | unset | Adapter `effortLevel` (e.g. `low` / `medium` / `high`) |
 | `HI_AGENT_PERMISSION_MODE` | unset | Adapter `permissions.defaultMode` (e.g. `acceptEdits`) |
 | `HI_AGENT_RUNTIME_DIR` | OS cache dir | Override the dir the runtime is installed into |
@@ -172,14 +172,14 @@ Managed cognition parameters (model, effort, permission mode) come from the
 alongside the upstream credential and base URL (`AI_API_KEY` / `AI_API_BASE`).
 In dev these load from `.env`; see [`.env.example`](.env.example). To use your
 own runtime (or to skip
-the first-run download), put `node`, `claude-agent-acp`, and `claude` on your
+the first-run download), put `node` and `codex` on your
 `PATH` — hi-agent detects and uses them automatically.
 
 ### Runtime install & versioning
 
-The Node and ACP adapter versions are pinned in
-[`src/runtime/manifest.toml`](src/runtime/manifest.toml); the adapter +
-`claude` CLI dependency tree is pinned by the committed
+The Node and `codex` versions are pinned in
+[`src/runtime/manifest.toml`](src/runtime/manifest.toml); the `codex` CLI
+dependency tree is pinned by the committed
 [`src/runtime/package.json`](src/runtime/package.json) /
 [`src/runtime/package-lock.json`](src/runtime/package-lock.json). On first run hi-agent
 downloads the pinned Node release from nodejs.org (extracted with the system
@@ -187,7 +187,7 @@ downloads the pinned Node release from nodejs.org (extracted with the system
 cache dir, marks the install complete, and reuses it on every later start.
 `build.rs` stamps the pinned versions into the binary; `hi-agent --version`
 reports the crate version alongside the runtime component versions (bundle id,
-node, adapter, claude).
+node, codex).
 
 ### Voice (optional, additive)
 
@@ -234,7 +234,7 @@ hi-agent/
 │   ├── types.rs                            # Conversation, Channel, Signal, JournalEntry, Intent
 │   ├── server/                             # axum router + extractors + handlers
 │   ├── reaction.rs                          # shared queue, worker registry, interruption
-│   ├── acp/                                # ACP adapter subprocess + per-session helpers
+│   ├── codex/                              # codex app-server subprocess + per-thread helpers
 │   ├── mcp.rs                              # in-process MCP hub + the seven tools
 │   ├── memory/                             # journal, intents, snapshot builder
 │   ├── heartbeat.rs                        # 1 Hz tick; absolute-intent firing
@@ -242,8 +242,7 @@ hi-agent/
 │   └── appearance/                         # web surface (Rust handlers + embedded Vite SPA)
 └── tests/
     ├── http_smoke.rs                       # route surface + header rejection + journaling
-    ├── interruption.rs                     # #[ignore] — needs claude-code, see body
-    └── approval_flow.rs                    # #[ignore] — needs claude-code, see body
+    ├── interruption.rs                     # #[ignore] — needs codex, see body
 ```
 
 ## Development
@@ -265,14 +264,14 @@ docker build -t hi-agent:dev .
 ```
 
 On first run the binary installs its own runtime (downloads the pinned Node and
-`npm ci`s the ACP adapter + `claude` CLI into a cache dir), so the image needs
-no separate claude-code container. First run therefore needs network access and
+`npm ci`s the pinned `codex` CLI into a cache dir), so the image needs
+no separate agent container. First run therefore needs network access and
 the system `tar`. The image still needs `AI_API_KEY` supplied at
 runtime for cognition to work.
 
 ## Risks and known unverified things
 
-See [`docs/risks.md`](docs/risks.md). The headline item: concurrent ACP sessions in the Claude Code runtime have not been measured under load. Validate the concurrency assumption (drive concurrent inputs from several windows and compare wall-clock) before trusting the architecture in production.
+See [`docs/risks.md`](docs/risks.md). The headline item: concurrent `codex app-server` sessions have not been measured under load. Validate the concurrency assumption (drive concurrent inputs from several windows and compare wall-clock) before trusting the architecture in production.
 
 ## License
 

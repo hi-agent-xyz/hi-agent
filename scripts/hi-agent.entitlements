@@ -3,7 +3,7 @@
 <!--
   Hardened-runtime entitlements for the bundled HiAgent.app.
 
-  The app embeds and spawns Node (the ACP adapter + claude) and esbuild, and loads
+  The app embeds and spawns Node (for esbuild) and the codex CLI, and loads
   native `.node` addons — so under the hardened runtime it needs:
     - allow-jit / allow-unsigned-executable-memory : V8's JIT.
     - disable-library-validation : load `.node` / dylibs not signed with our Team ID.

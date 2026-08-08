@@ -121,7 +121,7 @@ async fn provision(into: PathBuf) -> anyhow::Result<()> {
 /// so this is only needed for the shell path.
 ///
 /// `POSIX_SPAWN_SETEXEC` replaces this image in place (same PID, same env/PATH — so
-/// `node`/`claude` on the dev PATH still resolve, and cargo-watch keeps tracking the
+/// `node`/`codex` on the dev PATH still resolve, and cargo-watch keeps tracking the
 /// process), and `responsibility_spawnattrs_setdisclaim` makes the replacement
 /// disclaim the inherited responsibility. Gated on `HI_AGENT_DISCLAIM` (set only by
 /// dev.sh); `HI_AGENT_DISCLAIMED` marks the re-exec'd image so it runs once. Purely
@@ -219,7 +219,7 @@ fn main() -> anyhow::Result<()> {
     // Package-time provisioning: fill a `.app`'s Resources with the managed
     // runtime + models + static ffmpeg, then exit. Forces the managed downloads
     // (never resolves a system runtime), so it stages a complete tree even on a
-    // host that has node/claude/ffmpeg installed. Driven by `make dmg`.
+    // host that has node/codex/ffmpeg installed. Driven by `make dmg`.
     if let Some(into) = cli.provision_into {
         let rt = tokio::runtime::Runtime::new()?;
         return rt.block_on(provision(into));

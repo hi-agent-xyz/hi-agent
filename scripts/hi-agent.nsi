@@ -4,7 +4,7 @@
 ; Setup.exe that drops the (cross-compiled) hi-agent.exe under
 ; %LOCALAPPDATA%\Programs\Hi Agent, wires up Start Menu + Desktop shortcuts and
 ; an Add/Remove-Programs entry, and ships an uninstaller. The managed runtime
-; (Node + claude + esbuild + ffmpeg + models) is NOT bundled here -- the binary
+; (Node + codex + esbuild + ffmpeg + models) is NOT bundled here -- the binary
 ; auto-provisions it into the OS cache on first launch (the "it runs" tier).
 ;
 ; Driven entirely by /D defines from scripts/make-installer.sh:

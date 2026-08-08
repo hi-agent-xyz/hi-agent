@@ -23,7 +23,7 @@
 //!
 //! ## One long-lived session; the agent bounds its own context
 //!
-//! The address is registered **once, for the life of the process**; the ACP session is
+//! The address is registered **once, for the life of the process**; the agent session is
 //! opened once and **held across wakes**, replaced only when it breaks. Two different lifetimes for two different things: an address
 //! must be stable (nothing durable may hold a session id, and a prompt certainly cannot),
 //! while a session is *replaceable* — `docs/arch/core.md`: *"No session is a source of
@@ -156,7 +156,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     loop {
         // The rung never polls the account and never predicts whether a call can run.
         // It only reacts to the process-wide 402 edge, then waits for the broker/app's
-        // explicit Resume message. Pending mail and the live ACP session stay in place.
+        // explicit Resume message. Pending mail and the live agent session stay in place.
         if energy_paused {
             tokio::select! {
                 event = energy.recv() => {
@@ -395,7 +395,7 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
         // Cognition can send only to live session ids. Stand the voice up before
         // building this turn's window so every owed user-facing delivery has
         // somewhere to land after a restart. `ensure_voice` registers the address
-        // synchronously; its ACP warm-up may continue while mail queues behind it.
+        // synchronously; its warm-up may continue while mail queues behind it.
         reaction.ensure_voice().await;
     }
 

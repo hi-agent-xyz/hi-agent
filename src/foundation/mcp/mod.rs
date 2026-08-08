@@ -1,11 +1,11 @@
 //! Minimal MCP server — the tool carrier between the mind and the reaction module.
 //!
-//! The reaction session (and its workers) reach this over the ACP `mcp_servers`
+//! The reaction session (and its workers) reach this over the `mcp_servers` block in their thread config
 //! attachment as an HTTP MCP endpoint (`/mcp`). It speaks just enough of the MCP
 //! "Streamable HTTP" transport to serve tools: a JSON-RPC *request* gets a single
 //! `application/json` response, a *notification* gets `202 Accepted`, and the GET
 //! SSE stream is declined (`405`) since we never push server-initiated messages.
-//! No MCP transport session ids — each ACP session opens its own connection and
+//! No MCP transport session ids — each agent session opens its own connection and
 //! identifies its role and agent-session id on every call via headers, so the
 //! transport stays stateless here.
 //!
@@ -470,7 +470,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 //       vision capability's text when it doesn't.
 //   generation     `text-to-image`, `image-to-image`,
 //                  `text-to-video`, `image-to-video`           → never touches the
-//       bundle. No model reached through the ACP adapter emits pixels, so these are
+//       bundle. No model reached through the agent wire emits pixels, so these are
 //       always a provider call.
 //
 // The four generation tools are declared and return [`not_implemented`]. The surface
@@ -987,7 +987,7 @@ async fn dispatch_tool(
 
 /// `look`: capture the screen so the calling session can see where to act. Returns
 /// a text hint (size + frontmost app) and the screenshot as an image content block,
-/// which `claude-agent-acp` forwards to the multimodal model. Errors when capture
+/// which codex forwards to the model as an `input_image`. Errors when capture
 /// is unavailable (non-macOS, or Screen Recording not granted).
 async fn do_look() -> Value {
     let snap = match crate::body::capabilities::desktop_context::capture().await {

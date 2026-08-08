@@ -229,7 +229,7 @@ pub struct AppState {
 
     /// Warm-up requests. A presence GET (`GET /api/out/*`, the long-polls a client
     /// opens when it attaches) asks here so the reaction stands itself up —
-    /// spawning the subprocess and opening the ACP session — before the first
+    /// spawning the subprocess and opening the agent session — before the first
     /// utterance lands, keeping that cold-start off the first reply's critical
     /// path. Bounded and best-effort: a full channel only means warm-ups are
     /// already queued, so a dropped request costs at most the cold-start it would
@@ -302,11 +302,11 @@ pub struct AppState {
     /// Memory substrate — journal. Cloneable handle.
     pub memory: Memory,
 
-    /// Structured visibility into the ACP session lifecycle. Served read-only by
+    /// Structured visibility into the agent session lifecycle. Served read-only by
     /// the `/api/sessions` endpoints.
     pub observatory: Observatory,
 
-    /// Raw JSON-RPC wire tap — every ACP frame, business-logic agnostic. Served
+    /// Raw JSON-RPC wire tap — every wire frame, business-logic agnostic. Served
     /// read-only by `GET /api/wire/frames/events` for the raw session inspector.
     pub wire_tap: WireTap,
 
@@ -360,7 +360,7 @@ impl AppState {
         });
     }
 
-    /// Ask the reaction to warm up now — spawn its subprocess and open its ACP
+    /// Ask the reaction to warm up now — spawn its subprocess and open its agent
     /// session — triggered when a client opens one of the `/api/out/*` long-polls.
     /// Best-effort and non-blocking: a full queue drops the request, leaving the
     /// cold-start to happen on first use as before. Idempotent on the reaction
@@ -490,7 +490,7 @@ pub fn build(
         .route("/api/in/taste", post(stubs::post_taste))
         .route("/api/sessions", get(sessions::get_sessions))
         .route("/api/sessions/events", get(sessions::get_sessions_events))
-        // The raw ACP wire feed — every JSON-RPC frame, business-logic agnostic.
+        // The raw wire feed — every JSON-RPC frame, business-logic agnostic.
         // Backs the raw session inspector at `/inspect/sessions`.
         .route("/api/wire/frames/events", get(wire::get_wire_frames_events))
         // The MCP tool endpoint a session's `mcp_servers` attach connects to. The

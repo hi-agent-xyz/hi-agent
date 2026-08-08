@@ -52,7 +52,7 @@ impl Feature {
     /// Human title shown in the dialog.
     fn title(self) -> &'static str {
         match self {
-            Feature::Llm => "LLM (Anthropic-compatible)",
+            Feature::Llm => "LLM (OpenAI Responses-compatible)",
             Feature::Stt => "Speech-to-text",
             Feature::Tts => "Text-to-speech",
             Feature::Vision => "Vision",

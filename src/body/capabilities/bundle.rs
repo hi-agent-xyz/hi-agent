@@ -10,10 +10,10 @@
 //! Everything above this treats the agent as uniformly able to understand image and
 //! video; this module absorbs the per-model variation so that assumption holds.
 //!
-//! One bundle ships today: the Claude family understands images natively but takes
-//! no video, so image is [`Handling::Native`] and video is [`Handling::Polyfill`].
-//! Adding another base model (e.g. a text-only one) is an additive change to
-//! [`model_is_native_image`], threaded from the resolved LLM model.
+//! One bundle ships today: the family we drive over the agent wire understands images
+//! natively but takes no video, so image is [`Handling::Native`] and video is
+//! [`Handling::Polyfill`]. Adding another base model (e.g. a text-only one) is an
+//! additive change to [`model_is_native_image`], threaded from the resolved LLM model.
 
 /// A kind of visual input the agent might need to understand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub struct Bundle {
     native_image: bool,
 }
 
-/// The bundle for the currently-shipped model family (Claude → native image). The
+/// The bundle for the currently-shipped model family (native image). The
 /// single bundle today is model-independent; [`model_is_native_image`] is the seam
 /// a future non-native (e.g. text-only) model extends, threaded from the resolved
 /// LLM model rather than an env var.
@@ -49,7 +49,7 @@ pub fn current() -> Bundle {
 
 impl Bundle {
     /// How this bundle handles `modality`. Video is always [`Handling::Polyfill`]: no
-    /// model reached through the Claude adapter takes video input, so a clip is always
+    /// model reached through the agent wire takes video input, so a clip is always
     /// understood by the vision capability and handed over as text.
     pub fn handling(&self, modality: Modality) -> Handling {
         match modality {
@@ -59,10 +59,10 @@ impl Bundle {
     }
 }
 
-/// Whether the named model understands images natively. We ship the Claude family
-/// (native image), and `None` means the adapter's default (also Claude), so the
-/// default is `true`. This is the seam future model families extend: a text-only
-/// model would return `false` here, threaded from the resolved LLM model.
+/// Whether the named model understands images natively. Every family we drive today
+/// does, and `None` means "whatever codex picked" — also native — so the default is
+/// `true`. This is the seam future model families extend: a text-only model would
+/// return `false` here, threaded from the resolved LLM model.
 fn model_is_native_image(_model: Option<&str>) -> bool {
     true
 }
@@ -87,6 +87,6 @@ mod tests {
     #[test]
     fn unset_model_defaults_native() {
         assert!(model_is_native_image(None));
-        assert!(model_is_native_image(Some("claude-opus-4-8")));
+        assert!(model_is_native_image(Some("gpt-5.1-codex")));
     }
 }

@@ -23,7 +23,7 @@
 //!
 //! **Read-only, and that is not an omission.** The registry has no stop/abort verb:
 //! `Registry::unregister` removes the address (a subsequent `send` reports `Unknown`)
-//! but does not touch the ACP subprocess or the drive task behind it, so exposing it
+//! but does not touch the codex subprocess or the drive task behind it, so exposing it
 //! as `POST /api/workers/{id}/stop` would report a stop that did not happen. A real
 //! stop verb has to be built in the registry first; there is no route for one here.
 //!

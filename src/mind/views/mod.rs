@@ -11,7 +11,7 @@
 //! separately as `views/<project>/<name>.jsx`.
 //!
 //! esbuild ships as a native binary in the `@esbuild/<os>-<arch>` package, which
-//! the managed runtime installs alongside the ACP adapter (see
+//! the managed runtime installs alongside the codex CLI (see
 //! `src/runtime/package.json`). We exec that binary directly — no Node wrapper.
 
 use std::hash::{Hash, Hasher};

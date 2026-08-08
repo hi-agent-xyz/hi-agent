@@ -23,7 +23,7 @@ const FIRST_TAB = TABS[0]!;
 /**
  * The inspect console — an operator-facing surface distinct from the agent "face"
  * at `/`. Tabs map to nested routes: `/inspect/conversation` inspects the live
- * channels, `/inspect/sessions` inspects ACP sessions. Bare `/inspect` redirects
+ * channels, `/inspect/sessions` inspects agent sessions. Bare `/inspect` redirects
  * to the first tab. Each tab owns deeper nested routes (`…/{id}`) for its detail view.
  */
 export function Inspect() {

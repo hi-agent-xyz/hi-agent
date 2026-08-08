@@ -6,13 +6,13 @@
 #   - Vite dev server on :12359 (src/appearance/web)
 #
 # Why this isn't just `trap 'kill 0'`: `cargo watch` runs the backend
-# (`cargo run` -> `hi-agent` -> `node` ACP adapter -> `claude`, plus esbuild /
+# (`cargo run` -> `hi-agent` -> `codex app-server`, plus esbuild /
 # ffmpeg) in its OWN process group so it can restart that subtree on file
 # changes. A `kill 0` only signals the recipe shell's group, so it never reaches
 # those — they're left to cargo watch's own signal forwarding, which races on
 # exit and "sometimes" orphans the backend. Worse, hi-agent drains in-flight
 # HTTP for up to 10s on SIGTERM (the browser holds SSE + long-poll open), so the
-# backend + its node/claude children keep :12358 bound long after the prompt
+# backend + its codex children keep :12358 bound long after the prompt
 # returns.
 #
 # Instead we snapshot the full descendant tree of each server *by PID* (so a
@@ -87,7 +87,7 @@ trap cleanup INT TERM EXIT
 #      terminal (which has no usage strings) and the request hangs forever. A
 #      LaunchServices launch (double-clicking a .app) is its own responsible
 #      process; to get the same effect while still running under cargo-watch (and
-#      keeping the shell's PATH so node/claude resolve), the binary re-execs itself
+#      keeping the shell's PATH so node/codex resolve), the binary re-execs itself
 #      disclaiming responsibility when it sees HI_AGENT_DISCLAIM=1, set below.
 #      See reexec_disclaiming_responsibility() in src/main.rs.
 #

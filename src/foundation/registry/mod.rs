@@ -11,7 +11,7 @@
 //! the same verb going the other way — which is why the sender's identity is stamped here
 //! and never passed in by the caller. An agent that names itself can name someone else.
 //!
-//! Nothing in this module talks to ACP or to a model. It owns addresses, mailboxes and
+//! Nothing in this module talks to the agent wire or to a model. It owns addresses, mailboxes and
 //! metadata; who drains a mailbox and what they do with it belongs to the caller.
 
 use std::collections::HashMap;

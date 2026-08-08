@@ -143,24 +143,27 @@ pub struct Tokens {
     pub access_expires_at: String,
 }
 
-/// Upstream LLM credentials (the bundled Claude adapter's `ANTHROPIC_*`).
+/// Upstream LLM credentials — the gateway the codex child talks to, and which model
+/// on it. Rendered into a thread's `model_providers` entry plus the one env var codex
+/// reads the key from; see `AgentConfig::thread_config` / `auth_child_env`.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmCredentials {
     /// Which wire (vendor/protocol impl) backs the LLM; empty → the feature's
-    /// default (the bundled Claude adapter). Reserved for a future second LLM wire;
-    /// `resolve` uses the single adapter today. See [`VendorKey::wire`].
+    /// default. Reserved for a future second LLM wire; `resolve` drives the single
+    /// one (codex over OpenAI Responses) today. See [`VendorKey::wire`].
     #[serde(skip_serializing_if = "String::is_empty")]
     pub wire: String,
-    /// Upstream base URL; empty → the bundled Anthropic default.
+    /// Upstream base URL — the provider *base* codex appends `/responses` to; empty
+    /// → the built-in default.
     pub base_url: String,
     /// Upstream API key; empty → not configured (falls back to `.env`).
     pub api_key: String,
-    /// Model override (`ANTHROPIC_MODEL`); `None` → the adapter's default.
+    /// Model override; `None` → let codex pick its own default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Companion model for the background "haiku" slot (`ANTHROPIC_DEFAULT_HAIKU_MODEL`);
-    /// `None` → reuse `model`. Only the managed (broker) path sets this today.
+    /// Cheaper/faster companion model for background work; `None` → reuse `model`.
+    /// Only the managed (broker) path sets this today.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub small: Option<String>,
 }

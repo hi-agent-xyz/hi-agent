@@ -2,7 +2,7 @@
 #
 # Build a hermetic Hi Agent.app and wrap it in a styled drag-to-Applications .dmg.
 #
-# Produces an app whose managed runtime (Node + ACP adapter + claude), recognition
+# Produces an app whose managed runtime (Node + the codex CLI), recognition
 # models, and static ffmpeg all live under Contents/Resources — so it launches and
 # runs fully offline, with nothing to install. Apple Silicon macOS only.
 #
@@ -117,7 +117,7 @@ sign_one() {
 }
 
 echo ">> signing nested Mach-O binaries (identity: $IDENTITY)…"
-# Every Mach-O under the bundle (node, claude, ffmpeg, esbuild, *.node addons),
+# Every Mach-O under the bundle (node, codex, ffmpeg, esbuild, *.node addons),
 # excluding the main executable — the bundle sign below seals that one. -type f
 # skips symlinks (npm's .bin/*), whose real targets are signed directly.
 while IFS= read -r -d '' f; do

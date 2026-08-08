@@ -1,6 +1,6 @@
-//! Observatory — structured visibility into the ACP session lifecycle.
+//! Observatory — structured visibility into the agent session lifecycle.
 //!
-//! ACP sessions are otherwise invisible: the persistent reaction session,
+//! agent sessions are otherwise invisible: the persistent reaction session,
 //! ephemeral worker sessions (each on its own subprocess), in-flight prompts,
 //! session lifecycle events all live only as scattered `tracing`
 //! lines. The observatory is an additive, cloneable handle (like [`Memory`] or
@@ -36,7 +36,7 @@ const HISTORY_CAP: usize = 1000;
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
 
-/// Which kind of ACP session this is — the reaction's persistent mind, an
+/// Which kind of agent session this is — the reaction's persistent mind, an
 /// ephemeral worker or the
 /// reflection ("sleep") pass that consolidates raw into episodes/facets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -49,7 +49,7 @@ pub enum SessionKind {
     Cognition,
 }
 
-/// Live state of one ACP session in the mirror.
+/// Live state of one agent session in the mirror.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionView {
     pub id: String,

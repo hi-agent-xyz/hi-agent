@@ -58,35 +58,35 @@
 .inspect-main { flex: 1; min-height: 0; }
 
 /* ---- shared list (left) + detail (right) layout ---- */
-.acp { display: grid; grid-template-columns: 280px 1fr; height: 100%; min-height: 0; }
+.wire { display: grid; grid-template-columns: 280px 1fr; height: 100%; min-height: 0; }
 /* These panes scroll only vertically; pinning overflow-x to hidden stops the
    browser from inferring overflow-x: auto and flashing a spurious horizontal
    scrollbar (content already reflows via min-width:0 / wrapping). */
-.acp-list { border-right: 1px solid var(--line); overflow: hidden auto; }
-.acp-list-head {
+.wire-list { border-right: 1px solid var(--line); overflow: hidden auto; }
+.wire-list-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
   position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
 }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
 .live-dot.on { background: var(--ok); }
-.acp-list ul { list-style: none; margin: 0; padding: 4px; }
-.acp-list li {
+.wire-list ul { list-style: none; margin: 0; padding: 4px; }
+.wire-list li {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: 7px; cursor: pointer;
 }
-.acp-list li:hover { background: var(--panel); }
-.acp-list li.sel { background: var(--panel-2); }
-.acp-list li .nm { flex: 1 1 auto; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acp-list li .badges { margin-left: auto; flex: 0 1 auto; min-width: 0; display: flex; gap: 5px; }
+.wire-list li:hover { background: var(--panel); }
+.wire-list li.sel { background: var(--panel-2); }
+.wire-list li .nm { flex: 1 1 auto; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wire-list li .badges { margin-left: auto; flex: 0 1 auto; min-width: 0; display: flex; gap: 5px; }
 /* Cap long unbreakable labels so a row cannot push past the fixed-width sidebar. */
-.acp-list li .mini { font-family: var(--mono); font-size: 11px; color: var(--dim); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wire-list li .mini { font-family: var(--mono); font-size: 11px; color: var(--dim); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--dim); }
 .dot.busy { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 .dot.idle { background: var(--ok); }
 .dot.cold { background: var(--line); }
 
-.acp-detail { overflow: hidden auto; padding: 16px; min-width: 0; }
+.wire-detail { overflow: hidden auto; padding: 16px; min-width: 0; }
 .detail-head .dh-title { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .detail-head .dh-title b { font-size: 17px; }
 
@@ -112,7 +112,7 @@
 .wbadge.failed { background: rgba(232,115,106,.16); color: var(--bad); }
 
 /* events */
-.acp-events h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 16px 0 8px; }
+.wire-events h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 16px 0 8px; }
 .evtable { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; line-height: 1.6; table-layout: fixed; }
 .evtable th { text-align: left; font-weight: 600; color: var(--dim); text-transform: uppercase; font-size: 11px; letter-spacing: .04em; padding: 4px 12px 4px 0; border-bottom: 1px solid rgba(42,47,58,.8); }
 .evtable th:nth-child(1) { width: 96px; }
@@ -129,7 +129,7 @@
 .evtable .evraw pre { margin: 0; font-family: var(--mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
 .evnull { color: var(--dim); font-style: italic; }
 
-/* Raw ACP frame log — six columns (Time, Dir, Method, #, Frame, JSON); override
+/* Raw wire frame log — six columns (Time, Dir, Method, #, Frame, JSON); override
    the generic four-column widths above. Time is wider for the HH:MM:SS.mmm stamp. */
 .frtable th:nth-child(1) { width: 108px; }
 .frtable th:nth-child(2) { width: 44px; }
@@ -189,7 +189,7 @@
 .edge.not_permitted b { color: var(--warn); }
 .edge-msg { color: var(--fg); }
 
-/* session-kind tag in the ACP list */
+/* session-kind tag in the wire list */
 .skind {
   font-family: var(--mono); font-size: 10px; line-height: 1;
   padding: 2px 4px; border-radius: 4px; flex: 0 0 auto;
@@ -229,6 +229,6 @@
 .chan-line .chan-body.partial { color: var(--dim); }
 
 @media (max-width: 760px) {
-  .acp { grid-template-columns: 1fr; grid-template-rows: 200px 1fr; }
-  .acp-list { border-right: none; border-bottom: 1px solid var(--line); }
+  .wire { grid-template-columns: 1fr; grid-template-rows: 200px 1fr; }
+  .wire-list { border-right: none; border-bottom: 1px solid var(--line); }
 }

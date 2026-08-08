@@ -16,11 +16,13 @@
 //!   received. It could not see the harness's own system prompt and tool schemas —
 //!   the large majority of every request — so the number it thresholded on was a
 //!   small, drifting fraction of the truth.
-//! - **We cannot compact in place.** The ACP surface is `session/new`,
-//!   `session/prompt`, `session/cancel`, `session/update`; there is no compaction
-//!   method. Summarize-and-reopen was not the chosen design, it was the only move
-//!   available from outside the boundary — and it is strictly lossier than what the
-//!   agent does internally.
+//! - **Summarize-and-reopen was a workaround for a gap the wire no longer has.** ACP
+//!   offered `session/new`, `session/prompt`, `session/cancel`, `session/update` and no
+//!   compaction method, so reopening was not the chosen design — it was the only move
+//!   available from outside the boundary, and strictly lossier than what the agent does
+//!   internally. The codex wire exposes `thread/compact/start` outright, which settles
+//!   the argument rather than reopening it: compaction is the agent's, on its own
+//!   history, and now even its own explicit verb. Nothing out here needs to imitate it.
 //! - **The ceiling was wrong by more than an order of magnitude.** 48,000 chars is
 //!   roughly 3% of a 1M-token window. In practice a conversation crossed it within one
 //!   sitting, so an ordinary conversation was being summarized and restarted

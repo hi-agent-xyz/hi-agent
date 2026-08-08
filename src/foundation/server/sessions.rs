@@ -1,4 +1,4 @@
-//! Session visibility endpoints — the operator's window into ACP sessions.
+//! Session visibility endpoints — the operator's window into agent sessions.
 //!
 //! - `GET /api/sessions` — JSON live snapshot of the conversation (process, reaction
 //!   session, workers, context budget, last turn).
