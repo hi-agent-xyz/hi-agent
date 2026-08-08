@@ -10,7 +10,7 @@
 //! - **Double-tap the right ⌘ → "come and see this":** hands the agent a screenshot of
 //!   the current screen. It is *not a new sense* — the screenshot lands exactly like a
 //!   drag-dropped image (a handed file on the `file` channel) and wakes the mind
-//!   ([`crate::foundation::server::files::receive_screenshot`]).
+//!   (`foundation::server::files::receive_screenshot`).
 //! - **Press-and-hold the right ⌘ → continuous attention:** for as long as the key is
 //!   held, the agent listens (native mic capture → the same audio ingest the browser mic
 //!   uses) and may look at the screen (its existing `look` tool); on release it
@@ -29,6 +29,7 @@
 //! non-macOS the whole thing is a no-op.
 
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
 use crate::foundation::server::AppState;

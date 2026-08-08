@@ -79,7 +79,7 @@ impl UploadResult {
 /// signal that wakes the reaction. `body` is the text surface the mind reacts to
 /// (it never sees the bytes); the blob path rides the journal entry's `media`.
 /// The framing in `body` is the caller's — a neutral handoff ([`receive_file`])
-/// or the "come and see this" gesture ([`receive_screenshot`]) — and this appends
+/// or the macOS "come and see this" gesture ([`receive_screenshot`]) — and this appends
 /// the locator, so no caller can frame a file the mind then cannot open.
 ///
 /// **The locator is the whole point of the signal.** `docs/arch/agents.md` retires
@@ -158,6 +158,7 @@ async fn receive_file(
 /// Command; see [`crate::body::gesture`]). Same `file` channel, same wake — only the
 /// framing differs: this is the user's current screen / working context, handed
 /// over for the agent to look at and help with, not a neutral document.
+#[cfg(target_os = "macos")]
 pub(crate) async fn receive_screenshot(
     state: &AppState,
     bytes: &Bytes,

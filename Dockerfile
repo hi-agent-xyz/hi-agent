@@ -7,17 +7,17 @@ COPY src/appearance/web ./
 RUN npm run build
 
 # Stage 2: build the Rust binary (embeds SPA)
-FROM rust:1-bookworm AS rust
+FROM rust:1-trixie AS rust
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends cmake libclang-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY Cargo.toml Cargo.lock build.rs ./
+COPY Cargo.toml Cargo.lock build.rs .env.example ./
 COPY src ./src
 COPY --from=web /web/dist ./src/appearance/web/dist
 RUN cargo build --release
 
 # Stage 3: minimal runtime
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 # `unzip`: Chrome for Testing publishes the headless browser the view renderer
 # drives as a `.zip`, and GNU tar (unlike the bsdtar macOS/Windows ship as `tar`)
 # cannot read one. Without this the browser provisioner has no extractor here.
