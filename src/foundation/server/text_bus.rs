@@ -84,9 +84,19 @@ impl TextBus {
         self.epoch.as_str()
     }
 
-    /// Discard a cursor unless it belongs to this process's retained log.
-    pub fn normalize_after(&self, epoch: Option<&str>, after: Option<u64>) -> Option<u64> {
-        (epoch == Some(self.epoch())).then_some(after).flatten()
+    /// Discard a cursor unless it belongs to this process's retained log and
+    /// names an utterance that could already have been delivered.
+    ///
+    /// A future id would otherwise park forever: ids only advance from
+    /// `next_id`, so a reader asking for "after 999" while the process is at 7
+    /// can never observe another utterance.
+    pub async fn normalize_after(&self, epoch: Option<&str>, after: Option<u64>) -> Option<u64> {
+        if epoch != Some(self.epoch()) {
+            return None;
+        }
+        let after = after?;
+        let out = self.inner.lock().await;
+        (after < out.next_id).then_some(after)
     }
 
     /// Append a chunk of agent text. Starts a new utterance when the previous one
@@ -301,12 +311,17 @@ mod tests {
         assert_eq!(out.log.len(), MAX_RETAINED);
     }
 
-    #[test]
-    fn a_cursor_from_another_process_resets() {
+    #[tokio::test]
+    async fn a_cursor_from_another_process_or_the_future_resets() {
         let bus = TextBus::new();
-        assert_eq!(bus.normalize_after(Some("old-process"), Some(999)), None);
-        assert_eq!(bus.normalize_after(None, Some(999)), None);
-        assert_eq!(bus.normalize_after(Some(bus.epoch()), Some(7)), Some(7));
+        assert_eq!(bus.normalize_after(Some("old-process"), Some(999)).await, None);
+        assert_eq!(bus.normalize_after(None, Some(999)).await, None);
+        assert_eq!(bus.normalize_after(Some(bus.epoch()), Some(7)).await, None);
+
+        bus.push_chunk("first".into()).await;
+        bus.end_utterance().await;
+        assert_eq!(bus.normalize_after(Some(bus.epoch()), Some(0)).await, Some(0));
+        assert_eq!(bus.normalize_after(Some(bus.epoch()), Some(1)).await, None);
     }
 
     #[test]

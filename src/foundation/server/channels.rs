@@ -105,10 +105,7 @@ fn merge_channels(
                     Err(RecvError::Closed) => return None,
                 },
                 r = s.view.recv() => match r {
-                    Ok(e) => Some(ChannelSignal {
-                        ts: e.ts, channel: Channel::Vision, direction: "out",
-                        body: view_summary(&e.envelope), is_final: true,
-                    }),
+                    Ok(e) => Some(view_signal(&e)),
                     Err(RecvError::Lagged(_)) => None,
                     Err(RecvError::Closed) => return None,
                 },
@@ -196,6 +193,16 @@ fn video_in_summary(e: &VideoInEvent) -> Option<ChannelSignal> {
     }
 }
 
+fn view_signal(event: &crate::foundation::server::ViewEvent) -> ChannelSignal {
+    ChannelSignal {
+        ts: event.ts,
+        channel: Channel::View,
+        direction: "out",
+        body: view_summary(&event.envelope),
+        is_final: true,
+    }
+}
+
 /// A compact one-line summary of a view envelope for the inspector.
 fn view_summary(env: &crate::types::ViewEnvelope) -> String {
     use crate::types::ViewOp;
@@ -212,4 +219,29 @@ fn to_sse_event(sig: &ChannelSignal) -> Event {
         .event("channel")
         .json_data(sig)
         .unwrap_or_else(|_| Event::default().comment("serialize error"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::foundation::server::ViewEvent;
+    use crate::types::{ViewEnvelope, ViewOp};
+
+    #[test]
+    fn outbound_view_events_stay_on_the_view_channel() {
+        let event = ViewEvent {
+            ts: Utc::now(),
+            envelope: ViewEnvelope {
+                id: "tasks".into(),
+                op: ViewOp::Show,
+                module_url: Some("/views/tasks.mjs".into()),
+                traits: None,
+            },
+        };
+
+        let signal = view_signal(&event);
+        assert_eq!(signal.channel, Channel::View);
+        assert_eq!(signal.direction, "out");
+        assert!(signal.is_final);
+    }
 }

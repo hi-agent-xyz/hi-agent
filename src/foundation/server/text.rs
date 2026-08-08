@@ -111,7 +111,10 @@ pub async fn get_out_text(
     Query(q): Query<OutTextQuery>,
     AuthBearer(auth): AuthBearer,
 ) -> Response {
-    let after = state.text_bus.normalize_after(q.epoch.as_deref(), q.after);
+    let after = state
+        .text_bus
+        .normalize_after(q.epoch.as_deref(), q.after)
+        .await;
     tracing::info!(
         auth = ?auth,
         requested_epoch = ?q.epoch,
