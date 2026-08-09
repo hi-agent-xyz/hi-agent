@@ -35,10 +35,10 @@ function words() {
   }
   return T.en;
 }
+const L = words();
 
 export default function OutOfEnergy() {
   const [href, setHref] = useState(FALLBACK_URL);
-  const L = words();
 
   useEffect(() => {
     let alive = true;
@@ -62,7 +62,6 @@ export default function OutOfEnergy() {
       animate={{ opacity: 1 }}
       transition={{ duration: 0.35, ease: EASE }}
       role="alert"
-      aria-live="polite"
     >
       <style>{`
         .out-of-energy {

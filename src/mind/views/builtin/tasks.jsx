@@ -1,9 +1,7 @@
 // Built-in task ledger. The full canvas is organized by the one durable lifecycle:
 // todo, doing, done, cancelled. Liveness is optional detail on a doing task, never a
 // second kind or mode.
-import { useState, useEffect, useCallback } from "react";
-
-export const captionAside = "top";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -97,16 +95,20 @@ const T = {
   },
 };
 
+// Resolves to both the table and the tag that chose it: the dates on this surface are
+// formatted by `Intl`, which needs a locale, and the honest one is the language the copy
+// around it is already in. `undefined` there reads the *system* locale instead, so a zh
+// reader on an en machine got "创建于 Aug 8, 3:04 PM".
 function words() {
   const app = document.documentElement.lang || "";
   const chain = !app || /^system$/i.test(app) ? [navigator.language] : [app, navigator.language];
   for (const tag of chain) {
-    if (/^zh\b/i.test(tag || "")) return T.zh;
-    if (/^en\b/i.test(tag || "")) return T.en;
+    if (/^zh\b/i.test(tag || "")) return [T.zh, tag];
+    if (/^en\b/i.test(tag || "")) return [T.en, tag];
   }
-  return T.en;
+  return [T.en, "en"];
 }
-const L = words();
+const [L, LOCALE] = words();
 
 const STATUSES = [
   { id: "todo", label: L.category.todo, tone: "mute" },
@@ -126,20 +128,34 @@ export default function Tasks() {
   const [tasks, setTasks] = useState(null);
   const [status, setStatus] = useState("doing");
   const [busy, setBusy] = useState(null);
+  // A ref, not the state: the poll interval is created once and would otherwise close
+  // over the `busy` of its first render.
+  const busyRef = useRef(false);
 
   const reload = useCallback(async () => {
     const data = await api.list().catch(() => ({ tasks: [] }));
     setTasks(data.tasks || []);
   }, []);
 
+  // Poll, for the reason the workers roster does: the agent opens and closes tasks while
+  // this is on screen, and a ledger that is quietly stale still reads as authoritative —
+  // it is the surface someone checks *before* asking "did you drop that?". Held off while
+  // a status write is in flight (so a row can't flip back under the click) and while the
+  // page is hidden, since nothing is being read then.
   useEffect(() => {
     reload();
+    const timer = setInterval(() => {
+      if (!document.hidden && !busyRef.current) reload();
+    }, 8000);
+    return () => clearInterval(timer);
   }, [reload]);
 
   const setTaskStatus = async (subject, nextStatus) => {
     setBusy(subject);
+    busyRef.current = true;
     await api.patch(subject, { status: nextStatus }).catch(() => {});
     setBusy(null);
+    busyRef.current = false;
     reload();
   };
 
@@ -361,7 +377,7 @@ function formatStamp(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   const sameYear = date.getFullYear() === new Date().getFullYear();
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(LOCALE, {
     month: "short",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),

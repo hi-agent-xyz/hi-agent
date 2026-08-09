@@ -16,9 +16,12 @@
 //!
 //! **1. Colour comes from the host's theme tokens, or from nothing.** The vocabulary is
 //! whatever `ui/global.css` actually defines: `--fg` / `--fg-dim` / `--fg-mute`,
-//! `--surface` / `--surface-strong`, `--line` / `--line-strong`, `--accent` (+ `-soft` /
-//! `-line` / `-wash`), `--shadow` / `--shadow-strong` (which are *colours*, not shadow
-//! lists), `--bg-0` / `--bg-1`, `--font-display`. Do not invent a name: `var(--card,#fff)`
+//! `--surface` / `--surface-strong` / `--surface-border`, `--line` / `--line-strong`,
+//! `--accent` (+ `-soft` / `-line` / `-wash`) and the second accent `--accent-2`,
+//! `--danger` (+ `-line` / `-wash`) for a destructive verb, `--shadow` / `--shadow-strong`
+//! (which are *colours*, not shadow lists), `--bg-0` / `--bg-1`, `--font-display` /
+//! `--font-mono`, the shared easing `--ease`, and the frame insets `--hi-safe-top` /
+//! `-right` / `-bottom` / `-left`. Do not invent a name: `var(--card,#fff)`
 //! reads like a token and is really a hardcoded white, which is how named people once went
 //! invisible in dark mode. Mixing the two halves is the trap — a *fixed* palette is fine
 //! and often right for a poster, but then the text colour must be fixed too, or it flips
@@ -73,10 +76,13 @@ const WELCOME_MARK: &str = include_str!("builtin/hi-mark.svg");
 const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
-/// The review surfaces: one per kind of thing the agent accumulates, each paired with a
-/// `.geom.json`. Bundled system surfaces own the full canvas and provide their own
-/// background, scrolling, and safe padding. The host's centered-card fallback remains
-/// available to agent-authored views that declare no placement.
+/// The review surfaces: one per kind of thing the agent accumulates. Each owns the full
+/// canvas and provides its own background and scrolling; the *safe* insets are the host's
+/// (`.hi-view-fill` pads every layer clear of the window chrome and the control cluster),
+/// so a view never reads `--hi-safe-*` itself. What each one does still reserve is the
+/// bottom strip the caption pills rise through — deliberately unpadded by the host, since
+/// reserving it would cost every view a slice of frame — which is what the 128px of
+/// bottom padding in these files is for, on top of the host's own 76px.
 ///
 /// They are siblings of `people-review`, and they exist for the same reason it does — the
 /// agent's own state was only inspectable by reading files over its shoulder, so nothing
@@ -210,6 +216,25 @@ mod tests {
         let raw = std::fs::read_to_string(builtin.join("vendor-outage.geom.json")).unwrap();
         let parsed: crate::types::ViewTraits = serde_json::from_str(&raw).unwrap();
         assert!(parsed.owns_captions);
+    }
+
+    /// The Tools surface has to have a word for every rung the endpoint serves. A role
+    /// with no entry in the view's own table falls back to printing its bare id — which
+    /// is how `worker`, the first rung listed and the only one that does the work, sat
+    /// in that view undescribed, in both languages, reading like a leaked internal name.
+    #[test]
+    fn the_tools_view_names_every_role_the_endpoint_serves() {
+        let source = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "tools").unwrap().1;
+        for role in crate::foundation::server::tools::ROLES {
+            // Each language table keys its label by the raw role, so the id appears once
+            // per table; one occurrence would mean a language was missed.
+            let key = format!("{role}: [");
+            assert_eq!(
+                source.matches(&key).count(),
+                2,
+                "tools.jsx must label role `{role}` in both en and zh"
+            );
+        }
     }
 
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint

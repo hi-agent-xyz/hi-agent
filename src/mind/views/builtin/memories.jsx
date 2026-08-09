@@ -13,8 +13,6 @@
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect, useCallback } from "react";
 
-export const captionAside = "top";
-
 const J = { "Content-Type": "application/json" };
 const enc = (s) => encodeURIComponent(s);
 const api = {
@@ -45,6 +43,10 @@ const T = {
     pick: "Pick one on the left.", unreadable: "Can't read this one.",
     dimEmpty: "Nothing in this one yet.",
     save: "Save", savedTag: "Saved", dirtyTag: "Edited, not saved",
+    // The write can fail (a renamed route, a read-only disk). Saying so is the point:
+    // a correction that silently didn't land is the bug this whole surface exists for.
+    failedTag: "Couldn't save — nothing was written.",
+    unsavedMark: "edited, not saved",
     modified: (at) => `last updated ${at}`,
     recent: "Recently",
     stamp: (d, hm) => `${MON[d.getMonth()]} ${d.getDate()}, ${hm}`,
@@ -58,6 +60,8 @@ const T = {
     pick: "左边挑一个。", unreadable: "读不出来。",
     dimEmpty: "这一类还是空的。",
     save: "记下来", savedTag: "已记下", dirtyTag: "改了还没存",
+    failedTag: "没存上 —— 什么都没写进去。",
+    unsavedMark: "改了还没存",
     modified: (at) => `上次更新 ${at}`,
     recent: "最近发生的",
     stamp: (d, hm) => `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`,
@@ -82,8 +86,13 @@ export default function Memories() {
   const [dim, setDim] = useState(null);
   const [subject, setSubject] = useState(null);
   const [facet, setFacet] = useState(null);
-  const [draft, setDraft] = useState("");
+  // Unsaved edits, keyed `dimension/subject`, kept across a switch of subject: this is
+  // the surface for correcting a memory, so the correction must survive a click on the
+  // rail. A key is present only while the text differs from what was read, so "has a
+  // draft" and "is dirty" are the same question — the rail marks off it too.
+  const [drafts, setDrafts] = useState({});
   const [saved, setSaved] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [episodes, setEpisodes] = useState(null);
 
   useEffect(() => {
@@ -97,25 +106,49 @@ export default function Memories() {
   }, []);
 
   useEffect(() => {
-    if (!dim || !subject) { setFacet(null); setDraft(""); return; }
+    if (!dim || !subject) { setFacet(null); return; }
     let alive = true;
+    setSaved(false); setFailed(false);
     api.read(dim, subject).then((d) => {
       if (!alive) return;
-      setFacet(d); setDraft(d.content || ""); setSaved(false);
+      setFacet(d);
     }).catch(() => alive && setFacet({ error: true }));
     return () => { alive = false; };
   }, [dim, subject]);
 
+  const key = dim && subject ? `${dim}/${subject}` : null;
+  const stored = facet && !facet.error ? facet.content || "" : "";
+  const draft = key !== null && key in drafts ? drafts[key] : stored;
+  const dirty = key !== null && key in drafts;
+
+  // One rule for the whole surface: a draft exists only while it differs from what was
+  // read, so typing the original text back is not an edit.
+  const edit = (value) => {
+    if (key === null) return;
+    setSaved(false); setFailed(false);
+    setDrafts((all) => {
+      const next = { ...all };
+      if (value === stored) delete next[key];
+      else next[key] = value;
+      return next;
+    });
+  };
+
+  // The PUT answers with the file as it now stands (`{ ok, bytes, modified }`) — read it
+  // rather than assuming. A write that did not land must not report "Saved".
   const save = useCallback(async () => {
-    if (!dim || !subject) return;
-    await api.write(dim, subject, draft).catch(() => {});
+    if (!dim || !subject || key === null) return;
+    const result = await api.write(dim, subject, draft).catch(() => null);
+    if (!result?.ok) { setFailed(true); return; }
+    setFacet((f) => ({ ...(f || {}), content: draft, modified: result.modified }));
+    setDrafts((all) => { const next = { ...all }; delete next[key]; return next; });
+    setFailed(false);
     setSaved(true);
-  }, [dim, subject, draft]);
+  }, [dim, subject, key, draft]);
 
   if (dims === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
 
   const current = dims.find((d) => d.dimension === dim);
-  const dirty = facet && !facet.error && draft !== (facet.content || "");
 
   if (dims.length === 0) {
     return (
@@ -136,21 +169,24 @@ export default function Memories() {
 
       <div style={S.dims}>
         {dims.map((d) => (
-          <span key={d.dimension}
-            style={{ ...S.dimChip, ...(d.dimension === dim ? S.dimOn : {}) }}
+          <button key={d.dimension} type="button" aria-pressed={d.dimension === dim}
+            style={{ ...S.reset, ...S.dimChip, ...(d.dimension === dim ? S.dimOn : {}) }}
             onClick={() => { setDim(d.dimension); setSubject(d.subjects?.[0] ?? null); }}>
             {L.dim[d.dimension] || d.dimension}
             <span style={S.dimN}>{d.count}</span>
-          </span>
+          </button>
         ))}
       </div>
 
       <div style={S.split}>
         <div style={S.side}>
           {(current?.subjects || []).map((s) => (
-            <div key={s} style={{ ...S.subj, ...(s === subject ? S.subjOn : {}) }} onClick={() => setSubject(s)}>
-              {s}
-            </div>
+            <button key={s} type="button" aria-pressed={s === subject}
+              style={{ ...S.reset, ...S.subj, ...(s === subject ? S.subjOn : {}) }}
+              onClick={() => setSubject(s)}>
+              <span style={S.subjName}>{s}</span>
+              {`${dim}/${s}` in drafts && <span style={S.unsaved} title={L.unsavedMark} aria-label={L.unsavedMark} />}
+            </button>
           ))}
           {(current?.subjects || []).length === 0 && <div style={S.none}>{L.dimEmpty}</div>}
         </div>
@@ -164,10 +200,13 @@ export default function Memories() {
             : (
               <>
                 <textarea style={S.editor} value={draft} spellCheck={false}
-                  onChange={(e) => { setDraft(e.target.value); setSaved(false); }} />
+                  onChange={(e) => edit(e.target.value)} />
                 <div style={S.actions}>
-                  <span style={S.stamp}>
-                    {saved ? L.savedTag : dirty ? L.dirtyTag : facet?.modified ? L.modified(short(facet.modified)) : ""}
+                  <span style={{ ...S.stamp, ...(failed ? S.stampFailed : {}) }} role={failed ? "alert" : undefined}>
+                    {failed ? L.failedTag
+                      : saved ? L.savedTag
+                      : dirty ? L.dirtyTag
+                      : facet?.modified ? L.modified(short(facet.modified)) : ""}
                   </span>
                   <button style={{ ...S.btnPrimary, ...(dirty ? {} : S.btnOff) }} disabled={!dirty} onClick={save}>
                     {L.save}
@@ -212,6 +251,10 @@ const S = {
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
     padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
+  // Everything that responds to a click is a real <button>, so it is reachable by tab
+  // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
+  reset: { appearance: "none", border: "none", background: "none", font: "inherit",
+    color: "inherit", textAlign: "left", cursor: "pointer" },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 20 },
   sect: { fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", color: "var(--fg-mute)",
     margin: "28px 0 11px" },
@@ -229,9 +272,11 @@ const S = {
 
   split: { display: "flex", gap: 16, alignItems: "stretch", flexWrap: "wrap" },
   side: { flex: "0 0 190px", display: "flex", flexDirection: "column", gap: 2, maxHeight: 380, overflowY: "auto" },
-  subj: { fontSize: 13.5, fontWeight: 600, padding: "8px 11px", borderRadius: 10, cursor: "pointer",
-    color: "var(--fg-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  subj: { display: "flex", alignItems: "center", gap: 7, width: "100%", fontSize: 13.5, fontWeight: 600,
+    padding: "8px 11px", borderRadius: 10, color: "var(--fg-dim)" },
+  subjName: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   subjOn: { background: "var(--surface-strong)", color: "var(--fg)", boxShadow: "var(--v-shadow)" },
+  unsaved: { flex: "none", width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" },
 
   pane: { flex: "1 1 320px", minWidth: 0, display: "flex", flexDirection: "column", gap: 10 },
   warn: { fontSize: 12.5, color: "var(--accent)", background: "var(--accent-wash)",
@@ -242,6 +287,7 @@ const S = {
     outline: "none" },
   actions: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
   stamp: { fontSize: 12.5, color: "var(--fg-mute)" },
+  stampFailed: { color: "var(--danger)", fontWeight: 600 },
   btnPrimary: { padding: "9px 17px", borderRadius: 11, fontWeight: 700, fontSize: 13, cursor: "pointer",
     border: "none", background: "var(--accent)", color: "var(--bg-0)", fontFamily: "inherit" },
   btnOff: { opacity: 0.4, cursor: "default" },

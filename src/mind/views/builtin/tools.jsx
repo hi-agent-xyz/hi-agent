@@ -10,8 +10,6 @@
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect } from "react";
 
-export const captionAside = "top";
-
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. `Tools` is this system's own vocabulary —
 // like Skills and Memory — so it stays the English word in both tables. The role
@@ -27,12 +25,14 @@ const T = {
     count: (n, layers) => `${n} tools · split across ${layers} layers`,
     noTools: "No tools.",
     // What each rung is *for*, in one line — the role name alone doesn't say why its
-    // tool list is shaped the way it is.
+    // tool list is shaped the way it is. Keyed by every role `/api/tools` serves
+    // (`ROLES` in server/tools.rs); a rung with no entry here would print as its bare id.
     role: {
-      reaction: ["the speaking layer", "speaks up when someone is there, puts things on the screen; does no work"],
+      worker: ["the working layer", "the one sent out to do a job — the only rung that touches the screen and makes things"],
+      reflection: ["the memory-keeping layer", "looks back, writes into memory"],
       cognition: ["the thinking layer", "doesn't do the work itself — hands it out, then watches for the answer"],
       deliberation: ["the pondering layer", "can only hand a thought back"],
-      reflection: ["the memory-keeping layer", "looks back, writes into memory"],
+      reaction: ["the speaking layer", "speaks up when someone is there, puts things on the screen; does no work"],
       other: ["other", "deliberately empty — a fake realtime capability used to hang here"],
     },
   },
@@ -41,10 +41,11 @@ const T = {
     count: (n, layers) => `${n} 个 · 分给 ${layers} 层`,
     noTools: "没有工具。",
     role: {
-      reaction: ["说话的那层", "在场时开口、把东西放到屏幕上；不干活"],
+      worker: ["干活的那层", "被派出去做事的那一层 —— 只有它动屏幕，也只有它出东西"],
+      reflection: ["整理记忆的那层", "回头看，写进记忆"],
       cognition: ["想事情的那层", "自己不动手，派活出去、盯着回音"],
       deliberation: ["琢磨的那层", "只能把想法递回去"],
-      reflection: ["整理记忆的那层", "回头看，写进记忆"],
+      reaction: ["说话的那层", "在场时开口、把东西放到屏幕上；不干活"],
       other: ["其他", "刻意空着 —— 曾经这里挂着一份假的实时能力"],
     },
   },

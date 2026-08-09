@@ -5,9 +5,6 @@
 // agent. Seeded at `_builtin/upload`; the agent may adapt it like any view.
 import { useState, useEffect, useRef } from "react";
 
-// Our content fills the frame; let the host dock the live words up top.
-export const captionAside = "top";
-
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. This surface used to be Chinese-only; the
 // strings are the same handful, now selected off the person's language setting.
@@ -21,6 +18,7 @@ const T = {
     dropHere: "Drop a file here",
     pick: "or click to pick · contracts, ID photos, PDFs all work",
     qrAlt: "Scan to upload", qrHint: "Scan with your phone", qrWait: "Making the code…",
+    qrFailed: "Couldn't make the code.", qrRetry: "Try again",
     sent: "sent", failed: "failed", sending: "sending",
   },
   zh: {
@@ -28,6 +26,7 @@ const T = {
     dropHere: "把文件拖到这里",
     pick: "或点击选择 · 合同、证件照、PDF 都行",
     qrAlt: "扫码上传", qrHint: "手机扫码传", qrWait: "二维码准备中…",
+    qrFailed: "二维码没做出来。", qrRetry: "再试一次",
     sent: "已发送", failed: "失败", sending: "发送中",
   },
 };
@@ -47,21 +46,30 @@ const L = words();
 
 export default function Upload() {
   const [url, setUrl] = useState(null);
+  const [qrFailed, setQrFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [items, setItems] = useState([]); // { key, name, state: sending|done|error }
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
 
-  // Mint an upload link for the phone QR.
+  // Mint an upload link for the phone QR. A failure has to say so and offer another go:
+  // the door that stays on "preparing…" for ever reads as a slow one, and the person
+  // waits for a code that is never coming instead of using the drop zone beside it.
   useEffect(() => {
     let alive = true;
+    setQrFailed(false);
     fetch("/api/handoff", { method: "POST" })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((d) => alive && setUrl(d.url))
-      .catch(() => {});
+      .then((d) => {
+        if (!alive) return;
+        if (d?.url) setUrl(d.url);
+        else setQrFailed(true);
+      })
+      .catch(() => alive && setQrFailed(true));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [attempt]);
 
   async function send(files) {
     for (const file of files) {
@@ -120,6 +128,11 @@ export default function Upload() {
               <img alt={L.qrAlt} width={148} height={148} style={S.qrImg} src={"/api/qr?data=" + encodeURIComponent(url)} />
               <div style={S.hint}>{L.qrHint}</div>
             </>
+          ) : qrFailed ? (
+            <>
+              <div style={S.hint}>{L.qrFailed}</div>
+              <button type="button" style={S.retry} onClick={() => setAttempt((n) => n + 1)}>{L.qrRetry}</button>
+            </>
           ) : (
             <div style={S.hint}>{L.qrWait}</div>
           )}
@@ -158,6 +171,8 @@ const S = {
   // The white plate stays literal in both themes: a QR needs its light quiet zone to scan.
   qrImg: { borderRadius: 12, background: "#fff", padding: 8 },
   hint: { color: "var(--fg-mute)", fontSize: 13 },
+  retry: { appearance: "none", font: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer",
+    color: "var(--accent)", background: "none", border: "none", padding: "2px 4px" },
   list: { width: "min(980px,100%)", margin: "0 auto", display: "flex", flexDirection: "column", gap: 6 },
   listRow: { display: "flex", gap: 8, alignItems: "center", fontSize: 14 },
   name: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },

@@ -10,8 +10,6 @@
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect } from "react";
 
-export const captionAside = "top";
-
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. `Drive` is an ordinary word for the shelf of
 // files, so it reads as 文件 in Chinese — unlike Memory, which is this system's own
@@ -27,6 +25,9 @@ const T = {
     count: (n, size) => `${n === 1 ? "1 file" : `${n} files`} · ${size}`,
     emptyBig: "Nothing kept here yet.",
     emptySub: "Contracts, documents, drafts — anything worth keeping as the original file shows up here once you hand it over.",
+    // A shelf that exists and holds nothing is an answer, not a gap in the list.
+    shelfEmpty: "Empty.",
+    loose: "Loose",
   },
   zh: {
     title: "文件",
@@ -34,6 +35,8 @@ const T = {
     count: (n, size) => `${n} 份 · ${size}`,
     emptyBig: "还没存着什么。",
     emptySub: "合同、证件、稿子这类要留原件的东西，传给它以后会在这里。",
+    shelfEmpty: "空的。",
+    loose: "散着的",
   },
 };
 
@@ -50,6 +53,10 @@ function words() {
 }
 const L = words();
 
+// Not a folder name: the bucket for files handed over without a shelf. A real drive
+// directory can never collide with it — `/` cannot appear in one path segment.
+const LOOSE = "/loose";
+
 export default function Drive() {
   const [entries, setEntries] = useState(null);
 
@@ -65,6 +72,8 @@ export default function Drive() {
 
   const files = entries.filter((e) => !e.dir);
 
+  // With no file anywhere, the shelves are beside the point: "what have I handed it"
+  // is answered better by the sentence than by three empty rows.
   if (files.length === 0) {
     return (
       <div style={S.page}>
@@ -77,14 +86,35 @@ export default function Drive() {
     );
   }
 
-  // Group by the first path segment so the three top folders read as the three shelves
-  // they are, rather than as an undifferentiated file list.
+  // Group by the first path segment so the top folders read as the shelves they are,
+  // rather than as an undifferentiated file list. The endpoint sends directory entries
+  // too, on purpose — an empty `drive/papers/` is a real answer to "what am I holding",
+  // so a shelf with nothing on it gets a row of its own rather than vanishing. Files
+  // sitting at the root of the drive have no shelf; they collect under `loose`.
   const groups = new Map();
-  for (const f of files) {
-    const top = f.path.split("/")[0] || "";
+  for (const e of entries) {
+    if (e.dir && !e.path.includes("/")) {
+      if (!groups.has(e.path)) groups.set(e.path, []);
+      continue;
+    }
+    if (e.dir) continue;
+    const top = e.path.includes("/") ? e.path.split("/")[0] : LOOSE;
     if (!groups.has(top)) groups.set(top, []);
-    groups.get(top).push(f);
+    groups.get(top).push(e);
   }
+
+  // The three named shelves lead, in the order docs/data-dir-layout.md names them;
+  // anything else the agent made follows, alphabetically, and loose files land last.
+  const rank = (top) => {
+    const known = ["projects", "notes", "papers"].indexOf(top);
+    if (known >= 0) return [0, known, ""];
+    return top === LOOSE ? [2, 0, ""] : [1, 0, top];
+  };
+  const shelves = [...groups.entries()].sort(([a], [b]) => {
+    const [ga, ka, na] = rank(a);
+    const [gb, kb, nb] = rank(b);
+    return ga - gb || ka - kb || na.localeCompare(nb);
+  });
 
   return (
     <div style={S.page}>
@@ -93,20 +123,27 @@ export default function Drive() {
         <span style={S.count}>{L.count(files.length, bytes(files.reduce((n, f) => n + (f.bytes || 0), 0)))}</span>
       </div>
 
-      {[...groups.entries()].map(([top, list]) => (
+      {shelves.map(([top, list]) => (
         <div key={top} style={S.group}>
-          <div style={S.sect}>{L.top[top] || top}<span style={S.sectN}>{list.length}</span></div>
-          <div style={S.list}>
-            {list.map((f) => (
-              <a key={f.path} style={S.row} href={`/api/drive/file/${f.path.split("/").map(encodeURIComponent).join("/")}`}
-                target="_blank" rel="noreferrer">
-                <span style={S.ext}>{(f.ext || "·").slice(0, 4)}</span>
-                <span style={S.name}>{f.path.split("/").slice(1).join("/") || f.path}</span>
-                <span style={S.size}>{bytes(f.bytes)}</span>
-                <span style={S.when}>{short(f.modified)}</span>
-              </a>
-            ))}
+          <div style={S.sect}>
+            {top === LOOSE ? L.loose : L.top[top] || top}
+            <span style={S.sectN}>{list.length}</span>
           </div>
+          {list.length === 0 ? (
+            <div style={S.shelfEmpty}>{L.shelfEmpty}</div>
+          ) : (
+            <div style={S.list}>
+              {list.map((f) => (
+                <a key={f.path} style={S.row} href={`/api/drive/file/${f.path.split("/").map(encodeURIComponent).join("/")}`}
+                  target="_blank" rel="noreferrer">
+                  <span style={S.ext}>{(f.ext || "·").slice(0, 4)}</span>
+                  <span style={S.name}>{top === LOOSE ? f.path : f.path.split("/").slice(1).join("/")}</span>
+                  <span style={S.size}>{bytes(f.bytes)}</span>
+                  <span style={S.when}>{short(f.modified)}</span>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -114,7 +151,7 @@ export default function Drive() {
 }
 
 function bytes(n) {
-  if (!n) return "0";
+  if (!n) return "0 B";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / 1048576).toFixed(1)} MB`;
@@ -143,6 +180,7 @@ const S = {
   sect: { display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700,
     letterSpacing: ".05em", color: "var(--fg-mute)", marginBottom: 9 },
   sectN: { fontWeight: 600 },
+  shelfEmpty: { fontSize: 13, color: "var(--fg-mute)", padding: "2px 2px 4px" },
 
   list: { display: "flex", flexDirection: "column", gap: 6 },
   row: { display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit",

@@ -34,7 +34,8 @@ use crate::foundation::mcp::tools_for_role;
 /// precisely so that emptiness is visible — the arm previously held the legacy agentic
 /// reaction's toolset long after no live role mapped to it, and read as a live surface in
 /// every review.
-const ROLES: [&str; 6] = ["worker", "reflection", "cognition", "deliberation", "reaction", "other"];
+pub(crate) const ROLES: [&str; 6] =
+    ["worker", "reflection", "cognition", "deliberation", "reaction", "other"];
 
 /// The role a listed surface is served under. `other` is the `_` arm, reached with no
 /// role at all.

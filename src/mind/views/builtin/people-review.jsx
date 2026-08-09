@@ -6,8 +6,6 @@
 // action posts to /api/people/*; the store is global.
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 
-export const captionAside = "top";
-
 const api = {
   list: () => fetch("/api/people").then((r) => r.json()),
   name: (subject, name) =>
@@ -20,7 +18,8 @@ const api = {
     fetch("/api/people/split/apply", { method: "POST", headers: J, body: JSON.stringify({ subject, modality, groups }) }).then((r) => r.json()),
 };
 const J = { "Content-Type": "application/json" };
-const clipUrl = (subject, modality, stem) => `/api/people/${encodeURIComponent(subject)}/${modality}/${stem}`;
+const clipUrl = (subject, modality, stem) =>
+  `/api/people/${encodeURIComponent(subject)}/${modality}/${encodeURIComponent(stem)}`;
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. This view is about people, not about this
@@ -33,6 +32,10 @@ const clipUrl = (subject, modality, stem) => `/api/people/${encodeURIComponent(s
 const T = {
   en: {
     title: "People",
+    // On a fresh install this is the whole view. An empty grid under a title reads as a
+    // page still loading; "no one yet" is a real answer and says what fills it.
+    emptyBig: "No one stored yet.",
+    emptySub: "As it meets people — a face on the camera, a voice in the room — they show up here as cards for you to name.",
     unnamed: "Unnamed", namePh: "Add a name…",
     mergeHint: (n) => `If there's already a "${n}", saving merges the two together`,
     sec: { face: "Faces", voice: "Voices" },
@@ -47,6 +50,8 @@ const T = {
   },
   zh: {
     title: "认识的人",
+    emptyBig: "还没记住谁。",
+    emptySub: "见过面、听过声音之后，人会一张张出现在这里，你来给他们起名字。",
     unnamed: "未命名", namePh: "加个名字…",
     mergeHint: (n) => `已经有「${n}」的话，保存会合并到一起`,
     sec: { face: "人脸", voice: "声音" },
@@ -130,9 +135,21 @@ export default function PeopleReview() {
 
   if (people === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
 
+  if (people.length === 0) {
+    return (
+      <div style={S.page}>
+        <div style={S.h1}>{L.title}</div>
+        <div style={S.empty}>
+          <div style={S.emptyBig}>{L.emptyBig}</div>
+          <div style={S.emptySub}>{L.emptySub}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={S.page}>
-      <style>{"@keyframes eqpulse{0%,100%{height:10px}50%{height:26px}}"}</style>
+      <style>{"@keyframes hi-ppl-eqpulse{0%,100%{height:10px}50%{height:26px}}"}</style>
       <div style={S.h1}>{L.title}</div>
       <div style={S.grid} ref={gridRef}>
         {ordered.map((p) =>
@@ -151,7 +168,7 @@ function Card({ person, onOpen }) {
   const isFace = person.face.length > 0;
   const poster = isFace ? clipUrl(person.subject, "face", person.face[0]) : null;
   return (
-    <div data-card={person.subject} style={S.card} onClick={onOpen}
+    <button type="button" data-card={person.subject} style={{ ...S.reset, ...S.card }} onClick={onOpen}
       onMouseEnter={(e) => lift(e.currentTarget, true)} onMouseLeave={(e) => lift(e.currentTarget, false)}>
       {poster ? (
         <div style={{ ...S.poster, backgroundImage: `url('${poster}')` }} />
@@ -159,7 +176,7 @@ function Card({ person, onOpen }) {
         <div style={{ ...S.poster, ...S.voicePoster }}><Eq /></div>
       )}
       <div style={person.named ? S.name : S.nameNone}>{person.named ? person.subject : L.unnamed}</div>
-    </div>
+    </button>
   );
 }
 
@@ -219,7 +236,7 @@ function ModSection({ person, modality, onChanged, first }) {
     <div style={{ ...S.modsec, ...(first ? {} : S.modsecTop) }}>
       <div style={S.secttl}>
         <span>{L.sec[modality]} <span style={S.cnt}>{stems.length}</span></span>
-        {messy && <span style={S.regroup} onClick={regroup}>{L.regroup}</span>}
+        {messy && <button type="button" style={{ ...S.reset, ...S.regroup }} onClick={regroup}>{L.regroup}</button>}
       </div>
       <div style={S.clips}>
         {stems.map((stem) => (
@@ -229,7 +246,12 @@ function ModSection({ person, modality, onChanged, first }) {
       {proposal && !proposal.none && (
         <Proposal person={person} modality={modality} proposal={proposal} onClose={() => setProposal(null)} onChanged={onChanged} />
       )}
-      {proposal && proposal.none && <div style={S.plead}>{L.oneOnly}<a style={S.link} onClick={() => setProposal(null)}>{L.ok}</a></div>}
+      {proposal && proposal.none && (
+        <div style={S.plead}>
+          {L.oneOnly}
+          <button type="button" style={{ ...S.reset, ...S.link }} onClick={() => setProposal(null)}>{L.ok}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -240,14 +262,14 @@ function Clip({ subject, modality, stem, onChanged }) {
   const audioRef = useRef(null);
   const url = clipUrl(subject, modality, stem);
 
+  const isVoice = modality === "voice";
   const play = (e) => {
     e.stopPropagation();
-    if (modality === "voice") {
-      if (!audioRef.current) audioRef.current = new Audio(url);
-      const a = audioRef.current;
-      if (playing) { a.pause(); setPlaying(false); }
-      else { a.currentTime = 0; a.play().catch(() => {}); setPlaying(true); a.onended = () => setPlaying(false); }
-    }
+    if (!isVoice) return;
+    if (!audioRef.current) audioRef.current = new Audio(url);
+    const a = audioRef.current;
+    if (playing) { a.pause(); setPlaying(false); }
+    else { a.currentTime = 0; a.play().catch(() => {}); setPlaying(true); a.onended = () => setPlaying(false); }
   };
   const eject = async (e) => {
     e.stopPropagation();
@@ -255,15 +277,24 @@ function Clip({ subject, modality, stem, onChanged }) {
     setTimeout(async () => { await api.eject(subject, modality, stem); onChanged(); }, 300);
   };
 
-  const base = modality === "face"
-    ? { ...S.clip, backgroundImage: `url('${url}')`, backgroundSize: "cover", backgroundPosition: "center" }
-    : { ...S.clip, ...S.voiceClip };
+  const base = isVoice
+    ? { ...S.clip, ...S.voiceClip }
+    : { ...S.clip, backgroundImage: `url('${url}')`, backgroundSize: "cover", backgroundPosition: "center",
+        cursor: "default" };
 
+  // Only a voice clip plays, so only a voice clip offers the play glyph, the pointer and
+  // a key handler — a ▶ on a face crop promised something no click could deliver. The
+  // tile stays a div because it already contains the eject button.
   return (
-    <div style={{ ...base, ...(gone ? S.clipGone : {}), ...(playing ? S.clipPlaying : {}) }} onClick={play}>
-      {modality === "voice" && <Eq small live={playing} />}
-      <button style={S.eject} title={L.notThisPerson} onClick={eject}>✕</button>
-      <div style={S.clipPlay}>▶</div>
+    <div style={{ ...base, ...(gone ? S.clipGone : {}), ...(playing ? S.clipPlaying : {}) }}
+      onClick={play}
+      role={isVoice ? "button" : undefined}
+      tabIndex={isVoice ? 0 : undefined}
+      aria-pressed={isVoice ? playing : undefined}
+      onKeyDown={isVoice ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); play(e); } } : undefined}>
+      {isVoice && <Eq small live={playing} />}
+      <button type="button" style={S.eject} title={L.notThisPerson} aria-label={L.notThisPerson} onClick={eject}>✕</button>
+      {isVoice && <div style={S.clipPlay}>▶</div>}
     </div>
   );
 }
@@ -320,7 +351,9 @@ function Eq({ big, small, live }) {
         <i key={i} style={{
           width: w, height: h, borderRadius: w, display: "inline-block",
           background: live ? "var(--accent)" : "var(--fg-mute)", opacity: live ? 0.9 : 0.5,
-          animation: live ? `eqpulse 1s ease-in-out ${i * 0.1}s infinite` : "none",
+          // Prefixed: the keyframes go into the host document, shared with every other
+          // view on the page, so a bare `eqpulse` is a name collision waiting to happen.
+          animation: live ? `hi-ppl-eqpulse 1s ease-in-out ${i * 0.1}s infinite` : "none",
         }} />
       ))}
     </div>
@@ -372,8 +405,20 @@ const S = {
     padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 26 },
+  // Everything that responds to a click is a real <button>, so it is reachable by tab
+  // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
+  reset: { appearance: "none", border: "none", background: "none", font: "inherit",
+    color: "inherit", textAlign: "left", cursor: "pointer", padding: 0 },
+
+  empty: { padding: "46px 8px", textAlign: "center" },
+  emptyBig: { fontSize: 17, fontWeight: 600, color: "var(--fg-dim)" },
+  emptySub: { fontSize: 13.5, color: "var(--fg-mute)", marginTop: 7, lineHeight: 1.55,
+    maxWidth: 460, marginLeft: "auto", marginRight: "auto" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(168px,1fr))", gap: 18, alignItems: "start" },
-  card: { background: "var(--surface-strong)", borderRadius: 22, boxShadow: "var(--ppl-shadow)", overflow: "hidden",
+  // `display:block` + full width: as a <button> this would otherwise shrink-wrap its
+  // contents and centre them, instead of filling its grid cell the way the div did.
+  card: { display: "block", width: "100%", background: "var(--surface-strong)", borderRadius: 22,
+    boxShadow: "var(--ppl-shadow)", overflow: "hidden",
     cursor: "pointer", transition: "transform .2s cubic-bezier(.32,.72,0,1),box-shadow .2s" },
   // `backgroundColor`, never the `background` shorthand: the shorthand resets
   // background-size/position, which left every face crop tiling at natural size.

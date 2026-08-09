@@ -12,8 +12,6 @@
 // /api/workers; polls, because the whole value is that it is current.
 import { useState, useEffect, useCallback } from "react";
 
-export const captionAside = "top";
-
 const api = {
   list: () => fetch("/api/workers").then((r) => r.json()),
   one: (id) => fetch(`/api/workers/${encodeURIComponent(id)}`).then((r) => r.json()),
@@ -128,12 +126,13 @@ export default function Workers() {
         <div style={S.list}>
           {workers.map((w) => (
             <div key={w.id} style={S.row}>
-              <div style={S.rowTop} onClick={() => setOpenId(openId === w.id ? null : w.id)}>
+              <button type="button" style={{ ...S.reset, ...S.rowTop }} aria-expanded={openId === w.id}
+                onClick={() => setOpenId(openId === w.id ? null : w.id)}>
                 <span style={{ ...S.dot, ...(w.busy ? S.dotBusy : {}) }} aria-hidden />
                 <span style={S.role}>{L.role[w.role] || w.role}</span>
                 <span style={S.task}>{w.task || L.noTask}</span>
                 <span style={S.elapsed}>{elapsed(w.started)}</span>
-              </div>
+              </button>
 
               <div style={S.stats}>
                 <span>{w.busy ? L.busy : L.idle}</span>
@@ -180,6 +179,10 @@ const S = {
   head: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0 },
   count: { fontSize: 13, color: "var(--fg-mute)", fontWeight: 600 },
+  // Everything that responds to a click is a real <button>, so it is reachable by tab
+  // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
+  reset: { appearance: "none", border: "none", background: "none", font: "inherit",
+    color: "inherit", textAlign: "left", cursor: "pointer", padding: 0 },
 
   empty: { padding: "46px 8px", textAlign: "center" },
   emptyBig: { fontSize: 17, fontWeight: 600, color: "var(--fg-dim)" },
@@ -188,7 +191,7 @@ const S = {
   list: { display: "flex", flexDirection: "column", gap: 10 },
   row: { background: "var(--surface-strong)", borderRadius: 16, boxShadow: "var(--v-shadow)",
     padding: "14px 16px" },
-  rowTop: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", cursor: "pointer" },
+  rowTop: { display: "flex", width: "100%", alignItems: "center", gap: 10, flexWrap: "wrap", cursor: "pointer" },
   dot: { width: 8, height: 8, borderRadius: "50%", background: "var(--line-strong)", flex: "none" },
   dotBusy: { background: "var(--accent)" },
   role: { fontSize: 11.5, fontWeight: 700, color: "var(--accent)", background: "var(--accent-wash)",

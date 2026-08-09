@@ -178,10 +178,12 @@ what you need as bare modules:
 
 **Colour that follows the person's theme.** The host defines these, and only these:
 `--fg` / `--fg-dim` / `--fg-mute` (text), `--surface` / `--surface-strong` (panels over
-the paper), `--line` / `--line-strong` (borders, and neutral placeholder fills),
-`--accent` / `--accent-soft` / `--accent-line` / `--accent-wash`, `--shadow` /
-`--shadow-strong` (colours, not shadow lists), `--bg-0` / `--bg-1` (the page ground) and
-`--font-display`. Reach for one when you want a colour that tracks light/dark. Two
+the paper) and `--surface-border`, `--line` / `--line-strong` (borders, and neutral
+placeholder fills), `--accent` / `--accent-soft` / `--accent-line` / `--accent-wash`,
+a second accent `--accent-2`, `--danger` / `--danger-line` / `--danger-wash` for
+something destructive, `--shadow` / `--shadow-strong` (colours, not shadow lists),
+`--bg-0` / `--bg-1` (the page ground), `--font-display` / `--font-mono`, and `--ease`
+(the shared easing curve). Reach for one when you want a colour that tracks light/dark. Two
 things to get right: don't invent a name — `var(--card,#fff)` looks like a token and is
 really just a hardcoded white, because `--card` doesn't exist — and don't half-do it: a
 fixed background under `var(--fg)` text is the exact recipe for a view that is legible

@@ -12,8 +12,6 @@
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect, useCallback } from "react";
 
-export const captionAside = "top";
-
 const api = {
   list: () => fetch("/api/skills").then((r) => r.json()),
   read: (path) => fetch(`/api/skills/${path.split("/").map(encodeURIComponent).join("/")}`).then((r) => r.json()),
@@ -140,10 +138,10 @@ function Row({ skill, open, content, onToggle, confirming, onAskDelete, onCancel
   const age = ageOf(skill.modified);
   return (
     <div style={{ ...S.row, ...(skill.builtin ? S.rowBuiltin : {}) }}>
-      <div style={S.rowTop} onClick={onToggle}>
+      <button type="button" style={{ ...S.reset, ...S.rowTop }} aria-expanded={open} onClick={onToggle}>
         <span style={S.name}>{skill.name}</span>
         {age && <span style={{ ...S.age, ...(age.old ? S.ageOld : {}) }}>{age.text}</span>}
-      </div>
+      </button>
       {skill.excerpt && !open && <div style={S.excerpt}>{skill.excerpt}</div>}
       <div style={S.metaRow}>
         <span style={S.path}>{skill.path}</span>
@@ -151,11 +149,11 @@ function Row({ skill, open, content, onToggle, confirming, onAskDelete, onCancel
           confirming ? (
             <span style={S.confirm}>
               <span style={S.confirmQ}>{L.confirmQ}</span>
-              <span style={S.link} onClick={onCancelDelete}>{L.cancel}</span>
-              <span style={{ ...S.link, ...S.linkDanger }} onClick={onDelete}>{L.confirmDel}</span>
+              <button type="button" style={{ ...S.reset, ...S.link }} onClick={onCancelDelete}>{L.cancel}</button>
+              <button type="button" style={{ ...S.reset, ...S.link, ...S.linkDanger }} onClick={onDelete}>{L.confirmDel}</button>
             </span>
           ) : (
-            <span style={S.del} onClick={onAskDelete}>{L.del}</span>
+            <button type="button" style={{ ...S.reset, ...S.del }} onClick={onAskDelete}>{L.del}</button>
           )
         )}
       </div>
@@ -189,6 +187,10 @@ const S = {
     padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 22 },
+  // Everything that responds to a click is a real <button>, so it is reachable by tab
+  // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
+  reset: { appearance: "none", border: "none", background: "none", font: "inherit",
+    color: "inherit", textAlign: "left", cursor: "pointer", padding: 0 },
   sect: { fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", color: "var(--fg-mute)",
     margin: "26px 0 11px" },
 
@@ -200,7 +202,7 @@ const S = {
   row: { background: "var(--surface-strong)", borderRadius: 16, boxShadow: "var(--v-shadow)",
     padding: "14px 16px 12px" },
   rowBuiltin: { background: "transparent", boxShadow: "none", border: "1px solid var(--line)" },
-  rowTop: { display: "flex", alignItems: "baseline", gap: 10, cursor: "pointer" },
+  rowTop: { display: "flex", width: "100%", alignItems: "baseline", gap: 10, cursor: "pointer" },
   name: { fontSize: 15.5, fontWeight: 650, letterSpacing: "-.01em", flex: 1, minWidth: 0 },
   age: { fontSize: 12.5, color: "var(--fg-mute)", fontWeight: 600, flex: "none" },
   ageOld: { color: "var(--accent)" },
