@@ -1,5 +1,4 @@
-// Built-in: 会用的工具 — the whole tool surface, laid out by which rung gets which tools.
-//
+// purpose: 会用的工具 — the whole tool surface laid out by which rung gets which tools. Read-only.
 // The odd one out in this family: everything else here reviews accumulated state that a
 // person may need to correct, and this reviews compile-time code. There is nothing to fix
 // from the screen, and that is deliberate — it is here because until now there was no way

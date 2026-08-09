@@ -1,4 +1,5 @@
-// Built-in: 手头在跑的 — the working sessions alive right now. Read-only on purpose:
+// purpose: 手头在跑的 — the working sessions alive right now, and an honest empty state when there are none. Read-only.
+// Read-only on purpose:
 // the registry has no stop verb, and a button that pretended to kill a worker would be
 // worse than no button.
 //

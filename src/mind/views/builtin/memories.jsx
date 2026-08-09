@@ -1,6 +1,4 @@
-// Built-in: 记得的事 — the facets memory keeps about people, projects and topics, and the
-// one place a person can correct one.
-//
+// purpose: 记得的事 — read the facets memory holds about people, projects and topics, and correct one in place.
 // docs/arch/data.md says a facet is "revisable, correctable by one sentence from the
 // person", and that "a correction that does not stick is now a memory bug to fix". Until
 // this view there was nothing that could show a facet at all, let alone fix one — and

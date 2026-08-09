@@ -1,6 +1,6 @@
-// Built-in: the file-handoff entry. Shown when the user wants to hand the agent a
-// file (a contract, a passport scan). Two doors: drag-drop / pick (this device),
-// and a QR a phone scans to upload. A handed file is an artifact, not something
+// purpose: hand the agent a file — drag-drop or pick on this device, or scan a QR to send one from a phone.
+// Shown when the user wants to hand over a file (a contract, a passport scan).
+// A handed file is an artifact, not something
 // the agent looks at — both doors post to the `file` channel, which wakes the
 // agent. Seeded at `_builtin/upload`; the agent may adapt it like any view.
 import { useState, useEffect, useRef } from "react";

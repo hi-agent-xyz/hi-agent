@@ -1,6 +1,6 @@
-// Built-in task ledger. The full canvas is organized by the one durable lifecycle:
-// todo, doing, done, cancelled. Liveness is optional detail on a doing task, never a
-// second kind or mode.
+// purpose: 任务 — the task ledger as todo / doing / done / cancelled, with liveness as detail on a doing task.
+// The full canvas is organized by the one durable lifecycle: todo, doing, done,
+// cancelled. Liveness is optional detail on a doing task, never a second kind or mode.
 import { useState, useEffect, useCallback, useRef } from "react";
 
 const J = { "Content-Type": "application/json" };

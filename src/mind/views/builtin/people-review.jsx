@@ -1,6 +1,5 @@
-// Built-in: 认识的人 — review who the agent has stored (faces + voices), name the
-// unknown ones, pull a clip that doesn't belong out of a cluster, and auto-regroup
-// a cluster that's really several people. A calm Contacts-style grid; clicking a
+// purpose: 认识的人 — review stored faces and voices, name the unknown ones, eject a mis-clustered clip, regroup a mixed cluster.
+// A calm Contacts-style grid; clicking a
 // card expands it in place (FLIP) into a review row — poster left, editable name +
 // per-modality clip strips right/below. Naming onto an existing name merges. Every
 // action posts to /api/people/*; the store is global.

@@ -1,6 +1,7 @@
-// Built-in: 存着的文件 — what is in `drive/`, the verbatim, precious half of the data dir
-// (`projects/`, `notes/`, `papers/`). Handed artifacts live here: a contract, a passport
-// scan, a paper — files the agent keeps as bytes rather than as memory.
+// purpose: 存着的文件 — browse `drive/`, the artifacts the agent keeps as bytes (contracts, scans, papers). Read-only.
+// The verbatim, precious half of the data dir (`projects/`, `notes/`, `papers/`).
+// Handed artifacts live here: a contract, a passport scan, a paper — files the agent
+// keeps as bytes rather than as memory.
 //
 // Read-only, and honestly so. docs/data-dir-layout.md says the tree exists but its
 // contract does not: graduation into `drive/projects/` is not built, and neither is the

@@ -186,6 +186,33 @@ mod tests {
         }
     }
 
+    /// The toolbox is read by scanning the tree for `// purpose:` lines
+    /// (`docs/arch/data.md#views`), and `_builtin/` is the only part of it a fresh
+    /// install has. A bundled view without the line degrades to a bare filename in
+    /// the one scan the builder runs before it authors anything — so every one of
+    /// them opens with a purpose line, and it has to be the *first* line, since that
+    /// is what `grep -n "^// purpose:"` returns.
+    #[test]
+    fn every_bundled_view_opens_with_a_purpose_line() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
+        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
+        for name in names {
+            let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
+            let first = source.lines().next().unwrap_or_default();
+            assert!(
+                first.starts_with("// purpose:"),
+                "{name}.jsx must open with a `// purpose:` line; it opens with {first:?}"
+            );
+            assert!(
+                first.trim_start_matches("// purpose:").trim().len() > 20,
+                "{name}.jsx's purpose line says too little to match a job against: {first:?}"
+            );
+        }
+    }
+
     /// Full-bleed is the frame every view gets, so owning the canvas is no longer
     /// something a view declares — and a sidecar that exists only to say "fill" is
     /// a file that can be forgotten. What this keeps is that none of them carries

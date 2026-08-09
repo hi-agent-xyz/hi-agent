@@ -1,5 +1,5 @@
-// Built-in: the managed account has observed a 402. This is host-owned condition
-// state, not model output. The process-wide vendor gate shows and hides it directly
+// purpose: the host's own notice that managed calls are paused on a 402. Shown and taken down by the vendor gate, not by the agent.
+// Host-owned condition state, not model output. The process-wide vendor gate shows and hides it directly
 // from the durable energy level and polls recovery while it is visible.
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
