@@ -39,8 +39,7 @@
 //!    sink, so work it creates returns to Reflection rather than the voice or Cognition.
 //! 4. **Two kinds of wake.** Reflection is the one rung driven by a clock *and* by mail.
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
-//!    which `docs/arch/core.md` is explicit is not what the (deferred) global clock is
-//!    for.
+//!    which is the only shape of timing the host has (`docs/arch/core.md#glancing-up`).
 //!
 //! ## Sessions per wake, registration per process
 //!

@@ -679,9 +679,8 @@ enum LoopInput {
 /// `s`/`m`/`h` suffix (`30s`, `20m`, `1h`). `None` for anything unparseable, so a
 /// malformed setting falls back to its default rather than taking a wrong value.
 ///
-/// Used only by [`duration_tunable`] now — this grammar outlived the `alarm` tool
-/// it was written for, because the config knobs (`pulse`, `reflect_every`,
-/// `reflect_max`, `vendor_probe`) are written by hand and want the same shorthand.
+/// Used only by [`duration_tunable`] — the config knobs (`pulse`, `reflect_every`,
+/// `reflect_max`, `vendor_probe`) are written by hand and want this shorthand.
 fn parse_delay(tok: &str) -> Option<Duration> {
     let tok = tok.trim();
     let (digits, mult) = if let Some(n) = tok.strip_suffix(|c| c == 's' || c == 'S') {

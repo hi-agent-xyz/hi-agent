@@ -119,8 +119,8 @@ Each is a statement we can test, and each has a real failure behind it.
    through Reaction, and an empty room holds the turn rather than dropping it.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
    glancing up — the pulse, the reflection backoff, Cognition's glance-up. Scheduling
-   past that is the agent's to build with the shell it already has; see
-   [the clock we declined](core.md#glancing-up--and-why-there-is-no-clock).
+   past that is the agent's to arrange with the shell it already has; see
+   [glancing up](core.md#glancing-up).
 7. **Recovery is reconstruction, not continuation.** Workers are volatile, so anything
    valuable is written down before the crash.
 8. **A liveness probe that returns nothing means the thing is DOWN.** Count, don't check for

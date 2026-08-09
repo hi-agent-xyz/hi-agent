@@ -443,8 +443,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // invoke route are real, so the reflex store can be read and fired but never
         // written. That is an open decision, not an oversight: it needs a rung or it
         // needs deleting, and it is now visibly nobody's rather than sitting in an arm
-        // that looked live. (`alarm` was the other, and it is gone outright — see
-        // `docs/arch/core.md` on the clock we declined.)
+        // that looked live. (`alarm` was the other, and it is gone outright — the host
+        // fires at no named time; see `docs/arch/core.md#glancing-up`.)
         _ => vec![],
     }
 }

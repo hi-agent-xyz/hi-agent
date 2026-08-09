@@ -27,9 +27,10 @@ pub(super) const SAY_MAX_CHARS: usize = 240;
 /// Once there were four: two for dispatching work and two for a worker to reach the
 /// voice. The reaching ones are gone — a worker addresses its owner with the one verb
 /// now, through the switchboard, which needs no channel of its own.
-/// `Alarm` went with [the clock we declined](../../../docs/arch/core.md);
-/// scheduling is the agent's own, built with the shell it already has. What is left
-/// is one variant, and it is here because the loop owns the state it touches.
+/// `Alarm` went with it: nothing in the host fires at a named time
+/// ([`glancing up`](../../../docs/arch/core.md)), and the agent arranges its own
+/// timing with the shell it already has. What is left is one variant, and it is
+/// here because the loop owns the state it touches.
 #[derive(Debug)]
 pub enum LoopControl {
     /// Start a working session for `task` (the `create_worker` tool), owned by the

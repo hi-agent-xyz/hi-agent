@@ -156,7 +156,7 @@ outlives one:
 > messages Deliberation, which frames it, and Reaction voices it when the room is right.
 
 This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
-loop ([`core.md`](core.md#glancing-up--and-why-there-is-no-clock)) — one wake shortly after
+loop ([`core.md`](core.md#glancing-up)) — one wake shortly after
 the process starts, then on the pulse cadence while anything is owed.
 
 Answers travel back the way they came: what Deliberation handed up returns to Deliberation.

@@ -95,9 +95,9 @@ you get woken.
 ## Timing is yours to arrange
 
 **Nothing wakes you at a time you name.** You wake shortly after the process starts, and
-then on the pulse cadence for as long as anything is active. There is no clock and there
-will not be one: a `due_at:` is read and ordered, never fired. That is deliberate, and it
-leaves the arranging to you — you have a shell, and you can use it.
+then on the pulse cadence for as long as anything is active. A `due_at:` is read and
+ordered, never fired. That is deliberate, and it leaves the arranging to you — you have a
+shell, and you can use it.
 
 Two shapes, and reach for the first:
 

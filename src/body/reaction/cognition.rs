@@ -122,10 +122,9 @@ async fn run(reaction: Reaction, registration: Registration) {
     // standing duty survived a restart on disk and nothing ever picked it back up.
     // `docs/arch/agents.md` has always specified the recovery sequence ("the glance-up
     // fires → Cognition wakes → reads active tasks → …"); this is the half of it that was
-    // missing. It is **not** a scheduler and never becomes one: a clock module was
-    // designed, deferred, and then declined outright — scheduling past this cadence is
-    // the agent's own, built with the shell it already has
-    // (`docs/arch/core.md#glancing-up--and-why-there-is-no-clock`).
+    // missing. It is **not** a scheduler and never becomes one — scheduling past this
+    // cadence is the agent's own, arranged with the shell it already has
+    // (`docs/arch/core.md#glancing-up`).
     //
     // Two wakes, deliberately different things: the **boot** one fires once because a
     // restart happened, and the **recurring** one fires into idleness because a duty

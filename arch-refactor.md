@@ -151,7 +151,7 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 | `fe47609` `603c365` | **A sceneless rung can be named** (superseded by `9d7bc97`), and **two worker bugs that needed no Cognition**: `{scene}` was substituted raw into `memory/raw/…/file/` where the directory is percent-encoded, so for every `user@device` scene the file-filing worker was sent somewhere empty; and `create_worker` registered *after* a subprocess spawn while telling its caller to message the id immediately |
 | `d90156f` | **N3 — Cognition.** Registration is process-lifetime, the ACP session is **per wake** (⚠️ **reversed** — see the long-lived-rungs entry below). Owns the ledger, hosts its own workers under `*cognition*`, never speaks |
 | `9d7bc97` | **An address is a session id, and reachability is projected.** Also: one mail renderer, replacing three that had already drifted |
-| `fdc4111` | **The clock is deferred**, and everything that waited on it says so — a task's `due` fires nothing |
+| `fdc4111` | **The clock goes**, and everything that waited on it says so — a task's `due` fires nothing |
 | `42c1530` | **The voice's brief is one file**, named for the rung that reads it: `speaking.md` → `reaction.md`; the alarm instruction goes with it |
 | `a0aae29` | **A worker has a type**, and the type is a prompt file — `CreateWorker(type)`, five bundled prompts, the const dies |
 | `50c0863` | **The view reviewer gets a way to render** (`review_view`) — the first caller the browser stack has ever had |
@@ -164,7 +164,7 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 | `a782bad` | The window drops `self.md` and `hot.md` for the brief a rung wrote itself |
 | `cd008a6` | The agent is told where its own sessions are kept, and why it copies a handed file |
 | `f3961e1` `85f1116` | **Every prompt is one whole file.** The seed, `core.md`, `meaning.md`, `self.md`, `workers/common.md`, `appearance.md`, `aesthetic.md` all deleted; 9 flat files remain |
-| `fdc4111` | **The clock is deferred, and everything that waited on it says so.** Design unchanged; four comments and a status line. See the struck-out N4 |
+| `fdc4111` | **The clock goes, and everything that waited on it says so.** See the struck-out N4 — settled, not pending |
 | `42c1530` | **`speaking.md` → `reaction.md`, and the frame moves into the file.** A file per role, per `arch.md#character`. The ~40-line Rust preamble (one self; your two tools) was the half an operator could not override. The voice also stops being told to set an alarm it has no tool for |
 | `a0aae29` | **A worker has a type, and the type is a prompt file.** `CreateWorker(type)` was in `foundation.md` and not in the code, which is *why* one prompt carried five specialisms as `When your task is to…` conditionals. Now `prompts/workers/` — `common.md` + one per type; the `const &str` is gone, so every role prompt is operator-overridable. **New: `decision-maker.md`, `file-filer.md`** |
 | `50c0863` | **N7b (half) — the view reviewer can render, so it can exist.** `review_view(ref, theme?, region?, size?)` on the worker surface: compile → render → verdict + problems + screenshot. 1000+ lines of browser-proven stack had no caller because no session could reach it. **New: `view-reviewer.md`**; `view-builder.md` corrected (it pointed at `look`, which screenshots the *user's screen*) |
@@ -420,39 +420,19 @@ that is N4. Gating on `open_tasks()` being non-empty fires forever for any servi
 self-feeding shape `NON_ACTIVITY_CHANNELS` exists to prevent — and would read as restart-recovery
 working while a task due in an hour still has no wake.
 
-### ~~N4 — The clock~~ · **skipped 2026-08-01, on the user's call — marked for the future in code**
+### ~~N4 — The clock~~ · **removed 2026-08-09. Settled — do not reopen it here or in `docs/arch/`.**
 
-Buildable (N3 owns tasks) and **deliberately not built**. The design in `docs/arch/core.md`
-stands unchanged — one type, one owner, four rules — and its status line now reads *deferred*
-rather than *to be built*, which is the only edit `docs/arch/` took.
+There is no host scheduler. The host's timing surface is the three loops that already exist —
+the **pulse**, the **reflection backoff**, and **Cognition's glance-up** — and everything past
+that the agent arranges with the shell it already has: a cron entry, a `launchd` job, a parked
+worker that sleeps and messages home. `alarm`, `schedule_alarm`, `Alarms`, `take_due` and
+`tasks::due_before` are all deleted; no code path fires at a named time.
 
-**What the deferral actually costs, in one line: a task's `due` is decorative.** Nothing fires
-on it. Two of the three intended registrations are already paced elsewhere — the **pulse** from
-inside each scene loop, the **reflection backoff** from inside its own — so what is missing is
-exactly the third: **task timers**. A duty recorded as "by Friday" surfaces when a pulse next
-prompts a rung to read the ledger, not when it comes due. And **Cognition, which owns the
-ledger, has no pulse**; it is woken only by mail. That is the hole, named rather than papered
-over.
-
-The narrow fix, if the hole bites before the module is worth building, is **a timer arm on
-Cognition's `select!`** carrying the same "read your open tasks" note the scene pulse carries —
-twenty lines, not a scheduler. Cognition's loop is already shaped for it and still has **no boot
-turn**, for the reason N3 gives.
-
-Two things this makes honest rather than latent, and both are now commented as such:
-
-- **The whole alarm path is dead.** `alarm` is declared only in the dead `_` arm of
-  `tools_for_role`, so no live role can schedule one, so `schedule_alarm` / `Alarms` /
-  `take_due` / Cognition's `SceneControl::Alarm` arm are unreachable end to end. Kept as the
-  clock's seed — the parsing and coalescing are the parts that were already right — but
-  labelled, because a scheduler that cannot be reached must not read as a working one.
-- **Invariant 6 is unmet, not met differently.** "Every timer is rebuilt from open tasks at
-  startup" describes a clock that does not exist; alarms live on the per-scene loop stack and
-  die with the process. `tasks::due_before` keeps its zero callers on purpose and carries the
-  explanation.
-
-Landed as comments in `tasks.rs` (`due_before`), `reaction/mod.rs` (`Alarms`),
-`reaction/cognition.rs` (the alarm arm), plus the `docs/arch/core.md#clock` status line.
+What that costs is stated once, in [`docs/arch/core.md#glancing-up`](docs/arch/core.md), and
+nowhere else: a `due` is read and ordered, never fired, so a deadline is met at the next glance;
+and nothing wakes the voice when a promise is running **late**. The safety property that makes
+an agent-chosen mechanism sound is `verify` being a **result** check, which lives with
+[Tasks](docs/arch/data.md).
 
 ### N4′ — Cognition's own wake, and liveness in the projection · **built on `feat/task-resumption`, 502 lib + 30 integration green, 0 warnings — not pushed, never run live**
 
@@ -568,7 +548,7 @@ layers, and only the middle is a disobeyed instruction:
 
 1. **Reaction obeyed.** `reaction.md` says speak when the work lands; nothing landed. Its own
    fallback is "your next quiet moment" — the pulse, at **30 minutes**, against a promise made
-   in minutes. With the clock deferred, that mismatch is permanent.
+   in minutes. Nothing in the host fires at a named time, so that mismatch is permanent.
 2. **`cognition.md` is weakly worded** — message the scene *"if there is something a person would
    want to hear"*: a conditional with no bias, and no notion that a scene which handed up is
    *waiting*.
@@ -689,8 +669,8 @@ by the person, and a timer could only find one by polling. `surfaces.md` also lo
 **arbiter** references, which were retired vocabulary.
 
 **Still open, and named rather than papered over:** nothing wakes the voice when it is running
-*late* on a promise — the "running late" half of the L1 finding is untouched, because that needs
-a timer and the clock is deferred. A return gets them told; nothing gets them told on time.
+*late* on a promise — the "running late" half of the L1 finding is untouched, because nothing in
+the host fires at a named time. A return gets them told; nothing gets them told on time.
 
 ### ~~N6 (original framing)~~
 
@@ -958,13 +938,11 @@ two: **nothing reads the frame log**. The verification substrate exists and has 
 stores were never the problem, and the loan is repaid: **the tasks writer is Cognition's**, with
 a test pinning that exactly one prompt carries the instruction. The ledger now has a second
 reader too — `agent_window` projects it to the rung that writes it.
-`CORE` — still least built, and now least built **on purpose**. **N5 is off the critical path**
-(Cognition's per-wake session means the unreachable swap no longer blocks the rung that would
-have needed it most) and **the clock is skipped outright** — so the scene loop keeps doing the
-work of the missing modules inline, and that is the accepted shape rather than a gap waiting on
+`CORE` — least built, and **on purpose**: the session swap and the clock were not deferred but
+**removed**, so the loop paces itself inline and that is the finished shape, not a gap waiting on
 a commit. What is genuinely unfinished here is behaviour, not structure: the vendor gate is
-half-classified, and three mechanisms (swap, alarms, `record_reflex`) can never fire. Each is now
-labelled where it lives, which is the standard this file holds. **Presence now gates** (N6) —
+half-classified, and one mechanism — `record_reflex` — can never fire. It is labelled where it
+lives, which is the standard this file holds. **Presence now gates** (N6) —
 the one thing that can be spent is withheld, `say` reports what became of an utterance, and
 coming back is an event the voice is woken for. What presence still cannot do is notice that a
 promise is running *late*; that one wants the clock.
