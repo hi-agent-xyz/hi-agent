@@ -158,6 +158,23 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     bodies.sort_unstable();
     assert!(bodies[0].contains("notes.txt"));
     assert!(bodies[1].contains("scan.pdf"));
+
+    // The locator, checked by *opening* it. `docs/arch/agents.md` retires the
+    // perception tool on the grounds that a handed file arrives as a ref and a ref
+    // is a path — so asserting the text merely contains `⟨ref:` would pin the shape
+    // of the lie this fixes. The body used to name only the original filename, which
+    // is not what the bytes are stored as.
+    let raw = dir.path().join("memory").join("raw").join("file");
+    for body in &bodies {
+        let rel = body
+            .split_once("⟨ref: ")
+            .and_then(|(_, rest)| rest.split_once('⟩'))
+            .map(|(rel, _)| rel)
+            .unwrap_or_else(|| panic!("handed file carries no ref: {body}"));
+        let path = raw.join(rel);
+        assert!(path.is_file(), "the ref must resolve under {raw:?}: {rel}");
+        assert!(!std::fs::read(&path).unwrap().is_empty(), "the ref must reach the bytes");
+    }
 }
 
 #[tokio::test]

@@ -273,6 +273,12 @@ async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> Str
     let dir = |p: PathBuf| p.display().to_string();
     let mut out = text
         .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
+        // The root a `⟨ref: <day>/<file>⟩` resolves against: `<raw_dir>/<channel>/<ref>`.
+        // Without it a ref is a fragment, not a path — and "a ref is a path, and an agent
+        // that can read files can open it" is the reasoning that retired the perception
+        // tool (`docs/arch/agents.md`). The rung was told to open refs and never told
+        // where they start.
+        .replace("{raw_dir}", &dir(crate::mind::memory::layout::raw_root(&base)))
         .replace(
             "{sessions_dir}",
             &dir(crate::mind::memory::layout::raw_root(&base).join("sessions")),
@@ -748,6 +754,27 @@ mod soul_tests {
     fn the_filing_worker_is_told_why_it_copies() {
         assert!(WORKER_FILE_FILER_BASE.contains("copy, never move"));
         assert!(WORKER_FILE_FILER_BASE.contains("fades"));
+    }
+
+    /// `docs/arch/agents.md` retires the perception tool because "a ref is a path, and
+    /// an agent that can read files can open it" — which is only true if the rung is
+    /// told where refs start. Nothing said, so the two prompts that open one now name
+    /// `{raw_dir}`, and it has to survive substitution: an unexpanded placeholder is a
+    /// path to nothing, and the rung reports the file missing rather than empty.
+    #[tokio::test]
+    async fn the_rungs_that_open_a_ref_are_told_where_refs_start() {
+        assert!(DELIBERATION_BASE.contains("{raw_dir}"), "deliberation must name the root");
+        assert!(WORKER_FILE_FILER_BASE.contains("{raw_dir}"), "the filer must name the root");
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
+        for text in [
+            deliberation_prompt(dir.path()).await,
+            worker_prompt(dir.path(), WorkerType::FileFiler).await,
+        ] {
+            assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
+            assert!(text.contains(&root), "the substituted root must be the absolute raw root");
+        }
     }
 
     #[test]

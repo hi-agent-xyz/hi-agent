@@ -79,7 +79,23 @@ impl UploadResult {
 /// signal that wakes the reaction. `body` is the text surface the mind reacts to
 /// (it never sees the bytes); the blob path rides the journal entry's `media`.
 /// The framing in `body` is the caller's — a neutral handoff ([`receive_file`])
-/// or the "come and see this" gesture ([`receive_screenshot`]).
+/// or the "come and see this" gesture ([`receive_screenshot`]) — and this appends
+/// the locator, so no caller can frame a file the mind then cannot open.
+///
+/// **The locator is the whole point of the signal.** `docs/arch/agents.md` retires
+/// the perception tool on the grounds that "a photo or a file arrives as a **ref**,
+/// a ref is a path, and an agent that can read files can open it" — and
+/// `deliberation.md` teaches exactly that, naming this line as an example. It was
+/// not true: the body said `The user handed you a file: passport.jpg` and nothing
+/// else, while the bytes landed under a generated name that is not `passport.jpg`.
+/// The one rung that can read was told a file existed and given no way to reach it.
+///
+/// The ref is `<day>/<rel>` under the channel's own root — the same grammar the
+/// vision channel already emits and [`media::resolve`] already reads — and it is
+/// deliberately *relative*: this string is appended to the durable log, and
+/// invariant 11 forbids persisting a host path into `data/`. The absolute root
+/// reaches the rung through its prompt (`{raw_dir}`), which is reinstalled from
+/// the binary every boot and so may hold one.
 async fn ingest_file(
     state: &AppState,
     name: &str,
@@ -92,6 +108,7 @@ async fn ingest_file(
     let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, &ext, bytes)
         .await
         .map_err(|e| format!("store file: {e}"))?;
+    let body = format!("{body} {}", file_ref(ts, &rel));
 
     crate::foundation::channel_log::inbound(Channel::File, &body);
 
@@ -116,6 +133,13 @@ async fn ingest_file(
         .await
         .map_err(|_| "inbound channel closed".to_string())?;
     Ok(())
+}
+
+/// The locator, in the one grammar every channel uses: `⟨ref: <day>/<rel>⟩`,
+/// resolved against `<raw>/file/`. Kept beside the store call rather than at the
+/// framing sites so a new door onto this channel cannot forget it.
+fn file_ref(ts: chrono::DateTime<Utc>, rel: &str) -> String {
+    format!("⟨ref: {}/{rel}⟩", crate::mind::memory::layout::day_key(ts))
 }
 
 /// Receive one handed file (drag-drop / picker / phone handoff) — a neutral

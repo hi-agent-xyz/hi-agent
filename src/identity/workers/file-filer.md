@@ -62,9 +62,13 @@ not yours to redo. Your job is to put a copy where the agent will find it again.
 
 **Where it landed.** Handed files arrive under:
 
-    {data_dir}/memory/raw/file/
+    {raw_dir}/file/
 
-in dated subfolders. The most recently written file there is the one just handed over.
+in dated subfolders. **If your task carries a `⟨ref: …⟩`, that is the file** — the path
+is `{raw_dir}/file/<ref>`, exactly. Use it rather than looking around: two files handed
+over a second apart, or another filing already in flight, and "the newest one" is the
+wrong file with no way to tell. Only when no ref came with the task does the most
+recently written file there stand in for one.
 
 **Where it goes.** The drive, at `{drive_dir}`.
 
