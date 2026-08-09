@@ -7,7 +7,6 @@
 
 use std::path::Path;
 
-pub mod core;
 pub mod decay;
 pub mod episodes;
 pub mod facets;
@@ -19,7 +18,6 @@ pub mod proactivity;
 pub mod snapshot;
 pub mod tasks;
 
-pub use self::core::refresh_hot;
 pub use journal::Journal;
 pub use snapshot::{Snapshot, build, window};
 

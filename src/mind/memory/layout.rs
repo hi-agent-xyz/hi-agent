@@ -47,11 +47,6 @@ pub fn raw_root(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("raw")
 }
 
-/// `<memory>/hot.md` — the always-loaded working set (a regenerable projection).
-pub fn hot_path(data_dir: &Path) -> PathBuf {
-    memory_dir(data_dir).join("hot.md")
-}
-
 /// `<memory>/prompts` — the **generated** system prompts: one file per agent that
 /// carries state forward into every window.
 ///
@@ -85,10 +80,10 @@ pub fn agent_prompt_path(data_dir: &Path, agent: &str) -> PathBuf {
 
 /// `<memory>/proactivity.md` — the learned read on speaking up unprompted: which
 /// subjects the person welcomes a proactive word on, and which they don't. A
-/// derived projection like [`hot_path`] — the reflection pass regenerates it from
+/// derived projection — the reflection pass regenerates it from
 /// how the agent's own unprompted utterances landed; the agent only reads it, to
 /// judge whether breaking silence clears the bar. Absent ⇒ nothing proven ⇒ stay
-/// cautious.
+/// cautious. Regenerated wholesale, never patched.
 pub fn proactivity_path(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("proactivity.md")
 }

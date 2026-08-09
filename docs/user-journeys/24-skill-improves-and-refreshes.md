@@ -2,7 +2,7 @@
 
 **Persona:** 同一用户,隔些时候又递一段比赛"再剪个集锦";这中间 agent 真剪过一次。
 **Goal:** 第一次又查又试又翻车的"贵"经历,**沉成一条技能**(怎么剪、用什么、坑在哪、什么样算好);第二次**从那条线起步**,明显快、起点就在 bar 上——但技能里**会过期的那半**(当下剪法 / 工具新版本)第二次**重新核**,不把旧的当真理固化。
-**Preconditions:** 有个 `skills/` 工坊(挨着 `views/`),技能是 agent 自己话写的笔记;reflection 会把一次成功的难活策展成干净可复用的笔记。**复用现成模式:[20](20-reuse-built-views.md)(view 复用的三层:in-session / 跨 session 靠 reflection 沉淀 / builder `ls` 兜底)、self.md(自己话写的常驻笔记)、reflection 给 drive 做 housekeeping 的先例(d4af1be)。与 [14](14-knowledge-grows.md)(懂得随用而长)、[11](11-china-tax.md)(技能怎么带"重新核当年规则")相连——本条正面回答 11 的 open question。**
+**Preconditions:** 有个 `skills/` 工坊(挨着 `views/`),技能是 agent 自己话写的笔记;reflection 会把一次成功的难活策展成干净可复用的笔记。**复用现成模式:[20](20-reuse-built-views.md)(view 复用的三层:in-session / 跨 session 靠 reflection 沉淀 / builder `ls` 兜底)、agent 自己话写的常驻笔记、reflection 给 drive 做 housekeeping 的先例(d4af1be)。与 [14](14-knowledge-grows.md)(懂得随用而长)、[11](11-china-tax.md)(技能怎么带"重新核当年规则")相连——本条正面回答 11 的 open question。**
 
 ---
 
@@ -38,12 +38,12 @@
 
 ## Open questions
 
-- **`skills/` 笔记的结构**:纯自由话(像 self.md)还是带个轻约定标出"哪部分会过期"?——本条主张至少要能让 21 认出 transient 半,所以倾向一个极轻的"会过期"标记。
+- **`skills/` 笔记的结构**:纯自由话还是带个轻约定标出"哪部分会过期"?——本条主张至少要能让 21 认出 transient 半,所以倾向一个极轻的"会过期"标记。
 - **reflection 策展技能 vs 策展 facts** 是同一趟还是分开?门槛怎么定(连 [14](14-knowledge-grows.md) 的 competence:懂多少读自证据图)?
-- **统一在记忆梯度里讲?** 技能、view 工具箱([20](20-reuse-built-views.md))、drive(d4af1be)同属"agent 自己攒的东西"——要不要都顺着 raw→episodes→facets→hot.md 讲,而非另起炉灶?
+- **统一在记忆梯度里讲?** 技能、view 工具箱([20](20-reuse-built-views.md))、drive(d4af1be)同属"agent 自己攒的东西"——要不要都顺着 raw→episodes→facets 讲,而非另起炉灶?
 - **capability-gap**("我连个剪辑工具都没有 → 装 / 建 / 问")并到这条线,还是另起(连 [13](13-equip-a-capability.md))?本条假设工具已在,只沉淀**怎么用**。
 
-_机制:复用现成模式——`skills/` 工坊照 [views/](20-reuse-built-views.md) + self.md;reflection 策展照它给 facets / drive(d4af1be)的策展;reuse-before-start 照 [appearance.md](../../src/reaction/appearance.md)。新结构只有 `skills/` 工坊 + reflection 多策展一类。本 journey 的**核心主张**——技能与研究反射(22)的"重核 transient 半"耦合——是把"越用越快"和"不固化陈货"两件事拧成一股,正面解 [11](11-china-tax.md) 的悬案。成熟度:**guidance 已写;contribute 路径实测通过,reuse / reflection 策展 / transient 标记未验**(见下)。_
+_机制:复用现成模式——`skills/` 工坊照 [views/](20-reuse-built-views.md) 与 agent 自己写的常驻笔记;reflection 策展照它给 facets / drive(d4af1be)的策展;reuse-before-start 照 [appearance.md](../../src/reaction/appearance.md)。新结构只有 `skills/` 工坊 + reflection 多策展一类。本 journey 的**核心主张**——技能与研究反射(22)的"重核 transient 半"耦合——是把"越用越快"和"不固化陈货"两件事拧成一股,正面解 [11](11-china-tax.md) 的悬案。成熟度:**guidance 已写;contribute 路径实测通过,reuse / reflection 策展 / transient 标记未验**(见下)。_
 
 ## 实测 2026-06-22 · 分支 worktree-acquisition-reflexes(基 origin/main 422d268)
 

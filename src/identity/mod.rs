@@ -18,10 +18,15 @@
 //! and `aesthetic.md` no longer exist, and [`install_prompts`]'s tests assert they stay
 //! gone.
 //!
-//! `self.md` still lives under `<data_dir>/memory/` (no data migration). Under
-//! `docs/arch/data.md#memoryprompts` it does not get relocated at all: who this install
-//! is becomes a *section* of a generated prompt, so the file goes away with the change
-//! that gives Deliberation the writer's job.
+//! Nor is there a second place identity lives. `self.md`, the recency digest `hot.md`
+//! and the duty ledger `commitments.md` were each read by nothing by the end: under
+//! `docs/arch/data.md#memoryprompts` who this install is is a *section of a generated
+//! prompt*, Deliberation writes that prompt, and duties are
+//! [`crate::mind::memory::tasks`]. Their readers went when Deliberation took the
+//! writer's job; their writers are gone now too. Existing data dirs keep whatever they
+//! already have on disk — nothing deletes a file someone may have authored — and
+//! `snapshot`'s `leftover_legacy_files_are_never_inlined` pins that a leftover can
+//! never climb back into a window.
 
 use std::path::{Path, PathBuf};
 
@@ -369,7 +374,7 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
 
 /// One extra line on a genuine first meeting — the brand-new install where nothing has
 /// accrued yet. It disappears on its own the moment any history exists (a memory
-/// episode, the first reflected `hot.md`, a duty written), so it can only ever colour
+/// episode written, a duty taken on), so it can only ever colour
 /// the very first hello, never nag. It rides on **Reaction**, because the hello and the
 /// welcome view are both the voice's to give.
 const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
@@ -399,44 +404,29 @@ write to you in another language — then follow their lead."
 }
 
 
-/// `<data_dir>/memory/commitments.md` — the **superseded** duty ledger.
-///
-/// Duties are [`crate::mind::memory::tasks`] now: one ledger, and this is no longer
-/// it. Nothing inlines this file into a window and nothing points the mind at it any
-/// more. It survives for one reason — [`is_first_meeting`] still reads it, so an
-/// install that wrote duties here before the change is not mistaken for a brand-new
-/// one and greeted with a first hello.
-pub fn commitments_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("memory").join("commitments.md")
-}
-
-
 /// Whether this looks like a genuine **first meeting** — a brand-new install where the
-/// agent has no history with the person yet. True when none of the accruing traces
-/// exist: no recency digest (`hot.md`), no memory episodes, and nothing owed. The
-/// authored `self.md` is deliberately *not* consulted — an operator may pre-author
-/// identity on a fresh box, and that says nothing about whether the person has been
-/// met. The predicate self-clears: the first jotted memory, reflection, or task flips
-/// it false, so the first-hello cue can never repeat.
+/// agent has no history with the person yet. True when neither accruing trace exists:
+/// no memory episodes, and nothing owed. An authored `self.md` is deliberately not
+/// consulted — an operator may pre-author identity on a fresh box, and that says
+/// nothing about whether the person has been met. The predicate self-clears: the first
+/// jotted memory, reflection, or task flips it false, so the first-hello cue can never
+/// repeat.
 ///
-/// Duties are checked in both places on purpose. A task is where one lands now; the
-/// superseded `commitments.md` is read too, so an install that wrote duties there
-/// before the change is not mistaken for a stranger and greeted with a first hello.
+/// Two weaker probes used to sit beside these. `hot.md` was a projection *of* the
+/// episodes, so it could never be present without them and never widened the answer;
+/// `commitments.md` was the superseded duty ledger, and a duty lands in the task
+/// facets now. Both files are retired, and an install old enough to hold either has
+/// long since reflected at least once — which is what `no_episodes` reads.
 fn is_first_meeting(base: &Path) -> bool {
     use crate::mind::memory::layout;
     let empty_dir = |dir: PathBuf| match std::fs::read_dir(dir) {
         Ok(mut entries) => entries.next().is_none(),
         Err(_) => true, // dir absent ⇒ nothing recorded
     };
-    let no_hot = !layout::hot_path(base).exists();
     let no_episodes = empty_dir(layout::episodes_dir(base));
     let no_tasks =
         empty_dir(layout::facets_dir(base).join(crate::mind::memory::tasks::DIMENSION));
-    let no_commitments = match std::fs::read_to_string(commitments_path(base)) {
-        Ok(text) => text.trim().is_empty(),
-        Err(_) => true,
-    };
-    no_hot && no_episodes && no_tasks && no_commitments
+    no_episodes && no_tasks
 }
 
 #[cfg(test)]
@@ -445,7 +435,7 @@ mod soul_tests {
 
     #[tokio::test]
     async fn fresh_install_gets_the_first_meeting_cue_in_the_voice() {
-        // A brand-new data dir has no hot.md, no episodes, no commitments — so the
+        // A brand-new data dir has no episodes and nothing owed — so the
         // *voice's* prompt carries the one-time first-hello cue and the welcome view.
         // It rides here rather than on an agentic seed because the hello is the
         // voice's to give and it cannot go and read anything.
@@ -458,12 +448,12 @@ mod soul_tests {
 
     #[tokio::test]
     async fn any_history_clears_the_first_meeting_cue() {
-        // The moment anything has accrued — here a reflected `hot.md` — it's no longer
+        // The moment anything has accrued — here one written episode — it's no longer
         // a first meeting, so the cue disappears and can never nag on later wakes.
         let dir = tempfile::tempdir().unwrap();
-        let hot = crate::mind::memory::layout::hot_path(dir.path());
-        std::fs::create_dir_all(hot.parent().unwrap()).unwrap();
-        std::fs::write(&hot, "lately on my mind…").unwrap();
+        let episode = crate::mind::memory::layout::episodes_dir(dir.path()).join("2026-08-09T00-00-00");
+        std::fs::create_dir_all(&episode).unwrap();
+        std::fs::write(episode.join("episode.md"), "we talked about the drive view\n").unwrap();
         assert!(!is_first_meeting(dir.path()));
         let prompt = reaction_system_prompt(dir.path()).await;
         assert!(!prompt.contains("this is a brand-new install"));

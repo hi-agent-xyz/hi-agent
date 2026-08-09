@@ -190,25 +190,13 @@ go without.]"
     s
 }
 
-// `legacy_working_set` lived here: `self.md` under "Who I am to this person" and
-// `hot.md` under "Lately on my mind", read off disk and injected into every
-// window. **Both are gone**, which its own TODO said would happen with the change that
-// gave Deliberation the writer's job — and Deliberation now writes
-// `memory/prompts/conversation.md`, which is what [`carried_forward`] projects at the top
-// of this window.
-//
-// They were held back because removing them *before* anything wrote the generated
-// prompts would have stripped the window to the log tail. That condition is met, and the
-// two are the wrong shape besides: under `docs/arch/data.md#memoryprompts` who this
-// install is is a **section of a generated prompt**, not a file beside it, and `hot.md`
-// is a mechanical digest of recent gists — a digest is not a working memory, and it
-// competed with the brief a rung actually authored for itself.
-//
-// The writers are untouched: reflection still refreshes `hot.md`, and `self.md` is still
-// authored. What changed is that neither is injected into a window any more. If the
-// brief turns out to be thinner in practice than what these carried, that is a fix to
-// `deliberation.md` — the rung that writes it — and not a reason to re-add a second
-// source of the same thing.
+// What a window carries forward is [`carried_forward`] — the generated prompt
+// Deliberation writes at `memory/prompts/conversation.md` — and nothing beside it.
+// Two files used to be injected here as well (`self.md` as "Who I am to this person",
+// a recency digest as "Lately on my mind"); their injection went when Deliberation took
+// over the writer's job, and their writers are gone too. If the brief turns out thinner
+// in practice than what those carried, the fix is to `deliberation.md` — the rung that
+// writes it — and not a second source of the same thing.
 
 
 /// The floor: the recent signals, straight off the log. Never empty — an
@@ -455,19 +443,35 @@ mod window_tests {
         assert!(at("# Active tasks") < at("## Recent (last 30 minutes)"));
     }
 
-    /// The one ledger. `commitments.md` was the second one, and it is no longer
-    /// inlined — a duty reaches the window as a task or not at all.
+    /// Three files an older install still has on disk, because retiring them removed
+    /// their readers and writers but deliberately did not delete anyone's data:
+    /// `commitments.md` (the second duty ledger — a duty now reaches the window as a
+    /// task or not at all), `self.md`, and `hot.md`. None may leak back into a window.
+    /// Built by literal path on purpose: the layout helpers that named them are gone,
+    /// and this test outliving them is the point.
     #[tokio::test]
-    async fn the_old_commitments_file_is_not_inlined_any_more() {
+    async fn leftover_legacy_files_are_never_inlined() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let commitments = crate::identity::commitments_path(dir.path());
-        tokio::fs::create_dir_all(commitments.parent().unwrap()).await.unwrap();
-        tokio::fs::write(&commitments, "- watch the ops group\n").await.unwrap();
+        let mem_dir = dir.path().join("memory");
+        tokio::fs::create_dir_all(&mem_dir).await.unwrap();
+        for (name, body) in [
+            ("commitments.md", "- watch the ops group\n"),
+            ("self.md", "They prefer to be called 老板.\n"),
+            ("hot.md", "- shipped the drive view\n"),
+        ] {
+            tokio::fs::write(mem_dir.join(name), body).await.unwrap();
+        }
+        // A real signal first, so the window has content to leak *into*. Without it an
+        // empty window would satisfy every assertion below and the guard would pass by
+        // saying nothing.
+        heard(&memory, "这周的卡片做完了吗").await;
 
         let text = window(&memory, 0).await;
-        assert!(!text.contains("watch the ops group"), "{text}");
-        assert!(!text.contains("standing commitments"), "{text}");
+        assert!(text.contains("这周的卡片做完了吗"), "the window is empty, so this proves nothing: {text}");
+        for leaked in ["watch the ops group", "老板", "shipped the drive view", "standing commitments"] {
+            assert!(!text.contains(leaked), "leaked {leaked}: {text}");
+        }
     }
 
     /// Invariant 4 for the rung that writes the ledger. Cognition going to *look* for

@@ -154,8 +154,8 @@ pub async fn record_episode(
 }
 
 /// The gists (episode bodies, frontmatter stripped) of the most recent `limit`
-/// episodes, oldest first — reflection uses this for continue-vs-new judgment, and
-/// `hot.md` for the working set. Empty if there are no episodes yet.
+/// episodes, oldest first — reflection uses this for its continue-vs-new judgment.
+/// Empty if there are no episodes yet.
 pub async fn recent_gists(memory: &Memory, limit: usize) -> anyhow::Result<Vec<String>> {
     let dir = layout::episodes_dir(memory.data_dir());
     let mut rd = match tokio::fs::read_dir(&dir).await {

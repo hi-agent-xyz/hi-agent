@@ -4,10 +4,9 @@
 //! and which they don't, distilled by the reflection ("sleep") pass from how the
 //! agent's own unprompted utterances landed. The soul seed references it by absolute
 //! path (see [`super::layout::proactivity_path`]) and the agent Reads it before it
-//! ever volunteers something, so nothing here is inlined into a prompt. Like
-//! [`super::core`]'s `hot.md`, it's a projection — rewritten wholesale by the
-//! reflection pass, never patched — and absent until the first unprompted word has
-//! been judged.
+//! ever volunteers something, so nothing here is inlined into a prompt. It is a
+//! projection — rewritten wholesale by the reflection pass, never patched — and
+//! absent until the first unprompted word has been judged.
 
 use std::path::Path;
 

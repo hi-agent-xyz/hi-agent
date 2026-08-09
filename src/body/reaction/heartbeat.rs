@@ -52,7 +52,7 @@ use crate::foundation::agent::SessionRole;
 use crate::body::capabilities::{face, voiceprint};
 use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
-use crate::mind::memory::{decay, episodes, facets, layout, people_vectors, refresh_hot};
+use crate::mind::memory::{decay, episodes, facets, layout, people_vectors};
 use crate::foundation::observatory::EventKind;
 use crate::foundation::registry;
 use crate::types::{Channel, JournalEntry};
@@ -203,10 +203,6 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
     let run = session.prompt(prompt).await?;
     run.wait().await?;
 
-    // hot.md now reflects the freshly written episodes across the conversation.
-    if let Err(err) = refresh_hot(&reaction.inner.memory).await {
-        tracing::warn!(error = %err, "failed to refresh hot.md after reflection");
-    }
     tracing::info!("reflection finished");
     Ok(())
 }

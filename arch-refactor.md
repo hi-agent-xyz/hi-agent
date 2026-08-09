@@ -881,6 +881,14 @@ Seven still reference retired mechanisms (`hot.md`, `commitments.md`, `self.md`)
 `24-skill-improves-and-refreshes`, `28-first-meeting`, `README`. Two are already done
 (`20-reuse-built-views`, `25-resume-interrupted-work`) and show the pattern.
 
+**Update — the three files are now retired in code too**, so these names no longer point at
+anything that exists: no reader, no writer, no path helper. `28-first-meeting` (a live
+precondition), `24` (which held `self.md` up as the model for a skill note) and `README`
+are corrected. The four left — `03`, `02`, `05`, `13`, plus `gaps.md` — are **dated 实测
+records**, where the file name is part of what was observed on the day; those want the
+`20`/`25` treatment (a preamble saying the mechanism was replaced and by what), not an
+edit to the finding itself. Still open.
+
 Add to the sweep: anything naming `delegate`, `ask`, `surface`, `see`, `alarm`, or the arbiter.
 
 **The rule that matters:** the journeys' *promises* all still hold — only the implementation

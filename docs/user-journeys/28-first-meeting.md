@@ -2,7 +2,7 @@
 
 **Persona:** 全新装好,用户第一次开口——往往就一句 "hi"。这一刻他在问的是"这到底是个啥",而不是要一份说明书。开箱第一面只有一次机会。
 **Goal:** 给一个**好的第一印象**:温暖、简短地把"我是谁"落地——你就跟我说话、我们一起把事做了;我会记得你;我能伸手用你的工具去把事办了;而且——最要紧的一条——我能被**教会**,给我看一次就会,像个人不像个 app。同时屏上摆出一块预置的欢迎 view,让这份感觉可看可感;然后**收住、让位**。不是导览、不是向导、不教任何东西。
-**Preconditions:** 全新 install(没有 `hot.md` / episodes / commitments —— seed 据此判定"第一次见");屏在场、能 `show`;预置内置 view `_builtin/welcome`(随二进制打包,像 `_builtin/upload` 一样,见 [18](18-send-files-to-agent.md))。detection 与叙述都是 soft-guidance(seed 里一句一次性提示 + `speaking.md` 的"第一次问好"),只有欢迎 view 是预置资产——作为普适的开箱基元,是"不预置资产"的有意例外(见 [[no-prebundled-assets-accumulate-via-guidance]])。
+**Preconditions:** 全新 install(**没有 episodes、没有欠着的活** —— 据此判定"第一次见");屏在场、能 `show`;预置内置 view `_builtin/welcome`(随二进制打包,像 `_builtin/upload` 一样,见 [18](18-send-files-to-agent.md))。detection 与叙述都是 soft-guidance(Reaction 的 prompt 里一句一次性提示),只有欢迎 view 是预置资产——作为普适的开箱基元,是"不预置资产"的有意例外(见 [[no-prebundled-assets-accumulate-via-guidance]])。
 
 ## Steps & expected UX
 
@@ -24,7 +24,7 @@
 
 - **纯文本通道、无屏** → 降级:欢迎 view 摆不了就只说那几句(话本身要能独立成立),别硬塞一个空 ref。
 - **第一句不是问好而是直接派活**("帮我查下…") → 别执着走完介绍;接住活儿,自我介绍压成一句带过,别挡路(见 [[feedback-bias-to-action]] 的精神:别把仪式凌驾于用户意图)。
-- **operator 预置了 `self.md`**(给它起好名 / 设好性格) → 那不算"见过这个人",第一次问好照常;detection 有意不看 `self.md`。
+- **operator 预置了身份**(给它起好名 / 设好性格) → 那不算"见过这个人",第一次问好照常;detection 有意只看"有没有攒下东西",不看任何预先写好的身份。
 - **重复问好 / 重启** → 有 history 后 seed 不再提示;万一观察到二次自我介绍,再上一次性哨兵文件(`.hi-met`)兜底(暂不建)。
 - **别越界成教学** → 不解释每个功能、不演示、不 checklist;view 里那几句 examples 只作氛围点缀,一旦读起来像 hand-holding 就砍。
 
