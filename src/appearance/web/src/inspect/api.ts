@@ -103,6 +103,13 @@ export interface RawFrame {
   seq: number;
   ts: string;
   conn: number;
+  // Which rung this subprocess hosts: reaction, deliberation, cognition,
+  // reflection, worker. The tap has always stamped it and this interface used to
+  // drop it, so the inspector could only call a session by its connection number.
+  role: string;
+  // hi-agent's own session id, minted before the subprocess starts — so it names
+  // the handshake frames too, which `thread_id` cannot.
+  agent_session: number | null;
   dir: WireDir;
   thread_id: string | null;
   method: string | null;

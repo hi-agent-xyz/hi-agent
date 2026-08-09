@@ -44,7 +44,7 @@ use tokio::time::timeout;
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::foundation::agent::SessionRole;
-use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
+use crate::foundation::observatory::{EventKind, Observatory, SessionKind, WorkerState};
 use crate::identity::WorkerType;
 use crate::mind::memory::layout;
 
@@ -228,6 +228,21 @@ impl WorkerRegistry {
             )
             .await?;
 
+        // A rung, not a worker. It shares the worker machinery — one session, one
+        // mailbox, an idle TTL — and recording it as `WorkerSpawned` alone made the
+        // observatory unable to tell the conversation's reader from the errands it
+        // sits beside. `SessionOpened` is what names a rung; the worker event stays
+        // because the map, the transcript and the status read are still the worker's.
+        reaction
+            .inner
+            .observatory
+            .record(
+                EventKind::SessionOpened {
+                    kind: SessionKind::Deliberation,
+                    id: id.to_string(),
+                },
+            )
+            .await;
         reaction
             .inner
             .observatory
@@ -307,6 +322,16 @@ impl WorkerRegistry {
             .await?;
 
         let observatory = reaction.inner.observatory.clone();
+        if is_deliberation {
+            // Same reason as `warm_deliberation`: the rung is opened through the worker
+            // path, so without this it is recorded as one.
+            observatory
+                .record(EventKind::SessionOpened {
+                    kind: SessionKind::Deliberation,
+                    id: id.to_string(),
+                })
+                .await;
+        }
         observatory
             // A pseudo-conversation is a routing tag, never a mirror key: Cognition hosts its
             // workers under `*cognition*`, and passing that through would put a room

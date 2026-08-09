@@ -36,17 +36,37 @@ const HISTORY_CAP: usize = 1000;
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
 
-/// Which kind of agent session this is — the reaction's persistent mind, an
-/// ephemeral worker or the
-/// reflection ("sleep") pass that consolidates raw into episodes/facets.
+/// Which rung an agent session is: the four of the
+/// [ladder](../../../docs/arch/arch.md) that hold sessions, plus the workers below
+/// them. It mirrors [`crate::foundation::agent::SessionRole`] and must keep doing
+/// so — a rung with no variant here cannot be told apart from a worker anywhere in
+/// the observatory, which is exactly what happened to Deliberation. (A `Summarizer`
+/// variant outlived the session swap that produced it and is gone with it.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
     Reaction,
+    Deliberation,
     Worker,
-    Summarizer,
     Reflection,
     Cognition,
+}
+
+/// The mirror, made the compiler's problem rather than a convention. Adding a rung to
+/// [`SessionRole`] now fails to compile until it has a kind here, which is the check
+/// that was missing when Deliberation was added and the observatory kept calling it a
+/// worker.
+impl From<crate::foundation::agent::SessionRole> for SessionKind {
+    fn from(role: crate::foundation::agent::SessionRole) -> Self {
+        use crate::foundation::agent::SessionRole as R;
+        match role {
+            R::Reaction => Self::Reaction,
+            R::Deliberation => Self::Deliberation,
+            R::Worker => Self::Worker,
+            R::Reflection => Self::Reflection,
+            R::Cognition => Self::Cognition,
+        }
+    }
 }
 
 /// Live state of one agent session in the mirror.
@@ -253,12 +273,14 @@ impl Observatory {
                         turns: 0,
                     });
                 }
-                // Worker open is mirrored by WorkerSpawned; the summarizer and
-                // reflection passes are throwaways we don't surface as standing
-                // sessions. Cognition is not the voice, so it is history-only — which
-                // is where a rung nobody is listening to honestly belongs.
+                // Worker open is mirrored by WorkerSpawned; a reflection pass is a
+                // throwaway we don't surface as a standing session. Deliberation and
+                // Cognition are not the voice, so they are history-only — which is
+                // where a rung nobody is listening to honestly belongs. They are
+                // *recorded* either way: the event log is what names a rung, and
+                // until it did, Deliberation was indistinguishable from a worker.
                 SessionKind::Worker
-                | SessionKind::Summarizer
+                | SessionKind::Deliberation
                 | SessionKind::Reflection
                 | SessionKind::Cognition => {}
             },
@@ -377,6 +399,26 @@ pub fn event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The observatory's whole job is answering "what is the machine doing", and a
+    /// rung it cannot name is one it answers wrongly rather than not at all. Each
+    /// role's kind also has to serialize to the role's own word, because the wire
+    /// name is what the inspector prints.
+    #[test]
+    fn every_rung_has_a_kind_and_keeps_its_name() {
+        use crate::foundation::agent::SessionRole as R;
+        for (role, word) in [
+            (R::Reaction, "reaction"),
+            (R::Deliberation, "deliberation"),
+            (R::Worker, "worker"),
+            (R::Reflection, "reflection"),
+            (R::Cognition, "cognition"),
+        ] {
+            let kind = SessionKind::from(role);
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, format!("\"{word}\""), "{role:?} serializes as {json}");
+        }
+    }
 
     #[tokio::test]
     async fn mirrors_reaction_session_and_turn() {

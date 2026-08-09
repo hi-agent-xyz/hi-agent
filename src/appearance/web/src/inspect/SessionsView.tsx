@@ -117,8 +117,17 @@ function frameLabel(f: RawFrame): string {
 interface Group {
   key: string; // URL key + dedup key
   conn: number;
+  role: string; // which rung this subprocess hosts — stamped on every frame
+  agentSession: number | null; // hi-agent's own id, present from the first frame
   sessionId: string | null; // adopted from the thread/start response; null until then
   frames: RawFrame[];
+}
+
+// The five rungs, plus a fallback. A session's identity here is its *rung* — the
+// connection number says which subprocess, which is not a question anyone has.
+const ROLES = ["reaction", "deliberation", "cognition", "reflection", "worker"];
+function roleClass(role: string): string {
+  return ROLES.includes(role) ? role : "unknown";
 }
 
 // Fold the flat frame stream into per-connection groups, preserving first-seen
@@ -130,10 +139,18 @@ function group(frames: RawFrame[]): Group[] {
   for (const f of frames) {
     let g = map.get(f.conn);
     if (!g) {
-      g = { key: `c::${f.conn}`, conn: f.conn, sessionId: f.thread_id, frames: [] };
+      g = {
+        key: `c::${f.conn}`,
+        conn: f.conn,
+        role: f.role,
+        agentSession: f.agent_session,
+        sessionId: f.thread_id,
+        frames: [],
+      };
       map.set(f.conn, g);
     }
     if (!g.sessionId && f.thread_id) g.sessionId = f.thread_id;
+    if (g.agentSession == null && f.agent_session != null) g.agentSession = f.agent_session;
     g.frames.push(f);
   }
   return [...map.values()];
@@ -179,8 +196,11 @@ export function SessionsView() {
                 className={g.key === selected ? "sel" : ""}
                 onClick={() => navigate(`${BASE}/${encodeURIComponent(g.key)}`)}
               >
-                <span className={`skind ${g.sessionId ? "reaction" : "worker"}`}>{g.sessionId ? "id" : "··"}</span>
-                <span className="nm">{g.sessionId ? g.sessionId.slice(0, 20) : "opening…"}</span>
+                <span className={`skind ${roleClass(g.role)}`}>{g.role || "?"}</span>
+                <span className="nm">
+                  {g.agentSession != null ? `#${g.agentSession}` : "opening…"}
+                  {g.sessionId ? <span className="muted"> · {g.sessionId.slice(0, 12)}</span> : null}
+                </span>
                 <span className="badges">
                   <span className="mini">{g.frames.length}</span>
                 </span>
@@ -205,9 +225,10 @@ function FrameLog({ group: g }: { group: Group }) {
   return (
     <div className="detail-head">
       <div className="dh-title">
-        <b>{g.sessionId ? "session" : "opening…"}</b>
+        <b>{g.role || "session"}</b>
         <span className="muted">
-          {g.sessionId ? <> · <code>{g.sessionId}</code></> : null} · {g.frames.length} frames
+          {g.agentSession != null ? <> · session <code>#{g.agentSession}</code></> : <> · opening…</>}
+          {g.sessionId ? <> · thread <code>{g.sessionId}</code></> : null} · {g.frames.length} frames
         </span>
       </div>
 
