@@ -85,6 +85,12 @@ struct RetainedView {
     /// host-owned captions.
     #[serde(default)]
     traits: Option<ViewTraits>,
+    /// The view's durable name — see [`ViewEnvelope::view_ref`]. A snapshot records
+    /// it so [`ViewBus::refresh_sources`] can recompile the view on the next boot
+    /// instead of resurrecting the module it happened to compile to. `None` for an
+    /// inline-source view, and for every snapshot written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    view_ref: Option<String>,
 }
 
 /// On-disk whole-state snapshot of the appearance at a moment, with `as_of` so
@@ -173,6 +179,87 @@ impl ViewBus {
             return;
         }
         entry.content = next;
+        entry.version += 1;
+        entry.notify.notify_waiters();
+        persist(&self.data_dir, entry).await;
+    }
+
+    /// Recompile the restored screen from its source, so a restart shows what the
+    /// view *is* now rather than the module it happened to compile to when it was
+    /// shown.
+    ///
+    /// [`ViewBus::load`] restores `module_url` verbatim, and that URL is a content
+    /// hash over the source **as it was at show time**; the compiled tree is a
+    /// disposable cache, not the view's identity. Without this pass, editing a view's
+    /// source — or shipping a binary that reseeds `_builtin/` — leaves the old
+    /// artifact pinned on screen forever. Nothing errors, because the old module is
+    /// still on disk and still imports cleanly; the screen just quietly keeps serving
+    /// a version of the view the rest of the process has moved past. That is not
+    /// hypothetical: a `_builtin/tasks` compiled before the task lifecycle replaced
+    /// `state` with `status` went on filtering `x.state === "open"` against an API
+    /// that had stopped emitting `state`, and so reported every task closed and the
+    /// list empty.
+    ///
+    /// Runs once at startup — after `install_builtin_views` has reseeded the tree and
+    /// after the compiler exists. Only the content slot is refreshed; the condition
+    /// slot is re-derived from embedded source by its own reconcile.
+    ///
+    /// Failure is deliberately not fatal, and never blanks the screen: a ref that no
+    /// longer resolves or source that no longer compiles keeps the pinned module. A
+    /// stale view beats an empty room, and the person can always clear it.
+    pub async fn refresh_sources(&self, compiler: &crate::mind::views::ViewCompiler) {
+        let restored = { self.inner.lock().await.content.clone() };
+        let Some(view) = restored else {
+            return;
+        };
+        let Some(view_ref) = restored_ref(&view, &self.data_dir).await else {
+            return;
+        };
+
+        let (source, traits) = match crate::mind::views::resolve_ref(&self.data_dir, &view_ref).await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                tracing::warn!(
+                    id = %view.id, view_ref = %view_ref, %error,
+                    "restored view's source is gone; keeping the module it was shown as",
+                );
+                return;
+            }
+        };
+        let module_url = match compiler.compile(&source).await {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(
+                    id = %view.id, view_ref = %view_ref, %error,
+                    "restored view no longer compiles; keeping the module it was shown as",
+                );
+                return;
+            }
+        };
+
+        let next = RetainedView {
+            id: view.id.clone(),
+            module_url,
+            traits,
+            view_ref: Some(view_ref),
+        };
+
+        let mut map = self.inner.lock().await;
+        let entry = &mut *map;
+        // Anything that wrote the slot while we were compiling is newer than what we
+        // restored, so it wins — we would otherwise put the old screen back.
+        if entry.content.as_ref() != Some(&view) || entry.content.as_ref() == Some(&next) {
+            return;
+        }
+        tracing::info!(
+            id = %next.id,
+            view_ref = next.view_ref.as_deref().unwrap_or(""),
+            was = %view.module_url,
+            now = %next.module_url,
+            "recompiled the restored view from source",
+        );
+        entry.content = Some(next);
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, entry).await;
@@ -318,9 +405,38 @@ fn resolve_slot(
                 id: envelope.id,
                 module_url,
                 traits: envelope.traits,
+                view_ref: envelope.view_ref,
             }))
         }
     }
+}
+
+/// The ref to recompile a restored view from, or `None` to keep it as it is.
+///
+/// Normally the snapshot recorded one. Snapshots written before `view_ref` existed
+/// did not — and the views most hurt by that are exactly the built-ins, because they
+/// are the ones a binary update reseeds, so their pinned module goes stale with
+/// nobody having touched a file.
+///
+/// For those, the id is a sound bridge: `reaction.md` names the built-ins to the
+/// agent as `_builtin/<name>` and it shows each one under that bare name, so an id
+/// that matches a file the host itself just seeded into `_builtin/` names that view.
+/// The file is checked rather than assumed, so an id that means nothing there is
+/// simply left alone, and the refreshed snapshot records a real ref — the guess
+/// happens once per install and never again.
+///
+/// An inline-source view legitimately has no ref and never gains one; it can only
+/// ever be restored as the artifact it compiled to.
+async fn restored_ref(view: &RetainedView, data_dir: &Path) -> Option<String> {
+    if let Some(view_ref) = &view.view_ref {
+        return Some(view_ref.clone());
+    }
+    let candidate = format!("_builtin/{}", view.id.trim());
+    if !crate::mind::views::valid_ref(&candidate) {
+        return None;
+    }
+    let source = data_dir.join("views").join(format!("{candidate}.jsx"));
+    tokio::fs::try_exists(&source).await.unwrap_or(false).then_some(candidate)
 }
 
 /// The newest parseable snapshot under the `appearance/` dir, or `None`.
@@ -414,6 +530,7 @@ mod tests {
             op: ViewOp::Show,
             module_url: Some(url.into()),
             traits: None,
+            view_ref: None,
         }
     }
 
@@ -423,6 +540,7 @@ mod tests {
             op: ViewOp::Dismiss,
             module_url: None,
             traits: None,
+            view_ref: None,
         }
     }
 
@@ -505,6 +623,7 @@ mod tests {
                 op: ViewOp::Replace,
                 module_url: Some("/m/v2.mjs".into()),
                 traits: None,
+                view_ref: None,
             },
         )
         .await;
@@ -742,6 +861,7 @@ mod tests {
                     op: ViewOp::Show,
                     module_url: Some("/m/g.mjs".into()),
                     traits: Some(traits),
+                    view_ref: None,
                 },
             )
             .await;
@@ -771,5 +891,150 @@ mod tests {
             vec!["a".to_string()],
             "the agent is told what it can act on, not the host's layer"
         );
+    }
+
+    // ── restoring a view by its ref ───────────────────────────────────────────
+    //
+    // A compiler with no usable esbuild is enough for these: `compile` returns the
+    // cache-hit URL without spawning anything when the module is already on disk,
+    // and never gets called at all when the ref fails to resolve. `seed_view`
+    // therefore writes the source AND its compiled artifact, which is exactly the
+    // state a real boot is in after `install_builtin_views` reseeds a view whose
+    // module was compiled on an earlier run.
+
+    fn offline_compiler(data_dir: &Path) -> crate::mind::views::ViewCompiler {
+        crate::mind::views::ViewCompiler::new(PathBuf::from("/nonexistent/esbuild"), data_dir)
+    }
+
+    /// Write `source` at `views/<view_ref>.jsx` plus its compiled module, and
+    /// answer with the URL that source compiles to.
+    async fn seed_view(data_dir: &Path, view_ref: &str, source: &str) -> String {
+        let views = data_dir.join("views");
+        let path = views.join(format!("{view_ref}.jsx"));
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, source).await.unwrap();
+
+        let (hash, url) = crate::mind::views::module_ref(source);
+        let compiled = views.join("_compiled");
+        tokio::fs::create_dir_all(&compiled).await.unwrap();
+        tokio::fs::write(compiled.join(format!("{hash}.mjs")), "// compiled").await.unwrap();
+        url
+    }
+
+    fn show_ref(id: &str, url: &str, view_ref: &str) -> ViewEnvelope {
+        ViewEnvelope {
+            id: id.into(),
+            op: ViewOp::Show,
+            module_url: Some(url.into()),
+            traits: None,
+            view_ref: Some(view_ref.into()),
+        }
+    }
+
+    /// The defect this whole path exists for: the source moved on while the screen
+    /// held the module compiled from the *old* source. A restart must show the view
+    /// as it is now.
+    #[tokio::test]
+    async fn refresh_recompiles_a_restored_view_from_its_current_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stale = seed_view(tmp.path(), "deck/leader", "export default () => 'v1'").await;
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("deck", &stale, "deck/leader")).await;
+        }
+
+        // The source is edited between runs — a view rebuild, or a new binary
+        // reseeding `_builtin/`.
+        let fresh = seed_view(tmp.path(), "deck/leader", "export default () => 'v2'").await;
+        assert_ne!(stale, fresh, "the edit must change the content hash");
+
+        let bus = ViewBus::load(tmp.path());
+        assert_eq!(
+            bus.wait_state(None).await.views[0].module_url, stale,
+            "load alone restores the module the view was shown as"
+        );
+
+        bus.refresh_sources(&offline_compiler(tmp.path())).await;
+        assert_eq!(
+            bus.wait_state(None).await.views[0].module_url, fresh,
+            "the refresh puts the view's current source on screen"
+        );
+    }
+
+    /// Snapshots written before the ref existed pin a module and nothing else. The
+    /// built-ins are the ones that go stale on their own (a binary reseeds them), and
+    /// the agent shows each under its bare name — so an id matching a seeded
+    /// `_builtin/` source identifies the view, and the refreshed snapshot records a
+    /// real ref so the bridge is never needed again.
+    #[tokio::test]
+    async fn refresh_adopts_the_builtin_ref_for_a_snapshot_written_without_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_view(tmp.path(), "_builtin/tasks", "export default () => 'old'").await;
+        {
+            let bus = ViewBus::load(tmp.path());
+            // No ref — exactly what a pre-`view_ref` snapshot restores as.
+            bus.apply(show("tasks", "/views/_compiled/deadbeef.mjs")).await;
+        }
+
+        let current = seed_view(tmp.path(), "_builtin/tasks", "export default () => 'new'").await;
+        let bus = ViewBus::load(tmp.path());
+        bus.refresh_sources(&offline_compiler(tmp.path())).await;
+        assert_eq!(bus.wait_state(None).await.views[0].module_url, current);
+
+        // …and the ref is now on disk, so the next boot resolves it outright.
+        let reloaded = ViewBus::load(tmp.path());
+        let restored = reloaded.inner.lock().await.content.clone().unwrap();
+        assert_eq!(restored.view_ref.as_deref(), Some("_builtin/tasks"));
+    }
+
+    /// An inline-source view has no durable name and no `_builtin/` file behind its
+    /// id. It must be left exactly as it was rather than blanked.
+    #[tokio::test]
+    async fn refresh_leaves_a_view_it_cannot_name_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show("one-off", "/views/_compiled/abc123.mjs")).await;
+        }
+
+        let bus = ViewBus::load(tmp.path());
+        bus.refresh_sources(&offline_compiler(tmp.path())).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.views[0].module_url, "/views/_compiled/abc123.mjs");
+        assert_eq!(state.views[0].id, "one-off");
+    }
+
+    /// A ref whose source has since been deleted keeps the module it was shown as.
+    /// A stale view beats an empty room, and the person can still clear it.
+    #[tokio::test]
+    async fn refresh_keeps_the_pinned_module_when_the_source_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = seed_view(tmp.path(), "deck/leader", "export default () => 'v1'").await;
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("deck", &url, "deck/leader")).await;
+        }
+        tokio::fs::remove_file(tmp.path().join("views/deck/leader.jsx")).await.unwrap();
+
+        let bus = ViewBus::load(tmp.path());
+        bus.refresh_sources(&offline_compiler(tmp.path())).await;
+        assert_eq!(bus.wait_state(None).await.views[0].module_url, url);
+    }
+
+    /// The condition slot is host-owned and re-derived from embedded source every
+    /// boot, so the refresh must not touch it.
+    #[tokio::test]
+    async fn refresh_leaves_the_condition_slot_to_its_own_reconcile() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.reconcile(show("vendor-outage", "/m/energy.mjs")).await;
+        }
+
+        let bus = ViewBus::load(tmp.path());
+        bus.refresh_sources(&offline_compiler(tmp.path())).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(ids(&state), vec!["vendor-outage"]);
+        assert_eq!(state.views[0].module_url, "/m/energy.mjs");
     }
 }

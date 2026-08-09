@@ -258,4 +258,16 @@ pub struct ViewEnvelope {
     /// (host-owned captions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traits: Option<ViewTraits>,
+    /// The ref `show` resolved this view from (`_builtin/tasks`, `deck/leader`) —
+    /// the view's *durable* name.
+    ///
+    /// `module_url` is a content hash of the source **as it was when the view was
+    /// shown**, and the compiled tree is a disposable cache, so it is the wrong
+    /// thing to restore a screen from: edit the source (or ship a new binary that
+    /// reseeds `_builtin/`) and the pinned hash keeps resolving — to the old view,
+    /// forever. Carrying the ref lets the restore recompile what the view *is*
+    /// now. `None` for an inline `source` view, which has no durable name and so
+    /// can only ever be restored as the artifact it compiled to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_ref: Option<String>,
 }

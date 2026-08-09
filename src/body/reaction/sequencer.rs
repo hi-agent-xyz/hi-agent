@@ -47,6 +47,7 @@ pub(super) enum Beat {
         op: String,
         source: String,
         traits: Option<ViewTraits>,
+        view_ref: Option<String>,
     },
     TurnEnd {
         done: oneshot::Sender<String>,
@@ -142,6 +143,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 op,
                 source,
                 traits,
+                view_ref,
             } => {
                 let (id, op) = resolve_view(id, &op);
                 if !armed {
@@ -150,7 +152,9 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 if reaction.inner.interrupts.should_skip(turn).await {
                     continue;
                 }
-                for emit in interleave::view_emits(&mut splitter, id, op, source, traits) {
+                for emit in
+                    interleave::view_emits(&mut splitter, id, op, source, traits, view_ref)
+                {
                     super::perform(emit, &synth_tx, &reaction).await;
                 }
             }

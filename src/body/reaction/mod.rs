@@ -814,6 +814,13 @@ pub async fn start(
         traits: Some(
             serde_json::from_str(geom).context("parsing the built-in out-of-energy traits")?,
         ),
+        // No ref on purpose. A ref exists so a *restored* view can be recompiled from
+        // its source, and the condition slot is never restored from one: it is
+        // host-owned and re-derived here, from the embedded source, on every boot —
+        // `reconcile_energy_view` re-applies the live level at startup. Handing it a
+        // ref would put a disk read into the out-of-energy path, which
+        // `out_of_energy_view` deliberately keeps out of it.
+        view_ref: None,
     };
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
     let reaction = Reaction {
@@ -981,6 +988,7 @@ impl Reaction {
                 op: ViewOp::Dismiss,
                 module_url: None,
                 traits: None,
+                view_ref: None,
             }
         };
         self.inner.views.reconcile(envelope).await;
@@ -2047,8 +2055,8 @@ async fn perform(
                 let _ = tx.send(sentence).await;
             }
         }
-        interleave::Emit::Show { id, op, source, traits } => {
-            emit_view(reaction, id, op, source, traits).await
+        interleave::Emit::Show { id, op, source, traits, view_ref } => {
+            emit_view(reaction, id, op, source, traits, view_ref).await
         }
     }
 }
@@ -2286,6 +2294,7 @@ async fn emit_view(
     op: ViewOp,
     source: String,
     traits: Option<ViewTraits>,
+    view_ref: Option<String>,
 ) {
     let module_url = if op == ViewOp::Dismiss {
         None
@@ -2316,7 +2325,7 @@ async fn emit_view(
         .inner
         .out
         .send(OutboundSignal::View {
-            envelope: ViewEnvelope { id, op, module_url, traits },
+            envelope: ViewEnvelope { id, op, module_url, traits, view_ref },
         })
         .await;
 }

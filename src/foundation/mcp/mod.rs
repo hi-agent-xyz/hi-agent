@@ -31,7 +31,6 @@ use crate::foundation::registry;
 use crate::identity::WorkerType;
 use crate::mind::memory::people_vectors;
 use crate::foundation::server::PartialMinute;
-use crate::types::ViewTraits;
 
 /// MCP protocol version we advertise when the client doesn't pin one. We echo the
 /// client's requested version when present, so this is only the fallback.
@@ -970,14 +969,20 @@ async fn dispatch_tool(
             // carry a `.geom.json` sidecar — what the builder declared about it.
             // There is no placement to override here any more: views are full-bleed,
             // one at a time, so the mind decides *what* is on screen and never where.
-            let (source, traits) = match arg_opt("ref") {
-                Some(r) if !r.trim().is_empty() => match resolve_view_ref(data_dir, &r).await {
-                    Ok(resolved) => resolved,
-                    Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
-                },
-                _ => (arg_str("source"), None),
+            // The ref travels on with the view: it is the view's durable name, and
+            // the compiled module URL it resolves to is a disposable content hash
+            // that goes stale the moment the source is edited or the binary reseeds
+            // `_builtin/`. Restoring the screen after a restart needs the name.
+            let (view_ref, source, traits) = match arg_opt("ref") {
+                Some(r) if !r.trim().is_empty() => {
+                    match crate::mind::views::resolve_ref(data_dir, &r).await {
+                        Ok((source, traits)) => (Some(r.trim().to_string()), source, traits),
+                        Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
+                    }
+                }
+                _ => (None, arg_str("source"), None),
             };
-            sink.show(arg_opt("id"), op, source, traits).await.map(|()| "shown")
+            sink.show(arg_opt("id"), op, source, traits, view_ref).await.map(|()| "shown")
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
@@ -1038,7 +1043,7 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     if view_ref.is_empty() {
         return tool_error("review_view requires a `ref`");
     }
-    let (source, traits) = match resolve_view_ref(data_dir, &view_ref).await {
+    let (source, traits) = match crate::mind::views::resolve_ref(data_dir, &view_ref).await {
         Ok(v) => v,
         Err(e) => return tool_error(&e),
     };
@@ -1666,118 +1671,6 @@ fn not_implemented(task: &str, seam: &str, provider: bool) -> Value {
         "`{task}` is not implemented yet — {seam}. Right now {provider}. The tool's shape is \
          final and nothing about this call was wrong."
     ))
-}
-
-/// A view ref is a relative path under the views tree, naming the view's source file
-/// minus the `.jsx` — e.g. `badminton-top10/leader` → `views/badminton-top10/
-/// leader.jsx`. Each `/`-separated segment is a slug (letters, digits, `-`, `_`) —
-/// no dots, no empty segments — so the ref stays inside the views tree and can't
-/// traverse out. The build sub-agent writes `<ref>.jsx` with its own file tools (no
-/// MCP tool needed); this reads it back server-side, so the JSX never enters the
-/// mind's context.
-fn valid_view_ref(view_ref: &str) -> bool {
-    !view_ref.is_empty()
-        && view_ref.len() <= 128
-        && view_ref.split('/').all(|seg| {
-            !seg.is_empty()
-                && seg.bytes().all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
-        })
-}
-
-/// Resolve a view ref to its stored JSX source (and what the builder declared
-/// about it, if anything), read from the views tree. The agent passes only the
-/// tiny ref through `show`; this reads the component back, plus an optional
-/// `<ref>.geom.json` sidecar the builder wrote next to it. A missing or
-/// unparseable sidecar is not an error — it just means host-owned captions, which
-/// is the safe default. The sidecar no longer carries placement: every view is
-/// full-bleed, so `owns_captions` is the only thing left to declare.
-async fn resolve_view_ref(
-    data_dir: &std::path::Path,
-    view_ref: &str,
-) -> Result<(String, Option<ViewTraits>), String> {
-    let view_ref = view_ref.trim();
-    if !valid_view_ref(view_ref) {
-        return Err(format!("invalid ref `{view_ref}` (names and `/` only, no dots)"));
-    }
-    let views = data_dir.join("views");
-    let source = tokio::fs::read_to_string(views.join(format!("{view_ref}.jsx")))
-        .await
-        .map_err(|e| format!("no such view ({e})"))?;
-    let traits = match tokio::fs::read(views.join(format!("{view_ref}.geom.json"))).await {
-        Ok(bytes) => serde_json::from_slice::<ViewTraits>(&bytes).ok(),
-        Err(_) => None,
-    };
-    Ok((source, traits))
-}
-
-#[cfg(test)]
-mod view_store_tests {
-    use super::*;
-
-    #[test]
-    fn ref_validation_allows_nested_slugs_blocks_traversal() {
-        assert!(valid_view_ref("badminton-top10"));
-        assert!(valid_view_ref("badminton-top10/leader"));
-        assert!(valid_view_ref("a/b/c_2"));
-        assert!(!valid_view_ref(""), "empty");
-        assert!(!valid_view_ref("../etc/passwd"), "dots blocked");
-        assert!(!valid_view_ref("a//b"), "empty segment");
-        assert!(!valid_view_ref("dot.name"), "dot blocked");
-        assert!(!valid_view_ref("/abs"), "leading slash → empty segment");
-        assert!(!valid_view_ref(&"x".repeat(129)), "too long");
-    }
-
-    #[tokio::test]
-    async fn resolve_reads_views_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let proj = dir.path().join("views").join("deck");
-        tokio::fs::create_dir_all(&proj).await.unwrap();
-        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        let (source, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
-        assert_eq!(source, "export default () => 1");
-        // No sidecar written → host-owned captions.
-        assert!(traits.is_none());
-    }
-
-    #[tokio::test]
-    async fn resolve_reads_traits_sidecar() {
-        let dir = tempfile::tempdir().unwrap();
-        let proj = dir.path().join("views").join("deck");
-        tokio::fs::create_dir_all(&proj).await.unwrap();
-        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        tokio::fs::write(proj.join("leader.geom.json"), r#"{"owns_captions":true}"#)
-            .await
-            .unwrap();
-        let (_, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
-        assert!(traits.expect("sidecar traits").owns_captions);
-    }
-
-    /// Sidecars written under the old placement schema are still on disk in every
-    /// existing workshop. They must degrade to the default rather than failing the
-    /// show: the unknown `region`/`size` keys are ignored and `owns_captions` — the
-    /// one field that survived — is read straight through.
-    #[tokio::test]
-    async fn resolve_ignores_retired_placement_keys() {
-        let dir = tempfile::tempdir().unwrap();
-        let proj = dir.path().join("views").join("deck");
-        tokio::fs::create_dir_all(&proj).await.unwrap();
-        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        tokio::fs::write(
-            proj.join("leader.geom.json"),
-            r#"{"region":"right","size":"wide","owns_captions":true}"#,
-        )
-        .await
-        .unwrap();
-        let (_, traits) = resolve_view_ref(dir.path(), "deck/leader").await.unwrap();
-        assert!(traits.expect("sidecar traits").owns_captions);
-    }
-
-    #[tokio::test]
-    async fn resolve_rejects_bad_refs() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(resolve_view_ref(dir.path(), "../secret").await.is_err(), "traversal");
-        assert!(resolve_view_ref(dir.path(), "missing/view").await.is_err(), "no file");
-    }
 }
 
 #[cfg(test)]

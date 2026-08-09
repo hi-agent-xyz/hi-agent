@@ -19,7 +19,13 @@ use crate::types::{ViewOp, ViewTraits};
 #[derive(Debug)]
 pub(super) enum Emit {
     Speak(String),
-    Show { id: String, op: ViewOp, source: String, traits: Option<ViewTraits> },
+    Show {
+        id: String,
+        op: ViewOp,
+        source: String,
+        traits: Option<ViewTraits>,
+        view_ref: Option<String>,
+    },
 }
 
 /// Coalesce spoken text into sentences for TTS. Pure: no side-effects, so the
@@ -42,12 +48,13 @@ pub(super) fn view_emits(
     op: ViewOp,
     source: String,
     traits: Option<ViewTraits>,
+    view_ref: Option<String>,
 ) -> Vec<Emit> {
     let mut out = Vec::new();
     if let Some(tail) = splitter.flush() {
         out.push(Emit::Speak(tail));
     }
-    out.push(Emit::Show { id, op, source, traits });
+    out.push(Emit::Show { id, op, source, traits, view_ref });
     out
 }
 
@@ -75,9 +82,9 @@ mod release_tests {
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = Vec::new();
         let declared = Some(ViewTraits { owns_captions: true });
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), declared));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), declared, None));
         emits.extend(speak_emits("Narrate one. ", &mut sp, now));
-        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None));
+        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None, None));
         emits.extend(speak_emits("Narrate two. ", &mut sp, now));
         if let Some(tail) = sp.flush() {
             emits.push(Emit::Speak(tail));
@@ -105,7 +112,7 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = speak_emits("partial no period", &mut sp, now);
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None, None));
         assert_eq!(trace(&emits), vec!["speak:partial no period", "show:c1"]);
     }
 }

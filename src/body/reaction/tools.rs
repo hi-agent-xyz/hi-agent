@@ -179,7 +179,9 @@ impl ToolSink {
     /// Show a view (the `show` tool): queue it onto the sequencer, which
     /// paces it to the surrounding narration. `op` is `show`/`replace`/`dismiss`;
     /// `id` may be omitted (one is synthesized). `traits` is what the view declared
-    /// about itself (or `None` — host-owned captions).
+    /// about itself (or `None` — host-owned captions). `view_ref` is the ref the
+    /// source was read from, carried so the restore can recompile it (`None` for an
+    /// inline-source view).
     ///
     /// Unlike speech this is never gated: a view is retained state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
@@ -190,12 +192,13 @@ impl ToolSink {
         op: String,
         source: String,
         traits: Option<ViewTraits>,
+        view_ref: Option<String>,
     ) -> anyhow::Result<()> {
         self.mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?
             .beats
-            .send(Beat::Show { id, op, source, traits })
+            .send(Beat::Show { id, op, source, traits, view_ref })
             .await
             .map_err(|_| anyhow::anyhow!("sequencer gone; show dropped"))
     }

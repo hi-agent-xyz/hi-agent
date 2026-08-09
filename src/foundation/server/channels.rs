@@ -236,6 +236,7 @@ mod tests {
                 op: ViewOp::Show,
                 module_url: Some("/views/tasks.mjs".into()),
                 traits: None,
+                view_ref: Some("_builtin/tasks".into()),
             },
         };
 

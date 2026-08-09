@@ -61,6 +61,51 @@ pub fn render_context() -> Option<&'static RenderContext> {
     RENDER.get()
 }
 
+/// A view ref is a relative path under the views tree, naming the view's source file
+/// minus the `.jsx` — e.g. `badminton-top10/leader` → `views/badminton-top10/
+/// leader.jsx`. Each `/`-separated segment is a slug (letters, digits, `-`, `_`) —
+/// no dots, no empty segments — so the ref stays inside the views tree and can't
+/// traverse out. The build sub-agent writes `<ref>.jsx` with its own file tools (no
+/// MCP tool needed); this reads it back server-side, so the JSX never enters the
+/// mind's context.
+pub fn valid_ref(view_ref: &str) -> bool {
+    !view_ref.is_empty()
+        && view_ref.len() <= 128
+        && view_ref.split('/').all(|seg| {
+            !seg.is_empty()
+                && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
+/// Read a view ref's source and what it declared about itself.
+///
+/// This is the one place a ref becomes source, because two callers now need it and
+/// they are on opposite sides of the view's life: `show` resolves a ref the agent
+/// named, and the appearance restore re-resolves the ref a *past* show recorded.
+/// Both must read the same file by the same rules, or a view would come back as
+/// something the tool would refuse to put up.
+///
+/// Views are full-bleed, so `owns_captions` is the only thing left to declare and a
+/// missing or unparseable sidecar is not an error — it just means host-owned captions.
+pub async fn resolve_ref(
+    data_dir: &Path,
+    view_ref: &str,
+) -> Result<(String, Option<crate::types::ViewTraits>), String> {
+    let view_ref = view_ref.trim();
+    if !valid_ref(view_ref) {
+        return Err(format!("invalid ref `{view_ref}` (names and `/` only, no dots)"));
+    }
+    let views = data_dir.join("views");
+    let source = tokio::fs::read_to_string(views.join(format!("{view_ref}.jsx")))
+        .await
+        .map_err(|e| format!("no such view ({e})"))?;
+    let traits = match tokio::fs::read(views.join(format!("{view_ref}.geom.json"))).await {
+        Ok(bytes) => serde_json::from_slice::<crate::types::ViewTraits>(&bytes).ok(),
+        Err(_) => None,
+    };
+    Ok((source, traits))
+}
+
 /// Compiles agent view source to a served ESM module URL. Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct ViewCompiler {
@@ -159,12 +204,86 @@ impl ViewCompiler {
 
 /// Deterministic content hash + served URL for `source`. A cache key, not a
 /// security boundary: a 64-bit hash is ample for de-duping a few authored views.
-fn module_ref(source: &str) -> (String, String) {
+///
+/// `pub(crate)` so a test can seed the compiled cache for a known source and
+/// exercise a caller of [`ViewCompiler::compile`] on the cache-hit path, which is
+/// the one path through the compiler that never spawns esbuild.
+pub(crate) fn module_ref(source: &str) -> (String, String) {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     source.hash(&mut h);
     let hash = format!("{:016x}", h.finish());
     let url = format!("/views/_compiled/{hash}.mjs");
     (hash, url)
+}
+
+#[cfg(test)]
+mod view_ref_tests {
+    use super::*;
+
+    #[test]
+    fn ref_validation_allows_nested_slugs_blocks_traversal() {
+        assert!(valid_ref("badminton-top10"));
+        assert!(valid_ref("badminton-top10/leader"));
+        assert!(valid_ref("a/b/c_2"));
+        assert!(!valid_ref(""), "empty");
+        assert!(!valid_ref("../etc/passwd"), "dots blocked");
+        assert!(!valid_ref("a//b"), "empty segment");
+        assert!(!valid_ref("dot.name"), "dot blocked");
+        assert!(!valid_ref("/abs"), "leading slash → empty segment");
+        assert!(!valid_ref(&"x".repeat(129)), "too long");
+    }
+
+    #[tokio::test]
+    async fn resolve_reads_views_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("views").join("deck");
+        tokio::fs::create_dir_all(&proj).await.unwrap();
+        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
+        let (source, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
+        assert_eq!(source, "export default () => 1");
+        // No sidecar written → host-owned captions.
+        assert!(traits.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_reads_traits_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("views").join("deck");
+        tokio::fs::create_dir_all(&proj).await.unwrap();
+        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
+        tokio::fs::write(proj.join("leader.geom.json"), r#"{"owns_captions":true}"#)
+            .await
+            .unwrap();
+        let (_, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
+        assert!(traits.expect("sidecar traits").owns_captions);
+    }
+
+    /// Sidecars written under the old placement schema are still on disk in every
+    /// existing workshop. They must degrade to the default rather than failing the
+    /// show: the unknown `region`/`size` keys are ignored and `owns_captions` — the
+    /// one field that survived — is read straight through.
+    #[tokio::test]
+    async fn resolve_ignores_retired_placement_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("views").join("deck");
+        tokio::fs::create_dir_all(&proj).await.unwrap();
+        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
+        tokio::fs::write(
+            proj.join("leader.geom.json"),
+            r#"{"region":"right","size":"wide","owns_captions":true}"#,
+        )
+        .await
+        .unwrap();
+        let (_, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
+        assert!(traits.expect("sidecar traits").owns_captions);
+    }
+
+    #[tokio::test]
+    async fn resolve_rejects_bad_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(resolve_ref(dir.path(), "../secret").await.is_err(), "traversal");
+        assert!(resolve_ref(dir.path(), "missing/view").await.is_err(), "no file");
+    }
 }
 
 #[cfg(test)]
