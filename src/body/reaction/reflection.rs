@@ -306,7 +306,7 @@ async fn turn(
 
     use crate::foundation::codex::{SessionOpts, SessionUpdate};
     use crate::identity::Role;
-    use crate::foundation::observatory::{EventKind, SessionKind};
+    use crate::foundation::observatory::EventKind;
     use crate::mind::memory::snapshot;
 
     let data_dir = reaction.inner.memory.data_dir();
@@ -335,7 +335,7 @@ async fn turn(
         .observatory
         .record(
             EventKind::SessionOpened {
-                kind: SessionKind::Reflection,
+                kind: Role::Reflection,
                 id: session.id().to_string(),
             },
         )

@@ -43,7 +43,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
-use crate::foundation::observatory::{EventKind, Observatory, SessionKind, WorkerState};
+use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
 use crate::identity::{Role, WorkerType};
 use crate::mind::memory::layout;
 
@@ -237,7 +237,7 @@ impl WorkerRegistry {
             .observatory
             .record(
                 EventKind::SessionOpened {
-                    kind: SessionKind::Deliberation,
+                    kind: Role::Deliberation,
                     id: id.to_string(),
                 },
             )
@@ -326,7 +326,7 @@ impl WorkerRegistry {
             // path, so without this it is recorded as one.
             observatory
                 .record(EventKind::SessionOpened {
-                    kind: SessionKind::Deliberation,
+                    kind: Role::Deliberation,
                     id: id.to_string(),
                 })
                 .await;

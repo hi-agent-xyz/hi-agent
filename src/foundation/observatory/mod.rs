@@ -31,61 +31,45 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::identity::Role;
 
-
 /// How many recent events the in-memory ring retains for SSE replay-on-connect.
 const HISTORY_CAP: usize = 1000;
 /// Broadcast backlog; a subscriber that lags past this misses events (logged on
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
 
-/// Which rung an agent session is: the four of the
-/// [ladder](../../../docs/arch/arch.md) that hold sessions, plus the workers below
-/// them. It mirrors [`Role`] and must keep doing so — a role with no variant here
-/// cannot be told apart from a worker anywhere in the observatory, which is exactly what
-/// happened to Deliberation. (A `Summarizer`
-/// variant outlived the session swap that produced it and is gone with it.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionKind {
-    Reaction,
-    Deliberation,
-    Worker,
-    Reflection,
-    Cognition,
-}
-
-/// The mirror, made the compiler's problem rather than a convention. Adding a role now
-/// fails to compile until it has a kind here, which is the check that was missing when
-/// Deliberation was added and the observatory kept calling it a worker.
+/// **A role, on this module's wire, is its word.** `"reaction"`, `"deliberation"`,
+/// `"worker"`, `"reflection"`, `"cognition"` — exactly [`Role::as_str`], which is also
+/// what the `X-HI-Role` header and `GET /api/workers` say, so one session reads the same
+/// in all three places.
 ///
-/// **This still is a mirror, and one is left.** `agent::SessionRole` — what this used to
-/// convert from — is gone into [`Role`], the one role namespace; the remaining question
-/// is whether the observatory needs a type of its own at all, since `SessionKind`'s five
-/// variants are `Role::as_str`'s five words and its `snake_case` serialization is those
-/// words verbatim. Collapsing it means giving `Role` a hand-written `Serialize` that
-/// emits the bare word and drops the worker type, which is a wire decision rather than a
-/// mechanical one, so it is deliberately not taken here.
+/// **This replaced a `SessionKind` enum**: five variants that were [`Role`]'s five
+/// variants with the worker payload dropped, a `From<Role>` to convert, and a test to
+/// stop the two drifting. It was the last of four copies of one concept, and its own doc
+/// admitted the job — *"it mirrors `SessionRole` and must keep doing so"*. A mirror that
+/// must be kept in sync by hand is the thing that let Deliberation be reported as a
+/// worker for as long as it was.
 ///
-/// The worker arm ignores its payload for that reason: an event stream about session
-/// lifecycle names the *surface*, and all five worker types share one. Which kind of
-/// worker a live session is is answered by `GET /api/workers`, which carries the type.
-impl From<Role> for SessionKind {
-    fn from(role: Role) -> Self {
-        match role {
-            Role::Reaction => Self::Reaction,
-            Role::Deliberation => Self::Deliberation,
-            Role::Worker(_) => Self::Worker,
-            Role::Reflection => Self::Reflection,
-            Role::Cognition => Self::Cognition,
-        }
-    }
+/// It is a **projection, not a type**, so it lives here as a function rather than in
+/// [`crate::identity`] as a lossy `Serialize`. The loss is deliberate and local: a
+/// lifecycle event names the *surface* a session runs on, and all five worker types share
+/// one. Which kind of worker a session is is a live-roster question, answered by
+/// `GET /api/workers`, which carries the type. Putting this on `Role` itself would make
+/// every future serializer of a role silently drop the type to suit one consumer.
+///
+/// Serialize-only on purpose. There is no matching deserializer and there should not be:
+/// `"worker"` cannot say which of the five it was, so a round trip would have to invent
+/// one. Nothing reads these back — `sessions.jsonl` is an append-only journal with no
+/// reader in-process — so the asymmetry costs nothing.
+fn role_word<S: serde::Serializer>(role: &Role, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(role.as_str())
 }
 
 /// Live state of one agent session in the mirror.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionView {
     pub id: String,
-    pub kind: SessionKind,
+    #[serde(serialize_with = "role_word")]
+    pub kind: Role,
     pub opened_at: DateTime<Utc>,
     /// True while a prompt is mid-flight on this session.
     pub in_flight: bool,
@@ -144,8 +128,16 @@ pub struct SessionEvent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum EventKind {
-    SessionOpened { kind: SessionKind, id: String },
-    SessionClosed { kind: SessionKind, id: String },
+    SessionOpened {
+        #[serde(serialize_with = "role_word")]
+        kind: Role,
+        id: String,
+    },
+    SessionClosed {
+        #[serde(serialize_with = "role_word")]
+        kind: Role,
+        id: String,
+    },
     /// `input` is the human-readable incoming message(s) for this turn — the new
     /// signals batch (human utterances, worker reports, pulses), not the
     /// full seeded prompt.
@@ -276,10 +268,10 @@ impl Observatory {
 
         match kind {
             EventKind::SessionOpened { kind, id } => match kind {
-                SessionKind::Reaction => {
+                Role::Reaction => {
                     view.reaction_session = Some(SessionView {
                         id: id.clone(),
-                        kind: SessionKind::Reaction,
+                        kind: Role::Reaction,
                         opened_at: now,
                         in_flight: false,
                         turns: 0,
@@ -291,12 +283,12 @@ impl Observatory {
                 // where a rung nobody is listening to honestly belongs. They are
                 // *recorded* either way: the event log is what names a rung, and
                 // until it did, Deliberation was indistinguishable from a worker.
-                SessionKind::Worker
-                | SessionKind::Deliberation
-                | SessionKind::Reflection
-                | SessionKind::Cognition => {}
+                Role::Worker(_)
+                | Role::Deliberation
+                | Role::Reflection
+                | Role::Cognition => {}
             },
-            EventKind::SessionClosed { kind: SessionKind::Reaction, id } => {
+            EventKind::SessionClosed { kind: Role::Reaction, id } => {
                 if view.reaction_session.as_ref().map(|session| session.id.as_str())
                     == Some(id.as_str())
                 {
@@ -413,26 +405,40 @@ mod tests {
     use super::*;
 
     /// The observatory's whole job is answering "what is the machine doing", and a role
-    /// it cannot name is one it answers wrongly rather than not at all. Each role's kind
-    /// also has to serialize to the role's own word, because the wire name is what the
-    /// inspector prints.
+    /// it cannot name is one it answers wrongly rather than not at all. So every role
+    /// reaches the wire, and reaches it as its own word — the wire name is what the
+    /// inspector prints, and `EventsView.tsx` renders it as a bare string.
     ///
-    /// Swept over [`Role::ALL`] against [`Role::as_str`] rather than a hand-written list
-    /// of five pairs, so the mirror is checked against the source of the words instead of
-    /// against a second copy of them. That is also what makes the remaining duplication
-    /// safe until `SessionKind` is collapsed: the two cannot drift without failing here.
+    /// This used to compare a `SessionKind` mirror against `Role::as_str`, i.e. two copies
+    /// of five words against each other. There is one copy now, so what is left to pin is
+    /// the *shape*: a role serializes as a string, not as the `{"worker": "general"}` an
+    /// automatic derive would produce for a variant with a payload.
     #[test]
-    fn every_role_has_a_kind_and_keeps_its_name() {
+    fn every_role_reaches_the_wire_as_its_own_word() {
         for role in Role::ALL {
-            let json = serde_json::to_string(&SessionKind::from(*role)).unwrap();
-            assert_eq!(json, format!("\"{}\"", role.as_str()), "{role:?} serializes as {json}");
+            let event = EventKind::SessionOpened { kind: *role, id: "s".into() };
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(json["kind"], serde_json::json!(role.as_str()), "{role:?} on the wire");
+            assert!(json["kind"].is_string(), "{role:?} must not serialize structurally");
+        }
+    }
+
+    /// All five worker types land on the one word, which is the projection being lossy on
+    /// purpose: a lifecycle event names the surface, and `GET /api/workers` carries the
+    /// specialism.
+    #[test]
+    fn a_worker_of_any_type_is_one_word_on_the_wire() {
+        for t in crate::identity::WorkerType::ALL {
+            let event = EventKind::SessionOpened { kind: Role::Worker(*t), id: "s".into() };
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(json["kind"], serde_json::json!("worker"), "{} on the wire", t.as_str());
         }
     }
 
     #[tokio::test]
     async fn mirrors_reaction_session_and_turn() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() })
+        obs.record(EventKind::SessionOpened { kind: Role::Reaction, id: "sess-1".into() })
             .await;
         obs.record(EventKind::TurnStarted { turn: 0, input: "hi".into() }).await;
 
@@ -457,17 +463,17 @@ mod tests {
     #[tokio::test]
     async fn closing_a_reaction_session_clears_only_that_live_session() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() })
+        obs.record(EventKind::SessionOpened { kind: Role::Reaction, id: "sess-1".into() })
             .await;
 
-        obs.record(EventKind::SessionClosed { kind: SessionKind::Reaction, id: "older".into() })
+        obs.record(EventKind::SessionClosed { kind: Role::Reaction, id: "older".into() })
             .await;
         assert_eq!(
             obs.snapshot().await.reaction_session.as_ref().map(|s| s.id.as_str()),
             Some("sess-1")
         );
 
-        obs.record(EventKind::SessionClosed { kind: SessionKind::Reaction, id: "sess-1".into() })
+        obs.record(EventKind::SessionClosed { kind: Role::Reaction, id: "sess-1".into() })
             .await;
         assert!(obs.snapshot().await.reaction_session.is_none());
     }
@@ -498,7 +504,7 @@ mod tests {
     async fn a_non_voice_event_is_recorded_and_mirrors_nothing() {
         let obs = Observatory::new(None);
         obs.record(EventKind::SessionOpened {
-            kind: SessionKind::Reflection,
+            kind: Role::Reflection,
             id: "refl-1".into(),
         })
         .await;
@@ -511,13 +517,13 @@ mod tests {
     #[tokio::test]
     async fn subscribe_replays_then_streams_live_without_dup() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::SessionOpened { kind: SessionKind::Reaction, id: "sess-1".into() })
+        obs.record(EventKind::SessionOpened { kind: Role::Reaction, id: "sess-1".into() })
             .await;
         let (replay, mut rx) = obs.subscribe().await;
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].seq, 1);
 
-        obs.record(EventKind::SessionClosed { kind: SessionKind::Reaction, id: "sess-1".into() })
+        obs.record(EventKind::SessionClosed { kind: Role::Reaction, id: "sess-1".into() })
             .await;
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live event follows replay with no gap or dup");

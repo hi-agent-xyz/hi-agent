@@ -194,7 +194,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
         .observatory
         .record(
             EventKind::SessionOpened {
-                kind: crate::foundation::observatory::SessionKind::Reflection,
+                kind: Role::Reflection,
                 id: session.id().to_string(),
             },
         )

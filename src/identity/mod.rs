@@ -104,8 +104,7 @@ impl WorkerType {
 
     /// Every type, for the tool schema's `enum` and for install/test sweeps. One list,
     /// so a new variant cannot be advertised in one place and forgotten in the other.
-    pub const ALL: &'static [Self] =
-        &[
+    pub const ALL: &'static [Self] = &[
         Self::General,
         Self::ViewBuilder,
         Self::ViewReviewer,

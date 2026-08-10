@@ -61,7 +61,7 @@ use tokio::time::{Instant, sleep_until};
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::identity::Role;
-use crate::foundation::observatory::{EventKind, SessionKind};
+use crate::foundation::observatory::EventKind;
 use crate::foundation::registry::{self, Registration};
 use crate::mind::memory::snapshot;
 
@@ -522,7 +522,7 @@ async fn open_session(
         .observatory
         .record(
             EventKind::SessionOpened {
-                kind: SessionKind::Cognition,
+                kind: Role::Cognition,
                 id: opened.id().to_string(),
             },
         )

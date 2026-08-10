@@ -76,7 +76,7 @@ use crate::foundation::config;
 use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
 use crate::mind::memory::{Memory, snapshot};
-use crate::foundation::observatory::{EventKind, Observatory, SessionKind};
+use crate::foundation::observatory::{EventKind, Observatory};
 use crate::types::{Channel, JournalEntry, Origin, Signal, ViewEnvelope, ViewOp, ViewTraits};
 use bytes::Bytes;
 use uuid::Uuid;
@@ -1878,7 +1878,7 @@ async fn record_reaction_session_closed(
         .observatory
         .record(
             EventKind::SessionClosed {
-                kind: SessionKind::Reaction,
+                kind: Role::Reaction,
                 id: session.id().to_string(),
             },
         )
@@ -1927,7 +1927,7 @@ async fn open_reaction_session(
         .observatory
         .record(
             EventKind::SessionOpened {
-                kind: SessionKind::Reaction,
+                kind: Role::Reaction,
                 id: session.id().to_string(),
             },
         )
