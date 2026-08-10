@@ -673,9 +673,73 @@ intended registrations lose **"you just came back"** — a return is not due at 
 by the person, and a timer could only find one by polling. `surfaces.md` also loses its last
 **arbiter** references, which were retired vocabulary.
 
-**Still open, and named rather than papered over:** nothing wakes the voice when it is running
+~~**Still open, and named rather than papered over:** nothing wakes the voice when it is running
 *late* on a promise — the "running late" half of the L1 finding is untouched, because nothing in
-the host fires at a named time. A return gets them told; nothing gets them told on time.
+the host fires at a named time. A return gets them told; nothing gets them told on time.~~
+**Closed by N8** (2026-08-10, on `feat/check-in`, unpushed). It stayed open one N too long:
+`Returned` was doing double duty as the progress mechanism, and a return is the moment the
+person was about to ask anyway.
+
+### N8 — The check-in · **built on `feat/check-in`, 611 lib + 35 integration green, 0 warnings — not pushed, never run live**
+
+**The "running late" half of the L1 finding, closed — and it was a broken product, not a
+rough edge.** Reported by the user from normal use on 2026-08-10 (`b7dc549`, local
+`make dev`): *"i have to ask progress often, which is not nice ux"*. The day's
+`data/memory/raw/text/2026-08-10/text.jsonl` is unambiguous — three separate "progress?"
+from the boss in one morning, each answered completely and instantly, after silences of
+**13, 15, 13 and 18 minutes**. The answer was always ready. Nothing sent it.
+
+Three mechanisms, and the third is the one that mattered:
+
+1. **The pulse cannot reach these gaps.** Default 30m, and `last_activity` resets on
+   every turn — so no silence in the transcript ever came close.
+2. **A worker reports at completion only.** Nothing travels up mid-flight.
+3. **The number the voice names had no reader.** `reaction.md` tells it to put a size on
+   a silence and then says outright *"You have no timer — nothing taps you on the
+   shoulder at the minute you named"* — while the same section's last line is the
+   judgment: *"a check-in that arrives is a promise kept; one they have to ask for is
+   already late."* The character was right and the host could not keep it.
+
+What looked like proactive updates in the transcript were all riding on `Woke::Returned`
+— and a person coming back to the window is precisely the moment they were about to ask.
+
+**`docs/arch/` was edited, deliberately.** `core.md#glancing-up` gains *the check-in* and
+loses "nothing wakes the voice when a promise is running late" from its costs;
+`surfaces.md` gains `back_in` on `say`; `agents.md` gives Reaction the deadline as part
+of the social layer it already owns. **This does not reopen N4.** One slot per voice, one
+deadline, one wake, no target, no payload; a task's `due` still fires nothing; scheduling
+past a cadence is still the agent's own. It is a second deadline in the `select!` that
+already carries the pulse's.
+
+- **`say(text, back_in)`** arms it. On `say` and not a verb of its own because a promise
+  is only a promise once it has been *said* — a separate call could arm a wake for a
+  number nobody was told. An overlong (rejected) utterance arms nothing.
+- **`Said` replaces the bare `Spoken` return**, so the ack confirms the number the host
+  is now holding. An unreadable `back_in` arms nothing **and says so** — swallowing it
+  would leave the voice believing it was covered, which is worse than no timer.
+- **`LoopInput::CheckIn`** is its own wake beside `Pulse` and `Returned`, for the same
+  reason `Returned` is: rendering it as `(pulse)` would tell the voice to stay quiet at
+  the instant it should speak.
+- **A floor under an open-ended silence** (`check_in`, default 5m, doubling to the pulse,
+  `off` disables). The observed failure was mostly promises with *no number at all*, so a
+  mechanism resting entirely on the model remembering the parameter would have missed the
+  majority of it. Deliberation-busy only — Cognition's workers are not this loop's to
+  describe. The note distinguishes the two sources: a floor must never claim a promise
+  nobody heard. **The backoff dial is whether the last check-in produced speech**, not a
+  blind doubling — the voice is the only thing that knows if there was anything to say,
+  so a cadence that keeps landing stays at 5m and one that keeps passing in silence
+  widens itself out of the way.
+- **Discharged by the thing it was about coming back** — a Deliberation report clears an
+  untouched slot, so the voice is not woken to say "you told them they'd hear by now"
+  right after it has just told them. A slot the same turn re-armed is kept.
+- **Dropped into an empty room**, not held: the words would be held anyway and `Returned`
+  already wakes the voice with a fresher read.
+
+**Unverified, and it is the whole point:** no live run. The re-test is one real errand
+that takes >5 minutes — hand it over, *don't ask*, and watch for `check-in fired` in
+`server.log` plus whether what gets spoken is actual progress rather than "still working
+on it". `render_status`'s 240-char tail is the only substance the voice has to build that
+from, and whether that is enough is exactly what a live run answers.
 
 ### ~~N6 (original framing)~~
 
@@ -976,8 +1040,10 @@ a commit. What is genuinely unfinished here is behaviour, not structure: the ven
 half-classified, and one mechanism — `record_reflex` — can never fire. It is labelled where it
 lives, which is the standard this file holds. **Presence now gates** (N6) —
 the one thing that can be spent is withheld, `say` reports what became of an utterance, and
-coming back is an event the voice is woken for. What presence still cannot do is notice that a
-promise is running *late*; that one wants the clock.
+coming back is an event the voice is woken for. Lateness is now an event too (N8): the voice
+names a size in `say`'s `back_in` and the host wakes it when that is up, with a floor beneath
+for the silence it left open-ended. It did not want the clock — it wanted one deadline, which
+is the thing N4 was never arguing against.
 `AGENTS` — all four rungs real **and now wearing their own clothes**: Deliberation is opened as
 `SessionRole::Deliberation` with the one-tool surface the design gives it, and the `_` fallback
 that would have swallowed it is empty. **Every worker kind is a prompt file**, including the two
