@@ -107,6 +107,13 @@ present then, not a backlog; voice does not keep, so there is nothing worth hold
 What waits for a better moment waits in Reaction's judgment, which is where the decision
 lives.
 
+The same call also carries `back_in` — the size Reaction just put on a silence, which
+arms [the check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
+that brings it back to keep the promise. It rides on `say` rather than on a verb of its
+own precisely because a promise is only a promise once it has been *said*: a separate
+call could arm a wake for a number nobody was ever told. Still one queue-free surface —
+what is held is a deadline, not an utterance.
+
 ### Text appearance
 
 Outbound text is one backend-owned current exchange, rendered by any number of windows.

@@ -646,6 +646,18 @@ impl WorkerRegistry {
     /// mid-conversation is *am I still looking into this* — so it can say "still on it"
     /// with a straight face instead of guessing. Anything a worker produces reaches the
     /// voice as a report, on the report path, which is where it belongs.
+    /// Whether the conversation's own thinking is running right now.
+    ///
+    /// The cheap half of [`WorkerRegistry::render_status`]'s question, for the check-in
+    /// floor: that one takes a transcript lock to build a tail nobody needs when the
+    /// question is only *is anything in flight*. Deliberation alone — a session further
+    /// up belongs to whoever created it, and this loop has nothing to say about it.
+    pub(super) fn thinking(&self) -> bool {
+        self.deliberation
+            .and_then(|id| self.workers.get(&id))
+            .is_some_and(|w| w.busy.load(Ordering::Relaxed))
+    }
+
     pub(super) async fn render_status(&self) -> String {
         let Some(id) = self.deliberation else {
             return String::new();

@@ -11,8 +11,12 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::sync::{Mutex, mpsc};
+// The loop's clock, so a deadline set here can be handed straight to `sleep_until`
+// there. `tokio::time::Instant` is also what a paused test clock advances.
+use tokio::time::Instant;
 
 use crate::types::ViewTraits;
 
@@ -96,6 +100,103 @@ pub(super) struct Mouth {
     /// A counter rather than a flag, so nothing has to reset it and two turns cannot
     /// race over whose flag it was.
     pub(super) said: Arc<AtomicU64>,
+    /// When the voice next owes them a word. Written here, at the instant it makes the
+    /// promise, for the same reason the presence read is taken here: the promise is a
+    /// property of *this utterance*, and a turn can outlive the window that started it.
+    pub(super) next_word: NextWord,
+}
+
+/// When the voice next owes the person a word.
+///
+/// `after` is the size that was named — kept alongside the deadline so the wake can
+/// say *"you said ten minutes, and it has been ten minutes"* rather than arriving as
+/// an anonymous tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Owed {
+    pub(super) at: Instant,
+    pub(super) after: Duration,
+    /// `true` when the voice named the number itself, in `say`'s `back_in`. `false`
+    /// when the host put a floor under a silence the voice left open-ended — see
+    /// [`NextWord::floor`]. The two produce different notes, because only one of them
+    /// is a promise the person actually heard.
+    pub(super) promised: bool,
+}
+
+/// The slot holding the voice's own next check-in — the *only* thing in this host
+/// that fires at a named time.
+///
+/// `reaction.md` has always told the voice to put a size on a silence ("give me a
+/// couple of minutes, I'll tell you when it's up") and, in the same breath, that the
+/// number is decorative: *"You have no timer — nothing taps you on the shoulder at the
+/// minute you named."* What actually woke the voice was the work coming back, the
+/// person speaking, the person returning to the window, or the pulse — half an hour by
+/// default. A promise made in minutes against a wake measured in half-hours is one the
+/// host cannot keep, and the person closes the gap by asking "progress?", which is the
+/// failure `reaction.md` calls out in its own words: *a check-in they have to ask for
+/// is already late*.
+///
+/// **This is not the clock [`docs/arch/core.md`] removed, and must not grow into one.**
+/// It holds exactly one deadline, process-wide-per-voice; it fires nothing but the
+/// reaction loop; it carries no task, no target and no payload beyond a note; and the
+/// only moment it can name is one the voice just said out loud (or a floor under a
+/// silence it left open). A task's `due` still fires nothing. What it adds is a second
+/// deadline in a `select!` that already carries the pulse's.
+///
+/// Written from the `/mcp` task (`say`) and read by the loop, so it is a shared cell
+/// rather than loop-private state. A `std::sync::Mutex` because every critical section
+/// here is a move of one `Option` and never crosses an await.
+#[derive(Clone, Default)]
+pub(super) struct NextWord {
+    cell: Arc<std::sync::Mutex<Option<Owed>>>,
+}
+
+impl NextWord {
+    /// The voice named a number: it just told them they'd hear back within `after`.
+    /// Replaces whatever was armed — the newest promise is the one they heard.
+    pub(super) fn promise(&self, after: Duration) {
+        self.set(Some(Owed { at: Instant::now() + after, after, promised: true }));
+    }
+
+    /// The host's floor under an open-ended silence, armed only when nothing is
+    /// already armed (a promise the voice made outranks it).
+    pub(super) fn floor(&self, after: Duration) {
+        let mut cell = self.cell.lock().expect("next-word slot poisoned");
+        if cell.is_none() {
+            *cell = Some(Owed { at: Instant::now() + after, after, promised: false });
+        }
+    }
+
+    /// When the next check-in is due, for the loop's deadline set. `None` = nothing armed.
+    pub(super) fn due_at(&self) -> Option<Instant> {
+        self.cell.lock().expect("next-word slot poisoned").map(|owed| owed.at)
+    }
+
+    /// Take the check-in if it has come due, clearing the slot. One-shot by
+    /// construction: a wake that fires is a wake that disarms, so a voice that stays
+    /// quiet is not re-woken every loop iteration for the same overdue promise.
+    pub(super) fn take_due(&self, now: Instant) -> Option<Owed> {
+        let mut cell = self.cell.lock().expect("next-word slot poisoned");
+        match *cell {
+            Some(owed) if owed.at <= now => cell.take(),
+            _ => None,
+        }
+    }
+
+    /// Drop whatever is armed. Used when the moment passes into an empty room — the
+    /// return wake is the better carrier then — and when a turn has just spoken to
+    /// the work anyway.
+    pub(super) fn clear(&self) {
+        self.set(None);
+    }
+
+    /// What is armed right now, without taking it.
+    pub(super) fn peek(&self) -> Option<Owed> {
+        *self.cell.lock().expect("next-word slot poisoned")
+    }
+
+    fn set(&self, owed: Option<Owed>) {
+        *self.cell.lock().expect("next-word slot poisoned") = owed;
+    }
 }
 
 /// The standing loop that owns a tool sink.
@@ -161,6 +262,55 @@ impl Spoken {
     }
 }
 
+/// What one `say` call did: where the words landed, and whether it also put the voice
+/// back on the hook for a named time.
+///
+/// Two facts rather than one enum arm each, because they are independent — an
+/// utterance held for an empty room can still carry a promise, and most utterances
+/// carry none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Said {
+    pub spoken: Spoken,
+    /// The check-in this call armed, when `back_in` named a usable size. `None` means
+    /// nothing was armed — either none was asked for, or what was asked for was
+    /// unreadable (which the ack says outright, since only the caller can fix it).
+    pub armed: Option<Duration>,
+    /// A `back_in` arrived and could not be read as a duration.
+    pub unreadable_back_in: bool,
+}
+
+impl Said {
+    /// The literal `say` returns — a plain statement of what happened, read by a model
+    /// deciding what to do next.
+    pub fn ack(self) -> String {
+        let mut s = self.spoken.ack().to_string();
+        if let Some(after) = self.armed {
+            s.push_str(&format!(
+                ". You're on the hook for a word within {} — I'll wake you when it's up \
+                 if nothing else has by then",
+                render_gap(after)
+            ));
+        } else if self.unreadable_back_in {
+            s.push_str(
+                ". I couldn't read your `back_in`, so nothing will wake you — say it as \
+                 `90s`, `10m` or `1h`",
+            );
+        }
+        s
+    }
+}
+
+/// A duration in the words the voice would use for it. Rounded, never precise: it is
+/// read back into a sentence about a promise, and "10m" is what was said out loud.
+pub(super) fn render_gap(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h", s / 3600),
+    }
+}
+
 impl ToolSink {
     /// Forward one control command to the reaction loop. Returns an error only if
     /// the loop is gone (channel closed).
@@ -178,13 +328,23 @@ impl ToolSink {
     /// than left to the turn's rendered snapshot: a turn can outlive the window that
     /// started it, and the whole point of speech being a call is that the answer is
     /// true at the moment it is given.
-    pub async fn say(&self, text: String) -> anyhow::Result<Spoken> {
+    ///
+    /// `back_in` is the size the voice just put on a silence — "give me ten minutes" →
+    /// `10m`. It arms [`NextWord`], and that is the whole of the timing the host owns:
+    /// a promise is only a promise once it has been *said*, so the only way to set one
+    /// is as part of saying it. An utterance rejected for length arms nothing, because
+    /// nothing was said.
+    pub async fn say(&self, text: String, back_in: Option<&str>) -> anyhow::Result<Said> {
         let mouth = self
             .mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no voice; there is nowhere to say it"))?;
         if text.chars().count() > SAY_MAX_CHARS {
-            return Ok(Spoken::TooLong);
+            return Ok(Said {
+                spoken: Spoken::TooLong,
+                armed: None,
+                unreadable_back_in: false,
+            });
         }
         let reach = mouth.presence.reachable();
         mouth
@@ -196,10 +356,19 @@ impl ToolSink {
         // sent) does not read as speech. Every fate below — voiced, screen-only, held —
         // is an utterance that left the mind; where it landed is presence's business.
         mouth.said.fetch_add(1, Ordering::Relaxed);
-        Ok(match (reach.speaker, reach.window) {
-            (true, _) => Spoken::Voiced,
-            (false, true) => Spoken::TextOnly,
-            (false, false) => Spoken::Held,
+        let asked = back_in.map(str::trim).filter(|s| !s.is_empty());
+        let armed = asked.and_then(super::parse_delay).filter(|d| !d.is_zero());
+        if let Some(after) = armed {
+            mouth.next_word.promise(after);
+        }
+        Ok(Said {
+            spoken: match (reach.speaker, reach.window) {
+                (true, _) => Spoken::Voiced,
+                (false, true) => Spoken::TextOnly,
+                (false, false) => Spoken::Held,
+            },
+            armed,
+            unreadable_back_in: asked.is_some() && armed.is_none(),
         })
     }
 
@@ -292,6 +461,7 @@ mod tests {
                 beats,
                 presence: presence.clone(),
                 said: Arc::new(AtomicU64::new(0)),
+                next_word: NextWord::default(),
             }),
         };
         (sink, rx)
@@ -306,12 +476,12 @@ mod tests {
         let said = sink.mouth.as_ref().unwrap().said.clone();
 
         assert_eq!(
-            sink.say("x".repeat(SAY_MAX_CHARS + 1)).await.unwrap(),
+            sink.say("x".repeat(SAY_MAX_CHARS + 1), None).await.unwrap().spoken,
             Spoken::TooLong
         );
         assert_eq!(said.load(Ordering::Relaxed), 0, "a rejected call said nothing");
 
-        sink.say("hi".into()).await.unwrap();
+        sink.say("hi".into(), None).await.unwrap();
         assert_eq!(said.load(Ordering::Relaxed), 1);
     }
 
@@ -320,7 +490,7 @@ mod tests {
         let p = Presence::new();
         let _audio = p.connect(OutChannel::Audio);
         let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::Voiced);
+        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Voiced);
     }
 
     #[tokio::test]
@@ -383,14 +553,14 @@ mod tests {
         let p = Presence::new();
         let _view = p.connect(OutChannel::View);
         let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::TextOnly);
+        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::TextOnly);
     }
 
     #[tokio::test]
     async fn an_empty_room_holds_it() {
         let p = Presence::new();
         let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into()).await.unwrap(), Spoken::Held);
+        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Held);
     }
 
     #[tokio::test]
@@ -399,7 +569,7 @@ mod tests {
         let (sink, mut rx) = mouth(&p);
         let text = "x".repeat(SAY_MAX_CHARS + 1);
 
-        assert_eq!(sink.say(text).await.unwrap(), Spoken::TooLong);
+        assert_eq!(sink.say(text, None).await.unwrap().spoken, Spoken::TooLong);
         assert!(rx.try_recv().is_err());
     }
 
@@ -409,7 +579,7 @@ mod tests {
         // retained and keeps, so the beat goes out even to nobody.
         let p = Presence::new();
         let (sink, mut rx) = mouth(&p);
-        sink.say("hi".into()).await.unwrap();
+        sink.say("hi".into(), None).await.unwrap();
         assert!(matches!(rx.try_recv(), Ok(Beat::Say(t)) if t == "hi"));
     }
 
@@ -417,7 +587,89 @@ mod tests {
     async fn a_rung_with_no_mouth_cannot_say() {
         let (control, _ctl) = mpsc::channel(8);
         let sink = ToolSink { control, mouth: None };
-        assert!(sink.say("hi".into()).await.is_err());
+        assert!(sink.say("hi".into(), None).await.is_err());
+    }
+
+    /// The number the voice names in `say` is the whole mechanism: without it the
+    /// promise is words only — the state `reaction.md` used to describe outright
+    /// ("you have no timer"), and the reason a person ends up asking "progress?".
+    #[tokio::test]
+    async fn a_named_size_arms_the_check_in() {
+        let p = Presence::new();
+        let (sink, _rx) = mouth(&p);
+        let said = sink.say("give me ten minutes".into(), Some("10m")).await.unwrap();
+
+        assert_eq!(said.armed, Some(Duration::from_secs(600)));
+        let owed = sink.mouth.as_ref().unwrap().next_word.peek().expect("armed");
+        assert!(owed.promised, "the voice named this one itself");
+        assert_eq!(owed.after, Duration::from_secs(600));
+        assert!(said.ack().contains("10m"), "the ack must confirm the number: {}", said.ack());
+    }
+
+    /// Nothing said, nothing promised. An overlong call never reaches the person, so
+    /// arming a wake for it would put the host on the hook for words they never heard.
+    #[tokio::test]
+    async fn a_rejected_utterance_promises_nothing() {
+        let p = Presence::new();
+        let (sink, _rx) = mouth(&p);
+        let said = sink.say("x".repeat(SAY_MAX_CHARS + 1), Some("10m")).await.unwrap();
+
+        assert_eq!(said.spoken, Spoken::TooLong);
+        assert_eq!(said.armed, None);
+        assert!(sink.mouth.as_ref().unwrap().next_word.peek().is_none());
+    }
+
+    /// An unreadable size arms nothing and *says so*. Swallowing it would leave the
+    /// voice believing it is covered, which is the one state worse than no timer.
+    #[tokio::test]
+    async fn an_unreadable_size_is_reported_back() {
+        let p = Presence::new();
+        let (sink, _rx) = mouth(&p);
+        let said = sink.say("a moment".into(), Some("soonish")).await.unwrap();
+
+        assert_eq!(said.armed, None);
+        assert!(said.unreadable_back_in);
+        assert!(sink.mouth.as_ref().unwrap().next_word.peek().is_none());
+        assert!(said.ack().contains("back_in"), "{}", said.ack());
+    }
+
+    /// The newest number is the one they heard, so it replaces the older promise
+    /// rather than queueing behind it.
+    #[tokio::test]
+    async fn a_new_number_replaces_the_old_one() {
+        let p = Presence::new();
+        let (sink, _rx) = mouth(&p);
+        sink.say("ten minutes".into(), Some("10m")).await.unwrap();
+        sink.say("make that two".into(), Some("2m")).await.unwrap();
+
+        let owed = sink.mouth.as_ref().unwrap().next_word.peek().expect("armed");
+        assert_eq!(owed.after, Duration::from_secs(120));
+    }
+
+    /// The host's floor never overwrites a promise the person actually heard.
+    #[tokio::test]
+    async fn a_promise_outranks_the_floor() {
+        let next = NextWord::default();
+        next.promise(Duration::from_secs(600));
+        next.floor(Duration::from_secs(300));
+
+        let owed = next.peek().expect("armed");
+        assert!(owed.promised);
+        assert_eq!(owed.after, Duration::from_secs(600));
+    }
+
+    /// One-shot: firing disarms. A voice that reads the room and stays quiet must not
+    /// be re-woken for the same overdue promise on every pass round the loop.
+    #[tokio::test]
+    async fn taking_a_due_check_in_disarms_it() {
+        let next = NextWord::default();
+        next.floor(Duration::from_secs(300));
+        let due = next.due_at().expect("armed");
+
+        assert!(next.take_due(due - Duration::from_secs(1)).is_none(), "not due yet");
+        assert!(next.take_due(due).is_some());
+        assert!(next.take_due(due).is_none(), "and it is gone");
+        assert!(next.due_at().is_none());
     }
 
     #[test]

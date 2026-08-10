@@ -39,6 +39,12 @@ pub const KEY_EFFORT: &str = "effort";
 /// Idle interval between host pulses. Duration grammar (`90s`/`30m`/`1h`);
 /// `0`/`off` disables pulses; unset / unparseable → the built-in default.
 pub const KEY_PULSE: &str = "pulse";
+/// How long the voice may leave an open-ended silence standing while its own thinking
+/// is still running, before the host wakes it to say where things stand. Duration
+/// grammar; `0`/`off` disables the floor — leaving only the check-ins the voice arms
+/// itself through `say`'s `back_in`, never no check-ins at all; unset → the built-in
+/// default (5m). The gap doubles on each consecutive host-armed check-in, up to `pulse`.
+pub const KEY_CHECK_IN: &str = "check_in";
 /// Master switch for the reflection ("sleep") pass; `off` disables it entirely.
 pub const KEY_REFLECT: &str = "reflect";
 /// Base reflection cadence — how often a conversation with fresh input consolidates.

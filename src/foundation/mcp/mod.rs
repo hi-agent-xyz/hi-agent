@@ -52,6 +52,11 @@ pub enum McpReply {
 /// The host can hold an utterance until the room is right, queue it behind another, or
 /// refuse it — and Reaction finds out which. Text streamed into the transcript is
 /// fire-and-forget and leaves nowhere for that decision to live.
+///
+/// It is also where a **promise** is made, via `back_in`, and that is not a second
+/// concern smuggled onto one tool: a promise is only a promise once it has been said,
+/// so the size of a silence belongs to the utterance that opened it. The alternative —
+/// a separate verb — could arm a wake for a number nobody was ever told.
 fn say_tool() -> Value {
     tool(
         "say",
@@ -64,7 +69,20 @@ fn say_tool() -> Value {
          whether a spoken line was worth spending.",
         json!({
             "type": "object",
-            "properties": { "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." } },
+            "properties": {
+                "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." },
+                "back_in": {
+                    "type": "string",
+                    "description": "Optional, and the only timer you have. When you put a size \
+                                    on a silence — \"give me ten minutes\" — put that same size \
+                                    here (`90s`, `10m`, `1h`) and you will be woken when it is \
+                                    up, unless something has already brought you back by then. \
+                                    Without it the number you named is only words, and they \
+                                    find out where things stand by asking. Set it on the \
+                                    utterance that makes the promise, and set it again each \
+                                    time you give them a new number.",
+                },
+            },
             "required": ["text"],
         }),
     )
@@ -1054,8 +1072,12 @@ async fn dispatch_tool(
             }
             // The ack is what actually happened on each channel, not a constant: the
             // tool's whole justification is that speech is answerable, and an answer
-            // that always reads "spoken" answers nothing.
-            sink.say(text).await.map(crate::body::reaction::Spoken::ack)
+            // that always reads "spoken" answers nothing. It also confirms the check-in
+            // this call armed, so a promise the host is now holding is never something
+            // the voice has to assume it made.
+            sink.say(text, arg_opt("back_in").as_deref())
+                .await
+                .map(crate::body::reaction::Said::ack)
         }
         "show" => {
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();
@@ -1078,13 +1100,15 @@ async fn dispatch_tool(
                 }
                 _ => (None, arg_str("source"), None),
             };
-            sink.show(arg_opt("id"), op, source, traits, view_ref).await.map(|()| "shown")
+            sink.show(arg_opt("id"), op, source, traits, view_ref)
+                .await
+                .map(|()| "shown".to_string())
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
 
     match outcome {
-        Ok(ack) => tool_ok(ack),
+        Ok(ack) => tool_ok(&ack),
         Err(err) => tool_error(&err.to_string()),
     }
 }

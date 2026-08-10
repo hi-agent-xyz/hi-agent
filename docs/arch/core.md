@@ -283,6 +283,41 @@ the conversation, the **reflection backoff** for consolidation, and **Cognition'
 glance-up** (one wake shortly after the process starts, then on the pulse cadence
 whenever anything is owed).
 
+Beside them sits the one deadline that is *not* a cadence: **the voice's own
+check-in**, below. It is not a fourth loop and not a scheduler — one slot, one
+deadline, one wake, no target and no payload.
+
+#### The check-in — the only thing that fires at a named time
+
+Reaction sets it by naming a number in `say`'s `back_in` — the same number it just
+said out loud ("give me ten minutes") — and the host wakes it when that is up. The
+size of a silence is therefore a property of *the utterance that opened it*: a
+promise is only a promise once it has been said, so there is no way to arm a wake for
+a number nobody was told.
+
+**Why this is not the clock this design removed.** It holds exactly one deadline per
+voice, it fires nothing but that voice's own loop, it carries no task and no target,
+and a task's `due` still fires nothing. It is a second deadline in a `select!` that
+already carries the pulse's. Every property the removal was protecting survives:
+scheduling past a cadence remains the agent's own, arranged with the shell it has.
+
+**And a floor beneath it, because a promise can go unmade.** While the conversation's
+own thinking is still running and the voice left the silence open-ended, the host arms
+a check-in itself — five minutes, doubling to the pulse. **The dial on that gap is
+whether the last one was worth it**: a check-in that produced speech keeps the base
+cadence, one that passed in silence widens it. The voice is the only thing that knows
+whether there was anything to say, so it is the thing that sets the pace.
+
+The note says which of the two it is. A promise the person heard is a fact they hold
+too; a floor is only the agent's own rule about not going dark, and a voice told it
+"promised" when it named nothing would be inventing one. Both are **permission to
+speak, never an instruction to**: what is worth saying is read off `## Still looking
+into` and the projected ledger, and staying quiet is a legitimate answer.
+
+A check-in that comes due into an **empty room is dropped**, not held: the words would
+be held anyway, and [presence](#presence) already wakes the voice on their return —
+with the same work in front of it and a fresher read of where it stands.
+
 Everything else an agent needs from time, **the agent arranges itself.** It has a
 shell, so it installs a cron entry, a `launchd` job, a systemd timer, or parks a
 worker that sleeps and messages home — and a crontab survives a reboot, which
@@ -333,9 +368,20 @@ all. If a genuine need appears, the answer is a channel that says what it is
 A deadline is met **at the next glance, not at its minute** — `due` is read by the
 projection and orders what is shown, and nothing in the host fires on it. At a
 30-minute pulse that is fine for a filing deadline and wrong for a wake-me-at-07:00
-alarm, which is the agent's to arrange per the table above. And **nothing wakes the
-voice when a promise is running late** — a return is observed by
-[presence](#presence), but lateness is not an event anyone observes.
+alarm, which is the agent's to arrange per the table above.
+
+What used to stand here as the second cost — *nothing wakes the voice when a promise
+is running late* — is the check-in above, and it was removed for a reason worth
+keeping in view. It read as a rough edge and was a broken product: the voice named a
+number, nothing read it, and the person closed the gap by asking "progress?". A
+promise whose only enforcement is the model remembering to speak is not a promise, and
+`reaction.md` said so in its own words long before the host could act on it — *a
+check-in they have to ask for is already late*.
+
+What is still true: a promise is kept only while the process lives. Nothing restores
+an armed check-in across a restart, and nothing should — a promise made in minutes is
+stale by the time a restart is noticed, and what survives a restart is the **duty**,
+in the ledger, which the glance-up picks back up.
 
 ## Fix-forward
 

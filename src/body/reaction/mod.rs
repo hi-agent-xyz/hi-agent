@@ -63,7 +63,7 @@ mod workers;
 
 pub use interrupts::InterruptRegistry;
 pub use outbound::OutboundSignal;
-pub use tools::{LoopControl, Spoken, ToolOwner, ToolRegistry, ToolSink};
+pub use tools::{LoopControl, Said, Spoken, ToolOwner, ToolRegistry, ToolSink};
 
 use chrono::Utc;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
@@ -107,6 +107,32 @@ const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
 /// `pulse` for a session speeds up every wake there is, rather than all but one.
 pub(super) fn pulse_interval() -> Option<Duration> {
     duration_tunable(config::tunables::get(config::KEY_PULSE), DEFAULT_PULSE)
+}
+
+/// The floor under an open-ended silence: how long the voice may stay quiet while its
+/// own thinking is still running before the host wakes it to say where things stand.
+///
+/// Five minutes because the failure it answers was measured — an errand ran, the voice
+/// said "I'll report once confirmed" with no number, and the person filled the next
+/// thirteen to eighteen minutes by asking "progress?" three times in one morning. It
+/// only ever fires while work is genuinely in flight, and a wake is permission to
+/// speak, not an obligation: the voice reads the room and may stay quiet.
+const DEFAULT_CHECK_IN: Duration = Duration::from_secs(300);
+
+/// The floor gap for an open-ended silence ([`DEFAULT_CHECK_IN`]), or `None` when
+/// `check_in` is `0`/`off` — which leaves only the check-ins the voice arms itself
+/// through `say`'s `back_in`, never no check-ins at all.
+fn check_in_interval() -> Option<Duration> {
+    duration_tunable(config::tunables::get(config::KEY_CHECK_IN), DEFAULT_CHECK_IN)
+}
+
+/// The ceiling the floor backs off to. A job that runs for hours should not be
+/// interrupted every five minutes, so each consecutive host-armed check-in doubles the
+/// gap — the reflection backoff's shape — and stops at the pulse, which is already the
+/// answer to "how often does this agent look up from what it's doing". A word from the
+/// voice or the person resets it: the conversation is live again.
+fn check_in_cap() -> Duration {
+    pulse_interval().unwrap_or(DEFAULT_PULSE)
 }
 
 /// Whether the reflection ("sleep") pass runs at all. On unless the stored `reflect`
@@ -670,6 +696,15 @@ enum LoopInput {
     /// this as `(pulse)` would tell Reaction to stay quiet at precisely the instant
     /// it should speak.
     Returned,
+    /// The voice's own check-in coming due — it said they'd hear back by now, or it
+    /// left a silence open-ended while its thinking ran and the host put a floor under
+    /// it ([`tools::NextWord`]).
+    ///
+    /// Its own variant, not a `Pulse` with a different note, for the reason `Returned`
+    /// is: a pulse is a quiet moment the prompt says almost nothing is worth breaking,
+    /// while this is the moment a word was *owed*. Rendering it as `(pulse)` would tell
+    /// the voice to stay quiet at precisely the instant it should speak.
+    CheckIn { owed: tools::Owed },
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
@@ -1110,6 +1145,9 @@ impl Reaction {
         // How many utterances the mouth has accepted. The loop holds the other end so a
         // turn can tell whether it spoke while its bracket is still open.
         let said = Arc::new(AtomicU64::new(0));
+        // When the voice next owes them a word. `say` writes it from the `/mcp` task;
+        // the loop below reads it as a deadline. See [`tools::NextWord`].
+        let next_word = tools::NextWord::default();
 
         self.inner
             .tools
@@ -1121,6 +1159,7 @@ impl Reaction {
                         beats: beats_tx.clone(),
                         presence: self.inner.presence.clone(),
                         said: said.clone(),
+                        next_word: next_word.clone(),
                     }),
                 },
             )
@@ -1137,7 +1176,7 @@ impl Reaction {
                 task_worker_inbound,
                 control_rx,
                 control_tx,
-                Speaking { beats: beats_tx, said },
+                Speaking { beats: beats_tx, said, next_word },
                 voice,
             )
             .await;
@@ -1159,6 +1198,10 @@ struct Speaking {
     beats: mpsc::Sender<sequencer::Beat>,
     /// Utterances the mouth has accepted, ever. See [`tools::Mouth::said`].
     said: Arc<AtomicU64>,
+    /// When the voice next owes them a word — armed by `say`, read here as a deadline.
+    /// It travels with the mouth for the same reason `said` does: it is set at the
+    /// instant of speech and read by the loop that has to act on it.
+    next_word: tools::NextWord,
 }
 
 /// Why the reaction loop's wait resolved. Keeps the `select!` arms tiny so the
@@ -1173,6 +1216,9 @@ enum Woke {
     /// The process-wide vendor gate changed level. Re-read [`Vendor::turn_gate`];
     /// the notification carries no state and therefore cannot go stale.
     Vendor,
+    /// A deadline came up: the pulse, a vendor-recovery probe, or the voice's own
+    /// check-in ([`tools::NextWord`]). Which one is worked out on the far side, from
+    /// the deadlines themselves, so all three keep one arm.
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
@@ -1264,6 +1310,12 @@ async fn reaction_loop(
     let mut last_activity = Instant::now();
     let mut pulsed_once = false;
 
+    // The check-in floor's current gap, doubling while the voice keeps leaving an
+    // open-ended silence over running work and resetting the moment either side speaks
+    // to it. `None` = `check_in: off`, i.e. only the check-ins the voice arms itself.
+    let check_in_base = check_in_interval();
+    let mut check_in_gap = check_in_base;
+
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
     // drop the mail it was attempting to deliver. Cleared on a successful turn (the
@@ -1295,6 +1347,11 @@ async fn reaction_loop(
             let down = !matches!(gate, TurnGate::Go);
             // While down, suppress pulses — they call the model and would just fail.
             let pulse_at = if down { None } else { pulse_every.map(|d| last_activity + d) };
+            // The voice's own check-in. Suppressed while down for the same reason as the
+            // pulse, but *not* dropped: unlike a return — a moment, stale once it has
+            // passed — an owed word is still owed after an outage, and later rather than
+            // never is the whole point of it.
+            let check_in_at = if down { None } else { speaking.next_word.due_at() };
             // While down, the recovery timer: the backoff retry deadline (429/generic).
             // Up → no such timer.
             let recover_at = match gate {
@@ -1303,7 +1360,7 @@ async fn reaction_loop(
                 // No conversation-local deadline: the process-wide gate owns recovery.
                 TurnGate::Hold => None,
             };
-            let deadline = [pulse_at, recover_at]
+            let deadline = [pulse_at, recover_at, check_in_at]
                 .into_iter()
                 .flatten()
                 .min();
@@ -1434,6 +1491,28 @@ async fn reaction_loop(
                         tracing::info!("pulse fired");
                         enqueue(&reaction, &mut workers, &mut batch, LoopInput::Pulse { note }).await;
                     }
+                    // The word the voice owes them. Taking it disarms it, so a voice that
+                    // reads the room and stays quiet is not re-woken for the same overdue
+                    // promise on the next iteration.
+                    if let Some(owed) = speaking.next_word.take_due(now) {
+                        // Into an empty room it is dropped rather than spoken. The words
+                        // would be held anyway, and `Returned` already wakes the voice the
+                        // moment they come back — with the same running work in front of
+                        // it and a fresher read of where things stand. Firing here as well
+                        // would burn a turn to compose a line that a second turn then
+                        // rewrites.
+                        if !reaction.inner.presence.reachable().window {
+                            tracing::info!(
+                                promised = owed.promised,
+                                "check-in came due into an empty room; leaving it to their return"
+                            );
+                        } else {
+                            tracing::info!(promised = owed.promised, "check-in fired");
+                            last_activity = now;
+                            enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
+                                .await;
+                        }
+                    }
                     if !batch.is_empty() {
                         break 'wait;
                     }
@@ -1479,6 +1558,21 @@ async fn reaction_loop(
 
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
+
+        // Why this turn is running, read before the batch is cleared — it decides how
+        // the check-in floor paces itself below.
+        let by_human = batch.iter().any(|i| matches!(i, LoopInput::Human(_)));
+        let by_floor = batch
+            .iter()
+            .any(|i| matches!(i, LoopInput::CheckIn { owed } if !owed.promised));
+        // The conversation's own thinking coming back — the thing a promise made *about*
+        // it was for. Captured with what was armed going in, so the discharge below can
+        // tell an untouched promise from a fresh one this turn just made.
+        let by_thinking_back = batch
+            .iter()
+            .any(|i| matches!(i, LoopInput::Worker(r) if r.is_deliberation));
+        let armed_before = speaking.next_word.peek();
+        let said_before = speaking.said.load(Ordering::Relaxed);
 
         let turn_result = run_reaction_turn(
             &reaction,
@@ -1536,6 +1630,46 @@ async fn reaction_loop(
         // Any completed turn is activity: the pulse clock restarts, so pulses
         // only ever fire into genuine quiet.
         last_activity = Instant::now();
+
+        // A promise is discharged by the thing it was about coming back. This turn was
+        // handed its own thinking with an instruction to relay it, so waking the voice
+        // later to say "you told them they'd hear by now" would be the host arguing with
+        // a word already spoken. Only when the slot is untouched: a turn that named a new
+        // number ("still on it — another five minutes") armed a *new* promise, and that
+        // one is exactly the promise worth keeping.
+        if by_thinking_back && speaking.next_word.peek() == armed_before {
+            speaking.next_word.clear();
+        }
+
+        // How the check-in floor paces itself, and the dial is **whether the last one was
+        // worth it**. A word from the person, a number the voice just named, or a check-in
+        // that actually produced speech all mean the cadence is earning its keep, so it
+        // stays at the base gap. One that came and went in silence doubles it, up to the
+        // pulse — a job running for hours must not be interrupted every five minutes, and
+        // the voice is the only thing that knows whether there was anything to say.
+        // (The reflection backoff's shape, for the same reason.)
+        let spoke = speaking.said.load(Ordering::Relaxed) > said_before;
+        if by_human || spoke || speaking.next_word.peek().is_some_and(|o| o.promised) {
+            check_in_gap = check_in_base;
+        } else if by_floor {
+            check_in_gap = check_in_gap.map(|gap| (gap * 2).min(check_in_cap()));
+        }
+
+        // The floor itself. `reaction.md` asks the voice to put a size on every silence
+        // it opens; when it doesn't, this is what keeps "never go dark on a long job"
+        // from resting entirely on the model remembering to. A promise the voice made
+        // itself outranks it — `floor` leaves an armed slot alone.
+        //
+        // Only while the conversation's own thinking is still running. A quiet agent
+        // with nothing in flight owes nobody a word, and the pulse is already the wake
+        // for that. **Work handed further up is out of scope on purpose**: Cognition's
+        // workers are not this loop's to describe, and their substance comes back down
+        // the report path, which drives a turn of its own.
+        if let Some(gap) = check_in_gap
+            && workers.thinking()
+        {
+            speaking.next_word.floor(gap);
+        }
 
         // Coalesce mid-turn arrivals. Utterances that queued while this turn ran
         // (a generation is now seconds, not ~1s) are siblings of the thread we just
@@ -2201,6 +2335,9 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Returned => {
                 let _ = writeln!(s, "{RETURNED_NOTE}");
             }
+            LoopInput::CheckIn { owed } => {
+                let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
+            }
             LoopInput::Mail(mail) => {
                 let _ = writeln!(s, "{}", registry::render(mail));
             }
@@ -2224,6 +2361,40 @@ pub(super) fn render_pulse(note: &str) -> String {
 /// host's job here was only to make the moment observable at all.
 const RETURNED_NOTE: &str =
     "(they're back) They just brought the window forward after a stretch away.";
+
+/// What a check-in looks like in the turn's "New signals".
+///
+/// A **fact plus the floor is yours**, never a script. The host knows exactly two
+/// things — that a word is owed and how long it has been owed for — and states them;
+/// what the work has actually reached is in `## Still looking into` and the projected
+/// ledger, and what is worth saying about it is Reaction's alone. It may also be
+/// nothing: the wake is permission to speak, not an instruction to.
+///
+/// The two sources read differently on purpose. A promise the voice made is a fact the
+/// *person* holds too — they were told a number and it has passed, so silence now is a
+/// visibly broken promise. A host floor is only the agent's own rule about going dark;
+/// nobody is waiting on a specific minute, and saying so keeps the voice from inventing
+/// a promise it never made.
+fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
+    // Since the promise was made, not since the deadline: the deadline is normally
+    // *now*, and "that was 0s ago" is not the sentence anyone means.
+    let waited = tools::render_gap(now.saturating_duration_since(owed.at) + owed.after);
+    if owed.promised {
+        format!(
+            "(check-in) You told them they'd hear from you within {} — you said that {waited} \
+             ago and haven't spoken since. If it's done, say what came of it; if it's still \
+             running, say where it's got to and give them a new number.",
+            tools::render_gap(owed.after),
+        )
+    } else {
+        format!(
+            "(check-in) You've been quiet {waited} while your own thinking runs, and you \
+             left them no number. Nobody is waiting on a particular minute — but if \
+             there's something real to say about where it's got to, this is the moment \
+             they'd rather hear it than have to ask."
+        )
+    }
+}
 
 /// How one turn-driving input is recorded in the durable log, or `None` when it
 /// needs no row of its own.
@@ -2254,6 +2425,14 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
         // content*. It should not hold a conversation warm by itself, and it should not
         // push a conversation over the frontier threshold into consolidating on nothing.
         LoopInput::Returned => Some((Channel::Clock, Origin::Host, RETURNED_NOTE.to_owned())),
+        // On `Channel::Clock` with the pulse and the return, and for the same reason:
+        // a check-in is the host noticing the time, not something the person said. It
+        // must not hold a conversation warm by itself.
+        LoopInput::CheckIn { owed } => Some((
+            Channel::Clock,
+            Origin::Host,
+            render_check_in(owed, Instant::now()),
+        )),
         // Mail crosses no wire, so this is its only chance to be written down.
         LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, registry::render(mail))),
     }
@@ -2449,5 +2628,57 @@ mod duration_tests {
         assert_eq!(parse_delay("soon"), None);
         assert_eq!(parse_delay(""), None);
         assert_eq!(parse_delay("m"), None);
+    }
+}
+
+#[cfg(test)]
+mod check_in_tests {
+    use super::*;
+    use crate::body::reaction::tools::Owed;
+
+    fn owed(after_secs: u64, promised: bool) -> Owed {
+        Owed {
+            at: Instant::now(),
+            after: Duration::from_secs(after_secs),
+            promised,
+        }
+    }
+
+    /// A promise the person heard and a floor the host set are different situations,
+    /// and the note has to read as the one it is. Telling the voice it "said ten
+    /// minutes" when it named no number invents a promise, which is exactly the kind of
+    /// claim `reaction.md` spends a section forbidding.
+    #[test]
+    fn the_two_sources_do_not_read_alike() {
+        let kept = render_check_in(&owed(600, true), Instant::now());
+        let floor = render_check_in(&owed(300, false), Instant::now());
+
+        assert!(kept.starts_with("(check-in)"), "{kept}");
+        assert!(floor.starts_with("(check-in)"), "{floor}");
+        assert_ne!(kept, floor);
+        assert!(kept.contains("10m"), "a promise names the number it made: {kept}");
+        assert!(
+            !floor.contains("told them"),
+            "a floor must not claim a promise nobody heard: {floor}"
+        );
+    }
+
+    /// The elapsed span is measured from when the promise was *made*, not from the
+    /// deadline — which is normally now, and "that was 0s ago" is not a sentence.
+    #[test]
+    fn the_span_counts_from_the_promise() {
+        let o = owed(600, true);
+        let note = render_check_in(&o, o.at + Duration::from_secs(60));
+        assert!(note.contains("11m"), "10m promised + 1m late: {note}");
+    }
+
+    /// A pulse says almost nothing is worth breaking a silence for; a check-in is the
+    /// moment a word was owed. Sharing the `(pulse)` marker would tell the voice to
+    /// stay quiet at precisely the instant it should speak.
+    #[test]
+    fn a_check_in_is_not_a_pulse() {
+        let note = render_check_in(&owed(300, false), Instant::now());
+        assert!(!note.contains("(pulse)"), "{note}");
+        assert!(!note.contains(RETURNED_NOTE));
     }
 }

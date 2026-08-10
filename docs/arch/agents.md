@@ -81,6 +81,12 @@ and needs a capable model.
 unprompted. That was once a separate host component; all four of its duties belong to
 whatever speaks, and this is what speaks. See [`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
 
+Owning that timing includes the one deadline in this host that fires at a named minute:
+`say`'s `back_in` arms the [check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
+that brings the voice back to keep a promise it made. It belongs here for the same
+reason the rest of the social layer does — the rung that named the number is the rung
+that owes the word.
+
 > **Enforced, not merely instructed.** This is the one place where a tool surface is a hard
 > limit rather than a division of labour: the whole argument for the rung — that it *cannot*
 > wait — is worth nothing if it can quietly open a file. Restricting our own tool surface is

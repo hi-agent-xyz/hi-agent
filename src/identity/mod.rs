@@ -944,15 +944,25 @@ mod soul_tests {
     }
 
     #[test]
-    fn the_voice_is_not_told_to_set_a_timer() {
-        // Nothing in the host fires at a named time (`docs/arch/core.md#glancing-up`), and
-        // Reaction is tools-off, so it cannot arrange one either. A brief that tells
-        // the voice to arm a reminder for a check-in it promised is a brief describing a
-        // mechanism that cannot run; what survives is the promise — size the silence, and
-        // lean long because nothing will remind you.
+    fn the_voice_has_exactly_one_timer_and_is_told_its_name() {
+        // The retired clock stays retired: `alarm` was a general scheduler and its
+        // vocabulary must not creep back (`docs/arch/core.md#glancing-up`).
         assert!(!REACTION_BASE.contains("set an alarm"));
         assert!(!REACTION_BASE.contains("When the alarm fires"));
-        assert!(REACTION_BASE.contains("You have no timer"));
+
+        // What replaced "you have no timer" is one deadline the voice arms itself, on
+        // the utterance that makes the promise. The brief has to name the parameter,
+        // because a promise the model never arms is the failure this was built for —
+        // the person filling the silence by asking "progress?".
+        assert!(REACTION_BASE.contains("back_in"), "the brief must name the parameter");
+        assert!(
+            REACTION_BASE.contains("only timer you have"),
+            "and must not leave the voice thinking it has more than one"
+        );
+        assert!(
+            !REACTION_BASE.contains("You have no timer"),
+            "the brief still describes a host that cannot wake it"
+        );
     }
 
 

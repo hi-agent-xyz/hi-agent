@@ -871,6 +871,33 @@ loop {
 
 ---
 
+## 26 · 活儿一长就没声了,进度全靠老板追问 · ✅ **已修 `feat/check-in`,未复测**
+
+**症状。** 派出去的活跑起来之后,**中间那一段是纯黑的**。老板只能自己填这段silence:一个上午问了三次(08:34 "progress???"、09:17 "deployed?"、09:52 "progress?"),每次一问就立刻得到一个完整、准确的答案——**答案一直都在,只是没人送出来**。
+
+**证据(2026-08-10,`b7dc549`,本机 `make dev` 真实使用,非脚本 journey)。** `data/memory/raw/text/2026-08-10/text.jsonl` 的时间轴:
+
+- 08:11:32 声音自己说 *"Give me around ten minutes."* → 08:21:11 主动汇报了一次 ✅ → 之后 **13 分钟无声**,08:34:03 老板 "progress???"。
+- 08:47:13 *"I'll report the exact directory once confirmed"*(**没给数**)→ **15 分钟无声**,09:02:12 老板自己把路径贴了进来。
+- 09:04:54 → **13 分钟无声**,09:17:35 老板 "deployed?"。
+- 09:21:21 → **18 分钟无声**,09:39:15 才出声 —— 而 `server.log` 显示这一次出声的起因是 `attention: they're back after an absence` / `presence returned; waking the voice`,**不是任何进度机制**。09:49:09 又一次 return 唤醒,`reply_chars=0`(判断得对,当时确实没新东西),三分钟后老板 09:52:46 "progress?"。
+
+**机制。** 声音的唤醒源只有五个:人说话、mail、worker 报告(**完成时**)、presence 回来、pulse。
+
+1. **pulse 默认 30 分钟,而且每个 turn 都会重置 `last_activity`** —— 上面每一段沉默都是 13–18 分钟,**没有一次够得着 pulse**。
+2. **worker 只在结束时发报告**,中途什么都不发。
+3. **声音承诺的那个数字没有任何读者。** `reaction.md` 一边要求"给沉默定个尺寸",一边自己承认 *"You have no timer — nothing taps you on the shoulder at the minute you named."* 同一节的最后一句正是本条的判据:**"a check-in that arrives is a promise kept; one they have to ask for is already late."**
+
+所以那几次"主动汇报"其实都搭在 presence return 上——**而人回到窗口,恰恰就是他准备开口问的那一刻**,等于没有。
+
+**修法。** 给声音一个、且只有一个定时器:`say(text, back_in)`。说出口的那句话自己带上刚刚承诺的尺寸(`10m`),host 到点唤醒它(`LoopInput::CheckIn`,与 `(pulse)`、`(they're back)` 并列的第三种唤醒)。**下面再垫一层地板**:自家 Deliberation 还在跑、而声音没留数时,host 按 `check_in`(默认 5m,逐次翻倍到 pulse)自己唤醒一次。两者都只是**允许说话,不是命令说话**——醒来无话可说就继续沉默。空房间到点则直接丢弃,交给 return 唤醒。设计侧改动记在 `docs/arch/core.md#the-check-in`。
+
+**未复测。** 需要的是一次真实长活:派一件跑十几分钟的活,不问,看 `server.log` 是否出现 `check-in fired`,以及出声的内容是不是**真的进度**而不是 "still working on it"。
+
+**涉及。** 01、04、05、07、22、29 —— 凡是"派活 + 等"的 journey。
+
+---
+
 ## 附:测试方法(复现用)
 
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:
