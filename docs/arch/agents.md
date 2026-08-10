@@ -147,6 +147,22 @@ It is the **only** thing that creates workers, and the **only** writer of the ta
 Both follow from the same idea: durable work is what it means for something to be real, and
 deciding that is judgment, not bookkeeping the voice should do in passing.
 
+**Dispatch is two verbs, not one: hand out and take back.** A worker can be *interrupted*
+mid-turn (`cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
+not a convenience — without it there is no way to stop work at all, because everything else
+that reaches a session is mail, and mail is read between turns. A stop delivered that way
+arrives after the thing it was meant to stop, so a retraction could be acknowledged in words
+and never take effect: the person meets the result of work they cancelled, which is worse
+than never having been able to cancel, because they were told it stopped.
+
+Interrupting is **not** killing. The turn unwinds as `interrupted`, the worker reports what
+it had reached, and the session stays warm with its full context — so "no, do this instead"
+is a cancel plus a message to the same id. The rung that owns the cancel is the rung that
+owns the dispatch, for the same reason "one dispatcher" holds: a second party able to stop
+another's work is a second dispatcher wearing different clothes. Reaction, which hears the
+retraction first, passes it up and says only that it is being called off — it has no such
+tool, and must not claim the stop it cannot perform.
+
 It outlives any one exchange, which is what makes it the right home for everything that
 outlives one:
 

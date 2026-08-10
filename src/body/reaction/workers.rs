@@ -42,7 +42,7 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
+use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate, StopReason};
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
 use crate::identity::{Role, WorkerType};
 use crate::mind::memory::layout;
@@ -119,6 +119,17 @@ pub(super) enum WorkerReportKind {
     Done(String),
     /// The task errored out (session open failed, prompt failed, etc.).
     Failed(String),
+    /// The turn was cut short by [`WorkerRegistry::interrupt`]; the string is whatever
+    /// the worker had produced by then, which may be nothing.
+    ///
+    /// Its own variant because the other two would both lie about it. `Done` is what
+    /// made this bug expensive rather than merely wrong: `run.wait()` returns `Ok` on an
+    /// interrupt, so a cancelled worker would report its half-finished output as a
+    /// finished result — and the rung reading that closes the task. `Failed` is not true
+    /// either; nothing went wrong, someone changed their mind. What the owner needs to
+    /// know is that the work stopped **because it was told to**, so it can leave the
+    /// ledger alone rather than closing it as delivered.
+    Interrupted(String),
 }
 
 /// One live working session. The registry holds it to inspect its transcript, to
@@ -129,6 +140,18 @@ struct Worker {
     /// The current (or most recent) task — updated on each follow-up — for status
     /// lines and the reports posted back.
     task: String,
+    /// The agent session itself, held so the turn it is running can be **interrupted**
+    /// — the one thing a mailbox cannot do.
+    ///
+    /// Everything else that reaches a worker is a message, and a message is read
+    /// between turns: [`follow_up`](WorkerRegistry::follow_up) appends to the inbox and
+    /// [`drive_worker`] picks it up only once `run_worker` has returned. So "stop" sent
+    /// that way arrives after the thing it was meant to stop. A retraction has to reach
+    /// *inside* the running turn, and [`AgentSession::cancel`] (`turn/interrupt`) is the
+    /// only thing that does. The drive task owns the session; this is a second handle to
+    /// the same `Arc`, which is what makes the cancel available to the registry without
+    /// disturbing the loop.
+    session: Arc<AgentSession>,
     /// The worker's accumulated (channel-stripped) output, grown by its drive
     /// task and read by [`WorkerRegistry::render_status`].
     transcript: Arc<Mutex<String>>,
@@ -255,6 +278,7 @@ impl WorkerRegistry {
 
         let transcript = Arc::new(Mutex::new(String::new()));
         let busy = Arc::new(AtomicBool::new(false));
+        let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
             id,
             None,
@@ -271,6 +295,11 @@ impl WorkerRegistry {
             id,
             Worker {
                 task: placeholder.to_string(),
+                // Deliberation is followed up rather than cancelled — nothing holds its
+                // id as a cancel target — but the field is not optional: it is the
+                // session, and a handle that is present for one construction site and
+                // absent for another is a field nobody can reason about.
+                session: handle,
                 transcript,
                 busy,
                 drive,
@@ -341,6 +370,9 @@ impl WorkerRegistry {
 
         let transcript = Arc::new(Mutex::new(String::new()));
         let busy = Arc::new(AtomicBool::new(true));
+        // Cloned before the drive task takes it: the registry needs a handle to cancel
+        // through, and the drive task needs the session to run turns on. Same `Arc`.
+        let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
             id,
             Some(task.clone()),
@@ -359,6 +391,7 @@ impl WorkerRegistry {
             id,
             Worker {
                 task,
+                session: handle,
                 transcript,
                 busy,
                 drive,
@@ -492,6 +525,50 @@ impl WorkerRegistry {
         // specialism. A parameter with one possible value is a parameter that lies.
         self.spawn_inner(reaction, mint_session_id(), task, WorkerType::General, is_deliberation, owner)
             .await
+    }
+
+    /// Stop the turn `id` is running, because the person no longer wants the work.
+    ///
+    /// This is the half of dispatch that was missing. Handing work out was one call;
+    /// taking it back was nothing at all — a retraction could only be *posted*, and a
+    /// posted retraction is read after the turn it was meant to stop, which is to say
+    /// never in time. The failure that earned this: an idea was floated, withdrawn
+    /// twenty-five seconds later, acknowledged with "I've stopped the build work", and
+    /// built anyway six minutes after that, because no code path existed behind the
+    /// sentence.
+    ///
+    /// Interrupting is not killing. The turn unwinds through
+    /// [`StopReason::Interrupted`], the worker reports what it had got to, and the
+    /// session **stays warm and addressable** — so "stop, and instead…" is one cancel
+    /// plus one follow-up on a session that still remembers everything. Aborting the
+    /// drive task would take the context with it, which is why [`Drop`] does that and
+    /// this does not.
+    ///
+    /// Returns whether a turn was actually interrupted. `false` is ordinary — the worker
+    /// is gone, or it finished on its own in the moment between deciding to stop it and
+    /// getting here — and the caller must say *that* rather than report a stop that
+    /// never happened. A session sitting idle takes the cancel silently and reports
+    /// nothing back, so a caller told "stopping it" would wait for a report that is never
+    /// coming.
+    pub(super) async fn interrupt(&self, id: SessionId) -> bool {
+        let Some(w) = self.workers.get(&id) else {
+            tracing::info!(worker = id, "nothing to interrupt; worker is gone");
+            return false;
+        };
+        match w.session.cancel().await {
+            Ok(true) => {
+                tracing::info!(worker = id, "working session interrupted");
+                true
+            }
+            Ok(false) => {
+                tracing::info!(worker = id, "nothing to interrupt; worker was idle");
+                false
+            }
+            Err(err) => {
+                tracing::warn!(worker = id, error = %err, "interrupt failed");
+                false
+            }
+        }
     }
 
     /// Ensure the conversation's persistent **Deliberation** is working on `task`: resume the
@@ -651,6 +728,19 @@ there (plainly, no jargon), rather than going silent.",
             report.task,
             err.trim()
         ),
+        // No deliberation arm: Deliberation is followed up, never cancelled — nothing
+        // holds its id as a cancel target, and the must-relay framing would be wrong
+        // anyway. There is no reply owed for work that was called off.
+        WorkerReportKind::Interrupted(partial) if partial.trim().is_empty() => format!(
+            "working session {} was stopped before it produced anything — task was \"{}\"",
+            report.id, report.task
+        ),
+        WorkerReportKind::Interrupted(partial) => format!(
+            "working session {} was stopped part-way — task was \"{}\". What it had got to:\n{}",
+            report.id,
+            report.task,
+            partial.trim()
+        ),
     }
 }
 
@@ -663,6 +753,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
     let (verb, body) = match &report.kind {
         WorkerReportKind::Done(answer) => ("finished", answer.trim()),
         WorkerReportKind::Failed(err) => ("failed", err.trim()),
+        WorkerReportKind::Interrupted(partial) => ("was stopped", partial.trim()),
     };
     let who = if report.is_deliberation {
         "deliberation".to_string()
@@ -725,7 +816,8 @@ async fn drive_worker(
             "working session turn start"
         );
         let kind = match run_worker(id, &task, &session, &transcript).await {
-            Ok(answer) => WorkerReportKind::Done(answer),
+            Ok((partial, StopReason::Interrupted)) => WorkerReportKind::Interrupted(partial),
+            Ok((answer, _)) => WorkerReportKind::Done(answer),
             Err(err)
                 if crate::foundation::energy_state::is_402_error(&err)
                     && crate::foundation::energy_state::is_out() =>
@@ -749,6 +841,9 @@ async fn drive_worker(
         let (state, summary_chars) = match &kind {
             WorkerReportKind::Done(answer) => (WorkerState::Done, answer.chars().count()),
             WorkerReportKind::Failed(err) => (WorkerState::Failed, err.chars().count()),
+            WorkerReportKind::Interrupted(partial) => {
+                (WorkerState::Interrupted, partial.chars().count())
+            }
         };
         observatory
             .record(
@@ -844,7 +939,7 @@ async fn run_worker(
     task: &str,
     session: &AgentSession,
     transcript: &Arc<Mutex<String>>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, StopReason)> {
     let mut run = session.prompt(task.to_string()).await?;
     let mut full = String::new();
 
@@ -871,8 +966,11 @@ async fn run_worker(
         }
     }
 
-    run.wait().await?;
-    Ok(full.trim().to_string())
+    // The stop reason is carried out rather than dropped: `wait` returns `Ok` for an
+    // interrupted turn just as it does for a completed one, so discarding it is what
+    // made a cancelled worker indistinguishable from a finished one.
+    let result = run.wait().await?;
+    Ok((full.trim().to_string(), result.stop_reason))
 }
 
 /// Last `n` characters of `s`, flattened to a single line for a status tail.
@@ -910,6 +1008,46 @@ mod ownership_tests {
         );
     }
 
+
+    fn report(kind: WorkerReportKind) -> WorkerReport {
+        WorkerReport {
+            id: 7,
+            task: "build the 1-pager skill".into(),
+            kind,
+            is_deliberation: false,
+            owner: Some(2),
+        }
+    }
+
+    /// The bug this whole change exists for, at the point it did its damage.
+    ///
+    /// `SessionRun::wait` returns `Ok` for an interrupted turn exactly as it does for a
+    /// completed one, so a cancelled worker's half-finished output used to travel up as
+    /// `Done` — and the rung reading a `Done` report closes the task as delivered. The
+    /// person cancels; the ledger records success; nobody can tell from the record that
+    /// anything was stopped. So the report must *say* it was stopped, in both renderings:
+    /// the one the mind reads and the one written down for whoever reads it next.
+    #[test]
+    fn an_interrupted_worker_never_reports_as_finished() {
+        let stopped = report(WorkerReportKind::Interrupted("got as far as the outline".into()));
+        for text in [render_report(&stopped), render_report_plainly(&stopped)] {
+            assert!(text.contains("stopped"), "should say it was stopped: {text}");
+            assert!(!text.contains("finished"), "must not read as finished: {text}");
+        }
+
+        // And the partial work still travels — a stop is not a reason to throw away what
+        // was already learned, since the usual next move is to redirect the same session.
+        assert!(render_report(&stopped).contains("got as far as the outline"));
+    }
+
+    /// A cancel that lands before the worker has said anything is the *common* case —
+    /// it is what "stop it now" is supposed to achieve — so it needs a sentence of its
+    /// own rather than the part-way one trailing an empty section where the work goes.
+    #[test]
+    fn a_worker_stopped_before_it_produced_anything_says_so() {
+        let text = render_report(&report(WorkerReportKind::Interrupted(String::new())));
+        assert!(text.contains("before it produced anything"), "{text}");
+    }
 
     /// Session ids are process-wide, not per registry, so ownership is
     /// unambiguous across every role.

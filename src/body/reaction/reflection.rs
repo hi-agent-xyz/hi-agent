@@ -210,6 +210,10 @@ async fn run(reaction: Reaction, registration: Registration) {
                         }
                         continue;
                     }
+                    Some(LoopControl::CancelWorker { id: worker, reply }) => {
+                        let _ = reply.send(workers.interrupt(worker).await);
+                        continue;
+                    }
                     None => break,
                 }
             }

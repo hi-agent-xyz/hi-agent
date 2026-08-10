@@ -251,6 +251,10 @@ async fn run(reaction: Reaction, registration: Registration) {
                         }
                         continue;
                     }
+                    Some(LoopControl::CancelWorker { id: worker, reply }) => {
+                        let _ = reply.send(workers.interrupt(worker).await);
+                        continue;
+                    }
                     None => break,
                 }
             }
@@ -312,6 +316,14 @@ async fn run(reaction: Reaction, registration: Registration) {
                             {
                                 tracing::warn!(error = %err, "cognition failed to create a worker");
                             }
+                        }
+                        // Served in-turn for a sharper version of the same reason: a
+                        // cancel is *only* ever called mid-prompt, and it is the one
+                        // control message whose whole value is how fast it lands. Held
+                        // until the turn ended, it would stop a worker no earlier than
+                        // doing nothing would have.
+                        Some(LoopControl::CancelWorker { id: worker, reply }) => {
+                            let _ = reply.send(workers.interrupt(worker).await);
                         }
                         // The sender is gone; the turn still deserves to finish. A closed
                         // channel resolves immediately forever, so stop selecting on it.

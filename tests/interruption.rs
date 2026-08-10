@@ -19,6 +19,17 @@
 //! is excluded even though the turn itself completes. See
 //! `src/reaction/interrupts.rs` (unit-tested there).
 //!
+//! **This is about the voice's own turn, and `cancel_worker` does not contradict it.**
+//! Two different situations. Here, a second signal arrives while the reaction is
+//! mid-thought and nothing should be cut: the person is still talking, the turn folds
+//! their words in, and cancelling would only make the agent forget half of what it just
+//! heard. There, the person has withdrawn work a *worker* is grinding through in the
+//! background, where folding in is impossible — nothing re-reads its mail until the turn
+//! ends, so the only alternative to interrupting is letting the cancelled work finish and
+//! land. Reflexive cancel of a turn someone is speaking into: still no. Deliberate cancel
+//! of an errand nobody wants any more: that is what the tool is for, and it is never
+//! automatic — a rung has to decide it and name the session.
+//!
 //! Driving this for real requires either:
 //!
 //!   (a) A live `codex app-server` subprocess. Tests would

@@ -1194,6 +1194,10 @@ async fn apply_control(
             }
             None
         }
+        LoopControl::CancelWorker { id, reply } => {
+            let _ = reply.send(workers.interrupt(id).await);
+            None
+        }
     }
 }
 

@@ -124,6 +124,33 @@ fn create_worker_tool() -> Value {
     )
 }
 
+/// `cancel_worker` — the other half of `create_worker`.
+///
+/// Without it, work handed out could not be taken back: everything else that reaches a
+/// working session is a message, and a message is read between turns, so a "stop" sent
+/// that way arrives after the thing it was meant to stop. This reaches into the running
+/// turn and ends it.
+///
+/// It is deliberately *not* destructive. The session survives the cancel with its whole
+/// context, so the common shape — "no, not that, do this instead" — is a cancel followed
+/// by `send_message` to the same id, and the session already knows everything it learned
+/// before being stopped.
+fn cancel_worker_tool() -> Value {
+    tool(
+        "cancel_worker",
+        "Stop a working session you created, now, mid-work. Use it the moment the person \
+         takes something back or changes direction — telling them you have stopped without \
+         calling this is a sentence, not a stop, and the work carries on. The session stays \
+         alive and keeps everything it has learned, so to redirect rather than drop the \
+         work, cancel and then `send_message` the new instruction to the same id.",
+        json!({
+            "type": "object",
+            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "required": ["id"],
+        }),
+    )
+}
+
 fn session_status_tool() -> Value {
     tool(
         "session_status",
@@ -243,6 +270,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("reflection") => vec![
             send_message_tool(),
             create_worker_tool(),
+            cancel_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
             tool(
@@ -400,6 +428,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("cognition") => vec![
             send_message_tool(),
             create_worker_tool(),
+            cancel_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
         ],
@@ -861,6 +890,74 @@ async fn dispatch_tool(
                 "session {} — {state}; {} turn(s) so far; on: {}",
                 st.id, st.turns, st.task
             ));
+        }
+        "cancel_worker" => {
+            // Same rung guard as `create_worker`, for the same reason: stopping work is
+            // dispatch, and dispatch is the standing rungs'.
+            if !matches!(role, Some("reflection") | Some("cognition")) {
+                return tool_error(&format!(
+                    "`cancel_worker` belongs to the standing rungs; role `{}` may not \
+                     stop work",
+                    role.unwrap_or("<none>")
+                ));
+            }
+            let Some(caller) = session_id else {
+                return tool_error("cancel_worker needs a session identity; this session has none");
+            };
+            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
+                return tool_error("cancel_worker requires a numeric `id`");
+            };
+            let Some(st) = registry::global().status(id) else {
+                return tool_error(&format!(
+                    "no live session {id} — it may have already finished. Nothing was stopped."
+                ));
+            };
+            // You may stop your own work and nobody else's. The switchboard already
+            // holds the authoritative owner, so this reads the same fact `send_message`
+            // routes on rather than inventing a second answer to it.
+            if st.owner != Some(caller) {
+                return tool_error(
+                    "a working session can only be stopped by the session that asked for the work",
+                );
+            }
+            let owner_role = ToolOwner::from_role(role).expect("role guard above");
+            let Some(sink) = registry.get(owner_role).await else {
+                return tool_error("the owning loop is not up, so nothing can be stopped");
+            };
+            // **This one waits for its answer**, where `create_worker` does not, because
+            // the answer is the whole point: "I stopped it" and "it had already finished"
+            // lead to different next moves and different things said to the person. The
+            // loop serves its control channel *during* a turn, so the wait is short; the
+            // timeout exists only so a wedged loop degrades to an honest "couldn't tell"
+            // rather than hanging the caller mid-thought.
+            let (reply, answer) = tokio::sync::oneshot::channel();
+            if let Err(err) = sink.send(LoopControl::CancelWorker { id, reply }).await {
+                return tool_error(&err.to_string());
+            }
+            return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
+                Ok(Ok(true)) => tool_ok(&format!(
+                    "stopped session {id} mid-work. It will report back with whatever it \
+                     had got to. It stays alive and keeps its context, so send_message it \
+                     a new instruction if you want it to do something else instead."
+                )),
+                // Nothing was running. Said plainly, because the tempting summary —
+                // "stopped" — would have the caller waiting on a report that is never
+                // coming, and telling the person work was called off when it had in fact
+                // already been done.
+                Ok(Ok(false)) => tool_ok(&format!(
+                    "nothing to stop — session {id} was not working when this arrived, so \
+                     it had already finished or was already idle. No report is coming, and \
+                     whatever it did is done. Check session_messages if you need to know \
+                     what that was."
+                )),
+                Ok(Err(_)) => tool_error(&format!(
+                    "the owning loop dropped the request; session {id} was not stopped"
+                )),
+                Err(_) => tool_error(&format!(
+                    "no answer from the owning loop in time; it is not confirmed that \
+                     session {id} stopped — check session_status before telling anyone it did"
+                )),
+            };
         }
         "session_messages" => {
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
@@ -1909,6 +2006,10 @@ mod surface_tests {
     /// legacy fallback, which handed it `say` and `show` — refused at dispatch — and
     /// **not** `create_worker`, the one tool it exists to use. A rung with no arm is not
     /// a rung with defaults; it is a rung with someone else's.
+    ///
+    /// `cancel_worker` sits beside `create_worker` because dispatch is two verbs: a rung
+    /// that can start work and not stop it can only ever be told to change its mind too
+    /// late.
     #[test]
     fn cognition_holds_the_switchboard_and_nothing_else() {
         let mut got = names(Some("cognition"));
@@ -1916,6 +2017,7 @@ mod surface_tests {
         assert_eq!(
             got,
             vec![
+                "cancel_worker".to_string(),
                 "create_worker".to_string(),
                 "send_message".to_string(),
                 "session_messages".to_string(),

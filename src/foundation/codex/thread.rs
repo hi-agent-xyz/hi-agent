@@ -354,15 +354,23 @@ impl AgentSession {
     }
 
     /// Interrupt the turn currently running. The in-flight [`SessionRun`] resolves with
-    /// [`StopReason::Interrupted`]. A no-op when no turn is running.
-    pub async fn cancel(&self) -> anyhow::Result<()> {
+    /// [`StopReason::Interrupted`].
+    ///
+    /// **Returns whether there was actually a turn to interrupt.** Nothing running is an
+    /// ordinary outcome — the work finished on its own in the moment between deciding to
+    /// stop it and saying so — but it is a *different* outcome, and collapsing the two
+    /// into `Ok(())` is how a caller ends up reporting "stopping it" about a session that
+    /// had already finished and will never report back. That is the same false
+    /// confirmation this whole path exists to remove, so it is not repeated one layer
+    /// down.
+    pub async fn cancel(&self) -> anyhow::Result<bool> {
         let Some(turn_id) = self.current_turn.lock().await.clone() else {
-            return Ok(());
+            return Ok(false);
         };
         self.process
             .request("turn/interrupt", json!({ "threadId": self.id, "turnId": turn_id }))
             .await
-            .map(|_| ())
+            .map(|_| true)
     }
 }
 

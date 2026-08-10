@@ -43,6 +43,19 @@ pub enum LoopControl {
     /// answers to; a worker belongs to the session that created it, never to the voice
     /// it happens to run in.
     CreateWorker { id: u64, task: String, kind: crate::identity::WorkerType, owner: Option<u64> },
+    /// Stop the turn a working session is running (the `cancel_worker` tool).
+    ///
+    /// Crosses on this channel for the same reason `CreateWorker` does — the live-session
+    /// map is the loop's own state — and it is the symmetric half of it. Dispatch that
+    /// can only hand work out is dispatch that cannot change its mind, and the one
+    /// instruction a person gives most urgently is "stop".
+    ///
+    /// Unlike `CreateWorker` it carries a **reply**, because the two outcomes are not the
+    /// same news. `true` means a running turn was cut and a report is coming; `false`
+    /// means there was nothing to cut — already finished, or already gone — and no report
+    /// will arrive. A caller that cannot tell them apart can only guess, and the guess it
+    /// would make ("stopped") is the one that reproduces the bug this tool was added for.
+    CancelWorker { id: u64, reply: tokio::sync::oneshot::Sender<bool> },
 }
 
 /// The handle the MCP handler dispatches to. Cheap to clone. Carries two

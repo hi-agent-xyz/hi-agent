@@ -83,6 +83,8 @@ pub enum WorkerState {
     Running,
     Done,
     Failed,
+    /// Stopped on purpose by a cancel — neither delivered nor broken.
+    Interrupted,
 }
 
 /// The most recent turn on the reaction session.
