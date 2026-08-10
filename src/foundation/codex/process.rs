@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
@@ -173,6 +174,120 @@ impl Drop for RegistryGuard {
     }
 }
 
+/// How long a held stderr record waits for a continuation line before it is logged.
+///
+/// A record's own lines arrive back-to-back, so any gap this wide means the record is
+/// complete. Without it a lone error would sit unlogged until codex happened to log
+/// again — or until the process exited.
+const STDERR_IDLE_FLUSH: Duration = Duration::from_millis(200);
+
+/// The level codex stamped on one of its own log records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StderrLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+/// Reassembles codex's `tracing` records from the lines its stderr pipe delivers.
+///
+/// Codex logs for a terminal: ANSI-styled, `<ts> <LEVEL> <target>: <message>`, and a
+/// message containing newlines arrives as several lines of which only the first carries
+/// a header. Logging each line as it lands turned one error into six warnings full of
+/// escape bytes — 463 of the 471 stderr lines ever recorded were continuation fragments
+/// of a handful of records. A line with a header closes the record before it; anything
+/// else is a continuation of the record still open.
+#[derive(Default)]
+struct StderrJoiner {
+    pending: Option<(StderrLevel, String)>,
+}
+
+impl StderrJoiner {
+    /// Takes one raw line, returning the record it completed (if any).
+    fn push(&mut self, line: &str) -> Option<(StderrLevel, String)> {
+        let clean = strip_ansi(line);
+        match parse_record_header(&clean) {
+            Some((level, message)) => self.pending.replace((level, message.to_string())),
+            // Header-less output — a continuation, or spew from something in the child
+            // that isn't codex's logger. The latter has no level of its own, and unlabelled
+            // output from a subprocess is worth seeing, so it keeps `Warn`.
+            None => match self.pending.as_mut() {
+                Some((_, text)) => {
+                    text.push('\n');
+                    text.push_str(&clean);
+                    None
+                }
+                None => {
+                    self.pending = Some((StderrLevel::Warn, clean));
+                    None
+                }
+            },
+        }
+    }
+
+    /// Releases the open record — on EOF, or once the pipe has gone quiet.
+    fn flush(&mut self) -> Option<(StderrLevel, String)> {
+        self.pending.take()
+    }
+}
+
+/// Splits codex's `<timestamp> <LEVEL> <rest>` header off an ANSI-stripped line.
+///
+/// `None` means the line carries no header of its own: a continuation line, or output
+/// that didn't come from codex's logger at all.
+fn parse_record_header(line: &str) -> Option<(StderrLevel, &str)> {
+    let (timestamp, rest) = line.trim_start().split_once(char::is_whitespace)?;
+    // RFC 3339 UTC, which is what codex's logger emits. Checked so an ordinary line that
+    // happens to start with two words isn't mistaken for a new record.
+    if !(timestamp.contains('T') && timestamp.ends_with('Z')) {
+        return None;
+    }
+    let (level, message) = rest.trim_start().split_once(char::is_whitespace)?;
+    let level = match level {
+        "ERROR" => StderrLevel::Error,
+        "WARN" => StderrLevel::Warn,
+        "INFO" => StderrLevel::Info,
+        "DEBUG" => StderrLevel::Debug,
+        "TRACE" => StderrLevel::Trace,
+        _ => return None,
+    };
+    Some((level, message.trim_start()))
+}
+
+/// Drops ANSI escape sequences. Codex styles its log lines for a terminal; the raw bytes
+/// reach the tap verbatim (a raw frame is raw), but in our log they are noise in a file
+/// and a second layer of styling on a console.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' || chars.peek() != Some(&'[') {
+            out.push(c);
+            continue;
+        }
+        chars.next();
+        // CSI runs to its final byte, `@`..=`~`.
+        for c in chars.by_ref() {
+            if ('\u{40}'..='\u{7e}').contains(&c) {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn log_stderr_record(level: StderrLevel, text: &str) {
+    match level {
+        StderrLevel::Error => tracing::error!(target: "codex::stderr", "{text}"),
+        StderrLevel::Warn => tracing::warn!(target: "codex::stderr", "{text}"),
+        StderrLevel::Info => tracing::info!(target: "codex::stderr", "{text}"),
+        StderrLevel::Debug => tracing::debug!(target: "codex::stderr", "{text}"),
+        StderrLevel::Trace => tracing::trace!(target: "codex::stderr", "{text}"),
+    }
+}
+
 /// Aborts the reader/writer/stderr tasks when the driver future is dropped, so an
 /// aborted driver takes its whole connection down rather than leaving three tasks
 /// pumping a dead pipe.
@@ -314,12 +429,34 @@ impl CodexProcess {
             let role = role.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if line.trim().is_empty() {
-                        continue;
+                let mut joiner = StderrJoiner::default();
+                loop {
+                    match tokio::time::timeout(STDERR_IDLE_FLUSH, lines.next_line()).await {
+                        Ok(Ok(Some(line))) => {
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            // The tap keeps the line exactly as it crossed the pipe; only
+                            // the log gets the reassembled, de-styled record.
+                            tap.record(conn, session_id, &role, Dir::Stderr, &line);
+                            if let Some((level, text)) = joiner.push(&line) {
+                                log_stderr_record(level, &text);
+                            }
+                        }
+                        // Idle: whatever is still held is complete.
+                        Err(_elapsed) => {
+                            if let Some((level, text)) = joiner.flush() {
+                                log_stderr_record(level, &text);
+                            }
+                        }
+                        // EOF, or the pipe broke — either way there is no more of this record.
+                        Ok(_) => {
+                            if let Some((level, text)) = joiner.flush() {
+                                log_stderr_record(level, &text);
+                            }
+                            break;
+                        }
                     }
-                    tap.record(conn, session_id, &role, Dir::Stderr, &line);
-                    tracing::warn!(target: "codex::stderr", "{line}");
                 }
             })
         };
@@ -584,6 +721,75 @@ fn error_text(err: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The record that produced this test, verbatim off the wire on 2026-08-10.
+    const STYLED_ERROR: &str = "\u{1b}[2m2026-08-10T10:26:00.471756Z\u{1b}[0m \u{1b}[31mERROR\u{1b}[0m \u{1b}[2mcodex_core::tools::router\u{1b}[0m\u{1b}[2m:\u{1b}[0m \u{1b}[3merror\u{1b}[0m\u{1b}[2m=\u{1b}[0mexec_command failed for `/bin/zsh -lc 'if [ ! -d /Users/iloahz/projects/KTV/.git ]; then";
+
+    #[test]
+    fn ansi_styling_is_dropped_and_text_kept() {
+        let clean = strip_ansi(STYLED_ERROR);
+        assert!(!clean.contains('\u{1b}'), "no escape bytes survive: {clean}");
+        assert!(clean.starts_with("2026-08-10T10:26:00.471756Z ERROR codex_core::tools::router: error="));
+        assert_eq!(strip_ansi("plain"), "plain");
+    }
+
+    #[test]
+    fn a_header_yields_its_level_and_message() {
+        let clean = strip_ansi(STYLED_ERROR);
+        let (level, message) = parse_record_header(&clean).expect("header");
+        assert_eq!(level, StderrLevel::Error);
+        assert!(message.starts_with("codex_core::tools::router: error=exec_command failed"));
+    }
+
+    #[test]
+    fn the_padded_unstyled_form_parses_too() {
+        // An unstyled build pads the level to five columns.
+        let (level, message) =
+            parse_record_header("2026-08-10T10:26:00.471756Z  WARN codex_core: slow").expect("header");
+        assert_eq!(level, StderrLevel::Warn);
+        assert_eq!(message, "codex_core: slow");
+    }
+
+    #[test]
+    fn a_line_without_a_header_is_not_read_as_one() {
+        assert!(parse_record_header("git status --short").is_none());
+        assert!(parse_record_header("Cloning into '/Users/iloahz/projects/KTV'...").is_none());
+        // Two words, but the first is no timestamp.
+        assert!(parse_record_header("ERROR something happened").is_none());
+    }
+
+    #[test]
+    fn continuation_lines_join_the_record_above_them() {
+        let mut joiner = StderrJoiner::default();
+        assert!(joiner.push(STYLED_ERROR).is_none(), "a record is held open, not logged per line");
+        assert!(joiner.push("git status --short").is_none());
+        assert!(joiner.push("git log -1 --oneline").is_none());
+
+        let (level, text) = joiner.flush().expect("the open record flushes");
+        assert_eq!(level, StderrLevel::Error);
+        assert_eq!(text.lines().count(), 3, "one record, not three: {text}");
+        assert!(text.ends_with("git log -1 --oneline"));
+        assert!(joiner.flush().is_none(), "nothing is held twice");
+    }
+
+    #[test]
+    fn a_new_header_closes_the_record_before_it() {
+        let mut joiner = StderrJoiner::default();
+        joiner.push("2026-08-10T10:26:00.471756Z INFO codex_core: first");
+        let (level, text) = joiner
+            .push("2026-08-10T10:26:01.000000Z ERROR codex_core: second")
+            .expect("the first record completes");
+        assert_eq!(level, StderrLevel::Info);
+        assert_eq!(text, "codex_core: first");
+        assert_eq!(joiner.flush().expect("the second is still open").0, StderrLevel::Error);
+    }
+
+    #[test]
+    fn header_less_spew_stays_a_warning() {
+        let mut joiner = StderrJoiner::default();
+        joiner.push("dyld: symbol not found");
+        assert_eq!(joiner.flush().expect("held"), (StderrLevel::Warn, "dyld: symbol not found".into()));
+    }
 
     fn channels() -> (
         Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, Value>>>>>,
