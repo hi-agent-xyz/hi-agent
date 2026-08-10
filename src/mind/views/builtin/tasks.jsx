@@ -1,6 +1,18 @@
-// purpose: 任务 — the task ledger as todo / doing / done / cancelled, with liveness as detail on a doing task.
+// purpose: 任务 — the task ledger as one board: todo / doing / done / cancelled side by side.
 // The full canvas is organized by the one durable lifecycle: todo, doing, done,
 // cancelled. Liveness is optional detail on a doing task, never a second kind or mode.
+//
+// The board is the whole page — four columns, each scrolling on its own, nothing
+// hidden behind a filter. A card is therefore a *glance*: a clamped title, the one or
+// two facts that decide whether it needs you, and the actions. Everything long —
+// the untruncated title, the prose, the liveness contract — lives in the detail panel
+// a card opens. Titles arrive as whatever the agent wrote, and some are paragraphs;
+// the card truncates rather than letting one task eat the column.
+//
+// A status change is a card moved between columns, and dragging one there is the
+// gesture the layout already promises. It is never the *only* way: HTML5 drag does not
+// exist on touch and cannot be driven from a keyboard, so every card keeps its buttons
+// and the drag is the shortcut on top of them.
 import { useState, useEffect, useCallback, useRef } from "react";
 
 const J = { "Content-Type": "application/json" };
@@ -19,8 +31,7 @@ const T = {
     title: "Tasks",
     activeN: (n) => `${n} active`,
     totalN: (n) => `${n} ${n === 1 ? "task" : "tasks"}`,
-    status: "Status",
-    statusNav: "Task status",
+    board: "Task board",
     category: {
       todo: "Todo",
       doing: "Doing",
@@ -28,10 +39,10 @@ const T = {
       cancelled: "Cancelled",
     },
     empty: {
-      todo: "No tasks waiting to start.",
-      doing: "Nothing is being worked on.",
-      done: "No completed tasks yet.",
-      cancelled: "No cancelled tasks.",
+      todo: "Nothing queued.",
+      doing: "Nothing in progress.",
+      done: "Nothing finished yet.",
+      cancelled: "Nothing cancelled.",
     },
     attentionN: (n) => `${n} need attention`,
     created: (at) => `Created ${at}`,
@@ -46,7 +57,17 @@ const T = {
     markDone: "Mark done",
     cancel: "Cancel",
     reopen: "Reopen",
+    // Short forms for the card, where a column is a few hundred pixels wide. The
+    // full wording above stays as the button's label for anyone not reading pixels.
+    shortStart: "Start",
+    shortTodo: "Todo",
+    shortDone: "Done",
+    shortCancel: "Cancel",
+    shortReopen: "Reopen",
+    details: "Open details",
+    close: "Close",
     malformed: "This task has invalid stored fields. Changing its status will rewrite the recognized fields.",
+    malformedShort: "Invalid fields",
     noBody: "(no notes)",
     monitoring: "Liveness",
     verify: "Check",
@@ -58,8 +79,7 @@ const T = {
     title: "任务",
     activeN: (n) => `${n} 件进行中`,
     totalN: (n) => `${n} 件任务`,
-    status: "状态",
-    statusNav: "任务状态",
+    board: "任务看板",
     category: {
       todo: "待办",
       doing: "进行中",
@@ -67,10 +87,10 @@ const T = {
       cancelled: "已取消",
     },
     empty: {
-      todo: "没有等待开始的任务。",
-      doing: "目前没有正在处理的任务。",
-      done: "还没有已完成的任务。",
-      cancelled: "没有已取消的任务。",
+      todo: "没有待办。",
+      doing: "没有进行中的。",
+      done: "还没有完成的。",
+      cancelled: "没有已取消的。",
     },
     attentionN: (n) => `${n} 件需要留意`,
     created: (at) => `创建于 ${at}`,
@@ -85,7 +105,15 @@ const T = {
     markDone: "完成",
     cancel: "取消",
     reopen: "重新打开",
+    shortStart: "开始",
+    shortTodo: "待办",
+    shortDone: "完成",
+    shortCancel: "取消",
+    shortReopen: "重开",
+    details: "查看详情",
+    close: "关闭",
     malformed: "这条任务包含无效字段。修改状态时会重写可识别的字段。",
+    malformedShort: "字段无效",
     noBody: "（没有备注）",
     monitoring: "运行检查",
     verify: "检查方式",
@@ -126,11 +154,18 @@ const STATUS_TONE = {
 
 export default function Tasks() {
   const [tasks, setTasks] = useState(null);
-  const [status, setStatus] = useState("doing");
   const [busy, setBusy] = useState(null);
-  // A ref, not the state: the poll interval is created once and would otherwise close
-  // over the `busy` of its first render.
+  // The open detail panel is held by subject, not by task object: the poll below
+  // replaces every task on each tick, and a held object would freeze the panel on
+  // the version that was open when it was clicked.
+  const [openSubject, setOpenSubject] = useState(null);
+  // The card in hand: `{ subject, status }`, so a column can tell whether a drop over it
+  // would change anything before it offers to accept one.
+  const [drag, setDrag] = useState(null);
+  // Refs, not the state: the poll interval is created once and would otherwise close
+  // over the `busy` and `drag` of its first render.
   const busyRef = useRef(false);
+  const dragRef = useRef(false);
 
   const reload = useCallback(async () => {
     const data = await api.list().catch(() => ({ tasks: [] }));
@@ -140,12 +175,13 @@ export default function Tasks() {
   // Poll, for the reason the workers roster does: the agent opens and closes tasks while
   // this is on screen, and a ledger that is quietly stale still reads as authoritative —
   // it is the surface someone checks *before* asking "did you drop that?". Held off while
-  // a status write is in flight (so a row can't flip back under the click) and while the
-  // page is hidden, since nothing is being read then.
+  // a status write is in flight (so a card can't flip back under the click), while a card
+  // is mid-drag (re-rendering the board out from under a held card cancels the drag), and
+  // while the page is hidden, since nothing is being read then.
   useEffect(() => {
     reload();
     const timer = setInterval(() => {
-      if (!document.hidden && !busyRef.current) reload();
+      if (!document.hidden && !busyRef.current && !dragRef.current) reload();
     }, 8000);
     return () => clearInterval(timer);
   }, [reload]);
@@ -159,6 +195,25 @@ export default function Tasks() {
     reload();
   };
 
+  const startDrag = (task) => {
+    dragRef.current = true;
+    setDrag({ subject: task.subject, status: task.status });
+  };
+
+  const endDrag = () => {
+    dragRef.current = false;
+    setDrag(null);
+  };
+
+  // A drop onto the column a card came from is not a change — dropping there is how you
+  // cancel a drag, so it must not spend a write or flash the card busy.
+  const dropOn = (subject, nextStatus) => {
+    endDrag();
+    const task = tasks?.find((item) => item.subject === subject);
+    if (!task || task.status === nextStatus) return;
+    setTaskStatus(subject, nextStatus);
+  };
+
   if (tasks === null) {
     return (
       <div className="hi-tasks">
@@ -168,71 +223,47 @@ export default function Tasks() {
           <span />
           <span />
           <span />
+          <span />
         </div>
       </div>
     );
   }
 
   const activeCount = tasks.filter((task) => task.status === "todo" || task.status === "doing").length;
-  const visible = tasks.filter((task) => task.status === status);
-  const selected = STATUSES.find((item) => item.id === status) || STATUSES[1];
-  const attention = visible.filter(taskNeedsAttention).length;
+  // A task whose status changed out from under the panel keeps the panel open on it —
+  // it is still the task someone was reading. Only a task that left the ledger closes it.
+  const open = openSubject ? tasks.find((task) => task.subject === openSubject) || null : null;
 
   return (
     <div className="hi-tasks">
       <style>{CSS}</style>
       <Header activeCount={activeCount} totalCount={tasks.length} />
 
-      <div className="hi-tasks__workspace">
-        <nav className="hi-tasks__statuses" aria-label={L.statusNav}>
-          <div className="hi-tasks__statuses-title">{L.status}</div>
-          <div className="hi-tasks__status-list">
-            {STATUSES.map((item) => {
-              const count = tasks.filter((task) => task.status === item.id).length;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="hi-tasks__status"
-                  data-active={item.id === status ? "true" : undefined}
-                  data-tone={item.tone}
-                  aria-pressed={item.id === status}
-                  onClick={() => setStatus(item.id)}
-                >
-                  <span className="hi-tasks__status-dot" aria-hidden="true" />
-                  <span className="hi-tasks__status-label">{item.label}</span>
-                  <span className="hi-tasks__status-count">{count}</span>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
-
-        <main className="hi-tasks__content">
-          <div className="hi-tasks__content-head">
-            <div>
-              <h2>{selected.label}</h2>
-              <div className="hi-tasks__content-count">{L.totalN(visible.length)}</div>
-            </div>
-            {attention > 0 && <div className="hi-tasks__attention">{L.attentionN(attention)}</div>}
-          </div>
-
-          {visible.length === 0 ? (
-            <div className="hi-tasks__empty">{L.empty[status]}</div>
-          ) : (
-            <div className="hi-tasks__list">
-              {visible.map((task) => (
-                <Row
-                  key={task.subject}
-                  task={task}
-                  busy={busy === task.subject}
-                  onStatus={setTaskStatus}
-                />
-              ))}
-            </div>
-          )}
-        </main>
+      <div className="hi-tasks__board" aria-label={L.board}>
+        {STATUSES.map((column) => (
+          <Column
+            key={column.id}
+            column={column}
+            tasks={tasks.filter((task) => task.status === column.id)}
+            busy={busy}
+            drag={drag}
+            onStatus={setTaskStatus}
+            onOpen={setOpenSubject}
+            onDragStart={startDrag}
+            onDragEnd={endDrag}
+            onDrop={dropOn}
+          />
+        ))}
       </div>
+
+      {open && (
+        <Detail
+          task={open}
+          busy={busy === open.subject}
+          onStatus={setTaskStatus}
+          onClose={() => setOpenSubject(null)}
+        />
+      )}
     </div>
   );
 }
@@ -249,9 +280,141 @@ function Header({ activeCount, totalCount }) {
   );
 }
 
-function Row({ task, busy, onStatus }) {
-  const [expanded, setExpanded] = useState(false);
-  const tone = STATUS_TONE[task.status] || "var(--fg-mute)";
+function Column({ column, tasks, busy, drag, onStatus, onOpen, onDragStart, onDragEnd, onDrop }) {
+  const attention = tasks.filter(taskNeedsAttention).length;
+  const [over, setOver] = useState(false);
+  // Only a card from another column can land here. Without this the source column also
+  // lights up as a target, which reads as "this does something" when it does not.
+  const takes = Boolean(drag) && drag.status !== column.id;
+
+  return (
+    <section
+      className="hi-tasks__column"
+      data-tone={column.tone}
+      data-drop={takes && over ? "true" : undefined}
+      aria-label={`${column.label} (${tasks.length})`}
+      onDragOver={(event) => {
+        if (!takes) return;
+        // Preventing the default is what makes an element a drop target at all.
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        // `dragleave` also fires crossing into a child, so only a departure that leaves
+        // the column entirely counts.
+        if (!event.currentTarget.contains(event.relatedTarget)) setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!takes) return;
+        event.preventDefault();
+        setOver(false);
+        onDrop(event.dataTransfer.getData("text/plain") || drag.subject, column.id);
+      }}
+    >
+      <div className="hi-tasks__column-head">
+        <span className="hi-tasks__column-dot" aria-hidden="true" />
+        <h2 className="hi-tasks__column-label">{column.label}</h2>
+        <span className="hi-tasks__column-count">{tasks.length}</span>
+        {attention > 0 && (
+          <span className="hi-tasks__column-attention" title={L.attentionN(attention)}>
+            {attention}
+          </span>
+        )}
+      </div>
+
+      {tasks.length === 0 ? (
+        <div className="hi-tasks__empty">{L.empty[column.id]}</div>
+      ) : (
+        <div className="hi-tasks__cards">
+          {tasks.map((task) => (
+            <Card
+              key={task.subject}
+              task={task}
+              busy={busy === task.subject}
+              dragging={drag?.subject === task.subject}
+              onStatus={onStatus}
+              onOpen={onOpen}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }) {
+  const notes = cardNotes(task);
+  // A drag that ends on the card it started from still delivers a `click`, which would
+  // open the panel on a gesture the person meant as "put it back".
+  const dragged = useRef(false);
+
+  return (
+    <article
+      className="hi-tasks__card"
+      draggable
+      data-malformed={task.malformed ? "true" : undefined}
+      data-dragging={dragging ? "true" : undefined}
+      aria-busy={busy}
+      style={{ "--task-status": STATUS_TONE[task.status] || "var(--fg-mute)" }}
+      onDragStart={(event) => {
+        dragged.current = true;
+        // Firefox refuses to start a drag with an empty payload; the subject is also
+        // what the drop handler reads back, so this is the payload, not a placebo.
+        event.dataTransfer.setData("text/plain", task.subject);
+        event.dataTransfer.effectAllowed = "move";
+        onDragStart(task);
+      }}
+      onDragEnd={() => {
+        onDragEnd();
+        // Cleared after the click that may follow this drag has been swallowed.
+        setTimeout(() => {
+          dragged.current = false;
+        }, 0);
+      }}
+    >
+      <button
+        type="button"
+        className="hi-tasks__card-open"
+        // The card clamps to two lines, so the untruncated title has to be reachable
+        // without opening the panel — this is the hover that gives it.
+        title={`${task.title || task.subject}\n\n${L.details}`}
+        onClick={() => {
+          if (dragged.current) return;
+          onOpen(task.subject);
+        }}
+      >
+        <span className="hi-tasks__card-title">{task.title || task.subject}</span>
+        {notes.length > 0 && (
+          <span className="hi-tasks__card-notes">
+            {notes.map((note) => (
+              <span key={note.text} data-warn={note.warn ? "true" : undefined}>
+                {note.text}
+              </span>
+            ))}
+          </span>
+        )}
+      </button>
+
+      <Actions task={task} busy={busy} onStatus={onStatus} short />
+    </article>
+  );
+}
+
+function Detail({ task, busy, onStatus, onClose }) {
+  const panel = useRef(null);
+
+  useEffect(() => {
+    panel.current?.focus();
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const due = dueMeta(task);
   const health = healthMeta(task);
   const closedAt =
@@ -262,44 +425,42 @@ function Row({ task, busy, onStatus }) {
         : null;
 
   return (
-    <article
-      className="hi-tasks__row"
-      data-closed={task.status === "done" || task.status === "cancelled" ? "true" : undefined}
-      data-malformed={task.malformed ? "true" : undefined}
-      aria-busy={busy}
-      style={{ "--task-status": tone }}
-    >
-      <button
-        type="button"
-        className="hi-tasks__row-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+    <div className="hi-tasks__scrim" onClick={onClose}>
+      <div
+        ref={panel}
+        className="hi-tasks__detail"
+        role="dialog"
+        aria-modal="true"
+        aria-label={task.title || task.subject}
+        tabIndex={-1}
+        style={{ "--task-status": STATUS_TONE[task.status] || "var(--fg-mute)" }}
+        onClick={(event) => event.stopPropagation()}
       >
-        <span className="hi-tasks__status-bar" aria-hidden="true" />
-        <span className="hi-tasks__row-copy">
-          <span className="hi-tasks__row-title">{task.title || task.subject}</span>
-          <span className="hi-tasks__row-meta">
-            <span className="hi-tasks__status-chip">{L.category[task.status] || task.status}</span>
+        <div className="hi-tasks__detail-head">
+          <span className="hi-tasks__chip">{L.category[task.status] || task.status}</span>
+          <button type="button" className="hi-tasks__close" aria-label={L.close} onClick={onClose}>
+            ×
+          </button>
+        </div>
+
+        <div className="hi-tasks__detail-scroll">
+          <h3 className="hi-tasks__detail-title">{task.title || task.subject}</h3>
+
+          <div className="hi-tasks__detail-meta">
             {task.createdAt && <span>{L.created(formatStamp(task.createdAt))}</span>}
             {closedAt && <span>{closedAt}</span>}
             {due && <span data-warn={due.warn ? "true" : undefined}>{due.text}</span>}
             {health && <span data-warn={health.warn ? "true" : undefined}>{health.text}</span>}
-          </span>
-        </span>
-        <span className="hi-tasks__chevron" data-open={expanded ? "true" : undefined} aria-hidden="true" />
-      </button>
+          </div>
 
-      <Actions task={task} busy={busy} onStatus={onStatus} />
+          {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
 
-      {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
-
-      {expanded && (
-        <div className="hi-tasks__body">
           {task.body ? (
             <div className="hi-tasks__prose">{task.body}</div>
           ) : (
             <div className="hi-tasks__none">{L.noBody}</div>
           )}
+
           {task.liveness && (
             <div className="hi-tasks__liveness">
               <div className="hi-tasks__liveness-title">{L.monitoring}</div>
@@ -309,66 +470,49 @@ function Row({ task, busy, onStatus }) {
               {task.liveness.startKey && <div><b>{L.startKey}:</b> {task.liveness.startKey}</div>}
             </div>
           )}
+
           <div className="hi-tasks__subject">{task.subject}</div>
         </div>
-      )}
-    </article>
+
+        <Actions task={task} busy={busy} onStatus={onStatus} />
+      </div>
+    </div>
   );
 }
 
-function Actions({ task, busy, onStatus }) {
+// `short` swaps the card's cramped labels in while keeping the full wording as the
+// accessible name — a column is too narrow for "Move to todo", a screen reader is not.
+function Actions({ task, busy, onStatus, short }) {
+  const button = (kind, status, label, shortLabel) => (
+    <button
+      type="button"
+      className={`hi-tasks__button hi-tasks__button--${kind}`}
+      disabled={busy}
+      aria-label={label}
+      title={label}
+      onClick={() => onStatus(task.subject, status)}
+    >
+      {short ? shortLabel : label}
+    </button>
+  );
+
+  // `draggable={false}` so pressing a button never starts a drag of the card around it:
+  // a draggable element otherwise hands its whole subtree to the drag.
   if (task.status === "done" || task.status === "cancelled") {
     return (
-      <div className="hi-tasks__actions">
-        <button
-          type="button"
-          className="hi-tasks__button hi-tasks__button--ghost"
-          disabled={busy}
-          onClick={() => onStatus(task.subject, "todo")}
-        >
-          {L.reopen}
-        </button>
+      <div className="hi-tasks__actions" draggable={false}>
+        {button("ghost", "todo", L.reopen, L.shortReopen)}
       </div>
     );
   }
 
   return (
-    <div className="hi-tasks__actions">
-      {task.status === "todo" ? (
-        <button
-          type="button"
-          className="hi-tasks__button hi-tasks__button--ghost"
-          disabled={busy}
-          onClick={() => onStatus(task.subject, "doing")}
-        >
-          {L.start}
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="hi-tasks__button hi-tasks__button--ghost"
-          disabled={busy}
-          onClick={() => onStatus(task.subject, "todo")}
-        >
-          {L.moveTodo}
-        </button>
-      )}
-      <button
-        type="button"
-        className="hi-tasks__button hi-tasks__button--danger"
-        disabled={busy}
-        onClick={() => onStatus(task.subject, "cancelled")}
-      >
-        {L.cancel}
-      </button>
-      <button
-        type="button"
-        className="hi-tasks__button hi-tasks__button--primary"
-        disabled={busy}
-        onClick={() => onStatus(task.subject, "done")}
-      >
-        {L.markDone}
-      </button>
+    <div className="hi-tasks__actions" draggable={false}>
+      {task.status === "todo"
+        ? button("ghost", "doing", L.start, L.shortStart)
+        : button("ghost", "todo", L.moveTodo, L.shortTodo)}
+      {button("danger", "cancelled", L.cancel, L.shortCancel)}
+      {button("primary", "done", L.markDone, L.shortDone)}
     </div>
   );
 }
@@ -408,6 +552,29 @@ function taskNeedsAttention(task) {
   return Boolean(dueMeta(task)?.warn || healthMeta(task)?.warn);
 }
 
+// One clipped line under the title, so what earns the space is what would make someone
+// act: a warning first, then the one date that means anything for this status.
+function cardNotes(task) {
+  const notes = [];
+  if (task.malformed) notes.push({ text: L.malformedShort, warn: true });
+  const due = dueMeta(task);
+  const health = healthMeta(task);
+  if (due?.warn) notes.push(due);
+  if (health?.warn) notes.push(health);
+  if (notes.length === 0) {
+    if (due) notes.push(due);
+    else if (health) notes.push(health);
+  }
+  if (task.status === "done" && task.completedAt) {
+    notes.push({ text: L.completed(formatStamp(task.completedAt)) });
+  } else if (task.status === "cancelled" && task.cancelledAt) {
+    notes.push({ text: L.cancelled(formatStamp(task.cancelledAt)) });
+  } else if (task.createdAt) {
+    notes.push({ text: L.created(formatStamp(task.createdAt)) });
+  }
+  return notes;
+}
+
 const CSS = `
   .hi-tasks,
   .hi-tasks * {
@@ -415,6 +582,7 @@ const CSS = `
   }
 
   .hi-tasks {
+    position: relative;
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -437,12 +605,12 @@ const CSS = `
 
   .hi-tasks__header {
     flex: none;
-    min-height: 82px;
+    min-height: 64px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    padding: 18px clamp(22px, 3vw, 44px);
+    padding: 14px clamp(16px, 2.4vw, 30px);
     border-bottom: 1px solid var(--line);
   }
 
@@ -455,99 +623,90 @@ const CSS = `
 
   .hi-tasks__heading h1 {
     margin: 0;
-    font-size: 28px;
+    font-size: 24px;
     line-height: 1.1;
     font-weight: 800;
     letter-spacing: 0;
   }
 
   .hi-tasks__heading span,
-  .hi-tasks__total,
-  .hi-tasks__content-count {
+  .hi-tasks__total {
     color: var(--fg-dim);
     font-size: 13px;
     font-weight: 650;
     font-variant-numeric: tabular-nums;
   }
 
-  .hi-tasks__workspace {
+  /* The board is the page: four columns that fill the height and never scroll it.
+     Below ~1100px the columns keep a readable floor and the board scrolls sideways
+     instead of squeezing every card into a ribbon. */
+  .hi-tasks__board {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+    grid-template-columns: repeat(4, minmax(250px, 1fr));
+    gap: 12px;
+    padding: 14px clamp(16px, 2.4vw, 30px) 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
-  .hi-tasks__statuses {
+  .hi-tasks__column {
+    --column-tone: var(--fg-mute);
+    min-width: 0;
     min-height: 0;
-    padding: 24px 14px 116px clamp(18px, 2.5vw, 34px);
-    overflow-y: auto;
-    border-right: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 48%, var(--bg-0));
-  }
-
-  .hi-tasks__statuses-title {
-    margin: 0 10px 10px;
-    color: var(--fg-dim);
-    font-size: 12px;
-    line-height: 1.4;
-    font-weight: 750;
-  }
-
-  .hi-tasks__status-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--surface) 42%, var(--bg-0));
   }
 
-  .hi-tasks__status {
-    --status-tone: var(--fg-mute);
-    width: 100%;
-    min-height: 44px;
-    display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto;
+  .hi-tasks__column[data-tone="accent"] { --column-tone: var(--accent); }
+  .hi-tasks__column[data-tone="secondary"] { --column-tone: var(--accent-2); }
+  .hi-tasks__column[data-tone="danger"] { --column-tone: var(--danger); }
+
+  /* Only the column a held card would actually land in lights up. */
+  .hi-tasks__column[data-drop="true"] {
+    border-color: var(--accent-line);
+    background: var(--accent-wash);
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+  }
+
+  .hi-tasks__column-head {
+    flex: none;
+    display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    text-align: left;
-    color: var(--fg-dim);
-    transition: background 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease);
+    gap: 8px;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
   }
 
-  .hi-tasks__status[data-tone="accent"] { --status-tone: var(--accent); }
-  .hi-tasks__status[data-tone="secondary"] { --status-tone: var(--accent-2); }
-  .hi-tasks__status[data-tone="danger"] { --status-tone: var(--danger); }
-
-  .hi-tasks__status:hover {
-    background: var(--surface);
-    color: var(--fg);
-  }
-
-  .hi-tasks__status[data-active="true"] {
-    border-color: var(--line);
-    background: var(--surface-strong);
-    color: var(--fg);
-  }
-
-  .hi-tasks__status-dot {
+  .hi-tasks__column-dot {
+    flex: none;
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--status-tone);
+    background: var(--column-tone);
   }
 
-  .hi-tasks__status-label {
+  .hi-tasks__column-label {
     min-width: 0;
-    overflow-wrap: anywhere;
+    margin: 0;
+    overflow: hidden;
+    color: var(--fg);
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 13.5px;
-    line-height: 1.35;
-    font-weight: 680;
+    line-height: 1.3;
+    font-weight: 780;
   }
 
-  .hi-tasks__status-count {
-    min-width: 24px;
-    height: 24px;
+  .hi-tasks__column-count {
+    margin-left: auto;
+    min-width: 22px;
+    height: 22px;
     display: grid;
     place-items: center;
     padding: 0 6px;
@@ -560,170 +719,128 @@ const CSS = `
     font-variant-numeric: tabular-nums;
   }
 
-  .hi-tasks__content {
-    min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    padding-bottom: 120px;
-  }
-
-  .hi-tasks__content-head {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    min-height: 76px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    padding: 16px clamp(20px, 3vw, 40px);
-    border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--bg-0) 94%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-
-  .hi-tasks__content-head h2 {
-    margin: 0 0 3px;
-    color: var(--fg);
-    font-size: 16px;
-    line-height: 1.3;
-    font-weight: 780;
-    letter-spacing: 0;
-  }
-
-  .hi-tasks__attention {
+  .hi-tasks__column-attention {
+    min-width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--danger-wash);
     color: var(--danger);
-    font-size: 12.5px;
-    line-height: 1.4;
-    font-weight: 750;
+    font-size: 11.5px;
+    line-height: 1;
+    font-weight: 780;
+    font-variant-numeric: tabular-nums;
   }
 
-  .hi-tasks__list {
+  .hi-tasks__cards {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 18px clamp(20px, 3vw, 40px) 0;
+    padding: 10px;
+    overflow-y: auto;
   }
 
-  .hi-tasks__row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "toggle actions"
-      "bad bad"
-      "body body";
-    align-items: start;
+  /* The floating dock sits over the bottom-right corner of the surface, which is the
+     last column's tail. Only that column pays for the clearance. */
+  .hi-tasks__column:last-child .hi-tasks__cards {
+    padding-bottom: 76px;
+  }
+
+  .hi-tasks__card {
+    flex: none;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--line);
+    border-left: 3px solid var(--task-status);
     border-radius: 8px;
     background: var(--surface);
     transition: background 160ms var(--ease), border-color 160ms var(--ease);
   }
 
-  .hi-tasks__row:hover {
-    border-color: var(--line-strong);
+  .hi-tasks__card:hover {
     background: var(--surface-strong);
+    border-top-color: var(--line-strong);
+    border-right-color: var(--line-strong);
+    border-bottom-color: var(--line-strong);
   }
 
-  .hi-tasks__row[data-malformed="true"] {
-    border-color: var(--danger-line);
+  .hi-tasks__card[data-malformed="true"] {
+    border-top-color: var(--danger-line);
+    border-right-color: var(--danger-line);
+    border-bottom-color: var(--danger-line);
   }
 
-  .hi-tasks__row[data-closed="true"] {
-    background: transparent;
+  /* The card left behind while its ghost is under the cursor. */
+  .hi-tasks__card[data-dragging="true"] {
+    opacity: 0.4;
   }
 
-  .hi-tasks__row-toggle {
-    grid-area: toggle;
+  .hi-tasks__card-open {
     width: 100%;
-    min-width: 0;
-    min-height: 76px;
-    display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) 18px;
-    align-items: center;
-    gap: 14px;
-    padding: 13px 10px 13px 14px;
-    text-align: left;
-  }
-
-  .hi-tasks__status-bar {
-    width: 4px;
-    height: 38px;
-    border-radius: 2px;
-    background: var(--task-status);
-  }
-
-  .hi-tasks__row-copy {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 6px;
+    padding: 11px 12px 8px;
+    text-align: left;
   }
 
-  .hi-tasks__row-title {
-    min-width: 0;
+  /* Two lines, then it stops. A title is a name here — the paragraph some of them
+     carry belongs to the detail panel, and the card must not grow to hold it. */
+  .hi-tasks__card-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
     color: var(--fg);
-    font-size: 15px;
-    line-height: 1.42;
-    font-weight: 680;
+    font-size: 13.5px;
+    line-height: 1.45;
+    font-weight: 700;
     overflow-wrap: anywhere;
   }
 
-  .hi-tasks__row-meta {
+  .hi-tasks__card-notes {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 7px 12px;
+    align-items: baseline;
+    gap: 10px;
+    overflow: hidden;
     color: var(--fg-dim);
-    font-size: 12px;
-    line-height: 1.35;
+    white-space: nowrap;
+    font-size: 11.5px;
+    line-height: 1.4;
     font-weight: 620;
+    font-variant-numeric: tabular-nums;
   }
 
-  .hi-tasks__row-meta [data-warn="true"] {
+  .hi-tasks__card-notes span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .hi-tasks__card-notes [data-warn="true"] {
+    flex: none;
     color: var(--danger);
   }
 
-  .hi-tasks__status-chip {
-    padding: 3px 7px;
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--task-status) 10%, transparent);
-    color: var(--task-status);
-    font-weight: 750;
-  }
-
-  .hi-tasks__row-meta span {
-    white-space: nowrap;
-  }
-
-  .hi-tasks__chevron {
-    width: 8px;
-    height: 8px;
-    border-right: 1.5px solid var(--fg-dim);
-    border-bottom: 1.5px solid var(--fg-dim);
-    transform: rotate(45deg) translate(-2px, -2px);
-    transition: transform 160ms var(--ease);
-  }
-
-  .hi-tasks__chevron[data-open="true"] {
-    transform: rotate(225deg) translate(-1px, -1px);
-  }
-
   .hi-tasks__actions {
-    grid-area: actions;
-    align-self: center;
     display: flex;
-    gap: 8px;
-    padding: 12px 12px 12px 6px;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 10px 10px;
   }
 
   .hi-tasks__button {
-    min-height: 44px;
-    padding: 0 13px;
+    min-height: 30px;
+    padding: 0 10px;
     border-radius: 6px;
-    font-size: 13px;
-    font-weight: 750;
+    font-size: 12px;
+    font-weight: 720;
     white-space: nowrap;
     transition: background 160ms var(--ease), border-color 160ms var(--ease), opacity 160ms var(--ease);
   }
@@ -733,7 +850,8 @@ const CSS = `
     opacity: 0.45;
   }
 
-  .hi-tasks__button--ghost {
+  .hi-tasks__button--ghost,
+  .hi-tasks__button--danger {
     border: 1px solid var(--line-strong);
     color: var(--fg-dim);
   }
@@ -742,11 +860,6 @@ const CSS = `
     border-color: var(--accent-line);
     background: var(--accent-wash);
     color: var(--fg);
-  }
-
-  .hi-tasks__button--danger {
-    border: 1px solid var(--line-strong);
-    color: var(--fg-dim);
   }
 
   .hi-tasks__button--danger:hover:not(:disabled) {
@@ -765,19 +878,120 @@ const CSS = `
     filter: brightness(0.94);
   }
 
+  .hi-tasks__empty {
+    flex: 1;
+    display: grid;
+    place-content: center;
+    padding: 24px 16px;
+    color: var(--fg-mute);
+    text-align: center;
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-weight: 650;
+  }
+
+  /* Absolute, not fixed: the view is a surface inside the app, and a transformed
+     ancestor would silently re-anchor a fixed overlay. */
+  .hi-tasks__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+    padding: clamp(16px, 4vh, 48px) clamp(16px, 4vw, 48px);
+    background: color-mix(in srgb, var(--bg-0) 62%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .hi-tasks__detail {
+    width: min(640px, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--bg-0);
+    box-shadow: 0 24px 60px var(--shadow-strong);
+  }
+
+  .hi-tasks__detail:focus-visible {
+    outline: none;
+  }
+
+  .hi-tasks__detail-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 12px 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hi-tasks__chip {
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--task-status) 12%, transparent);
+    color: var(--task-status);
+    font-size: 12px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__close {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--fg-dim);
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .hi-tasks__close:hover {
+    background: var(--surface-strong);
+    color: var(--fg);
+  }
+
+  .hi-tasks__detail-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .hi-tasks__detail-title {
+    margin: 0 0 10px;
+    color: var(--fg);
+    font-size: 16px;
+    line-height: 1.5;
+    font-weight: 760;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__detail-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-bottom: 14px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    line-height: 1.35;
+    font-weight: 620;
+  }
+
+  .hi-tasks__detail-meta [data-warn="true"] {
+    color: var(--danger);
+  }
+
   .hi-tasks__bad {
-    grid-area: bad;
-    padding: 0 18px 12px 32px;
+    margin-bottom: 14px;
     color: var(--danger);
     font-size: 12.5px;
     line-height: 1.5;
-  }
-
-  .hi-tasks__body {
-    grid-area: body;
-    margin: 0 18px 16px 32px;
-    padding: 14px 0 0;
-    border-top: 1px solid var(--line);
   }
 
   .hi-tasks__prose,
@@ -787,11 +1001,6 @@ const CSS = `
     line-height: 1.65;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  .hi-tasks__none,
-  .hi-tasks__subject {
-    color: var(--fg-dim);
   }
 
   .hi-tasks__liveness {
@@ -813,59 +1022,45 @@ const CSS = `
 
   .hi-tasks__subject {
     margin-top: 12px;
+    color: var(--fg-mute);
     font-size: 11.5px;
     line-height: 1.4;
     overflow-wrap: anywhere;
   }
 
-  .hi-tasks__empty {
-    min-height: 240px;
-    display: grid;
-    place-content: center;
-    padding: 38px;
-    color: var(--fg-dim);
-    text-align: center;
-    font-size: 16px;
-    line-height: 1.45;
-    font-weight: 680;
+  .hi-tasks__detail .hi-tasks__actions {
+    flex: none;
+    justify-content: flex-end;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+  }
+
+  .hi-tasks__detail .hi-tasks__button {
+    min-height: 38px;
+    padding: 0 13px;
+    font-size: 13px;
+    font-weight: 750;
   }
 
   .hi-tasks__loading {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 28px clamp(22px, 3vw, 44px);
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(250px, 1fr));
+    gap: 12px;
+    padding: 14px clamp(16px, 2.4vw, 30px) 16px;
+    overflow: hidden;
   }
 
   .hi-tasks__loading span {
-    width: 100%;
-    height: 76px;
     border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--surface);
-  }
-
-  @media (max-width: 980px) {
-    .hi-tasks__row {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-areas:
-        "toggle"
-        "actions"
-        "bad"
-        "body";
-    }
-
-    .hi-tasks__actions {
-      width: 100%;
-      justify-content: flex-end;
-      padding: 0 14px 12px 32px;
-    }
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--surface) 42%, var(--bg-0));
   }
 
   @media (max-width: 760px) {
     .hi-tasks__header {
-      min-height: 68px;
+      min-height: 56px;
       padding: 12px 16px;
     }
 
@@ -874,118 +1069,17 @@ const CSS = `
     }
 
     .hi-tasks__heading h1 {
-      font-size: 24px;
+      font-size: 21px;
     }
 
-    .hi-tasks__workspace {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .hi-tasks__statuses {
-      flex: none;
-      padding: 12px 14px;
-      overflow: visible;
-      border-right: 0;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .hi-tasks__statuses-title {
-      display: none;
-    }
-
-    .hi-tasks__status-list {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 6px;
-    }
-
-    .hi-tasks__status {
-      grid-template-columns: 7px minmax(0, 1fr) auto;
-      gap: 7px;
-      padding: 7px 8px;
-    }
-
-    .hi-tasks__status-label {
-      font-size: 12.5px;
-    }
-
-    .hi-tasks__status-count {
-      min-width: 22px;
-      height: 22px;
-      padding: 0 5px;
-    }
-
-    .hi-tasks__content {
-      flex: 1;
-    }
-
-    .hi-tasks__content-head {
-      min-height: 64px;
-      padding: 12px 16px;
-    }
-
-    .hi-tasks__list {
-      padding: 12px 14px 0;
-    }
-
-    .hi-tasks__row-toggle {
-      min-height: 72px;
-      padding-right: 14px;
-    }
-
-    .hi-tasks__bad {
-      padding-right: 14px;
-    }
-
-    .hi-tasks__body {
-      margin-right: 14px;
-    }
-  }
-
-  @media (max-width: 560px) {
-    .hi-tasks__status-list {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .hi-tasks__board,
+    .hi-tasks__loading {
+      gap: 10px;
+      padding: 12px 14px 14px;
     }
 
     .hi-tasks__total {
       display: none;
-    }
-
-    .hi-tasks__heading {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 2px;
-    }
-
-    .hi-tasks__heading h1 {
-      font-size: 22px;
-    }
-
-    .hi-tasks__actions {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      padding-left: 14px;
-    }
-
-    .hi-tasks__actions:has(.hi-tasks__button:only-child) {
-      display: flex;
-    }
-
-    .hi-tasks__button {
-      min-width: 0;
-      padding: 0 8px;
-      white-space: normal;
-      line-height: 1.2;
-    }
-
-    .hi-tasks__row-meta span {
-      white-space: normal;
-    }
-
-    .hi-tasks__attention {
-      max-width: 120px;
-      text-align: right;
     }
   }
 `;

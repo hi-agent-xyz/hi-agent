@@ -67,6 +67,15 @@ There are exactly four statuses:
 - `done` — finished and delivered
 - `cancelled` — explicitly abandoned rather than completed
 
+**`title:` is a name, not a report.** One short line — a handful of words that say which
+duty this is, the way you would refer to it out loud: "watch the Feishu IT group", "back
+up the photo library". It stays the same for the life of the task. Everything that
+changes — where it stands, what is blocked, what you found, what is left — goes in the
+prose below the frontmatter, which is the part with room for it. A title that has grown
+into a status update is a title nobody can scan and a task you have to re-read to
+recognize; when you catch yourself writing one, cut it back to the name and move the rest
+down into the body.
+
 Stamp `completed_at:` when moving to `done`, and `cancelled_at:` when moving to
 `cancelled`; clear either closing timestamp when reopening a task. **Only write
 `due_at:` when the person actually set a due date or time.**
