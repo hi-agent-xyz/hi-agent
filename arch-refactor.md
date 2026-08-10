@@ -736,8 +736,23 @@ is gone; what remains is deciding when to reach for `session/load` at all.
 **This is now the work itself, not a backlog behind it — see L1.** Ordered by what breaks worst
 if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 and 9.
 
-1. **`say` adoption.** If the model does not call the tool, the agent goes **mute** — no error,
-   no degradation. Highest-consequence unverified change on `main`.
+1. ~~**`say` adoption.**~~ **Run 2026-08-10 against the live instance. It was mute — the risk as
+   written, exactly.** Four reaction turns in the day's `data/memory/raw/sessions/*/2.jsonl`:
+   four `agentMessage`s, **zero `say` calls**. A plain "the google login, is it done?" drew a
+   complete 195-character answer that was typed, thrown away by `drive_voice`, and logged as
+   `turn done unspoken_chars=195` — a successful turn that reached nobody.
+
+   **The cause was not prompt adherence; it was the tool surface.** The voice was holding
+   codex's built-ins (one turn ran `nl -ba views/people/voice-roster.jsx | sed …` mid-sentence),
+   and a session with a shell answers like a coding agent: markdown findings with file:line
+   links, as message text. Two builds, same model, same first message, fresh `--data-dir` each:
+   built-ins on → 0 `say` in 4 turns; built-ins off → `say` from the first turn on.
+
+   Fixed in `voice-never-mute`, two parts: the enforcement below, and a host-side backstop —
+   a turn that produced text and no utterance is handed its own miss once
+   (`recover_mute_turn`), then logged at ERROR if it stays silent. Note the backstop **did not
+   rescue the built-ins-on arm** — it nudged and the model still would not call `say`. The
+   surface is the fix; the nudge only catches the stray turn.
 1b. **The ledger gets written at all** (N3). Second only to `say`, and for the same reason: the
    pen moved out of `deliberation.md`, so between that commit and a Deliberation actually
    handing up, **nothing writes the ledger**. Failure looks like an agent that simply never
@@ -850,9 +865,21 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
 - **Ping-pong is possible.** Two long-lived agents can message each other indefinitely. Expected;
   guided by prompt, logged rather than blocked.
 - **A worker's `Bash` can read the auth token from its own env.** Non-hacker threat model.
-- ~~**`_meta` tool restriction is vendor-specific.**~~ **Moot since the codex swap** — that hack was
-  ACP's, and ACP is gone. Codex offers no built-in-tool switch at all, so the Reaction's tools-off
-  voice is now soft guidance plus a read-only sandbox. See the wire-change entry above.
+- ~~**`_meta` tool restriction is vendor-specific.**~~ ~~**Moot since the codex swap** — Codex offers
+  no built-in-tool switch at all, so the Reaction's tools-off voice is now soft guidance plus a
+  read-only sandbox.~~ **Wrong, and it cost us the mute voice above (2026-08-10).** Codex has the
+  switch; it is spelled as a *permission profile*, not a tool list:
+
+      "permissions": { "hi-agent-voice": { "default_tools_enabled": false } },
+      "default_permissions": "hi-agent-voice"
+
+  in the thread's `config`. The flatter spellings do not exist — 0.144.1 under `--strict-config`
+  answers `unknown configuration field tools.default_tools_enabled`, and
+  `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`. Codex logs
+  `Permissions profile 'hi-agent-voice' does not define any recognized filesystem entries …
+  Filesystem access will remain restricted` when it takes, which is both the proof it parsed
+  and the posture Reaction wants. The MCP attach is configured separately and survives it.
+  Reaction only — `agents.md` gives "no built-ins at all" to no other rung.
 - **Cross-scene ambient awareness is weaker** than the old global digest. Continuity routes
   through Cognition instead.
 - **No hand-edit lever.** Load-bearing — see `docs/arch/arch.md#character`.
