@@ -542,17 +542,20 @@ button {
    While something fills the stage (an agent view at z-index 50, or the camera
    backdrop), the words dock as a pill in the bottom bar and rise above it — a
    dark scrim keeps them legible over whatever is behind. One fixed dock: centred
-   in the bottom band, held clear of the controls cluster (right) and the camera
-   pip (left) by the side gutters below, so the words never sit on the content or
-   the corner widgets. A view that renders the words itself hides this layer
-   entirely (handled in the host, not here). */
+   above the bottom band. A view that renders the words itself hides this layer
+   entirely (handled in the host, not here).
+
+   Gutters reserve space for corner widgets the dock would otherwise *overlap* —
+   and only those. The controls cluster is a 38px row sitting 20px off the bottom
+   (top edge 58px); the dock's own floor is 74px, a full row above it, so the two
+   never meet horizontally and the dock owes the right corner nothing. The camera
+   pip is the one real conflict: it is 0.75 × its width tall (180-520px wide), so
+   it reaches well into the dock's rows and must be stepped past — see below. */
 .hi-stage.hi-stage--captions {
   top: auto;
   bottom: calc(var(--hi-safe-bottom) + 74px);
-  /* Centre band between the two bottom-corner zones: controls (~350px) on the
-     right, always; the camera pip on the left only when it's up (see below). */
-  left: max(372px, var(--hi-safe-left) + 24px);
-  right: max(372px, var(--hi-safe-right) + 24px);
+  left: max(24px, var(--hi-safe-left) + 24px);
+  right: max(24px, var(--hi-safe-right) + 24px);
   width: auto;
   transform: none;
   text-align: center;
@@ -560,8 +563,8 @@ button {
 }
 
 /* When the camera pip holds the lower-left corner, push the dock's left edge past
-   it (the pip is clamp(180px, 24vw, 520px) wide from the left margin) so pip ·
-   captions · controls stay three non-overlapping zones. */
+   it (the pip is clamp(180px, 24vw, 520px) wide from the left margin, and tall
+   enough to reach the dock's rows) so the words never sit on the live feed. */
 .hi-stage.hi-stage--captions[data-camera="pip"] {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
@@ -582,6 +585,13 @@ button {
      across a room on a TV, without dominating the view it sits under. */
   font-size: clamp(16px, 1.7vw, 30px);
   line-height: 1.4;
+  /* The dock spans the window, but a line of text that wide stops being readable;
+     hold the pill to a comfortable measure and let the flex centring place it. */
+  max-width: min(1100px, 100%);
+  /* A path or URL has no soft break, so wrapping alone would push it past the
+     pill's edge and under `overflow: hidden` — break inside the token instead of
+     clipping it. */
+  overflow-wrap: anywhere;
   /* Backstop: a clause with no soft break (a URL, a code token) can't tower over
      the view — cap it at three lines. The voice carries the full content. */
   display: -webkit-box;
@@ -876,8 +886,8 @@ button {
 }
 
 @media (max-width: 640px) {
-  /* Too narrow for a three-zone bar: the caption becomes a near-full-width strip
-     sitting just above the control row instead of between the corner widgets. */
+  /* Too narrow to step past the camera pip and still leave a readable measure:
+     the caption takes the full width and simply sits over the pip's top edge. */
   .hi-stage.hi-stage--captions,
   .hi-stage.hi-stage--captions[data-camera="pip"] {
     left: 14px;
