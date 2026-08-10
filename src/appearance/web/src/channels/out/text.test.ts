@@ -1,17 +1,29 @@
 import { describe, expect, it } from "vitest";
+import { parseTextAppearanceState } from "./text";
 
-import { parseTextCursor, serializeTextCursor } from "./text";
-
-describe("outbound text cursor", () => {
-  it("round-trips an epoch-qualified cursor", () => {
-    const cursor = { epoch: "2026-08-08T00:00:00Z", id: 12 };
-    expect(parseTextCursor(serializeTextCursor(cursor))).toEqual(cursor);
+describe("outbound text appearance state", () => {
+  it("accepts a whole current-state snapshot", () => {
+    expect(
+      parseTextAppearanceState({
+        user: "What day is it?",
+        agent: { text: "Sunday.", final: true },
+        interim: "wait",
+      }),
+    ).toEqual({
+      user: "What day is it?",
+      agent: { text: "Sunday.", final: true },
+      interim: "wait",
+    });
   });
 
-  it("resets legacy numeric and malformed storage", () => {
-    expect(parseTextCursor("12")).toBeNull();
-    expect(parseTextCursor('{"epoch":"boot","id":-1}')).toBeNull();
-    expect(parseTextCursor('{"epoch":"","id":1}')).toBeNull();
-    expect(parseTextCursor("not-json")).toBeNull();
+  it("accepts the empty initial appearance", () => {
+    expect(parseTextAppearanceState({})).toEqual({});
+  });
+
+  it("rejects malformed snapshots", () => {
+    expect(parseTextAppearanceState(null)).toBeNull();
+    expect(parseTextAppearanceState({ user: 3 })).toBeNull();
+    expect(parseTextAppearanceState({ agent: { text: "partial" } })).toBeNull();
+    expect(parseTextAppearanceState({ agent: { text: 1, final: false } })).toBeNull();
   });
 });

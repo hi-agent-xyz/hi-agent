@@ -117,8 +117,8 @@ subscription held behind another window is not a stale reading — it is a false
 everything downstream reasons correctly from it to the wrong answer. The face therefore
 drops its out-channels the moment nobody is looking: hidden, miniaturized, closed, or
 **fully occluded by another window** — the last of which no web API reports, so it
-arrives from the shell (`windowDidChangeOcclusionState:`). A channel that stays up
-because a long-poll re-opens on its own is exactly the hazard this axis has to exclude.
+arrives from the shell (`windowDidChangeOcclusionState:`). A state subscription that
+stays up or reconnects on its own is exactly the hazard this axis has to exclude.
 
 **The window has three states, and they are the one presence fact the client reports
 rather than the host deriving.** Active, background, closed. Dropping the channels makes
@@ -145,31 +145,38 @@ even when every channel is open, since it shapes *how much* to say rather than *
 — so it, alone, is rendered into the window. One reader either way: Reaction.
 
 **What the gate protects is narrower than it first looks, and that is the point.**
-Words and views survive an empty room without help: outbound text is retained and
-delivered to a reader that connects later, and the screen is retained state, folded
-and replayed to whoever attaches next. Neither is spent. **Voice is the exception** — it
-exists only in the moment it is heard, so a spoken line synthesized with no speaker
-attached is gone, and the person comes back and never learns it happened. So the host
-withholds exactly one thing, the speech synthesis, and reports what it did: `say`
-answers with where the words actually landed — aloud, on screen only, or waiting for
-them. Everything above that is Reaction's judgment, not a rail.
+Text and views are appearance state, not deliveries. The host owns what is on the face
+now; attaching a surface gives it that present state and then replacements. **Voice is
+the exception** — it exists only in the moment it is heard, so a spoken line synthesized
+with no speaker attached is gone. The host therefore withholds exactly one thing, speech
+synthesis, and reports what it did: `say` answers with where the words actually landed —
+aloud, on screen only, or waiting for them. Everything above that is Reaction's judgment,
+not a rail.
 
-**That narrowing is only sound while the buffer is honest, and it is the buffer's reader
-that decides.** Text is deferred rather than spent because it waits for a reader that
-connects later. A drain-and-delete bus cannot promise that: it defers only until *a*
-reader takes it, and an unattended reader takes it and shows it to nobody. The mechanism
-meant to protect the words is then the one that spends them, and the outcome is worse
-than either honest end — the person gets a fragment that reads as a whole message rather
-than a message they can tell they missed. **Half-spent is the failure designed against
-here**: voice is spent by physics, text by attention, and the gate can only see the first.
+**There is one text appearance, however many windows render it.** Its authoritative state
+is the latest settled human line, any live recognition interim, and the agent's current
+reply as it grows. A surface receives the whole state when it connects and every later
+whole-state replacement. It never consumes text and never tells the host what it has
+read. There are no message ids, client ids, cursors, acknowledgements or per-window
+bookmarks.
 
-So **the text bus is a retained log with a cursor per reader**, not a queue that empties.
-Every attached client sees every utterance; an utterance is retired when all live readers
-have passed it, not when the first one does. This is what `/out/view` already does — the
-screen is retained state replayed to whoever attaches — and with one conversation it is
-mandatory rather than merely correct: the desktop window, the menu-bar popover, and a
-browser tab are three readers of one mouth, and a queue would let them steal each other's
-words.
+This is current-state synchronization, **not catch-up**. A slow surface may skip
+intermediate typing states and still converge on the latest one. A surface attaching
+after an exchange was replaced does not receive that older exchange. A process restart
+starts the text appearance empty. The journal is the historical conversation; the
+appearance is only the present. `/out/view` follows the same whole-state principle, with
+the separate decision that views persist across restart.
+
+This ownership rule is what makes multiple windows one appearance instead of several
+readers of one mouth. It also removes the interrupted-delivery problem: after a transport
+break the surface receives the current whole text again, replacing its local rendering
+rather than resuming, appending or acknowledging fragments.
+
+A settled human line also wins the present immediately. If it lands after a reaction turn
+started, later text from that older turn is excluded from the appearance; the reaction and
+journal still finish, and the next turn may answer the new line. The full state machine,
+breaking boundary, and accepted consequences are fixed in
+[`text-appearance.md`](text-appearance.md).
 
 **Coming back is an event, and the only one here.** Every other presence change is read
 off the axes during a turn that was already happening. A return is not: it happens
@@ -178,7 +185,7 @@ precisely when nothing is happening, so without an edge nothing would observe it
 comes round, which is half an hour. So Reaction is woken when the person brings a window
 forward after an absence. **Only a first-party activation counts**: an out-channel
 reconnecting proves a browser exists, never that someone is in front of it, and a
-long-poll re-opens on its own while a tab sits forgotten in the background. The wake
+state subscription reconnects on its own while a tab sits forgotten in the background. The wake
 carries a fact and no instruction, and it is dropped rather than queued if it fires
 mid-turn — a turn in progress is already talking to them.
 

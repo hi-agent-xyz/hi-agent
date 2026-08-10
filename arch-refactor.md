@@ -2,6 +2,11 @@
 
 **Scratch file. Untracked on purpose; delete when the refactor lands.**
 
+> Historical work log. Its earlier `text_bus` queue/cursor investigations record
+> superseded implementations, not the current contract. The authoritative decision
+> is [`docs/arch/core.md`](docs/arch/core.md): text is one backend-owned current
+> appearance state with no message identity, client identity, cursor, or catch-up.
+
 - **Design lives in [`docs/arch/`](docs/arch/)**. It is the **goal state**, not a description of
   what exists. Never edit it to match the code. If a decision genuinely needs *changing*, change
   it there and note it here — that has happened twice and both times it was the right move.

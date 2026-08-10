@@ -121,14 +121,15 @@ issue is implementation-side, not docs-side.
 - [ ] `curl -X POST --data-binary 'hi'
       http://127.0.0.1:12358/api/in/text` returns 202 and writes a `SignalIn`
       line to `data/journal.jsonl`
-- [ ] A `GET /api/out/text` long-poll opened beforehand receives the
-      reaction's reply
+- [ ] A `GET /api/out/text` stream returns the current state immediately and
+      receives whole-state replacements as the reaction replies
 - [ ] `set_intent` (via a router decision, e.g. "remind me in 2 minutes")
       followed by waiting two minutes fires the intent — observable as an
       `IntentFired` line in `journal.jsonl` and an outbound signal on the
       long-poll
 - [ ] `POST /vision` returns 501 with a body explaining "not implemented in v0"
-- [ ] Multiple `GET /api/out/text` long-polls all receive the same reply
+- [ ] Multiple `GET /api/out/text` streams converge on the same current state;
+      reconnecting one returns that state without a client id or cursor
 
 ## Items not in this register
 

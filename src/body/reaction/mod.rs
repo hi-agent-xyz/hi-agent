@@ -1565,6 +1565,7 @@ async fn run_reaction_turn(
     beats: &mpsc::Sender<sequencer::Beat>,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
+    reaction.inner.interrupts.note_turn_started(turn_id);
 
     // This turn's delta: whether the conversation's own thinking is still running (so the
     // voice can say "still on it" rather than guess), presence, any barge-in note, and

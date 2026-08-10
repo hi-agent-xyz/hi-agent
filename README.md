@@ -70,7 +70,7 @@ curl -X POST http://127.0.0.1:12358/api/in/text \
   --data-binary 'hello'
 ```
 
-You should see `202 Accepted` and a fresh line in `data/journal.jsonl`. To watch the agent talk back, open a long-poll in another terminal first:
+You should see `202 Accepted` and a fresh journal entry. To observe the shared text appearance, open its state stream:
 
 ```sh
 curl -N http://127.0.0.1:12358/api/out/text
@@ -81,7 +81,7 @@ curl -N http://127.0.0.1:12358/api/out/text
 The most useful four:
 
 ```sh
-# Open a long-poll on /api/out/text (Ctrl-C to close)
+# Current text state immediately, then whole-state replacements (Ctrl-C to close)
 curl -N http://127.0.0.1:12358/api/out/text
 
 # Send text
@@ -100,6 +100,25 @@ curl -X POST
   -d '{"id":"<approval-uuid>","allow":true}' \
   http://127.0.0.1:12358/approval
 ```
+
+### Text appearance contract
+
+`GET /api/out/text` is one long-lived NDJSON state stream, not a reply queue. Its first
+line is the complete text appearance now; later lines replace it:
+
+```json
+{"user":"What day is it?","agent":{"text":"Sunday.","final":true}}
+```
+
+The backend owns this state. Every window receives the same latest settled human line,
+live recognition interim, and accumulating agent reply. There are no message IDs, client
+IDs, cursors, acknowledgements, or historical catch-up. Opening a window synchronizes
+the present; it does not replay exchanges that have already been replaced. The text
+appearance starts empty after a process restart. Durable history lives in the journal.
+This is intentionally breaking: the old plain-text long poll, cursor query, response
+headers, browser cursor, and previous appearance data have no migration or compatibility
+path. The complete decision is in
+[`docs/arch/text-appearance.md`](docs/arch/text-appearance.md).
 
 ## Architecture
 
@@ -137,7 +156,7 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 |---|---|---|
 | `GET /` homepage | Y | Embedded Vite SPA, OG meta injected at request time |
 | `POST /api/in/text` | Y | Body bytes are the signal; optional `X-HI-Stream` names its source |
-| `GET /api/out/text` long-poll | Y | One retained outbound stream; each reader advances with an epoch-qualified cursor |
+| `GET /api/out/text` state stream | Y | Immediate whole current text state, then replacements; no identities, cursor, consumption, or catch-up |
 | `GET /approval` long-poll | Y | JSON event; 5-minute timeout on the requesting side |
 | `POST /vision` | 501 | Per v0 scope; body describes the omission |
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |

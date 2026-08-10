@@ -23,9 +23,9 @@
 //! inbound-audio broadcast (so `GET /api/in/audio` plays the live mic), and each
 //! finalized sentence is dispatched as a text `SignalIn`. The agent sees no live
 //! partials — a sentence reaches it once, settled — but rolling partials *are*
-//! echoed to conversation observers (`GET /api/in/text`, `final:false`): they're the
-//! barge-in trigger, letting a client duck its playback the instant speech is
-//! recognized.
+//! folded into the shared text appearance's `interim` field and echoed to the
+//! inspector tap. The appearance update is the client-side barge-in trigger,
+//! letting playback stop the instant speech is recognized.
 //!
 //! Observe (`GET /api/in/audio`): the live audio bytes for the conversation, one source
 //! (mic stream or posted clip) per chunked response — the inbound mirror of
@@ -446,10 +446,10 @@ pub async fn ingest_pcm_stream(
             let cuts = tokio::select! {
                 msg = tr_rx.recv() => match msg {
                     Some(t) => {
-                        // Echo every rolling partial to the conversation's observers
-                        // (`final:false`). This is the duck trigger: the client
-                        // stops its own playback the moment speech is
-                        // recognized, hundreds of ms before a sentence settles.
+                        // Fold every rolling partial into the shared text
+                        // appearance and echo it to observers (`final:false`).
+                        // The appearance update is the duck trigger: the client
+                        // stops playback hundreds of ms before a sentence settles.
                         // The same moment is reported to the barge-in registry,
                         // whose own clock decides whether the agent's voice was
                         // probably still sounding (→ "what went unheard" note).

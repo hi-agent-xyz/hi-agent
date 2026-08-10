@@ -278,7 +278,7 @@ impl ViewBus {
             }
             // Enroll on the notify *while still holding the lock* so a
             // `notify_waiters()` between here and the await cannot be lost,
-            // then release the lock and park (same pattern as TextBus).
+            // then release the lock and park.
             let notify = entry.notify.clone();
             let notified = notify.notified();
             tokio::pin!(notified);

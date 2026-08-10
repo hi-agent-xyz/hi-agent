@@ -1,18 +1,14 @@
 //! The text channel: `POST /api/in/text`, `GET /api/in/text`, `GET /api/out/text`.
 //!
 //! `POST /api/in/text` is the typed-input path: the body is dispatched to the
-//! mind (journalled + queued on `inbound`) and echoed on the
-//! input-echo bus so every client observing `GET /api/in/text` renders the same
-//! line — the human's words fan out the way the agent's do.
+//! mind (journalled + queued on `inbound`), echoed to live channel observers,
+//! and folded into the backend-owned current text appearance.
 //!
-//! `GET /api/out/text` is a long-poll for the agent's reply. The handler binds
-//! to the reader's next utterance, holds the
-//! connection open, and streams each chunk into the response body until the
-//! utterance completes. Closing the body is the spec's "end of utterance". A
-//! fresh GET re-subscribes for the next utterance; because the
-//! [`TextBus`](crate::foundation::server::TextBus) retains utterances, a reply produced
-//! between polls (or before the first poll) is retained rather than lost — see
-//! that module for the race this fixes.
+//! `GET /api/out/text` is one long-lived NDJSON stream of whole current-state
+//! snapshots. A subscriber receives the present exchange immediately, then a
+//! replacement whenever it changes. There are no message ids, client ids,
+//! cursors or replay. The journal is history; this endpoint is the appearance's
+//! present.
 //!
 //! `GET /api/in/text` is a live observe stream (see [`crate::foundation::server::observe`]):
 //! no buffering, just the inputs as they cross the boundary.
@@ -26,13 +22,11 @@ use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use uuid::Uuid;
 
-use futures::StreamExt as _;
-
-use axum::extract::Query;
-use crate::foundation::server::observe;
-use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::AppState;
+use crate::foundation::server::headers::{AuthBearer, StreamHeader};
+use crate::foundation::server::observe;
 use crate::types::{Channel, JournalEntry, Origin, Signal};
+use futures::stream::unfold;
 
 pub async fn post_text(
     State(state): State<Arc<AppState>>,
@@ -78,8 +72,8 @@ pub async fn post_text(
     // clock (covers both typed text and transcribed voice, which lands here too).
     state.presence.note_activity();
 
-    // Echo to observers (live, no buffer) before dispatching inward, so a
-    // typed line shows on every client just like recognized speech does.
+    // Fold into the shared text appearance and echo to live observers before
+    // dispatching inward.
     state.echo_input(Channel::Text, &signal.body, true);
 
     if let Err(err) = state.inbound.send(signal).await {
@@ -90,64 +84,42 @@ pub async fn post_text(
     StatusCode::ACCEPTED.into_response()
 }
 
-/// Query for `GET /api/out/text`: where this reader has got to.
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct OutTextQuery {
-    /// The text-log process epoch returned by the previous response.
-    pub epoch: Option<String>,
-    /// The id of the last utterance this reader received in full. Absent means
-    /// "start at the oldest still retained", so a client that has never connected
-    /// still gets a reply produced before it arrived.
-    pub after: Option<u64>,
-}
-
-/// `GET /api/out/text` — the agent's reply, one utterance per long-poll.
-///
-/// Reading does not consume: the utterance stays for every other attached
-/// surface. The client says where it is with `?after=`, and the id it just
-/// received comes back on `X-HI-Utterance` for the next request.
+/// `GET /api/out/text` — the current text appearance, then every replacement.
 pub async fn get_out_text(
     State(state): State<Arc<AppState>>,
-    Query(q): Query<OutTextQuery>,
     AuthBearer(auth): AuthBearer,
 ) -> Response {
-    let after = state
-        .text_bus
-        .normalize_after(q.epoch.as_deref(), q.after)
-        .await;
-    tracing::info!(
-        auth = ?auth,
-        requested_epoch = ?q.epoch,
-        after = ?after,
-        "GET /api/out/text long-poll opened"
-    );
+    tracing::info!(auth = ?auth, "GET /api/out/text state stream opened");
 
-    // Opening this long-poll is a presence signal: warm up so the process +
+    // Opening this state stream is a presence signal: warm up so the process +
     // session + upstream cache are hot before the first utterance.
     state.warm();
 
     // Count this reader as live presence for as long as its body stream exists.
-    let presence = state.presence.connect(crate::body::presence::OutChannel::Text);
-    // Resolved before the response head is written — the header has to be on the
-    // response, and the body comes after it. Parks here if nothing is pending,
-    // which is what makes this a long-poll rather than an empty 200.
-    let id = state.text_bus.next_id_after(after).await;
-    let stream = state.text_bus.subscribe(after).map(move |item| {
-        let _held = &presence;
-        item
-    });
+    let presence = state
+        .presence
+        .connect(crate::body::presence::OutChannel::Text);
+    let rx = state.text_appearance.subscribe();
+    let stream = unfold(
+        (rx, true, presence),
+        |(mut rx, first, presence)| async move {
+            if !first && rx.changed().await.is_err() {
+                return None;
+            }
+            let snapshot = { rx.borrow_and_update().clone() };
+            let mut line = serde_json::to_vec(&snapshot).expect("text state is serializable");
+            line.push(b'\n');
+            Some((
+                Ok::<Bytes, std::convert::Infallible>(Bytes::from(line)),
+                (rx, false, presence),
+            ))
+        },
+    );
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header(
-            crate::foundation::server::text_bus::TEXT_EPOCH_HEADER,
-            state.text_bus.epoch(),
-        )
-        .header(
-            crate::foundation::server::text_bus::UTTERANCE_HEADER,
-            id.to_string(),
-        )
+        .header(header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
         .unwrap()
 }

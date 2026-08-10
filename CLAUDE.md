@@ -113,14 +113,14 @@ Journeys in [docs/user-journeys/](docs/user-journeys/) are specs of *intended* b
 
 Talk to it over the text channel — Claude plays the boss; the human is only pulled in for account-side steps (QR/device auth, credentials) and for observing effects in external apps (e.g. what actually landed in the Feishu group):
 
+    curl -N localhost:12358/api/out/text               # current state, then replacements
     curl -X POST --data-binary "..." localhost:12358/api/in/text
-    curl localhost:12358/api/out/text                  # long-poll; one utterance per GET
-    curl "localhost:12358/api/out/text?after=3"        # …and the next one, by cursor
 
 Method — the parts that keep the test honest:
 
 - **Don't lead the witness.** Speak like a terse, normal boss; never script journey-expected behaviors into the prompt. Test recovery by *creating the situation* (kill its processes, restart the host, plant a failure) and watching — not by mentioning it.
 - **Trust but verify every claim.** Ground truth lives outside the conversation: `server.log`, `GET /api/sessions`, the raw wire frames (`GET /api/wire/frames/events`, kept per session under `data/memory/raw/`— every JSON-RPC line in both directions, so a tool call shows what it actually ran), and its workspace artifacts/ledgers.
-- **Keep the harness out of the experiment.** A watcher whose own command line contains the probe string becomes a decoy (`pgrep -f "[f]oo"` avoids self-match); a long-poll `--max-time` that aborts mid-utterance triggers at-least-once redelivery on the next poll.
+- **Keep the harness out of the experiment.** A watcher whose own command line contains the probe string becomes a decoy (`pgrep -f "[f]oo"` avoids self-match). `/api/out/text` is a single current-state subscription: reconnecting receives one whole latest snapshot, never a replay or fragment continuation.
+- **Do not reintroduce text delivery state.** [`docs/arch/text-appearance.md`](docs/arch/text-appearance.md) is the accepted breaking contract: one backend-owned present, no message/client identity or cursor, and no migration.
 - To speed pulses up for a test session, set the `pulse` tunable in the config store (`sqlite3 data/config.db "INSERT INTO app_settings(key,value) VALUES('pulse','120') ON CONFLICT(key) DO UPDATE SET value='120'"`) or the Agent section of Settings; reset it afterwards (default 30m).
 - Findings go back into the journey doc (实测缺口 / 复测 sections). When behavior and journey disagree, that's a bug in one or the other — resolve explicitly.

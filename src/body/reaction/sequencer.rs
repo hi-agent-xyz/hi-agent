@@ -38,10 +38,19 @@ const UTTERANCE_QUIET_CLOSE: Duration = Duration::from_secs(3);
 /// fills with the turn's spoken reply, so the loop can size the context budget and
 /// log the turn.
 pub(super) enum Beat {
-    TurnStart { turn: u64 },
+    TurnStart {
+        turn: u64,
+    },
     Say(String),
-    Show { id: Option<String>, op: String, source: String, traits: Option<ViewTraits> },
-    TurnEnd { done: oneshot::Sender<String> },
+    Show {
+        id: Option<String>,
+        op: String,
+        source: String,
+        traits: Option<ViewTraits>,
+    },
+    TurnEnd {
+        done: oneshot::Sender<String>,
+    },
 }
 
 /// The sequencer task. Drains `beats` for the life of the process, holding
@@ -61,11 +70,8 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
     let mut full_reply = String::new();
     // The open /thought utterance, if any, and when speech last landed on it. A
     // turn is not one utterance: the mind may say a sentence, then work tools for
-    // minutes — leaving the reply body open that whole time strands the client
-    // (its long-poll times out mid-utterance, and the bus then replays the text to
-    // the next poll). A pause ends an utterance, like speech: after
-    // [`UTTERANCE_QUIET_CLOSE`] without a `Say`, close /thought; a later `Say` in
-    // the same turn simply opens the next utterance (the bus auto-opens on push).
+    // minutes. A pause settles the current text state like a speech boundary; a
+    // later `Say` in the same turn continues the same current reply.
     let mut quiet_deadline: Option<tokio::time::Instant> = None;
 
     loop {
@@ -95,6 +101,11 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 synth_handle = None;
                 full_reply.clear();
                 quiet_deadline = None;
+                let _ = reaction
+                    .inner
+                    .out
+                    .send(OutboundSignal::TextTurnStart { turn })
+                    .await;
             }
             Beat::Say(text) => {
                 if !armed || text.is_empty() {
@@ -126,7 +137,12 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 super::emit_thought_chunk(&reaction, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
-            Beat::Show { id, op, source, traits } => {
+            Beat::Show {
+                id,
+                op,
+                source,
+                traits,
+            } => {
                 let (id, op) = resolve_view(id, &op);
                 if !armed {
                     continue;
@@ -170,12 +186,12 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
 /// spawn the frame drain. No-op when TTS is unconfigured — the turn is silent.
 ///
 /// **Also a no-op when no speaker is attached**, which is the presence gate at the
-/// only place it can bite. Words and views survive an empty room — the text bus
-/// retains utterances for a reader that opens later, and the view bus retains
-/// state and replays it — so neither needs holding. Voice is the one channel with no
-/// second chance: synthesized frames go out on the wire as they are made, and a span
-/// nobody is listening to is spent rather than deferred. That is the failure
-/// `docs/arch/core.md#presence` names, and it is *only* about this span.
+/// only place it can bite. Text and views are current appearance state: a surface
+/// attaching later receives what is present then, without replaying a delivery
+/// history. Voice is the one channel with no second chance: synthesized frames go
+/// out on the wire as they are made, and a span nobody is listening to is spent.
+/// That is the failure `docs/arch/core.md#presence` names, and it is *only* about
+/// this span.
 ///
 /// Note this is read per turn, not once for the process: a person who unplugs
 /// headphones mid-conversation stops being spoken to on the next `say`, with no
@@ -218,10 +234,7 @@ async fn open_tts(
             *synth_handle = Some(handle);
         }
         Err(err) => {
-            crate::foundation::energy_state::note_402_error(
-                reaction.inner.memory.data_dir(),
-                &err,
-            );
+            crate::foundation::energy_state::note_402_error(reaction.inner.memory.data_dir(), &err);
             tracing::warn!(error = %err, "TTS session start failed; turn is silent");
         }
     }

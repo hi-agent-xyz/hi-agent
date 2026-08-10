@@ -344,13 +344,11 @@ define_class!(
         /// `visibilitychange`, and keeps its timers and long-polls running. `hidden` covers
         /// a miniaturized, app-hidden or closed window and nothing else.
         ///
-        /// That gap was load-bearing. The face holds an out-channel open per output, and
+        /// That gap is load-bearing. The face holds an out-channel open per output, and
         /// the backend derives presence from which of them are open — so a window sitting
-        /// behind a full-screen editor reported a person who was not looking, the presence
-        /// gate passed, and the agent spoke and streamed text into it. The words were
-        /// drained from the server's buffer and rolled off the caption band unseen: not
-        /// withheld and not delivered, but half-spent, which reads to the person as an
-        /// agent that started a list at "two".
+        /// behind a full-screen editor would report a person who was not looking. Text is
+        /// backend-owned current state now, but the same false reach would still authorize
+        /// voice synthesis into an unattended room.
         ///
         /// Reported as the same foreground/background beat as close/open, so the face has
         /// one notion of "is anyone reading this" rather than two that can disagree.

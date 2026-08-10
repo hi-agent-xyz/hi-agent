@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseTextCursor,
-  serializeTextCursor,
   subscribeOutText,
-  type TextCursor,
+  type TextAppearanceState,
 } from "../channels/out/text";
 import { subscribeAudioTurns } from "../channels/out/audio";
 import { subscribeActivity, type AgentActivity } from "../channels/out/activity";
-import { postInText, subscribeInText } from "../channels/in/text";
+import { postInText } from "../channels/in/text";
 import { reportAttention, type WindowState } from "../channels/in/attention";
 import { AudioBus } from "../lib/audioBus";
 import { ActivityMeter } from "../lib/activityMeter";
@@ -23,61 +21,41 @@ import {
 } from "../ui/Presence";
 import type { SpeechItem } from "../ui/SpeechText";
 
-/** Where this browser has got to in the outbound text log (see `subscribeOutText`). */
-const TEXT_CURSOR_KEY = "hi-agent.out-text-cursor";
-
 // How many of the agent's reply lines stay on screen at once. The reply rolls
 // as a calm caption (newest last), but it's windowed *on top of* the pinned
-// user line — never instead of it (see `visibleExchange`), so an answer of any
-// length can't scroll the prompt that prompted it off-screen. Three lines (not
-// two) give a viewer time to read each line before it rolls out of view.
+// user line, so an answer of any length can't scroll the prompt that prompted
+// it off-screen. Three lines (not two) give a viewer time to read each line
+// before it rolls out of view.
 const AGENT_REPLY_WINDOW = 3;
 
-// Stable id for the single rolling-interim line (the user's speech as it's
-// being recognized). One slot by design: partials are cumulative, so
-// each replaces the last, and keying by a constant id lets React patch the
-// same <p> instead of remounting per partial.
+// Stable id for the single rolling-interim line. The backend owns its text and
+// expiry; every window renders the same slot.
 const INTERIM_ID = -1;
 
-// A rolling interim with no follow-up (STT stream died mid-utterance, no final
-// ever lands) is cleared after this long so a ghost italic line can't linger.
-const INTERIM_STALE_MS = 3000;
-
-// Agent reply sentences are revealed paced to roughly speaking rate, not dumped
-// the instant they arrive, so the transcript tracks the voice instead of racing
-// ahead of it. Estimate-grade on purpose (we don't read real playback position);
-// a barge-in clears whatever is still queued. See `pumpAgent` / `duck`. The rate
-// sits just under the backend's ~200ms/char Mandarin speech model (interrupts.rs)
-// so text leads the voice by a hair rather than lagging it; tune live by ear.
-const REVEAL_MS_PER_CHAR = 170;
-const MIN_REVEAL_MS = 450;
-
-// Index of the last user line in a timeline, or -1 if the agent has spoken but
-// the user hasn't yet (e.g. an opening greeting). The user line anchors the
-// "current exchange": everything after it is the agent's reply to it.
-function lastUserIndex(items: SpeechItem[]): number {
-  for (let i = items.length - 1; i >= 0; i--) {
-    if (items[i]?.speaker === "user") return i;
+// Derive the caption band from the authoritative whole state. Incomplete
+// trailing prose stays hidden until it reaches a sentence boundary, matching
+// the previous calm whole-sentence reveal without keeping a per-window queue.
+function visibleTextAppearance(state: TextAppearanceState): SpeechItem[] {
+  const items: SpeechItem[] = [];
+  if (state.user) {
+    items.push({ id: 0, text: state.user, speaker: "user" });
   }
-  return -1;
-}
 
-// State bound: drop turns before the user's current one. Earlier exchanges are
-// never shown, so they aren't retained — but the current user line and the full
-// reply accumulating after it are always kept. A new user line (the next turn)
-// is what clears the previous exchange.
-function dropPriorTurns(items: SpeechItem[]): SpeechItem[] {
-  const u = lastUserIndex(items);
-  return u <= 0 ? items : items.slice(u);
-}
+  if (state.agent) {
+    const buffer = new SentenceBuffer();
+    const settled = buffer.push(state.agent.text);
+    if (state.agent.final) settled.push(...buffer.flush());
+    const lines = settled.flatMap((sentence) => breakLongSentence(sentence));
+    const firstVisible = Math.max(0, lines.length - AGENT_REPLY_WINDOW);
+    for (let i = firstVisible; i < lines.length; i += 1) {
+      items.push({ id: i + 1, text: lines[i]!, speaker: "agent" });
+    }
+  }
 
-// Display window: the user's latest line pinned, followed by the most recent
-// `AGENT_REPLY_WINDOW` lines of the reply to it. With no user line yet, just the
-// rolling reply caption.
-function visibleExchange(items: SpeechItem[]): SpeechItem[] {
-  const u = lastUserIndex(items);
-  if (u === -1) return items.slice(-AGENT_REPLY_WINDOW);
-  return [...items.slice(u, u + 1), ...items.slice(u + 1).slice(-AGENT_REPLY_WINDOW)];
+  if (state.interim) {
+    items.push({ id: INTERIM_ID, text: state.interim, speaker: "user", pending: true });
+  }
+  return items;
 }
 
 // ---- Channel preferences (persisted client-side) -------------------------
@@ -171,12 +149,10 @@ export interface AgentSession {
  * the input channels (mic → /api/in/audio/stream, continuous PCM; camera →
  * /api/in/vision, a frame every couple seconds) and subscribes to every channel
  * on both boundaries, rendering whatever arrives: /api/out/audio plays on
- * arrival, /api/out/text chunks fade in as whole sentences. The user's words —
- * whether typed or recognized from speech — arrive as settled text lines on
- * /api/in/text (the server transcribes the mic and posts the transcript there),
- * so every attached client shows identical UI whether or not it holds the
- * mic. "Audio is audio": the raw mic bytes ride /api/in/audio for anyone who
- * wants to listen, but the conversation the face renders is text.
+ * arrival, while /api/out/text supplies whole snapshots of the backend-owned
+ * current exchange. Typed and recognized human text are folded into that same
+ * state server-side, so every attached client renders the same appearance
+ * whether or not it owns the input device.
  *
  * Crucially it does NOT decide turns. Turn-taking — when the agent speaks, which
  * drafts to suppress — lives in the mind (the reaction), which commits after the
@@ -197,7 +173,7 @@ export function useAgentSession(): AgentSession {
 
   const [woken, setWoken] = useState(false);
   const [bus, setBus] = useState<AudioBus | null>(null);
-  const [sentences, setSentences] = useState<SpeechItem[]>([]);
+  const [textAppearance, setTextAppearance] = useState<TextAppearanceState>({});
 
   const [audioInput, setAudioInput] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
@@ -211,18 +187,13 @@ export function useAgentSession(): AgentSession {
   const [textInput, setTextInput] = useState(prefsRef.current.textInput);
   const [backendActivity, setBackendActivity] = useState<AgentActivity | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
-  // The user's speech as it's being recognized (cumulative rolling text), or
-  // null when no utterance is in flight. Server-broadcast on /in/text, so every
-  // every attached client shows the same live line.
-  const [interim, setInterim] = useState<string | null>(null);
   // Is anyone actually looking at this window right now?
   //
   // This is the client half of the presence model: the backend derives `reach`
   // from which out-channels are *open* (`presence.rs`), so an out-channel that
-  // stays subscribed behind another window reports a person who isn't there. The
-  // gate then passes, `say` answers "spoken", and the words are drained from the
-  // server's buffer and rolled off the caption band unseen — delivered by every
-  // measure the host has, and received by nobody.
+  // stays subscribed behind another window reports a person who isn't there.
+  // Text state is not consumed by that connection, but the false presence claim
+  // would still make the host speak aloud into an unattended room.
   //
   // So attendance is a first-class client fact, and holding an out-channel open is
   // the claim "someone is reading this". Three states, all of them about the page's
@@ -262,13 +233,6 @@ export function useAgentSession(): AgentSession {
   const visionRef = useRef<VideoStreamer | null>(null);
   const presenceRef = useRef<PresenceStiller | null>(null);
   const visionStreamRef = useRef<MediaStream | null>(null);
-  const sentenceIdRef = useRef(0);
-  // Agent reply sentences awaiting reveal, and the timer pacing them onto screen
-  // (see `pumpAgent`). A barge-in empties the queue so unheard lines never show.
-  const pendingAgentRef = useRef<string[]>([]);
-  const paceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Staleness sweep for the interim line (see INTERIM_STALE_MS).
-  const interimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Live cognition cadence: bumped per streamed chunk, decays between them, so
   // the Presence pulses with the agent's real output rate (not a canned loop).
   const activityRef = useRef(new ActivityMeter());
@@ -288,128 +252,40 @@ export function useAgentSession(): AgentSession {
     [],
   );
 
-  const clearInterim = useCallback(() => {
-    if (interimTimerRef.current !== null) {
-      clearTimeout(interimTimerRef.current);
-      interimTimerRef.current = null;
-    }
-    setInterim(null);
-  }, []);
-
-  // Each partial replaces the slot wholesale (the text is cumulative), and
-  // re-arms the staleness sweep.
-  const updateInterim = useCallback(
-    (text: string) => {
-      setInterim(text);
-      if (interimTimerRef.current !== null) clearTimeout(interimTimerRef.current);
-      interimTimerRef.current = setTimeout(() => clearInterim(), INTERIM_STALE_MS);
-    },
-    [clearInterim],
-  );
-
-  // Reveal queued agent sentences one at a time, paced to ~speaking rate, so the
-  // words track the voice instead of all landing at once. Reschedules itself
-  // until the queue drains.
-  const pumpAgent = useCallback(() => {
-    const text = pendingAgentRef.current.shift();
-    if (text === undefined) {
-      paceTimerRef.current = null;
-      return;
-    }
-    sentenceIdRef.current += 1;
-    const id = sentenceIdRef.current;
-    setSentences((prev) => dropPriorTurns([...prev, { id, text, speaker: "agent" }]));
-    const ms = Math.max(MIN_REVEAL_MS, text.length * REVEAL_MS_PER_CHAR);
-    paceTimerRef.current = setTimeout(pumpAgent, ms);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Queue freshly-arrived reply sentences. An idle pacer reveals the first at
-  // once, then paces the rest itself. Long sentences are broken into breath-group
-  // clauses first, so one over-long line never parks as a wall of caption text —
-  // the parts reveal in turn, keeping the same total cadence (see breakLongSentence).
-  const enqueueAgent = useCallback(
-    (list: string[]) => {
-      if (list.length === 0) return;
-      const chunks = list.flatMap((s) => breakLongSentence(s));
-      if (chunks.length === 0) return;
-      pendingAgentRef.current.push(...chunks);
-      if (paceTimerRef.current === null) pumpAgent();
-    },
-    [pumpAgent],
-  );
-
-  // Drop everything still queued to reveal and stop the pacer — used when the
-  // human takes the floor (barge-in) or a new exchange begins.
-  const clearAgentQueue = useCallback(() => {
-    pendingAgentRef.current = [];
-    if (paceTimerRef.current !== null) {
-      clearTimeout(paceTimerRef.current);
-      paceTimerRef.current = null;
-    }
-  }, []);
-
-  // Fold a settled user line into the timeline. Every user line — typed or
-  // transcribed from speech — arrives settled on the /in/text observe loop and
-  // funnels here, so user speech and user text render identically.
-  const finalizeUser = useCallback((text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    // A new user line supersedes any reply still queued to reveal.
-    clearAgentQueue();
-    sentenceIdRef.current += 1;
-    const item: SpeechItem = { id: sentenceIdRef.current, text: trimmed, speaker: "user" };
-    // A new user line opens a new exchange — drop the prior turn so this line
-    // (and the reply about to stream) is what stays on screen.
-    setSentences((prev) => dropPriorTurns([...prev, item]));
-  }, [clearAgentQueue]);
-
-  // ---- GET /out/text subscription loop (after wake) ----------------------
-  // Held open only while the window is attended. Dropping it when nobody is
-  // looking is what makes the backend's `reach.window` honest — and because the
-  // server's text bus retains utterances and never removes one just because it
-  // was read, the words wait there instead of being handed to a window nobody is
-  // watching — and every other attached surface still gets them. That is the difference between the
-  // reply being deferred and being half-spent: previously the band kept scrolling
-  // behind another app, so a reply longer than AGENT_REPLY_WINDOW arrived, rolled,
-  // and was already truncated by the time it was looked at.
+  // ---- GET /out/text current-state stream (after wake) -------------------
+  // Held open only while the window is attended, which keeps reach honest. The
+  // first snapshot on every connection is the backend's current appearance, so
+  // foregrounding, refreshing, or opening another window converges immediately
+  // without a per-window reading position.
   useEffect(() => {
     if (!woken || !attended) return;
     const ctrl = new AbortController();
     let cancelled = false;
-    const buffer = new SentenceBuffer();
-    // Where this reader has got to. Persisted so a reload continues the thread
-    // instead of replaying whatever the server still holds.
-    let after: TextCursor | null = parseTextCursor(sessionStorage.getItem(TEXT_CURSOR_KEY));
+    let initialized = false;
+    let previousAgent = "";
+    let previousInterim: string | undefined;
 
     void (async () => {
       while (!cancelled) {
         try {
-          // Render the agent's words as they arrive. The mind only streams a
-          // reply once it has committed to speaking (the human yielded the
-          // floor), so there are no superseded drafts to untangle here.
-          for await (const chunk of subscribeOutText({
-            signal: ctrl.signal,
-            after,
-            onUtterance: (cursor) => {
-              // Known gap: headers arrive before the streaming body completes.
-              // Advancing here can skip a partial utterance after an abort; moving
-              // this to EOF also requires replay to replace, not append to, a draft.
-              after = cursor;
-              try {
-                sessionStorage.setItem(TEXT_CURSOR_KEY, serializeTextCursor(cursor));
-              } catch {
-                /* private mode — the cursor just won't survive a reload */
-              }
-            },
-          })) {
+          for await (const state of subscribeOutText({ signal: ctrl.signal })) {
             if (cancelled) break;
-            // Pulse the field with this chunk; larger bursts lift it more.
-            activityRef.current.bump(Math.min(1, chunk.text.length / 40));
-            enqueueAgent(buffer.push(chunk.text));
+            const agent = state.agent?.text ?? "";
+            if (initialized && agent !== previousAgent) {
+              const added = agent.startsWith(previousAgent)
+                ? agent.length - previousAgent.length
+                : agent.length;
+              if (added > 0) activityRef.current.bump(Math.min(1, added / 40));
+            }
+            if (state.interim && state.interim !== previousInterim) {
+              const voice = voiceRef.current;
+              if (voice?.isPlaying()) voice.stop();
+            }
+            initialized = true;
+            previousAgent = agent;
+            previousInterim = state.interim;
+            setTextAppearance(state);
           }
-          enqueueAgent(buffer.flush()); // body closed → utterance complete
-          buffer.reset();
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
           await new Promise((r) => setTimeout(r, 1500));
@@ -420,9 +296,8 @@ export function useAgentSession(): AgentSession {
     return () => {
       cancelled = true;
       ctrl.abort();
-      clearAgentQueue();
     };
-  }, [woken, attended, enqueueAgent, clearAgentQueue]);
+  }, [woken, attended]);
 
   // ---- Attention reporter (window came forward) --------------------------
   // Tell the backend what our own window is doing. First-party only: our window,
@@ -513,58 +388,6 @@ export function useAgentSession(): AgentSession {
     };
   }, [woken, attended, audioOutput]);
 
-  // Reflexive duck: recognized speech (a rolling partial on the observe
-  // stream) lands while the agent's voice is playing → cut playback right
-  // here, like a person stopping mid-word when you start talking. Nothing is
-  // sent anywhere: the words buffer to the mind like any other signal, and the
-  // backend infers from its own clock what went unheard. One-shot per turn:
-  // after stop(), isPlaying() is false, so the partials that follow are no-ops.
-  const duck = useCallback(() => {
-    const voice = voiceRef.current;
-    if (voice?.isPlaying()) voice.stop();
-    // Drop any reply lines still queued to reveal — the human took the floor, so
-    // the unheard tail shouldn't keep typing itself out after the voice stops.
-    clearAgentQueue();
-  }, [clearAgentQueue]);
-
-  // ---- GET /in/text observe loop: typed lines (this client or another) ---
-  // Every user line lands here: typed input the server echoes back, and speech
-  // the server transcribed and posted to the text channel. Both render the same
-  // way, so the conversation reads uniformly across every attached client.
-  // Rolling partials (`final:false`, live STT) render as a live italic line
-  // (the interim slot) and double as the duck trigger above.
-  useEffect(() => {
-    if (!woken) return;
-    const ctrl = new AbortController();
-    let cancelled = false;
-    void (async () => {
-      while (!cancelled) {
-        try {
-          for await (const ev of subscribeInText({ signal: ctrl.signal })) {
-            if (cancelled) break;
-            if (ev.text.trim().length === 0) continue;
-            if (!ev.final) {
-              duck();
-              updateInterim(ev.text.trim());
-              continue;
-            }
-            clearInterim();
-            finalizeUser(ev.text);
-          }
-        } catch {
-          if (cancelled || ctrl.signal.aborted) break;
-          clearInterim();
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-      clearInterim();
-    };
-  }, [woken, finalizeUser, duck, updateInterim, clearInterim]);
-
   // ---- audio-input channel: acquire/release the mic (and vision) ---------
   // Independent of the session itself — text and audio are coequal input
   // channels, each freely toggled on or off. Enabling needs the session's
@@ -598,10 +421,9 @@ export function useAgentSession(): AgentSession {
       audioBus.attachMic(micNode);
 
       // Passthrough: stream every mic frame to the backend; the upstream STT
-      // segments and transcribes. No client-side VAD. The socket is upload-only
-      // — the recognized text arrives on the /in/text observe loop above (the
-      // server posts the transcript to the text channel), so even this client
-      // reads its own words from there.
+      // segments and transcribes. No client-side VAD. The socket is upload-only;
+      // recognized text is folded into the shared /out/text appearance state,
+      // so this window renders the same transcript as every other one.
       const streamer = await AudioStreamer.create(audioBus.ctx, micNode);
       if (superseded()) {
         // Disabled while we were acquiring — don't leave the socket open.
@@ -828,13 +650,9 @@ export function useAgentSession(): AgentSession {
   //     optimization: an open out-channel is how the backend concludes someone is
   //     there, so leaving them up behind a closed window is what let the agent
   //     speak into it and count the words delivered.
-  // Text output was previously left flowing on the reasoning that it is "the
-  // persistent, observable record, already there in the timeline when the window
-  // reopens". It wasn't: the band evicts past AGENT_REPLY_WINDOW as it reveals,
-  // and it reveals on a timer that doesn't know whether anyone is watching, so a
-  // long reply was already truncated by the time the window came back. The words
-  // wait in the server's retained text log now, whole, and arrive when there is
-  // someone to read them. Inert in a browser tab (no native lifecycle events).
+  // Text state itself stays backend-owned while this window is away. Foreground
+  // opens one fresh subscription and receives the current state immediately;
+  // nothing advances or queues on behalf of this window while it is hidden.
   useEffect(() => {
     return onNativeLifecycle((phase) => {
       if (phase === "background" || phase === "closed") {
@@ -874,8 +692,8 @@ export function useAgentSession(): AgentSession {
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      // The server echoes the line back on /in/text, where the observe loop folds
-      // it into the timeline as a user line — so we don't add it locally.
+      // The server folds the accepted line into the shared current appearance,
+      // so this window never adds a private optimistic copy.
       void postInText({ body: trimmed }).catch(() => {});
     },
     [],
@@ -883,7 +701,7 @@ export function useAgentSession(): AgentSession {
 
   const state: PresenceState = projectActivityState({
     ready: woken && backendActivity?.reaction_ready === true,
-    listening: interim !== null,
+    listening: textAppearance.interim !== undefined,
     speaking: ttsPlaying,
     reactionBusy: backendActivity?.reaction_busy === true,
     delegatedBusy: (backendActivity?.delegated_busy_count ?? 0) > 0,
@@ -892,15 +710,10 @@ export function useAgentSession(): AgentSession {
   // Dots track the agent's voice while it plays.
   const reactive = state === "speaking" && ttsPlaying;
 
-  // Render the current exchange — the user's line pinned, the agent's reply
-  // rolling beneath it — with the live interim line (speech still being
-  // recognized) trailing last, so it also lands in the captions window when a
-  // view holds the stage.
-  const displaySentences = useMemo<SpeechItem[]>(() => {
-    const visible = visibleExchange(sentences);
-    if (interim === null) return visible;
-    return [...visible, { id: INTERIM_ID, text: interim, speaker: "user", pending: true }];
-  }, [sentences, interim]);
+  const displaySentences = useMemo<SpeechItem[]>(
+    () => visibleTextAppearance(textAppearance),
+    [textAppearance],
+  );
 
   return {
     state,

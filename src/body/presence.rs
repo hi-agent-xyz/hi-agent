@@ -304,9 +304,9 @@ impl Presence {
     ///
     /// **Only [`Presence::note_activation`] fires it**, and that is the whole care in
     /// the design. A reconnecting out-channel looks like an arrival and is not one:
-    /// `/api/out/text` is a long-poll that re-opens continuously while a tab sits
-    /// forgotten in the background, so `connect` proves a browser exists, never that
-    /// a person is in front of it. The attention lane is first-party and reports
+    /// `/api/out/text` is a long-lived state subscription that reconnects after
+    /// transport failures, so `connect` proves a surface exists, never that a
+    /// person is in front of it. The attention lane is first-party and reports
     /// exactly one thing — this page just became visible or regained focus — which is
     /// a human hand.
     ///

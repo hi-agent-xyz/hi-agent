@@ -876,7 +876,7 @@ loop {
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:
 
 - Mac mini,fresh `--data-dir`,`pulse` 调到 120s(pulse 与 Cognition 的 glance-up 是仅有的唤醒),测完复原。
-- 两条长轮询挂着:`GET /api/out/text`(一次一句)和 `GET /api/out/view`(挂着 = 屏在场)。不挂 audio,于是顺带验了 presence 门。
+- 挂着 `GET /api/out/text` 当前状态流和 `GET /api/out/view` 长轮询(挂着 = 屏在场)。不挂 audio,于是顺带验了 presence 门。
 - Claude 扮演老板,**说人话、不剧透 journey 预期**;要测恢复就**造出那个局面**(杀进程 / 重启 / 种一个失败),而不是在提示里提它。
 - **每一条都从对话之外核实**:逐字帧日志(`memory/raw/sessions/<run>/<session>.jsonl`)、`server.log`、`GET /api/sessions`、磁盘上的产物。agent 说它做了什么,不算证据。
 

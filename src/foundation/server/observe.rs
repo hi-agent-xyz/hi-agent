@@ -1,11 +1,10 @@
 //! `GET /api/in/<channel>` — observe recognized inputs, live.
 //!
-//! Inputs cross the world→agent boundary on a single client's POST/WS, but every
-//! attached client should render them identically — the same guarantee the
-//! outbound channels give. Each handler here subscribes to the
-//! [`InputEcho`](crate::foundation::server::InputEcho) broadcast, keeps only this
-//! channel, and streams the matches as newline-delimited JSON for as long as the
-//! connection is held.
+//! Each handler subscribes to the
+//! [`InputEcho`](crate::foundation::server::InputEcho) observer broadcast, keeps
+//! only this channel, and streams the matches as newline-delimited JSON for as
+//! long as the connection is held. This is an inspection/reflex tap; the user
+//! facing text appearance has its own authoritative state.
 //!
 //! This is *presence*, not history: the broadcast is lossy with no replay (see
 //! `InputEcho`), so an observer sees inputs from the moment it connects. A

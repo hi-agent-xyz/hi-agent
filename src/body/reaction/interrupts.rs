@@ -3,8 +3,8 @@
 //!
 //! There is no interrupt signal anywhere on the wire, and the mind is never
 //! cancelled — fix-forward holds with no exceptions. The client ducks its own
-//! speaker reflexively when speech is recognized (it watches the `final:false`
-//! partials on its observe stream); the human's words then buffer and fold into
+//! speaker reflexively when speech is recognized (it watches the shared text
+//! appearance's rolling `interim`); the human's words then buffer and fold into
 //! the next turn like any other signal. What this module adds is the speaker's
 //! *self-knowledge*: a human knows "I'd been talking about ten seconds when she
 //! cut in" from their own internal clock, not from a receipt. Same here — the
@@ -24,6 +24,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -79,14 +80,41 @@ struct SpeechState {
 /// Shared barge-in state. Created once in `lib.rs`, cloned into the HTTP
 /// front (whose STT relay reports recognized speech) and the reaction (whose
 /// sequencer stamps voice spans and whose turns drain pending notes).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InterruptRegistry {
     inner: Arc<Mutex<SpeechState>>,
+    /// Latest reaction turn that actually started. Stored separately from the
+    /// async speech state so inbound HTTP handlers can order a settled human
+    /// line against a turn without waiting on a lock.
+    latest_turn: Arc<AtomicU64>,
+}
+
+impl Default for InterruptRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SpeechState::default())),
+            latest_turn: Arc::new(AtomicU64::new(u64::MAX)),
+        }
+    }
 }
 
 impl InterruptRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record a reaction turn at the point it starts, before its prompt can
+    /// produce output. This is internal ordering only; it never reaches a wire.
+    pub fn note_turn_started(&self, turn: u64) {
+        self.latest_turn.store(turn, Ordering::Release);
+    }
+
+    /// Latest started reaction turn, if any.
+    pub fn latest_turn_started(&self) -> Option<u64> {
+        match self.latest_turn.load(Ordering::Acquire) {
+            u64::MAX => None,
+            turn => Some(turn),
+        }
     }
 
     /// A turn's voice just started flowing. Called by the sequencer as it opens
@@ -308,5 +336,14 @@ mod tests {
         assert!(reg.should_skip(9).await);
         // A later (reorganized) pass with a fresh id is unaffected.
         assert!(!reg.should_skip(10).await);
+    }
+
+    #[test]
+    fn latest_started_turn_is_shared_without_entering_the_wire() {
+        let reg = InterruptRegistry::new();
+        let clone = reg.clone();
+        assert_eq!(clone.latest_turn_started(), None);
+        reg.note_turn_started(41);
+        assert_eq!(clone.latest_turn_started(), Some(41));
     }
 }

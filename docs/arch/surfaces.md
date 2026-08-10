@@ -102,9 +102,29 @@ them to come back. Fire-and-forget has nowhere to put that answer, which is the 
 problem: an utterance you cannot be told the fate of is one you spend without knowing.
 
 Note what this does *not* mean: the host holds no queue of things to say later. Text and
-views keep on their own, so there is nothing to hold; voice does not keep, so there is
-nothing worth holding. What waits for a better moment waits in Reaction's judgment,
-which is where the decision lives.
+views are the appearance's current state, so a newly attached surface receives what is
+present then, not a backlog; voice does not keep, so there is nothing worth holding.
+What waits for a better moment waits in Reaction's judgment, which is where the decision
+lives.
+
+### Text appearance
+
+Outbound text is one backend-owned current exchange, rendered by any number of windows.
+The state contains the latest settled human line, an optional rolling recognition
+interim, and the agent's current text with whether its latest utterance boundary settled.
+
+`GET /api/out/text` returns one long-lived NDJSON response. The first object is the whole
+current state; every following object replaces it wholesale. The wire carries no message
+or client identity and accepts no cursor. Connecting synchronizes the present and then
+subscribes to changes. It does not replay earlier exchanges, and reading never changes
+the state.
+
+The text state is process-local and starts empty after restart. Durable conversation
+history belongs to the journal. This separation is deliberate: the face is not a mailbox
+or transcript browser. A settled human line also prevents any later text from the
+already-running prior reaction turn from reclaiming the appearance. See
+[`text-appearance.md`](text-appearance.md) for the complete transition and interruption
+contract.
 
 **Showing is a call for the same reason and one of its own.** Putting something on a screen
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.

@@ -4,7 +4,7 @@
 //! ephemeral worker sessions (each on its own subprocess), in-flight prompts,
 //! session lifecycle events all live only as scattered `tracing`
 //! lines. The observatory is an additive, cloneable handle (like [`Memory`] or
-//! [`TextBus`]) that the reaction, workers and heartbeat feed as
+//! [`TextAppearance`]) that the reaction, workers and heartbeat feed as
 //! those things happen. It keeps two things:
 //!
 //! - a **live mirror** — the voice's current state (reaction session, context
@@ -18,7 +18,7 @@
 //! snapshots-then-subscribes can neither miss an event nor see a duplicate.
 //!
 //! [`Memory`]: crate::mind::memory::Memory
-//! [`TextBus`]: crate::foundation::server::TextBus
+//! [`TextAppearance`]: crate::foundation::server::TextAppearance
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
