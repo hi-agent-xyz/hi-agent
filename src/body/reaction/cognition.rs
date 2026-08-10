@@ -580,19 +580,133 @@ async fn turn(
     // only a done line, "thinking" and "parked with nothing to do" read the same.
     tracing::info!(cognition = id, prompt_chars = prompt.chars().count(), "cognition turn start");
 
+    // What is owed *before* the turn, so a duty this turn retires can be recognized
+    // afterwards. Subjects only — the check is "did this leave the active set", and
+    // reading the titles back out of a closed record is the WARN's job, not this one's.
+    let owed_before = active_subjects(reaction).await;
+
     let mut run = session.prompt(prompt).await?;
     let mut full = String::new();
+    let mut sent = 0usize;
     while let Some(update) = run.next_update().await {
-        if let SessionUpdate::Text(text) = update {
-            full.push_str(&text);
-            // Mirror it into the switchboard's bounded tail, or `session_messages`
-            // answers "nothing yet" forever — and a Deliberation that handed work up has
-            // no other way to see what became of it.
-            registry::global().record_output(id, &text);
+        match update {
+            SessionUpdate::Text(text) => {
+                full.push_str(&text);
+                // Mirror it into the switchboard's bounded tail, or `session_messages`
+                // answers "nothing yet" forever — and a Deliberation that handed work up has
+                // no other way to see what became of it.
+                registry::global().record_output(id, &text);
+            }
+            // Counted from the raw frame rather than the tool dispatch, because what is
+            // being checked is the model's behaviour, not the host's: this has to stay
+            // true of a `send_message` that the host went on to refuse.
+            SessionUpdate::Frame(frame) if is_send_message_call(&frame) => sent += 1,
+            _ => {}
         }
     }
     run.wait().await?;
 
-    tracing::info!(cognition = id, reply_chars = full.chars().count(), "cognition turn done");
+    // **A turn's reply text is not a channel.** It goes to the bounded tail above, which is
+    // only ever *pulled* (`session_messages`), so a timer-woken turn's conclusion has no
+    // reader at all — `cognition.md` says so ("Nothing you write reaches anyone directly")
+    // and the only way anything leaves this rung is `send_message`.
+    //
+    // Silence is legitimate: deciding a finding is not worth raising is Cognition's own
+    // gate (`docs/arch/agents.md`), and the host must not overrule it. So `sent` is
+    // reported plainly and the WARN is kept for the one case the host can judge without
+    // guessing — **a duty left the ledger and nobody was told**, which is the shape of
+    // `done` meaning "finished *and delivered*". Observed live 2026-08-10: a restart sweep
+    // closed a task, wrote a 402-char report as its final answer, and sent nothing.
+    let closed = owed_before.difference(&active_subjects(reaction).await).count();
+    if closed > 0 && sent == 0 {
+        tracing::warn!(
+            cognition = id,
+            closed,
+            reply_chars = full.chars().count(),
+            "cognition closed a task and sent nothing; the report reached no one",
+        );
+    }
+
+    tracing::info!(
+        cognition = id,
+        reply_chars = full.chars().count(),
+        sent,
+        "cognition turn done"
+    );
     Ok(())
+}
+
+/// The subjects of every `todo`/`doing` task, for the before/after comparison above.
+/// An unreadable ledger yields an empty set, which can only *suppress* the warning —
+/// the same direction every other failure here takes, and the opposite of inventing a
+/// close that did not happen.
+async fn active_subjects(reaction: &Reaction) -> std::collections::HashSet<String> {
+    crate::mind::memory::tasks::active_tasks(reaction.inner.memory.data_dir())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|task| task.subject)
+        .collect()
+}
+
+/// Whether a raw codex frame is Cognition reaching another part of itself — an
+/// `item/started` for the `send_message` MCP tool.
+///
+/// `item/started` and not `item/completed`: the question is whether it *tried*. A call the
+/// host rejected (a dead address, a malformed id) is a delivery that failed, which is a
+/// different fault from never having addressed anyone, and only the first is this
+/// function's business.
+fn is_send_message_call(frame: &serde_json::Value) -> bool {
+    if frame.get("method").and_then(serde_json::Value::as_str) != Some("item/started") {
+        return false;
+    }
+    let Some(item) = frame.get("params").and_then(|p| p.get("item")) else {
+        return false;
+    };
+    item.get("type").and_then(serde_json::Value::as_str) == Some("mcpToolCall")
+        && item.get("tool").and_then(serde_json::Value::as_str) == Some("send_message")
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_send_message_call_is_recognized_from_the_raw_frame() {
+        assert!(is_send_message_call(&json!({
+            "method": "item/started",
+            "params": { "item": {
+                "type": "mcpToolCall", "id": "exec-1", "server": "hi-agent",
+                "tool": "send_message", "status": "inProgress",
+                "arguments": { "to": "2", "message": "the build failed on the auth tests" },
+            }},
+        })));
+    }
+
+    /// The failure this exists to catch looks exactly like a normal turn on the wire:
+    /// shell work, file edits, and prose. None of it addresses anyone.
+    #[test]
+    fn nothing_else_in_a_turn_counts_as_reaching_someone() {
+        for frame in [
+            json!({ "method": "item/started", "params": { "item": {
+                "type": "commandExecution", "command": "/bin/zsh -lc 'sed -n 1,40p facet.md'",
+            }}}),
+            json!({ "method": "item/started", "params": { "item": {
+                "type": "fileChange", "changes": [{ "path": "memory/facets/tasks/x/facet.md" }],
+            }}}),
+            json!({ "method": "item/completed", "params": { "item": {
+                "type": "agentMessage", "phase": "final_answer", "text": "Restart sweep complete.",
+            }}}),
+            json!({ "method": "item/started", "params": { "item": {
+                "type": "mcpToolCall", "server": "hi-agent", "tool": "create_worker",
+            }}}),
+            // The completion of a send is not a second send.
+            json!({ "method": "item/completed", "params": { "item": {
+                "type": "mcpToolCall", "server": "hi-agent", "tool": "send_message",
+            }}}),
+        ] {
+            assert!(!is_send_message_call(&frame), "{frame}");
+        }
+    }
 }
