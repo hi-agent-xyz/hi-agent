@@ -10,6 +10,7 @@
 //! loop with no locking.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::{Mutex, mpsc};
 
@@ -73,6 +74,15 @@ pub struct ToolSink {
 pub(super) struct Mouth {
     pub(super) beats: mpsc::Sender<Beat>,
     pub(super) presence: crate::body::presence::Presence,
+    /// How many utterances this mouth has accepted, ever. Only ever incremented.
+    ///
+    /// The turn loop reads it either side of a generation to answer one question the
+    /// beat stream cannot answer until `TurnEnd`: *did this turn speak at all?* It has
+    /// to be answerable **before** the bracket closes, because the answer decides
+    /// whether the turn gets a second try at speaking — see [`super::run_reaction_turn`].
+    /// A counter rather than a flag, so nothing has to reset it and two turns cannot
+    /// race over whose flag it was.
+    pub(super) said: Arc<AtomicU64>,
 }
 
 /// The standing loop that owns a tool sink.
@@ -169,6 +179,10 @@ impl ToolSink {
             .send(Beat::Say(text))
             .await
             .map_err(|_| anyhow::anyhow!("sequencer gone; say dropped"))?;
+        // Counted where the utterance is accepted, so `TooLong` (rejected above, never
+        // sent) does not read as speech. Every fate below — voiced, screen-only, held —
+        // is an utterance that left the mind; where it landed is presence's business.
+        mouth.said.fetch_add(1, Ordering::Relaxed);
         Ok(match (reach.speaker, reach.window) {
             (true, _) => Spoken::Voiced,
             (false, true) => Spoken::TextOnly,
@@ -261,9 +275,31 @@ mod tests {
         let (control, _ctl) = mpsc::channel(8);
         let sink = ToolSink {
             control,
-            mouth: Some(Mouth { beats, presence: presence.clone() }),
+            mouth: Some(Mouth {
+                beats,
+                presence: presence.clone(),
+                said: Arc::new(AtomicU64::new(0)),
+            }),
         };
         (sink, rx)
+    }
+
+    /// The count the turn loop reads to decide whether a turn spoke: an accepted
+    /// utterance moves it, a rejected one does not.
+    #[tokio::test]
+    async fn only_an_accepted_utterance_counts_as_speech() {
+        let p = Presence::new();
+        let (sink, _rx) = mouth(&p);
+        let said = sink.mouth.as_ref().unwrap().said.clone();
+
+        assert_eq!(
+            sink.say("x".repeat(SAY_MAX_CHARS + 1)).await.unwrap(),
+            Spoken::TooLong
+        );
+        assert_eq!(said.load(Ordering::Relaxed), 0, "a rejected call said nothing");
+
+        sink.say("hi".into()).await.unwrap();
+        assert_eq!(said.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

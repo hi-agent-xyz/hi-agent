@@ -40,15 +40,16 @@ use crate::identity::Role;
 impl Role {
     /// How much of the machine this role's own tools may touch.
     ///
-    /// **The reaction is read-only, and that is as close as codex gets to the tools-off
-    /// voice ACP gave us.** There, the reaction opened with `builtin_tools: []` and
-    /// genuinely held nothing. Codex has no equivalent switch — `exec_command`,
-    /// `apply_patch` and the rest are always in the schema — so the voice is held to its
-    /// job by two softer things instead: a read-only sandbox, so a stray call cannot
-    /// change anything, and `speaking.md` as its actual system prompt, which is a far
-    /// stronger lever here than it ever was under ACP. If the voice does reach for a
-    /// shell in practice, the answer is to take it off the agent process entirely (one
-    /// direct Responses call, no `tools` array), not to bolt on a hard rail.
+    /// **The reaction is read-only, and it is also tools-off** — the second half is
+    /// [`reaction_permissions`], not this. Codex *does* have the switch ACP's
+    /// `builtin_tools: []` gave us; it is spelled as a permission profile, and this
+    /// comment used to say it did not exist and that the sandbox plus the prompt were
+    /// all we had. That was wrong twice over: the voice reached for a shell anyway, and
+    /// a voice holding a shell answers in prose instead of calling `say`.
+    ///
+    /// The sandbox still earns its place under the profile — it bounds what any tool
+    /// arriving by another route (a future MCP surface, a codex default we did not
+    /// anticipate) can touch, and one of those two is a mechanism rather than a list.
     ///
     /// Every other rung gets full access, which is what the ACP path did in effect —
     /// Claude ran unsandboxed with every permission request auto-allowed — so the wire
@@ -184,6 +185,17 @@ impl AgentLayer {
     /// allow-list here, and it is deliberately not used: two filters for one decision is
     /// how they drift apart, and the header already covers the case the allow-list
     /// cannot (the same tool behaving differently per rung).
+    ///
+    /// That header decides *our* surface. It says nothing about the agent's **own**
+    /// built-ins, and Reaction is the one rung where those have to be gone too —
+    /// [`agents.md`](../../../docs/arch/agents.md#reaction--one-generation): "no reads,
+    /// no fetches, no working directory, and no built-ins at all… Restricting our own
+    /// tool surface is not sufficient on its own; the session's underlying toolset has
+    /// to be restricted too, or 'cannot' means 'was asked not to'." It was asked not to,
+    /// and it did anyway — a reaction turn on 2026-08-10 ran
+    /// `nl -ba views/people/voice-roster.jsx | sed -n …` mid-sentence, and turns that
+    /// held a shell wrote file-and-line code reviews as message text instead of calling
+    /// `say`, which reaches nobody. [`reaction_permissions`] is the enforcement.
     fn thread_config(
         &self,
         cfg: &AgentConfig,
@@ -211,6 +223,11 @@ impl AgentLayer {
                 }
             }),
         );
+        if role == Role::Reaction {
+            let (name, profile) = reaction_permissions();
+            config.insert("permissions".into(), json!({ name: profile }));
+            config.insert("default_permissions".into(), json!(name));
+        }
         config
     }
 
@@ -221,6 +238,24 @@ impl AgentLayer {
     pub async fn shutdown(&self) {
         self.inner.registry.shutdown().await;
     }
+}
+
+/// The codex permission profile Reaction's thread opens under, and its name.
+///
+/// `default_tools_enabled = false` is codex's switch for its *own* toolset — shell,
+/// file reads, apply-patch, web search. The MCP attach is configured separately
+/// (`mcp_servers`) and is untouched by it, so what the voice is left holding is exactly
+/// `say`, `show` and `send_message`.
+///
+/// The shape is codex's, not ours, and it is picky: `permissions` is a **map of named
+/// profiles** and `default_permissions` is the string naming the one in force. The
+/// flatter spellings do not exist — the pinned 0.144.1 under `--strict-config` answers
+/// `unknown configuration field tools.default_tools_enabled`, and
+/// `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`.
+/// A profile that names no filesystem entries leaves filesystem access restricted,
+/// which is the posture Reaction wants anyway.
+fn reaction_permissions() -> (&'static str, serde_json::Value) {
+    ("hi-agent-voice", json!({ "default_tools_enabled": false }))
 }
 
 #[cfg(test)]
@@ -289,6 +324,28 @@ mod tests {
         assert_eq!(Role::Reaction.sandbox(), Sandbox::ReadOnly);
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             assert_eq!(role.sandbox(), Sandbox::FullAccess, "{role:?} does real work");
+        }
+    }
+
+    /// Swept the same way as the sandbox, and for the same reason: "no built-ins at all"
+    /// is Reaction's alone, and a rung that quietly arrived without a shell would be a
+    /// rung that cannot do its job.
+    #[test]
+    fn only_the_voice_opens_with_the_agents_own_tools_off() {
+        let (name, _) = reaction_permissions();
+        let voice = layer().thread_config(&config(), Role::Reaction, Some(1));
+        assert_eq!(voice["default_permissions"], name);
+        assert_eq!(voice["permissions"][name]["default_tools_enabled"], false);
+        // The restriction is codex's own toolset; ours arrives over MCP and must survive
+        // it, or the profile that was meant to leave the voice holding `say` takes it.
+        assert!(voice.contains_key("mcp_servers"));
+
+        for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
+            let config = layer().thread_config(&config(), *role, Some(1));
+            assert!(
+                !config.contains_key("default_permissions"),
+                "{role:?} works, and working needs tools"
+            );
         }
     }
 

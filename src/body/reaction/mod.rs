@@ -1107,6 +1107,10 @@ impl Reaction {
             });
         }
 
+        // How many utterances the mouth has accepted. The loop holds the other end so a
+        // turn can tell whether it spoke while its bracket is still open.
+        let said = Arc::new(AtomicU64::new(0));
+
         self.inner
             .tools
             .register(
@@ -1116,6 +1120,7 @@ impl Reaction {
                     mouth: Some(tools::Mouth {
                         beats: beats_tx.clone(),
                         presence: self.inner.presence.clone(),
+                        said: said.clone(),
                     }),
                 },
             )
@@ -1132,7 +1137,7 @@ impl Reaction {
                 task_worker_inbound,
                 control_rx,
                 control_tx,
-                beats_tx,
+                Speaking { beats: beats_tx, said },
                 voice,
             )
             .await;
@@ -1140,6 +1145,20 @@ impl Reaction {
 
         (voice_id, tx)
     }
+}
+
+/// The loop's end of the mouth, whose other end is [`tools::Mouth`] on the `/mcp`
+/// side. The loop sends each turn's `TurnStart`/`TurnEnd` brackets down `beats`; the
+/// tool handler sends the `Say`/`Show` beats between them, so the two halves are the
+/// same mouth seen from either side of a turn.
+///
+/// They travel together because a turn asks one question of both — *what did this
+/// actually put in front of the person* — and the count is the only half that can
+/// answer it while the bracket is still open.
+struct Speaking {
+    beats: mpsc::Sender<sequencer::Beat>,
+    /// Utterances the mouth has accepted, ever. See [`tools::Mouth::said`].
+    said: Arc<AtomicU64>,
 }
 
 /// Why the reaction loop's wait resolved. Keeps the `select!` arms tiny so the
@@ -1187,10 +1206,8 @@ async fn reaction_loop(
     // sender, but keeping a clone here means `control.recv()` never resolves to
     // `None` while this loop runs, so a quiet tool channel can't end the loop.
     _control_keepalive: mpsc::Sender<LoopControl>,
-    // The output sequencer inlet. The loop sends each turn's TurnStart/
-    // TurnEnd brackets here; the `/mcp` handler sends the say/show beats
-    // between them. The same sender is the keepalive for the sequencer task.
-    beats: mpsc::Sender<sequencer::Beat>,
+    // The loop's end of the mouth: the sequencer inlet and the utterance count.
+    speaking: Speaking,
     // Registered synchronously by `ensure_voice`, before this task is spawned,
     // so recovery can already address the conversation while its warm-up runs. Held here so
     // every loop exit unregisters it by scope.
@@ -1465,7 +1482,7 @@ async fn reaction_loop(
             &mut workers,
             &mut reaction_session,
             voice_id,
-            &beats,
+            &speaking,
         )
         .await;
         registry::global().finish_turn(voice_id);
@@ -1571,7 +1588,7 @@ async fn run_reaction_turn(
     workers: &mut workers::WorkerRegistry,
     reaction_session: &mut Option<Arc<AgentSession>>,
     voice_id: registry::SessionId,
-    beats: &mpsc::Sender<sequencer::Beat>,
+    speaking: &Speaking,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     reaction.inner.interrupts.note_turn_started(turn_id);
@@ -1622,8 +1639,12 @@ async fn run_reaction_turn(
     // Captured before the prompt is handed over — it is moved into `drive_voice`.
     let context_chars = context.chars().count();
     tracing::info!(ctx_chars = context_chars, "reaction: prompting session");
-    let _ = beats.send(sequencer::Beat::TurnStart { turn: turn_id }).await;
+    let _ = speaking
+        .beats
+        .send(sequencer::Beat::TurnStart { turn: turn_id })
+        .await;
 
+    let before = speaking.said.load(Ordering::Relaxed);
     let mut turn_error = None;
     let spoke = match drive_voice(&session, context).await {
         Ok(text) => {
@@ -1635,6 +1656,7 @@ async fn run_reaction_turn(
                 unspoken_chars = text.chars().count(),
                 "reaction: turn done"
             );
+            recover_mute_turn(&session, &speaking.said, before, &text).await;
             true
         }
         Err(err) => {
@@ -1688,7 +1710,10 @@ async fn run_reaction_turn(
 
     // Close the bracket and record what was spoken (for barge-in resolution).
     let (done_tx, done_rx) = oneshot::channel();
-    let _ = beats.send(sequencer::Beat::TurnEnd { done: done_tx }).await;
+    let _ = speaking
+        .beats
+        .send(sequencer::Beat::TurnEnd { done: done_tx })
+        .await;
     let reply = done_rx.await.unwrap_or_default();
     reaction.inner.interrupts.end_turn(turn_id, &reply).await;
 
@@ -1943,9 +1968,62 @@ async fn open_reaction_session(
     Ok(session)
 }
 
+/// What a turn is told when it wrote a reply and never said it. Phrased as the one
+/// fact it got wrong plus both ways out, so the honest answer "I meant to stay quiet"
+/// stays available and the nudge cannot bully a silent turn into speaking.
+const MUTE_NUDGE: &str = "None of that reached them — writing is not speaking here, and \
+     only `say` carries. If any of it was meant for them, say it now: natural spoken \
+     language, no markdown, one chunk per call. If you meant to stay quiet, do nothing.";
+
+/// Give a turn that produced words but no utterance one chance to actually say them.
+///
+/// A turn speaks by calling `say`; text it merely types is working-out and reaches
+/// nobody. When the model writes its reply as message text instead, the person is
+/// answered with **silence and no error anywhere** — the exact failure `agents.md`
+/// accepted as the risk of making speech a call, seen live on 2026-08-10: a plain
+/// "the google login, is it done?" drew a complete 195-character answer that was
+/// typed, never said, and thrown away by a turn that logged success.
+///
+/// So the host checks the one thing it can check — did the mouth accept anything
+/// between the start of this generation and now — and if not, hands the session back
+/// its own miss. Once. A second silence is the model's answer and is left alone; it is
+/// logged loudly because a mute voice is a server-side fault, never a card in the UI.
+///
+/// This is a backstop, not the mechanism. What is meant to make it rare is Reaction
+/// holding no tools but its own ([`crate::foundation::agent::reaction_permissions`]) —
+/// a session with a shell behaves like a coding agent and answers in prose.
+async fn recover_mute_turn(session: &AgentSession, said: &AtomicU64, before: u64, typed: &str) {
+    if said.load(Ordering::Relaxed) > before {
+        return;
+    }
+    // Silence is a real move — most of what reaches the voice deserves nothing back,
+    // and the prompt spends a section saying so. An empty generation is that move,
+    // and nudging it would turn "say less" into "say something".
+    if typed.trim().is_empty() {
+        return;
+    }
+
+    tracing::warn!(
+        typed_chars = typed.chars().count(),
+        "reaction: turn wrote a reply and said none of it; nudging"
+    );
+    match drive_voice(session, MUTE_NUDGE.to_string()).await {
+        Ok(_) if said.load(Ordering::Relaxed) > before => {
+            tracing::info!("reaction: the nudge recovered the turn");
+        }
+        Ok(text) => tracing::error!(
+            typed_chars = text.chars().count(),
+            "reaction: voice stayed mute through the nudge; the person got nothing"
+        ),
+        // The turn itself succeeded, so its failure classifier has already run and its
+        // mail is already spent. A failed nudge only loses the recovery.
+        Err(err) => tracing::warn!(error = %err, "reaction: mute nudge failed"),
+    }
+}
+
 /// Prompt the reaction session and return its spoken text (every `agent_message_chunk`
-/// concatenated). Tool calls — the reaction's only tool is `show` — are dispatched
-/// server-side through hi-agent's `/mcp` (which emits the `Beat::Show`), so the drive
+/// concatenated). Tool calls — `say`, `show`, `send_message` — are dispatched
+/// server-side through hi-agent's `/mcp` (which emits the beats), so the drive
 /// loop just keeps streaming speech past them, exactly like a worker's loop; `wait()`
 /// then parks the session and surfaces any real prompt error (a gateway 402/429, a
 /// transport reset) to the caller's classifier.
