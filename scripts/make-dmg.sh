@@ -2,7 +2,7 @@
 #
 # Build a hermetic Hi Agent.app and wrap it in a styled drag-to-Applications .dmg.
 #
-# Produces an app whose managed runtime (Node + the codex CLI), recognition
+# Produces an app whose managed runtime (the codex CLI + esbuild), recognition
 # models, and static ffmpeg all live under Contents/Resources — so it launches and
 # runs fully offline, with nothing to install. Apple Silicon macOS only.
 #
@@ -117,9 +117,10 @@ sign_one() {
 }
 
 echo ">> signing nested Mach-O binaries (identity: $IDENTITY)…"
-# Every Mach-O under the bundle (node, codex, ffmpeg, esbuild, *.node addons),
-# excluding the main executable — the bundle sign below seals that one. -type f
-# skips symlinks (npm's .bin/*), whose real targets are signed directly.
+# Every Mach-O under the bundle (codex and the helpers it vendors beside itself —
+# rg, zsh — plus ffmpeg, esbuild, *.node addons), excluding the main executable:
+# the bundle sign below seals that one. -type f skips symlinks, whose real targets
+# are signed directly.
 while IFS= read -r -d '' f; do
   [ "$f" = "$MACOS/hi-agent" ] && continue
   if file -b "$f" | grep -q '^Mach-O'; then

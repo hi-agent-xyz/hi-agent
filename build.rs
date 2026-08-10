@@ -1,16 +1,13 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/appearance/web/dist");
     println!("cargo:rerun-if-changed=src/runtime/manifest.toml");
-    // The pin files are embedded by src/runtime (include_str!); rebuild on change.
-    println!("cargo:rerun-if-changed=src/runtime/package.json");
-    println!("cargo:rerun-if-changed=src/runtime/package-lock.json");
 
-    // Pinned-version stamps surfaced by `--version`. NODE_VERSION also drives the
-    // download URL. The runtime is fetched on first run (see src/runtime), not
-    // embedded.
+    // Pinned-version stamps surfaced by `--version`. Each also derives its
+    // component's download URL. The runtime is fetched on first run (see
+    // src/runtime), not embedded.
     let manifest = read_manifest_versions();
-    println!("cargo:rustc-env=HI_AGENT_NODE_VERSION={}", manifest.node_version);
     println!("cargo:rustc-env=HI_AGENT_CODEX_VERSION={}", manifest.codex_version);
+    println!("cargo:rustc-env=HI_AGENT_ESBUILD_VERSION={}", manifest.esbuild_version);
     println!("cargo:rustc-env=HI_AGENT_CHROME_VERSION={}", manifest.chrome_version);
 
     // macOS only: compile + link the native SwiftUI Settings window (the Phase-1 shell
@@ -86,8 +83,8 @@ fn build_swift_settings() {
 }
 
 struct ManifestVersions {
-    node_version: String,
     codex_version: String,
+    esbuild_version: String,
     chrome_version: String,
 }
 
@@ -104,9 +101,9 @@ fn read_manifest_versions() -> ManifestVersions {
             Some(rest.trim().trim_matches('"').to_string())
         })
     };
-    let node_version = get("node_version").unwrap_or_else(|| "dev".to_string());
     let codex_version = get("codex_version").unwrap_or_else(|| "dev".to_string());
+    let esbuild_version = get("esbuild_version").unwrap_or_else(|| "dev".to_string());
     let chrome_version = get("chrome_version").unwrap_or_else(|| "dev".to_string());
 
-    ManifestVersions { node_version, codex_version, chrome_version }
+    ManifestVersions { codex_version, esbuild_version, chrome_version }
 }

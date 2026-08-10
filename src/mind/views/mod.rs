@@ -10,9 +10,10 @@
 //! identical source compiles at most once. The agent-authored *source* sediments
 //! separately as `views/<project>/<name>.jsx`.
 //!
-//! esbuild ships as a native binary in the `@esbuild/<os>-<arch>` package, which
-//! the managed runtime installs alongside the codex CLI (see
-//! `src/runtime/package.json`). We exec that binary directly — no Node wrapper.
+//! esbuild ships as a native binary in the `@esbuild/<os>-<arch>` package, whose
+//! tarball the runtime downloads and unpacks alongside the codex CLI (see
+//! `src/runtime`). We exec that binary directly — there is no Node anywhere in this,
+//! neither as a wrapper nor as the thing that installed it.
 
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -141,8 +142,8 @@ impl ViewCompiler {
         }
         if !self.esbuild_bin.exists() {
             bail!(
-                "esbuild not found at {} — the managed runtime installs it via \
-                 `npm ci`; a system runtime must provide it on the adapter",
+                "esbuild not found at {} — `runtime::ensure_view_esbuild` should have \
+                 downloaded it; check that dir and the startup log",
                 self.esbuild_bin.display()
             );
         }
@@ -302,39 +303,33 @@ mod tests {
         assert_ne!(h1, h3, "different source must hash differently");
     }
 
-    /// Locate an esbuild native binary if one is installed on this host (the
-    /// standalone view-tool install, or a dev checkout that has run `npm ci`).
+    /// Locate an esbuild native binary if one is provisioned on this host — either the
+    /// standalone view-tool install or the copy that ships with a managed runtime.
     /// Returns `None` to skip the spawning tests where esbuild isn't provisioned.
     fn esbuild_probe() -> Option<PathBuf> {
-        let (os, arch) = crate::runtime::node_target().ok()?;
-        let platform = format!("{os}-{arch}");
+        let (os, arch) = crate::runtime::npm_target().ok()?;
+        let rel = crate::runtime::esbuild_rel();
         let cache = directories::ProjectDirs::from("dev", "human-interface", "hi-agent")?
             .cache_dir()
             .to_path_buf();
-        let candidates = [
-            // Standalone view-tool install (what `ensure_view_esbuild` provisions
-            // when the runtime comes from PATH).
-            cache
-                .join("view-tool")
-                .join(format!("esbuild-0.28.1-{platform}"))
-                .join("node_modules/@esbuild")
-                .join(&platform)
-                .join("bin/esbuild"),
-            // Managed runtime under a fingerprinted dir: any `runtime/*/adapter`.
-            cache.join("runtime"),
-        ];
-        // First candidate is a concrete file; the second is a dir to scan.
-        if candidates[0].exists() {
-            return Some(candidates[0].clone());
+
+        // Standalone view-tool install (what `ensure_view_esbuild` provisions when the
+        // runtime came from PATH).
+        let standalone = cache
+            .join("view-tool")
+            .join(format!(
+                "esbuild-{}-{os}-{arch}",
+                env!("HI_AGENT_ESBUILD_VERSION")
+            ))
+            .join(&rel);
+        if standalone.exists() {
+            return Some(standalone);
         }
-        let runtime_root = &candidates[1];
-        let entries = std::fs::read_dir(runtime_root).ok()?;
+
+        // Managed runtime under a fingerprinted dir: any `runtime/*/esbuild`.
+        let entries = std::fs::read_dir(cache.join("runtime")).ok()?;
         for entry in entries.flatten() {
-            let bin = entry
-                .path()
-                .join("adapter/node_modules/@esbuild")
-                .join(&platform)
-                .join("bin/esbuild");
+            let bin = entry.path().join("esbuild").join(&rel);
             if bin.exists() {
                 return Some(bin);
             }

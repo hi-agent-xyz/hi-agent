@@ -6,7 +6,7 @@
 #
 # Unlike `make dmg`, this does NOT provision the hermetic runtime. It deliberately
 # ships no Contents/Resources, so `bundle::resources_dir()` stays None and the app
-# uses the dev box's system runtime (node + codex on PATH) and the cwd-relative
+# uses the dev box's system runtime (a pin-matching codex on PATH) and the cwd-relative
 # ./data dir — i.e. it behaves exactly like the bare `target/release/hi-agent`, just
 # wrapped so the camera/mic prompts can fire. For a distributable build, use `make dmg`.
 #
@@ -45,7 +45,7 @@ echo ">> ad-hoc signing…"
 codesign --force -s - "$APP"
 
 echo ">> done: $APP"
-echo "   run it (from the repo root, so ./data + system node/codex resolve):"
+echo "   run it (from the repo root, so ./data + a system codex resolve):"
 echo "     \"$APP/Contents/MacOS/hi-agent\" --port 12358 > server.log 2>&1 &"
 echo "   if the camera/mic prompt is misattributed to your terminal, launch via LaunchServices instead:"
 echo "     open \"$APP\" --args --port 12358 --data-dir \"$ROOT/data\""

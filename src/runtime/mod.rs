@@ -1,42 +1,45 @@
-//! Codex + Node runtime resolution.
+//! Codex + view-toolchain provisioning.
 //!
-//! Two tools, for two unrelated jobs. **`codex`** is the agent: hi-agent drives
-//! `codex app-server` over stdio, and it is a native binary with no interpreter under
-//! it. **`node`** is only the view compiler's host — esbuild ships as a native binary
-//! inside an npm package, and npm is how we get it.
+//! Two native binaries, for two unrelated jobs, with **no interpreter under either**.
+//! **`codex`** is the agent: hi-agent drives `codex app-server` over stdio.
+//! **`esbuild`** is hi-agent's own view compiler, spawned to turn agent-written
+//! component source into ESM — nothing to do with the agent itself.
 //!
-//! That is a change from the ACP era, when node sat *between* hi-agent and the model
-//! (`node` → `claude-agent-acp` → `claude`) and a version skew between the adapter and
-//! the CLI could wedge a turn for minutes. Nothing runs between us and codex now.
+//! Both are compiled programs (Rust and Go) that merely happen to be *distributed*
+//! through the npm registry. So we fetch them the way you fetch any tarball: an HTTPS
+//! GET of the platform package's `.tgz`, then `tar -x` into place. An npm package is a
+//! gzipped tar whose entries all sit under a single `package/` root, so
+//! `--strip-components=1` lands its contents directly in a directory of ours. There is
+//! no Node, no npm, no lockfile and no `node_modules` anywhere in this path.
 //!
-//! We **prefer what the system already offers**: if `node` and `codex` are both on
-//! `PATH`, we use them directly and download nothing. That is also how you point
-//! hi-agent at your own runtime for local development.
+//! That is the second interpreter to leave. First node stopped sitting *between*
+//! hi-agent and the model (the ACP era's `node` → `claude-agent-acp` → `claude`, where
+//! adapter/CLI version skew could wedge a turn for minutes). Now it is gone as a
+//! package manager too: it was only ever the thing that unpacked two binaries we can
+//! unpack ourselves, and downloading a 30 MB interpreter to run `npm ci` was the tail
+//! wagging the dog.
 //!
-//! Only when the system *doesn't* offer both do we fall back to a self-contained
-//! install: download the pinned Node release and `npm ci` the pinned `@openai/codex`
-//! (which carries the native binary as a platform dep) into a single fixed directory
-//! ([`runtime_dir`]), then resolve the node/codex paths. Subsequent runs reuse that
-//! directory via a `.complete` marker, so the install cost is paid once.
+//! **We prefer what the system already offers**: a pin-matching `codex` on `PATH` is
+//! used directly and we download nothing. That is also how you point hi-agent at your
+//! own build for local development. A system runtime brings no esbuild with it, so the
+//! view compiler is provisioned separately — see [`ensure_view_esbuild`].
 //!
-//! The pins come from `src/runtime/manifest.toml` + the committed lockfile, so a
-//! managed install stays reproducible — we just fetch at first run instead of at
-//! build time. The install dir is **content-addressed** by a fingerprint of those
-//! pins ([`runtime_fingerprint`]): the Node version plus the lockfile bytes. Bump
-//! any pin — Node, codex, or a transitive dep like esbuild — and the
-//! fingerprint changes, so the next run installs into a fresh subdir instead of
-//! silently reusing a stale one. That is the whole auto-update story for the
-//! managed runtime: an app update that changes the lockfile heals the runtime on
-//! the user's next launch, with no manual cache deletion. Superseded installs from
-//! prior pins are pruned best-effort once the current one is ready.
+//! The pins live in `src/runtime/manifest.toml`, and the install dir is
+//! **content-addressed** by them ([`runtime_fingerprint`]): bump a version and the next
+//! run installs into a fresh subdir instead of silently reusing a stale one. That is
+//! the whole auto-update story — an app update that changes a pin heals the runtime on
+//! the user's next launch, with no manual cache deletion. Superseded installs are
+//! pruned best-effort once the current one is ready.
 //!
-//! Detection is all-or-nothing: a partial system set (e.g. `node` but no
-//! `codex`) falls back to the managed install so we never mix a system tool with
-//! a managed one. Prototype scope for the install path: macOS, Linux, and Windows
-//! on x86_64/aarch64, extraction via the system `tar` (bsdtar on Windows 10+,
-//! which auto-detects the `.zip` Node ships there), and no SHA-256 verification of
-//! the Node download yet.
+//! Prototype scope for the install path: macOS, Linux, and Windows on x86_64/aarch64,
+//! extraction via the system `tar` (present on all three — unlike the browser's `.zip`,
+//! a `.tgz` is readable by GNU tar and bsdtar alike), and no hash verification of the
+//! downloads. HTTPS authenticates the registry, and a hash fetched from that same
+//! registry at download time would add nothing; pinning hashes in-repo would defend
+//! against a silent re-cut of a published version, which is not a threat worth six
+//! per-platform constants that must be hand-updated on every bump.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -44,63 +47,45 @@ use anyhow::{Context, anyhow, bail};
 use tokio::process::Command;
 
 /// The headless browser the view render pipeline drives. Same system-first,
-/// managed-fallback shape as the tools above; provisioned lazily on first render.
+/// managed-fallback shape as the tools here; provisioned lazily on first render.
 pub mod browser;
 
-/// Pinned Node version (no leading `v`), stamped from `src/runtime/manifest.toml`.
-const NODE_VERSION: &str = env!("HI_AGENT_NODE_VERSION");
-
-/// Pinned `@openai/codex` version, stamped from `src/runtime/manifest.toml` (kept in
-/// sync with `package.json`). Used to reject a *different* `codex` found on `PATH`: a
-/// stray global install silently shadowing the pin is exactly the failure mode that
-/// wedged turns for minutes in the ACP era, and the protocol still moves fast enough
-/// that a version we did not test is a real hazard (0.144 spells its sandbox modes
-/// kebab-case; the published docs for a later build show camelCase).
+/// Pinned `@openai/codex` version, stamped from `src/runtime/manifest.toml`. Also used
+/// to reject a *different* `codex` found on `PATH`: a stray global install silently
+/// shadowing the pin is exactly the failure mode that wedged turns for minutes in the
+/// ACP era, and the app-server protocol still moves fast enough that a version we did
+/// not test is a real hazard (0.144 spells its sandbox modes kebab-case; the published
+/// docs for a later build show camelCase).
 const CODEX_VERSION: &str = env!("HI_AGENT_CODEX_VERSION");
 
-/// The committed pin files, embedded so `npm ci` reproduces the exact tree
-/// without needing the repo on disk. Tiny (text), unlike the runtime itself.
-const PACKAGE_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/runtime/package.json"
-));
-const PACKAGE_LOCK: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/runtime/package-lock.json"
-));
+/// Pinned `esbuild` version for the view toolchain, stamped from the same manifest.
+const ESBUILD_VERSION: &str = env!("HI_AGENT_ESBUILD_VERSION");
 
-/// Where `npm ci` puts the tree, relative to the install dir.
-const NODE_MODULES_REL: &str = "adapter/node_modules";
+/// Registry the platform tarballs come from. A constant rather than a literal so
+/// pointing at a mirror is a one-line change.
+const NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
 /// Absolute paths to the resolved runtime components.
 #[derive(Debug, Clone)]
 pub struct ResolvedRuntime {
-    pub node_bin: PathBuf,
     /// The `codex` executable hi-agent drives as `codex app-server --stdio`.
     pub codex_bin: PathBuf,
-    /// The `node_modules` this runtime was installed into, when it has one. `None`
-    /// for a system runtime, which resolved its tools from `PATH` and so has no tree
-    /// of ours to borrow esbuild from.
-    pub node_modules: Option<PathBuf>,
+    /// The esbuild this runtime was installed with, when it has one. `None` for a
+    /// system runtime, which found `codex` on `PATH` and so carries no tree of ours;
+    /// [`ensure_view_esbuild`] fills that gap.
+    pub esbuild_bin: Option<PathBuf>,
     /// Where these came from — `"system"` (found on `PATH`), `"managed"`
-    /// (downloaded/installed into the cache), or `"bundled"` (shipped in a `.app`).
+    /// (downloaded into the cache), or `"bundled"` (shipped in a `.app`).
     /// For logging only.
     pub origin: &'static str,
 }
 
-impl ResolvedRuntime {
-    /// Directory containing the `node` binary (for PATH prefixing).
-    pub fn node_bin_dir(&self) -> &Path {
-        self.node_bin.parent().unwrap_or_else(|| Path::new("."))
-    }
-}
-
-/// Resolve the runtime: prefer one bundled inside a packaged `.app`, else the
-/// system tools if all are present, else install on first run and reuse after.
+/// Resolve the runtime: prefer one bundled inside a packaged `.app`, else a
+/// pin-matching system `codex`, else install on first run and reuse after.
 pub async fn ensure() -> anyhow::Result<ResolvedRuntime> {
     // A shipped `.app` carries a complete managed runtime under its Resources;
     // use it so the packaged app runs with no download and is unaffected by
-    // whatever node/codex happen to be on the user's PATH. Absent (dev/Docker/
+    // whatever codex happens to be on the user's PATH. Absent (dev/Docker/
     // Linux), this is `None` and we fall through to the existing tiers.
     if let Some(res) = crate::bundle::resources_dir() {
         let rt = res.join("runtime");
@@ -110,8 +95,8 @@ pub async fn ensure() -> anyhow::Result<ResolvedRuntime> {
         }
     }
 
-    // Prefer what the system already offers — no download when the user has
-    // node + codex on PATH.
+    // Prefer what the system already offers — no download when the user has a
+    // pin-matching codex on PATH.
     if let Some(system) = resolve_system() {
         return Ok(system);
     }
@@ -120,7 +105,7 @@ pub async fn ensure() -> anyhow::Result<ResolvedRuntime> {
 
     // Reuse a complete install from a previous run, otherwise install now. The
     // target is fingerprinted by the current pins, so a `.complete` here means it
-    // was built from *these* pins — a changed lockfile lands on a different path.
+    // was built from *these* pins — a changed version lands on a different path.
     let runtime = if target.join(".complete").exists() {
         tracing::debug!(path = %target.display(), "runtime already installed");
         resolve(&target)?
@@ -163,37 +148,28 @@ fn gc_stale_runtimes(current: &Path) {
     }
 }
 
-/// esbuild version for the view toolchain. Keep in sync with the `esbuild` pin
-/// in `src/runtime/package.json` — the managed install carries the same one; this is
-/// the version we install standalone when the runtime came from the system PATH (and
-/// so has no `node_modules` of ours to borrow from).
-const ESBUILD_VERSION: &str = "0.28.1";
-
-/// Resolve an esbuild native binary for the view compiler, guaranteeing one
-/// exists regardless of where the runtime came from. esbuild is *hi-agent's* own
-/// tool for compiling agent views — nothing to do with the agent itself. A
-/// **managed** runtime carries esbuild in its `node_modules`, so we reuse that; a
-/// **system** runtime (local dev with node/codex on PATH) has no tree of ours, so we
-/// install a standalone copy once into a hi-agent-owned cache dir.
+/// Resolve an esbuild native binary for the view compiler, guaranteeing one exists
+/// regardless of where the runtime came from. A **managed** or **bundled** runtime was
+/// installed with esbuild alongside codex, so we reuse that; a **system** runtime
+/// (local dev with codex on `PATH`) has no tree of ours, so we install a standalone
+/// copy once into a hi-agent-owned cache dir.
 pub async fn ensure_view_esbuild(runtime: &ResolvedRuntime) -> anyhow::Result<PathBuf> {
-    if let Some(adjacent) = runtime.node_modules.as_deref().and_then(esbuild_binary)
+    if let Some(adjacent) = runtime.esbuild_bin.as_deref()
         && adjacent.exists()
     {
-        tracing::debug!(path = %adjacent.display(), "using esbuild bundled with the runtime");
-        return Ok(adjacent);
+        tracing::debug!(path = %adjacent.display(), "using esbuild installed with the runtime");
+        return Ok(adjacent.to_path_buf());
     }
-    ensure_standalone_esbuild(&runtime.node_bin).await
+    ensure_standalone_esbuild().await
 }
 
 /// Install (once) a standalone esbuild into a fingerprinted cache dir and return
 /// its native binary. Content-addressed by esbuild version + host target, so a
 /// version bump installs fresh instead of reusing a stale binary.
-async fn ensure_standalone_esbuild(node_bin: &Path) -> anyhow::Result<PathBuf> {
-    let (os, arch) = node_target()?;
-    let bin_rel = PathBuf::from("node_modules").join(esbuild_rel_in_node_modules(os, arch));
-
+async fn ensure_standalone_esbuild() -> anyhow::Result<PathBuf> {
+    let (os, arch) = npm_target()?;
     let target = esbuild_dir(os, arch)?;
-    let bin = target.join(&bin_rel);
+    let bin = target.join(esbuild_rel());
     if bin.exists() {
         return Ok(bin);
     }
@@ -210,50 +186,29 @@ async fn ensure_standalone_esbuild(node_bin: &Path) -> anyhow::Result<PathBuf> {
     // half-installed esbuild.
     let tmp = parent.join(format!(".esbuild.tmp.{}", std::process::id()));
     let _ = tokio::fs::remove_dir_all(&tmp).await;
-    tokio::fs::create_dir_all(&tmp)
-        .await
-        .with_context(|| format!("creating {}", tmp.display()))?;
 
-    let pkg = format!(
-        "{{\n  \"name\": \"hi-agent-view-tool\",\n  \"private\": true,\n  \
-         \"dependencies\": {{ \"esbuild\": \"{ESBUILD_VERSION}\" }}\n}}\n"
-    );
-    tokio::fs::write(tmp.join("package.json"), pkg)
+    hint("preparing the view compiler (downloading esbuild, ~5 MB)…");
+    let staged = tmp.join(esbuild_rel());
+    let outcome = fetch_npm_package(&esbuild_tarball_url(os, arch), &tmp, "esbuild")
         .await
-        .context("writing view-tool package.json")?;
-
-    let npm_cli = npm_cli_for(node_bin)
-        .with_context(|| format!("locating npm bundled with {}", node_bin.display()))?;
-    hint("preparing the view compiler (installing esbuild)…");
-    let mut cmd = Command::new(node_bin);
-    cmd.arg(&npm_cli)
-        .arg("install")
-        .arg("--omit=dev")
-        .current_dir(&tmp)
-        .env("npm_config_fund", "false")
-        .env("npm_config_audit", "false")
-        .env("npm_config_update_notifier", "false");
-    let out = run_with_heartbeat(cmd, "…still preparing the view compiler")
-        .await
-        .context("running npm install esbuild")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
+        .and_then(|()| {
+            is_executable(&staged).then_some(()).ok_or_else(|| {
+                anyhow!(
+                    "esbuild downloaded but its native binary is missing at {} \
+                     (unsupported host target {os}-{arch}?)",
+                    staged.display()
+                )
+            })
+        });
+    if let Err(e) = outcome {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
-        bail!("installing esbuild failed:\n{}", stderr.trim());
-    }
-    if !tmp.join(&bin_rel).exists() {
-        let _ = tokio::fs::remove_dir_all(&tmp).await;
-        bail!(
-            "esbuild installed but its native binary is missing at {} \
-             (unsupported host target {os}-{arch}?)",
-            tmp.join(&bin_rel).display()
-        );
+        return Err(e);
     }
 
     let _ = tokio::fs::remove_dir_all(&target).await;
     match tokio::fs::rename(&tmp, &target).await {
         Ok(()) => {}
-        Err(_) if target.join(&bin_rel).exists() => {
+        Err(_) if bin.exists() => {
             let _ = tokio::fs::remove_dir_all(&tmp).await;
         }
         Err(e) => {
@@ -263,14 +218,6 @@ async fn ensure_standalone_esbuild(node_bin: &Path) -> anyhow::Result<PathBuf> {
     }
     tracing::info!(path = %bin.display(), "view compiler esbuild ready");
     Ok(bin)
-}
-
-/// Locate the esbuild native binary in the `node_modules` a runtime was installed
-/// into (the managed install carries it). `None` when the host platform is
-/// unsupported, so the caller falls through to a standalone install.
-fn esbuild_binary(node_modules: &Path) -> Option<PathBuf> {
-    let (os, arch) = node_target().ok()?;
-    Some(node_modules.join(esbuild_rel_in_node_modules(os, arch)))
 }
 
 /// Cache dir for the standalone view-toolchain esbuild, keyed by version + host
@@ -297,19 +244,21 @@ fn runtime_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs.cache_dir().join("runtime").join(runtime_fingerprint()))
 }
 
-/// A short, stable fingerprint of everything that determines the installed tree:
-/// the pinned Node version and the committed lockfile (which captures every npm
-/// dep pin, transitive ones like esbuild included). FNV-1a, not a crypto hash —
-/// this is a cache key for de-duping installs, not a security boundary — but
-/// deterministic across builds and platforms so the same pins always resolve to
-/// the same dir.
+/// A short, stable fingerprint of everything that determines the installed tree: the
+/// two pinned versions. FNV-1a, not a crypto hash — this is a cache key for de-duping
+/// installs, not a security boundary — but deterministic across builds and platforms so
+/// the same pins always resolve to the same dir.
+///
+/// (Under npm this had to hash the whole lockfile, because a transitive dep could
+/// change the installed tree without either direct version moving. Fetching two exact
+/// tarballs leaves no transitive deps to capture.)
 fn runtime_fingerprint() -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = OFFSET;
     // NUL between the parts so a byte can't migrate across the boundary and
-    // collide a different (version, lockfile) split.
-    for part in [NODE_VERSION.as_bytes(), b"\0", PACKAGE_LOCK.as_bytes()] {
+    // collide a different (codex, esbuild) split.
+    for part in [CODEX_VERSION.as_bytes(), b"\0", ESBUILD_VERSION.as_bytes()] {
         for &b in part {
             h ^= b as u64;
             h = h.wrapping_mul(PRIME);
@@ -321,11 +270,11 @@ fn runtime_fingerprint() -> String {
 /// Provision a complete managed runtime into `dir` — used at package time to
 /// populate a `.app`'s `Contents/Resources/runtime`. Reuses the same fingerprinted
 /// cache as [`ensure`]'s auto-install tier, so a repeat `make dmg` (or a prior
-/// `make dev`) downloads nothing; only a cold cache pays the Node + `npm ci` cost.
-/// Unlike [`ensure`] it never short-circuits to a system runtime on `PATH` — the
-/// packaging host (a dev Mac with node/codex installed) would otherwise stage
-/// nothing. The bundle gets a *copy* of the cache, not a link: `make dmg` codesigns
-/// the bundle's Mach-O in place, which must never reach back into the shared cache.
+/// `make dev`) downloads nothing; only a cold cache pays the download. Unlike
+/// [`ensure`] it never short-circuits to a system runtime on `PATH` — the packaging
+/// host (a dev Mac with codex installed) would otherwise stage nothing. The bundle
+/// gets a *copy* of the cache, not a link: `make dmg` codesigns the bundle's Mach-O in
+/// place, which must never reach back into the shared cache.
 pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
     let cache = runtime_dir()?;
     if cache.join(".complete").exists() {
@@ -345,10 +294,10 @@ pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Recursively copy `src` to `dst` via the system `cp -Rp`, preserving symlinks
-/// (npm's `.bin/*`) and the execute bits on `node`/`codex`. `dst` is removed first
-/// so `cp` creates it as an exact copy rather than nesting `src` inside an existing
-/// dir. Used to stamp a bundle's runtime from the shared cache.
+/// Recursively copy `src` to `dst` via the system `cp -Rp`, preserving symlinks and
+/// the execute bits on the binaries. `dst` is removed first so `cp` creates it as an
+/// exact copy rather than nesting `src` inside an existing dir. Used to stamp a
+/// bundle's runtime from the shared cache.
 async fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     let _ = tokio::fs::remove_dir_all(dst).await;
     if let Some(parent) = dst.parent() {
@@ -369,10 +318,11 @@ async fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Install the pinned Node + codex into `target`. Builds in a sibling temp dir
+/// Install the pinned codex + esbuild into `target`. Builds in a sibling temp dir
 /// and atomically renames into place, so concurrent or interrupted starts never
 /// observe a half-installed runtime.
 async fn install(target: &Path) -> anyhow::Result<ResolvedRuntime> {
+    let (os, arch) = npm_target()?;
     let parent = target
         .parent()
         .ok_or_else(|| anyhow!("runtime dir {} has no parent", target.display()))?;
@@ -386,25 +336,39 @@ async fn install(target: &Path) -> anyhow::Result<ResolvedRuntime> {
         .await
         .with_context(|| format!("creating {}", tmp.display()))?;
 
-    // 1. Node — download + extract into <tmp>/node.
-    let node_bin = fetch_node(&tmp)
-        .await
-        .context("installing the Node runtime")?;
-    // 2. codex (+ esbuild) — npm ci against the committed lockfile into <tmp>/adapter.
-    npm_ci(&node_bin, &tmp)
+    // 1. codex — the agent binary, plus the helper tree it expects beside itself.
+    hint(&format!(
+        "first run — downloading codex {CODEX_VERSION} (~130 MB)…"
+    ));
+    fetch_npm_package(&codex_tarball_url(os, arch), &tmp.join("codex"), "codex")
         .await
         .context("installing the codex runtime")?;
+    // 2. esbuild — hi-agent's own view compiler.
+    hint("first run — downloading the view compiler (esbuild, ~5 MB)…");
+    fetch_npm_package(
+        &esbuild_tarball_url(os, arch),
+        &tmp.join("esbuild"),
+        "esbuild",
+    )
+    .await
+    .context("installing the view compiler")?;
 
-    // Fail loudly if the install didn't produce the paths we expect, before we
-    // publish anything (a corrupt cache dir is worse than a clear error).
+    // Fail loudly if the install didn't produce the paths we expect, before we publish
+    // anything (a corrupt cache dir is worse than a clear error). `resolve` already
+    // errors when the codex binary can't be located under the extracted tree at all.
     let staged = resolve(&tmp)?;
-    for (label, p) in [("node", &staged.node_bin), ("codex", &staged.codex_bin)] {
-        if !p.exists() {
-            bail!(
-                "runtime installed but the {label} entry is missing at {} \
+    for (label, path) in [
+        ("codex", Some(staged.codex_bin.as_path())),
+        ("esbuild", staged.esbuild_bin.as_deref()),
+    ] {
+        match path {
+            Some(p) if is_executable(p) => {}
+            Some(p) => bail!(
+                "runtime installed but the {label} entry is missing or not executable at {} \
                  (the pinned package layout may have changed)",
                 p.display()
-            );
+            ),
+            None => bail!("runtime installed but no {label} path was resolved"),
         }
     }
 
@@ -431,56 +395,51 @@ async fn install(target: &Path) -> anyhow::Result<ResolvedRuntime> {
     resolve(target)
 }
 
-/// Build absolute paths from an installed (or reused) target dir.
+/// Build absolute paths from an installed (or reused) target dir. Errors when the
+/// codex binary can't be found under it, so a corrupt or layout-changed tree reports
+/// itself here rather than as a spawn failure much later.
 fn resolve(target: &Path) -> anyhow::Result<ResolvedRuntime> {
-    let node_modules = target.join(NODE_MODULES_REL);
+    let codex_dir = target.join("codex");
+    let codex_bin = codex_bin_in(&codex_dir).ok_or_else(|| {
+        anyhow!(
+            "no codex binary under {} (expected vendor/<target>/bin/codex — \
+             the pinned package layout may have changed)",
+            codex_dir.display()
+        )
+    })?;
     Ok(ResolvedRuntime {
-        node_bin: node_bin_in(&target.join("node")),
-        codex_bin: codex_bin_in(&node_modules),
-        node_modules: Some(node_modules),
+        codex_bin,
+        esbuild_bin: Some(target.join("esbuild").join(esbuild_rel())),
         origin: "managed",
     })
 }
 
-/// The native `codex` inside an installed `node_modules`.
+/// The native `codex` inside an extracted platform package.
 ///
-/// `@openai/codex` is a thin JS launcher; the executable lives in a platform package
-/// (`@openai/codex-darwin-arm64`) under `vendor/<rust-target>/bin/codex`. We spawn the
-/// native binary rather than the launcher: it saves a node startup on every session
-/// spawn, and it keeps `codex` working regardless of what `node` the child's PATH
-/// happens to resolve.
+/// The executable lives at `vendor/<rust-target>/bin/codex` — and the rest of that
+/// `vendor/<rust-target>/` directory is not incidental: codex ships `rg`, a `zsh`, and
+/// (on Linux) `bwrap` beside the binary and finds them by relative path. That is why we
+/// extract the whole package rather than cherry-picking one file out of the tarball.
 ///
-/// The two directory names use *different* naming schemes — npm's `darwin-arm64` and
-/// Rust's `aarch64-apple-darwin` — so both are found by search rather than by a mapping
-/// table we would have to keep correct for five platforms. `npm ci` honours `os`/`cpu`
-/// and installs exactly the one platform package for this host, so the search has one
-/// candidate by construction. Falls back to the launcher path if the layout is
-/// unfamiliar, so the caller's existence check reports a real path.
-fn codex_bin_in(node_modules: &Path) -> PathBuf {
-    let exe = if cfg!(target_os = "windows") { "codex.exe" } else { "codex" };
-    let launcher = node_modules.join("@openai/codex/bin/codex.js");
-
-    let Ok(entries) = std::fs::read_dir(node_modules.join("@openai")) else {
-        return launcher;
+/// The vendor directory is named with a Rust target triple (`aarch64-apple-darwin`)
+/// while the package it came from is named the npm way (`darwin-arm64`), so the binary
+/// is found by search rather than by a mapping table we would have to keep correct for
+/// six platforms. The tarball is this host's by construction, so the search has exactly
+/// one candidate.
+fn codex_bin_in(codex_dir: &Path) -> Option<PathBuf> {
+    let exe = if cfg!(target_os = "windows") {
+        "codex.exe"
+    } else {
+        "codex"
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !name.starts_with("codex-") {
-            continue;
-        }
-        let vendor = entry.path().join("vendor");
-        let Ok(targets) = std::fs::read_dir(&vendor) else {
-            continue;
-        };
-        for target in targets.flatten() {
-            let candidate = target.path().join("bin").join(exe);
-            if candidate.is_file() {
-                return candidate;
-            }
+    let targets = std::fs::read_dir(codex_dir.join("vendor")).ok()?;
+    for target in targets.flatten() {
+        let candidate = target.path().join("bin").join(exe);
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
-    launcher
+    None
 }
 
 /// Same as [`resolve`] but stamped `origin = "bundled"` — the layout of a
@@ -490,6 +449,76 @@ fn resolve_bundled(target: &Path) -> anyhow::Result<ResolvedRuntime> {
     let mut r = resolve(target)?;
     r.origin = "bundled";
     Ok(r)
+}
+
+/// Registry URL for the `codex` platform tarball.
+///
+/// The per-platform packages are npm *aliases*: `@openai/codex-darwin-arm64` resolves
+/// to `npm:@openai/codex@<version>-darwin-arm64` — the same package name under a
+/// platform-suffixed *version*, not a package of its own. So the host tokens belong in
+/// the version, and there is one package to know about rather than six.
+fn codex_tarball_url(os: &str, arch: &str) -> String {
+    format!("{NPM_REGISTRY}/@openai/codex/-/codex-{CODEX_VERSION}-{os}-{arch}.tgz")
+}
+
+/// Registry URL for the `esbuild` platform tarball. Unlike codex's, these are genuinely
+/// separate scoped packages (`@esbuild/darwin-arm64`) at the plain version — and a
+/// scoped package's tarball path drops the scope.
+fn esbuild_tarball_url(os: &str, arch: &str) -> String {
+    format!("{NPM_REGISTRY}/@esbuild/{os}-{arch}/-/{os}-{arch}-{ESBUILD_VERSION}.tgz")
+}
+
+/// Download an npm package tarball and extract it into `dir`.
+///
+/// An npm tarball is a gzipped tar whose every entry sits under a single `package/`
+/// root, so `--strip-components=1` lands the package's own contents directly in `dir`.
+/// Extraction goes through the system `tar`, which handles symlinks, hardlinks and the
+/// execute bits correctly and exists on all three supported platforms (`-xf` without
+/// `z` lets it auto-detect the gzip, matching how the browser install invokes it).
+async fn fetch_npm_package(url: &str, dir: &Path, label: &str) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(dir)
+        .await
+        .with_context(|| format!("creating {}", dir.display()))?;
+
+    tracing::debug!(%url, %label, "downloading npm package tarball");
+    let client = crate::net::http_client();
+    let bytes = with_heartbeat(
+        crate::net::with_retries(label, || fetch_url_bytes(&client, url)),
+        &format!("…still downloading {label}"),
+    )
+    .await?;
+
+    // Beside the destination rather than inside it, so a failed extraction can't leave
+    // the archive behind in a tree we go on to publish. Built by *appending* `.tgz`
+    // rather than `with_extension`, which would treat the pid in `.esbuild.tmp.<pid>`
+    // as an extension and replace it — collapsing two concurrent installs onto one
+    // archive path.
+    let archive = {
+        let name = dir
+            .file_name()
+            .ok_or_else(|| anyhow!("{} has no file name to derive an archive from", dir.display()))?;
+        let mut name = name.to_os_string();
+        name.push(".tgz");
+        dir.with_file_name(name)
+    };
+    tokio::fs::write(&archive, &bytes)
+        .await
+        .with_context(|| format!("writing {}", archive.display()))?;
+
+    let status = Command::new("tar")
+        .arg("-xf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(dir)
+        .arg("--strip-components=1")
+        .status()
+        .await
+        .with_context(|| format!("running `tar` to extract {label} (is `tar` installed?)"))?;
+    let _ = tokio::fs::remove_file(&archive).await;
+    if !status.success() {
+        bail!("`tar` failed to extract the {label} package from {url}");
+    }
+    Ok(())
 }
 
 /// GET `url` and buffer the whole body through the shared timeout client, so a
@@ -511,150 +540,30 @@ pub(crate) async fn fetch_url_bytes(
         .with_context(|| format!("reading the download body from {url}"))
 }
 
-/// Download the pinned Node release and extract it into `<dir>/node`, returning
-/// the path to its `node` binary. Uses the system `tar` (handles strip, symlinks,
-/// hardlinks, and permissions correctly; on Windows 10+ the bundled bsdtar
-/// auto-detects the `.zip` Node ships there).
-async fn fetch_node(dir: &Path) -> anyhow::Result<PathBuf> {
-    let (os, arch) = node_target()?;
-    let ext = if cfg!(target_os = "windows") {
-        "zip"
-    } else {
-        "tar.gz"
-    };
-    let stem = format!("node-v{NODE_VERSION}-{}-{arch}", node_dist_os(os));
-    let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/{stem}.{ext}");
-
-    let node_dir = dir.join("node");
-    tokio::fs::create_dir_all(&node_dir)
-        .await
-        .with_context(|| format!("creating {}", node_dir.display()))?;
-
-    hint(&format!(
-        "first run — downloading Node {NODE_VERSION} (~30 MB)…"
-    ));
-    tracing::debug!(%url, "downloading Node");
-    let client = crate::net::http_client();
-    let bytes = crate::net::with_retries("node", || fetch_url_bytes(&client, url.as_str())).await?;
-
-    let archive = dir.join(format!("node.{ext}"));
-    tokio::fs::write(&archive, &bytes)
-        .await
-        .with_context(|| format!("writing {}", archive.display()))?;
-
-    // Strip the leading `node-v.../` component so paths land directly in node/.
-    // `-xf` (no `z`) lets tar auto-detect the format — gzip on unix, zip under
-    // Windows' bsdtar — so one command serves both archives.
-    let status = Command::new("tar")
-        .arg("-xf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&node_dir)
-        .arg("--strip-components=1")
-        .status()
-        .await
-        .context("running `tar` to extract Node (is `tar` installed?)")?;
-    if !status.success() {
-        bail!("`tar` failed to extract {}", archive.display());
-    }
-    let _ = tokio::fs::remove_file(&archive).await;
-
-    let node_bin = node_bin_in(&node_dir);
-    if !is_executable(&node_bin) {
-        bail!(
-            "Node extracted but `{}` is missing or not executable",
-            node_bin.display()
-        );
-    }
-    Ok(node_bin)
-}
-
-/// `npm ci --omit=dev` the committed lockfile into `<dir>/adapter`, driving npm
-/// via `node <npm-cli.js>` so the freshly-downloaded Node (not on PATH) runs it.
-async fn npm_ci(node_bin: &Path, dir: &Path) -> anyhow::Result<()> {
-    let adapter = dir.join("adapter");
-    tokio::fs::create_dir_all(&adapter)
-        .await
-        .with_context(|| format!("creating {}", adapter.display()))?;
-    tokio::fs::write(adapter.join("package.json"), PACKAGE_JSON)
-        .await
-        .context("writing package.json")?;
-    tokio::fs::write(adapter.join("package-lock.json"), PACKAGE_LOCK)
-        .await
-        .context("writing package-lock.json")?;
-
-    let npm_cli = npm_cli_for(node_bin)
-        .with_context(|| format!("locating npm bundled with {}", node_bin.display()))?;
-
-    hint("first run — installing the codex runtime (this can take a minute)…");
-    let mut cmd = Command::new(node_bin);
-    cmd.arg(&npm_cli)
-        .arg("ci")
-        .arg("--omit=dev")
-        .current_dir(&adapter)
-        .env("npm_config_fund", "false")
-        .env("npm_config_audit", "false")
-        .env("npm_config_update_notifier", "false");
-
-    let out = run_with_heartbeat(cmd, "…still installing")
-        .await
-        .context("running npm ci")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        bail!("npm ci failed:\n{}", stderr.trim());
-    }
-    Ok(())
-}
-
-/// Locate `npm-cli.js` bundled with a `node` binary. The npm tree sits beside the
-/// binary: `<prefix>/lib/node_modules/npm` on unix (binary at `<prefix>/bin/node`),
-/// and `<dir>/node_modules/npm` on Windows (binary at `<dir>/node.exe`).
-fn npm_cli_for(node_bin: &Path) -> Option<PathBuf> {
-    let cli = if cfg!(target_os = "windows") {
-        node_bin.parent()?.join("node_modules/npm/bin/npm-cli.js")
-    } else {
-        node_bin
-            .parent()?
-            .parent()?
-            .join("lib/node_modules/npm/bin/npm-cli.js")
-    };
-    cli.exists().then_some(cli)
-}
-
-/// Run a command to completion, capturing output, and print `slow_hint` every
-/// 15s so a long install doesn't look hung.
-async fn run_with_heartbeat(
-    mut cmd: Command,
-    slow_hint: &str,
-) -> anyhow::Result<std::process::Output> {
-    let fut = cmd.output();
+/// Await `fut`, printing `slow_hint` every 15s so a long download doesn't look hung.
+async fn with_heartbeat<T>(fut: impl Future<Output = T>, slow_hint: &str) -> T {
     tokio::pin!(fut);
     let mut ticker = tokio::time::interval(Duration::from_secs(15));
     ticker.tick().await; // consume the immediate first tick
     loop {
         tokio::select! {
-            res = &mut fut => return Ok(res?),
+            res = &mut fut => return res,
             _ = ticker.tick() => hint(slow_hint),
         }
     }
 }
 
-/// Map the host to the **npm platform-package** naming used by the deps we
-/// resolve: the esbuild platform package (`@esbuild/<os>-<arch>`) and codex's
-/// (`@openai/codex-<os>-<arch>`) — see `crate::mind::views`. `Err` on platforms we
+/// Map the host to the **npm platform token** pair used by the packages we fetch —
+/// `@esbuild/<os>-<arch>` and codex's `<version>-<os>-<arch>`. `Err` on platforms we
 /// don't auto-install.
-///
-/// nodejs.org's *download* naming agrees with this except on Windows, where the
-/// npm token is `win32` but the Node release archive uses `win`; [`node_dist_os`]
-/// bridges that for [`fetch_node`].
-pub(crate) fn node_target() -> anyhow::Result<(&'static str, &'static str)> {
+pub(crate) fn npm_target() -> anyhow::Result<(&'static str, &'static str)> {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         "linux" => "linux",
         "windows" => "win32",
         other => bail!(
             "runtime auto-install supports macOS, Linux, and Windows only (OS `{other}`). \
-             Install node and codex on your PATH to use the system runtime instead."
+             Install codex on your PATH to use the system runtime instead."
         ),
     };
     let arch = match std::env::consts::ARCH {
@@ -662,40 +571,20 @@ pub(crate) fn node_target() -> anyhow::Result<(&'static str, &'static str)> {
         "aarch64" => "arm64",
         other => bail!(
             "runtime auto-install supports x86_64 and aarch64 only (arch `{other}`). \
-             Install node and codex on your PATH to use the system runtime instead."
+             Install codex on your PATH to use the system runtime instead."
         ),
     };
     Ok((os, arch))
 }
 
-/// nodejs.org dist OS token for an npm OS token. Identical except Windows, where
-/// the Node release archive uses `win` while the npm packages use `win32`.
-fn node_dist_os(npm_os: &str) -> &str {
-    match npm_os {
-        "win32" => "win",
-        other => other,
-    }
-}
-
-/// The `node` binary's path within an extracted Node tree: `node.exe` at the root
-/// on Windows, `bin/node` on unix.
-fn node_bin_in(node_dir: &Path) -> PathBuf {
+/// Path of the esbuild native binary within an extracted `@esbuild/<plat>` package. On
+/// Windows the package ships `esbuild.exe` at its root; on unix the binary lives under
+/// `bin/esbuild`.
+pub(crate) fn esbuild_rel() -> PathBuf {
     if cfg!(target_os = "windows") {
-        node_dir.join("node.exe")
+        PathBuf::from("esbuild.exe")
     } else {
-        node_dir.join("bin").join("node")
-    }
-}
-
-/// Path of the esbuild native binary *inside a `node_modules`* for this host. On
-/// Windows the `@esbuild/<plat>` package ships `esbuild.exe` at its root; on unix
-/// the binary lives under `bin/esbuild`.
-fn esbuild_rel_in_node_modules(os: &str, arch: &str) -> PathBuf {
-    let pkg = PathBuf::from("@esbuild").join(format!("{os}-{arch}"));
-    if cfg!(target_os = "windows") {
-        pkg.join("esbuild.exe")
-    } else {
-        pkg.join("bin").join("esbuild")
+        PathBuf::from("bin").join("esbuild")
     }
 }
 
@@ -716,11 +605,12 @@ pub(crate) fn is_executable(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
 }
 
-/// Use the system's tools when it offers both: `node` and `codex` on `PATH`.
-/// All-or-nothing — returns `None` if either is missing, so we never pair a system
-/// tool with a managed one.
+/// Use the system's `codex` when it offers a pin-matching one.
+///
+/// This used to require node *and* codex, all-or-nothing, so a system tool was never
+/// paired with a managed one. With node gone there is only one tool left to find, and
+/// esbuild is provisioned independently either way.
 fn resolve_system() -> Option<ResolvedRuntime> {
-    let node_bin = find_on_path("node")?;
     let codex_bin = resolve_codex_bin()?;
 
     // A `codex` on `PATH` whose version differs from our pin is a trap: the app-server
@@ -741,15 +631,10 @@ fn resolve_system() -> Option<ResolvedRuntime> {
         return None;
     }
 
-    tracing::debug!(
-        node = %node_bin.display(),
-        codex = %codex_bin.display(),
-        "using system runtime from PATH",
-    );
+    tracing::debug!(codex = %codex_bin.display(), "using system runtime from PATH");
     Some(ResolvedRuntime {
-        node_bin,
         codex_bin,
-        node_modules: None,
+        esbuild_bin: None,
         origin: "system",
     })
 }
@@ -760,7 +645,10 @@ fn resolve_system() -> Option<ResolvedRuntime> {
 /// the caller treats "unknown" as "don't reject". Blocking on purpose — this runs once
 /// during startup resolution, before the async runtime has any work to do.
 fn codex_version_on_path(codex_bin: &Path) -> Option<String> {
-    let out = std::process::Command::new(codex_bin).arg("--version").output().ok()?;
+    let out = std::process::Command::new(codex_bin)
+        .arg("--version")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -770,7 +658,7 @@ fn codex_version_on_path(codex_bin: &Path) -> Option<String> {
 
 /// Find an executable named `name` on `PATH`, returning the first match. On
 /// Windows, where executables carry an extension, each `PATHEXT` suffix is also
-/// tried, so a bare `node` finds `node.exe` and `codex` finds `codex.cmd`.
+/// tried, so a bare `codex` finds `codex.cmd`.
 pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -873,89 +761,91 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_target_maps_known_hosts() {
+    fn npm_target_maps_known_hosts() {
         // Whatever host runs the test must be a supported target.
-        let (os, arch) = node_target().expect("test host should be a supported target");
+        let (os, arch) = npm_target().expect("test host should be a supported target");
         assert!(matches!(os, "darwin" | "linux" | "win32"));
         assert!(matches!(arch, "x64" | "arm64"));
     }
 
+    /// codex's platform packages are npm *aliases* onto a platform-suffixed version of
+    /// the single `@openai/codex` package, so the host tokens land in the version, not
+    /// in the package name; esbuild's are ordinary scoped packages, so they land in the
+    /// name. Confusing those two shapes is the whole risk of fetching tarballs
+    /// ourselves, so pin both spellings.
     #[test]
-    fn node_dist_os_bridges_windows_naming() {
-        // npm packages say `win32`; the nodejs.org download says `win`.
-        assert_eq!(node_dist_os("win32"), "win");
-        assert_eq!(node_dist_os("darwin"), "darwin");
-        assert_eq!(node_dist_os("linux"), "linux");
+    fn tarball_urls_match_the_registry_layout() {
+        assert_eq!(
+            codex_tarball_url("darwin", "arm64"),
+            format!(
+                "https://registry.npmjs.org/@openai/codex/-/codex-{CODEX_VERSION}-darwin-arm64.tgz"
+            )
+        );
+        assert_eq!(
+            esbuild_tarball_url("linux", "x64"),
+            format!(
+                "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-{ESBUILD_VERSION}.tgz"
+            )
+        );
     }
 
     #[test]
     fn esbuild_rel_uses_host_binary_layout() {
-        // The package dir is named by the (os, arch) args; the binary's location
-        // within it is the *host's* layout (esbuild.exe at root on Windows,
-        // bin/esbuild on unix), since the standalone esbuild is for this host.
-        let rel = esbuild_rel_in_node_modules("darwin", "arm64");
-        assert!(rel.starts_with("@esbuild"));
+        // esbuild.exe at the package root on Windows, bin/esbuild on unix.
         #[cfg(not(target_os = "windows"))]
-        assert!(rel.ends_with("bin/esbuild"));
+        assert!(esbuild_rel().ends_with("bin/esbuild"));
         #[cfg(target_os = "windows")]
-        assert!(rel.ends_with("esbuild.exe"));
+        assert!(esbuild_rel().ends_with("esbuild.exe"));
+    }
+
+    /// The binary sits under a directory named with a Rust target triple, inside a
+    /// package named the npm way — which is exactly why it is found by search instead
+    /// of a per-platform mapping table.
+    #[test]
+    fn codex_path_finds_the_native_binary_under_vendor() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_dir = dir.path().join("codex");
+        let exe = if cfg!(target_os = "windows") {
+            "codex.exe"
+        } else {
+            "codex"
+        };
+        let vendor = codex_dir.join("vendor/aarch64-apple-darwin/bin");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join(exe), b"").unwrap();
+
+        assert_eq!(codex_bin_in(&codex_dir), Some(vendor.join(exe)));
+    }
+
+    /// With no extracted tree to search there is no plausible-looking path to invent,
+    /// so the answer is `None` and `resolve` turns it into a message naming the dir.
+    #[test]
+    fn codex_path_is_none_when_the_tree_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(codex_bin_in(&dir.path().join("codex")), None);
+        let err = resolve(dir.path()).unwrap_err().to_string();
+        assert!(err.contains("no codex binary under"), "{err}");
     }
 
     #[test]
     fn resolve_builds_expected_paths() {
-        let r = resolve(Path::new("/cache/runtimeX")).unwrap();
-        assert_eq!(r.origin, "managed");
-        assert_eq!(
-            r.node_modules.as_deref(),
-            Some(Path::new("/cache/runtimeX/adapter/node_modules"))
-        );
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert_eq!(r.node_bin, Path::new("/cache/runtimeX/node/bin/node"));
-            assert_eq!(r.node_bin_dir(), Path::new("/cache/runtimeX/node/bin"));
-        }
-        #[cfg(target_os = "windows")]
-        {
-            assert!(r.node_bin.ends_with("node/node.exe"));
-            assert!(r.node_bin_dir().ends_with("runtimeX/node"));
-        }
-    }
-
-    /// With no installed tree to search, the codex path falls back to the JS launcher
-    /// rather than to a plausible-looking path that does not exist. The caller checks
-    /// existence and reports it, so a wrong-but-real path is the honest answer.
-    #[test]
-    fn codex_path_falls_back_to_the_launcher_when_the_tree_is_absent() {
-        let bin = codex_bin_in(Path::new("/cache/runtimeX/adapter/node_modules"));
-        assert!(bin.ends_with("@openai/codex/bin/codex.js"), "{}", bin.display());
-    }
-
-    /// The native binary sits two differently-named directories deep — npm's
-    /// `codex-darwin-arm64` and Rust's `aarch64-apple-darwin` — which is exactly why it
-    /// is found by search instead of a per-platform mapping table.
-    #[test]
-    fn codex_path_finds_the_native_binary_in_a_platform_package() {
         let dir = tempfile::tempdir().unwrap();
-        let nm = dir.path().join("node_modules");
-        let exe = if cfg!(target_os = "windows") { "codex.exe" } else { "codex" };
-        let vendor = nm.join("@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin");
+        let exe = if cfg!(target_os = "windows") {
+            "codex.exe"
+        } else {
+            "codex"
+        };
+        let vendor = dir.path().join("codex/vendor/x86_64-unknown-linux-musl/bin");
         std::fs::create_dir_all(&vendor).unwrap();
         std::fs::write(vendor.join(exe), b"").unwrap();
-        // A sibling launcher package exists too, and must not win.
-        std::fs::create_dir_all(nm.join("@openai/codex/bin")).unwrap();
-        std::fs::write(nm.join("@openai/codex/bin/codex.js"), b"").unwrap();
 
-        assert_eq!(codex_bin_in(&nm), vendor.join(exe));
-    }
-
-    #[test]
-    fn app_bundle_paths_are_recognized_as_shims() {
-        assert!(is_app_bundle_path(Path::new(
-            "/Applications/cmux.app/Contents/Resources/bin/codex"
-        )));
-        assert!(!is_app_bundle_path(Path::new("/Users/me/.local/bin/codex")));
-        assert!(!is_app_bundle_path(Path::new("/opt/homebrew/bin/codex")));
+        let r = resolve(dir.path()).unwrap();
+        assert_eq!(r.origin, "managed");
+        assert_eq!(r.codex_bin, vendor.join(exe));
+        assert_eq!(
+            r.esbuild_bin,
+            Some(dir.path().join("esbuild").join(esbuild_rel()))
+        );
     }
 
     #[test]
@@ -968,14 +858,14 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_reacts_to_lockfile_changes() {
+    fn fingerprint_reacts_to_version_changes() {
         // Same hash construction as `runtime_fingerprint`, exercised over two
-        // inputs to prove a changed lockfile yields a different dir.
-        fn fp(node: &str, lock: &str) -> String {
+        // inputs to prove a changed pin yields a different dir.
+        fn fp(codex: &str, esbuild: &str) -> String {
             const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
             const PRIME: u64 = 0x0000_0100_0000_01b3;
             let mut h = OFFSET;
-            for part in [node.as_bytes(), b"\0", lock.as_bytes()] {
+            for part in [codex.as_bytes(), b"\0", esbuild.as_bytes()] {
                 for &b in part {
                     h ^= b as u64;
                     h = h.wrapping_mul(PRIME);
@@ -983,10 +873,19 @@ mod tests {
             }
             format!("{h:016x}")
         }
-        assert_ne!(fp("22.14.0", "{a}"), fp("22.14.0", "{b}"));
-        assert_ne!(fp("22.14.0", "{a}"), fp("24.0.0", "{a}"));
+        assert_ne!(fp("0.144.1", "0.28.1"), fp("0.146.0", "0.28.1"));
+        assert_ne!(fp("0.144.1", "0.28.1"), fp("0.144.1", "0.29.0"));
         // The NUL boundary makes the split unambiguous.
         assert_ne!(fp("ab", "c"), fp("a", "bc"));
+    }
+
+    #[test]
+    fn app_bundle_paths_are_recognized_as_shims() {
+        assert!(is_app_bundle_path(Path::new(
+            "/Applications/cmux.app/Contents/Resources/bin/codex"
+        )));
+        assert!(!is_app_bundle_path(Path::new("/Users/me/.local/bin/codex")));
+        assert!(!is_app_bundle_path(Path::new("/opt/homebrew/bin/codex")));
     }
 
     #[test]

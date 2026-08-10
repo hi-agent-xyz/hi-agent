@@ -1,16 +1,20 @@
 # Pinned runtime versions, read at build time by build.rs and stamped into the
-# binary as the HI_AGENT_* env vars (surfaced by `--version`). The Node download
-# URL is derived from node_version in src/runtime/mod.rs; the codex tree is pinned
-# by the committed package.json + package-lock.json alongside this file.
+# binary as the HI_AGENT_* env vars (surfaced by `--version`). Each one also derives
+# a download URL in src/runtime/ — every component is a native binary fetched as a
+# tarball, so these versions are the whole pin. There is no lockfile and no npm.
 #
-# The install dir is keyed by `runtime_fingerprint()` (node_version + the
-# lockfile), so bumping a pin lands in a fresh dir, reinstalls on next run, and
-# sweeps the previous pin's dir away — no manual cleanup needed.
-node_version    = "22.14.0"
+# The install dir is keyed by `runtime_fingerprint()` (codex_version +
+# esbuild_version), so bumping a pin lands in a fresh dir, reinstalls on next run,
+# and sweeps the previous pin's dir away — no manual cleanup needed.
+#
 # The `codex` CLI, whose `app-server` subcommand is the agent wire. Bumping this is
 # a protocol change, not a patch: 0.144 rejects the camelCase sandbox spelling that
 # later docs show, so re-run the app-server spike before moving it.
 codex_version   = "0.144.1"
+# esbuild, hi-agent's own view compiler — it turns agent-written component source
+# into ESM and has nothing to do with the agent. Fetched from the npm registry as
+# @esbuild/<os>-<arch>, which ships the native Go binary and no JS.
+esbuild_version = "0.28.1"
 # Headless browser for the view render pipeline (see src/runtime/browser.rs). A
 # Chrome-for-Testing `chrome-headless-shell` build, downloaded per-host from
 # storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/. Only

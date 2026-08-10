@@ -239,10 +239,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // lazily, one per session (Chrome-style isolation); the pinned runtime and managed
     // env are shared by all. The child reaches the upstream LLM directly (no local
     // proxy), over the provider its thread config names.
-    let mut child_env =
-        config
-            .agent
-            .child_env(config.port, &codex_home, runtime.node_bin_dir());
+    let mut child_env = config.agent.child_env(config.port, &codex_home);
     // Sessions read their own prompt back from <prompts>/ at open; hand them the
     // absolute dir the same way workers already get HI_AGENT_BASE_URL.
     child_env.push((
@@ -264,13 +261,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             cwd = ?std::env::current_dir().ok(),
             runtime_origin = runtime.origin,
             codex_bin = %runtime.codex_bin.display(),
-            node_bin = %runtime.node_bin.display(),
             codex_home = %codex_home.display(),
             upstream_base_url = %config.agent.upstream_base_url,
             model = ?config.agent.model,
             // A tail, not the key: enough to tell two credentials apart in a log.
             auth_token_fp = &key[key.len().saturating_sub(20)..],
-            path_head = child_env.iter().find(|(n, _)| n == "PATH").map(|(_, v)| v.split(':').next().unwrap_or("")).unwrap_or(""),
             "child auth/runtime env resolved"
         );
     }

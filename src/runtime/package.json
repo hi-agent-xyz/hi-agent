@@ -1,8 +1,0 @@
-{
-  "name": "hi-agent-runtime",
-  "private": true,
-  "dependencies": {
-    "@openai/codex": "0.144.1",
-    "esbuild": "0.28.1"
-  }
-}

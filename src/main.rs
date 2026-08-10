@@ -42,8 +42,8 @@ struct Cli {
 fn version_string() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
-        " (node ", env!("HI_AGENT_NODE_VERSION"),
-        "; codex ", env!("HI_AGENT_CODEX_VERSION"),
+        " (codex ", env!("HI_AGENT_CODEX_VERSION"),
+        "; esbuild ", env!("HI_AGENT_ESBUILD_VERSION"),
         "; chrome ", env!("HI_AGENT_CHROME_VERSION"), ")"
     )
 }

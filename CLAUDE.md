@@ -50,7 +50,9 @@ The app targets two install shapes:
 1. **Docker on a server** — `make docker` builds the image; users run it server-side.
 2. **Bundled desktop app** (e.g. macOS) — a packaged native install for the desktop. _Desktop bundling is not wired up in-repo yet (no Tauri/Electron)._
 
-The managed runtime (Node + codex + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. On a dev box with `node` + `codex` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)). Node is only esbuild's host: the agent is `codex app-server`, a native binary hi-agent talks JSON-RPC to over stdio.
+The managed runtime (codex + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. Both are native binaries that merely ship through the npm registry, so provisioning is an HTTPS GET of each platform tarball plus `tar -x` — **there is no Node and no npm** in this path. On a dev box with a pin-matching `codex` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)). The agent is `codex app-server`, a native binary hi-agent talks JSON-RPC to over stdio.
+
+(Node is still a *build-time* dev dependency for the web SPA — `make build` runs `npm ci` in `src/appearance/web`. That is unrelated to what an end user's machine downloads at runtime.)
 
 ## macOS entry shape (tray vs. headless)
 
@@ -93,7 +95,7 @@ The engine's outbound API grows from config CRUD into a **bidirectional perceive
 
 - **Engine = POSIX-only, no TCC.** Runs as the same UID as the shell, so it inherits plain file access (its data dir, user-chosen paths) for free. It requires *nothing* TCC-gated — the split is load-bearing, TCC inheritance is not.
 - **Shell holds all TCC grants** (Screen Recording, Accessibility, Camera, Microphone, protected folders) and brokers them over the API.
-- **Bundle + co-sign the engine inside the `.app`** (same pattern already used for node/codex/ffmpeg; mandatory for Developer-ID notarization anyway). Spawn it by **bundle-relative path** (not the OS-cache auto-install path the runtime uses) so it launches under the app's responsible-process — free TCC inheritance *if ever needed*, as a safety margin, not a dependency.
+- **Bundle + co-sign the engine inside the `.app`** (same pattern already used for codex/esbuild/ffmpeg; mandatory for Developer-ID notarization anyway). Spawn it by **bundle-relative path** (not the OS-cache auto-install path the runtime uses) so it launches under the app's responsible-process — free TCC inheritance *if ever needed*, as a safety margin, not a dependency.
 - **Mic capture → shell** (resolves the one open item): keeps the engine 100% TCC-free rather than dragging a Microphone grant into it. `cpal`-in-engine was the only capability that could have stayed; the permission story tips it to the shell.
 
 ### Sequencing — two phases, don't flip ownership first

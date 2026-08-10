@@ -87,7 +87,7 @@ trap cleanup INT TERM EXIT
 #      terminal (which has no usage strings) and the request hangs forever. A
 #      LaunchServices launch (double-clicking a .app) is its own responsible
 #      process; to get the same effect while still running under cargo-watch (and
-#      keeping the shell's PATH so node/codex resolve), the binary re-execs itself
+#      keeping the shell's PATH so a system codex resolves), the binary re-execs itself
 #      disclaiming responsibility when it sees HI_AGENT_DISCLAIM=1, set below.
 #      See reexec_disclaiming_responsibility() in src/main.rs.
 #

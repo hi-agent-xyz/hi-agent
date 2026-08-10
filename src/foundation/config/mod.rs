@@ -310,26 +310,27 @@ impl AgentConfig {
     }
 
     /// Build the **static** env var pairs for the codex child process — everything fixed
-    /// for the process lifetime (the server URL, codex's home, PATH). The volatile
-    /// upstream credential comes from [`auth_child_env`](Self::auth_child_env),
-    /// re-resolved per spawn and merged in by the agent layer, so a fresh child never
-    /// carries a stale key.
+    /// for the process lifetime (the server URL, codex's home). The volatile upstream
+    /// credential comes from [`auth_child_env`](Self::auth_child_env), re-resolved per
+    /// spawn and merged in by the agent layer, so a fresh child never carries a stale
+    /// key.
     ///
     /// `server_port` is hi-agent's own HTTP port (handed to the child as
     /// `HI_AGENT_BASE_URL` so a session can reach the channels); `codex_home` is the
-    /// scratch dir codex keeps its own state in; `node_bin_dir` is the directory holding
-    /// the managed `node`.
+    /// scratch dir codex keeps its own state in.
+    ///
+    /// PATH is not among these: the child inherits ours untouched. It used to be
+    /// rewritten to prepend the managed `node` dir, back when the runtime downloaded a
+    /// Node to run `npm` with — a worker writing a throwaway script got that node for
+    /// free. Now that nothing here installs an interpreter, handing the agent a node
+    /// the user never installed would be inventing a capability rather than reflecting
+    /// one, so a worker sees exactly the toolchain the host actually has.
     ///
     /// Nothing about the model or provider is here any more — that all rides
     /// [`thread_config`](Self::thread_config) on `thread/start`. The env carries exactly
     /// two things the wire cannot: the secret, and where codex may scribble.
-    pub fn child_env(
-        &self,
-        server_port: u16,
-        codex_home: &Path,
-        node_bin_dir: &Path,
-    ) -> Vec<(String, String)> {
-        let mut env = vec![
+    pub fn child_env(&self, server_port: u16, codex_home: &Path) -> Vec<(String, String)> {
+        vec![
             (
                 ENV_SERVER_BASE_URL.to_string(),
                 format!("http://127.0.0.1:{server_port}"),
@@ -341,17 +342,7 @@ impl AgentConfig {
             // Nothing here may open a browser: an agent process that pops Safari during
             // an OAuth path would be a surprise on someone's desktop.
             ("NO_BROWSER".to_string(), "1".to_string()),
-        ];
-        // Prepend the managed node dir to PATH. The agent no longer needs node to *run*
-        // — codex is a native binary — but a worker that writes and runs a script still
-        // benefits from a node being there, and it is the one we control.
-        let sep = if cfg!(windows) { ';' } else { ':' };
-        let existing = std::env::var("PATH").unwrap_or_default();
-        env.push((
-            "PATH".to_string(),
-            format!("{}{sep}{existing}", node_bin_dir.to_string_lossy()),
-        ));
-        env
+        ]
     }
 }
 
@@ -475,16 +466,14 @@ mod tests {
             "https://x/v1".to_string(),
             "k".to_string(),
         );
-        let env = cfg.child_env(
-            8080,
-            std::path::Path::new("/data/codex-home"),
-            std::path::Path::new("/cache/runtime/node/bin"),
-        );
+        let env = cfg.child_env(8080, std::path::Path::new("/data/codex-home"));
         let map: std::collections::HashMap<_, _> = env.into_iter().collect();
         assert_eq!(map["HI_AGENT_BASE_URL"], "http://127.0.0.1:8080");
         assert_eq!(map["CODEX_HOME"], "/data/codex-home");
         assert_eq!(map["NO_BROWSER"], "1");
-        assert!(map["PATH"].starts_with("/cache/runtime/node/bin"));
+        // PATH is inherited, not rewritten — we no longer install an interpreter to
+        // splice in front of the user's own toolchain.
+        assert!(!map.contains_key("PATH"));
         // The volatile credential is NOT frozen into the static env — it comes from
         // `auth_child_env`, re-resolved per session spawn.
         assert!(!map.contains_key(ENV_LLM_KEY));
