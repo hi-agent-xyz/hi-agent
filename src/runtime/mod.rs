@@ -54,7 +54,7 @@ pub mod browser;
 /// to reject a *different* `codex` found on `PATH`: a stray global install silently
 /// shadowing the pin is exactly the failure mode that wedged turns for minutes in the
 /// ACP era, and the app-server protocol still moves fast enough that a version we did
-/// not test is a real hazard (0.144 spells its sandbox modes kebab-case; the published
+/// not test is a real hazard (0.147 spells its sandbox modes kebab-case; the published
 /// docs for a later build show camelCase).
 const CODEX_VERSION: &str = env!("HI_AGENT_CODEX_VERSION");
 
@@ -614,7 +614,7 @@ fn resolve_system() -> Option<ResolvedRuntime> {
     let codex_bin = resolve_codex_bin()?;
 
     // A `codex` on `PATH` whose version differs from our pin is a trap: the app-server
-    // protocol is still moving (0.144 rejects the camelCase sandbox spelling that a
+    // protocol is still moving (0.147 rejects the camelCase sandbox spelling that a
     // later build's docs show), so an unpinned global install can fail in ways that look
     // like our bug. On a definite mismatch, skip the system runtime and fall through to
     // the managed install of the pinned version. A version we can't read is accepted —
@@ -641,7 +641,7 @@ fn resolve_system() -> Option<ResolvedRuntime> {
 
 /// Best-effort `codex --version`, reduced to the bare version string.
 ///
-/// The CLI prints `codex-cli 0.144.1`. Returns `None` if it can't be run or parsed, so
+/// The CLI prints `codex-cli 0.147.0`. Returns `None` if it can't be run or parsed, so
 /// the caller treats "unknown" as "don't reject". Blocking on purpose — this runs once
 /// during startup resolution, before the async runtime has any work to do.
 fn codex_version_on_path(codex_bin: &Path) -> Option<String> {

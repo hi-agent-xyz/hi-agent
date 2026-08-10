@@ -252,7 +252,9 @@ impl AgentConfig {
     /// arrives on the child's environment, so a thread config can be logged verbatim.
     ///
     /// Verified against `codex app-server` 0.144: a thread opened with these overrides
-    /// and an otherwise empty `CODEX_HOME` reaches the configured endpoint.
+    /// and an otherwise empty `CODEX_HOME` reaches the configured endpoint. Re-checked
+    /// on 0.147 at the bump — the thread still opens with this block; the endpoint leg
+    /// was not re-exercised.
     pub fn thread_config(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut config = serde_json::Map::new();
         if let Some(model) = &self.model {

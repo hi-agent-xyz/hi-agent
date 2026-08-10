@@ -249,7 +249,7 @@ impl AgentLayer {
 ///
 /// The shape is codex's, not ours, and it is picky: `permissions` is a **map of named
 /// profiles** and `default_permissions` is the string naming the one in force. The
-/// flatter spellings do not exist — the pinned 0.144.1 under `--strict-config` answers
+/// flatter spellings do not exist — 0.144.1 under `--strict-config` answers
 /// `unknown configuration field tools.default_tools_enabled`, and
 /// `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`.
 /// A profile that names no filesystem entries leaves filesystem access restricted,

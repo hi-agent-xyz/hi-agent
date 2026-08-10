@@ -8,9 +8,9 @@
 # and sweeps the previous pin's dir away — no manual cleanup needed.
 #
 # The `codex` CLI, whose `app-server` subcommand is the agent wire. Bumping this is
-# a protocol change, not a patch: 0.144 rejects the camelCase sandbox spelling that
-# later docs show, so re-run the app-server spike before moving it.
-codex_version   = "0.144.1"
+# a protocol change, not a patch: 0.147 still rejects the camelCase sandbox spelling
+# that the published docs show, so re-run the app-server spike before moving it.
+codex_version   = "0.147.0"
 # esbuild, hi-agent's own view compiler — it turns agent-written component source
 # into ESM and has nothing to do with the agent. Fetched from the npm registry as
 # @esbuild/<os>-<arch>, which ships the native Go binary and no JS.
