@@ -56,11 +56,17 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * **Every view owns the whole frame.** There is no host card, no region and no
  * size class to resolve: the server hands over at most two layers in z-order (the
  * agent's content, then the host's condition notice), and each gets the same
- * `.hi-view-fill` layer with its own background and layout. The frame's only
- * non-negotiable inset is the window chrome and the bottom band the caption dock
- * and controls float in, which `.hi-view-fill` supplies as padding — so a view
- * that lays out nothing of its own still lands legible and clear of the chrome,
- * while a background pinned at `inset: 0` still bleeds edge to edge.
+ * `.hi-view-fill` layer with its own layout. The frame's only non-negotiable inset
+ * is the window chrome and the bottom band the caption dock and controls float in,
+ * which `.hi-view-fill` supplies as padding — so a view that lays out nothing of
+ * its own still lands legible and clear of the chrome, while a background pinned
+ * at `inset: 0` still bleeds edge to edge.
+ *
+ * The layer also carries the ground (`--paper`, the presence's own), painted under
+ * that padding so it reaches the window edge. A themed view therefore paints no
+ * background at all; only a view with a palette that isn't the theme's brings one,
+ * and it pins it. The rule it replaces — every view paints its own flat `--bg-0` —
+ * is what put a lighter frame around the padding on the dark theme.
  */
 export function ViewSlot() {
   const { views } = useViews();

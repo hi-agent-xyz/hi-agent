@@ -74,8 +74,14 @@ export default function Welcome() {
 }
 
 const S = {
+  // Pinned to the layer's padding box, not flowed inside it: this poster brings its
+  // own fixed ground, and a fixed ground has to cover the frame — left in the flow it
+  // would paint only the padded content box and sit in a frame of the host's paper.
+  // Safe to cover: the strip is background-only, and the copy is centred well clear
+  // of it. A themed view does the opposite and simply stands on the paper.
   poster: {
-    position: "relative",
+    position: "absolute",
+    inset: 0,
     overflow: "hidden",
     boxSizing: "border-box",
     display: "flex",
@@ -83,9 +89,6 @@ const S = {
     alignItems: "center",
     justifyContent: "center",
     gap: 30,
-    width: "100%",
-    height: "100%",
-    minHeight: "100%",
     padding: "64px 32px 128px",
     background: "#fff8f3",
     fontFamily: "var(--font-display)",

@@ -19,7 +19,8 @@
 //! `--surface` / `--surface-strong` / `--surface-border`, `--line` / `--line-strong`,
 //! `--accent` (+ `-soft` / `-line` / `-wash`) and the second accent `--accent-2`,
 //! `--danger` (+ `-line` / `-wash`) for a destructive verb, `--shadow` / `--shadow-strong`
-//! (which are *colours*, not shadow lists), `--bg-0` / `--bg-1`, `--font-display` /
+//! (which are *colours*, not shadow lists), `--bg-0` / `--bg-1` and the ground they make
+//! (`--paper`, which the layer already paints for you), `--font-display` /
 //! `--font-mono`, the shared easing `--ease`, and the frame insets `--hi-safe-top` /
 //! `-right` / `-bottom` / `-left`. Do not invent a name: `var(--card,#fff)`
 //! reads like a token and is really a hardcoded white, which is how named people once went
@@ -77,9 +78,14 @@ const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
 /// The review surfaces: one per kind of thing the agent accumulates. Each owns the full
-/// canvas and provides its own background and scrolling; the *safe* insets are the host's
+/// canvas and provides its own scrolling; the *safe* insets are the host's
 /// (`.hi-view-fill` pads every layer clear of the window chrome and the control cluster),
-/// so a view never reads `--hi-safe-*` itself. What each one does still reserve is the
+/// so a view never reads `--hi-safe-*` itself. The *ground* is the host's too — the layer
+/// paints `--paper` under its own padding, so a themed surface paints no background at
+/// all rather than a flat `--bg-0` that stops at the padding and frames itself in the
+/// paper (a visible border across the titlebar strip and both gutters in dark, where
+/// `--bg-1` and `--bg-0` differ). A fixed-palette poster like `welcome` is the exception
+/// and covers the frame itself by pinning at `inset: 0`. What each one does still reserve is the
 /// bottom strip the caption pills rise through — deliberately unpadded by the host, since
 /// reserving it would cost every view a slice of frame — which is what the 128px of
 /// bottom padding in these files is for, on top of the host's own 76px.

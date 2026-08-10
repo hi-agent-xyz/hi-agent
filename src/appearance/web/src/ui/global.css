@@ -78,6 +78,27 @@
 
   --ease: cubic-bezier(0.22, 0.7, 0.2, 1);
 
+  /* ── The paper ─────────────────────────────────────────────────────────
+     The ground the whole face stands on, declared once and used by every layer
+     that covers the frame (the presence, and each view layer under whatever the
+     view paints on top). One ground everywhere is what makes the window read as
+     a single surface: the alternative — each layer picking its own flat colour —
+     is how a view ends up framed by a lighter border of the layer behind it.
+
+     Derived from the theme colours rather than restated per theme: the `var()`s
+     resolve against whichever `--bg-*` block is in force, so light and dark
+     follow for free.
+
+     The horizontal radius is deliberately huge (600%) so the top edge stays a
+     flat `--bg-1` across the full width — the vignette darkens only downward.
+     That keeps the strip directly under the native title bar uniformly `--bg-1`,
+     which the macOS window paints its flat titlebar to match (see
+     macos_window.rs::apply_face_theme). A tighter horizontal radius (the old
+     140%) let the top corners fade toward the darker `--bg-0`, leaving a faint
+     darker-at-the-ends seam under the bar in dark mode (invisible in light,
+     where --bg-0 == --bg-1 == white). */
+  --paper: radial-gradient(600% 120% at 50% 0%, var(--bg-1), var(--bg-0) 62%);
+
   /* ── Safe area: what the page may paint, but must not put content in ──
      The face window spans its own titlebar (`FullSizeContentView`, see
      macos_window.rs) so the paper paints the bar too — but the OS still floats
@@ -390,13 +411,8 @@ button {
    very faint state-glow breathing into it (colour set by data-state below). No
    canvas, no audio — a calm, matte, static skin.
 
-   The horizontal radius is deliberately huge (600%) so the top edge stays a flat
-   `--bg-1` across the full width — the vignette darkens only downward. That keeps
-   the strip directly under the native title bar uniformly `--bg-1`, which the macOS
-   window paints its flat titlebar to match (see macos_window.rs::apply_face_theme).
-   A tighter horizontal radius (the old 140%) let the top corners fade toward the
-   darker `--bg-0`, leaving a faint darker-at-the-ends seam under the bar in dark
-   mode (invisible in light, where --bg-0 == --bg-1 == white). */
+   It is `--paper` and nothing else — the same ground a view layer stands on, so
+   putting a view up changes what is *on* the paper, never the paper. */
 .hi-presence {
   position: absolute;
   inset: 0;
@@ -404,7 +420,7 @@ button {
   width: 100%;
   height: 100%;
   display: block;
-  background: radial-gradient(600% 120% at 50% 0%, var(--bg-1), var(--bg-0) 62%);
+  background: var(--paper);
 }
 
 /* The breathing state-glow ("watercolour") was removed: it was the only always-on
@@ -624,7 +640,18 @@ button {
    every edge the way the seamless window wants, while flowed content stays clear
    of the chrome. A view that absolutely-positions its *content* at `top:0` opts
    back out of this; the view-builder guide says to place with `var(--hi-safe-top)`
-   instead. */
+   instead.
+
+   The layer also brings its own `--paper`, the ground the presence stands on, and
+   that is what closes the frame. Padding is the trap here: a view that simply
+   paints `--bg-0` on its flowed root fills the *content* box, so the padding it
+   was given showed as a lighter border of the layer behind it — a hard-edged
+   frame across the top strip and both gutters, plain in dark (`--bg-1` vs
+   `--bg-0`) and invisible in light, where the two are the same white. Because the
+   layer's own background paints under its padding, the same paper now runs corner
+   to corner, and a themed view needs no ground of its own at all. A view with a
+   palette that isn't the theme's (a poster) still pins its background at
+   `inset: 0` to cover this one edge to edge. */
 .hi-view-fill {
   position: absolute;
   inset: 0;
@@ -632,6 +659,7 @@ button {
     max(20px, var(--hi-safe-right))
     calc(var(--hi-safe-bottom) + 76px)
     max(20px, var(--hi-safe-left));
+  background: var(--paper);
 }
 
 /* --- Keyboard fallback ------------------------------------------------

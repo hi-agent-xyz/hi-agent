@@ -154,12 +154,14 @@ export default function Upload() {
   );
 }
 
-// Full-canvas utility surface. The view owns its background and scrolling while
-// keeping the handoff controls at a readable working width.
+// Full-canvas utility surface. The ground is the host layer's paper (a themed
+// surface paints none of its own, or the padding it was handed shows as a frame);
+// the view owns its scrolling and keeps the handoff controls at a readable
+// working width.
 const S = {
   root: { width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
     display: "flex", flexDirection: "column", gap: 18,
-    padding: "36px clamp(20px,5vw,72px) 128px", background: "var(--bg-0)",
+    padding: "36px clamp(20px,5vw,72px) 128px",
     fontFamily: "var(--font-display)", color: "var(--fg)" },
   title: { width: "min(980px,100%)", margin: "0 auto", fontWeight: 800, fontSize: 28,
     lineHeight: 1.2, letterSpacing: 0, textAlign: "left" },

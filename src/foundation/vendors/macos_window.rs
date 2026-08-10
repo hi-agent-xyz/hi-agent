@@ -124,9 +124,10 @@ fn srgb(r: f64, g: f64, b: f64) -> Retained<NSColor> {
 /// The web view now paints the title-bar strip itself (it fills the whole window),
 /// so this background colour is only a fallback: it shows for the instant before the
 /// page first paints and along any edge a live resize briefly outruns the web view's
-/// repaint. It's matched to `--bg-1` — the page's colour at the top edge (`.hi-presence`
-/// is `--bg-1` at `50% 0%`) — so even that transient flash stays on-theme (light white
-/// `#ffffff`, dark espresso `#2b2720`). The title uses `--fg` (light ink `#3a352c`, dark
+/// repaint. It's matched to `--bg-1` — the page's colour at the top edge, where `--paper`
+/// is flat `--bg-1` — so even that transient flash stays on-theme (light white
+/// `#ffffff`, dark espresso `#2b2720`). That holds with a view on screen too: a view
+/// layer stands on the same paper. The title uses `--fg` (light ink `#3a352c`, dark
 /// ivory `#e8dfce`). Called at install and again on each open so a light/dark switch
 /// since the last open is picked up.
 fn apply_face_theme(window: &NSWindow, label: &NSTextField, data_dir: &Path) {

@@ -581,6 +581,9 @@ const CSS = `
     box-sizing: border-box;
   }
 
+  /* No ground of its own: the board stands on the layer's paper, which runs under
+     the safe padding to the window edge. A flat colour here would fill only the
+     padded content box and frame the board in the paper it doesn't match. */
   .hi-tasks {
     position: relative;
     width: 100%;
@@ -589,7 +592,6 @@ const CSS = `
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--bg-0);
     color: var(--fg);
     font-family: var(--font-display);
   }

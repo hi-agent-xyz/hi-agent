@@ -129,7 +129,7 @@ function firstSentence(s) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
+    padding: "28px clamp(20px,3vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   head: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 },
   h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0 },

@@ -206,9 +206,13 @@ is one idea — not a whole list crammed onto one slide. If the brief is a seque
 time; give each its own id.
 
 **You get the whole screen. Fill it.** Your view is the only one on it — the host
-puts up one view at a time, edge to edge, and paints nothing behind you. There is no
-card, no frame and no width cap to design around, and nothing to declare about
-placement: you own the background, the layout, and every pixel of a landscape frame.
+puts up one view at a time, edge to edge, and lays nothing behind you but the theme's
+own paper. There is no card, no frame and no width cap to design around, and nothing
+to declare about placement: you own the layout and every pixel of a landscape frame.
+
+The paper means a view built out of the theme tokens can simply stand on it and paint
+no background of its own — that is the seamless case, and it is one less thing to get
+right. Bring a ground only when your composition wants one that isn't the theme's.
 
 So compose for a full screen, not for a box that happens to be big. A page laid out as
 though it were still a card — a column of content stranded mid-screen with dead margins
@@ -230,10 +234,12 @@ floating *over* your view.
 
 The host pads the layer clear of the titlebar and of the control cluster, so ordinary
 flowed content is clear of *those* for free. A background is meant to bleed *through*
-the padding — pin one with `position: absolute; inset: 0` and it runs corner to corner
-as it should. But pinning readable content with `position: absolute/fixed; top: 0`
-escapes the padding and lands it under the traffic lights; pin to `var(--hi-safe-top)`
-instead.
+the padding — so if you bring one, pin it with `position: absolute; inset: 0` and it
+runs corner to corner as it should. Setting it on your flowed root instead paints only
+the padded box, and the paper around it reads as a frame you didn't draw: a hard line
+across the top strip and down both sides. But pinning readable *content* with
+`position: absolute/fixed; top: 0` escapes the padding and lands it under the traffic
+lights; pin that to `var(--hi-safe-top)` instead.
 
 The caption pills are the one thing no padding holds off you, deliberately: they carry
 their own dark scrim so they stay legible over anything, and reserving room for them

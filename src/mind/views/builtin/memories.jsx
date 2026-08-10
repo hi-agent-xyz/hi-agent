@@ -247,7 +247,7 @@ function short(iso) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "28px clamp(20px,3vw,44px) 128px", background: "var(--bg-0)",
+    padding: "28px clamp(20px,3vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   // Everything that responds to a click is a real <button>, so it is reachable by tab
   // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.

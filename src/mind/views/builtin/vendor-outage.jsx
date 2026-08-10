@@ -73,7 +73,6 @@ export default function OutOfEnergy() {
           place-items: center;
           padding: max(32px, var(--hi-safe-top)) max(24px, var(--hi-safe-right)) max(32px, var(--hi-safe-bottom)) max(24px, var(--hi-safe-left));
           color: var(--fg);
-          background: var(--bg-0);
           font-family: var(--font-display);
           text-align: center;
         }
