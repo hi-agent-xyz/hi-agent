@@ -48,7 +48,7 @@ use std::path::Path;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::foundation::codex::SessionOpts;
-use crate::foundation::agent::SessionRole;
+use crate::identity::Role;
 use crate::body::capabilities::{face, voiceprint};
 use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
@@ -184,7 +184,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
         .inner
         .agent
         .session(
-            SessionRole::Reflection,
+            Role::Reflection,
             Some(id),
             SessionOpts { system_prompt: Some(system_prompt), ..Default::default() },
         )

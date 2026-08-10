@@ -12,7 +12,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::{self, Stream};
 use serde::Serialize;
 
-use crate::foundation::registry::{self, Role, SessionId, Status};
+use crate::foundation::registry::{self, SessionId, Status};
+use crate::identity::Role;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct AgentActivity {
@@ -75,7 +76,7 @@ fn project(statuses: &[Status]) -> AgentActivity {
         .filter(active)
         .filter(|status| match status.role {
             Role::Deliberation | Role::Cognition => true,
-            Role::Worker => owner_chain_reaches(status.owner, &delegated_roots, &by_id),
+            Role::Worker(_) => owner_chain_reaches(status.owner, &delegated_roots, &by_id),
             Role::Reaction | Role::Reflection => false,
         })
         .count();
@@ -108,6 +109,7 @@ fn owner_chain_reaches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::WorkerType;
     use chrono::{TimeZone, Utc};
 
     fn status(
@@ -134,9 +136,9 @@ mod tests {
         let statuses = vec![
             status(1, Role::Reaction, None, true, false),
             status(2, Role::Deliberation, None, true, false),
-            status(3, Role::Worker, Some(2), true, false),
+            status(3, Role::Worker(WorkerType::General), Some(2), true, false),
             status(4, Role::Reflection, None, true, false),
-            status(5, Role::Worker, Some(4), true, false),
+            status(5, Role::Worker(WorkerType::General), Some(4), true, false),
         ];
 
         assert_eq!(
@@ -164,8 +166,8 @@ mod tests {
         let statuses = vec![
             status(1, Role::Reaction, None, false, false),
             status(2, Role::Deliberation, None, false, false),
-            status(3, Role::Worker, Some(2), false, false),
-            status(4, Role::Worker, Some(3), true, false),
+            status(3, Role::Worker(WorkerType::General), Some(2), false, false),
+            status(4, Role::Worker(WorkerType::General), Some(3), true, false),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);
@@ -176,7 +178,7 @@ mod tests {
         let statuses = vec![
             status(1, Role::Reaction, None, false, false),
             status(2, Role::Cognition, None, false, false),
-            status(3, Role::Worker, Some(2), true, false),
+            status(3, Role::Worker(WorkerType::General), Some(2), true, false),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);

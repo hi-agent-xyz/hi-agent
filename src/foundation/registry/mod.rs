@@ -19,6 +19,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
+
+use crate::identity::Role;
 use tokio::sync::{watch, Notify};
 
 
@@ -53,16 +55,16 @@ pub fn mint() -> SessionId {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Which rung a session is. Only [`Role::Worker`] is restricted here; the rest differ by
-/// prompt and tool surface, which are not this module's business.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    Reaction,
-    Deliberation,
-    Cognition,
-    Reflection,
-    Worker,
-}
+// Which role a session is running comes from [`crate::identity::Role`] — the one
+// namespace for all nine, rungs and worker types alike. This module kept its own
+// five-variant copy until now, on the reasoning that prompt and tool surface "are not
+// this module's business". They still aren't; the *identity* of the session is, because
+// routing turns on it (a worker may address only its owner) and `GET /api/workers`
+// reports it. Splitting the type is what left the switchboard unable to say which kind
+// of worker a session was.
+//
+// Only workers are restricted here. That predicate is [`Role::is_worker`], which stays
+// correct as worker types are added because they nest inside one variant.
 
 /// What happened to a message — **delivery, never a response.** `send` does not wait for
 /// the target to read, act, or agree; it reports whether the message reached a mailbox.
@@ -309,7 +311,7 @@ impl Registry {
 
             // A worker answers to whoever asked, and to nobody else.
             if let Some(sender) = map.get(&from)
-                && sender.role == Role::Worker
+                && sender.role.is_worker()
                 && sender.owner != Some(to)
             {
                 return Delivery::NotPermitted;
@@ -348,7 +350,7 @@ impl Registry {
         let mut out: Vec<(String, SessionId)> = Vec::new();
         match me.role {
             // Its owner, which the routing rule already limits it to.
-            Role::Worker => {
+            Role::Worker(_) => {
                 if let Some(owner) = me.owner {
                     out.push(("the session that asked for this work".to_string(), owner));
                 }
@@ -617,6 +619,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::WorkerType;
 
     fn reg() -> Registry {
         Registry::new()
@@ -627,7 +630,7 @@ mod tests {
         let r = reg();
         let (a, b) = (mint(), mint());
         r.register(a, Role::Cognition, None, "thinking".into());
-        r.register(b, Role::Worker, Some(a), "the errand".into());
+        r.register(b, Role::Worker(WorkerType::General), Some(a), "the errand".into());
 
         assert_eq!(r.send(a, b, "go".into()), Delivery::Delivered);
         let mail = r.take_pending(b).expect("delivered");
@@ -644,7 +647,7 @@ mod tests {
         let r = reg();
         let (a, b) = (mint(), mint());
         r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker, Some(a), String::new());
+        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new());
 
         r.send(a, b, "first".into());
         r.send(a, b, "second".into());
@@ -664,7 +667,7 @@ mod tests {
         let r = reg();
         let (a, b) = (mint(), mint());
         r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker, Some(a), String::new());
+        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new());
 
         // Mail present: it is taken, and the inbox stays open for more.
         r.send(a, b, "one more thing".into());
@@ -693,7 +696,7 @@ mod tests {
         let r = reg();
         let (owner, w) = (mint(), mint());
         r.register(owner, Role::Deliberation, None, String::new());
-        r.register(w, Role::Worker, Some(owner), String::new());
+        r.register(w, Role::Worker(WorkerType::General), Some(owner), String::new());
 
         // A worker may not address itself as an agent — that is not its owner.
         assert_eq!(r.send(w, w, "self".into()), Delivery::NotPermitted);
@@ -755,7 +758,7 @@ mod tests {
         assert_eq!(r.send(a, 9_999, "hello".into()), Delivery::Unknown);
 
         let gone = mint();
-        r.register(gone, Role::Worker, Some(a), String::new());
+        r.register(gone, Role::Worker(WorkerType::General), Some(a), String::new());
         r.unregister(gone);
         assert_eq!(r.send(a, gone, "hello".into()), Delivery::Unknown);
     }
@@ -768,7 +771,7 @@ mod tests {
         let (owner, other, worker) = (mint(), mint(), mint());
         r.register(owner, Role::Cognition, None, String::new());
         r.register(other, Role::Reaction, None, String::new());
-        r.register(worker, Role::Worker, Some(owner), String::new());
+        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new());
 
         assert_eq!(r.send(worker, owner, "done".into()), Delivery::Delivered);
         assert_eq!(
@@ -817,7 +820,7 @@ mod tests {
         r.register(cog, Role::Cognition, None, "thinking".into());
         r.register(rx, Role::Reaction, None, String::new());
         r.register(dl, Role::Deliberation, None, String::new());
-        r.register(w, Role::Worker, Some(cog), "file the receipts".into());
+        r.register(w, Role::Worker(WorkerType::General), Some(cog), "file the receipts".into());
 
         let who = r.reachable(cog);
         let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
@@ -834,7 +837,7 @@ mod tests {
         let (owner, worker, other) = (mint(), mint(), mint());
         r.register(owner, Role::Cognition, None, String::new());
         r.register(other, Role::Reaction, None, String::new());
-        r.register(worker, Role::Worker, Some(owner), String::new());
+        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new());
 
         let who = r.reachable(worker);
         assert_eq!(who.len(), 1, "{who:?}");
@@ -865,7 +868,7 @@ mod tests {
         r.register(owner, Role::Deliberation, None, String::new());
         assert!(!r.has_live_children(owner));
 
-        r.register(child, Role::Worker, Some(owner), String::new());
+        r.register(child, Role::Worker(WorkerType::General), Some(owner), String::new());
         assert!(r.has_live_children(owner));
         assert_eq!(r.children(owner), vec![child]);
 
@@ -878,10 +881,10 @@ mod tests {
         let r = reg();
         let (a, b) = (mint(), mint());
         r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker, Some(a), "file the receipts".into());
+        r.register(b, Role::Worker(WorkerType::General), Some(a), "file the receipts".into());
 
         let s = r.status(b).expect("registered");
-        assert_eq!(s.role, Role::Worker);
+        assert_eq!(s.role, Role::Worker(WorkerType::General));
         assert_eq!(s.owner, Some(a));
         assert_eq!(s.task, "file the receipts");
         assert!(!s.busy && !s.queued && s.turns == 0);
@@ -920,7 +923,7 @@ mod tests {
     fn output_is_a_bounded_tail_not_an_archive() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Worker, None, String::new());
+        r.register(a, Role::Worker(WorkerType::General), None, String::new());
         r.record_output(a, "hello ");
         r.record_output(a, "world");
         assert_eq!(r.messages(a).as_deref(), Some("hello world"));

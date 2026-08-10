@@ -305,7 +305,7 @@ async fn turn(
     use std::sync::Arc;
 
     use crate::foundation::codex::{SessionOpts, SessionUpdate};
-    use crate::foundation::agent::SessionRole;
+    use crate::identity::Role;
     use crate::foundation::observatory::{EventKind, SessionKind};
     use crate::mind::memory::snapshot;
 
@@ -318,7 +318,7 @@ async fn turn(
             .inner
             .agent
             .session(
-                SessionRole::Reflection,
+                Role::Reflection,
                 Some(id),
                 SessionOpts {
                     system_prompt: Some(system_prompt),

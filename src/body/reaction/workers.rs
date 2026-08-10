@@ -43,9 +43,8 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
-use crate::foundation::agent::SessionRole;
 use crate::foundation::observatory::{EventKind, Observatory, SessionKind, WorkerState};
-use crate::identity::WorkerType;
+use crate::identity::{Role, WorkerType};
 use crate::mind::memory::layout;
 
 use super::{LoopInput, Reaction};
@@ -82,9 +81,9 @@ const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 // switchboard's inbox is now the only one — it already merges a burst, already carries
 // the sender, and already knows how to shut itself when a session idles out.
 
-/// A working session's system prompt now lives in `prompts/workers/` — `common.md`
-/// plus one file per [`WorkerType`] — and is assembled by
-/// [`crate::identity::worker_prompt`].
+/// A working session's system prompt now lives in `prompts/workers/` — one whole file
+/// per [`WorkerType`], read through [`crate::identity::role_prompt`] like every other
+/// role's.
 ///
 /// It used to be a `const &str` right here: ~120 lines of prose, and the one role
 /// prompt that was not a bundled `.md`, so it alone could not be retuned without a
@@ -382,9 +381,18 @@ impl WorkerRegistry {
         is_deliberation: bool,
         owner: Option<SessionId>,
     ) -> anyhow::Result<(Arc<AgentSession>, Arc<Notify>)> {
-        // Deliberation gets one self-contained role prompt; ordinary workers get the
-        // prompt for their requested specialism.
+        // **One role drives all three things this function decides**: which prompt the
+        // session opens with, what the switchboard records, and which tool surface it
+        // attaches. Those used to be three separate expressions over three separate types
+        // — `identity::WorkerType` for the prompt, `registry::Role` for the record,
+        // `agent::SessionRole` for the surface — and only the first carried the
+        // specialism. That is precisely how a `view-builder` came to be registered as an
+        // anonymous `worker`, with nothing downstream able to say otherwise.
+        let role = if is_deliberation { Role::Deliberation } else { Role::Worker(kind) };
+
         let system_prompt = if is_deliberation {
+            // Deliberation alone needs more than its file: the absolute path of the brief
+            // it has to write, which cannot be baked into a bundled prompt.
             let data_dir = reaction.inner.memory.data_dir();
             if let Some(parent) = layout::conversation_prompt_path(data_dir).parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -393,23 +401,18 @@ impl WorkerRegistry {
             }
             crate::identity::deliberation_prompt(data_dir).await
         } else {
-            crate::identity::worker_prompt(reaction.inner.memory.data_dir(), kind).await
+            crate::identity::role_prompt(reaction.inner.memory.data_dir(), role).await
         };
 
         // The address exists before subprocess startup so mail can queue during both
         // eager warm-up and an ordinary create_worker spawn.
-        let mail = registry::global().register(
-            id,
-            if is_deliberation { registry::Role::Deliberation } else { registry::Role::Worker },
-            owner,
-            task.to_string(),
-        );
+        let mail = registry::global().register(id, role, owner, task.to_string());
 
         let opened = reaction
             .inner
             .agent
             .session(
-                if is_deliberation { SessionRole::Deliberation } else { SessionRole::Worker },
+                role,
                 Some(id),
                 SessionOpts {
                     system_prompt: Some(system_prompt),

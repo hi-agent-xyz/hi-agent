@@ -60,7 +60,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
-use crate::foundation::agent::SessionRole;
+use crate::identity::Role;
 use crate::foundation::observatory::{EventKind, SessionKind};
 use crate::foundation::registry::{self, Registration};
 use crate::mind::memory::snapshot;
@@ -502,7 +502,7 @@ async fn open_session(
             .inner
             .agent
             .session(
-                SessionRole::Cognition,
+                Role::Cognition,
                 Some(id),
                 SessionOpts {
                     system_prompt: Some(system_prompt),

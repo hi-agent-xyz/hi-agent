@@ -24,9 +24,11 @@ const api = {
 // labels under `role` are descriptions of what each one does, so those do get said in
 // the reader's language.
 //
-// The registry stores the *rung*, not the worker type — `create_worker` consumes the
-// type to pick a prompt and never records it — so "打杂 / 做界面" is not knowable here.
-// These are the five rungs the registry actually has.
+// The registry stores the **role**, and a worker's role carries its type, so a row can
+// say "做界面" rather than only "干活的". It could not before: `create_worker` consumed
+// the type to pick a prompt and nothing recorded it, so every specialism arrived here as
+// an anonymous worker. `role` is still what a row *is* — the five tool surfaces — and
+// `type` narrows the `worker` one; a row prefers the narrower label when it has one.
 //
 // TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
 // runtime — the agent reads the surface and writes the variant — rather than shipped
@@ -46,6 +48,15 @@ const T = {
       reflection: "filing",
       reaction: "speaking",
     },
+    // `general` is deliberately absent: a general worker is just "working", which the
+    // role label already says, and a second word for it would only add noise to the
+    // common row.
+    type: {
+      "view-builder": "building a view",
+      "view-reviewer": "reviewing a view",
+      "decision-maker": "deciding",
+      "file-filer": "filing a file",
+    },
     noTask: "(no note on what it's doing)",
     busy: "running", idle: "idle",
     turns: (n) => `${n} turns`, queued: "mail waiting", ownedBy: (o) => `owned by ${o}`,
@@ -63,6 +74,12 @@ const T = {
       deliberation: "琢磨的",
       reflection: "整理记忆的",
       reaction: "说话的",
+    },
+    type: {
+      "view-builder": "做界面",
+      "view-reviewer": "看界面",
+      "decision-maker": "拿主意",
+      "file-filer": "归档",
     },
     noTask: "（没写在做什么）",
     busy: "在跑", idle: "闲着",
@@ -130,7 +147,7 @@ export default function Workers() {
               <button type="button" style={{ ...S.reset, ...S.rowTop }} aria-expanded={openId === w.id}
                 onClick={() => setOpenId(openId === w.id ? null : w.id)}>
                 <span style={{ ...S.dot, ...(w.busy ? S.dotBusy : {}) }} aria-hidden />
-                <span style={S.role}>{L.role[w.role] || w.role}</span>
+                <span style={S.role}>{L.type?.[w.type] || L.role[w.role] || w.role}</span>
                 <span style={S.task}>{w.task || L.noTask}</span>
                 <span style={S.elapsed}>{elapsed(w.started)}</span>
               </button>

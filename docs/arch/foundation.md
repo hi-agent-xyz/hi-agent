@@ -142,7 +142,7 @@ Historical messages come from the protocol's own session load, not from a second
 
 ## Default tool surfaces
 
-Each role is handed a **default** surface, sized to keep its context small, sized to keep its context small — every tool
+Each role is handed a **default** surface, sized to keep its context small — every tool
 definition in the window costs tokens and latency on a turn that is trying to be fast. This
 is a default, not a rail: "only workers act" means workers do the actual jobs, not that the
 host fences anyone out.

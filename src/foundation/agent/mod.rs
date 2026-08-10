@@ -24,43 +24,21 @@ use serde_json::json;
 use crate::foundation::codex::process::Sandbox;
 use crate::foundation::codex::{AgentSession, CodexProcess, ProcessRegistry, SessionOpts, WireTap};
 use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SESSION_ID};
+use crate::identity::Role;
 
-/// Which tool surface a session gets, carried as `X-HI-Role` on its MCP attach so
-/// the `/mcp` server exposes the right tools (see [`crate::foundation::mcp`]). The
-/// reaction is the single fast conversational voice that owns interaction: it speaks
-/// via plain message text and gets a minimal `show`-only surface to put
-/// cognition's artifacts on screen — the heavy work is delegated to workers. A
-/// worker can only raise a question; a reflection session ("sleep") only
-/// reads/writes derived memory (episodes, facets) and has no voice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SessionRole {
-    /// The always-present **reaction** — the fast conversational voice. A turn is a
-    /// single quick generation on the smart model; it speaks via its plain message
-    /// text (`item/agentMessage/delta`) and may call only `show` to display a view
-    /// a worker already built. Real work is delegated to [`Worker`](Self::Worker)
-    /// sessions (cognition).
-    #[default]
-    Reaction,
-    Worker,
-    /// The conversation's reading and thinking rung.
-    Deliberation,
-    /// The shared brain.
-    Cognition,
-    Reflection,
-}
-
-impl SessionRole {
-    fn as_str(self) -> &'static str {
-        match self {
-            SessionRole::Reaction => "reaction",
-            SessionRole::Worker => "worker",
-            SessionRole::Reflection => "reflection",
-            SessionRole::Deliberation => "deliberation",
-            SessionRole::Cognition => "cognition",
-        }
-    }
-
-    /// How much of the machine this rung's own tools may touch.
+/// The sandbox half of what a [`Role`] decides, kept here beside the codex process it
+/// configures rather than in [`crate::identity`], which has no business knowing what a
+/// sandbox is.
+///
+/// **The role itself now comes from `identity`, with the prompt it selects.** This module
+/// used to define a private `SessionRole` carrying the same five variants, so the type
+/// that picked a tool surface and the type that picked a prompt were separate things that
+/// could not disagree out loud — and neither could say which *kind* of worker it was.
+/// `Role::as_str` is the `X-HI-Role` value the `/mcp` server reads (see
+/// [`crate::foundation::mcp::tools_for_role`]); all five worker types answer `worker`
+/// there, because a type picks a prompt and never a surface.
+impl Role {
+    /// How much of the machine this role's own tools may touch.
     ///
     /// **The reaction is read-only, and that is as close as codex gets to the tools-off
     /// voice ACP gave us.** There, the reaction opened with `builtin_tools: []` and
@@ -77,7 +55,7 @@ impl SessionRole {
     /// swap changes the wire and not what a worker may do.
     fn sandbox(self) -> Sandbox {
         match self {
-            SessionRole::Reaction => Sandbox::ReadOnly,
+            Role::Reaction => Sandbox::ReadOnly,
             _ => Sandbox::FullAccess,
         }
     }
@@ -148,7 +126,7 @@ impl AgentLayer {
     /// down.
     pub async fn session(
         &self,
-        role: SessionRole,
+        role: Role,
         session_id: Option<u64>,
         opts: SessionOpts,
     ) -> anyhow::Result<AgentSession> {
@@ -209,7 +187,7 @@ impl AgentLayer {
     fn thread_config(
         &self,
         cfg: &AgentConfig,
-        role: SessionRole,
+        role: Role,
         session_id: Option<u64>,
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut headers = serde_json::Map::new();
@@ -248,6 +226,7 @@ impl AgentLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::WorkerType;
 
     fn layer() -> AgentLayer {
         AgentLayer::new(
@@ -274,7 +253,7 @@ mod tests {
 
     #[test]
     fn a_worker_thread_attaches_mcp_with_its_routing_headers() {
-        let config = layer().thread_config(&config(), SessionRole::Worker, Some(42));
+        let config = layer().thread_config(&config(), Role::Worker(WorkerType::General), Some(42));
         let server = &config["mcp_servers"]["hi-agent"];
         assert_eq!(server["url"], "http://127.0.0.1:12358/mcp");
         assert_eq!(server["http_headers"][HEADER_ROLE], "worker");
@@ -284,7 +263,7 @@ mod tests {
 
     #[test]
     fn a_session_without_an_id_still_names_its_role() {
-        let config = layer().thread_config(&config(), SessionRole::Reaction, None);
+        let config = layer().thread_config(&config(), Role::Reaction, None);
         let headers = &config["mcp_servers"]["hi-agent"]["http_headers"];
         assert_eq!(headers[HEADER_ROLE], "reaction");
         assert!(
@@ -297,22 +276,35 @@ mod tests {
     fn the_model_wire_rides_the_same_thread_config() {
         // One object carries both halves, so a thread cannot come up attached to our
         // tools but pointed at the wrong endpoint.
-        let config = layer().thread_config(&config(), SessionRole::Cognition, Some(1));
+        let config = layer().thread_config(&config(), Role::Cognition, Some(1));
         assert_eq!(config["model"], "gpt-5.1-codex");
         assert!(config.contains_key("model_providers"));
         assert!(config.contains_key("mcp_servers"));
     }
 
+    /// Swept over every role rather than a hand-written list of four, so a worker type
+    /// added later cannot quietly arrive sandboxed or unsandboxed unnoticed.
     #[test]
     fn only_the_voice_is_sandboxed() {
-        assert_eq!(SessionRole::Reaction.sandbox(), Sandbox::ReadOnly);
-        for role in [
-            SessionRole::Worker,
-            SessionRole::Deliberation,
-            SessionRole::Cognition,
-            SessionRole::Reflection,
-        ] {
+        assert_eq!(Role::Reaction.sandbox(), Sandbox::ReadOnly);
+        for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             assert_eq!(role.sandbox(), Sandbox::FullAccess, "{role:?} does real work");
+        }
+    }
+
+    /// All five worker types attach the same surface. This is the property that lets the
+    /// type stay a prompt selector: if a specialism ever needed its own tools it would be
+    /// a rung, not a type.
+    #[test]
+    fn every_worker_type_attaches_the_one_worker_surface() {
+        for t in WorkerType::ALL {
+            let config = layer().thread_config(&config(), Role::Worker(*t), Some(7));
+            assert_eq!(
+                config["mcp_servers"]["hi-agent"]["http_headers"][HEADER_ROLE],
+                "worker",
+                "{} asked for a surface of its own",
+                t.as_str()
+            );
         }
     }
 }

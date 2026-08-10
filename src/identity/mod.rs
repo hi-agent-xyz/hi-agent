@@ -9,12 +9,12 @@
 //! This module owns the **prompt cascade**: the bundled bases are materialised under
 //! `<data_dir>/prompts/` at boot, each composed with an optional operator `*.local.md`
 //! override ([`install_prompts`]), then read back whole at session open
-//! ([`rung_prompt`], [`worker_prompt`], [`reaction_system_prompt`]). That cascade is the
+//! ([`role_prompt`], [`reaction_system_prompt`]). That cascade is the
 //! base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
 //!
 //! **There is no seed.** A rung used to be handed ~18 lines pointing at `core.md`,
 //! `meaning.md` and `self.md` and told to go read them; that shape and why it was
-//! retired are recorded on [`rung_prompt`]. `core.md`, `meaning.md`, `appearance.md`
+//! retired are recorded on [`installed_prompt`]. `core.md`, `meaning.md`, `appearance.md`
 //! and `aesthetic.md` no longer exist, and [`install_prompts`]'s tests assert they stay
 //! gone.
 //!
@@ -34,10 +34,10 @@ use std::path::{Path, PathBuf};
 /// [`install_prompts`].
 ///
 /// **One file per rung, and each is that rung's whole system prompt** — nothing points
-/// at anything else and nothing is fetched. They divide only by which entry point reads
-/// them back: [`reaction_system_prompt`] for the tools-off voice, [`reflection_prompt`]
-/// for the consolidation pass, [`cognition_prompt`] and [`deliberation_prompt`] for the
-/// thinking rungs. All ship in the binary and refresh on every build.
+/// at anything else and nothing is fetched. They are reached through [`Role::base`], and
+/// divide only by which entry point reads them back: [`reaction_system_prompt`] for the
+/// tools-off voice, [`role_prompt`] for everything else. All ship in the binary and
+/// refresh on every build.
 ///
 /// The cost of "whole" is that ~2,000 words of shared character live in three copies,
 /// and drift between them is the live risk — which is what the prompt tests below are
@@ -47,13 +47,12 @@ const REFLECTION_BASE: &str = include_str!("reflection.md");
 const DELIBERATION_BASE: &str = include_str!("deliberation.md");
 const COGNITION_BASE: &str = include_str!("cognition.md");
 
-/// The worker prompts, under `workers/`. `common.md` is what every working session is;
-/// the rest are one file per **type**, layered on top of it.
+/// The worker prompts, under `workers/` — one file per **type**, each whole.
 ///
-/// Two copies of "report to your owner" is how three mail renderers became three
-/// different strings, so the shared half is shared. Each half keeps its own
-/// `.local.md`, so an operator can retune what every worker is told *or* just the one
-/// kind, without editing the other.
+/// There is no `common.md`. One used to sit above these as the layer every type composed
+/// with, and retiring it is what made a worker's prompt the same kind of object as a
+/// rung's: entire, and reachable through the same [`Role::base`]. Each keeps its own
+/// `.local.md`, so an operator retunes one kind without touching the others.
 const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
 const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
 const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
@@ -61,7 +60,8 @@ const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md
 const WORKER_FILE_FILER_BASE: &str = include_str!("workers/file-filer.md");
 
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
-/// (`docs/arch/foundation.md#the-agent-session-registry`).
+/// (`docs/arch/foundation.md#the-agent-session-registry`), and the payload of
+/// [`Role::Worker`].
 ///
 /// **A type selects a prompt and nothing else.** Every worker runs the same session
 /// with the same tools; `docs/arch/agents.md` is explicit that a new role here is a new
@@ -133,6 +133,127 @@ impl WorkerType {
     }
 }
 
+/// **Which role a session is running.** One namespace for every agent in the process,
+/// and the only thing that tells one from another.
+///
+/// `docs/arch/agents.md` opens by saying every agent here is the same thing — a general
+/// agent on a session, differing only in **system prompt** and **tool surface** — and
+/// that "a new role is a new prompt, not new machinery". This enum is that sentence as a
+/// type: nine roles today, four rungs and five worker types, and a tenth is a `.md` plus
+/// a variant.
+///
+/// **It replaced three enums for the one concept**, which is why the switchboard used to
+/// be blind to half of it: `registry::Role` (routing) and `agent::SessionRole` (tool
+/// surface) had identical variant lists, and neither carried [`WorkerType`] (prompt). So
+/// nothing stored what kind a worker was, and `GET /api/workers` reported all five
+/// specialisms as a bare `worker`. The giveaway was already in this file — a worker's
+/// prompt was fetched by handing the rung loader `workers/<type>` as its name, i.e. a
+/// worker type was a rung with a path prefix, with no type to say so.
+///
+/// **Worker types nest rather than flatten**, and that is load-bearing. Routing asks one
+/// question — *is this a worker?* (`Registry::send`, where a worker may address only its
+/// owner). Nested, the answer is `matches!(role, Role::Worker(_))` however many types
+/// exist. Flattened into nine peer variants it would be a five-arm match someone has to
+/// remember to extend, which would make adding a worker type a routing edit — the exact
+/// thing "a new role is a new prompt" rules out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Role {
+    /// The mouth: one generation, speaks and shows, cannot wait on anything.
+    #[default]
+    Reaction,
+    /// The conversation's reading and thinking, between the voice and the brain.
+    Deliberation,
+    /// The shared brain — owns the task ledger, dispatches, never speaks.
+    Cognition,
+    /// The inward brain — curates `data/`, answers to nobody, never speaks.
+    Reflection,
+    /// A working session, carrying the type that picks its prompt.
+    Worker(WorkerType),
+}
+
+impl Role {
+    /// Every role, for install and for test sweeps. One list, so a role cannot exist in
+    /// one place and be forgotten in another — which is what the two lists this replaced
+    /// (`bundled_rung_prompts()` for four rungs, `WorkerType::ALL` for five types) made
+    /// easy: a worker prompt was never held to the sweeps the rungs were.
+    pub const ALL: &'static [Self] = &[
+        Self::Reaction,
+        Self::Deliberation,
+        Self::Cognition,
+        Self::Reflection,
+        Self::Worker(WorkerType::General),
+        Self::Worker(WorkerType::ViewBuilder),
+        Self::Worker(WorkerType::ViewReviewer),
+        Self::Worker(WorkerType::DecisionMaker),
+        Self::Worker(WorkerType::FileFiler),
+    ];
+
+    /// The wire name — the `X-HI-Role` header, `tools_for_role`, and the `role` field on
+    /// `GET /api/workers`.
+    ///
+    /// **Every worker type answers `"worker"`**, and that is the type doing exactly what
+    /// it claims: it selects a prompt and nothing else, so all five specialisms share one
+    /// tool surface and one header value. A caller that wants the specialism asks
+    /// [`Role::worker_type`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reaction => "reaction",
+            Self::Deliberation => "deliberation",
+            Self::Cognition => "cognition",
+            Self::Reflection => "reflection",
+            Self::Worker(_) => "worker",
+        }
+    }
+
+    /// This role's prompt as a path stem under `<data_dir>/prompts/` — `reaction` and
+    /// `workers/view-builder` being the same kind of thing is what lets
+    /// [`install_prompts`] be one loop over [`Role::ALL`].
+    ///
+    /// The worker arms spell their subdirectory out rather than composing
+    /// `format!("workers/{}", t.as_str())`, so this can stay `&'static str` and a session
+    /// open costs no allocation. That is a second spelling of each type's name, and
+    /// `a_worker_prompt_stem_is_its_type_under_workers` is what keeps the two in step.
+    pub fn prompt_name(self) -> &'static str {
+        match self {
+            Self::Reaction => "reaction",
+            Self::Deliberation => "deliberation",
+            Self::Cognition => "cognition",
+            Self::Reflection => "reflection",
+            Self::Worker(WorkerType::General) => "workers/general",
+            Self::Worker(WorkerType::ViewBuilder) => "workers/view-builder",
+            Self::Worker(WorkerType::ViewReviewer) => "workers/view-reviewer",
+            Self::Worker(WorkerType::DecisionMaker) => "workers/decision-maker",
+            Self::Worker(WorkerType::FileFiler) => "workers/file-filer",
+        }
+    }
+
+    /// The embedded base text for this role, compiled in and materialised by
+    /// [`install_prompts`].
+    pub(crate) fn base(self) -> &'static str {
+        match self {
+            Self::Reaction => REACTION_BASE,
+            Self::Deliberation => DELIBERATION_BASE,
+            Self::Cognition => COGNITION_BASE,
+            Self::Reflection => REFLECTION_BASE,
+            Self::Worker(t) => t.base(),
+        }
+    }
+
+    /// The specialism behind a working session; `None` for a rung. This is what the
+    /// registry could not answer before, and what `GET /api/workers` reports.
+    pub fn worker_type(self) -> Option<WorkerType> {
+        match self {
+            Self::Worker(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a working session, of any type. The predicate routing asks.
+    pub fn is_worker(self) -> bool {
+        matches!(self, Self::Worker(_))
+    }
+}
+
 /// Separator that introduces the operator's override layer. Placed after the
 /// bundled base so its instructions take precedence — the model honors the
 /// later, more specific guidance where the two conflict.
@@ -151,80 +272,65 @@ fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
     }
 }
 
-/// Install the bundled prompts under `<data_dir>/prompts/` at startup, composing
-/// each with its optional `*.local.md` operator override. The managed base files —
-/// the four rungs (`reaction.md`, `deliberation.md`, `cognition.md`, `reflection.md`)
-/// and `workers/<type>.md` — are rewritten every boot so they stay current; operator
-/// edits live in the never-touched `*.local.md` siblings. Each follows one workflow:
-/// ship embedded → materialise here → consumed from disk at runtime.
+/// Install the bundled prompts under `<data_dir>/prompts/` at startup, composing each
+/// with its optional `*.local.md` operator override. The managed base files — one per
+/// [`Role`], so `reaction.md` beside `workers/view-builder.md` — are rewritten every boot
+/// so they stay current; operator edits live in the never-touched `*.local.md` siblings.
+/// Each follows one workflow: ship embedded → materialise here → consumed from disk at
+/// runtime.
+///
+/// **One loop over [`Role::ALL`].** This was four hardcoded `write`s for the rungs plus a
+/// loop for the worker types, which is what a split concept costs at every site that
+/// touches it: adding a rung meant remembering this function, and the two halves reached
+/// for their override files through different base directories to arrive at the same
+/// paths.
+///
+/// The worker prompts keep their own subdirectory, because there is one per type and they
+/// would otherwise be the majority of a flat `prompts/`. One file per type and **no
+/// shared base**: a worker's prompt is whole, the same way a rung's is. `common.md` used
+/// to sit above them as the layer every type composed with, which meant a decision-maker
+/// read how to drive a camera and a file-filer read how to review its own artwork. The
+/// price is duplication — a 35-line preamble identical in all five, plus ~36 further
+/// lines shared by two or three of them — and drift between the copies is the risk the
+/// prompt tests below hold.
 pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("reaction.md"), compose_prompt(REACTION_BASE, &dir, "reaction.local.md"))?;
-    std::fs::write(dir.join("reflection.md"), compose_prompt(REFLECTION_BASE, &dir, "reflection.local.md"))?;
-    std::fs::write(dir.join("deliberation.md"), compose_prompt(DELIBERATION_BASE, &dir, "deliberation.local.md"))?;
-    std::fs::write(dir.join("cognition.md"), compose_prompt(COGNITION_BASE, &dir, "cognition.local.md"))?;
-
-    // The worker prompts get their own subdirectory, because there is one per type and
-    // they would otherwise be the majority of a flat `prompts/`.
-    //
-    // One file per type, and **no shared base**: a worker's prompt is whole, the same way
-    // a rung's is. `common.md` used to sit above them as the layer every type composed
-    // with, which meant a decision-maker read how to drive a camera and a file-filer read
-    // how to review its own artwork. The price is duplication: a 35-line preamble
-    // identical in all five, plus ~36 further lines shared by two or three of them. Drift
-    // between the copies is the risk, and the prompt tests below are what hold it.
-    //
-    // It was roughly five times that until the reviewer stopped carrying the builder's
-    // taste section verbatim — the same 74 lines, in the builder's voice, telling a rung
-    // whose whole job is *not* to edit the view to "fix what doesn't before you save".
-    let workers = dir.join("workers");
-    std::fs::create_dir_all(&workers)?;
-    for t in WorkerType::ALL {
+    // The nested one first: creating `prompts/workers/` creates `prompts/` with it.
+    std::fs::create_dir_all(dir.join("workers"))?;
+    for role in Role::ALL {
+        let name = role.prompt_name();
         std::fs::write(
-            workers.join(format!("{}.md", t.as_str())),
-            compose_prompt(t.base(), &workers, &format!("{}.local.md", t.as_str())),
+            dir.join(format!("{name}.md")),
+            compose_prompt(role.base(), &dir, &format!("{name}.local.md")),
         )?;
     }
 
     tracing::info!(
         dir = %dir.display(),
-        types = WorkerType::ALL.len(),
-        "installed bundled prompts (reaction.md, deliberation.md, cognition.md, reflection.md, workers/)"
+        roles = Role::ALL.len(),
+        "installed bundled prompts (one per role, workers under workers/)"
     );
     Ok(())
 }
 
-/// A working session's whole system prompt: `workers/<type>.md`, entire.
+/// A role's **whole** system prompt: its installed `.md`, entire and interpolated.
 ///
-/// Read off disk so an operator's `*.local.md` reaches a worker the same way it reaches
-/// every other rung, falling back to the embedded bases when a file is missing or
-/// empty. Read fresh per spawn, so an edit takes effect without a restart.
+/// Read off disk so an operator's `*.local.md` reaches every role the same way, falling
+/// back to the embedded base when the file is missing or empty. Read fresh per open, so
+/// an edit takes effect without a restart.
 ///
-/// **This replaced a `const &str` in `reaction/workers.rs`** — the one role prompt that
-/// was not a bundled `.md`, and so the one nobody could retune without a rebuild.
+/// **This is the one prompt entry point**, and it is one because a worker type and a rung
+/// are one concept. What it replaced — `worker_prompt(data_dir, kind)` beside three
+/// per-rung wrappers — already routed through the same loader with `workers/<type>`
+/// pasted in as a name; the type just had nowhere to live. The remaining wrappers below
+/// exist only where a rung needs something more than its file: Deliberation interpolates
+/// the brief's path, Reaction is read raw and tools-off.
 ///
-/// Only the directory placeholders [`rung_prompt`] already expands are
-/// interpolated. Former routing and encoded-path placeholders are gone, so no
-/// user string can redirect a worker's data path.
-pub async fn worker_prompt(data_dir: &Path, kind: WorkerType) -> String {
-    rung_prompt(data_dir, &format!("workers/{}", kind.as_str()), kind.base()).await
-}
-
-
-/// Every bundled rung prompt, as `(installed filename stem, embedded text)`.
-///
-/// Exists so tests can sweep the whole corpus rather than naming files one at a time —
-/// the failure this guards is a *new* prompt quietly not being held to the rules the
-/// others are. Adding a rung means adding a line here, and the sweeps pick it up.
-#[cfg(test)]
-pub(crate) fn bundled_rung_prompts() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("reaction", REACTION_BASE),
-        ("deliberation", DELIBERATION_BASE),
-        ("cognition", COGNITION_BASE),
-        ("reflection", REFLECTION_BASE),
-    ]
+/// Only the directory placeholders [`installed_prompt`] expands are interpolated. Former
+/// routing and encoded-path placeholders are gone, so no user string can redirect a
+/// session's data path.
+pub async fn role_prompt(data_dir: &Path, role: Role) -> String {
+    installed_prompt(data_dir, role.prompt_name(), role.base()).await
 }
 
 /// Absolutize `data_dir`: every path a prompt hands an agent must be absolute, because a
@@ -263,7 +369,7 @@ fn abs(data_dir: &Path) -> PathBuf {
 /// [`abs`]: a prompt that says `memory/raw/sessions/` or `$PROMPTS/../drive/` resolves
 /// against the *session's* cwd, and those differ by rung. The agent then reads a
 /// directory that does not exist and reports the thing missing rather than empty.
-async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> String {
+async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> String {
     let base = abs(data_dir);
     let path = base.join("prompts").join(format!("{name}.md"));
     let text = match tokio::fs::read_to_string(&path).await {
@@ -305,7 +411,7 @@ async fn rung_prompt(data_dir: &Path, name: &str, fallback: &'static str) -> Str
 /// `{conversation_memory}` is interpolated to the **absolute** path of the file it must
 /// write, because an agent-facing path that is relative is a path to the wrong file.
 pub async fn deliberation_prompt(data_dir: &Path) -> String {
-    let text = rung_prompt(data_dir, "deliberation", DELIBERATION_BASE).await;
+    let text = role_prompt(data_dir, Role::Deliberation).await;
     let target = crate::mind::memory::layout::conversation_prompt_path(&abs(data_dir));
     text.replace("{conversation_memory}", &target.display().to_string())
 }
@@ -324,7 +430,7 @@ pub async fn deliberation_prompt(data_dir: &Path) -> String {
 /// content in both places would be one copy going stale against the other, and the window
 /// is the half that is rebuilt every turn.
 pub async fn cognition_prompt(data_dir: &Path) -> String {
-    rung_prompt(data_dir, "cognition", COGNITION_BASE).await
+    role_prompt(data_dir, Role::Cognition).await
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -334,7 +440,7 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 /// — it *is* the task's instructions, so it must be present before the session can act.
 /// Read fresh each round, so an operator edit takes effect without a restart.
 pub async fn reflection_prompt(data_dir: &Path) -> String {
-    rung_prompt(data_dir, "reflection", REFLECTION_BASE).await
+    role_prompt(data_dir, Role::Reflection).await
 }
 
 /// **Reaction**'s system prompt — the conversation's voice (`docs/arch/agents.md#reaction`).
@@ -504,14 +610,36 @@ mod soul_tests {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
         let p = dir.path().join("prompts");
-        let read = |n: &str| std::fs::read_to_string(p.join(n)).unwrap();
-        assert_eq!(read("reaction.md"), REACTION_BASE);
-        assert_eq!(read("deliberation.md"), DELIBERATION_BASE);
-        assert_eq!(read("cognition.md"), COGNITION_BASE);
-        assert_eq!(read("reflection.md"), REFLECTION_BASE);
-        for gone in ["core.md", "meaning.md", "appearance.md", "aesthetic.md"] {
+        // One loop for all nine, rungs and workers alike — the four rungs were named one
+        // at a time here while the worker files went unchecked.
+        for role in Role::ALL {
+            let at = p.join(format!("{}.md", role.prompt_name()));
+            assert_eq!(
+                std::fs::read_to_string(&at).unwrap(),
+                role.base(),
+                "{} was not installed verbatim",
+                role.prompt_name()
+            );
+        }
+        for gone in ["core.md", "meaning.md", "appearance.md", "aesthetic.md", "workers/common.md"] {
             assert!(!p.join(gone).exists(), "{gone} should be retired");
         }
+    }
+
+    /// An operator override reaches a worker exactly as it reaches a rung. Worth pinning
+    /// because the two halves used to resolve their `*.local.md` through different base
+    /// directories (`prompts/` vs `prompts/workers/`) to land on the same path; there is
+    /// one base directory now, and the `workers/` segment rides in the stem.
+    #[test]
+    fn install_layers_the_operator_override_into_a_worker_file_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prompts");
+        std::fs::create_dir_all(p.join("workers")).unwrap();
+        std::fs::write(p.join("workers/file-filer.local.md"), "File nothing on a Sunday.").unwrap();
+        install_prompts(dir.path()).unwrap();
+        let out = std::fs::read_to_string(p.join("workers/file-filer.md")).unwrap();
+        assert!(out.starts_with(WORKER_FILE_FILER_BASE));
+        assert!(out.contains("File nothing on a Sunday."));
     }
 
     #[test]
@@ -526,14 +654,20 @@ mod soul_tests {
         assert!(out.contains("Prefer small workers."));
     }
 
-    /// Every thinking rung is self-contained: it opens with its own character rather than
-    /// a pointer to a file it must go and fetch. This is the property the seed did not
+    /// Every role is self-contained: it opens with its own character rather than a
+    /// pointer to a file it must go and fetch. This is the property the seed did not
     /// have — the seed's instruction to Read was *conditional*, and nothing checked it.
+    ///
+    /// **Swept over [`Role::ALL`], so it now covers the five worker prompts too.** It ran
+    /// over four rungs while `bundled_rung_prompts()` was the list, which is exactly the
+    /// hole a split concept leaves: the sweep existed to stop a *new* prompt escaping the
+    /// rules the others are held to, and five prompts were escaping it the whole time.
     #[tokio::test]
-    async fn every_rung_carries_its_own_character() {
+    async fn every_role_carries_its_own_character() {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
-        for (name, base) in bundled_rung_prompts() {
+        for role in Role::ALL {
+            let (name, base) = (role.prompt_name(), role.base());
             assert!(
                 !base.contains("read them all now"),
                 "{name} still bootstraps instead of carrying its character"
@@ -554,15 +688,48 @@ mod soul_tests {
         }
     }
 
-    /// One pen on the ledger. Cognition writes it; nobody else is told how.
+    /// One pen on the ledger. Cognition writes it; nobody else is told how — and "nobody"
+    /// now genuinely means all nine roles, not the four this used to look at.
     #[test]
     fn exactly_one_prompt_hands_out_the_ledger_pen() {
-        let carriers: Vec<&str> = bundled_rung_prompts()
-            .into_iter()
-            .filter(|(_, b)| b.contains("only writer of the task ledger"))
-            .map(|(n, _)| n)
+        let carriers: Vec<&str> = Role::ALL
+            .iter()
+            .filter(|r| r.base().contains("only writer of the task ledger"))
+            .map(|r| r.prompt_name())
             .collect();
         assert_eq!(carriers, vec!["cognition"], "the pen must be held once");
+    }
+
+    /// A worker's prompt stem is its type under `workers/`. [`Role::prompt_name`] spells
+    /// the five worker paths out as literals so it can return `&'static str`, which is a
+    /// second spelling of each type's name; this is what stops the two drifting.
+    #[test]
+    fn a_worker_prompt_stem_is_its_type_under_workers() {
+        for t in WorkerType::ALL {
+            assert_eq!(Role::Worker(*t).prompt_name(), format!("workers/{}", t.as_str()));
+        }
+    }
+
+    /// Nine roles, one namespace, no duplicates — and every worker type reachable as a
+    /// role. The list is what `install_prompts` and the sweeps both walk, so a variant
+    /// missing from it is a prompt that is never installed and never checked.
+    #[test]
+    fn every_role_is_in_the_one_list_exactly_once() {
+        assert_eq!(Role::ALL.len(), 4 + WorkerType::ALL.len());
+        let mut names: Vec<&str> = Role::ALL.iter().map(|r| r.prompt_name()).collect();
+        names.sort_unstable();
+        let mut deduped = names.clone();
+        deduped.dedup();
+        assert_eq!(names, deduped, "two roles share a prompt file");
+        for t in WorkerType::ALL {
+            assert!(Role::ALL.contains(&Role::Worker(*t)), "{} is not a role", t.as_str());
+        }
+        // The wire name collapses the five specialisms onto one tool surface.
+        assert!(Role::ALL.iter().filter(|r| r.as_str() == "worker").count() == WorkerType::ALL.len());
+        assert_eq!(Role::Worker(WorkerType::ViewBuilder).worker_type(), Some(WorkerType::ViewBuilder));
+        assert_eq!(Role::Cognition.worker_type(), None);
+        assert!(Role::Worker(WorkerType::General).is_worker());
+        assert!(!Role::Reaction.is_worker());
     }
 
     #[tokio::test]
@@ -591,14 +758,14 @@ mod soul_tests {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
 
-        let filer = worker_prompt(dir.path(), WorkerType::FileFiler).await;
+        let filer = role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await;
         assert!(
             filer.contains("memory/raw/file/"),
             "the filer is pointed at the flat channel directory"
         );
 
         for t in WorkerType::ALL {
-            let p = worker_prompt(dir.path(), *t).await;
+            let p = role_prompt(dir.path(), Role::Worker(*t)).await;
             assert!(!p.contains("{conversation"), "unsubstituted placeholder in {}", t.as_str());
         }
     }
@@ -613,7 +780,7 @@ mod soul_tests {
         install_prompts(dir.path()).unwrap();
 
         for t in WorkerType::ALL {
-            let p = worker_prompt(dir.path(), *t).await;
+            let p = role_prompt(dir.path(), Role::Worker(*t)).await;
             assert!(p.contains("You are a working session"), "{}", t.as_str());
             // The layer's opening heading, not the whole base: the directory
             // placeholders are substituted on the way through, so the composed prompt is
@@ -629,11 +796,11 @@ mod soul_tests {
         // existed. Pin prose the layer actually carries, so deleting the layer fails
         // the test and deleting a file it merely mentions does not.
         const VIEW_LAYER: &str = "review_view";
-        let builder = worker_prompt(dir.path(), WorkerType::ViewBuilder).await;
+        let builder = role_prompt(dir.path(), Role::Worker(WorkerType::ViewBuilder)).await;
         assert!(builder.contains(VIEW_LAYER));
         assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
 
-        let filer = worker_prompt(dir.path(), WorkerType::FileFiler).await;
+        let filer = role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await;
         assert!(!filer.contains(VIEW_LAYER), "the view layer must not ride along");
     }
 
@@ -652,7 +819,7 @@ mod soul_tests {
         install_prompts(dir.path()).unwrap();
 
         for t in [WorkerType::General, WorkerType::ViewBuilder, WorkerType::DecisionMaker] {
-            let p = worker_prompt(dir.path(), t).await;
+            let p = role_prompt(dir.path(), Role::Worker(t)).await;
             assert!(p.contains("only copy of the work"), "{} loses its work", t.as_str());
             // The location is the load-bearing half, and it has to arrive absolute: a
             // relative `memory/facets/...` resolves against a cwd that differs per rung.
@@ -668,10 +835,10 @@ mod soul_tests {
         // Redoing lost work is fine; redoing something a person already saw is not. Only
         // the general worker acts on the outside world, so only it carries the ordering
         // rule — the others build, judge, or file.
-        let general = worker_prompt(dir.path(), WorkerType::General).await;
+        let general = role_prompt(dir.path(), Role::Worker(WorkerType::General)).await;
         assert!(general.contains("outside world can already see"));
         for t in [WorkerType::ViewReviewer, WorkerType::FileFiler] {
-            let p = worker_prompt(dir.path(), t).await;
+            let p = role_prompt(dir.path(), Role::Worker(t)).await;
             assert!(!p.contains("only copy of the work"), "{} rode along", t.as_str());
         }
     }
@@ -770,7 +937,7 @@ mod soul_tests {
         let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
         for text in [
             deliberation_prompt(dir.path()).await,
-            worker_prompt(dir.path(), WorkerType::FileFiler).await,
+            role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await,
         ] {
             assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
             assert!(text.contains(&root), "the substituted root must be the absolute raw root");

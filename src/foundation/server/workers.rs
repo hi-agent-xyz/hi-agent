@@ -37,19 +37,14 @@ use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
 use serde::Serialize;
 
-use crate::foundation::registry::{self, Role, SessionId, Status};
+use crate::foundation::registry::{self, SessionId, Status};
 
 /// One live session, as the review view reads it.
 ///
-/// Three fields do not map one-to-one onto [`Status`], and the difference is the
+/// Two fields do not map one-to-one onto [`Status`], and the difference is the
 /// registry's, not this module's:
 ///
-/// - `role` is the **rung** (`worker`, `deliberation`, `cognition`, `reflection`,
-///   `reaction`), not the [`WorkerType`](crate::identity::WorkerType) a worker was
-///   created with. The switchboard never learns the worker type — `create_worker`
-///   consumes it to pick a system prompt and nothing stores it — so `general` /
-///   `view-builder` / `file-filer` cannot be reported from here.
-/// - `owner` is a session id in `Status`. It is rendered as the owner's rung when
+/// - `owner` is a session id in `Status`. It is rendered as the owner's role when
 ///   that session is still registered (so the common case reads `cognition`), and as
 ///   the bare id when the owner has already gone.
 /// - `queued` is a **bool** in `Status`, not a count: the registry answers "is
@@ -58,7 +53,20 @@ use crate::foundation::registry::{self, Role, SessionId, Status};
 #[derive(Serialize)]
 struct WorkerDto {
     id: String,
+    /// The role, as the `X-HI-Role` header and `tools_for_role` spell it — `reaction`,
+    /// `deliberation`, `cognition`, `reflection`, `worker` — so a row here and a tool
+    /// surface line up by eye.
     role: &'static str,
+    /// Which kind of working session, for the five that share the `worker` surface;
+    /// `null` for a rung.
+    ///
+    /// **This used to be unanswerable.** The switchboard held a role type of its own with
+    /// no room for the specialism, so `create_worker` consumed the type to pick a system
+    /// prompt and nothing kept it — every `view-builder` and `file-filer` in flight
+    /// reported here as a bare `worker`, and "has the reviewer ever actually run?" had no
+    /// answer outside a transcript. One `Role` carries both now.
+    #[serde(rename = "type")]
+    worker_type: Option<&'static str>,
     /// The live session that created this one, when it has an owner.
     owner: Option<String>,
     task: String,
@@ -74,7 +82,7 @@ struct WorkerDto {
 
 /// `GET /api/workers` — every live session in the switchboard.
 ///
-/// Every session, not only `Role::Worker`. A worker's owner is a session too, and the
+/// Every session, not only a worker. A worker's owner is a session too, and the
 /// bug this endpoint exists for was an agent asserting that work was in flight when the
 /// switchboard was empty — a filter here would rebuild exactly that blind spot. The
 /// `role` field says what each row is, so the view can narrow; the endpoint cannot
@@ -153,7 +161,8 @@ fn tail(id: SessionId) -> Option<String> {
 fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
     WorkerDto {
         id: st.id.to_string(),
-        role: role_name(st.role),
+        role: st.role.as_str(),
+        worker_type: st.role.worker_type().map(|t| t.as_str()),
         owner: owner_label(st.owner),
         task: st.task.clone(),
         busy: st.busy,
@@ -164,25 +173,16 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
     }
 }
 
-/// The rung, lowercased — the same spellings the `X-HI-Role` header and
-/// `tools_for_role` use, so a row here and a tool surface can be lined up by eye.
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Reaction => "reaction",
-        Role::Deliberation => "deliberation",
-        Role::Cognition => "cognition",
-        Role::Reflection => "reflection",
-        Role::Worker => "worker",
-    }
-}
-
-/// The owner's rung when it is still registered, else its bare id. An owner that has
+/// The owner's role when it is still registered, else its bare id. An owner that has
 /// shut down while its worker runs is the exact condition behind the dropped report, so
 /// it is shown as an id rather than dropped to `null`.
+///
+/// A local `role_name` match used to stand where `Role::as_str` is called — a fourth
+/// spelling of the same five strings, kept in step with the header by comment alone.
 fn owner_label(owner: Option<SessionId>) -> Option<String> {
     let owner = owner?;
     Some(match registry::global().status(owner) {
-        Some(st) => role_name(st.role).to_string(),
+        Some(st) => st.role.as_str().to_string(),
         None => owner.to_string(),
     })
 }
@@ -195,12 +195,13 @@ fn err(msg: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{Role, WorkerType};
     use chrono::{TimeZone, Utc};
 
     fn status(id: SessionId, busy: bool, minute: u32) -> Status {
         Status {
             id,
-            role: Role::Worker,
+            role: Role::Worker(WorkerType::General),
             owner: None,
             task: "check oil prices".into(),
             busy,
@@ -236,6 +237,7 @@ mod tests {
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["id"], "9");
         assert_eq!(v["role"], "worker");
+        assert_eq!(v["type"], "general");
         assert_eq!(v["owner"], serde_json::Value::Null);
         assert_eq!(v["task"], "check oil prices");
         assert_eq!(v["busy"], true);
@@ -245,17 +247,36 @@ mod tests {
         assert_eq!(v["tail"], "last line");
     }
 
+    /// Every role reaches a row, and a worker's row carries its specialism while a
+    /// rung's `type` is null. The five specialisms all report `role: worker` — the
+    /// surface they share — so the view narrows on `role` and labels on `type`.
     #[test]
-    fn every_rung_has_a_name() {
-        for (role, name) in [
-            (Role::Reaction, "reaction"),
-            (Role::Deliberation, "deliberation"),
-            (Role::Cognition, "cognition"),
-            (Role::Reflection, "reflection"),
-            (Role::Worker, "worker"),
-        ] {
-            assert_eq!(role_name(role), name);
+    fn a_row_names_its_role_and_a_worker_row_its_type() {
+        for role in Role::ALL {
+            let mut st = status(1, false, 0);
+            st.role = *role;
+            let v = serde_json::to_value(dto(&st, None)).unwrap();
+            assert_eq!(v["role"], role.as_str());
+            match role.worker_type() {
+                Some(t) => assert_eq!(v["type"], t.as_str()),
+                None => assert_eq!(v["type"], serde_json::Value::Null),
+            }
         }
+    }
+
+    /// The regression this whole change exists for: a specialist in flight is reportable
+    /// as one. Before, `create_worker` consumed the type to choose a prompt and the
+    /// switchboard recorded a bare `worker`, so nothing downstream could tell a view
+    /// reviewer from a file filer.
+    #[test]
+    fn a_specialist_is_reportable_as_one() {
+        let id = registry::mint();
+        registry::global().register(id, Role::Worker(WorkerType::ViewReviewer), None, "judge it".into());
+        let st = registry::global().status(id).unwrap();
+        let v = serde_json::to_value(dto(&st, None)).unwrap();
+        assert_eq!(v["role"], "worker");
+        assert_eq!(v["type"], "view-reviewer");
+        registry::global().unregister(id);
     }
 
     /// A live owner reads as its rung; one that has already shut down reads as its id
@@ -275,7 +296,7 @@ mod tests {
     #[test]
     fn the_tail_is_the_last_nonblank_line() {
         let id = registry::mint();
-        registry::global().register(id, Role::Worker, None, "an errand".into());
+        registry::global().register(id, Role::Worker(WorkerType::General), None, "an errand".into());
         assert_eq!(tail(id), None, "nothing said yet");
 
         registry::global().record_output(id, "first\n\nsecond\n\n");

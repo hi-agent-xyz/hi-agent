@@ -29,6 +29,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
+use crate::identity::Role;
+
 
 /// How many recent events the in-memory ring retains for SSE replay-on-connect.
 const HISTORY_CAP: usize = 1000;
@@ -38,9 +40,9 @@ const BROADCAST_CAP: usize = 512;
 
 /// Which rung an agent session is: the four of the
 /// [ladder](../../../docs/arch/arch.md) that hold sessions, plus the workers below
-/// them. It mirrors [`crate::foundation::agent::SessionRole`] and must keep doing
-/// so — a rung with no variant here cannot be told apart from a worker anywhere in
-/// the observatory, which is exactly what happened to Deliberation. (A `Summarizer`
+/// them. It mirrors [`Role`] and must keep doing so — a role with no variant here
+/// cannot be told apart from a worker anywhere in the observatory, which is exactly what
+/// happened to Deliberation. (A `Summarizer`
 /// variant outlived the session swap that produced it and is gone with it.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,19 +54,29 @@ pub enum SessionKind {
     Cognition,
 }
 
-/// The mirror, made the compiler's problem rather than a convention. Adding a rung to
-/// [`SessionRole`] now fails to compile until it has a kind here, which is the check
-/// that was missing when Deliberation was added and the observatory kept calling it a
-/// worker.
-impl From<crate::foundation::agent::SessionRole> for SessionKind {
-    fn from(role: crate::foundation::agent::SessionRole) -> Self {
-        use crate::foundation::agent::SessionRole as R;
+/// The mirror, made the compiler's problem rather than a convention. Adding a role now
+/// fails to compile until it has a kind here, which is the check that was missing when
+/// Deliberation was added and the observatory kept calling it a worker.
+///
+/// **This still is a mirror, and one is left.** `agent::SessionRole` — what this used to
+/// convert from — is gone into [`Role`], the one role namespace; the remaining question
+/// is whether the observatory needs a type of its own at all, since `SessionKind`'s five
+/// variants are `Role::as_str`'s five words and its `snake_case` serialization is those
+/// words verbatim. Collapsing it means giving `Role` a hand-written `Serialize` that
+/// emits the bare word and drops the worker type, which is a wire decision rather than a
+/// mechanical one, so it is deliberately not taken here.
+///
+/// The worker arm ignores its payload for that reason: an event stream about session
+/// lifecycle names the *surface*, and all five worker types share one. Which kind of
+/// worker a live session is is answered by `GET /api/workers`, which carries the type.
+impl From<Role> for SessionKind {
+    fn from(role: Role) -> Self {
         match role {
-            R::Reaction => Self::Reaction,
-            R::Deliberation => Self::Deliberation,
-            R::Worker => Self::Worker,
-            R::Reflection => Self::Reflection,
-            R::Cognition => Self::Cognition,
+            Role::Reaction => Self::Reaction,
+            Role::Deliberation => Self::Deliberation,
+            Role::Worker(_) => Self::Worker,
+            Role::Reflection => Self::Reflection,
+            Role::Cognition => Self::Cognition,
         }
     }
 }
@@ -400,23 +412,20 @@ pub fn event_stream(
 mod tests {
     use super::*;
 
-    /// The observatory's whole job is answering "what is the machine doing", and a
-    /// rung it cannot name is one it answers wrongly rather than not at all. Each
-    /// role's kind also has to serialize to the role's own word, because the wire
-    /// name is what the inspector prints.
+    /// The observatory's whole job is answering "what is the machine doing", and a role
+    /// it cannot name is one it answers wrongly rather than not at all. Each role's kind
+    /// also has to serialize to the role's own word, because the wire name is what the
+    /// inspector prints.
+    ///
+    /// Swept over [`Role::ALL`] against [`Role::as_str`] rather than a hand-written list
+    /// of five pairs, so the mirror is checked against the source of the words instead of
+    /// against a second copy of them. That is also what makes the remaining duplication
+    /// safe until `SessionKind` is collapsed: the two cannot drift without failing here.
     #[test]
-    fn every_rung_has_a_kind_and_keeps_its_name() {
-        use crate::foundation::agent::SessionRole as R;
-        for (role, word) in [
-            (R::Reaction, "reaction"),
-            (R::Deliberation, "deliberation"),
-            (R::Worker, "worker"),
-            (R::Reflection, "reflection"),
-            (R::Cognition, "cognition"),
-        ] {
-            let kind = SessionKind::from(role);
-            let json = serde_json::to_string(&kind).unwrap();
-            assert_eq!(json, format!("\"{word}\""), "{role:?} serializes as {json}");
+    fn every_role_has_a_kind_and_keeps_its_name() {
+        for role in Role::ALL {
+            let json = serde_json::to_string(&SessionKind::from(*role)).unwrap();
+            assert_eq!(json, format!("\"{}\"", role.as_str()), "{role:?} serializes as {json}");
         }
     }
 

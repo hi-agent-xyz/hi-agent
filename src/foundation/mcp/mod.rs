@@ -388,10 +388,6 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             ),
             image_text_to_text_tool(),
         ],
-        // The reaction is the fast conversational voice: it speaks via plain message
-        // text (not a `say` tool) and gets exactly one expression tool — `show` —
-        // to put a view a worker already built on screen. Nothing else; the heavy work
-        // is delegated to workers in code, not via a tool.
         // The shared brain. It delegates rather than does, so its surface is the
         // switchboard and nothing else: hand work out, ask after it, read what came back.
         //
@@ -421,12 +417,19 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // mail, not as something to poll for.
         //
         // No `look`/`act`/`video-text-to-text` either, and that is the correction this arm exists
-        // for. Until now a deliberation session was **opened as `SessionRole::Worker`**,
+        // for. Until now a deliberation session was **opened as a worker**,
         // so it got the effector surface and its `X-HI-Role` said `worker` — a rung
         // wearing another rung's clothes. Its built-ins stay on: `foundation.md` is
         // explicit that only Reaction's surface is a rail, and this one is sized for
         // context.
         Some("deliberation") => vec![send_message_tool()],
+        // **Reaction** — the mouth. Its two expression channels plus the one verb that
+        // reaches another agent, and nothing else: no reads, no fetches, no built-ins
+        // (`docs/arch/agents.md#reaction`). A stale comment stood above the arm before
+        // this one saying the voice "speaks via plain message text (not a `say` tool)
+        // and gets exactly one expression tool — `show`", which had not been true since
+        // `say` was added here; it also sat directly above the *cognition* arm, so it
+        // described the wrong rung in the wrong place.
         Some("reaction") => vec![say_tool(), show_tool(), send_message_tool()],
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
@@ -1973,7 +1976,7 @@ mod surface_tests {
     }
 
     /// Deliberation's whole surface, pinned — and the reason it needed pinning: the
-    /// rung was **opened as `SessionRole::Worker`**, so its `X-HI-Role` said `worker`
+    /// rung was **opened as a worker**, so its `X-HI-Role` said `worker`
     /// and it was handed the effector kit (`look`, `act`, `video-text-to-text`) that belongs to the
     /// rung that does the job. It reads and it hands up; that is one tool.
     ///
@@ -1989,7 +1992,7 @@ mod surface_tests {
     ///
     /// This arm used to hold the legacy agentic reaction's kit — `say`, `show`,
     /// `record_reflex`, and the understanding tools — with a comment saying no live role
-    /// mapped here. It was not merely dead: `SessionRole::Deliberation` stringifies to
+    /// mapped here. It was not merely dead: `Role::Deliberation` stringifies to
     /// `deliberation`, which had no arm, so the moment that role was constructed it
     /// would have landed here and been handed `say` (refused at dispatch) and no
     /// `send_message` at all. A fallback that hands out someone else's surface turns a

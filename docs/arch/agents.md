@@ -284,6 +284,13 @@ A worker's **type** is the `type` in [`CreateWorker(type)`](foundation.md#the-ag
 and it selects a prompt and nothing else — same session, same tools. Adding a kind is
 adding a `.md`.
 
+**A type is a role, not a field beside one.** The four rungs and the five types are one
+namespace of nine, because they are one concept: [the opening of this
+document](#goal) says every agent differs only in prompt and tool surface, and a type
+differs in exactly the first of those. So the type travels with the session wherever its
+role does — which is what lets the switchboard say a live session is a *view reviewer*
+rather than an anonymous worker, and `GET /api/workers` report it.
+
 | Worker | Job |
 |---|---|
 | General | whatever the task is |

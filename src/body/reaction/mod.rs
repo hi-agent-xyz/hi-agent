@@ -70,7 +70,8 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until, timeout};
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
-use crate::foundation::agent::{AgentLayer, SessionRole};
+use crate::foundation::agent::AgentLayer;
+use crate::identity::Role;
 use crate::foundation::config;
 use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
@@ -916,7 +917,7 @@ pub async fn start(
     // one its id was nobody's to know.
     let reflection_reg = registry::register_scoped(
         registry::mint(),
-        registry::Role::Reflection,
+        Role::Reflection,
         None,
         "tending the agent's own house".to_string(),
     );
@@ -935,7 +936,7 @@ pub async fn start(
     // and primes its long-lived agent session as soon as the HTTP/MCP server is ready.
     let cognition_reg = registry::register_scoped(
         registry::mint(),
-        registry::Role::Cognition,
+        Role::Cognition,
         None,
         "the shared brain".to_string(),
     );
@@ -1064,7 +1065,7 @@ impl Reaction {
         // the loop reaches its wait.
         let voice = registry::register_scoped(
             registry::mint(),
-            registry::Role::Reaction,
+            Role::Reaction,
             None,
             "the voice".to_string(),
         );
@@ -1541,7 +1542,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 }
 
 /// A reaction turn: the single fast conversational voice. An agent session
-/// ([`SessionRole::Reaction`]) on the small model, carrying `reaction.md` as its system
+/// ([`Role::Reaction`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
 /// switched off at session open. A turn is a single quick generation: it speaks by
 /// calling `say`, and may call `show` to put a view a worker already built on
@@ -1903,7 +1904,7 @@ async fn open_reaction_session(
             .inner
             .agent
             .session(
-                SessionRole::Reaction,
+                Role::Reaction,
                 Some(voice_id),
                 SessionOpts {
                     system_prompt: Some(
