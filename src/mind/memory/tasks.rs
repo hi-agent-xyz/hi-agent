@@ -207,7 +207,7 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
     );
     for task in &ordered[..shown] {
         out.push_str(&clip(&line(task, now), PROJECTED_LINE_CHARS));
-        if let Some(note) = liveness_note(task, now) {
+        if let Some(note) = trailing_note(task, now) {
             let _ = write!(out, " · {note}");
         }
         out.push('\n');
@@ -265,15 +265,24 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
     format!("- [{head}] {title}")
 }
 
-fn liveness_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
-    if !task.has_liveness_contract() {
-        return None;
+/// The one trailing fact a projected line can afford, and which one it is depends on what
+/// kind of task it is. Monitored machinery is judged by whether it is still alive, and its
+/// age says nothing — a watch is *supposed* to be old. Plain work is the opposite: nothing
+/// in the line ever said how long it had been sitting, so a delivery finished days ago and
+/// one opened this morning read identically, and only one of them is work.
+fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    if task.has_liveness_contract() {
+        return Some(match (task.checked_at, task.liveness.verify.is_some()) {
+            (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
+            (None, true) => "never checked".to_owned(),
+            (None, false) => "never checked, and no recorded way to".to_owned(),
+        });
     }
-    Some(match (task.checked_at, task.liveness.verify.is_some()) {
-        (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
-        (None, true) => "never checked".to_owned(),
-        (None, false) => "never checked, and no recorded way to".to_owned(),
-    })
+    // Below a day the number is noise on a list read many times a day, and a task with no
+    // `created_at:` gets no note at all rather than a guessed one.
+    let created = task.created_at?;
+    let days = (now - created).num_days();
+    (days >= 1).then(|| format!("open {days}d"))
 }
 
 fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
@@ -645,6 +654,34 @@ mod tests {
         task.title = "任务".repeat(200);
         let text = render_projection(std::slice::from_ref(&task), now());
         let line = text.lines().find(|line| line.starts_with("- ")).unwrap();
-        assert_eq!(line.chars().count(), PROJECTED_LINE_CHARS);
+        // The trailing note is appended after the clip, so only the title half is bounded.
+        let (title, _note) = line.split_once(" · ").unwrap();
+        assert_eq!(title.chars().count(), PROJECTED_LINE_CHARS);
+    }
+
+    #[test]
+    fn plain_work_carries_how_long_it_has_been_open() {
+        let mut fresh = task("Draft the report", TaskStatus::Doing);
+        fresh.created_at = Some(now() - Duration::hours(5));
+        let text = render_projection(std::slice::from_ref(&fresh), now());
+        assert!(!text.contains("open "), "{text}");
+
+        let mut stale = task("Draft the report", TaskStatus::Doing);
+        stale.created_at = Some(now() - Duration::days(6));
+        let text = render_projection(std::slice::from_ref(&stale), now());
+        assert!(text.contains("· open 6d"), "{text}");
+
+        // A watch is meant to be old, so its line stays about whether it is still alive.
+        let mut monitored = stale.clone();
+        monitored.liveness.verify = Some("latest ledger row is under 30m old".into());
+        let text = render_projection(std::slice::from_ref(&monitored), now());
+        assert!(!text.contains("open 6d"), "{text}");
+        assert!(text.contains("never checked"), "{text}");
+
+        // A record with no `created_at:` gets no note rather than a guessed one.
+        let mut undated = stale.clone();
+        undated.created_at = None;
+        let text = render_projection(std::slice::from_ref(&undated), now());
+        assert!(!text.contains("open "), "{text}");
     }
 }

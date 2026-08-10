@@ -989,6 +989,24 @@ mod soul_tests {
         );
     }
 
+    /// The pen has two ends, and only one of them was ever written down. Holding the sole
+    /// write on the ledger makes Cognition the sole *closer* too — nothing else in the loop
+    /// can retire a task, so an instruction that only says how to open one produces a list
+    /// that grows and never shrinks. That is not hypothetical: nine tasks stayed `open`
+    /// across a week, three of them delivered or called off out loud, and the closing
+    /// decision got handed to the person as buttons on a screen they never pressed.
+    #[test]
+    fn the_rung_holding_the_pen_is_told_to_close_as_well_as_open() {
+        assert!(
+            COGNITION_BASE.contains("Closing is yours"),
+            "the ledger's only writer must be told closing is its job too"
+        );
+        assert!(
+            COGNITION_BASE.contains("You owe the ask, not the wait"),
+            "a task whose last step is theirs must not sit open as a reminder for them"
+        );
+    }
+
     /// A rung with no mouth must not be handed the words for one. Cognition proposes and
     /// Reaction voices; a role layer that said "tell them" would have it try to speak
     /// through a sink that carries no sequencer, and blame the tool.

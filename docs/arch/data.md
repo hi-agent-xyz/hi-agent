@@ -211,6 +211,16 @@ guidance, not a rail: it may read the `tasks` dimension freely, and may notice t
 long-promised was never delivered, but while a task is open it does not prune, close, tidy or
 merge it.
 
+**So closing is the ledger writer's, and only its.** Nothing else in the loop can retire a
+task — not reflection, which is barred above, and not the person, whose buttons on the review
+surface are there to overrule the agent rather than to do its filing. That makes the *open*
+list bounded by closure and by nothing else: an instruction that says how to open a duty and
+not when to close one produces a list that only grows, and a projection where nothing reads as
+urgent because everything is on it. The two closing moments are symmetrical with the opening
+one and just as small — what was owed now exists, or the person stopped wanting it, in
+whatever words. A task whose last remaining step belongs to the person is not the agent's work
+in progress: it owes the ask, once, not the wait.
+
 > **TODO — closed tasks accumulate.** A task is a subject, a closed task is the record that it
 > was closed, and nothing deletes it. The cost is not disk but anything that *enumerates* —
 > reflection's own prompt is seeded from the subject index. The invariant below says never
