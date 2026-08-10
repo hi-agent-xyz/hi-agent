@@ -48,13 +48,13 @@ the durable craft alone — don't go re-checking what you plainly know.
 
 Things arrive to you as **refs**. A photo, a file, a recording — you'll see a line
 under "New signals" naming it and carrying its ref, like
-`📷 photo arrived ⟨ref: 2026-08-09/14/23-07.jpg⟩` or
-`The user handed you a file: passport.pdf (application/pdf, 2.1 MB). ⟨ref: 2026-08-09/14/31-02.pdf⟩`.
+`📷 photo arrived ⟨ref: vision/2026-08-09/14/23-07.jpg⟩` or
+`The user handed you a file: passport.pdf (application/pdf, 2.1 MB). ⟨ref: file/2026-08-09/14/31-02.pdf⟩`.
 
-**A ref is a path, and it starts at `{raw_dir}`:** the file is
-`{raw_dir}/<channel>/<ref>` — `vision` for a photo, `file` for something handed over,
-`audio` for a recording. The channel is the one the line arrived on. So the passport
-above is `{raw_dir}/file/2026-08-09/14/31-02.pdf`, and you can open it right now.
+**A ref is a path, and it starts at `{raw_dir}`.** Join the two and you have the file:
+the passport above is `{raw_dir}/file/2026-08-09/14/31-02.pdf`, and you can open it
+right now. Pass the ref whole when a tool asks for one — it says which channel it came
+from, so nothing has to guess.
 
 So when looking would answer better than guessing — reading a label, a menu, a
 foreign sign, handwriting; identifying a thing; checking what's on a screen someone

@@ -49,6 +49,54 @@ pub async fn store_blob(
     Ok(rel)
 }
 
+/// The locator a signal's text surface carries: `<channel>/<day>/<rel>`, i.e. the
+/// blob's path relative to [`layout::raw_root`]. Wrapped as `⟨ref: …⟩` by whoever
+/// writes the sentence.
+///
+/// **The channel is part of the ref, and that is the whole point.** It used to be
+/// `<day>/<rel>`, which is only a path if you already know which channel it came
+/// from — and the one tool that opens an image assumed the camera, so a photo the
+/// person *handed over* resolved to nothing and reported "it may have faded" about
+/// a file sitting on disk. A ref that names its own channel is a path; one that
+/// doesn't is a path plus a guess.
+pub fn signal_ref(channel: Channel, ts: DateTime<Utc>, rel: &str) -> String {
+    format!("{}/{}/{rel}", channel.as_str(), layout::day_key(ts))
+}
+
+/// Read a [`signal_ref`] back: `<channel>/<YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>` into the
+/// channel, the timestamp, and the channel-day-relative path [`resolve`] wants.
+///
+/// **A ref with no channel is read as vision**, because that is the only kind that
+/// existed before the channel was part of the grammar. Journals are never rewritten,
+/// so old lines keep resolving exactly as they did.
+///
+/// Only the one-off still grid (`<MM>-<SS>.<ext>`) parses. A streamed minute
+/// (`<MM>.<ext>`) is deliberately rejected: no signal offers one as a ref, and
+/// accepting the shape would resolve a whole minute of video where a still was meant.
+pub fn parse_ref(reff: &str) -> Option<(Channel, DateTime<Utc>, String)> {
+    let parts: Vec<&str> = reff.trim().split('/').collect();
+    let (channel, date, hh, file) = match parts[..] {
+        [c, date, hh, file] => (c.parse::<Channel>().ok()?, date, hh, file),
+        [date, hh, file] => (Channel::Vision, date, hh, file),
+        _ => return None,
+    };
+    let (stem, _ext) = file.rsplit_once('.')?;
+    let (mm, ss) = stem.split_once('-')?;
+    // Reuse the proven RFC3339 parse rather than NaiveDate helpers — a malformed
+    // part fails the parse and yields `None`.
+    let ts = DateTime::parse_from_rfc3339(&format!("{date}T{hh}:{mm}:{ss}Z"))
+        .ok()?
+        .with_timezone(&Utc);
+    Some((channel, ts, format!("{hh}/{file}")))
+}
+
+/// Resolve a [`signal_ref`] to bytes on disk, through the same best-available lookup
+/// [`resolve`] does. `None` when the ref is malformed or nothing is there.
+pub async fn resolve_ref(data_dir: &Path, reff: &str) -> Option<PathBuf> {
+    let (channel, ts, rel) = parse_ref(reff)?;
+    resolve(data_dir, channel, ts, &rel).await
+}
+
 /// Best-available path for a signal's media: the original blob if it still exists,
 /// else the nearest keepsake [`super::decay`] left when the day faded, else `None`
 /// (the signal survives as its text surface alone). `rel` is the entry's
@@ -122,6 +170,50 @@ fn hms_to_secs(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    fn ts() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 6, 25, 14, 23, 7).unwrap()
+    }
+
+    #[test]
+    fn a_ref_round_trips_through_its_channel() {
+        for channel in [Channel::Vision, Channel::File, Channel::Audio] {
+            let reff = signal_ref(channel, ts(), "14/23-07.jpg");
+            let (back, when, rel) = parse_ref(&reff).expect("round trip");
+            assert_eq!(back, channel, "{reff} lost its channel");
+            assert_eq!(when, ts());
+            assert_eq!(rel, "14/23-07.jpg");
+        }
+    }
+
+    /// Journals are never rewritten, so refs written before the channel was part of
+    /// the grammar keep resolving — and vision is what they all were.
+    #[test]
+    fn a_ref_without_a_channel_is_read_as_vision() {
+        let (channel, when, rel) = parse_ref("2026-06-25/14/23-07.jpg").expect("legacy ref");
+        assert_eq!(channel, Channel::Vision);
+        assert_eq!(when, ts());
+        assert_eq!(rel, "14/23-07.jpg");
+    }
+
+    /// The bug this grammar exists for: a handed image resolved under the camera,
+    /// found nothing, and reported it as faded.
+    #[tokio::test]
+    async fn a_handed_image_resolves_where_it_was_stored_not_where_the_camera_keeps_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let rel = store_blob(dir.path(), Channel::File, ts(), MediaSlot::InputOneOff, "png", b"x")
+            .await
+            .unwrap();
+
+        let reff = signal_ref(Channel::File, ts(), &rel);
+        assert!(resolve_ref(dir.path(), &reff).await.is_some(), "{reff} must resolve");
+
+        let as_vision = signal_ref(Channel::Vision, ts(), &rel);
+        assert!(
+            resolve_ref(dir.path(), &as_vision).await.is_none(),
+            "the camera channel holds nothing here — that mistake is what the channel prefix ends"
+        );
+    }
 
     #[test]
     fn parses_keep_names() {

@@ -65,7 +65,7 @@ not yours to redo. Your job is to put a copy where the agent will find it again.
     {raw_dir}/file/
 
 in dated subfolders. **If your task carries a `⟨ref: …⟩`, that is the file** — the path
-is `{raw_dir}/file/<ref>`, exactly. Use it rather than looking around: two files handed
+is `{raw_dir}/<ref>` — the ref names its own channel, so join the two, exactly. Use it rather than looking around: two files handed
 over a second apart, or another filing already in flight, and "the newest one" is the
 wrong file with no way to tell. Only when no ref came with the task does the most
 recently written file there stand in for one.

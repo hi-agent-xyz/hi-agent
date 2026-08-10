@@ -22,7 +22,6 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
 
 use crate::body::capabilities::{image_gen, video_gen, view_render};
 use crate::body::reaction::{LoopControl, ToolOwner, ToolRegistry};
@@ -493,7 +492,7 @@ fn image_text_to_text_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ carried by the image's signal, e.g. 2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ carried by the image's signal, e.g. vision/2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: what you want to know about the image (a question or focus). Omit to just look." },
             },
             "required": ["ref"],
@@ -552,7 +551,7 @@ fn image_to_image_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. 2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. vision/2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
                 "size": { "type": "string", "description": "Optional, vendor-specific output size." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
@@ -595,7 +594,7 @@ fn image_to_video_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. 2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. vision/2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: how it should move or what should happen." },
                 "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
                 "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
@@ -1470,17 +1469,16 @@ async fn do_image_text_to_text(data_dir: &Path, args: &Value) -> Value {
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
         return tool_error(
-            "image-text-to-text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. 2026-06-25/14/23-07.jpg",
+            "image-text-to-text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. vision/2026-06-25/14/23-07.jpg (pass it whole, channel included)",
         );
     };
-    let Some((ts, rel, mime)) = parse_still_ref(reff) else {
+    let Some(mime) = still_ref_mime(reff) else {
         return tool_error(&format!(
-            "image-text-to-text: malformed ref {reff:?} (expected <YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
+            "image-text-to-text: malformed ref {reff:?} \
+             (expected <channel>/<YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
         ));
     };
-    let Some(path) =
-        crate::mind::memory::media::resolve(data_dir, crate::types::Channel::Vision, ts, &rel).await
-    else {
+    let Some(path) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
         return tool_error(&format!("image-text-to-text: no media at {reff} (it may have faded)"));
     };
     let bytes = match tokio::fs::read(&path).await {
@@ -1627,20 +1625,17 @@ fn ext_to_mime(ext: &str) -> String {
     .to_string()
 }
 
-/// Parse a still `ref` — `<YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>` — into the timestamp and
-/// channel-day-relative path [`crate::mind::memory::media::resolve`] wants, plus the
-/// MIME. `None` if the shape doesn't match.
-fn parse_still_ref(reff: &str) -> Option<(DateTime<Utc>, String, String)> {
-    let (date, rel) = reff.split_once('/')?; // "2026-06-25", "14/23-07.jpg"
-    let (hh, file) = rel.split_once('/')?; // "14", "23-07.jpg"
-    let (stem, ext) = file.rsplit_once('.')?; // "23-07", "jpg"
-    let (mm, ss) = stem.split_once('-')?; // "23", "07"
-    // Reuse the proven RFC3339 parse (see keep_and_fade) rather than NaiveDate
-    // helpers — a malformed part fails the parse and yields `None`.
-    let ts = DateTime::parse_from_rfc3339(&format!("{date}T{hh}:{mm}:{ss}Z"))
-        .ok()?
-        .with_timezone(&Utc);
-    Some((ts, rel.to_string(), ext_to_mime(ext)))
+/// The MIME a still `ref` implies, and — because it goes through
+/// [`crate::mind::memory::media::parse_ref`] — a check that the ref is well formed
+/// before anything tries to open it. `None` if the shape doesn't match.
+///
+/// Where the ref *resolves* is no longer decided here. This function used to parse
+/// the shape and hand back a channel-day-relative path, which left the caller to
+/// supply the channel — and it supplied the camera, always.
+fn still_ref_mime(reff: &str) -> Option<String> {
+    let (_channel, _ts, rel) = crate::mind::memory::media::parse_ref(reff)?;
+    let (_stem, ext) = rel.rsplit_once('.')?;
+    Some(ext_to_mime(ext))
 }
 
 fn result(id: Value, result: Value) -> Value {
@@ -1794,18 +1789,20 @@ mod vision_tool_tests {
     use super::*;
 
     #[test]
-    fn parses_a_well_formed_still_ref() {
-        let (ts, rel, mime) = parse_still_ref("2026-06-25/14/23-07.jpg").unwrap();
-        assert_eq!(rel, "14/23-07.jpg");
-        assert_eq!(mime, "image/jpeg");
-        assert_eq!(ts.to_rfc3339(), "2026-06-25T14:23:07+00:00");
+    fn reads_the_mime_off_a_well_formed_still_ref() {
+        assert_eq!(still_ref_mime("vision/2026-06-25/14/23-07.jpg").unwrap(), "image/jpeg");
+        assert_eq!(still_ref_mime("file/2026-06-25/14/23-07.png").unwrap(), "image/png");
     }
 
     #[test]
     fn rejects_malformed_still_refs() {
-        assert!(parse_still_ref("not-a-ref").is_none());
-        assert!(parse_still_ref("2026-06-25/14/23.jpg").is_none(), "minute file, not a one-off still");
-        assert!(parse_still_ref("2026-06-25/14/23-07").is_none(), "no extension");
+        assert!(still_ref_mime("not-a-ref").is_none());
+        assert!(
+            still_ref_mime("vision/2026-06-25/14/23.jpg").is_none(),
+            "minute file, not a one-off still"
+        );
+        assert!(still_ref_mime("vision/2026-06-25/14/23-07").is_none(), "no extension");
+        assert!(still_ref_mime("nosuchchannel/2026-06-25/14/23-07.jpg").is_none());
     }
 
     #[test]

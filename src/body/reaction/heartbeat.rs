@@ -352,18 +352,22 @@ fn is_image(e: &JournalEntry) -> bool {
     matches!(e, JournalEntry::SignalIn { media: Some(m), .. } if m.mime.starts_with("image/"))
 }
 
-/// The ref for a still-image signal — `<date>/<HH>/<MM>-<SS>.<ext>`, the same shape
-/// `image-text-to-text` resolves — so reflection can look at the photo itself
-/// and fold what it shows into episodes/facets, rather than indexing it blind.
-/// `None` for non-image or media-less signals.
+/// The ref for a still-image signal, in the grammar `image-text-to-text` resolves —
+/// so reflection can look at the photo itself and fold what it shows into
+/// episodes/facets, rather than indexing it blind. `None` for non-image or
+/// media-less signals.
+///
+/// It takes the channel from the entry rather than assuming one. Consolidation sees
+/// every channel, so the handed passport and the camera still both come through here;
+/// while the ref omitted its channel, only the camera's resolved.
 fn still_ref(e: &JournalEntry) -> Option<String> {
-    let JournalEntry::SignalIn { ts, media: Some(m), .. } = e else {
+    let JournalEntry::SignalIn { ts, channel, media: Some(m), .. } = e else {
         return None;
     };
     if !m.mime.starts_with("image/") {
         return None;
     }
-    Some(format!("{}/{}", crate::mind::memory::layout::day_key(*ts), m.file))
+    Some(crate::mind::memory::media::signal_ref(*channel, *ts, &m.file))
 }
 
 /// How far a voice turn's window is padded, in seconds, when matching co-present

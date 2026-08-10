@@ -47,7 +47,7 @@ use uuid::Uuid;
 
 use crate::body::capabilities::face;
 use crate::foundation::vendors::ffmpeg_frame;
-use crate::mind::memory::layout::{MediaSlot, day_key};
+use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::server::headers::AuthBearer;
@@ -365,7 +365,10 @@ fn spawn_perceive(
 
         let body = match kind {
             Perceived::Still => {
-                let mut b = format!("📷 photo arrived ⟨ref: {}/{}⟩", day_key(ts), blob_rel);
+                let mut b = format!(
+                    "📷 photo arrived ⟨ref: {}⟩",
+                    media::signal_ref(Channel::Vision, ts, &blob_rel)
+                );
                 if let Some(note) = &face {
                     b.push_str(note);
                 }

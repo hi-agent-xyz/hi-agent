@@ -164,15 +164,18 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     // is a path — so asserting the text merely contains `⟨ref:` would pin the shape
     // of the lie this fixes. The body used to name only the original filename, which
     // is not what the bytes are stored as.
-    let raw = dir.path().join("memory").join("raw").join("file");
+    // The ref names its own channel, so it joins onto the *raw root* — a reader that
+    // has to supply the channel is the thing the grammar removed.
+    let raw = dir.path().join("memory").join("raw");
     for body in &bodies {
-        let rel = body
+        let reff = body
             .split_once("⟨ref: ")
             .and_then(|(_, rest)| rest.split_once('⟩'))
-            .map(|(rel, _)| rel)
+            .map(|(reff, _)| reff)
             .unwrap_or_else(|| panic!("handed file carries no ref: {body}"));
-        let path = raw.join(rel);
-        assert!(path.is_file(), "the ref must resolve under {raw:?}: {rel}");
+        assert!(reff.starts_with("file/"), "a handed file's ref must name its channel: {reff}");
+        let path = raw.join(reff);
+        assert!(path.is_file(), "the ref must resolve under {raw:?}: {reff}");
         assert!(!std::fs::read(&path).unwrap().is_empty(), "the ref must reach the bytes");
     }
 }

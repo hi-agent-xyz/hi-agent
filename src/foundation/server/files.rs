@@ -135,11 +135,10 @@ async fn ingest_file(
     Ok(())
 }
 
-/// The locator, in the one grammar every channel uses: `⟨ref: <day>/<rel>⟩`,
-/// resolved against `<raw>/file/`. Kept beside the store call rather than at the
-/// framing sites so a new door onto this channel cannot forget it.
+/// The locator, in the one grammar every channel uses. Kept beside the store call
+/// rather than at the framing sites so a new door onto this channel cannot forget it.
 fn file_ref(ts: chrono::DateTime<Utc>, rel: &str) -> String {
-    format!("⟨ref: {}/{rel}⟩", crate::mind::memory::layout::day_key(ts))
+    format!("⟨ref: {}⟩", media::signal_ref(Channel::File, ts, rel))
 }
 
 /// Receive one handed file (drag-drop / picker / phone handoff) — a neutral
