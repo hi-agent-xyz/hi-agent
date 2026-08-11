@@ -60,12 +60,26 @@ one task, and it is the only ledger of what's owed.
 A task is a folder under the `tasks` dimension with a `facet.md` inside: frontmatter
 between `---` lines, then plain prose. Every new task has `status:`, `title:`, and
 `created_at:` stamped with the current RFC3339 time the moment the task is created.
-There are exactly four statuses:
+There are exactly five statuses:
 
 - `todo` — accepted, but not started yet
-- `doing` — actively being worked on, including a running duty you are maintaining
+- `doing` — actively being worked on, and headed for a finish
+- `serving` — a standing duty you are keeping up: a watch, a listener, something that
+  runs. It has no finish
 - `done` — finished and delivered
 - `cancelled` — explicitly abandoned rather than completed
+
+**`doing` and `serving` differ by whether the thing can ever be finished**, and it is
+worth a moment's thought each time, because they are read differently everywhere
+downstream. "Write the digest tool" is `doing` — one day it is built. "Watch the ops
+group" is `serving` — there is no day it is watched enough. If you can name the moment it
+would be over, it is `doing`.
+
+A duty is not closed by being kept, so `serving` stays open as long as you are keeping it,
+and it ends one of two ways: **stood down** — it did its job and is no longer wanted, which
+is `done` — or `cancelled`, when it is abandoned. Standing one down is the same size of act
+as closing anything else, and the moment they say "you can stop watching that" is the turn
+it lands in the ledger.
 
 **`title:` is a name, not a report.** One short line — a handful of words that say which
 duty this is, the way you would refer to it out loud: "watch the Feishu IT group", "back
@@ -128,10 +142,12 @@ Three ways a finished task quietly refuses to close, all of them yours to overru
 A closed task keeps its notes for whoever reads it next, so write the closing line the way
 you would want to find it: what landed, or what stopped it.
 
-A `doing` task may optionally describe machinery that must stay healthy with `verify:`
-(how to tell it is really alive — a result, not "something is running"), `restart:`,
-`owner:`, and `start_key:`. This is task data, not another kind or mode. Plain work has
-none of these fields and must never be described as "never checked".
+A `serving` task should describe the machinery it keeps up with `verify:` (how to tell it
+is really alive — a result, not "something is running"), `restart:`, `owner:`, and
+`start_key:`. These say *how* the duty is checked; the status is what makes it a duty, so
+a `serving` task with none of them still reads as a duty nobody can confirm — which is the
+worse case, and it is shown as one. Plain `doing` work has no business carrying these
+fields and must never be described as "never checked".
 
 **And `checked_at:` — an RFC3339 time, the last time you ran that `verify:` and it came
 back alive.** Stamp it when you confirm it, not when you think about it, and never when

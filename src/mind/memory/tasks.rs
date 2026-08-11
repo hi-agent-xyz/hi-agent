@@ -4,14 +4,19 @@
 //! shape is deliberately small:
 //!
 //! ```text
-//! status: todo | doing | done | cancelled
+//! status: todo | doing | serving | done | cancelled
 //! created_at: <RFC3339>
 //! ```
 //!
+//! `todo` and `doing` promise an ending; `serving` promises presence. A duty being kept
+//! up — a watch, a listener, a backup that runs — never finishes, so judging it by how
+//! long it has been open says nothing, and offering to mark it done says the wrong thing.
+//! It closes by being stood down, not by being completed.
+//!
 //! `due_at`, `checked_at`, `completed_at`, and `cancelled_at` are optional lifecycle
-//! timestamps. A task may also carry a liveness contract (`verify`, `restart`,
-//! `owner`, `start_key`) when a `doing` task has machinery that must stay healthy.
-//! That contract is optional data, not another task kind or mode.
+//! timestamps. A `serving` task may also carry a liveness contract (`verify`, `restart`,
+//! `owner`, `start_key`) describing how to tell its machinery is still alive. That
+//! contract is how a duty is checked, not what makes it a duty: the status is.
 //!
 //! Older records using `kind` plus `state` remain readable. New writes emit only the
 //! status taxonomy.
@@ -32,6 +37,7 @@ const PROJECTED_LINE_CHARS: usize = 120;
 pub enum TaskStatus {
     Todo,
     Doing,
+    Serving,
     Done,
     Cancelled,
 }
@@ -41,6 +47,7 @@ impl TaskStatus {
         match self {
             Self::Todo => "todo",
             Self::Doing => "doing",
+            Self::Serving => "serving",
             Self::Done => "done",
             Self::Cancelled => "cancelled",
         }
@@ -50,18 +57,21 @@ impl TaskStatus {
     fn parse(s: &str) -> Self {
         match s.trim() {
             "doing" => Self::Doing,
+            "serving" => Self::Serving,
             "done" => Self::Done,
             "cancelled" => Self::Cancelled,
             _ => Self::Todo,
         }
     }
 
+    /// A duty is never closed by standing there being kept — `serving` is as open as
+    /// `doing`, and dropping it from the active set is how a watch goes unwatched.
     pub fn is_active(self) -> bool {
-        matches!(self, Self::Todo | Self::Doing)
+        matches!(self, Self::Todo | Self::Doing | Self::Serving)
     }
 }
 
-/// Optional health instructions for a `doing` task backed by running machinery.
+/// Optional health instructions for a `serving` task backed by running machinery.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Liveness {
     pub verify: Option<String>,
@@ -125,7 +135,7 @@ impl Task {
         }
         self.status = status;
         match status {
-            TaskStatus::Todo | TaskStatus::Doing => {
+            TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
                 self.completed_at = None;
                 self.cancelled_at = None;
             }
@@ -144,8 +154,15 @@ impl Task {
         self.due_at.is_some_and(|due| due <= now)
     }
 
-    fn has_liveness_contract(&self) -> bool {
-        self.status == TaskStatus::Doing && !self.liveness.is_empty()
+    fn is_serving(&self) -> bool {
+        self.status == TaskStatus::Serving
+    }
+
+    /// A duty nobody has confirmed alive. Deliberately keyed on the status rather than on
+    /// whether a `verify:` happens to be written: a duty with no recorded way to check it
+    /// is the *worse* case, not an exempt one.
+    fn unconfirmed(&self) -> bool {
+        self.is_serving() && self.checked_at.is_none()
     }
 }
 
@@ -178,7 +195,7 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
     anyhow::bail!("too many tasks already named like {base:?}; give this one its own title")
 }
 
-/// Todo and doing tasks, sorted by subject.
+/// Todo, doing and serving tasks, sorted by subject.
 pub async fn active_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     let mut all = scan(data_dir).await?;
     all.retain(|task| task.status.is_active());
@@ -217,6 +234,7 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
     if !rest.is_empty() {
         let todo = rest.iter().filter(|task| task.status == TaskStatus::Todo).count();
         let doing = rest.iter().filter(|task| task.status == TaskStatus::Doing).count();
+        let serving = rest.iter().filter(|task| task.is_serving()).count();
         let mut parts = Vec::new();
         if todo > 0 {
             parts.push(format!("{todo} todo"));
@@ -224,11 +242,11 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
         if doing > 0 {
             parts.push(format!("{doing} doing"));
         }
+        if serving > 0 {
+            parts.push(format!("{serving} serving"));
+        }
         let overdue = rest.iter().filter(|task| task.is_overdue(now)).count();
-        let unchecked = rest
-            .iter()
-            .filter(|task| task.has_liveness_contract() && task.checked_at.is_none())
-            .count();
+        let unchecked = rest.iter().filter(|task| task.unconfirmed()).count();
         let _ = write!(
             out,
             "- ... and {} more active ({})",
@@ -239,7 +257,7 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
             let _ = write!(out, ", {overdue} of them overdue");
         }
         if unchecked > 0 {
-            let _ = write!(out, ", {unchecked} monitored tasks never checked");
+            let _ = write!(out, ", {unchecked} duties never confirmed alive");
         }
         out.push_str(". The whole list is memory/facets/tasks/.\n");
     }
@@ -266,12 +284,12 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
 }
 
 /// The one trailing fact a projected line can afford, and which one it is depends on what
-/// kind of task it is. Monitored machinery is judged by whether it is still alive, and its
-/// age says nothing — a watch is *supposed* to be old. Plain work is the opposite: nothing
-/// in the line ever said how long it had been sitting, so a delivery finished days ago and
-/// one opened this morning read identically, and only one of them is work.
+/// kind of task it is. A duty is judged by whether it is still alive, and its age says
+/// nothing — a watch is *supposed* to be old. Plain work is the opposite: nothing in the
+/// line ever said how long it had been sitting, so a delivery finished days ago and one
+/// opened this morning read identically, and only one of them is work.
 fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
-    if task.has_liveness_contract() {
+    if task.is_serving() {
         return Some(match (task.checked_at, task.liveness.verify.is_some()) {
             (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
             (None, true) => "never checked".to_owned(),
@@ -295,15 +313,23 @@ fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     }
 }
 
-/// Overdue first, then upcoming, then undated doing work before todo work.
+/// Overdue first, then duties nobody has confirmed alive, then upcoming, then undated
+/// doing work, then duties known to be up, then todo work.
+///
+/// A duty splits across two of those bands on purpose. A watch that has been confirmed
+/// alive wants to be *seen* and not acted on, so it sits low; the same watch with nothing
+/// to say it is running is the one line here that might already be silently dead, so it
+/// sits at the top next to overdue work.
 type OrderKey<'a> = (usize, i64, &'a str);
 
 fn order_key(task: &Task, now: DateTime<Utc>) -> OrderKey<'_> {
-    match task.due_at {
-        Some(due) if due <= now => (0, due.timestamp(), &task.subject),
-        Some(due) => (1, due.timestamp(), &task.subject),
-        None if task.status == TaskStatus::Doing => (2, 0, &task.subject),
-        None => (3, 0, &task.subject),
+    match (task.due_at, task.status) {
+        (Some(due), _) if due <= now => (0, due.timestamp(), &task.subject),
+        _ if task.unconfirmed() => (1, 0, &task.subject),
+        (Some(due), _) => (2, due.timestamp(), &task.subject),
+        (None, TaskStatus::Doing) => (3, 0, &task.subject),
+        (None, TaskStatus::Serving) => (4, 0, &task.subject),
+        (None, _) => (5, 0, &task.subject),
     }
 }
 
@@ -376,8 +402,11 @@ fn legacy_status(kind: Option<&str>, state: Option<&str>) -> TaskStatus {
         Some("dropped") => TaskStatus::Cancelled,
         _ => match kind.map(str::trim) {
             Some("staged") | Some("deadline") => TaskStatus::Todo,
-            // `wip`, `watch`, `serving`, absent, and malformed kinds represented
-            // work the old system considered underway.
+            // The retired schema drew this same line and called it `kind`; these two are
+            // the duties, and they land where they always meant to.
+            Some("serving") | Some("watch") => TaskStatus::Serving,
+            // `wip`, absent, and malformed kinds represented work the old system
+            // considered underway.
             _ => TaskStatus::Doing,
         },
     }
@@ -503,13 +532,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_kind_and_state_map_into_the_four_statuses() {
+    async fn legacy_kind_and_state_map_into_the_five_statuses() {
         let dir = tempfile::tempdir().unwrap();
         for (subject, frontmatter, expected) in [
             ("queued", "kind: staged\nstate: open", TaskStatus::Todo),
             ("deadline", "kind: deadline\nstate: open", TaskStatus::Todo),
             ("wip", "kind: wip\nstate: open", TaskStatus::Doing),
-            ("watch", "kind: watch\nstate: open", TaskStatus::Doing),
+            ("watch", "kind: watch\nstate: open", TaskStatus::Serving),
+            ("serving", "kind: serving\nstate: open", TaskStatus::Serving),
             ("done", "kind: serving\nstate: done", TaskStatus::Done),
             ("dropped", "kind: wip\nstate: dropped", TaskStatus::Cancelled),
         ] {
@@ -532,6 +562,7 @@ mod tests {
         for task in [
             task("todo", TaskStatus::Todo),
             task("doing", TaskStatus::Doing),
+            task("serving", TaskStatus::Serving),
             task("done", TaskStatus::Done),
             task("cancelled", TaskStatus::Cancelled),
         ] {
@@ -540,7 +571,7 @@ mod tests {
         let active = active_tasks(dir.path()).await.unwrap();
         assert_eq!(
             active.iter().map(|task| task.subject.as_str()).collect::<Vec<_>>(),
-            vec!["doing", "todo"]
+            vec!["doing", "serving", "todo"]
         );
     }
 
@@ -558,6 +589,11 @@ mod tests {
         task.set_status(TaskStatus::Cancelled, at(28, 11));
         assert_eq!(task.cancelled_at, Some(at(28, 11)));
         assert!(task.completed_at.is_none());
+
+        // Standing a duty up reopens it as surely as `todo` or `doing` does.
+        task.set_status(TaskStatus::Serving, at(28, 12));
+        assert!(task.cancelled_at.is_none());
+        assert!(task.completed_at.is_none());
     }
 
     #[test]
@@ -573,32 +609,61 @@ mod tests {
         assert!(!plain_line.contains("due"));
     }
 
+    /// The status decides which fact the line carries, not whether a `verify:` was written.
     #[test]
-    fn liveness_is_optional_data_on_doing_tasks() {
+    fn a_duty_is_judged_by_liveness_and_plain_work_never_is() {
         let plain = task("Draft the report", TaskStatus::Doing);
         let text = render_projection(std::slice::from_ref(&plain), now());
         assert!(!text.contains("checked"), "{text}");
 
-        let mut monitored = task("Watch the queue", TaskStatus::Doing);
-        monitored.liveness.verify = Some("latest ledger row is under 30m old".into());
-        let text = render_projection(std::slice::from_ref(&monitored), now());
+        let mut duty = task("Watch the queue", TaskStatus::Serving);
+        duty.liveness.verify = Some("latest ledger row is under 30m old".into());
+        let text = render_projection(std::slice::from_ref(&duty), now());
+        assert!(text.contains("- [serving] Watch the queue"), "{text}");
         assert!(text.contains("never checked"), "{text}");
 
-        monitored.checked_at = Some(now() - Duration::hours(3));
-        let text = render_projection(std::slice::from_ref(&monitored), now());
+        duty.checked_at = Some(now() - Duration::hours(3));
+        let text = render_projection(std::slice::from_ref(&duty), now());
         assert!(text.contains("last confirmed alive 3h ago"), "{text}");
 
-        monitored.status = TaskStatus::Todo;
-        let text = render_projection(std::slice::from_ref(&monitored), now());
-        assert!(!text.contains("checked"), "{text}");
+        // A duty with nothing recorded to check it says so, rather than going quiet.
+        let mut unverifiable = task("Watch the queue", TaskStatus::Serving);
+        unverifiable.liveness = Liveness::default();
+        let text = render_projection(std::slice::from_ref(&unverifiable), now());
+        assert!(text.contains("never checked, and no recorded way to"), "{text}");
+
+        // Carrying the fields is not what makes it a duty; the status is.
+        duty.status = TaskStatus::Doing;
+        let text = render_projection(std::slice::from_ref(&duty), now());
+        assert!(!text.contains("confirmed alive"), "{text}");
+    }
+
+    /// An unconfirmed duty outranks the work below it: it is the one line that might
+    /// already be dead. A confirmed one drops under that work — seen, not acted on.
+    #[test]
+    fn unconfirmed_duties_rise_and_confirmed_ones_settle() {
+        let mut confirmed = task("aaa confirmed watch", TaskStatus::Serving);
+        confirmed.checked_at = Some(now() - Duration::minutes(20));
+        let unconfirmed = task("zzz silent watch", TaskStatus::Serving);
+        let work = task("mmm plain work", TaskStatus::Doing);
+
+        let text = render_projection(&[confirmed, work, unconfirmed], now());
+        let order: Vec<&str> = text
+            .lines()
+            .filter(|line| line.starts_with("- ["))
+            .collect();
+        assert!(order[0].contains("zzz silent watch"), "{text}");
+        assert!(order[1].contains("mmm plain work"), "{text}");
+        assert!(order[2].contains("aaa confirmed watch"), "{text}");
     }
 
     #[test]
-    fn two_hundred_active_tasks_are_bounded_and_counted_by_status() {
+    fn three_hundred_active_tasks_are_bounded_and_counted_by_status() {
         let mut tasks = Vec::new();
         for i in 0..100 {
             tasks.push(task(&format!("todo {i}"), TaskStatus::Todo));
             tasks.push(task(&format!("doing {i}"), TaskStatus::Doing));
+            tasks.push(task(&format!("serving {i}"), TaskStatus::Serving));
         }
         let text = render_projection(&tasks, now());
         let listed = text
@@ -607,9 +672,13 @@ mod tests {
             .count();
         assert_eq!(listed, PROJECTED_TASKS);
         let summary = text.lines().find(|line| line.starts_with("- ...")).unwrap();
-        assert!(summary.contains("188 more active"), "{summary}");
+        assert!(summary.contains("288 more active"), "{summary}");
         assert!(summary.contains("100 todo"), "{summary}");
-        assert!(summary.contains("88 doing"), "{summary}");
+        assert!(summary.contains("100 doing"), "{summary}");
+        assert!(summary.contains("88 serving"), "{summary}");
+        // None of these duties has ever been confirmed, and the tail has to say so —
+        // a count of duties is not a count of duties that are up.
+        assert!(summary.contains("88 duties never confirmed alive"), "{summary}");
         assert!(text.chars().count() < 2_500);
     }
 
@@ -628,7 +697,7 @@ mod tests {
     async fn no_absolute_host_path_is_persisted() {
         let dir = tempfile::tempdir().unwrap();
         let host = dir.path().display().to_string();
-        let mut task = task("Watch the queue", TaskStatus::Doing);
+        let mut task = task("Watch the queue", TaskStatus::Serving);
         task.liveness.restart = Some(format!("run {host}/bin/watch"));
         let err = write_task(dir.path(), &task).await.unwrap_err().to_string();
         assert!(err.contains("restart"), "{err}");
@@ -672,9 +741,10 @@ mod tests {
         assert!(text.contains("· open 6d"), "{text}");
 
         // A watch is meant to be old, so its line stays about whether it is still alive.
-        let mut monitored = stale.clone();
-        monitored.liveness.verify = Some("latest ledger row is under 30m old".into());
-        let text = render_projection(std::slice::from_ref(&monitored), now());
+        let mut duty = stale.clone();
+        duty.status = TaskStatus::Serving;
+        duty.liveness.verify = Some("latest ledger row is under 30m old".into());
+        let text = render_projection(std::slice::from_ref(&duty), now());
         assert!(!text.contains("open 6d"), "{text}");
         assert!(text.contains("never checked"), "{text}");
 

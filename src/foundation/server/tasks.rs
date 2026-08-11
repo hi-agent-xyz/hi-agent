@@ -1,6 +1,6 @@
 //! Task review endpoints.
 //!
-//! `GET /api/tasks` returns every task across the four lifecycle statuses.
+//! `GET /api/tasks` returns every task across the five lifecycle statuses.
 //! `PATCH /api/tasks/{subject}` changes `status` or `title`. Status transitions stamp
 //! `completed_at` and `cancelled_at` automatically and clear them when reopened.
 
@@ -71,8 +71,9 @@ fn dto(task: &Task, malformed: bool) -> TaskDto {
     }
 }
 
-/// Todo, doing, done, cancelled. Active tasks use due order; closed tasks use
-/// newest closing timestamp first.
+/// Todo, doing, serving, done, cancelled. Work uses due order; duties put the ones least
+/// recently confirmed alive on top, never-confirmed first; closed tasks use newest closing
+/// timestamp first.
 type SortKey = (u8, u8, i64, String);
 
 fn sort_key(task: &Task) -> SortKey {
@@ -83,14 +84,20 @@ fn sort_key(task: &Task) -> SortKey {
             task.due_at.map_or(0, |due| due.timestamp()),
             task.subject.clone(),
         ),
-        TaskStatus::Done => (
+        TaskStatus::Serving => (
             2,
+            if task.checked_at.is_some() { 1 } else { 0 },
+            task.checked_at.map_or(0, |at| at.timestamp()),
+            task.subject.clone(),
+        ),
+        TaskStatus::Done => (
+            3,
             if task.completed_at.is_some() { 0 } else { 1 },
             task.completed_at.map_or(0, |at| -at.timestamp()),
             task.subject.clone(),
         ),
         TaskStatus::Cancelled => (
-            3,
+            4,
             if task.cancelled_at.is_some() { 0 } else { 1 },
             task.cancelled_at.map_or(0, |at| -at.timestamp()),
             task.subject.clone(),
@@ -202,6 +209,7 @@ fn parse_status(value: &str) -> Option<TaskStatus> {
     match value.trim() {
         "todo" => Some(TaskStatus::Todo),
         "doing" => Some(TaskStatus::Doing),
+        "serving" => Some(TaskStatus::Serving),
         "done" => Some(TaskStatus::Done),
         "cancelled" => Some(TaskStatus::Cancelled),
         _ => None,
@@ -226,7 +234,9 @@ pub async fn patch_task(
     if let Some(value) = &patch.status {
         match parse_status(value) {
             Some(status) => task.set_status(status, Utc::now()),
-            None => return err("status must be todo, doing, done or cancelled"),
+            None => {
+                return err("status must be todo, doing, serving, done or cancelled");
+            }
         }
     }
     if let Some(value) = &patch.title {
@@ -273,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn dto_carries_status_and_lifecycle_timestamps() {
         let dir = tempfile::tempdir().unwrap();
-        let mut task = Task::new("Watch oil prices", TaskStatus::Doing);
+        let mut task = Task::new("Watch oil prices", TaskStatus::Serving);
         task.created_at = Some(at(1, 9));
         task.due_at = Some(at(9, 10));
         task.checked_at = Some(at(4, 22));
@@ -287,7 +297,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let value = serde_json::to_value(dto(&got, false)).unwrap();
-        assert_eq!(value["status"], "doing");
+        assert_eq!(value["status"], "serving");
         assert_eq!(value["createdAt"], "2026-08-01T09:00:00Z");
         assert_eq!(value["dueAt"], "2026-08-09T10:00:00Z");
         assert_eq!(value["checkedAt"], "2026-08-04T22:00:00Z");
@@ -322,6 +332,29 @@ mod tests {
         assert_eq!(
             rows.into_iter().map(|(_, subject)| subject).collect::<Vec<_>>(),
             vec!["todo", "recent", "older"]
+        );
+    }
+
+    /// Within the serving column the top card is the one whose health is least established,
+    /// so a duty that has gone quiet cannot hide under one confirmed a minute ago.
+    #[test]
+    fn duties_sort_by_how_long_since_confirmed_alive() {
+        let silent = Task::new("silent", TaskStatus::Serving);
+        let mut stale = Task::new("stale", TaskStatus::Serving);
+        stale.checked_at = Some(at(2, 9));
+        let mut fresh = Task::new("fresh", TaskStatus::Serving);
+        fresh.checked_at = Some(at(8, 9));
+        let doing = Task::new("doing", TaskStatus::Doing);
+        let done = Task::new("done", TaskStatus::Done);
+
+        let mut rows = [&fresh, &done, &silent, &doing, &stale]
+            .into_iter()
+            .map(|task| (sort_key(task), task.subject.clone()))
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            rows.into_iter().map(|(_, subject)| subject).collect::<Vec<_>>(),
+            vec!["doing", "silent", "stale", "fresh", "done"]
         );
     }
 
@@ -369,8 +402,10 @@ mod tests {
     fn patch_status_values_are_strict() {
         assert_eq!(parse_status("todo"), Some(TaskStatus::Todo));
         assert_eq!(parse_status(" doing "), Some(TaskStatus::Doing));
+        assert_eq!(parse_status("serving"), Some(TaskStatus::Serving));
         assert_eq!(parse_status("cancelled"), Some(TaskStatus::Cancelled));
         assert_eq!(parse_status("open"), None);
+        assert_eq!(parse_status("watch"), None);
         assert_eq!(parse_status("Done"), None);
     }
 }

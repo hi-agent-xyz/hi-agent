@@ -1,8 +1,11 @@
-// purpose: 任务 — the task ledger as one board: todo / doing / done / cancelled side by side.
-// The full canvas is organized by the one durable lifecycle: todo, doing, done,
-// cancelled. Liveness is optional detail on a doing task, never a second kind or mode.
+// purpose: 任务 — the task ledger as one board: todo / doing / serving / done / cancelled.
+// The full canvas is organized by the one durable lifecycle. `serving` is its own column
+// because a duty being kept up is not work in progress: it has no finish, so a Done button
+// on it asks the wrong question, and its age means nothing while "last confirmed alive"
+// means everything. Liveness detail is how a duty is checked; the status is what makes it
+// one.
 //
-// The board is the whole page — four columns, each scrolling on its own, nothing
+// The board is the whole page — five columns, each scrolling on its own, nothing
 // hidden behind a filter. A card is therefore a *glance*: a clamped title, the one or
 // two facts that decide whether it needs you, and the actions. Everything long —
 // the untruncated title, the prose, the liveness contract — lives in the detail panel
@@ -30,17 +33,20 @@ const T = {
   en: {
     title: "Tasks",
     activeN: (n) => `${n} active`,
+    servingN: (n) => `${n} serving`,
     totalN: (n) => `${n} ${n === 1 ? "task" : "tasks"}`,
     board: "Task board",
     category: {
       todo: "Todo",
       doing: "Doing",
+      serving: "Serving",
       done: "Done",
       cancelled: "Cancelled",
     },
     empty: {
       todo: "Nothing queued.",
       doing: "Nothing in progress.",
+      serving: "No standing duties.",
       done: "Nothing finished yet.",
       cancelled: "Nothing cancelled.",
     },
@@ -50,18 +56,22 @@ const T = {
     cancelled: (at) => `Cancelled ${at}`,
     due: (at) => `Due ${at}`,
     overdue: (at) => `Overdue ${at}`,
-    checked: (at) => `Checked ${at}`,
-    neverChecked: "Never checked",
+    checked: (at) => `Alive ${at}`,
+    neverChecked: "Never confirmed alive",
     start: "Start",
+    serve: "Keep as a standing duty",
     moveTodo: "Move to todo",
     markDone: "Mark done",
+    standDown: "Stand down",
     cancel: "Cancel",
     reopen: "Reopen",
     // Short forms for the card, where a column is a few hundred pixels wide. The
     // full wording above stays as the button's label for anyone not reading pixels.
     shortStart: "Start",
+    shortServe: "Serve",
     shortTodo: "Todo",
     shortDone: "Done",
+    shortStandDown: "Stand down",
     shortCancel: "Cancel",
     shortReopen: "Reopen",
     details: "Open details",
@@ -78,17 +88,20 @@ const T = {
   zh: {
     title: "任务",
     activeN: (n) => `${n} 件进行中`,
+    servingN: (n) => `${n} 项值守`,
     totalN: (n) => `${n} 件任务`,
     board: "任务看板",
     category: {
       todo: "待办",
       doing: "进行中",
+      serving: "值守",
       done: "已完成",
       cancelled: "已取消",
     },
     empty: {
       todo: "没有待办。",
       doing: "没有进行中的。",
+      serving: "没有值守中的事。",
       done: "还没有完成的。",
       cancelled: "没有已取消的。",
     },
@@ -98,16 +111,20 @@ const T = {
     cancelled: (at) => `取消于 ${at}`,
     due: (at) => `截止 ${at}`,
     overdue: (at) => `已逾期 ${at}`,
-    checked: (at) => `检查于 ${at}`,
-    neverChecked: "尚未检查",
+    checked: (at) => `${at} 确认在跑`,
+    neverChecked: "从未确认在跑",
     start: "开始",
+    serve: "转为长期值守",
     moveTodo: "移回待办",
     markDone: "完成",
+    standDown: "撤下值守",
     cancel: "取消",
     reopen: "重新打开",
     shortStart: "开始",
+    shortServe: "值守",
     shortTodo: "待办",
     shortDone: "完成",
+    shortStandDown: "撤下",
     shortCancel: "取消",
     shortReopen: "重开",
     details: "查看详情",
@@ -141,6 +158,7 @@ const [L, LOCALE] = words();
 const STATUSES = [
   { id: "todo", label: L.category.todo, tone: "mute" },
   { id: "doing", label: L.category.doing, tone: "accent" },
+  { id: "serving", label: L.category.serving, tone: "serving" },
   { id: "done", label: L.category.done, tone: "secondary" },
   { id: "cancelled", label: L.category.cancelled, tone: "danger" },
 ];
@@ -148,6 +166,7 @@ const STATUSES = [
 const STATUS_TONE = {
   todo: "var(--fg-dim)",
   doing: "var(--accent)",
+  serving: "var(--task-serving)",
   done: "var(--accent-2)",
   cancelled: "var(--danger)",
 };
@@ -218,8 +237,9 @@ export default function Tasks() {
     return (
       <div className="hi-tasks">
         <style>{CSS}</style>
-        <Header activeCount={0} totalCount={0} />
+        <Header activeCount={0} servingCount={0} totalCount={0} />
         <div className="hi-tasks__loading" aria-label={L.title}>
+          <span />
           <span />
           <span />
           <span />
@@ -229,7 +249,11 @@ export default function Tasks() {
     );
   }
 
+  // Counted apart, because they answer different questions. "3 active" that silently
+  // included two permanent watches said there was more work on than there was, and the
+  // number moved only when a duty was retired.
   const activeCount = tasks.filter((task) => task.status === "todo" || task.status === "doing").length;
+  const servingCount = tasks.filter((task) => task.status === "serving").length;
   // A task whose status changed out from under the panel keeps the panel open on it —
   // it is still the task someone was reading. Only a task that left the ledger closes it.
   const open = openSubject ? tasks.find((task) => task.subject === openSubject) || null : null;
@@ -237,7 +261,11 @@ export default function Tasks() {
   return (
     <div className="hi-tasks">
       <style>{CSS}</style>
-      <Header activeCount={activeCount} totalCount={tasks.length} />
+      <Header
+        activeCount={activeCount}
+        servingCount={servingCount}
+        totalCount={tasks.length}
+      />
 
       <div className="hi-tasks__board" aria-label={L.board}>
         {STATUSES.map((column) => (
@@ -268,12 +296,15 @@ export default function Tasks() {
   );
 }
 
-function Header({ activeCount, totalCount }) {
+function Header({ activeCount, servingCount, totalCount }) {
   return (
     <header className="hi-tasks__header">
       <div className="hi-tasks__heading">
         <h1>{L.title}</h1>
         <span>{L.activeN(activeCount)}</span>
+        {servingCount > 0 && (
+          <span className="hi-tasks__heading-serving">{L.servingN(servingCount)}</span>
+        )}
       </div>
       <div className="hi-tasks__total">{L.totalN(totalCount)}</div>
     </header>
@@ -482,6 +513,11 @@ function Detail({ task, busy, onStatus, onClose }) {
 
 // `short` swaps the card's cramped labels in while keeping the full wording as the
 // accessible name — a column is too narrow for "Move to todo", a screen reader is not.
+//
+// A card carries three buttons at most; the fourth transition on work — "keep this as a
+// standing duty" — is a decision, not a flick, and it lives in the detail panel where
+// there is room to name it. That panel is reachable by keyboard and by touch, so drag
+// stays the shortcut it was always meant to be rather than the only way into `serving`.
 function Actions({ task, busy, onStatus, short }) {
   const button = (kind, status, label, shortLabel) => (
     <button
@@ -506,11 +542,24 @@ function Actions({ task, busy, onStatus, short }) {
     );
   }
 
+  // A duty has no "done" to offer: it ends by being stood down, which is the same close
+  // wearing the name of what actually happened.
+  if (task.status === "serving") {
+    return (
+      <div className="hi-tasks__actions" draggable={false}>
+        {button("ghost", "todo", L.moveTodo, L.shortTodo)}
+        {button("danger", "cancelled", L.cancel, L.shortCancel)}
+        {button("primary", "done", L.standDown, L.shortStandDown)}
+      </div>
+    );
+  }
+
   return (
     <div className="hi-tasks__actions" draggable={false}>
       {task.status === "todo"
         ? button("ghost", "doing", L.start, L.shortStart)
         : button("ghost", "todo", L.moveTodo, L.shortTodo)}
+      {!short && button("ghost", "serving", L.serve, L.shortServe)}
       {button("danger", "cancelled", L.cancel, L.shortCancel)}
       {button("primary", "done", L.markDone, L.shortDone)}
     </div>
@@ -535,15 +584,18 @@ function dueMeta(task) {
   const time = new Date(task.dueAt).getTime();
   if (Number.isNaN(time)) return null;
   const overdue =
-    (task.status === "todo" || task.status === "doing") && time <= Date.now();
+    (task.status === "todo" || task.status === "doing" || task.status === "serving") &&
+    time <= Date.now();
   return {
     text: overdue ? L.overdue(formatStamp(task.dueAt)) : L.due(formatStamp(task.dueAt)),
     warn: overdue,
   };
 }
 
+// Every duty gets this line, including one with no `liveness` recorded — a duty nobody
+// wrote a check for is the worse case, not an exempt one, and silence there reads as fine.
 function healthMeta(task) {
-  if (task.status !== "doing" || !task.liveness) return null;
+  if (task.status !== "serving") return null;
   if (!task.checkedAt) return { text: L.neverChecked, warn: true };
   return { text: L.checked(formatStamp(task.checkedAt)), warn: false };
 }
@@ -569,6 +621,10 @@ function cardNotes(task) {
     notes.push({ text: L.completed(formatStamp(task.completedAt)) });
   } else if (task.status === "cancelled" && task.cancelledAt) {
     notes.push({ text: L.cancelled(formatStamp(task.cancelledAt)) });
+  } else if (task.status === "serving") {
+    // Never "Created Aug 3": a watch is supposed to be old, so its age is the one fact
+    // here that means nothing. Whether it is still up is the only one that does.
+    if (health && !notes.includes(health)) notes.push(health);
   } else if (task.createdAt) {
     notes.push({ text: L.created(formatStamp(task.createdAt)) });
   }
@@ -579,6 +635,25 @@ const CSS = `
   .hi-tasks,
   .hi-tasks * {
     box-sizing: border-box;
+  }
+
+  /* Serving needs a hue of its own, and the palette's four are spoken for: terracotta is
+     doing, sage is done, red is cancelled, ink-dim is todo. A cool slate is the one thing
+     left that cannot be mistaken for any of them in either mode — and it reads steady
+     rather than urgent, which is what a duty that is up should read as. Scoped here
+     because it means something only on this board. */
+  .hi-tasks {
+    --task-serving: #5a7a99;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .hi-tasks {
+      --task-serving: #8fb0cc;
+    }
+  }
+
+  :root[data-theme="dark"] .hi-tasks {
+    --task-serving: #8fb0cc;
   }
 
   /* No ground of its own: the board stands on the layer's paper, which runs under
@@ -639,14 +714,18 @@ const CSS = `
     font-variant-numeric: tabular-nums;
   }
 
-  /* The board is the page: four columns that fill the height and never scroll it.
-     Below ~1100px the columns keep a readable floor and the board scrolls sideways
+  .hi-tasks__heading .hi-tasks__heading-serving {
+    color: var(--task-serving);
+  }
+
+  /* The board is the page: five columns that fill the height and never scroll it.
+     Below ~1300px the columns keep a readable floor and the board scrolls sideways
      instead of squeezing every card into a ribbon. */
   .hi-tasks__board {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: repeat(4, minmax(250px, 1fr));
+    grid-template-columns: repeat(5, minmax(236px, 1fr));
     gap: 12px;
     padding: 14px clamp(16px, 2.4vw, 30px) 16px;
     overflow-x: auto;
@@ -666,6 +745,7 @@ const CSS = `
   }
 
   .hi-tasks__column[data-tone="accent"] { --column-tone: var(--accent); }
+  .hi-tasks__column[data-tone="serving"] { --column-tone: var(--task-serving); }
   .hi-tasks__column[data-tone="secondary"] { --column-tone: var(--accent-2); }
   .hi-tasks__column[data-tone="danger"] { --column-tone: var(--danger); }
 
@@ -1008,8 +1088,8 @@ const CSS = `
   .hi-tasks__liveness {
     margin-top: 14px;
     padding: 12px 14px;
-    border-left: 3px solid var(--accent-2);
-    background: color-mix(in srgb, var(--accent-2) 7%, transparent);
+    border-left: 3px solid var(--task-serving);
+    background: color-mix(in srgb, var(--task-serving) 7%, transparent);
     color: var(--fg-dim);
     font-size: 13px;
     line-height: 1.65;
@@ -1048,7 +1128,7 @@ const CSS = `
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: repeat(4, minmax(250px, 1fr));
+    grid-template-columns: repeat(5, minmax(236px, 1fr));
     gap: 12px;
     padding: 14px clamp(16px, 2.4vw, 30px) 16px;
     overflow: hidden;
