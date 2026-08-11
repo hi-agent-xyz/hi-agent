@@ -24,6 +24,21 @@ set -u
 
 cd "$(dirname "$0")/.."
 
+# Install web deps when they're missing or stale, the way `make build` does.
+# Without this a lockfile change (git pull, a new dependency) leaves `node_modules`
+# behind, and both vite processes die on an unresolved import from vite.config.ts —
+# a module-not-found stack trace that names the package but not the cause. `npm ci`
+# refreshes node_modules wholesale, so its mtime lands after the lockfile's and this
+# stays a no-op until the lockfile moves again.
+#
+# Deliberately before the cleanup trap is armed: cleanup() exits 0 when no server
+# ever launched, which would turn a failed install into a silent success.
+if [ ! -d src/appearance/web/node_modules ] \
+   || [ src/appearance/web/package-lock.json -nt src/appearance/web/node_modules ]; then
+  echo ">> web deps out of date — running npm ci"
+  ( cd src/appearance/web && npm ci ) || exit 1
+fi
+
 # Roots of the two dev servers, filled in as they're launched.
 pids=""
 
