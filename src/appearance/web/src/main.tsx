@@ -6,6 +6,7 @@ import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
 import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
+import { installNativeFeel } from "./lib/nativeFeel";
 import { installStageReport } from "./lib/stageReport";
 import "./ui/global.css";
 
@@ -23,6 +24,11 @@ applyHostChrome();
 // rather than in a component effect: it's a fact about the window, not about
 // anything React mounts, and StrictMode would double-invoke an effect.
 installStageReport();
+
+// The face reads as an app, not a web page: no double-click word-select, no
+// right-click page menu. Only the face — the inspect console below is an
+// operator's browser tool, where Reload and "open in new tab" are the point.
+if (!window.location.pathname.startsWith("/inspect")) installNativeFeel();
 
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
 // serves the page in prod; this only covers the dev seam, where Vite serves index.html
