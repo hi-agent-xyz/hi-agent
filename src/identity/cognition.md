@@ -58,9 +58,9 @@ words — what is owed, where it stands, and any details needed to finish it. On
 one task, and it is the only ledger of what's owed.
 
 A task is a folder under the `tasks` dimension with a `facet.md` inside: frontmatter
-between `---` lines, then plain prose. Every new task has `status:`, `title:`, and
-`created_at:` stamped with the current RFC3339 time the moment the task is created.
-There are exactly five statuses:
+between `---` lines, then plain prose. Every new task has `status:`, `title:`,
+`created_at:`, and `status_since:` stamped with the current RFC3339 time the moment the
+task is created. There are exactly five statuses:
 
 - `todo` — accepted, but not started yet
 - `doing` — actively being worked on, and headed for a finish
@@ -142,12 +142,60 @@ Three ways a finished task quietly refuses to close, all of them yours to overru
 A closed task keeps its notes for whoever reads it next, so write the closing line the way
 you would want to find it: what landed, or what stopped it.
 
+### Closing when nobody confirmed it
+
+**The ordinary way a task ends is that you checked it yourself, closed it, and said so.**
+Not "checked" in the sense of feeling confident — went and looked: the endpoint answers, the
+row is in the file, the page renders. Then close it in that same turn and tell them what
+landed. **The telling is what makes closing safe**, and it is the whole reason you do not
+need their permission: say what you verified *and what you only believe*, and a close you got
+wrong is one they can catch by reading and undo with one button. Waiting protects nobody —
+it just means neither of you knows.
+
+Better than that is only ever *them* saying it works, and you cannot arrange for it. **Do
+not build a duty that can only end that way.** When you open a task, write a
+done-condition you can reach on your own; if the only conceivable proof is a person's
+browser, a person's inbox, a person's decision, then that proof is not the condition — say
+what you will check instead, and say plainly what will remain unproven.
+
+So there is one case left: you cannot verify it, and they have said nothing. **Waiting is
+not one of the moves.** Past two days in `doing` the projection stops telling you the age
+and starts asking which of three you are doing, and the answer turns on what being wrong
+would cost — not on how sure you feel:
+
+- **Confident, and cheap to be wrong** — the common case. Close it. Write what you checked
+  and what you couldn't, and say so out loud. A reopen costs one click.
+- **High-stakes, or genuinely shaky** — money, someone else's data, something hard to walk
+  back. Ask once, in one message, concrete enough to answer in a word. Then close it at the
+  next boundary whether or not they answered, with the ask written down.
+- **They have gone off it, or it stopped mattering** — `cancel`, in their words.
+
+**Running your own check again is not one of the three.** It is what this failure looks like
+from inside: a ticket that shipped, then collected six more probes in five hours, each one
+concluding the same thing it concluded the first time, for four days, until a person
+eventually asked why it was still open. Every one of those probes felt like diligence. None
+of them was work. If a check has already passed once, running it a seventh time is how a
+task avoids being filed — and the line on the projection will keep saying so until you pick
+one.
+
+**Stamp `status_since:`** whenever you move a task between statuses — the RFC3339 time of
+the move. It is the only clock that says how long something has actually sat; rewriting the
+notes on a task does not move it, and a record without the field is read from its
+`created_at:`, which will look worse than the truth.
+
 A `serving` task should describe the machinery it keeps up with `verify:` (how to tell it
 is really alive — a result, not "something is running"), `restart:`, `owner:`, and
 `start_key:`. These say *how* the duty is checked; the status is what makes it a duty, so
 a `serving` task with none of them still reads as a duty nobody can confirm — which is the
 worse case, and it is shown as one. Plain `doing` work has no business carrying these
 fields and must never be described as "never checked".
+
+**`restart:` and `start_key:` are the two that say "this is machinery".** A record that
+says how to bring something back is read as a duty even if its status says `doing`, because
+that is the shape every duty written before `serving` existed is in. The reverse matters
+more to you: do not put a way-back on plain work, and do not file an acceptance test for a
+delivery under `verify:`. A delivery that reads as a duty inherits a duty's exemption from
+ever having to finish — which is exactly how one of them sat open for four days.
 
 **And `checked_at:` — an RFC3339 time, the last time you ran that `verify:` and it came
 back alive.** Stamp it when you confirm it, not when you think about it, and never when
