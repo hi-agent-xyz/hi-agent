@@ -18,8 +18,9 @@
 //! `owner`, `start_key`) describing how to tell its machinery is still alive. That
 //! contract is how a duty is checked, not what makes it a duty: the status is.
 //!
-//! Older records using `kind` plus `state` remain readable. New writes emit only the
-//! status taxonomy.
+//! Older records using `kind` plus `state` remain readable, and a record predating
+//! `serving` — `doing` carrying a liveness contract — is read back as the duty it always
+//! was (see [`coerce_duty`]). New writes emit only the status taxonomy.
 
 use std::path::{Path, PathBuf};
 
@@ -372,20 +373,21 @@ fn parse(subject: &str, content: &str) -> Task {
         Some(value) => TaskStatus::parse(&value),
         None => legacy_status(field("kind").as_deref(), field("state").as_deref()),
     };
+    let liveness = Liveness {
+        verify: field("verify"),
+        restart: field("restart"),
+        owner: field("owner"),
+        start_key: field("start_key"),
+    };
     Task {
         subject: subject.to_owned(),
-        status,
+        status: coerce_duty(status, &liveness),
         title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
         created_at: field("created_at").and_then(|value| parse_timestamp(&value)),
         due_at: field("due_at")
             .or_else(|| field("due"))
             .and_then(|value| parse_timestamp(&value)),
-        liveness: Liveness {
-            verify: field("verify"),
-            restart: field("restart"),
-            owner: field("owner"),
-            start_key: field("start_key"),
-        },
+        liveness,
         checked_at: field("checked_at")
             .or_else(|| field("checked"))
             .and_then(|value| parse_timestamp(&value)),
@@ -393,6 +395,23 @@ fn parse(subject: &str, content: &str) -> Task {
         cancelled_at: field("cancelled_at").and_then(|value| parse_timestamp(&value)),
         body: strip_frontmatter(content).trim().to_owned(),
     }
+}
+
+/// Every task written before `serving` existed recorded its duties as `doing` carrying a
+/// liveness contract, and that is the shape this reads back into place. It is a fallback
+/// for a record, never the definition: a duty is `serving` because someone said so, and a
+/// `serving` task with no contract stays one. The reverse — `doing` plus `verify:` — has no
+/// legitimate reading left, since plain work has no business carrying those fields, so the
+/// same rule covers a record written wrong today.
+///
+/// One case it cannot reach: a legacy duty that recorded no contract at all is
+/// indistinguishable from plain work, and only the agent re-reading its own ledger can
+/// move that one.
+fn coerce_duty(status: TaskStatus, liveness: &Liveness) -> TaskStatus {
+    if status == TaskStatus::Doing && !liveness.is_empty() {
+        return TaskStatus::Serving;
+    }
+    status
 }
 
 /// Compatibility for the retired `kind` + `state` schema.
@@ -505,7 +524,7 @@ mod tests {
     #[tokio::test]
     async fn current_schema_round_trips_without_kind_or_state() {
         let dir = tempfile::tempdir().unwrap();
-        let mut task = task("File the Feishu digest", TaskStatus::Doing);
+        let mut task = task("File the Feishu digest", TaskStatus::Serving);
         task.due_at = Some(at(30, 9));
         task.checked_at = Some(at(28, 10));
         task.liveness.verify =
@@ -517,14 +536,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(raw.contains("status: doing"));
+        assert!(raw.contains("status: serving"));
         assert!(raw.contains("created_at:"));
         assert!(raw.contains("due_at:"));
         assert!(!raw.contains("\nkind:"));
         assert!(!raw.contains("\nstate:"));
 
         let got = read_task(dir.path(), "File the Feishu digest").await.unwrap().unwrap();
-        assert_eq!(got.status, TaskStatus::Doing);
+        assert_eq!(got.status, TaskStatus::Serving);
         assert_eq!(got.created_at, Some(at(1, 9)));
         assert_eq!(got.due_at, Some(at(30, 9)));
         assert_eq!(got.checked_at, Some(at(28, 10)));
@@ -553,6 +572,59 @@ mod tests {
             .unwrap();
             let got = read_task(dir.path(), subject).await.unwrap().unwrap();
             assert_eq!(got.status, expected, "{subject}");
+        }
+    }
+
+    /// The ledger that existed the day before `serving` did: every duty in it is a `doing`
+    /// task carrying a `verify:`. Nothing rewrites those files, so reading them wrong would
+    /// have cost each of them the one line that says whether it is still up.
+    #[tokio::test]
+    async fn a_duty_written_before_serving_existed_reads_back_as_one() {
+        let dir = tempfile::tempdir().unwrap();
+        facets::update_facet(
+            dir.path(),
+            DIMENSION,
+            "watch-the-ops-group",
+            "---\nstatus: doing\ntitle: \"Watch the ops group\"\n\
+             checked_at: \"2026-07-28T10:00:00Z\"\nverify: \"latest row is under 30m old\"\n---\n",
+        )
+        .await
+        .unwrap();
+        let got = read_task(dir.path(), "watch-the-ops-group").await.unwrap().unwrap();
+        assert_eq!(got.status, TaskStatus::Serving);
+
+        let text = render_projection(std::slice::from_ref(&got), now());
+        assert!(text.contains("- [serving] Watch the ops group"), "{text}");
+        assert!(text.contains("last confirmed alive 2h ago"), "{text}");
+
+        // And the correction persists the moment anything writes the task back.
+        write_task(dir.path(), &got).await.unwrap();
+        let raw = facets::read_facet(dir.path(), DIMENSION, "watch-the-ops-group")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(raw.contains("status: serving"), "{raw}");
+    }
+
+    /// Only that one shape moves. A duty is `serving` because someone said so, and plain
+    /// work stays plain work.
+    #[tokio::test]
+    async fn coercion_does_not_reach_past_the_shape_it_is_for() {
+        assert_eq!(
+            coerce_duty(TaskStatus::Serving, &Liveness::default()),
+            TaskStatus::Serving,
+            "a duty with no contract recorded is still a duty"
+        );
+        assert_eq!(
+            coerce_duty(TaskStatus::Doing, &Liveness::default()),
+            TaskStatus::Doing
+        );
+        for closed in [TaskStatus::Done, TaskStatus::Cancelled, TaskStatus::Todo] {
+            let contract = Liveness {
+                verify: Some("a row landed today".into()),
+                ..Liveness::default()
+            };
+            assert_eq!(coerce_duty(closed, &contract), closed, "{closed:?}");
         }
     }
 

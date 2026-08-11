@@ -141,6 +141,10 @@ fn is_malformed(raw: &str, task: &Task) -> bool {
     };
 
     let status_bad = match field("status") {
+        // A record written before `serving` existed says `doing` and reads back as
+        // `serving`. The reader correcting it is not a defect in the record, and flagging
+        // it would put an "invalid fields" warning on every duty the agent ever opened.
+        Some(value) if value == "doing" && task.status == TaskStatus::Serving => false,
         Some(value) => value != task.status.as_str(),
         None => {
             field("state").is_some_and(|value| !matches!(value.as_str(), "open" | "done" | "dropped"))
@@ -356,6 +360,31 @@ mod tests {
             rows.into_iter().map(|(_, subject)| subject).collect::<Vec<_>>(),
             vec!["doing", "silent", "stale", "fresh", "done"]
         );
+    }
+
+    /// The board must not paint "invalid fields" across every duty the agent opened before
+    /// `serving` existed — the reader corrected those records, it did not find them broken.
+    #[tokio::test]
+    async fn a_duty_predating_serving_is_corrected_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        facets::update_facet(
+            dir.path(),
+            tasks::DIMENSION,
+            "watch-the-ops-group",
+            "---\nstatus: doing\ntitle: \"Watch the ops group\"\nverify: \"a row landed today\"\n---\n",
+        )
+        .await
+        .unwrap();
+        let raw = facets::read_facet(dir.path(), tasks::DIMENSION, "watch-the-ops-group")
+            .await
+            .unwrap()
+            .unwrap();
+        let task = tasks::read_task(dir.path(), "watch-the-ops-group")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Serving);
+        assert!(!is_malformed(&raw, &task));
     }
 
     #[tokio::test]
