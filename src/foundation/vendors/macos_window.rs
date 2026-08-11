@@ -18,6 +18,13 @@
 //! content under the transparent titlebar, so [`KeyWindow`] catches the double-click in
 //! `sendEvent:` and drives `zoom:` itself.
 //!
+//! **The frame is the user's, not ours.** Moving and resizing a window is the person
+//! arranging their own desktop, so the window keeps the frame they left it at — every
+//! reopen, and across restarts. AppKit owns that: a frame autosave name
+//! ([`FRAME_AUTOSAVE_NAME`]) persists the frame to user defaults on each move/resize and
+//! restores it at [`install`]. [`WINDOW_W`]/[`WINDOW_H`] and the one `center` are
+//! therefore first-run-only.
+//!
 //! **Seamless title bar — the page *is* the bar.** The native titlebar is made transparent
 //! and its text hidden; with `FullSizeContentView` the content view spans under it. Rather
 //! than inset the web view below the strip and paint that strip with a flat window colour
@@ -74,8 +81,15 @@ use crate::foundation::config::KEY_THEME;
 use crate::foundation::credentials::get_setting;
 
 /// The window's initial content size in points — a roomy desktop column for the face.
+/// Only the *first* size the window ever has: once the user resizes it, the frame they
+/// left is restored instead (see [`FRAME_AUTOSAVE_NAME`]).
 const WINDOW_W: f64 = 1000.0;
 const WINDOW_H: f64 = 720.0;
+
+/// Name AppKit files the window's frame under in user defaults (as `NSWindow Frame
+/// {name}`), which is all it takes for macOS to remember where the user put the window
+/// and how big they made it, across reopens and across restarts.
+const FRAME_AUTOSAVE_NAME: &str = "HiAgentFace";
 
 /// Height of the title-bar strip, matching the standard macOS titlebar so the traffic
 /// lights sit centered in it.
@@ -321,6 +335,12 @@ define_class!(
                 let window: &KeyWindow = &self.ivars().window;
                 let _: () = msg_send![window, orderOut: core::ptr::null_mut::<AnyObject>()];
             }
+            // Quit exits the process with `std::process::exit` (see `run_with_tray` in
+            // lib.rs), which skips AppKit's own termination — so the frame AppKit filed
+            // into user defaults a moment ago may still be sitting in the preferences
+            // daemon's write buffer. Flush it here, or a window moved just before quitting
+            // comes back tomorrow at yesterday's place.
+            let _: bool = NSUserDefaults::standardUserDefaults().synchronize();
         }
     }
 
@@ -371,7 +391,10 @@ define_class!(
 
 impl Host {
     /// Bring the app forward (so the face's input can take keys under the Accessory
-    /// policy) and show the window key + front.
+    /// policy) and show the window key + front — at whatever frame it already has.
+    /// Deliberately does *not* center or resize: a reopen finds the window where the
+    /// user left it (see [`FRAME_AUTOSAVE_NAME`]); only the very first open of a fresh
+    /// install is centered, once, at install.
     fn present(&self) {
         let mtm = MainThreadMarker::new().expect("window host runs on the main thread");
         let iv = self.ivars();
@@ -393,7 +416,6 @@ impl Host {
             }
             let _: () = msg_send![&*app, activateIgnoringOtherApps: true];
             let window: &KeyWindow = &iv.window;
-            let _: () = msg_send![window, center];
             let _: () = msg_send![window, makeKeyAndOrderFront: core::ptr::null_mut::<AnyObject>()];
         }
         // Coming back to the front: let the face restore the capture channels it paused
@@ -546,6 +568,21 @@ pub fn install(mtm: MainThreadMarker, url: &str, data_dir: PathBuf) {
         container.addSubview(&label);
         let _: () = msg_send![&*window, setContentView: &*container];
         std::mem::forget(container);
+
+        // Where the user last left the window is the user's decision, so keep it — across
+        // reopens *and* across restarts. AppKit does the whole job: with a frame autosave
+        // name set, every move and resize writes the frame into user defaults, and
+        // `setFrameUsingName:` reads it back. Done here, after `setContentView:`, so the
+        // restored size resizes a content view that already exists and its subviews
+        // autoresize with it. `setFrameUsingName:` reports whether a saved frame was found —
+        // false on a fresh install, and only then do we center. Restoring first and naming
+        // second, because naming the frame is what starts saving it.
+        let autosave = NSString::from_str(FRAME_AUTOSAVE_NAME);
+        let restored: bool = msg_send![&*window, setFrameUsingName: &*autosave];
+        let _: bool = msg_send![&*window, setFrameAutosaveName: &*autosave];
+        if !restored {
+            let _: () = msg_send![&*window, center];
+        }
 
         // The host owns the window, web view, request, and title label for the process
         // lifetime (the ivars keep them alive; the host itself is leaked below).
