@@ -203,8 +203,8 @@ pub enum JournalEntry {
 // ViewEnvelope — outbound agent-authored view module for the UI view slot
 // -----------------------------------------------------------------------------
 
-/// A view's one self-declared trait: whether it renders the conversation's live
-/// words itself, so the host's caption pills stand down.
+/// A view's one self-declared trait: whether it renders the conversation itself,
+/// so the host's own conversation surface stands down.
 ///
 /// This is all that survives of the old `Geometry` (`region` × `size`). Views are
 /// full-bleed, one at a time, so there is no placement left to declare, and so
@@ -217,15 +217,22 @@ pub enum JournalEntry {
 ///
 /// Kept as a struct (not a bare `bool`) because it is what a `.geom.json` sidecar
 /// deserializes into, and because the safe default is `false` — a view that forgets
-/// to declare it simply gets the host's caption pills, which is the right fallback
-/// rather than a silently mis-framed view.
+/// to declare it simply gets the host's own conversation surface, which is the right
+/// fallback rather than a silently mis-framed view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ViewTraits {
-    /// This view renders the live words itself; the host's caption participant
-    /// stands down. Only declare it if the view actually renders them — otherwise
-    /// the person's speech goes invisible.
-    #[serde(default)]
-    pub owns_captions: bool,
+    /// This view renders the conversation itself, so the host draws neither the
+    /// rail nor the collapsed pill (`docs/arch/stage.md`). Only declare it if the
+    /// view actually renders the words — otherwise the person's speech goes
+    /// invisible.
+    ///
+    /// The alias is the back-compat lever. It was `owns_captions` while the host's
+    /// only rendering of the words was a caption band, and that name is already
+    /// written into `.geom.json` sidecars on disk and into appearance snapshots.
+    /// Both keep loading, and re-serialize under the name the rest of the system
+    /// now uses.
+    #[serde(default, alias = "owns_captions")]
+    pub owns_conversation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

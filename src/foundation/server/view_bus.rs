@@ -850,7 +850,7 @@ mod tests {
     async fn apply_carries_traits_through_wire_and_reload() {
         let tmp = tempfile::tempdir().unwrap();
         let traits = ViewTraits {
-            owns_captions: true,
+            owns_conversation: true,
         };
 
         let version = {

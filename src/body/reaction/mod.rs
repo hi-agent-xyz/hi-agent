@@ -828,7 +828,7 @@ pub async fn start(
     shutdown: Shutdown,
     server_ready: watch::Receiver<bool>,
 ) -> anyhow::Result<Reaction> {
-    let (source, geom) = crate::mind::views::builtin::out_of_energy_view();
+    let source = crate::mind::views::builtin::out_of_energy_view();
     let energy_view = ViewEnvelope {
         id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
         op: ViewOp::Show,
@@ -838,9 +838,10 @@ pub async fn start(
                 .await
                 .context("compiling the built-in out-of-energy view")?,
         ),
-        traits: Some(
-            serde_json::from_str(geom).context("parsing the built-in out-of-energy traits")?,
-        ),
+        // Declares nothing. The notice takes the agent's half of the screen; the
+        // conversation rails beside it, so the person keeps the record of what was
+        // said and the line to answer on. See `docs/arch/stage.md`.
+        traits: None,
         // No ref on purpose. A ref exists so a *restored* view can be recompiled from
         // its source, and the condition slot is never restored from one: it is
         // host-owned and re-derived here, from the embedded source, on every boot —

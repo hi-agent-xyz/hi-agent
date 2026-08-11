@@ -284,14 +284,66 @@ button {
   width: 100vw;
   height: 100dvh;
   overflow: hidden;
+  /* The one stacking context everything else lives inside, so nothing outside
+     can interleave with the three planes below. */
   isolation: isolate;
+
+  /* The three planes, and the only global z-indexes in the application. They are
+     0, 1, 2 with no gaps on purpose: there is no room between two planes, so a
+     new surface has to JOIN one rather than slot between them — the gap habit is
+     what produced the 2 / 8 / 50 / 55 / 60 / 80 spread this replaced. The order
+     carries a meaning: the agent's plane is below the person's, so nothing the
+     agent shows can rise above the record of what was said or the controls to
+     answer it. See docs/arch/stage.md. */
+  --z-ground: 0;
+  --z-view: 1;
+  --z-cover: 2;
+
+  /* How much of the frame the conversation rail holds. Zero unless the shell says
+     otherwise, so every surface that has to step past it can do so unconditionally. */
+  --hi-rail: 0px;
+}
+
+/* The rail's measure: a readable line, never a column of two-word wraps, and
+   never more than a third of the window. Set on the root (not on the rail) so the
+   view frame and the input line can inset by the same number. */
+.hi-root[data-rail="open"] {
+  --hi-rail: clamp(320px, 30vw, 460px);
+}
+
+/* --- Planes -----------------------------------------------------------
+   ground · view · cover. Each is a stacking context, so ordering INSIDE one is a
+   local question with a small answer — a tie between the camera pip and the
+   controls is settled within `cover` and cannot affect anything outside it.
+   Inside a plane, z-index is a single digit; a contained context never needs 50,
+   so a larger value is evidence of someone fighting a stack they could not see. */
+.hi-plane {
+  position: absolute;
+  inset: 0;
+}
+
+.hi-plane--ground {
+  z-index: var(--z-ground);
+}
+
+.hi-plane--view {
+  z-index: var(--z-view);
+}
+
+/* The person's plane is transparent to the pointer as a whole; each surface on it
+   takes its own events back (`.hi-channels`, `.hi-kbd`, the chat). Without this
+   the plane would swallow every click meant for the view underneath it. */
+.hi-plane--cover {
+  z-index: var(--z-cover);
+  pointer-events: none;
 }
 
 /* --- Whole-face handoff ---------------------------------------------- */
+/* Last on the `cover` plane, so it is over every other host surface without
+   naming a number: paint order inside a plane is DOM order. */
 .hi-file-drop {
   position: fixed;
   inset: 0;
-  z-index: 80;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -448,19 +500,49 @@ button {
   mix-blend-mode: overlay;
 }
 
-/* --- Speech (the agent's words) --------------------------------------- */
+/* --- The conversation ------------------------------------------------- */
 /* The lead position. It holds the chat, which is the default face, so unlike the
-   docked pill it fills the room rather than floating a line in the middle of it:
+   collapsed pill it fills the room rather than floating a line in the middle of it:
    full height, scrollable, and it takes pointer events because a conversation you
    cannot scroll is a screenshot. The atmosphere and the presence field stay
-   visible behind it — the chat's own surfaces are the only opaque things. */
+   visible behind it — the chat's own surfaces are the only opaque things.
+
+   No z-index: it sits on the `cover` plane, after the camera and before the
+   controls in DOM order, which is all the ordering it has ever needed. */
 .hi-stage {
   position: absolute;
   inset: 0;
   bottom: calc(var(--hi-safe-bottom) + 64px);
-  z-index: 2;
   display: flex;
   justify-content: center;
+  pointer-events: auto;
+}
+
+/* The rail: the conversation beside the agent's view instead of behind it. It
+   keeps everything the lead position has — the scrollback, the input at its foot,
+   the scroll position — in a narrower box, because narrowing is what a
+   conversation that KEEPS does when something else needs the frame. It is opaque
+   (the same paper the views stand on), so a view pinning a background at inset 0
+   still bleeds under it without showing through. */
+.hi-stage.hi-stage--rail {
+  right: auto;
+  width: var(--hi-rail);
+  padding-left: max(0px, var(--hi-safe-left));
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+}
+
+.hi-stage.hi-stage--rail .hi-chat {
+  width: 100%;
+}
+
+/* Collapsed to the pill, or a view rendering the words itself. The chat stays
+   MOUNTED and merely stops being visible — flipping visibility rather than
+   branching is what keeps the scroll position and every page of scrollback
+   already fetched through /api/messages. */
+.hi-stage[data-shown="false"] {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .hi-chat {
@@ -563,11 +645,12 @@ button {
   font-style: italic;
 }
 
-/* --- Captions over a view ---------------------------------------------
-   While something fills the stage (an agent view at z-index 50, or the camera
-   backdrop), the words dock as a pill in the bottom bar and rise above it — a
-   dark scrim keeps them legible over whatever is behind. One fixed dock: centred
-   above the bottom band. A view that renders the words itself hides this layer
+/* --- The conversation, collapsed --------------------------------------
+   The pill is the conversation collapsed, not a separate surface: the person
+   asked for the frame back (or the window is too narrow for a rail), so the list
+   shrinks to the line it currently ends on and floats over whatever has the
+   stage — a dark scrim keeps it legible against anything behind. One fixed dock,
+   centred above the bottom band. A view that renders the words itself hides this
    entirely (handled in the host, not here).
 
    Gutters reserve space for corner widgets the dock would otherwise *overlap* —
@@ -588,7 +671,6 @@ button {
   transform: none;
   pointer-events: none;
   text-align: center;
-  z-index: 60;
 }
 
 /* When the camera pip holds the lower-left corner, push the dock's left edge past
@@ -644,16 +726,16 @@ button {
    condition notice) and each gets this same bare full-bleed surface, owning its
    own background and layout.
 
-   The one thing the layer still supplies is the safe area, because those insets
-   are not the view's to know: the window's own chrome floats over the top strip
-   (traffic lights + centred title) and the bottom band is shared with the caption
-   dock, the camera pip and the channel controls, all of which sit ABOVE the view
-   at z55/z60. Padding — not a smaller box — is what reserves them, so a
-   background the view pins with `position:absolute; inset:0` still bleeds to
-   every edge the way the seamless window wants, while flowed content stays clear
-   of the chrome. A view that absolutely-positions its *content* at `top:0` opts
-   back out of this; the view-builder guide says to place with `var(--hi-safe-top)`
-   instead.
+   The one thing the layer still supplies is the frame, because its insets are not
+   the view's to know: the window's own chrome floats over the top strip (traffic
+   lights + centred title), the bottom band is shared with the pill, the camera pip
+   and the channel controls, and the left edge is the conversation rail whenever
+   one is open — all of them on the `cover` plane, all of them above this one.
+   Padding — not a smaller box — is what reserves them, so a background the view
+   pins with `position:absolute; inset:0` still bleeds to every edge the way the
+   seamless window wants, while flowed content stays clear of the chrome. A view
+   that absolutely-positions its *content* at `top:0` opts back out of this; the
+   view-builder guide says to place with `var(--hi-safe-top)` instead.
 
    The layer also brings its own `--paper`, the ground the presence stands on, and
    that is what closes the frame. Padding is the trap here: a view that simply
@@ -671,7 +753,7 @@ button {
   padding: var(--hi-safe-top)
     max(20px, var(--hi-safe-right))
     calc(var(--hi-safe-bottom) + 76px)
-    max(20px, var(--hi-safe-left));
+    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
   background: var(--paper);
 }
 
@@ -689,14 +771,26 @@ button {
   right: max(24px, var(--hi-safe-right) + 24px);
   display: flex;
   justify-content: center;
-  /* Stays above the view stage like the other channel controls, so a typing
-     user can still reach the input while a view leads. */
-  z-index: 60;
+  pointer-events: auto;
 }
 
-/* Same step-past-the-pip the caption dock takes (the pip is
-   clamp(180px, 24vw, 520px) wide from the left margin). */
-.hi-root:has(.hi-selfview--pip) .hi-kbd {
+/* At the foot of the rail, under the messages it is adding to. The input follows
+   the conversation: a line nowhere near the messages reads as a command bar. It
+   also drops back below the control row, because the rail owns its own column and
+   the controls are not in it. */
+.hi-kbd.hi-kbd--rail {
+  left: max(0px, var(--hi-safe-left));
+  right: auto;
+  width: var(--hi-rail);
+  bottom: max(14px, var(--hi-safe-bottom));
+  padding: 0 16px;
+}
+
+/* Same step-past-the-pip the collapsed pill takes (the pip is
+   clamp(180px, 24vw, 520px) wide from the left margin). Only the centred line
+   owes the corner anything — the railed one is in its own column, and the pip
+   steps past the rail rather than the other way round. */
+.hi-root:has(.hi-selfview--pip) .hi-kbd:not(.hi-kbd--rail) {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
 
@@ -736,9 +830,9 @@ button {
   position: fixed;
   right: max(20px, var(--hi-safe-right));
   bottom: max(20px, var(--hi-safe-bottom));
-  /* Above the view stage (50) and camera pip (55), like the captions — the way
-     in/out stays reachable even while a view or the camera leads. */
-  z-index: 60;
+  /* No z-index: the `cover` plane already puts the whole cluster over the view,
+     so the way in and out stays reachable whatever the agent has on screen. */
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -938,17 +1032,20 @@ button {
 }
 
 /* --- Camera self-view -------------------------------------------------
-   The user's own camera while vision is on. Fullscreen backdrop above the
-   atmosphere (z1) but below the words/controls/views, so the agent still
-   leads; mirrored like a self-view. A soft veil keeps white captions legible
+   The user's own camera while vision is on. It is the person's own surface, so it
+   sits on the `cover` plane in both its shapes and is never underneath the
+   agent's; it is first on that plane, so the conversation and the controls draw
+   over it. Mirrored like a self-view. A soft veil keeps white captions legible
    over the live feed and keeps it in the calm register (a raw webcam jars).
-   When an agent view takes the stage it shrinks to a corner thumbnail that
-   floats above the view (z55, below captions z60) — same element, just a class
-   swap, so the feed never re-attaches. */
+   Fullscreen backdrop when nothing else is on the stage; once an agent view takes
+   it, a corner thumbnail — same element, just a class swap, so the feed never
+   re-attaches. */
 .hi-selfview {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  /* Steps past the conversation rail so the person sees all of themselves rather
+     than the part the rail leaves over. */
+  left: var(--hi-rail);
   overflow: hidden;
   pointer-events: none;
   background: #0b0d10;
@@ -977,11 +1074,10 @@ button {
 
 .hi-selfview--pip {
   inset: auto auto calc(var(--hi-safe-bottom) + 20px)
-    max(20px, var(--hi-safe-left));
+    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
   width: clamp(180px, 24vw, 520px);
   height: auto;
   aspect-ratio: 4 / 3;
-  z-index: 55;
   border-radius: 14px;
   box-shadow: 0 10px 34px rgba(20, 28, 40, 0.34);
 }
@@ -994,88 +1090,6 @@ button {
 @keyframes hi-sentence-in {
   from { opacity: 0; transform: translateY(10px); filter: blur(3px); }
   to   { opacity: 1; transform: none; filter: blur(0); }
-}
-
-/* --- History drawer --------------------------------------------------- */
-.hi-history {
-  position: fixed;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: min(560px, 92vw);
-}
-.hi-history-handle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  padding: 6px 14px;
-  border-radius: 999px 999px 0 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--fg-mute);
-  background: var(--surface);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid var(--line);
-  border-bottom: none;
-}
-.hi-history-grip {
-  width: 26px;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--line-strong);
-}
-.hi-history-list {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 8px;
-  width: 100%;
-  max-height: 40vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  background: var(--surface-strong);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-}
-.hi-history-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  border-radius: 8px;
-  color: var(--fg-dim);
-  border: 1px solid var(--line);
-  background: var(--accent-wash);
-  transition: color 160ms var(--ease), border-color 160ms var(--ease);
-}
-.hi-history-item:hover {
-  color: var(--fg);
-  border-color: var(--line-strong);
-}
-.hi-history-tag {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--accent);
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  padding: 2px 6px;
-}
-.hi-history-label {
-  font-size: 13px;
 }
 
 /* --- Reduced motion --------------------------------------------------- */
@@ -1094,10 +1108,12 @@ button {
    captions up, shrink the type, reclaim the reserved bottom band, and tighten the
    control buttons so the whole face fits ~380x540. Wide windows are unaffected. */
 @media (max-width: 420px) {
-  .hi-stage {
-    top: 46%;
-    width: 92vw;
-  }
+  /* No `.hi-stage` override here. It used to pull the lead position to `top: 46%`
+     and `width: 92vw`, which was right when the lead was a couple of floating
+     sentences and wrong once it became the chat — it squashed the conversation
+     into the lower half of an already small window. A window this narrow is below
+     the rail threshold anyway, so the conversation is either the whole stage or
+     the pill, and both want the full frame. */
   .hi-sentence {
     font-size: clamp(15px, 5vw, 24px);
   }

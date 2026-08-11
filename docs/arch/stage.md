@@ -1,0 +1,338 @@
+# The stage
+
+**Status:** proposed and built August 11, 2026, on `design/stage` — the code matches this
+document, and neither is on `main` yet. Defines what may be on screen at once, and how the
+conversation, the agent's views and the host's own surfaces share it. Supersedes the
+placement half of `core/layout.ts`'s doc comment and the "every view owns the whole frame"
+rule in `ui/ViewSlot.tsx`.
+
+## The problem
+
+`floorLayout` marks the captions participant `docked` whenever any view is on the stage
+([`core/layout.ts:91`](../../src/appearance/web/src/core/layout.ts)), and `Shell` reads
+that flag to render `<SpeechText>` — `messages[messages.length - 1]`, one line — in place
+of `<Chat>` ([`ui/Shell.tsx:111`](../../src/appearance/web/src/ui/Shell.tsx)). So showing
+anything collapses the conversation to its newest line, and the scrollback, the day
+separators and the input all go with it.
+
+Every other surface on the stage composes. The camera shrinks to a pip and keeps playing.
+The condition layer sits over the content without evicting it. Only the conversation —
+the one durable, append-only, journal-seeded thing in the product
+([`text-transcript.md`](text-transcript.md)) — degrades to a caption, and the only way
+back is to close the view.
+
+It degrades because it was never a participant. It is host chrome smuggled into the
+participant list under a synthetic id, `CAPTIONS_ID = "__captions__"`, whose "placement"
+is not a placement but a switch between two different components.
+
+## Decision
+
+**Everything on the stage is a view, the conversation included, and the stage composes
+them by role.**
+
+Three parts, in order of how much they change:
+
+### 1. A view's source is bundled or compiled
+
+| Source | What it is | Who has one |
+|---|---|---|
+| **compiled** | an esbuild artifact behind a content-addressed module URL, mounted by dynamic `import()` | the agent's content view, the condition notice |
+| **bundled** | a component inside the host bundle, always present, no compile step and no fetch | the conversation, the camera self-view |
+
+This is what makes it safe for the product's most important surface to be a view.
+**Being a view means having a role on the stage — not having gone through esbuild.** A
+compiled view that fails to compile or 404s renders `null`
+([`ViewSlot.tsx:32`](../../src/appearance/web/src/ui/ViewSlot.tsx)), which is the correct
+outcome for a board and an intolerable one for the record of what was said. The
+conversation must not be able to fail to appear, so it does not depend on the view
+compiler, the module cache, or the ref resolver.
+
+### 2. Four roles, and the write path decides which
+
+| Role | Owner | How it is written | Placement |
+|---|---|---|---|
+| `conversation` | the host — always present | nothing writes it | the stage alone · the rail beside content · the pill when collapsed |
+| `content` | the agent | `show` / `replace` / `dismiss` → `ViewBus::apply` | the stage, minus the rail |
+| `condition` | the process | level-driven `ViewBus::reconcile` | over everything, full-bleed |
+| `self` | the person's camera channel | the channel being on | the backdrop alone · a pip otherwise |
+
+This extends the rule the two slots already follow — *which slot a write lands in is
+decided by how it was written, not by anything on the wire*
+([`view_bus.rs:49`](../../src/foundation/server/view_bus.rs)) — from two roles to four.
+
+**Views still declare no geometry.** The compositor arranges by role, and a role's
+placement is fixed and host-decided. Nothing here reopens `region` / `size`, which stay
+deleted: a view is handed a frame and owns all of it, and the only thing that changed is
+that the frame may now be the stage minus a rail.
+
+### 3. The conversation has three presentations, one mount
+
+| Presentation | When | What is on screen |
+|---|---|---|
+| **stage** | nothing in `content` | the chat fills the frame — today's default face, unchanged |
+| **rail** | `content` is up and the window is wide enough | the chat in a fixed-measure column beside the content; full scrollback, own input |
+| **pill** | the person collapsed the rail, or the window is too narrow | the newest line, floating over the content — today's docked caption |
+
+`SpeechText` survives exactly here: **the pill is the conversation collapsed, not a
+separate surface.** One source, three presentations, and the person moves between them.
+
+**The input follows the conversation.** On the stage it is the centered line it is today;
+in the rail it sits at the rail's foot, under the messages it is adding to; collapsed it
+returns to the floating centered line. The input is where the conversation is, because
+typing into a line that is nowhere near the messages is what makes a chat feel like a
+command bar.
+
+## The rail
+
+The conversation takes the **left** column, the content the rest. Left because the person's
+own line anchors where they type and because the conversation is the spine the content
+hangs off — the content is the thing being discussed, and it is what changes.
+
+| | |
+|---|---|
+| Ideal measure | ~400px — a readable line, not a column of two-word wraps |
+| Bounds | min 320px, max 34% of the window |
+| Rail threshold | below ~760px of window width there is no rail: the conversation is the stage or the pill |
+
+Below the threshold the behaviour is today's, deliberately: a phone cannot show two things
+at once and pretending otherwise gives it two unusable things. The toggle there swaps
+which one is on the stage rather than splitting it.
+
+## Who decides the presentation
+
+- **By default, nobody:** it is derived — `content` present and the window wide → rail;
+  no content → stage; too narrow or collapsed → pill.
+- **The person** toggles rail ↔ pill from the channel controls.
+- **The agent cannot.** It has no tool for it and gains none. The one thing that must
+  never disappear because the agent decided so is the record of what it said.
+- **A view may stand the host down** by declaring `owns_conversation` — it renders the
+  words itself, so the host shows neither rail nor pill. This is today's `owns_captions`
+  under the vocabulary the rest of this document uses; the rename carries a
+  `#[serde(default)]` so snapshots written under the old name reload as `None`, which
+  reads as host-owned, which is the safe default it already was.
+
+**The collapse is a property of the window, not of the conversation, and it is not
+server state.** Every other thing on the stage is backend-owned so that a second device
+and a refresh converge — but that is about *what the agent has expressed*, and this is
+about how one window renders it. A phone that has no room for a rail must not collapse the
+desktop's. It is also the same refusal [`text-transcript.md`](text-transcript.md) makes
+about scroll position: a window's own view of the conversation stays in the window and is
+never reported.
+
+## What stays on the wire, and what does not
+
+`GET /api/out/view` keeps carrying exactly what it carries today: the `content` and
+`condition` slots, in z-order. **The conversation and the camera are not added to it.**
+
+They are constant participants — never absent, never dismissable, nothing to converge on
+— so a slot for them would be state with one value, and `on_screen()` would start
+reporting an id the agent cannot act on, which only invites it to try
+([`view_bus.rs:333`](../../src/foundation/server/view_bus.rs)). The appearance state stays
+the record of what the agent has expressed. The client materializes the constant
+participants locally, and the compositor sees a uniform list either way.
+
+## The compositor
+
+`floorLayout` is replaced by one pure pass over roles, keeping the existing shape (pure,
+deterministic, no solver, unit-tested in `core/layout.test.ts`):
+
+```ts
+stage({
+  content: boolean,          // the agent's view is up
+  condition: boolean,        // the process's notice is up
+  camera: boolean,           // the self view is live
+  ownsConversation: boolean, // the topmost content view renders the words itself
+  width: number,             // window width
+  collapsed: boolean,        // the person's toggle
+}): {
+  conversation: "stage" | "rail" | "pill" | "hidden";
+  content: "stage" | "fill"; // "stage" = the frame minus the rail
+  camera: "fill" | "pip";
+  input: "center" | "rail";
+  demote: number;            // presence fade, unchanged
+}
+```
+
+**Presentation changes are a class flip, never a remount.** The rule
+[`Shell.tsx:26`](../../src/appearance/web/src/ui/Shell.tsx) already states for the camera
+now covers the chat: `<Chat>` and `<CameraPreview>` are mounted once, above `ViewSlot`, and
+the pass only changes their props and classes. Remounting the chat on a stage→rail
+transition would throw away the scroll position and every page of scrollback already
+fetched through `/api/messages?before=`, which would make moving between presentations
+cost a round trip and land the person somewhere they did not ask to be.
+
+`.hi-view-fill` keeps its job — it insets the frame the content view is handed — and gains
+the rail as one more inset. No existing view changes: each was already told it owns the
+whole frame, and the frame is whatever the compositor gives it.
+
+## Layers
+
+Placement has two authorities today and they disagree. `floorLayout` decides docked / pip
+/ hidden; the stylesheet decides who covers whom, in eleven `z-index` declarations across
+`ui/global.css` and one inline `zIndex: 50` in `ViewSlot.tsx`. The conversation vanishing
+is exactly that disagreement — `layout.ts` calls it a participant, `.hi-stage { z-index: 2 }`
+parks it under the view plane at 50, and neither file is wrong on its own terms.
+
+The numbers are also ties and gaps: `.hi-stage` and `.hi-selfview` both sit at 2, and the
+pill, the input line and the controls all sit at 60 — so among those, covering is settled
+by the order of JSX in `Shell.tsx`. The gaps (2 → 8 → 50 → 55 → 60 → 80) are the reflex to
+leave room for the next surface, which is how there came to be eleven. One of them,
+`.hi-history` at 8, belongs to a History drawer no component renders.
+
+### The stack
+
+Three planes. A surface belongs to exactly one, always, and each plane carries its own
+internal order.
+
+| | Plane | What it is | Inside it, bottom to top |
+|---|---|---|---|
+| 0 | `ground` | the room | the paper (`.hi-presence`), the grain (`.hi-atmosphere`) |
+| 1 | `view` | everything the agent put on screen | the content view, the condition notice over it |
+| 2 | `cover` | everything the host owns and the agent can never occlude | the camera self view, the conversation, the input line, the controls, alerts |
+
+**The order has a meaning, not just a value: the agent's plane is below the person's.**
+Nothing the agent shows can rise above the record of what was said or the controls to
+answer it. That one sentence settles the next ten of these questions without another
+argument.
+
+`cover` names the invariant, not the geometry. The rail covers nothing — it tiles with the
+content — but it is on `cover` because a view must never be able to occlude it. **The plane
+says who *may* cover whom; the compositor decides whether they overlap at all.**
+
+Two things that were previously settled by accident now fall out instead of being declared:
+
+- **The condition notice is a view, so it cannot cover the conversation.** It is a view in
+  every other sense already — the `condition` slot, mounted through `ViewSlot`, second in
+  the wire's array — so putting it on the `view` plane needs no new rule and still gets the
+  right answer: an outage, or an exhausted-energy gate, takes the agent's half of the screen
+  and leaves the record, the input and the controls alone. Previously it was full-bleed over
+  everything except whatever happened to sit at 60.
+
+  Its `vendor-outage.geom.json` sidecar is deleted with this, and that is the interesting
+  half. It declared `owns_captions: true` — but the notice renders a fixed bilingual
+  message, not the conversation, so under the trait's own meaning the claim was never
+  true; it was a way to suppress the caption band behind a notice that read badly with one
+  floating over it. Carried forward as `owns_conversation` it would have gone from
+  cosmetic to harmful: it would take down the record and the input line at the exact
+  moment the person needs to read what happened and go fix it. No bundled view declares
+  anything now, and a test says so.
+- **Order inside `view` is the wire's order.** `ViewBus::wait_state` already emits content
+  first and condition second, and paint order inside a stacking context is DOM order — so
+  the view plane needs no `z-index` at all.
+
+The camera self view moves to `cover` in both its presentations and stops changing plane
+with its shape. It is the person's own surface. Nothing is lost: it is only ever the
+backdrop when no view is up, so it never had a view to be behind.
+
+**Nothing needs to sit between the planes**, which is the test of whether three is enough.
+The two candidates were the condition notice, now inside `view`, and the camera backdrop,
+now inside `cover` and only ever present when the `view` plane is empty.
+
+### What keeps it honest
+
+- **Three global numbers, and they are 0, 1, 2.** One `:root` block declares `--z-ground`,
+  `--z-view`, `--z-cover`, and the three plane wrappers are the only rules that read them.
+  `.hi-root` takes `isolation: isolate`, so nothing outside can interleave with them.
+- **Each plane is a stacking context, so ordering inside one is local.** A tie inside
+  `cover` — the camera pip against the controls — becomes a small question with an obvious
+  answer that nothing outside `cover` can be affected by. Today that same tie is at 60,
+  against the whole application. **This is what makes three planes stricter than six
+  layers rather than looser: the numbers do not go away, they stop being global.**
+- **Inside a plane, `z-index` is a single digit.** A contained context never needs 50, so
+  any value above 9 is evidence that someone was fighting a stack they could not see. That
+  is the vitest: outside the token block, no literal `z-index` above 9, and no inline
+  `zIndex` in a `.tsx` at all — which is exactly what `ViewSlot`'s 50 is today.
+- **An agent view cannot escape its plane.** A view writing `z-index: 9999` climbs to the
+  top of `view` and no further. Already true, by accident of `ViewSlot`'s `position: fixed`
+  + `zIndex` wrapper; it becomes a stated rule with a test, because the code running there
+  is agent-authored.
+- **The stack is static; only geometry is computed.** `stage()` returns presentations and
+  frames, never a plane, because a surface's plane never depends on what else is on screen.
+  That is what ends the two-authorities problem: CSS owns *over whom*, fixed and declared
+  once; the compositor owns *where*, computed per state. They can no longer disagree
+  because they no longer overlap.
+
+The conversation's own flip disappears here. Today it moves between z 2 as the chat and z
+60 as the pill; on three planes it is on `cover` in all three presentations, and the only
+thing that changes between them is the box the compositor hands it.
+
+## What this reverses
+
+*"A stage has room for a line, not a transcript"*
+([`Shell.tsx:101`](../../src/appearance/web/src/ui/Shell.tsx)) is wrong, and it is wrong
+for a reason worth writing down: it was true of the **caption band**, which was a timed
+reveal of an utterance that had already been spent and evicted — a band of that kind gets
+worse the longer it is, and the note in `arch-refactor.md` that *"an N large enough to
+never lose anything makes the face a chat log"* was correct about it.
+
+It stopped being true on August 11, when the conversation became an append-only list that
+keeps. Nothing about a list gets worse for being visible longer. The line survived its own
+premise.
+
+`ViewSlot`'s *"every view owns the whole frame"* narrows to *"every view owns the frame it
+is handed"*. The z-ordered stack it replaced stays abolished — this is composition between
+**roles**, which are four and fixed, not between views, which were unbounded and piled up
+fourteen deep.
+
+## Rejected
+
+**A drawer over the content.** Cheaper, and it fails the same way as today one gesture
+later: the moment you open the conversation you cannot see the board, and the moment you
+read the board you cannot see what was said about it. Simultaneous is the whole point.
+
+**The conversation as a compiled `_builtin/conversation.jsx`.** It is the uniform answer
+and it puts the chat behind esbuild provisioning, a content-hash fetch, and
+`refresh_sources` — for a surface whose failure mode must not exist. Bundled vs compiled is
+the distinction that lets the conversation be a view without inheriting an artifact's
+failure modes.
+
+**A `conversation` slot in `ViewBus`.** State with one value, and an id on the wire that
+the agent can read but not act on.
+
+## Accepted consequences
+
+- The content view gets a narrower frame whenever the rail is open. A view built assuming
+  the full window reflows; one that cannot is a view that needs a breakpoint, the same as
+  any web page.
+- Two windows on the same conversation can be in different presentations. That is intended
+  — it is the same conversation, drawn to fit.
+- The pill still exists, so there are two chat renderers to keep honest. They share
+  `useMessages` and the pill renders one message, so the divergence is bounded to styling.
+- Rail width is a host constant, not a preference. If it becomes one, it is a window
+  preference like the collapse — never appearance state.
+
+## Work
+
+Built on `design/stage`, in this order:
+
+1. **Compositor** — `stage()` replaces `floorLayout`, ten cases in `core/layout.test.ts`.
+   No server change, no wire change.
+2. **Planes** — three wrappers in `Shell`, three `--z-*` tokens in one `:root` block,
+   `isolation: isolate` on `.hi-root`. Every `z-index` on the cover plane turned out to be
+   removable rather than reducible: DOM order inside a stacking context is paint order, and
+   the surfaces were already in the right order. `ViewSlot`'s inline `zIndex: 50` is gone,
+   the orphaned `.hi-history` (82 lines, no component) is deleted, and `ui/planes.test.ts`
+   holds the line at three global numbers and no `zIndex` in a style prop.
+3. **Shell** — one `<Chat>` mount across all four presentations, hidden by a `data-shown`
+   visibility flip rather than a branch; `SpeechText` becomes the pill; the input moves
+   with the conversation.
+4. **CSS** — the rail column, `--hi-rail` as the one number every surface insets past
+   (`.hi-view-fill`, the camera in both shapes, the railed input), the narrow breakpoint.
+5. **Traits** — `owns_captions` → `owns_conversation` through `types::ViewTraits`, the
+   render URL, the sidecar contract and `channels/out/view.ts`, with `#[serde(alias)]` so
+   sidecars and snapshots already on disk keep loading. The outage view's sidecar deleted.
+6. **Controls** — the conversation toggle in `ChannelControls`, shown only when there is a
+   rail to collapse; the reset button retitled from "back to the calm room" to what it now
+   does, which is close the view.
+
+**Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
+the wire vocabulary — it has no server-side existence to name, so this is naming, not
+mechanism. And the whole thing wants eyes on a real window: the tests cover the pass and
+the plane discipline, not whether a 400px rail beside a five-column board reads well.
+
+## See also
+
+[`text-transcript.md`](text-transcript.md) for what the conversation *is* ·
+[`surfaces.md`](surfaces.md#carriers) for `show` and why it is a call ·
+[`view_bus.rs`](../../src/foundation/server/view_bus.rs) for the two slots and why the
+write path decides which.

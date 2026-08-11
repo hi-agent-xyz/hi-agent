@@ -81,7 +81,7 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = Vec::new();
-        let declared = Some(ViewTraits { owns_captions: true });
+        let declared = Some(ViewTraits { owns_conversation: true });
         emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), declared, None));
         emits.extend(speak_emits("Narrate one. ", &mut sp, now));
         emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None, None));

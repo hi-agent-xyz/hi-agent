@@ -13,6 +13,10 @@ Nothing in it is ever rewritten, cleared, or replaced. A message that was sent s
 sent, in the position it was sent in, until it ages out of the window — and even then it
 is still in the journal and still reachable by scrolling back.
 
+This file says what the conversation *is*. Where it sits on screen — as the host's own
+always-present view, sharing the stage with the agent's rather than collapsing behind it —
+is [`stage.md`](stage.md).
+
 ## What a message is
 
 Exactly three things become messages, and nothing else does:

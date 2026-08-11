@@ -13,7 +13,7 @@
 export interface ViewTraits {
   /** This view renders the live words itself; the host's caption pills stand
    * down. Absent reads as `false` — the safe default. */
-  owns_captions?: boolean;
+  owns_conversation?: boolean;
 }
 
 /** One active layer in the conversation's appearance, in z-order (first = bottom).

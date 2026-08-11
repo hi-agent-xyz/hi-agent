@@ -134,6 +134,10 @@ at boot and `GET /api/messages?before=<id>` scrolls further back through the sam
 identifiers. An id on a message is not a delivery cursor: nothing sends one back to claim
 progress. See [`text-transcript.md`](text-transcript.md) for the complete contract.
 
+The conversation is also a **view** — the host's own, always present — and it shares the
+screen with the agent's rather than being replaced by it. What may be on screen at once,
+and how the four roles are arranged, is [`stage.md`](stage.md).
+
 **Showing is a call for the same reason and one of its own.** Putting something on a screen
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.
 

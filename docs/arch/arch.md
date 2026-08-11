@@ -139,6 +139,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
 | [`core.md`](core.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
+| [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |

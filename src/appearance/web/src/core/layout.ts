@@ -1,104 +1,97 @@
-// The compositor: one pure pass that arranges the host's own live surfaces —
-// the caption words and the camera self-view — around whatever the agent has on
-// screen. Deterministic (no solver, no async coordinator).
+// The compositor: one pure pass that divides the stage between the agent's view
+// and the host's own surfaces — the conversation and the camera self-view.
+// Deterministic (no solver, no async coordinator).
 //
-// It no longer *places* agent views. Views are full-bleed, one at a time, so
-// there is nothing left to decide about where one goes; what remains is the
-// question the host surfaces actually ask — does the camera fill the stage or
-// tuck into its pip, do the words lead or dock, and does the top-most view
-// render them itself. That is this module's whole job.
+// It decides *geometry*, and only geometry. Who covers whom is not computed here
+// and never was a per-state question: every surface belongs to one of three
+// planes — ground, view, cover — for its whole life, declared once in the
+// stylesheet. See `docs/arch/stage.md`. Before that split, `floorLayout` decided
+// docked/pip/hidden while the stylesheet decided covering, and the two disagreed:
+// the pass called the conversation a participant while `.hi-stage { z-index: 2 }`
+// parked it under the view plane at 50, which is why showing anything collapsed
+// the conversation to a caption.
 //
-// Captions and camera are placed here but NEVER built or owned here: they stay
-// host-rendered, pinned surfaces (the camera <video> keeps its srcObject; the
-// caption DOM keeps streaming). This module only decides WHERE each box goes —
-// the "placement, not lifecycle" line the whole design rests on.
+// It also decides *placement, never lifecycle*: the chat and the camera <video>
+// are mounted once by the shell, above the swappable view slot, and this pass only
+// flips their props and classes. Re-mounting the camera re-acquires the device and
+// blacks out the feed; re-mounting the chat throws away the scroll position and
+// every page of scrollback already fetched.
 
-/** Stable ids for the two host-rendered participants, so a placement map can key
- * them alongside the agent views without colliding with any view id. */
-export const CAPTIONS_ID = "__captions__";
-export const CAMERA_ID = "__camera__";
+/** How the conversation is presented. One surface, four states — not four surfaces.
+ *
+ * - `stage` — it fills the frame: the default face.
+ * - `rail`  — a column beside the agent's view, with its full scrollback and input.
+ * - `pill`  — collapsed to the newest line, floating over the view.
+ * - `hidden` — a view is rendering the words itself.
+ */
+export type Conversation = "stage" | "rail" | "pill" | "hidden";
 
-export type ParticipantKind = "view" | "captions" | "camera";
+/** The self-view fills the frame when nothing else is on it, else a corner pip. */
+export type Camera = "fill" | "pip";
 
-/** Where a host surface sits. Views aren't placed — they fill the frame — so this
- * is only ever the handful of spots the captions and the camera use. */
-export type Region = "center" | "bottom" | "bottom_left" | "fill";
+/** The input line follows the conversation — it is where the messages are. */
+export type Input = "center" | "rail";
 
-/** One thing competing for the stage. A `view` carries `ownsCaptions` (all a view
- * declares now); the host chrome carries nothing — the compositor supplies its
- * defaults. */
-export interface Participant {
-  id: string;
-  kind: ParticipantKind;
-  ownsCaptions?: boolean;
+/** Below this window width there is no rail: a window this narrow cannot show two
+ * things at once, and splitting it gives you two unusable ones. The conversation
+ * is then the whole stage or the pill, and the person swaps between them. */
+export const RAIL_MIN_WIDTH = 760;
+
+export interface StageInput {
+  /** The agent has a view up. */
+  content: boolean;
+  /** The camera channel is live. */
+  camera: boolean;
+  /** The top-most view renders the conversation itself. */
+  ownsConversation: boolean;
+  /** Window width, for the rail threshold. */
+  width: number;
+  /** The person collapsed the rail. A window preference — never server state, so
+   * a phone with no room for a rail cannot collapse a desktop's. */
+  collapsed: boolean;
 }
 
-/** Where the compositor decided one participant sits. The three flags are
- * kind-specific (default false): `hidden` suppresses captions a view renders
- * itself; `pip` shrinks the camera to its corner; `docked` marks captions as
- * pills over content (vs. centered as the lead). */
-export interface Placement {
-  id: string;
-  kind: ParticipantKind;
-  region: Region;
-  hidden: boolean;
-  pip: boolean;
-  docked: boolean;
-}
-
-/** The whole stage resolved: how far to fade the presence while content leads,
- * plus a placement per host surface. */
-export interface Layout {
+export interface Stage {
+  conversation: Conversation;
+  camera: Camera;
+  input: Input;
+  /** How far to fade the presence while something leads. */
   demote: number;
-  placements: Map<string, Placement>;
+  /** Convenience for the shell: the view frame must inset past the rail. */
+  rail: boolean;
 }
 
 /**
- * Arrange the host surfaces around whatever is on screen. The presence demotes
- * once any view leads, the camera fills the stage alone but shrinks to a pip
- * behind a view, and the captions dock as pills whenever something fills the
- * stage — centered as the lead otherwise.
+ * Arrange the stage.
+ *
+ * The conversation yields the *frame* to whatever the agent puts up, and never the
+ * *screen*: it narrows to a rail rather than collapsing, because it is the one
+ * surface that keeps — see `docs/arch/text-transcript.md`. It collapses to the pill
+ * only when the person asks or the window has no room, and disappears only when a
+ * view has taken over rendering the words.
+ *
+ * The camera counts as occupying the stage for the same reason a view does: the
+ * self-view is full-bleed, so leaving the conversation on the stage over it would
+ * cover the thing the person turned on to see.
  */
-export function floorLayout(participants: Participant[]): Layout {
-  const views = participants.filter((p) => p.kind === "view");
-  const captions = participants.find((p) => p.kind === "captions");
-  const camera = participants.find((p) => p.kind === "camera");
+export function stage(input: StageInput): Stage {
+  const occupied = input.content || input.camera;
+  const tooNarrow = input.width < RAIL_MIN_WIDTH;
 
-  const overlaid = views.length > 0;
-  const demote = overlaid ? 0.72 : 0;
-  const placements = new Map<string, Placement>();
+  const conversation: Conversation =
+    input.content && input.ownsConversation
+      ? "hidden"
+      : !occupied
+        ? "stage"
+        : input.collapsed || tooNarrow
+          ? "pill"
+          : "rail";
 
-  // The camera fills the stage as a backdrop when nothing leads; behind a view it
-  // tucks into the lower-left corner pip.
-  const cameraFill = !!camera && !overlaid;
-  if (camera) {
-    placements.set(camera.id, {
-      id: camera.id,
-      kind: "camera",
-      region: cameraFill ? "fill" : "bottom_left",
-      hidden: false,
-      pip: overlaid,
-      docked: false,
-    });
-  }
-
-  // The words dock as a single bottom-center strip whenever something fills the
-  // stage behind them — a view, or the camera-as-backdrop — sat between the
-  // camera pip (left) and the controls (right) so they never cover the content.
-  // The top-most view may still render the words itself, in which case the host
-  // stands down. Alone (nothing on the stage), the words are the lead and centre.
-  if (captions) {
-    const docked = overlaid || cameraFill;
-    const top = views[views.length - 1];
-    placements.set(captions.id, {
-      id: captions.id,
-      kind: "captions",
-      region: docked ? "bottom" : "center",
-      hidden: overlaid && !!top?.ownsCaptions,
-      pip: false,
-      docked,
-    });
-  }
-
-  return { demote, placements };
+  return {
+    conversation,
+    camera: input.content ? "pip" : "fill",
+    input: conversation === "rail" ? "rail" : "center",
+    demote: input.content ? 0.72 : 0,
+    rail: conversation === "rail",
+  };
 }

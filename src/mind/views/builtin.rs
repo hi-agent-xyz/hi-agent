@@ -75,7 +75,6 @@ const WELCOME_MARK: &str = include_str!("builtin/hi-mark.svg");
 /// no generation available to phrase anything at that moment, so the copy has to already
 /// exist. English and Chinese are selected from the host's current language.
 const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
-const OUT_OF_ENERGY_GEOM: &str = include_str!("builtin/vendor-outage.geom.json");
 
 /// The review surfaces: one per kind of thing the agent accumulates. Each owns the full
 /// canvas and provides its own scrolling; the *safe* insets are the host's
@@ -111,11 +110,19 @@ const REVIEW_VIEWS: &[(&str, &str)] = &[
 pub const OUT_OF_ENERGY_REF: &str = "_builtin/vendor-outage";
 pub const OUT_OF_ENERGY_VIEW_ID: &str = "vendor-outage";
 
-/// The bundled source and placement for [`OUT_OF_ENERGY_REF`], read straight from
-/// the binary. The host shows this when managed calls are paused, so a disk read is
-/// intentionally not part of the recovery path.
-pub fn out_of_energy_view() -> (&'static str, &'static str) {
-    (OUT_OF_ENERGY, OUT_OF_ENERGY_GEOM)
+/// The bundled source for [`OUT_OF_ENERGY_REF`], read straight from the binary. The
+/// host shows this when managed calls are paused, so a disk read is intentionally
+/// not part of the recovery path.
+///
+/// It declares no traits, and the sidecar it used to ship is deleted. It carried
+/// `owns_captions: true`, which suppressed the caption band behind the notice — but
+/// the notice renders a fixed bilingual message, not the conversation, so the
+/// declaration was never true in the sense the trait means. Under the three planes
+/// (`docs/arch/stage.md`) it is also the wrong outcome: an outage is a condition of
+/// the agent's half of the screen and must leave the record of what was said, and
+/// the means to fix it, alone. The conversation now rails beside it.
+pub fn out_of_energy_view() -> &'static str {
+    OUT_OF_ENERGY
 }
 
 /// Write the bundled built-in views into `<data_dir>/views/_builtin/`, overwriting
@@ -130,8 +137,6 @@ pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
     std::fs::write(dir.join("welcome.jsx"), WELCOME)?;
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
     std::fs::write(dir.join("vendor-outage.jsx"), OUT_OF_ENERGY)?;
-    // The only sidecar left anywhere: this view renders the words itself.
-    std::fs::write(dir.join("vendor-outage.geom.json"), OUT_OF_ENERGY_GEOM)?;
     for (name, source) in REVIEW_VIEWS {
         std::fs::write(dir.join(format!("{name}.jsx")), source)?;
     }
@@ -150,14 +155,9 @@ mod tests {
         install_builtin_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("_builtin");
         assert!(builtin.join("vendor-outage.jsx").is_file());
-        assert!(builtin.join("vendor-outage.geom.json").is_file());
 
-        let (source, geom) = out_of_energy_view();
+        let source = out_of_energy_view();
         assert_eq!(source, std::fs::read_to_string(builtin.join("vendor-outage.jsx")).unwrap());
-        assert!(
-            serde_json::from_str::<crate::types::ViewTraits>(geom).is_ok(),
-            "the declared traits must parse"
-        );
 
         assert!(source.contains("Your energy is used up"));
         assert!(source.contains("hi-agent.xyz"));
@@ -238,17 +238,24 @@ mod tests {
         }
     }
 
-    /// The single exception, and the reason the sidecar mechanism still exists at
-    /// all: the outage view renders the conversation's words itself, so the host's
-    /// caption pills have to stand down behind it.
+    /// No bundled view declares a trait any more — the outage notice was the last
+    /// one, and it claimed `owns_captions` while rendering a fixed message rather
+    /// than the conversation. An outage is a condition of the agent's half of the
+    /// screen; it must not take down the record of what was said or the input line
+    /// to answer with (`docs/arch/stage.md`). The sidecar mechanism stays for
+    /// agent-authored views, which is where a real claim can come from.
     #[test]
-    fn only_the_outage_view_declares_traits_and_it_owns_the_captions() {
+    fn no_bundled_view_declares_traits_and_the_outage_cannot_hide_the_conversation() {
         let dir = tempfile::tempdir().unwrap();
         install_builtin_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("_builtin");
-        let raw = std::fs::read_to_string(builtin.join("vendor-outage.geom.json")).unwrap();
-        let parsed: crate::types::ViewTraits = serde_json::from_str(&raw).unwrap();
-        assert!(parsed.owns_captions);
+        let sidecars: Vec<String> = std::fs::read_dir(&builtin)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".geom.json"))
+            .collect();
+        assert!(sidecars.is_empty(), "bundled views declare nothing: {sidecars:?}");
     }
 
     /// The Tools surface has to have a word for every rung the endpoint serves. A role

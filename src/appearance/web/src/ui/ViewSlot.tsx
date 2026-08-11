@@ -53,14 +53,21 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * keeps the slot, so a motion-tagged element animates rather than remounting).
  * No default motion: a view appears/leaves instantly unless it opts into motion.
  *
- * **Every view owns the whole frame.** There is no host card, no region and no
- * size class to resolve: the server hands over at most two layers in z-order (the
- * agent's content, then the host's condition notice), and each gets the same
- * `.hi-view-fill` layer with its own layout. The frame's only non-negotiable inset
- * is the window chrome and the bottom band the caption dock and controls float in,
- * which `.hi-view-fill` supplies as padding — so a view that lays out nothing of
- * its own still lands legible and clear of the chrome, while a background pinned
- * at `inset: 0` still bleeds edge to edge.
+ * **Every view owns the frame it is handed.** There is no host card, no region and
+ * no size class to resolve: the server hands over at most two layers in z-order
+ * (the agent's content, then the host's condition notice), and each gets the same
+ * `.hi-view-fill` layer with its own layout. The frame's non-negotiable insets are
+ * the window chrome, the bottom band the controls float in, and — while the
+ * conversation holds a rail — the rail, all of which `.hi-view-fill` supplies as
+ * padding. So a view that lays out nothing of its own still lands legible and
+ * clear of the chrome, while a background pinned at `inset: 0` still bleeds edge
+ * to edge.
+ *
+ * The slot is the `view` plane's whole occupant and carries no `z-index` of its
+ * own: paint order inside a plane is DOM order, which here is already the wire's
+ * z-order. A view writing `z-index: 9999` therefore climbs to the top of this
+ * plane and no further — it can never reach the conversation or the controls.
+ * See `docs/arch/stage.md`.
  *
  * The layer also carries the ground (`--paper`, the presence's own), painted under
  * that padding so it reaches the window edge. A themed view therefore paints no
@@ -72,7 +79,7 @@ export function ViewSlot() {
   const { views } = useViews();
   if (views.length === 0) return null;
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 50 }}>
+    <>
       {views.map((v) => (
         <div key={v.id} className="hi-view-fill">
           <ViewErrorBoundary>
@@ -80,6 +87,6 @@ export function ViewSlot() {
           </ViewErrorBoundary>
         </div>
       ))}
-    </div>
+    </>
   );
 }

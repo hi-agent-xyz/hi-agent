@@ -1186,7 +1186,7 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     // takes the frame the window last reported, so "exactly the frame" now means the
     // person's actual window rather than a constant that matched none of them.
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
-        .with_captions(traits.is_some_and(|t| t.owns_captions));
+        .with_conversation(traits.is_some_and(|t| t.owns_conversation));
 
     // An explicit size is a deliberate second look at another frame, so it overrides one
     // axis at a time: asking for a narrower width alone should not also snap the height

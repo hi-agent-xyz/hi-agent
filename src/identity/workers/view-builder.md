@@ -257,23 +257,26 @@ views tree is served at `/views/<the same relative path>`, so a file you write t
 `badminton-top10/leader.jpg` is `<img src="/views/badminton-top10/leader.jpg">`.
 That path always loads and keeps your source small.
 
-**The words share the screen with you.** While your view is on stage the host keeps
-showing the conversation's words — the person's speech and the agent's lines — as small
-caption pills docked bottom-centre, floating over your view (you don't render them). So
-leave that strip quiet rather than running a line of text through it.
+**The conversation shares the screen with you.** While your view is on stage the host
+keeps the whole conversation up beside it — normally a column down the left of the
+window, and a small pill floating bottom-centre if the person has collapsed that column
+or the window is too narrow for two things. You never render either. Your view is handed
+a frame that is already inset past whichever it is, so there is nothing to do about the
+column; just leave the bottom strip quiet rather than running a line of text through it,
+because that is where the pill lands.
 
 If you'd rather fold the words into the composition yourself, render them with
 `useSpeech()` from `@hi/core` and say so in a small `<name>.geom.json` beside your
 saved view (same base name as the `.jsx`):
 
 ```
-{ "owns_captions": true }
+{ "owns_conversation": true }
 ```
 
 That is the *only* thing a sidecar declares, and the only reason to write one — no
-sidecar is the normal case. With `owns_captions` the host's caption pills stand down,
-so only declare it if you actually render the words; otherwise the person's speech goes
-invisible.
+sidecar is the normal case, and it is the right one almost always. With
+`owns_conversation` the host draws neither the column nor the pill, so only declare it if
+you actually render the words; otherwise the person's speech goes invisible.
 
 **It's theirs the moment they reach for it.** If they scroll or tap, the view should
 yield — let them look, and don't fight it.

@@ -12,6 +12,10 @@ interface KeyboardFallbackProps {
   onOpen: () => void;
   /** Turn the channel off — e.g. Esc. */
   onClose: () => void;
+  /** Where the line sits: centred in the bottom band, or at the foot of the
+   * conversation rail. The input follows the conversation, because typing into a
+   * line nowhere near the messages is what makes a chat feel like a command bar. */
+  anchor: "center" | "rail";
 }
 
 /**
@@ -21,7 +25,14 @@ interface KeyboardFallbackProps {
  * seeds the first character, so a keyboard user never has to reach for a button.
  * Independent of the audio channels: usable with the mic on, off, or unavailable.
  */
-export function KeyboardFallback({ onSend, open, pastedText, onOpen, onClose }: KeyboardFallbackProps) {
+export function KeyboardFallback({
+  onSend,
+  open,
+  pastedText,
+  onOpen,
+  onClose,
+  anchor,
+}: KeyboardFallbackProps) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastPasteIdRef = useRef(0);
@@ -67,7 +78,7 @@ export function KeyboardFallback({ onSend, open, pastedText, onOpen, onClose }: 
   if (!open) return null;
 
   return (
-    <div className="hi-kbd">
+    <div className={anchor === "rail" ? "hi-kbd hi-kbd--rail" : "hi-kbd"}>
       <input
         ref={inputRef}
         data-hi-base-text-input

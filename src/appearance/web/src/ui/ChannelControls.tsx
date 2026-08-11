@@ -28,8 +28,12 @@ interface ChannelControlsProps {
   onPickFiles: () => void;
   /** A file batch is currently being uploaded. */
   fileSending: boolean;
-  /** Reset the screen — close all views, back to the default empty room. */
+  /** Close the agent's view — the conversation takes the screen back. */
   onCloseViews: () => void;
+  /** How the conversation is currently drawn, from the compositor. */
+  conversation: "stage" | "rail" | "pill" | "hidden";
+  /** Collapse the conversation rail to the pill, or bring it back. */
+  onToggleConversation: () => void;
 }
 
 /**
@@ -37,8 +41,14 @@ interface ChannelControlsProps {
  * camera, text) and the output channel (voice) are all independent: each can be
  * on or off at any time, and they don't conflict. Every control is always
  * present (no state-gated chrome) so a user who can't (or won't) use a given
- * channel still has a clear way in or out; the trailing reset clears any views
- * back to the calm room. Order: status · mic · speaker · keyboard · attach · camera · reset.
+ * channel still has a clear way in or out; the trailing reset closes the agent's
+ * view, which gives the conversation the screen back.
+ * Order: status · mic · speaker · keyboard · attach · camera · conversation · reset.
+ *
+ * The conversation toggle is the one control that appears and disappears, and it
+ * has to: it collapses the rail to the pill and back, and there is no rail to
+ * collapse unless something else is on the stage. Showing it while the
+ * conversation *is* the stage would offer to hide the only thing on screen.
  */
 export function ChannelControls({
   activity,
@@ -55,7 +65,11 @@ export function ChannelControls({
   onPickFiles,
   fileSending,
   onCloseViews,
+  conversation,
+  onToggleConversation,
 }: ChannelControlsProps) {
+  const railed = conversation === "rail";
+  const collapsible = railed || conversation === "pill";
   return (
     <div className="hi-channels" role="group" aria-label="agent status and channels">
       <StatusButton activity={activity} />
@@ -116,12 +130,25 @@ export function ChannelControls({
         <CamGlyph off={!videoOn} />
       </button>
 
+      {collapsible && (
+        <button
+          type="button"
+          className={`hi-channel${railed ? " is-on" : ""}`}
+          onClick={onToggleConversation}
+          title={railed ? "conversation — tap to collapse" : "conversation — tap to open"}
+          aria-pressed={railed}
+          aria-label={railed ? "collapse the conversation" : "open the conversation"}
+        >
+          <ConversationGlyph open={railed} />
+        </button>
+      )}
+
       <button
         type="button"
         className="hi-channel"
         onClick={onCloseViews}
-        title="reset — close views, back to the calm room"
-        aria-label="reset the screen"
+        title="close the view — the conversation takes the screen back"
+        aria-label="close the view"
       >
         <ResetGlyph />
       </button>
@@ -205,6 +232,22 @@ function AttachGlyph() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+/** The frame with its rail: filled while the conversation holds a column, an empty
+ * frame once it has collapsed to the pill. The glyph is the layout, not a speech
+ * bubble — what the button changes is how the screen is divided. */
+function ConversationGlyph({ open }: { open: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      {open ? (
+        <rect x="4" y="5" width="6" height="14" rx="2.5" fill="currentColor" opacity="0.55" />
+      ) : (
+        <path d="M10 5v14" stroke="currentColor" strokeWidth="1.6" strokeDasharray="2 2.5" />
+      )}
     </svg>
   );
 }
