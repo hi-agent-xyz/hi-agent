@@ -33,6 +33,17 @@ pub const DIMENSION: &str = "tasks";
 pub const PROJECTED_TASKS: usize = 12;
 const PROJECTED_LINE_CHARS: usize = 120;
 
+/// How long work may sit in `doing` before the projection stops reporting its age and
+/// starts asking for a disposition.
+///
+/// Two days, because the thing this catches is not slow work — it is work that finished
+/// and never got filed, usually because the last conceivable proof belonged to the person
+/// and they never said anything. That wait has no end of its own: the record this was
+/// measured against sat four days past its own delivery, and would have sat there still.
+/// Long enough that a genuinely two-day job is not nagged, short enough that a finished one
+/// is not forgotten.
+const IDLE_BOUNDARY_HOURS: i64 = 48;
+
 /// The complete task lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
@@ -105,6 +116,18 @@ pub struct Task {
     pub checked_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
+    /// When the status last changed — the clock [`IDLE_BOUNDARY_HOURS`] reads.
+    ///
+    /// **Not "when was this touched".** A ticket that sat in `doing` for four days was
+    /// rewritten six times in five hours while it did so, each write another probe
+    /// concluding the same thing, so the file's own mtime called it freshly tended right up
+    /// to the day it was closed by hand. Churn is not movement, and the only movement a
+    /// duty has is its status.
+    ///
+    /// Stamped by [`Task::set_status`], so every transition code performs records itself.
+    /// A record without one falls back to `created_at`, which is older and therefore errs
+    /// toward the boundary rather than hiding behind it.
+    pub status_since: Option<DateTime<Utc>>,
     /// Frontmatter lines this schema does not know, verbatim and in order.
     ///
     /// The agent writes facets whole and has always kept its own record on a task —
@@ -119,10 +142,11 @@ pub struct Task {
 /// Frontmatter keys [`parse`] consumes, current and legacy. These are the only lines
 /// [`render`] may re-author, because it re-emits each one canonically; every other line is
 /// somebody else's and passes through untouched.
-const SCHEMA_KEYS: [&str; 15] = [
+const SCHEMA_KEYS: [&str; 16] = [
     "status",
     "title",
     "created_at",
+    "status_since",
     "due_at",
     "checked_at",
     "completed_at",
@@ -151,6 +175,7 @@ impl Task {
             checked_at: None,
             completed_at: (status == TaskStatus::Done).then_some(now),
             cancelled_at: (status == TaskStatus::Cancelled).then_some(now),
+            status_since: Some(now),
             extra: Vec::new(),
             body: String::new(),
         }
@@ -166,6 +191,7 @@ impl Task {
             return;
         }
         self.status = status;
+        self.status_since = Some(at);
         match status {
             TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
                 self.completed_at = None;
@@ -195,6 +221,19 @@ impl Task {
     /// is the *worse* case, not an exempt one.
     fn unconfirmed(&self) -> bool {
         self.is_serving() && self.checked_at.is_none()
+    }
+
+    /// Work that has been underway long enough that continuing to hold it open is itself
+    /// the thing to answer for.
+    ///
+    /// `doing` only. `serving` is exempt because a duty being old is what a duty looks
+    /// like, and `todo` because not-started-yet is a state it may sit in on purpose. The
+    /// one status that promises an ending is the one that can fail to reach it.
+    fn past_idle_boundary(&self, now: DateTime<Utc>) -> bool {
+        self.status == TaskStatus::Doing
+            && self
+                .status_since
+                .is_some_and(|since| (now - since).num_hours() >= IDLE_BOUNDARY_HOURS)
     }
 }
 
@@ -291,6 +330,10 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
         if unchecked > 0 {
             let _ = write!(out, ", {unchecked} duties never confirmed alive");
         }
+        let stalled = rest.iter().filter(|task| task.past_idle_boundary(now)).count();
+        if stalled > 0 {
+            let _ = write!(out, ", {stalled} waiting on a disposition from you");
+        }
         out.push_str(". The whole list is memory/facets/tasks/.\n");
     }
     out
@@ -320,7 +363,19 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
 /// nothing — a watch is *supposed* to be old. Plain work is the opposite: nothing in the
 /// line ever said how long it had been sitting, so a delivery finished days ago and one
 /// opened this morning read identically, and only one of them is work.
+///
+/// Past [`IDLE_BOUNDARY_HOURS`] the age stops being the fact worth carrying and the
+/// disposition does. An age is something to note; this is something to answer, and it names
+/// the three answers there are so that a seventh probe cannot pass for one of them.
 fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    if task.past_idle_boundary(now) {
+        let since = task.status_since?;
+        return Some(format!(
+            "last moved {} — close it with what you did verify, or ask once, or cancel it; \
+             checking it again is not one of the three",
+            ago(now, since)
+        ));
+    }
     if task.is_serving() {
         return Some(match (task.checked_at, task.liveness.verify.is_some()) {
             (Some(at), _) => format!("last confirmed alive {}", ago(now, at)),
@@ -345,23 +400,36 @@ fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     }
 }
 
-/// Overdue first, then duties nobody has confirmed alive, then upcoming, then undated
-/// doing work, then duties known to be up, then todo work.
+/// Overdue first, then duties nobody has confirmed alive, then work past the idle
+/// boundary, then upcoming, then undated doing work, then duties known to be up, then todo
+/// work.
 ///
 /// A duty splits across two of those bands on purpose. A watch that has been confirmed
 /// alive wants to be *seen* and not acted on, so it sits low; the same watch with nothing
 /// to say it is running is the one line here that might already be silently dead, so it
 /// sits at the top next to overdue work.
+///
+/// Work past the boundary rises for a reason the projection can't otherwise supply: only
+/// [`PROJECTED_TASKS`] lines are printed, and the thing being fixed is a task that quietly
+/// stops being read. A line that needs a decision cannot be allowed to fall off the bottom
+/// of the list, and the longest-stuck goes first within the band. It sits *below* an
+/// unconfirmed duty, which might be dead right now, and *above* a future due date, which is
+/// not a problem yet.
 type OrderKey<'a> = (usize, i64, &'a str);
 
 fn order_key(task: &Task, now: DateTime<Utc>) -> OrderKey<'_> {
     match (task.due_at, task.status) {
         (Some(due), _) if due <= now => (0, due.timestamp(), &task.subject),
         _ if task.unconfirmed() => (1, 0, &task.subject),
-        (Some(due), _) => (2, due.timestamp(), &task.subject),
-        (None, TaskStatus::Doing) => (3, 0, &task.subject),
-        (None, TaskStatus::Serving) => (4, 0, &task.subject),
-        (None, _) => (5, 0, &task.subject),
+        _ if task.past_idle_boundary(now) => (
+            2,
+            task.status_since.map_or(0, |since| since.timestamp()),
+            &task.subject,
+        ),
+        (Some(due), _) => (3, due.timestamp(), &task.subject),
+        (None, TaskStatus::Doing) => (4, 0, &task.subject),
+        (None, TaskStatus::Serving) => (5, 0, &task.subject),
+        (None, _) => (6, 0, &task.subject),
     }
 }
 
@@ -410,11 +478,12 @@ fn parse(subject: &str, content: &str) -> Task {
         owner: field("owner"),
         start_key: field("start_key"),
     };
+    let created_at = field("created_at").and_then(|value| parse_timestamp(&value));
     Task {
         subject: subject.to_owned(),
         status: coerce_duty(status, &liveness),
         title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
-        created_at: field("created_at").and_then(|value| parse_timestamp(&value)),
+        created_at,
         due_at: field("due_at")
             .or_else(|| field("due"))
             .and_then(|value| parse_timestamp(&value)),
@@ -424,6 +493,9 @@ fn parse(subject: &str, content: &str) -> Task {
             .and_then(|value| parse_timestamp(&value)),
         completed_at: field("completed_at").and_then(|value| parse_timestamp(&value)),
         cancelled_at: field("cancelled_at").and_then(|value| parse_timestamp(&value)),
+        status_since: field("status_since")
+            .and_then(|value| parse_timestamp(&value))
+            .or(created_at),
         extra: foreign_frontmatter(content),
         body: strip_frontmatter(content).trim().to_owned(),
     }
@@ -436,11 +508,21 @@ fn parse(subject: &str, content: &str) -> Task {
 /// legitimate reading left, since plain work has no business carrying those fields, so the
 /// same rule covers a record written wrong today.
 ///
-/// One case it cannot reach: a legacy duty that recorded no contract at all is
-/// indistinguishable from plain work, and only the agent re-reading its own ledger can
-/// move that one.
+/// **What makes a record a duty is a way back, not a `verify:`.** A `verify:` alone is the
+/// commonest thing plain work carries by mistake — an acceptance test the agent set itself,
+/// filed in the liveness field because that is where checks go — and reading that as a duty
+/// converts a finished delivery into something with no ending, which is the same camouflage
+/// this file removed from the projection, one layer down. The `google-login-hi-agent-xyz`
+/// record was exactly it: `verify:` plus an `owner:` note, no `restart:`, no `start_key:`,
+/// a delivery that had shipped four days earlier. The Feishu watcher, a real duty, carries
+/// all four. So a contract counts here only if it says how to bring the thing back —
+/// nothing you cannot relaunch is machinery.
+///
+/// Two cases it cannot reach, both needing the agent to re-read its own ledger: a legacy
+/// duty that recorded no contract at all, and one that recorded only how to check it.
 fn coerce_duty(status: TaskStatus, liveness: &Liveness) -> TaskStatus {
-    if status == TaskStatus::Doing && !liveness.is_empty() {
+    let has_way_back = liveness.restart.is_some() || liveness.start_key.is_some();
+    if status == TaskStatus::Doing && has_way_back {
         return TaskStatus::Serving;
     }
     status
@@ -518,6 +600,9 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     if let Some(created_at) = task.created_at {
         field("created_at", created_at.to_rfc3339().as_str())?;
     }
+    if let Some(status_since) = task.status_since {
+        field("status_since", status_since.to_rfc3339().as_str())?;
+    }
     if let Some(due_at) = task.due_at {
         field("due_at", due_at.to_rfc3339().as_str())?;
     }
@@ -585,6 +670,9 @@ mod tests {
     fn task(title: &str, status: TaskStatus) -> Task {
         let mut task = Task::new(title, status);
         task.created_at = Some(at(1, 9));
+        // An hour before `now()`: a fixture has just moved, so nothing is at the idle
+        // boundary unless a test puts it there.
+        task.status_since = Some(now() - Duration::hours(1));
         task
     }
 
@@ -695,9 +783,15 @@ mod tests {
         }
     }
 
-    /// The ledger that existed the day before `serving` did: every duty in it is a `doing`
-    /// task carrying a `verify:`. Nothing rewrites those files, so reading them wrong would
-    /// have cost each of them the one line that says whether it is still up.
+    /// The ledger that existed the day before `serving` did, in the shape it is actually
+    /// in: a duty there is a `doing` task that says how to bring its machinery back.
+    /// Nothing rewrites those files, so reading them wrong would have cost each of them the
+    /// one line that says whether it is still up.
+    ///
+    /// Counted over the live ledger, 17 records carry a liveness field: `verify:` alone
+    /// appears on 13 of them, `status: todo` and `kind: staged` records included, and
+    /// `owner:` on 16 — both of those are where a note lands, not a duty. Only the two real
+    /// duties record a `restart:` or a `start_key:`.
     #[tokio::test]
     async fn a_duty_written_before_serving_existed_reads_back_as_one() {
         let dir = tempfile::tempdir().unwrap();
@@ -706,7 +800,8 @@ mod tests {
             DIMENSION,
             "watch-the-ops-group",
             "---\nstatus: doing\ntitle: \"Watch the ops group\"\n\
-             checked_at: \"2026-07-28T10:00:00Z\"\nverify: \"latest row is under 30m old\"\n---\n",
+             checked_at: \"2026-07-28T10:00:00Z\"\nverify: \"latest row is under 30m old\"\n\
+             start_key: watch-the-ops-group\n---\n",
         )
         .await
         .unwrap();
@@ -745,6 +840,128 @@ mod tests {
                 ..Liveness::default()
             };
             assert_eq!(coerce_duty(closed, &contract), closed, "{closed:?}");
+        }
+    }
+
+    /// The clock is time in status, not time since the task was written down. Work opened a
+    /// month ago and picked up an hour ago is fresh; the same record left in `doing` is not.
+    #[test]
+    fn the_boundary_reads_time_in_status_not_age_since_creation() {
+        let mut fresh = task("Ship Google login", TaskStatus::Doing);
+        fresh.created_at = Some(now() - Duration::days(30));
+        let text = render_projection(std::slice::from_ref(&fresh), now());
+        assert!(text.contains("· open 30d"), "{text}");
+        assert!(!text.contains("close it with"), "{text}");
+
+        let mut stuck = fresh.clone();
+        stuck.status_since = Some(now() - Duration::days(4));
+        let text = render_projection(std::slice::from_ref(&stuck), now());
+        assert!(text.contains("last moved 4d ago"), "{text}");
+        assert!(
+            text.contains("close it with what you did verify, or ask once, or cancel it"),
+            "{text}"
+        );
+        assert!(text.contains("checking it again is not one of the three"), "{text}");
+        assert!(!text.contains("open 30d"), "the age is no longer the fact: {text}");
+
+        // The boundary itself: an hour short of it says nothing.
+        let mut short = fresh.clone();
+        short.status_since = Some(now() - Duration::hours(IDLE_BOUNDARY_HOURS - 1));
+        let text = render_projection(std::slice::from_ref(&short), now());
+        assert!(!text.contains("close it with"), "{text}");
+    }
+
+    /// Only the status that promises an ending can fail to reach one. A duty is meant to be
+    /// old, and `todo` is a status work can sit in on purpose.
+    #[test]
+    fn only_work_that_promises_an_ending_meets_the_boundary() {
+        let old = now() - Duration::days(9);
+        for exempt in [TaskStatus::Serving, TaskStatus::Todo] {
+            let mut task = task("Watch the ops group", exempt);
+            task.status_since = Some(old);
+            task.liveness.verify = Some("latest row is under 30m old".into());
+            task.liveness.start_key = Some("watch-the-ops-group".into());
+            let text = render_projection(std::slice::from_ref(&task), now());
+            assert!(!text.contains("close it with"), "{exempt:?}: {text}");
+        }
+
+        let mut work = task("Draft the report", TaskStatus::Doing);
+        work.status_since = Some(old);
+        let text = render_projection(std::slice::from_ref(&work), now());
+        assert!(text.contains("close it with"), "{text}");
+    }
+
+    /// A transition restamps the clock, a write persists it, and a record that predates the
+    /// field falls back to `created_at` — older, so it errs toward the boundary rather than
+    /// hiding behind it.
+    #[tokio::test]
+    async fn a_transition_restamps_the_clock_and_an_old_record_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = task("Ship Google login", TaskStatus::Doing);
+        task.status_since = Some(now() - Duration::days(4));
+        assert!(task.past_idle_boundary(now()));
+
+        task.set_status(TaskStatus::Done, now());
+        assert_eq!(task.status_since, Some(now()), "the clock moves with the status");
+        write_task(dir.path(), &task).await.unwrap();
+        let got = read_task(dir.path(), "ship-google-login").await.unwrap().unwrap();
+        assert_eq!(got.status_since, Some(now()));
+
+        facets::update_facet(
+            dir.path(),
+            DIMENSION,
+            "older-than-the-field",
+            "---\nstatus: doing\ntitle: \"Older than the field\"\n\
+             created_at: \"2026-07-01T09:00:00Z\"\n---\n",
+        )
+        .await
+        .unwrap();
+        let legacy = read_task(dir.path(), "older-than-the-field").await.unwrap().unwrap();
+        assert_eq!(legacy.status_since, Some(at(1, 9)));
+        assert!(legacy.past_idle_boundary(now()), "it is caught, not exempted");
+    }
+
+    /// The projection prints [`PROJECTED_TASKS`] lines, and the failure being fixed is a
+    /// task that stops being read. So a line needing a decision has to be one of the twelve,
+    /// however long the list gets.
+    #[test]
+    fn work_past_the_boundary_cannot_fall_off_the_projection() {
+        let mut tasks: Vec<Task> = (0..PROJECTED_TASKS + 8)
+            .map(|i| task(&format!("routine {i:02}"), TaskStatus::Doing))
+            .collect();
+        let mut stuck = task("zzz last alphabetically", TaskStatus::Doing);
+        stuck.status_since = Some(now() - Duration::days(4));
+        tasks.push(stuck);
+
+        let text = render_projection(&tasks, now());
+        let first = text.lines().find(|line| line.starts_with("- [")).unwrap();
+        assert!(first.contains("zzz last alphabetically"), "{text}");
+        assert!(first.contains("close it with"), "{text}");
+    }
+
+    /// The two shapes plain work carries by mistake, and the reason the rule asks for a way
+    /// back rather than for any liveness field at all. A delivery that set itself an
+    /// acceptance test, and one whose `owner:` holds a note — read either as a duty and a
+    /// finished piece of work becomes something with no ending, exempt from the boundary
+    /// that would have caught it.
+    #[test]
+    fn an_acceptance_test_is_not_machinery_and_neither_is_an_owner_note() {
+        let acceptance = Liveness {
+            verify: Some("the two OAuth routes exist and key on Google's `sub`".into()),
+            owner: Some("cognition shipped it; person-blocked on his own retry".into()),
+            ..Liveness::default()
+        };
+        assert_eq!(
+            coerce_duty(TaskStatus::Doing, &acceptance),
+            TaskStatus::Doing,
+            "the google-login record: shipped work, not a watch"
+        );
+
+        for way_back in [
+            Liveness { restart: Some("launchctl kickstart the label".into()), ..Liveness::default() },
+            Liveness { start_key: Some("feishu-it-group-watcher".into()), ..Liveness::default() },
+        ] {
+            assert_eq!(coerce_duty(TaskStatus::Doing, &way_back), TaskStatus::Serving);
         }
     }
 

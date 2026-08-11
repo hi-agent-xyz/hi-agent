@@ -371,7 +371,8 @@ mod tests {
             dir.path(),
             tasks::DIMENSION,
             "watch-the-ops-group",
-            "---\nstatus: doing\ntitle: \"Watch the ops group\"\nverify: \"a row landed today\"\n---\n",
+            "---\nstatus: doing\ntitle: \"Watch the ops group\"\nverify: \"a row landed today\"\n\
+             restart: \"launchctl kickstart the label\"\n---\n",
         )
         .await
         .unwrap();
