@@ -82,7 +82,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   CHANNELS     in: text · audio · vision · file(by ref)
                out: say · show · act
   ─────────────────────────────────────────────────────────────────────────────
-  CORE         wire · channel mux · presence ·
+  CORE         wire · channel mux · transcript ·
   (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
   AGENTS       the voice:  Reaction ⟷ Deliberation
@@ -116,7 +116,7 @@ Each is a statement we can test, and each has a real failure behind it.
    silently broken promise. The general form — what earns a place in any window at all — is
    the [projection test](data.md#what-earns-a-place).
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
-   through Reaction, and an empty room holds the turn rather than dropping it.
+   through Reaction, which decides whether it is worth saying and says it as a message.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
    glancing up — the pulse, the reflection backoff, Cognition's glance-up. Scheduling
    past that is the agent's to arrange with the shell it already has; see
@@ -138,7 +138,7 @@ Each is a statement we can test, and each has a real failure behind it.
 |---|---|
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
 | [`core.md`](core.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
-| [`text-appearance.md`](text-appearance.md) | the breaking current-state contract for shared text, interruption, and reconnects |
+| [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |

@@ -81,16 +81,14 @@ pub struct ToolSink {
     pub(super) mouth: Option<Mouth>,
 }
 
-/// The outbound half: the sequencer to emit onto, plus the presence read
-/// that decides what an emission can actually reach.
+/// The outbound half: the sequencer to emit onto.
 ///
-/// Presence lives here rather than being looked up at the call site because the two
-/// are the same fact — a mouth *is* the channels — and because the answer is
-/// needed at the instant of emission, not at the instant the sink was built.
+/// It used to carry a presence read as well, so `say` could answer where the words
+/// landed. That answer is gone with the gate — a message is appended to the
+/// conversation and keeps, so there is only one fate for an accepted utterance.
 #[derive(Clone)]
 pub(super) struct Mouth {
     pub(super) beats: mpsc::Sender<Beat>,
-    pub(super) presence: crate::body::presence::Presence,
     /// How many utterances this mouth has accepted, ever. Only ever incremented.
     ///
     /// The turn loop reads it either side of a generation to answer one question the
@@ -101,8 +99,8 @@ pub(super) struct Mouth {
     /// race over whose flag it was.
     pub(super) said: Arc<AtomicU64>,
     /// When the voice next owes them a word. Written here, at the instant it makes the
-    /// promise, for the same reason the presence read is taken here: the promise is a
-    /// property of *this utterance*, and a turn can outlive the window that started it.
+    /// promise: it is a property of *this utterance*, and a turn can outlive the
+    /// window that started it.
     pub(super) next_word: NextWord,
 }
 
@@ -224,24 +222,22 @@ impl ToolOwner {
 
 /// What became of an utterance — the answer `say` hands back to Reaction.
 ///
-/// The accepted cases are not degrees of success; they are different fates, and
-/// only one of them is lossy. Text is retained and delivered to every reader
-/// that opens later, so words keep. **Voice does not**: a TTS span synthesized with
-/// no speaker attached is spent, and the person never learns it happened — the
-/// failure `docs/arch/core.md#presence` exists to prevent. `TooLong` is rejected
-/// before it reaches any output channel.
+/// **Two cases, and only one of them is about the room's contents: neither.** This
+/// used to distinguish *voiced* / *on screen only* / *waiting for them to come back*,
+/// so Reaction could read the answer and go quiet on an empty room. That whole axis
+/// is gone: an accepted message is appended to the conversation, where it keeps and
+/// is read whenever they look. Whether a speaker happened to be attached decides
+/// only whether frames were synthesized, which is the host's business and not a
+/// thing to reason about.
+///
+/// What remains is the one fact the caller can act on, because only the caller can
+/// fix it: the message was too long to be a message.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Spoken {
-    /// The call was rejected because it exceeded the loose per-call limit.
+    /// Rejected: longer than a message. Nothing was sent.
     TooLong,
-    /// Heard aloud and on screen: a speaker is attached.
-    Voiced,
-    /// On screen only — no speaker, so nothing was synthesized. Not a failure: the
-    /// words landed in the channel they're actually on.
-    TextOnly,
-    /// Nothing is attached at all. The words are buffered and will land whenever
-    /// they next open a window; no voice was spent on the empty room.
-    Held,
+    /// Appended to the conversation.
+    Sent,
 }
 
 impl Spoken {
@@ -249,15 +245,10 @@ impl Spoken {
     /// because it is read by a model deciding what to do next — not a status code.
     pub fn ack(self) -> &'static str {
         match self {
-            Spoken::TooLong => "too_long — split this into shorter say calls",
-            Spoken::Voiced => "said aloud, and on their screen",
-            Spoken::TextOnly => {
-                "on their screen — not said aloud, because no speaker is attached right now"
+            Spoken::TooLong => {
+                "too long for one message — send it as a few shorter say calls instead"
             }
-            Spoken::Held => {
-                "nobody is connected — nothing was said aloud, and the words are waiting for \
-                 them and will show the moment they open a window"
-            }
+            Spoken::Sent => "sent",
         }
     }
 }
@@ -324,10 +315,6 @@ impl ToolSink {
     /// Speak `text` (the `say` tool): queue it onto the output sequencer,
     /// which paces it to TTS. Acks immediately — never waits on synthesis.
     ///
-    /// The returned [`Spoken`] is read against presence *here*, at emission, rather
-    /// than left to the turn's rendered snapshot: a turn can outlive the window that
-    /// started it, and the whole point of speech being a call is that the answer is
-    /// true at the moment it is given.
     ///
     /// `back_in` is the size the voice just put on a silence — "give me ten minutes" →
     /// `10m`. It arms [`NextWord`], and that is the whole of the timing the host owns:
@@ -346,15 +333,13 @@ impl ToolSink {
                 unreadable_back_in: false,
             });
         }
-        let reach = mouth.presence.reachable();
         mouth
             .beats
             .send(Beat::Say(text))
             .await
             .map_err(|_| anyhow::anyhow!("sequencer gone; say dropped"))?;
         // Counted where the utterance is accepted, so `TooLong` (rejected above, never
-        // sent) does not read as speech. Every fate below — voiced, screen-only, held —
-        // is an utterance that left the mind; where it landed is presence's business.
+        // sent) does not read as speech.
         mouth.said.fetch_add(1, Ordering::Relaxed);
         let asked = back_in.map(str::trim).filter(|s| !s.is_empty());
         let armed = asked.and_then(super::parse_delay).filter(|d| !d.is_zero());
@@ -362,11 +347,7 @@ impl ToolSink {
             mouth.next_word.promise(after);
         }
         Ok(Said {
-            spoken: match (reach.speaker, reach.window) {
-                (true, _) => Spoken::Voiced,
-                (false, true) => Spoken::TextOnly,
-                (false, false) => Spoken::Held,
-            },
+            spoken: Spoken::Sent,
             armed,
             unreadable_back_in: asked.is_some() && armed.is_none(),
         })
@@ -448,18 +429,15 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body::presence::{OutChannel, Presence};
-
-    /// A mouth wired to a live receiver, so `send` succeeds and the outcome
-    /// under test is the presence read rather than a closed channel.
-    fn mouth(presence: &Presence) -> (ToolSink, mpsc::Receiver<Beat>) {
+    /// A mouth wired to a live receiver, so `send` succeeds and a failure under
+    /// test is never just a closed channel.
+    fn mouth() -> (ToolSink, mpsc::Receiver<Beat>) {
         let (beats, rx) = mpsc::channel(8);
         let (control, _ctl) = mpsc::channel(8);
         let sink = ToolSink {
             control,
             mouth: Some(Mouth {
                 beats,
-                presence: presence.clone(),
                 said: Arc::new(AtomicU64::new(0)),
                 next_word: NextWord::default(),
             }),
@@ -471,8 +449,7 @@ mod tests {
     /// utterance moves it, a rejected one does not.
     #[tokio::test]
     async fn only_an_accepted_utterance_counts_as_speech() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
+        let (sink, _rx) = mouth();
         let said = sink.mouth.as_ref().unwrap().said.clone();
 
         assert_eq!(
@@ -485,12 +462,13 @@ mod tests {
         assert_eq!(said.load(Ordering::Relaxed), 1);
     }
 
+    /// An accepted message has one fate, and it does not depend on who is
+    /// connected. This is the assertion that keeps the gate from growing back.
     #[tokio::test]
-    async fn a_speaker_makes_it_voiced() {
-        let p = Presence::new();
-        let _audio = p.connect(OutChannel::Audio);
-        let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Voiced);
+    async fn an_accepted_message_is_simply_sent() {
+        let (sink, _rx) = mouth();
+        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Sent);
+        assert_eq!(Spoken::Sent.ack(), "sent");
     }
 
     #[tokio::test]
@@ -549,24 +527,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_window_without_a_speaker_is_text_only() {
-        let p = Presence::new();
-        let _view = p.connect(OutChannel::View);
-        let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::TextOnly);
-    }
-
-    #[tokio::test]
-    async fn an_empty_room_holds_it() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
-        assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Held);
-    }
-
-    #[tokio::test]
     async fn an_overlong_say_is_rejected_without_emission() {
-        let p = Presence::new();
-        let (sink, mut rx) = mouth(&p);
+        let (sink, mut rx) = mouth();
         let text = "x".repeat(SAY_MAX_CHARS + 1);
 
         assert_eq!(sink.say(text, None).await.unwrap().spoken, Spoken::TooLong);
@@ -577,8 +539,7 @@ mod tests {
     async fn the_words_are_emitted_whatever_the_room() {
         // The gate is about voice, never about dropping the utterance: text is
         // retained and keeps, so the beat goes out even to nobody.
-        let p = Presence::new();
-        let (sink, mut rx) = mouth(&p);
+        let (sink, mut rx) = mouth();
         sink.say("hi".into(), None).await.unwrap();
         assert!(matches!(rx.try_recv(), Ok(Beat::Say(t)) if t == "hi"));
     }
@@ -595,8 +556,7 @@ mod tests {
     /// ("you have no timer"), and the reason a person ends up asking "progress?".
     #[tokio::test]
     async fn a_named_size_arms_the_check_in() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
+        let (sink, _rx) = mouth();
         let said = sink.say("give me ten minutes".into(), Some("10m")).await.unwrap();
 
         assert_eq!(said.armed, Some(Duration::from_secs(600)));
@@ -610,8 +570,7 @@ mod tests {
     /// arming a wake for it would put the host on the hook for words they never heard.
     #[tokio::test]
     async fn a_rejected_utterance_promises_nothing() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
+        let (sink, _rx) = mouth();
         let said = sink.say("x".repeat(SAY_MAX_CHARS + 1), Some("10m")).await.unwrap();
 
         assert_eq!(said.spoken, Spoken::TooLong);
@@ -623,8 +582,7 @@ mod tests {
     /// voice believing it is covered, which is the one state worse than no timer.
     #[tokio::test]
     async fn an_unreadable_size_is_reported_back() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
+        let (sink, _rx) = mouth();
         let said = sink.say("a moment".into(), Some("soonish")).await.unwrap();
 
         assert_eq!(said.armed, None);
@@ -637,8 +595,7 @@ mod tests {
     /// rather than queueing behind it.
     #[tokio::test]
     async fn a_new_number_replaces_the_old_one() {
-        let p = Presence::new();
-        let (sink, _rx) = mouth(&p);
+        let (sink, _rx) = mouth();
         sink.say("ten minutes".into(), Some("10m")).await.unwrap();
         sink.say("make that two".into(), Some("2m")).await.unwrap();
 
@@ -676,15 +633,17 @@ mod tests {
     fn every_outcome_says_what_happened() {
         // The ack is read by a model, so it must be a sentence about the world —
         // and the outcomes must not read alike, or the answer carries no information.
-        let acks = [
-            Spoken::TooLong.ack(),
-            Spoken::Voiced.ack(),
-            Spoken::TextOnly.ack(),
-            Spoken::Held.ack(),
-        ];
+        let acks = [Spoken::TooLong.ack(), Spoken::Sent.ack()];
         for a in acks {
-            assert!(a.len() > 10, "an ack must state what happened: {a:?}");
+            assert!(!a.is_empty(), "an ack must state what happened: {a:?}");
         }
-        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 4);
+        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 2);
+    }
+
+    /// The rejection has to tell the caller what to do, because the caller is the
+    /// only one who can: a message that is too long is split, not truncated.
+    #[test]
+    fn the_rejection_asks_for_shorter_messages() {
+        assert!(Spoken::TooLong.ack().contains("shorter"));
     }
 }

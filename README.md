@@ -101,24 +101,25 @@ curl -X POST
   http://127.0.0.1:12358/approval
 ```
 
-### Text appearance contract
+### Text transcript contract
 
-`GET /api/out/text` is one long-lived NDJSON state stream, not a reply queue. Its first
-line is the complete text appearance now; later lines replace it:
+The conversation is an append-only message list. `GET /api/out/text` is one long-lived
+NDJSON stream: the first line is the current window whole, and later lines append to it.
 
 ```json
-{"user":"What day is it?","agent":{"text":"Sunday.","final":true}}
+{"reset":{"messages":[{"id":"0199…","ts":"2026-08-11T09:31:04Z","role":"user","text":"What day is it?"}],"interim":null}}
+{"append":{"id":"0199…","ts":"2026-08-11T09:31:06Z","role":"agent","text":"Sunday."}}
 ```
 
-The backend owns this state. Every window receives the same latest settled human line,
-live recognition interim, and accumulating agent reply. There are no message IDs, client
-IDs, cursors, acknowledgements, or historical catch-up. Opening a window synchronizes
-the present; it does not replay exchanges that have already been replaced. The text
-appearance starts empty after a process restart. Durable history lives in the journal.
-This is intentionally breaking: the old plain-text long poll, cursor query, response
-headers, browser cursor, and previous appearance data have no migration or compatibility
-path. The complete decision is in
-[`docs/arch/text-appearance.md`](docs/arch/text-appearance.md).
+Three things become messages and nothing else does: what the person typed or said, a
+file they handed over, and one `say` call — whole, never streamed in as it is generated.
+Views, worker reports, pulses and tool calls are not conversation and stay out.
+
+The backend owns the list. There are no client IDs, cursors, acknowledgements or read
+receipts, and no window ever tells the backend what it has seen. The list is seeded from
+the journal at boot, so a restart shows the conversation that was already happening;
+`GET /api/messages?before=<id>` reads further back. The complete decision is in
+[`docs/arch/text-transcript.md`](docs/arch/text-transcript.md).
 
 ## Architecture
 

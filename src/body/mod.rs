@@ -9,7 +9,7 @@
 //!   the loader/assembler, the output sequencer, and delegated workers.
 //! - `reflex` — taught teach-and-fire quick actions that run with no model in the
 //!   loop (the cerebellum fast-path).
-//! - `presence` — who/what is attached to a conversation right now.
+//! - `attachments` — which out-channels have a live subscriber right now.
 //! - `gesture` — the desktop attention gestures (come-and-see, press-and-hold-⌘).
 //!
 //! Whether a piece runs continuously (a sense, a clock) or is invoked on demand
@@ -17,6 +17,6 @@
 
 pub mod capabilities;
 pub mod gesture;
-pub mod presence;
+pub mod attachments;
 pub mod reaction;
 pub mod reflex;

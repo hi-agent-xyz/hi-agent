@@ -85,109 +85,85 @@ it.
   one turn at a time.
 - **Turn-taking** — the quiet-settle commit that decides a turn is over. Still host-side:
   it is [batching](surfaces.md#batching), and it happens before Reaction is woken.
-- **Presence gate** — Reaction reads [presence](#presence) and decides whether to speak into
-  a room that may be empty.
 - **Social timing** — when to voice a worker's answer, when to let it wait.
 
+*The fourth duty, a **presence gate**, has been retired outright rather than moved — see
+[Attachment](#attachment).*
+
 What the host keeps is what has no model in it: the queue behind `say`; the fact that
-`say` **returns**, so a held or failed utterance is answerable; and the one call that is
-not a judgment at all — **not synthesizing speech for a speaker that isn't attached**,
+`say` **returns**, so an over-long utterance is answerable; and the one call that is not
+a judgment at all — **not synthesizing speech for a speaker that isn't attached**,
 because that is a fact about the wire, not a read of the room.
 
-### Presence
+### Attachment
 
-Whether anyone is actually there. **Nobody sends it — it is derived**, and derived
-*only from what the app observes about its own surface and its own conversation*: which
-of its channels are open, and how recently the person engaged with it. Deliberately not
-from the system — no idle timer, no screen lock, no other-app probing. Those measure
-"away from the keyboard" when the question is "away from **hi-agent**", and someone
-heads-down in another app for an hour is, to us, away. A face on camera and a voice in
-the room are observed elsewhere and reach the agent as **journaled signals it weighs**,
-not as inputs to this model: a face is sometimes a photo, and evidence that soft belongs
-in judgment rather than in a gate.
+*This section was once called **Presence**, and it derived — from open channels, window
+activations, and a decaying belief — whether the person was actually there. It has been
+removed. What is left is one fact with one consumer.*
 
-It is not one number and not a mode ladder, but three orthogonal axes that combine
-freely — **reach** (which of window, speaker and mic a message can land on right now),
-**expectation** (a decaying belief about how much output they're awaiting: eager,
-around, away), and **posture** (whether a voice exchange is live).
+**Whether a speaker is attached.** Counted from live out-channel subscriptions, read at
+the instant a turn opens its TTS span, and used for exactly one thing: not synthesizing
+speech nobody can hear. That is a fact about the wire — the frames go out as they are
+made and a span with no listener is spent — and it is the only thing in this host that
+has ever needed to know who is connected.
 
-**An open channel is a claim that someone is reading it, and the client owes us the
-truth of that claim.** Reach is derived from which out-channels are subscribed, so a
-subscription held behind another window is not a stale reading — it is a false one, and
-everything downstream reasons correctly from it to the wrong answer. The face therefore
-drops its out-channels the moment nobody is looking: hidden, miniaturized, closed, or
-**fully occluded by another window** — the last of which no web API reports, so it
-arrives from the shell (`windowDidChangeOcclusionState:`). A state subscription that
-stays up or reconnects on its own is exactly the hazard this axis has to exclude.
+**Why the rest went.** An open channel answers *is a window subscribed*, which was never
+the same question as *are you reading*. The gap is not a tuning problem: a window behind
+an editor, a tab left open on another desk, and a person leaning in are the same
+subscription, and no amount of decay separates them. Everything derived from that
+reading inherited the error — the agent went quiet on someone sitting right there, and
+spoke to an empty desk, from the same signal. It was checked against the one ground
+truth available, which was the person saying it was wrong.
 
-**The window has three states, and they are the one presence fact the client reports
-rather than the host deriving.** Active, background, closed. Dropping the channels makes
-the last two identical on the wire — which is correct for reach, since nothing lands
-either way — but they are not the same situation, and nothing except the client can tell
-them apart. **Background is ambient; closed is an act.** A window behind an editor may be
-glanced at in seconds; a window the person shut is one they decided they were done with.
+**What replaced it is not a better estimate — it is not needing one.** The gate existed
+because words did not keep: text was current state, so speaking into an empty room threw
+the words away, and withholding them was the lesser loss. Messages keep. A message said
+to nobody is a message waiting in the conversation, exactly like a message sent to a
+phone that is face-down. There is nothing left to protect, so there is nothing left to
+detect.
 
-So the three feed **expectation**, not a fourth axis: closed reads away at once, because
-the decay exists to *infer* absence from silence and closing states it outright, while
-background gets no shortcut — someone reading in the window in front of ours has not
-left, and treating "not looking right now" as "gone" would make the agent go quiet on a
-person sitting right there. Neither is projected and neither appears in `say`'s answer:
-nothing above the host learns a new vocabulary, the states just move the expectation the
-mind already reads.
+Removed with it: the eager/around/away expectation and its projection into every turn's
+prompt; the three window states and the first-party attention lane that reported them;
+the return edge that woke Reaction when someone came back, and the held telling it
+existed to deliver; and `say`'s answer about where the words landed. A due check-in now
+fires into an empty room like any other message, because that is what a message is for.
 
-**Reach is answered, not projected. Expectation is projected.** Only one of the two can
-be learned by trying, and it should be: the host tells `say` where the words landed, read
-at the instant of emission, so nothing above the host has to ask whether it can be heard
-before speaking. A projected copy of the same fact is the staler of the two, and they
-disagree precisely when it matters, because a turn can outlive the window that started
-it. Expectation cannot be learned this way — it is graded rather than binary and true
-even when every channel is open, since it shapes *how much* to say rather than *whether*
-— so it, alone, is rendered into the window. One reader either way: Reaction.
+**A face on camera and a voice in the room are still observed**, and they still reach the
+agent as journaled signals it weighs. They were never inputs to this model, and that
+distinction survives it: a face is sometimes a photo, and soft evidence belongs in
+judgment rather than in a gate.
 
-**What the gate protects is narrower than it first looks, and that is the point.**
-Text and views are appearance state, not deliveries. The host owns what is on the face
-now; attaching a surface gives it that present state and then replacements. **Voice is
-the exception** — it exists only in the moment it is heard, so a spoken line synthesized
-with no speaker attached is gone. The host therefore withholds exactly one thing, speech
-synthesis, and reports what it did: `say` answers with where the words actually landed —
-aloud, on screen only, or waiting for them. Everything above that is Reaction's judgment,
-not a rail.
+### The conversation is a message list
 
-**There is one text appearance, however many windows render it.** Its authoritative state
-is the latest settled human line, any live recognition interim, and the agent's current
-reply as it grows. A surface receives the whole state when it connects and every later
-whole-state replacement. It never consumes text and never tells the host what it has
-read. There are no message ids, client ids, cursors, acknowledgements or per-window
-bookmarks.
+**There is one conversation, however many windows render it.** It is an ordered,
+append-only list of whole messages, owned by the host, seeded from the journal at boot.
+A window receives the current window of it on connect and every later message as it is
+appended. It never consumes a message, never tells the host what it has read, and holds
+no queue, cursor or bookmark of its own.
 
-This is current-state synchronization, **not catch-up**. A slow surface may skip
-intermediate typing states and still converge on the latest one. A surface attaching
-after an exchange was replaced does not receive that older exchange. A process restart
-starts the text appearance empty. The journal is the historical conversation; the
-appearance is only the present. `/out/view` follows the same whole-state principle, with
-the separate decision that views persist across restart.
+Three things are messages: what the person typed or said, a file they handed over, and
+one `say` call. **One `say` is one message, whole** — the call already carries its
+complete text, so nothing is assembled from streamed chunks. Sentence splitting still
+happens, but only to pace TTS, and it never reaches the list. Views, worker reports,
+pulses, recognition signals and tool calls are not conversation and are not in it; they
+have the view slot, the journal and the inspector.
 
-This ownership rule is what makes multiple windows one appearance instead of several
-readers of one mouth. It also removes the interrupted-delivery problem: after a transport
-break the surface receives the current whole text again, replacing its local rendering
-rather than resuming, appending or acknowledging fragments.
+**Nothing is ever rewritten or cleared**, which is what makes the ownership rule simple
+enough to keep. The previous contract had to decide what happened when a human line
+landed mid-turn, because both wanted the same slot; a list has no slot to contest, so
+the reply appends after the line it crossed with, carrying the timestamp that says so.
+`/out/view` keeps its own whole-state principle and its persistence across restart.
 
-A settled human line also wins the present immediately. If it lands after a reaction turn
-started, later text from that older turn is excluded from the appearance; the reaction and
-journal still finish, and the next turn may answer the new line. The full state machine,
-breaking boundary, and accepted consequences are fixed in
-[`text-appearance.md`](text-appearance.md).
+**There are no read receipts and there will not be.** That is the same underivable fact
+the presence gate was built on, and putting it back on the wire in a lighter costume
+would rebuild the same error. A window's unread marker is a scroll position in one
+browser and stays there.
 
-**Coming back is an event, and the only one here.** Every other presence change is read
-off the axes during a turn that was already happening. A return is not: it happens
-precisely when nothing is happening, so without an edge nothing would observe it, and
-"hold it for their return" would mean "hold it until they type" — or until the pulse
-comes round, which is half an hour. So Reaction is woken when the person brings a window
-forward after an absence. **Only a first-party activation counts**: an out-channel
-reconnecting proves a browser exists, never that someone is in front of it, and a
-state subscription reconnects on its own while a tab sits forgotten in the background. The wake
-carries a fact and no instruction, and it is dropped rather than queued if it fires
-mid-turn — a turn in progress is already talking to them.
+The message ids are the journal's, which is what lets scrollback and the live window
+share identifiers without a merge. An id on a message is not a delivery cursor: nothing
+sends one back to claim progress. The full contract — what is a message, the frames,
+durability, accepted consequences — is fixed in
+[`text-transcript.md`](text-transcript.md).
 
 ### Reflex
 
@@ -314,9 +290,11 @@ too; a floor is only the agent's own rule about not going dark, and a voice told
 speak, never an instruction to**: what is worth saying is read off `## Still looking
 into` and the projected ledger, and staying quiet is a legitimate answer.
 
-A check-in that comes due into an **empty room is dropped**, not held: the words would
-be held anyway, and [presence](#presence) already wakes the voice on their return —
-with the same work in front of it and a fresher read of where it stands.
+A check-in **fires whether or not anyone is looking**. It used to be dropped into an
+empty room, on the reasoning that the words would be withheld anyway and a return would
+wake the voice with a fresher read. Both halves of that went with the
+[gate](#attachment): a check-in produces a message, a message waits in the conversation,
+and there is no return edge left to defer it to.
 
 Everything else an agent needs from time, **the agent arranges itself.** It has a
 shell, so it installs a cron entry, a `launchd` job, a systemd timer, or parks a
@@ -356,11 +334,10 @@ field code reads, for exactly this reason.
 #### `/api/in/text` is not a wake channel
 
 If an agent-installed timer ever needs to poke a running instance over HTTP, note
-that the inbound text route journals `Origin::Human` and calls
-`presence.note_activity()`. A timer firing into it would tell the agent **a person
-just spoke** — resetting the away timer, starting the owed-reply clock, and
-defeating the presence gate. Both shapes above avoid it by not needing a door at
-all. If a genuine need appears, the answer is a channel that says what it is
+that the inbound text route journals `Origin::Human` and appends a message to the
+conversation. A timer firing into it would put **a line the person never wrote** in
+their chat, above the agent's reply to it. Both shapes above avoid it by not needing a
+door at all. If a genuine need appears, the answer is a channel that says what it is
 (`Channel::Clock`, already in `NON_ACTIVITY_CHANNELS`), never this one.
 
 #### What this costs, stated plainly

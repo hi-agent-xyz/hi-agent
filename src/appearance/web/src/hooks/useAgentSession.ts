@@ -1,62 +1,38 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  fetchOlderMessages,
   subscribeOutText,
-  type TextAppearanceState,
+  type Conversation,
+  type Message,
 } from "../channels/out/text";
 import { subscribeAudioTurns } from "../channels/out/audio";
 import { subscribeActivity, type AgentActivity } from "../channels/out/activity";
 import { postInText } from "../channels/in/text";
-import { reportAttention, type WindowState } from "../channels/in/attention";
 import { AudioBus } from "../lib/audioBus";
 import { ActivityMeter } from "../lib/activityMeter";
 import { AudioStreamer } from "../lib/audioStreamer";
 import { VideoStreamer } from "../lib/videoStreamer";
 import { PresenceStiller } from "../lib/presenceStiller";
 import { VoicePlayer } from "../lib/voicePlayer";
-import { SentenceBuffer, breakLongSentence } from "../lib/sentences";
 import { onNativeLifecycle } from "../lib/nativeBridge";
 import {
   projectActivityState,
   type PresenceState,
 } from "../ui/Presence";
-import type { SpeechItem } from "../ui/SpeechText";
 
-// How many of the agent's reply lines stay on screen at once. The reply rolls
-// as a calm caption (newest last), but it's windowed *on top of* the pinned
-// user line, so an answer of any length can't scroll the prompt that prompted
-// it off-screen. Three lines (not two) give a viewer time to read each line
-// before it rolls out of view.
-const AGENT_REPLY_WINDOW = 3;
+// How many older messages one scrollback request asks for. A page of chat, not a
+// page of log: the next request starts from whatever came back.
+const SCROLLBACK_PAGE = 50;
 
-// Stable id for the single rolling-interim line. The backend owns its text and
-// expiry; every window renders the same slot.
-const INTERIM_ID = -1;
-
-// Derive the caption band from the authoritative whole state. Incomplete
-// trailing prose stays hidden until it reaches a sentence boundary, matching
-// the previous calm whole-sentence reveal without keeping a per-window queue.
-function visibleTextAppearance(state: TextAppearanceState): SpeechItem[] {
-  const items: SpeechItem[] = [];
-  if (state.user) {
-    items.push({ id: 0, text: state.user, speaker: "user" });
-  }
-
-  if (state.agent) {
-    const buffer = new SentenceBuffer();
-    const settled = buffer.push(state.agent.text);
-    if (state.agent.final) settled.push(...buffer.flush());
-    const lines = settled.flatMap((sentence) => breakLongSentence(sentence));
-    const firstVisible = Math.max(0, lines.length - AGENT_REPLY_WINDOW);
-    for (let i = firstVisible; i < lines.length; i += 1) {
-      items.push({ id: i + 1, text: lines[i]!, speaker: "agent" });
-    }
-  }
-
-  if (state.interim) {
-    items.push({ id: INTERIM_ID, text: state.interim, speaker: "user", pending: true });
-  }
-  return items;
-}
+/**
+ * What our own window is doing. Local to this page now — it used to be reported
+ * to the backend, which derived a belief about the person from it.
+ *
+ * `closed` survives the removal because the native shell still reports it through
+ * the lifecycle bridge, and it means something here: shut is the one state where
+ * we should not hold channels open at all.
+ */
+export type WindowState = "active" | "background" | "closed";
 
 // ---- Channel preferences (persisted client-side) -------------------------
 // The user's chosen on/off state for each channel, remembered across visits in
@@ -116,7 +92,15 @@ export interface AgentSession {
   bus: AudioBus | null;
   /** Live cognition cadence (streamed-chunk pulses) the field reacts to. */
   activity: ActivityMeter;
-  sentences: SpeechItem[];
+  /** The conversation, oldest first. Append-only; nothing here is ever rewritten. */
+  messages: Message[];
+  /** The live recognition partial, shown pending at the tail. Not a message. */
+  interim?: string | undefined;
+  /**
+   * Prepend a page of older messages. Resolves to how many were added, so a
+   * caller can stop asking when it reaches the beginning.
+   */
+  loadOlder: () => Promise<number>;
   /** Whether the session's output graph is up (auto-started on mount). */
   woken: boolean;
   /** Whether the mic (audio input) channel is currently live. */
@@ -173,7 +157,7 @@ export function useAgentSession(): AgentSession {
 
   const [woken, setWoken] = useState(false);
   const [bus, setBus] = useState<AudioBus | null>(null);
-  const [textAppearance, setTextAppearance] = useState<TextAppearanceState>({});
+  const [conversation, setConversation] = useState<Conversation>({ messages: [] });
 
   const [audioInput, setAudioInput] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
@@ -239,7 +223,6 @@ export function useAgentSession(): AgentSession {
   // Last window state pushed to the backend, for burst coalescing, and the setter
   // itself so the native lifecycle handler below can reuse it (it lives in another
   // effect and must not duplicate the reporting rule).
-  const lastReportRef = useRef<{ state: WindowState; at: number } | null>(null);
   const enterWindowRef = useRef<((next: WindowState) => void) | null>(null);
 
   // Backend activity is the authoritative source for Typing and Working.
@@ -261,30 +244,51 @@ export function useAgentSession(): AgentSession {
     if (!woken || !attended) return;
     const ctrl = new AbortController();
     let cancelled = false;
-    let initialized = false;
-    let previousAgent = "";
     let previousInterim: string | undefined;
 
     void (async () => {
       while (!cancelled) {
         try {
-          for await (const state of subscribeOutText({ signal: ctrl.signal })) {
+          for await (const frame of subscribeOutText({ signal: ctrl.signal })) {
             if (cancelled) break;
-            const agent = state.agent?.text ?? "";
-            if (initialized && agent !== previousAgent) {
-              const added = agent.startsWith(previousAgent)
-                ? agent.length - previousAgent.length
-                : agent.length;
-              if (added > 0) activityRef.current.bump(Math.min(1, added / 40));
+            switch (frame.kind) {
+              // A whole window: the opening frame, or a resync after this
+              // subscriber fell behind. Replace rather than merge — the backend
+              // is the authority on what the conversation is.
+              case "reset":
+                previousInterim = frame.conversation.interim;
+                setConversation(frame.conversation);
+                break;
+              // One message, complete. The agent's own messages pulse the
+              // activity meter; the person's don't, since the field reacts to
+              // the agent thinking, not to typing.
+              case "append": {
+                const { message } = frame;
+                if (message.role === "agent") {
+                  activityRef.current.bump(Math.min(1, message.text.length / 40));
+                }
+                setConversation((prev) => ({
+                  ...prev,
+                  // Guard against a duplicate id: a resync can race an append,
+                  // and a message appearing twice in a chat is very visible.
+                  messages: prev.messages.some((m) => m.id === message.id)
+                    ? prev.messages
+                    : [...prev.messages, message],
+                  interim: undefined,
+                }));
+                break;
+              }
+              // Speech being recognized. A fresh partial is the barge-in trigger:
+              // it stops playback hundreds of ms before the sentence settles.
+              case "interim":
+                if (frame.text && frame.text !== previousInterim) {
+                  const voice = voiceRef.current;
+                  if (voice?.isPlaying()) voice.stop();
+                }
+                previousInterim = frame.text;
+                setConversation((prev) => ({ ...prev, interim: frame.text }));
+                break;
             }
-            if (state.interim && state.interim !== previousInterim) {
-              const voice = voiceRef.current;
-              if (voice?.isPlaying()) voice.stop();
-            }
-            initialized = true;
-            previousAgent = agent;
-            previousInterim = state.interim;
-            setTextAppearance(state);
           }
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
@@ -299,22 +303,18 @@ export function useAgentSession(): AgentSession {
     };
   }, [woken, attended]);
 
-  // ---- Attention reporter (window came forward) --------------------------
-  // Tell the backend what our own window is doing. First-party only: our window,
-  // never anything about other apps.
+  // ---- Window state --------------------------------------------------------
+  // What our own window is doing, kept locally. It used to be *reported* to the
+  // backend as well, on `POST /api/in/attention`, where it fed a belief about how
+  // present the person was. That belief is gone (`docs/arch/core.md#attachment`)
+  // and so is the route.
   //
-  // Repeated `active` is not noise — it is the "they keep checking" edge the eager
-  // read counts, so it is reported again every time rather than deduped away. What
-  // is deduped is the burst: `focus` and `visibilitychange` fire together on one
-  // bring-to-front, and that is one arrival, not two.
+  // What it still does is the part that was always sound: while the window is not
+  // attended we drop the out-channels, which is what keeps "is a speaker attached"
+  // an honest answer rather than a subscription left open behind an editor.
   useEffect(() => {
     const enter = (next: WindowState) => {
       setWindowState(next);
-      const now = Date.now();
-      const prev = lastReportRef.current;
-      if (prev && prev.state === next && now - prev.at < 1000) return;
-      lastReportRef.current = { state: next, at: now };
-      void reportAttention({ state: next });
     };
     enterWindowRef.current = enter;
     // Mount is an arrival: the page being up at all is someone opening it.
@@ -692,16 +692,46 @@ export function useAgentSession(): AgentSession {
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      // The server folds the accepted line into the shared current appearance,
-      // so this window never adds a private optimistic copy.
+      // The server appends the accepted line to the conversation and it arrives
+      // back on the stream, so this window keeps no private optimistic copy.
       void postInText({ body: trimmed }).catch(() => {});
     },
     [],
   );
 
+  // ---- scrollback ----------------------------------------------------------
+  // Ask for the page before the oldest message we hold. In flight at most once:
+  // the scroller can fire this on every scroll event near the top, and two
+  // overlapping requests would prepend the same page twice.
+  const loadingOlderRef = useRef(false);
+  const loadOlder = useCallback(async (): Promise<number> => {
+    if (loadingOlderRef.current) return 0;
+    const oldest = conversation.messages[0];
+    if (!oldest) return 0;
+    loadingOlderRef.current = true;
+    try {
+      const older = await fetchOlderMessages(oldest.id, { limit: SCROLLBACK_PAGE });
+      if (older.length === 0) return 0;
+      setConversation((prev) => {
+        const known = new Set(prev.messages.map((m) => m.id));
+        const fresh = older.filter((m) => !known.has(m.id));
+        if (fresh.length === 0) return prev;
+        return { ...prev, messages: [...fresh, ...prev.messages] };
+      });
+      return older.length;
+    } catch {
+      // Reaching the start of the conversation and failing to reach the server
+      // look the same from here, and neither is worth surfacing: the scroller
+      // simply stops growing, and a later scroll tries again.
+      return 0;
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [conversation.messages]);
+
   const state: PresenceState = projectActivityState({
     ready: woken && backendActivity?.reaction_ready === true,
-    listening: textAppearance.interim !== undefined,
+    listening: conversation.interim !== undefined,
     speaking: ttsPlaying,
     reactionBusy: backendActivity?.reaction_busy === true,
     delegatedBusy: (backendActivity?.delegated_busy_count ?? 0) > 0,
@@ -710,17 +740,14 @@ export function useAgentSession(): AgentSession {
   // Dots track the agent's voice while it plays.
   const reactive = state === "speaking" && ttsPlaying;
 
-  const displaySentences = useMemo<SpeechItem[]>(
-    () => visibleTextAppearance(textAppearance),
-    [textAppearance],
-  );
-
   return {
     state,
     reactive,
     bus,
     activity: activityRef.current,
-    sentences: displaySentences,
+    messages: conversation.messages,
+    interim: conversation.interim,
+    loadOlder,
     woken,
     audioInput,
     audioError,

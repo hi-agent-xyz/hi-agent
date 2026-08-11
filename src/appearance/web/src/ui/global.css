@@ -449,15 +449,24 @@ button {
 }
 
 /* --- Speech (the agent's words) --------------------------------------- */
+/* The lead position. It holds the chat, which is the default face, so unlike the
+   docked pill it fills the room rather than floating a line in the middle of it:
+   full height, scrollable, and it takes pointer events because a conversation you
+   cannot scroll is a screenshot. The atmosphere and the presence field stay
+   visible behind it — the chat's own surfaces are the only opaque things. */
 .hi-stage {
   position: absolute;
-  left: 50%;
-  top: 54%;
-  transform: translate(-50%, -50%);
-  width: min(1100px, 90vw);
+  inset: 0;
+  bottom: calc(var(--hi-safe-bottom) + 64px);
   z-index: 2;
-  pointer-events: none;
-  text-align: center;
+  display: flex;
+  justify-content: center;
+}
+
+.hi-chat {
+  width: min(1100px, 100%);
+  height: 100%;
+  text-align: start;
 }
 
 .hi-speech {
@@ -568,12 +577,16 @@ button {
    pip is the one real conflict: it is 0.75 × its width tall (180-520px wide), so
    it reaches well into the dock's rows and must be stepped past — see below. */
 .hi-stage.hi-stage--captions {
+  inset: auto;
   top: auto;
   bottom: calc(var(--hi-safe-bottom) + 74px);
   left: max(24px, var(--hi-safe-left) + 24px);
   right: max(24px, var(--hi-safe-right) + 24px);
   width: auto;
+  height: auto;
+  display: block;
   transform: none;
+  pointer-events: none;
   text-align: center;
   z-index: 60;
 }

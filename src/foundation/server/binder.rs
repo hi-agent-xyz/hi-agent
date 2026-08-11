@@ -4,7 +4,7 @@
 //! The reaction is the mind; it emits [`OutboundSignal`]s in human-channel terms
 //! ("said this text", "this span of speech", "show this view") and knows
 //! nothing about HTTP. Everything HTTP-shaped lives on this side of the seam:
-//! the current-state projection of /out/text, the `Content-Type` and turn binding
+//! the append onto /out/text, the `Content-Type` and turn binding
 //! of /out/audio, the broadcast of /out/view. This binder is the one place
 //! that translates between the two, so swapping HTTP for another wire touches
 //! only this file — the reaction and its vocabulary are untouched.
@@ -16,7 +16,9 @@ use chrono::Utc;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::body::reaction::OutboundSignal;
-use crate::foundation::server::{AudioEvent, OutputEcho, TextAppearance, ViewBus, ViewEvent};
+use crate::foundation::server::{
+    AudioEvent, Message, OutputEcho, Role, Transcript, ViewBus, ViewEvent,
+};
 use crate::types::Channel;
 
 /// Drain the reaction's outbound seam and bind each signal to its HTTP carrier.
@@ -24,7 +26,7 @@ use crate::types::Channel;
 /// drops `out_tx` (process teardown).
 pub(crate) async fn bind_outbound(
     mut rx: mpsc::Receiver<OutboundSignal>,
-    text: TextAppearance,
+    transcript: Transcript,
     audio_out: broadcast::Sender<AudioEvent>,
     views: ViewBus,
     view_out: broadcast::Sender<ViewEvent>,
@@ -32,23 +34,26 @@ pub(crate) async fn bind_outbound(
 ) {
     while let Some(signal) = rx.recv().await {
         match signal {
-            // /out/text is one backend-owned current state. A settled human line
-            // supersedes any reaction turn that started before it, so trailing
-            // output from that turn cannot reclaim the current appearance.
-            OutboundSignal::TextTurnStart { turn } => {
-                text.begin_reaction_turn(turn);
-            }
-            OutboundSignal::Text { chunk } => {
-                // Echo a live copy for the inspector alongside the authoritative
-                // current-state update.
+            // /out/text is the conversation: one whole message, appended. There is
+            // no turn boundary to respect and no earlier state to supersede, so a
+            // reply that crossed with a new human line simply lands after it.
+            OutboundSignal::Text { id, ts, text: said } => {
+                // Echo a live copy for the inspector alongside the append.
                 let _ = output_echo.send(OutputEcho {
                     channel: Channel::Text,
-                    text: chunk.clone(),
-                    is_final: false,
-                    ts: Utc::now(),
+                    text: said.clone(),
+                    is_final: true,
+                    ts,
                 });
-                text.push_agent_chunk(chunk);
+                transcript.append(Message {
+                    id,
+                    ts,
+                    role: Role::Agent,
+                    text: said,
+                    attachment: None,
+                });
             }
+            // Observability only — the conversation has no use for it.
             OutboundSignal::TextEnd => {
                 let _ = output_echo.send(OutputEcho {
                     channel: Channel::Text,
@@ -56,7 +61,6 @@ pub(crate) async fn bind_outbound(
                     is_final: true,
                     ts: Utc::now(),
                 });
-                text.end_agent_utterance();
             }
             // /audio: one utterance's span is one chunked response. The codec
             // becomes the response's Content-Type, set before the first byte;

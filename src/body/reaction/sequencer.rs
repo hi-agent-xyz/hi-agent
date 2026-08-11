@@ -102,11 +102,6 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 synth_handle = None;
                 full_reply.clear();
                 quiet_deadline = None;
-                let _ = reaction
-                    .inner
-                    .out
-                    .send(OutboundSignal::TextTurnStart { turn })
-                    .await;
             }
             Beat::Say(text) => {
                 if !armed || text.is_empty() {
@@ -134,8 +129,8 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 for emit in interleave::speak_emits(&text, &mut splitter, Instant::now()) {
                     super::perform(emit, &synth_tx, &reaction).await;
                 }
-                // /thought gets the raw chunk; TTS gets coalesced sentences (above).
-                super::emit_thought_chunk(&reaction, text).await;
+                // The whole utterance becomes one message; TTS gets coalesced sentences (above).
+                super::emit_message(&reaction, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
             }
             Beat::Show {
@@ -189,13 +184,13 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
 /// (`AudioBegin` carries the codec so the wire can set Content-Type first), then
 /// spawn the frame drain. No-op when TTS is unconfigured — the turn is silent.
 ///
-/// **Also a no-op when no speaker is attached**, which is the presence gate at the
-/// only place it can bite. Text and views are current appearance state: a surface
-/// attaching later receives what is present then, without replaying a delivery
-/// history. Voice is the one channel with no second chance: synthesized frames go
-/// out on the wire as they are made, and a span nobody is listening to is spent.
-/// That is the failure `docs/arch/core.md#presence` names, and it is *only* about
-/// this span.
+/// **Also a no-op when no speaker is attached** — the one place in this process that
+/// asks who is connected, and the only place it was ever needed. Text is an
+/// append-only conversation: a message keeps, so a surface attaching later reads it.
+/// Voice is the one channel with no second chance: synthesized frames go out on the
+/// wire as they are made, and a span nobody is listening to is spent. That is a fact
+/// about the wire rather than a read of the room — see
+/// `docs/arch/core.md#attachment` — and it is *only* about this span.
 ///
 /// Note this is read per turn, not once for the process: a person who unplugs
 /// headphones mid-conversation stops being spoken to on the next `say`, with no
@@ -209,7 +204,7 @@ async fn open_tts(
     if !tts::available() {
         return;
     }
-    if !reaction.inner.presence.reachable().speaker {
+    if !reaction.inner.attachments.speaker_attached() {
         tracing::debug!(turn, "no speaker attached; not synthesizing");
         return;
     }

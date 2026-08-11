@@ -360,10 +360,10 @@ async fn stream_audio_in(
     stream: Option<String>,
     mut socket: axum::extract::ws::WebSocket,
 ) {
-    // Hold a mic-reach guard for the life of the socket: the mic is open for the
-    // whole voice session, so this doubles as the "voice conversation active"
-    // posture signal for presence. Dropped when the stream ends below.
-    let _mic = state.presence.connect_mic();
+    // Hold a mic guard for the life of the socket. It counts the open mic and
+    // nothing more: it used to double as a "voice conversation is active" posture
+    // that presence read, and there is no longer anything reading it that way.
+    let _mic = state.attachments.connect_mic();
     // The WS is just one source of PCM frames. Forward its binary frames into the
     // shared ingest; when the socket closes the sender drops, the ingest sees the
     // stream end, and it finalizes. A browser mic carries no source tag.
@@ -446,15 +446,15 @@ pub async fn ingest_pcm_stream(
             let cuts = tokio::select! {
                 msg = tr_rx.recv() => match msg {
                     Some(t) => {
-                        // Fold every rolling partial into the shared text
-                        // appearance and echo it to observers (`final:false`).
-                        // The appearance update is the duck trigger: the client
+                        // Publish every rolling partial as the conversation's one
+                        // pending line and echo it to observers (`final:false`).
+                        // The interim update is the duck trigger: the client
                         // stops playback hundreds of ms before a sentence settles.
                         // The same moment is reported to the barge-in registry,
                         // whose own clock decides whether the agent's voice was
                         // probably still sounding (→ "what went unheard" note).
                         if !t.is_final && !t.text.trim().is_empty() {
-                            relay_state.echo_input(Channel::Text, &t.text, false);
+                            relay_state.note_interim(Channel::Text, &t.text);
                             relay_state.interrupts.note_speech(tokio::time::Instant::now()).await;
                         }
                         // A diarized utterance just finalized. Each segment names a
@@ -643,7 +643,7 @@ async fn deliver_transcript(
     };
     crate::foundation::channel_log::inbound(Channel::Audio, text);
     let entry = JournalEntry::SignalIn {
-        id,
+        id: id.clone(),
         ts,
         channel: Channel::Audio,
         body: text.to_owned(),
@@ -654,9 +654,10 @@ async fn deliver_transcript(
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");
     }
-    // Echo before dispatching inward. The caption display rides the text channel
-    // (a display concern), so a spoken line shows the same way a typed line does.
-    state.echo_input(Channel::Text, text, true);
+    // Append before dispatching inward. A spoken line is a message like a typed
+    // one, so it rides the text channel into the conversation (a display concern);
+    // the journal above keeps it on `Audio`, where it was actually heard.
+    state.note_message(Channel::Text, id, ts, text, None);
     if let Err(err) = state.inbound.send(signal).await {
         tracing::error!(error = %err, "inbound channel closed");
         return false;
@@ -817,7 +818,7 @@ pub async fn get_out_audio(
 ) -> impl IntoResponse {
     let mut rx = state.audio_out.subscribe();
     // A held audio long-poll = their ears are on; counted while we wait for a turn.
-    let _presence = state.presence.connect(crate::body::presence::OutChannel::Audio);
+    let _attached = state.attachments.connect(crate::body::attachments::OutChannel::Audio);
 
     tracing::info!(auth = ?auth, "GET /api/out/audio long-poll opened");
 

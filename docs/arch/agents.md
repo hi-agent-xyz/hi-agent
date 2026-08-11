@@ -77,9 +77,11 @@ working directory, and no built-ins at all**: it is fast because it *cannot* wai
 anything, not because it is small. Judging the edge of your own knowledge is a hard problem
 and needs a capable model.
 
-**It also owns the social layer** — the mouth, the presence gate, and the timing of anything
-unprompted. That was once a separate host component; all four of its duties belong to
-whatever speaks, and this is what speaks. See [`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
+**It also owns the social layer** — the mouth, and the timing of anything unprompted.
+That was once a separate host component; its duties belong to whatever speaks, and this
+is what speaks. (A fourth duty, the presence gate, was retired rather than inherited —
+see [Attachment](core.md#attachment).) See
+[`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
 
 Owning that timing includes the one deadline in this host that fires at a named minute:
 `say`'s `back_in` arms the [check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)

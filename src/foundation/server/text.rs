@@ -2,13 +2,13 @@
 //!
 //! `POST /api/in/text` is the typed-input path: the body is dispatched to the
 //! mind (journalled + queued on `inbound`), echoed to live channel observers,
-//! and folded into the backend-owned current text appearance.
+//! and appended to the conversation as one message.
 //!
-//! `GET /api/out/text` is one long-lived NDJSON stream of whole current-state
-//! snapshots. A subscriber receives the present exchange immediately, then a
-//! replacement whenever it changes. There are no message ids, client ids,
-//! cursors or replay. The journal is history; this endpoint is the appearance's
-//! present.
+//! `GET /api/out/text` is one long-lived NDJSON stream of the conversation: the
+//! current window whole, then one frame per message appended. `GET /api/messages`
+//! reads further back through the journal. Messages carry the journal's ids so the
+//! two agree, but no client ever sends one back — there is no cursor, no
+//! acknowledgement and no read position anywhere in this file.
 //!
 //! `GET /api/in/text` is a live observe stream (see [`crate::foundation::server::observe`]):
 //! no buffering, just the inputs as they cross the boundary.
@@ -16,15 +16,16 @@
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::foundation::server::AppState;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
-use crate::foundation::server::observe;
+use crate::foundation::server::{AppState, observe, transcript};
+use crate::mind::memory::journal;
 use crate::types::{Channel, JournalEntry, Origin, Signal};
 use futures::stream::unfold;
 
@@ -55,8 +56,12 @@ pub async fn post_text(
     );
     crate::foundation::channel_log::inbound(Channel::Text, &signal.body);
 
+    // Minted once and used twice: the journal entry and the message in the
+    // conversation are the same thing under the same key, which is what lets the
+    // list be rebuilt from the log without a merge.
+    let id = Uuid::now_v7().to_string();
     let entry = JournalEntry::SignalIn {
-        id: Uuid::now_v7().to_string(),
+        id: id.clone(),
         ts: signal.ts,
         channel: signal.channel,
         body: signal.body.clone(),
@@ -68,13 +73,9 @@ pub async fn post_text(
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");
     }
 
-    // A human message is engagement — refresh presence and start the owed-reply
-    // clock (covers both typed text and transcribed voice, which lands here too).
-    state.presence.note_activity();
-
-    // Fold into the shared text appearance and echo to live observers before
-    // dispatching inward.
-    state.echo_input(Channel::Text, &signal.body, true);
+    // Append to the conversation and echo to live observers before dispatching
+    // inward.
+    state.note_message(Channel::Text, id, signal.ts, &signal.body, None);
 
     if let Err(err) = state.inbound.send(signal).await {
         tracing::error!(error = %err, "inbound channel closed");
@@ -84,34 +85,53 @@ pub async fn post_text(
     StatusCode::ACCEPTED.into_response()
 }
 
-/// `GET /api/out/text` — the current text appearance, then every replacement.
+/// `GET /api/out/text` — the conversation: the current window whole, then every
+/// message as it is appended.
 pub async fn get_out_text(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
 ) -> Response {
-    tracing::info!(auth = ?auth, "GET /api/out/text state stream opened");
+    tracing::info!(auth = ?auth, "GET /api/out/text conversation stream opened");
 
-    // Opening this state stream is a presence signal: warm up so the process +
+    // Opening this stream means a surface just attached: warm up so the process +
     // session + upstream cache are hot before the first utterance.
     state.warm();
 
-    // Count this reader as live presence for as long as its body stream exists.
-    let presence = state
-        .presence
-        .connect(crate::body::presence::OutChannel::Text);
-    let rx = state.text_appearance.subscribe();
+    // Hold an attachment guard for as long as the body stream exists. This counts
+    // toward one question only — whether a speaker is attached, which decides
+    // whether speech is synthesized. Nothing infers from it whether anyone is
+    // reading; see `docs/arch/core.md#attachment`.
+    let attached = state
+        .attachments
+        .connect(crate::body::attachments::OutChannel::Text);
+    let (opening, rx) = state.transcript.subscribe();
+
+    // `Some(frame)` is pending output; after it, the stream pulls from `rx`. A
+    // lagged receiver resyncs with a fresh whole window rather than skipping
+    // messages — the list is the contract, and a gap in it would be a lie.
+    let transcript = state.transcript.clone();
     let stream = unfold(
-        (rx, true, presence),
-        |(mut rx, first, presence)| async move {
-            if !first && rx.changed().await.is_err() {
-                return None;
-            }
-            let snapshot = { rx.borrow_and_update().clone() };
-            let mut line = serde_json::to_vec(&snapshot).expect("text state is serializable");
+        (rx, Some(opening), attached, transcript),
+        |(mut rx, pending, attached, transcript)| async move {
+            let frame = match pending {
+                Some(frame) => frame,
+                None => loop {
+                    match rx.recv().await {
+                        Ok(frame) => break frame,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(missed = n, "text subscriber lagged; resyncing");
+                            let (resync, _) = transcript.subscribe();
+                            break resync;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    }
+                },
+            };
+            let mut line = serde_json::to_vec(&frame).expect("a frame is serializable");
             line.push(b'\n');
             Some((
                 Ok::<Bytes, std::convert::Infallible>(Bytes::from(line)),
-                (rx, false, presence),
+                (rx, None, attached, transcript),
             ))
         },
     );
@@ -122,6 +142,66 @@ pub async fn get_out_text(
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+/// `GET /api/messages?before=<id>&limit=<n>` — older messages, for scrollback.
+///
+/// Read from the journal through the same mapping the boot seed uses, so what you
+/// scroll into is the same conversation you were already looking at rather than a
+/// second, differently-shaped view of the log.
+///
+/// `before` is a message id, which is a journal id. It is **not** a cursor the
+/// backend remembers: it is where *this one request* starts, sent by a window that
+/// already has the newer messages in hand and is asking for what precedes them.
+pub async fn get_messages(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ScrollbackParams>,
+    AuthBearer(auth): AuthBearer,
+) -> Response {
+    let limit = params.limit.unwrap_or(SCROLLBACK_DEFAULT).min(SCROLLBACK_MAX);
+    let before = params
+        .before
+        .or_else(|| state.transcript.oldest_id())
+        .unwrap_or_default();
+    tracing::info!(auth = ?auth, before = %before, limit, "GET /api/messages");
+
+    let since = journal::uuidv7_ts(&before)
+        .map(|ts| ts - chrono::Duration::days(SCROLLBACK_DAYS))
+        .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("unix epoch is valid"));
+    let entries = match state.memory.journal.recent(since, JOURNAL_SCAN_MAX).await {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::error!(error = %err, "scrollback read failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "journal read failed").into_response();
+        }
+    };
+
+    let mut messages = transcript::from_journal(entries);
+    messages.retain(|m| m.id.as_str() < before.as_str());
+    if messages.len() > limit {
+        let drop = messages.len() - limit;
+        messages.drain(0..drop);
+    }
+    axum::Json(messages).into_response()
+}
+
+/// How far back one scrollback request reaches, in days of journal, before it
+/// reports what it found. A page of chat is minutes of conversation on an active
+/// day and months on a quiet one; this bounds the scan without bounding the
+/// conversation, since the next request starts from whatever came back.
+const SCROLLBACK_DAYS: i64 = 30;
+const SCROLLBACK_DEFAULT: usize = 50;
+const SCROLLBACK_MAX: usize = 200;
+/// Journal lines to consider per scrollback request. Generous because most of what
+/// it reads is not conversation (views, pulses, recognition) and is filtered out.
+const JOURNAL_SCAN_MAX: usize = 5000;
+
+#[derive(serde::Deserialize)]
+pub struct ScrollbackParams {
+    /// The oldest message the caller already has. Defaults to the oldest in the
+    /// live window.
+    before: Option<String>,
+    limit: Option<usize>,
 }
 
 /// `GET /api/in/text` — observe typed inputs live (NDJSON).

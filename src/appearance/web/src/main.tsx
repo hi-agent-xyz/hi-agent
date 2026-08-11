@@ -8,6 +8,7 @@ import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
 import { installNativeFeel } from "./lib/nativeFeel";
 import { installStageReport } from "./lib/stageReport";
+import "./ui/tailwind.css";
 import "./ui/global.css";
 
 // If the login gate is on, a 401 (session expired) bounces the tab to sign-in.

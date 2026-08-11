@@ -687,23 +687,14 @@ enum LoopInput {
     /// A host pulse firing — the recurring moment of self-attention. Carries
     /// bare situational facts; what to do with such a moment is core.md's job.
     Pulse { note: String },
-    /// The person came back — they brought the window forward after an absence.
-    ///
-    /// Kept distinct from [`LoopInput::Pulse`] rather than reusing it with a
-    /// different note, because the two mean opposite things to the voice. A pulse
-    /// is a quiet moment the prompt is explicit that almost nothing is worth
-    /// breaking; a return is the moment a held word was being held *for*. Rendering
-    /// this as `(pulse)` would tell Reaction to stay quiet at precisely the instant
-    /// it should speak.
-    Returned,
     /// The voice's own check-in coming due — it said they'd hear back by now, or it
     /// left a silence open-ended while its thinking ran and the host put a floor under
     /// it ([`tools::NextWord`]).
     ///
-    /// Its own variant, not a `Pulse` with a different note, for the reason `Returned`
-    /// is: a pulse is a quiet moment the prompt says almost nothing is worth breaking,
-    /// while this is the moment a word was *owed*. Rendering it as `(pulse)` would tell
-    /// the voice to stay quiet at precisely the instant it should speak.
+    /// Its own variant, not a `Pulse` with a different note: a pulse is a quiet moment
+    /// the prompt says almost nothing is worth breaking, while this is the moment a
+    /// word was *owed*. Rendering it as `(pulse)` would tell the voice to stay quiet at
+    /// precisely the instant it should speak.
     CheckIn { owed: tools::Owed },
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
@@ -768,10 +759,11 @@ struct ReactionInner {
     /// Wakes every parked reaction loop after the process-wide gate changes level. The
     /// level itself lives in [`Vendor`], so missed notifications are harmless.
     vendor_wake: tokio::sync::Notify,
-    /// Live-subscriber counts, shared with the HTTP front. Rendered into
-    /// each turn as one human-model presence sentence, so the mind knows which
-    /// channels actually reach the person right now.
-    presence: crate::body::presence::Presence,
+    /// Live-subscriber counts, shared with the HTTP front. Read at one place only —
+    /// [`sequencer::open_tts`], to decide whether a speech span is worth
+    /// synthesizing. Nothing about it is projected: see
+    /// [`crate::body::attachments`].
+    attachments: crate::body::attachments::Attachments,
     /// The live appearance state, shared (a cloneable handle) with the
     /// HTTP front's view bus. Read into each turn as `## On screen now` so the agent
     /// can see what it has shown — the screen is its own presentation surface, and
@@ -830,7 +822,7 @@ pub async fn start(
     view_compiler: crate::mind::views::ViewCompiler,
     tools: ToolRegistry,
     interrupts: InterruptRegistry,
-    presence: crate::body::presence::Presence,
+    attachments: crate::body::attachments::Attachments,
     views: crate::foundation::server::ViewBus,
     views_dir: PathBuf,
     shutdown: Shutdown,
@@ -867,7 +859,7 @@ pub async fn start(
             view_compiler,
             tools,
             interrupts,
-            presence,
+            attachments,
             views,
             energy_view,
             views_dir,
@@ -1157,7 +1149,6 @@ impl Reaction {
                     control: control_tx.clone(),
                     mouth: Some(tools::Mouth {
                         beats: beats_tx.clone(),
-                        presence: self.inner.presence.clone(),
                         said: said.clone(),
                         next_word: next_word.clone(),
                     }),
@@ -1211,8 +1202,6 @@ enum Woke {
     Control(Option<LoopControl>),
     /// Mail landed in the Reaction inbox.
     Mail,
-    /// The person came back after an absence — see [`crate::body::presence::Presence::returns`].
-    Returned,
     /// The process-wide vendor gate changed level. Re-read [`Vendor::turn_gate`];
     /// the notification carries no state and therefore cannot go stale.
     Vendor,
@@ -1279,11 +1268,6 @@ async fn reaction_loop(
     let mut workers = workers::WorkerRegistry::new(worker_inbound);
     let voice_id = voice.id();
     let voice_mail = voice.mail.clone();
-    // Taken once, for the life of the loop: the handle must be the same one the
-    // attention lane fires, and `Presence::returns` keeps one per conversation for exactly
-    // that reason.
-    let came_back = reaction.inner.presence.returns();
-
     tracing::info!(voice = voice_id, "reaction per-reaction loop up");
 
     // Pull both the voice's rungs' cold starts ahead of the person's first message. Reaction
@@ -1371,7 +1355,6 @@ async fn reaction_loop(
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
-                    _ = came_back.notified() => Woke::Returned,
                     _ = sleep_until(deadline) => Woke::Timer,
                     _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
@@ -1381,7 +1364,6 @@ async fn reaction_loop(
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = voice_mail.notified() => Woke::Mail,
-                    _ = came_back.notified() => Woke::Returned,
                     _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
             };
@@ -1402,27 +1384,6 @@ async fn reaction_loop(
                 Woke::Shutdown => {
                     tracing::info!("shutdown requested; exiting per-reaction loop");
                     return;
-                }
-                // They came back. This is the one wake the person causes without
-                // saying anything, and it exists so that "hold it for their return"
-                // is a promise the host can actually keep — otherwise a return is
-                // invisible until they type, or until the pulse comes round, which
-                // is half an hour by default.
-                //
-                // While the vendor is down it is dropped rather than held: a return
-                // is a *moment*, and delivering it after the outage clears would
-                // announce an arrival that already went stale. Mail is held because
-                // its content keeps; this does not.
-                Woke::Returned => {
-                    if down {
-                        continue 'wait;
-                    }
-                    tracing::info!("presence returned; waking the voice");
-                    // Their coming back is itself the activity — otherwise the pulse
-                    // that was already overdue fires straight after this turn.
-                    last_activity = Instant::now();
-                    enqueue(&reaction, &mut workers, &mut batch, LoopInput::Returned).await;
-                    break 'wait;
                 }
                 // Mail for the conversation's voice. It drives a turn like any other
                 // reason to speak — that is what makes `send_message(to: conversation)`
@@ -1495,23 +1456,15 @@ async fn reaction_loop(
                     // reads the room and stays quiet is not re-woken for the same overdue
                     // promise on the next iteration.
                     if let Some(owed) = speaking.next_word.take_due(now) {
-                        // Into an empty room it is dropped rather than spoken. The words
-                        // would be held anyway, and `Returned` already wakes the voice the
-                        // moment they come back — with the same running work in front of
-                        // it and a fresher read of where things stand. Firing here as well
-                        // would burn a turn to compose a line that a second turn then
-                        // rewrites.
-                        if !reaction.inner.presence.reachable().window {
-                            tracing::info!(
-                                promised = owed.promised,
-                                "check-in came due into an empty room; leaving it to their return"
-                            );
-                        } else {
-                            tracing::info!(promised = owed.promised, "check-in fired");
-                            last_activity = now;
-                            enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
-                                .await;
-                        }
+                        // Fired whether or not anyone is looking. It used to be dropped
+                        // into an empty room, because the words would have been withheld
+                        // anyway and a return would wake the voice with a fresher read —
+                        // and both of those went with the presence gate. What the voice
+                        // says now lands in the conversation and waits there.
+                        tracing::info!(promised = owed.promised, "check-in fired");
+                        last_activity = now;
+                        enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
+                            .await;
                     }
                     if !batch.is_empty() {
                         break 'wait;
@@ -1590,9 +1543,6 @@ async fn reaction_loop(
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
                 batch.clear();
-                // A reply landed — stop the presence owed-reply clock (no-op if
-                // nothing was owed, e.g. a pulse turn).
-                reaction.inner.presence.note_delivered();
                 // Report what the session has accumulated, for the dashboard only.
                 // **Nothing thresholds on this.** Bounding a session's context is the
                 // underlying agent's job — it compacts in place, near its real window,
@@ -1732,11 +1682,15 @@ async fn run_reaction_turn(
     reaction.inner.interrupts.note_turn_started(turn_id);
 
     // This turn's delta: whether the conversation's own thinking is still running (so the
-    // voice can say "still on it" rather than guess), presence, any barge-in note, and
-    // the new signals. The projected state it all hangs off is assembled in
-    // [`turn_context`].
+    // voice can say "still on it" rather than guess), any barge-in note, and the new
+    // signals. The projected state it all hangs off is assembled in [`turn_context`].
+    //
+    // **There is no `## Presence` section any more.** It carried a decaying belief about
+    // how present the person was, derived from open channels and window activations, and
+    // the belief could not be derived — a window behind an editor and a person leaning in
+    // are the same subscription. What replaced it is not a better estimate: messages keep,
+    // so nothing has to be decided about whether anyone is there.
     let worker_status = workers.render_status().await;
-    let presence_note = format!("## Presence\n{}", reaction.inner.presence.render());
     let interrupted = reaction
         .inner
         .interrupts
@@ -1768,7 +1722,6 @@ async fn run_reaction_turn(
         voice_id,
         &worker_status,
         &on_screen,
-        &presence_note,
         &interrupted,
         &new_signals,
     )
@@ -1904,12 +1857,11 @@ async fn turn_context(
     voice_id: registry::SessionId,
     worker_status: &str,
     on_screen: &str,
-    presence: &str,
     interrupted: &str,
     new_signals: &str,
 ) -> String {
     let projected = snapshot::window(memory, voice_id).await;
-    join_sections(&[projected.as_str(), worker_status, on_screen, presence, interrupted, new_signals])
+    join_sections(&[projected.as_str(), worker_status, on_screen, interrupted, new_signals])
 }
 
 #[cfg(test)]
@@ -1927,7 +1879,7 @@ mod turn_context_tests {
         let memory = Memory::open(dir.path()).await.unwrap();
 
         // Turn one, on a session opened just now: nothing written yet.
-        let first = turn_context(&memory, 0, "", "", "", "", "## New signals\n>在吗").await;
+        let first = turn_context(&memory, 0, "", "", "", "## New signals\n>在吗").await;
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
@@ -1941,7 +1893,7 @@ mod turn_context_tests {
         write_task(dir.path(), &owed).await.unwrap();
 
         // Turn two, same session — no re-open, no rotation.
-        let second = turn_context(&memory, 0, "", "", "", "", "## New signals\n>那卡片呢").await;
+        let second = turn_context(&memory, 0, "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
@@ -1957,17 +1909,17 @@ mod turn_context_tests {
             &memory,
             0,
             "## Workers\nbuilding a view",
-            "",
-            "## Presence\nhere",
+            "## On screen now\ntasks",
             "",
             "## New signals\n>好了没",
         )
         .await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
         assert!(at("## Recent (last 30 minutes)") < at("## Workers"));
-        assert!(at("## Workers") < at("## Presence"));
-        assert!(at("## Presence") < at("## New signals"));
+        assert!(at("## Workers") < at("## On screen now"));
+        assert!(at("## On screen now") < at("## New signals"));
         assert!(text.trim_end().ends_with("好了没"), "{text}");
+        assert!(!text.contains("## Presence"), "the presence projection is gone: {text}");
     }
 }
 
@@ -2203,9 +2155,21 @@ async fn drive_voice(session: &AgentSession, context: String) -> anyhow::Result<
 /// Best-effort, like every other append site: a failed write is logged and the
 /// reply still goes out; the log is not allowed to swallow a turn.
 async fn record_out(reaction: &Reaction, channel: Channel, body: String) {
+    record_out_as(reaction, channel, body, Uuid::now_v7().to_string(), Utc::now()).await;
+}
+
+/// [`record_out`] under a key the caller already holds — used when the same
+/// emission also becomes a message in the conversation and the two must agree.
+async fn record_out_as(
+    reaction: &Reaction,
+    channel: Channel,
+    body: String,
+    id: String,
+    ts: chrono::DateTime<Utc>,
+) {
     let entry = JournalEntry::SignalOut {
-        id: Uuid::now_v7().to_string(),
-        ts: Utc::now(),
+        id,
+        ts,
         channel,
         body,
         media: None,
@@ -2240,19 +2204,24 @@ async fn record_in(
     }
 }
 
-async fn emit_thought_chunk(reaction: &Reaction, text: String) {
-    // Per chunk, as it is written — not coalesced into one row per utterance. The
-    // log's promise is durability before reaction, and buffering to make a neater
-    // row would mean a crash mid-utterance loses words the agent already sent.
-    // Readers re-join the chunks in `(ts, id)` order, which is exactly what the
-    // merge already gives them.
-    record_out(reaction, Channel::Text, text.clone()).await;
+/// One `say` becomes one message: journaled, then appended to the conversation
+/// under the same id.
+///
+/// **The key is minted here and used twice**, rather than each side generating its
+/// own, because the conversation is rebuilt from the journal at boot — and two keys
+/// for one message would mean the list changed shape whenever it reloaded.
+///
+/// Journaled first, and before anything is split for speech: durability precedes
+/// reaction, and `say` already holds the whole text, so there is no window in which
+/// a crash could lose words the agent had already sent.
+async fn emit_message(reaction: &Reaction, text: String) {
+    let id = Uuid::now_v7().to_string();
+    let ts = Utc::now();
+    record_out_as(reaction, Channel::Text, text.clone(), id.clone(), ts).await;
     let _ = reaction
         .inner
         .out
-        .send(OutboundSignal::Text {
-            chunk: text,
-        })
+        .send(OutboundSignal::Text { id, ts, text })
         .await;
 }
 
@@ -2332,9 +2301,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Pulse { note } => {
                 let _ = writeln!(s, "{}", render_pulse(note));
             }
-            LoopInput::Returned => {
-                let _ = writeln!(s, "{RETURNED_NOTE}");
-            }
             LoopInput::CheckIn { owed } => {
                 let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
             }
@@ -2352,15 +2318,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
 pub(super) fn render_pulse(note: &str) -> String {
     format!("(pulse) {note}")
 }
-
-/// What a return looks like in the turn's "New signals".
-///
-/// Deliberately a *fact*, not an instruction: the host reports that a window came
-/// forward after a quiet stretch and says nothing about whether that deserves a
-/// word. Whether to speak, and what a held thing was worth, is Reaction's — the
-/// host's job here was only to make the moment observable at all.
-const RETURNED_NOTE: &str =
-    "(they're back) They just brought the window forward after a stretch away.";
 
 /// What a check-in looks like in the turn's "New signals".
 ///
@@ -2418,13 +2375,6 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             workers::render_report_plainly(report),
         )),
         LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
-        // A return is the person acting, but on no channel they typed into — so
-        // nothing upstream journaled it, and this is its only chance to be written
-        // down. `Channel::Clock` puts it in [`NON_ACTIVITY_CHANNELS`] on purpose:
-        // like a pulse and unlike a worker report, a return is *presence, not
-        // content*. It should not hold a conversation warm by itself, and it should not
-        // push a conversation over the frontier threshold into consolidating on nothing.
-        LoopInput::Returned => Some((Channel::Clock, Origin::Host, RETURNED_NOTE.to_owned())),
         // On `Channel::Clock` with the pulse and the return, and for the same reason:
         // a check-in is the host noticing the time, not something the person said. It
         // must not hold a conversation warm by itself.
@@ -2679,6 +2629,5 @@ mod check_in_tests {
     fn a_check_in_is_not_a_pulse() {
         let note = render_check_in(&owed(300, false), Instant::now());
         assert!(!note.contains("(pulse)"), "{note}");
-        assert!(!note.contains(RETURNED_NOTE));
     }
 }

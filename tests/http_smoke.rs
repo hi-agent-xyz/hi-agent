@@ -24,7 +24,7 @@ async fn spawn_server() -> (String, tempfile::TempDir, ServerSeams) {
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
         hi_agent::body::reaction::InterruptRegistry::new(),
-        hi_agent::body::presence::Presence::new(),
+        hi_agent::body::attachments::Attachments::new(),
         None,
     );
 

@@ -186,9 +186,9 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // "what went unheard" note into the next prompt. No cancel, no endpoint.
     let interrupts = body::reaction::InterruptRegistry::new();
     // Live-subscriber counts, shared the same way: the server's out-channel
-    // handlers hold a guard per connection, the reaction renders the counts into
-    // each turn as human-model facts ("no screen is attached").
-    let presence = body::presence::Presence::new();
+    // handlers hold a guard per connection. One question is asked of them — is a
+    // speaker attached, so a TTS span is worth synthesizing.
+    let attachments = body::attachments::Attachments::new();
 
     // Build the owner sign-in state (None when OIDC is unconfigured — sign-in
     // unavailable, free tier only). Fallible: it generates/reads the cookie key
@@ -204,7 +204,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         wire_tap.clone(),
         tool_registry.clone(),
         interrupts.clone(),
-        presence.clone(),
+        attachments.clone(),
         auth_state,
     );
 
@@ -333,7 +333,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         view_compiler,
         tool_registry,
         interrupts,
-        presence,
+        attachments,
         seams.state.views.clone(),
         views_dir,
         reaction_shutdown.clone(),

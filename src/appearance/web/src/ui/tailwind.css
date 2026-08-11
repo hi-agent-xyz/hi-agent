@@ -1,0 +1,91 @@
+/* Tailwind, and the bridge from shadcn's semantic tokens to this face's own.
+ *
+ * The chat components (`ui/shadcn/*`) are written against shadcn's vocabulary —
+ * `--background`, `--foreground`, `--primary`, `--muted`, `--border`. This face
+ * already had a vocabulary, "Paper & Ink" in `global.css`, and that one is
+ * authoritative: the native macOS title bar hardcodes an `NSColor` to match
+ * `--bg-0`, so a second, independent palette would drift the window chrome away
+ * from the window contents the first time either changed.
+ *
+ * So nothing here defines a colour. Every shadcn token is an alias onto a token
+ * that already exists, which means light/dark, the `data-theme` override and any
+ * future re-skin all keep working untouched — they move `global.css`, and this
+ * follows.
+ */
+
+@import "tailwindcss";
+
+/* Dark is `data-theme="dark"`, or the OS asking while nothing forced light —
+ * the same two conditions `global.css` uses. Tailwind's default `dark:` variant
+ * looks for a `.dark` class, which this app has never had. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"]) *, :not([data-theme="light"])) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --color-background: var(--bg-0);
+  --color-foreground: var(--fg);
+
+  /* The agent's own messages. Terracotta is this face's accent, and an agent
+     bubble is the one thing on screen that should carry it. */
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--caption-fg);
+
+  /* The person's messages: a floating surface over the paper, the same way
+     every other card in this app sits on it. */
+  --color-secondary: var(--surface-strong);
+  --color-secondary-foreground: var(--fg);
+
+  --color-muted: var(--accent-wash);
+  --color-muted-foreground: var(--fg-dim);
+
+  --color-accent: var(--accent-wash);
+  --color-accent-foreground: var(--fg);
+
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--caption-fg);
+
+  --color-border: var(--line);
+  --color-input: var(--line-strong);
+  --color-ring: var(--accent-soft);
+
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface-strong);
+  --color-popover-foreground: var(--fg);
+
+  --font-sans: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --radius: 14px;
+}
+
+/* Utilities the shadcn chat components use that Tailwind does not ship.
+ * Kept here rather than inlined into the components so a `shadcn add --overwrite`
+ * can refresh them without losing this. */
+@utility scroll-fade-b {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}

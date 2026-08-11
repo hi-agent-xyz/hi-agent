@@ -3,7 +3,7 @@
 // guarantees every importer shares the one provider instance.
 export {
   SessionProvider,
-  useSpeech,
+  useMessages,
   usePresence,
   useWake,
   useChannels,

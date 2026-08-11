@@ -112,8 +112,10 @@ async fn ingest_file(
 
     crate::foundation::channel_log::inbound(Channel::File, &body);
 
+    let id = Uuid::now_v7().to_string();
+    let reff = media::signal_ref(Channel::File, ts, &rel);
     let entry = JournalEntry::SignalIn {
-        id: Uuid::now_v7().to_string(),
+        id: id.clone(),
         ts,
         channel: Channel::File,
         body: body.clone(),
@@ -125,8 +127,16 @@ async fn ingest_file(
         tracing::error!(error = %err, "journal append failed; accepting file anyway");
     }
 
-    // Echo to conversation observers (live), then wake the reaction so the agent reacts.
-    state.echo_input(Channel::File, &body, true);
+    // A handed file is a message — the same one the agent is about to react to.
+    // The locator is stripped from the text and carried as the attachment, so the
+    // person sees what they sent rather than where it was filed.
+    state.note_message(
+        Channel::File,
+        id,
+        ts,
+        &body,
+        Some(crate::foundation::server::Attachment { reff, mime: mime.to_string() }),
+    );
     state
         .inbound
         .send(Signal { channel: Channel::File, body, stream: None, ts })
@@ -139,6 +149,46 @@ async fn ingest_file(
 /// rather than at the framing sites so a new door onto this channel cannot forget it.
 fn file_ref(ts: chrono::DateTime<Utc>, rel: &str) -> String {
     format!("⟨ref: {}⟩", media::signal_ref(Channel::File, ts, rel))
+}
+
+/// `GET /api/media/{*ref}` — the bytes behind a message's attachment.
+///
+/// A photo the person handed over is part of what they said, so the face has to be
+/// able to show it rather than a grey placeholder naming a path. The ref is the
+/// same channel-qualified locator the journal and the agent use, resolved through
+/// [`media::resolve_ref`] — which means a day that has since faded degrades to its
+/// keepsake, or to a 404, instead of pretending the original is still there.
+///
+/// Read-only, and confined to what the ref grammar can express: `parse_ref` accepts
+/// `<channel>/<date>/<HH>/<MM>-<SS>.<ext>` and nothing else, so no path this route
+/// resolves can escape the media tree.
+pub async fn get_media(
+    State(state): State<Arc<AppState>>,
+    Path(reff): Path<String>,
+) -> Response {
+    let Some(path) = media::resolve_ref(&state.data_dir, &reff).await else {
+        return (StatusCode::NOT_FOUND, "no such media").into_response();
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::warn!(reff = %reff, error = %err, "media read failed");
+            return (StatusCode::NOT_FOUND, "no such media").into_response();
+        }
+    };
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    (
+        [
+            (header::CONTENT_TYPE, mime_for_ext(&ext)),
+            (header::CACHE_CONTROL, "private, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// Receive one handed file (drag-drop / picker / phone handoff) — a neutral
@@ -343,6 +393,27 @@ fn prune_expired(map: &mut std::collections::HashMap<String, Handoff>) {
 
 /// A filesystem-safe lowercase extension for the stored blob, from the original
 /// filename when it has one, else mapped from the mime, else `bin`.
+/// The inverse of [`ext_for`], for serving bytes back. Deliberately a short list
+/// rather than a mime database: the only extensions this route can ever see are the
+/// ones `ext_for` wrote, and anything it doesn't recognize is safest served as
+/// opaque bytes the browser will not try to execute.
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
 fn ext_for(name: &str, mime: &str) -> String {
     if let Some(dot) = name.rfind('.') {
         let raw = &name[dot + 1..];

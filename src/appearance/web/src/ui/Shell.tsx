@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from "react";
-import { usePresence, useSpeech, useChannels, useSendText } from "../core";
+import { usePresence, useMessages, useChannels, useSendText } from "../core";
 import { useViews } from "../core/views";
 import { floorLayout, CAPTIONS_ID, CAMERA_ID, type Participant } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
-import { SpeechText } from "./SpeechText";
+import { Chat } from "./Chat";
+import { SpeechText, type SpeechItem } from "./SpeechText";
 import { ViewSlot } from "./ViewSlot";
 import { KeyboardFallback } from "./KeyboardFallback";
 import { ChannelControls } from "./ChannelControls";
@@ -32,7 +33,7 @@ import { HandoffOverlay } from "./HandoffOverlay";
  */
 export function Shell() {
   const presence = usePresence();
-  const sentences = useSpeech();
+  const { messages, interim, loadOlder } = useMessages();
   const ch = useChannels();
   const sendText = useSendText();
   const { views, clear } = useViews();
@@ -67,6 +68,15 @@ export function Shell() {
   const camera = placements.get(CAMERA_ID);
   const captionsDocked = captions?.docked ?? false;
 
+  // The docked pill shows the newest thing said, or the line currently being
+  // recognized if one is in flight — the same tail the chat ends on.
+  const newest = messages[messages.length - 1];
+  const lastSpoken: SpeechItem[] = interim
+    ? [{ id: -1, text: interim, speaker: "user", pending: true }]
+    : newest
+      ? [{ id: 0, text: newest.text, speaker: newest.role === "user" ? "user" : "agent" }]
+      : [];
+
   return (
     <div
       className="hi-root"
@@ -84,10 +94,12 @@ export function Shell() {
           <video> stays mounted so the feed never re-attaches and blacks out. */}
       <CameraPreview stream={ch.visionStream} pip={camera?.pip ?? false} />
 
-      {/* PINNED participant — the conversation's words. Docks as caption pills
-          when something fills the stage behind them (a view or the camera), else
-          sits centered as the lead. Hidden only when the topmost view renders the
-          words itself. Stays at this mount site across every layout. */}
+      {/* PINNED participant — the conversation. One source, two presentations.
+          As the lead it is the chat itself: scrollable, the whole conversation,
+          the default face. Docked behind a view or the camera it shrinks to the
+          last thing said, as a caption pill — a stage has room for a line, not a
+          transcript. Hidden only when the topmost view renders the words itself.
+          Stays at this mount site across every layout. */}
       {captions && !captions.hidden && (
         <div
           className={captionsDocked ? "hi-stage hi-stage--captions" : "hi-stage"}
@@ -96,7 +108,11 @@ export function Shell() {
           // so the bottom bar's three zones — pip · captions · controls — never overlap.
           data-camera={captionsDocked && camera?.pip ? "pip" : undefined}
         >
-          <SpeechText items={captionsDocked ? sentences.slice(-1) : sentences} />
+          {captionsDocked ? (
+            <SpeechText items={lastSpoken} />
+          ) : (
+            <Chat messages={messages} interim={interim} onLoadOlder={loadOlder} />
+          )}
         </div>
       )}
 

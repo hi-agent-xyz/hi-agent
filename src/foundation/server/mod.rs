@@ -22,7 +22,6 @@ use crate::types::{Channel, Signal, ViewEnvelope};
 
 pub mod account;
 pub mod activity;
-pub mod attention;
 pub mod audio;
 pub mod binder;
 pub mod channels;
@@ -42,7 +41,7 @@ pub mod stage;
 pub mod stubs;
 pub mod tasks;
 pub mod text;
-pub mod text_appearance;
+pub mod transcript;
 pub mod tools;
 pub mod view;
 pub mod view_bus;
@@ -50,7 +49,7 @@ pub mod vision;
 pub mod wire;
 pub mod workers;
 
-pub use text_appearance::{AgentText, TextAppearance, TextState};
+pub use transcript::{Attachment, Frame, Message, Role, Transcript};
 pub use view_bus::ViewBus;
 
 /// Outbound synthesized-audio event. One turn's speech is a continuous stream:
@@ -178,8 +177,8 @@ pub struct PartialMinute {
 /// One recognized input on the live observer tap `GET /api/in/<channel>`.
 ///
 /// This broadcast feeds reflexes and the channel inspector. It is deliberately
-/// lossy presence, not UI state and not a log. Text shown by the appearance is
-/// owned separately by [`TextAppearance`].
+/// lossy presence, not UI state and not a log. The conversation the person reads
+/// is owned separately by [`Transcript`].
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InputEcho {
     pub channel: Channel,
@@ -233,10 +232,11 @@ pub struct AppState {
     /// have saved.
     pub warm: mpsc::Sender<()>,
 
-    /// Backend-owned current text appearance. GET /api/out/text sends the whole
-    /// present exchange immediately and then whole-state replacements. There is
-    /// no reader identity, cursor, consumption or historical catch-up.
-    pub text_appearance: TextAppearance,
+    /// The conversation: one backend-owned, append-only message list. GET
+    /// /api/out/text sends the current window whole and then every later message
+    /// as it is appended. There is no reader identity, cursor, acknowledgement or
+    /// read receipt — see [`transcript`].
+    pub transcript: Transcript,
 
     /// Outbound audio broadcast. GET /api/out/audio subscribers receive from
     /// this; the reaction produces TTS clips here when a TTS provider is set.
@@ -291,8 +291,8 @@ pub struct AppState {
     pub input_echo: broadcast::Sender<InputEcho>,
 
     /// Outbound text echo broadcast — the live inspector mirror of the agent's
-    /// worded reply. Delivery to the appearance uses `text_appearance`; this
-    /// broadcast remains deliberately lossy because it is only observability.
+    /// worded reply. The message itself goes to `transcript`; this broadcast
+    /// remains deliberately lossy because it is only observability.
     pub output_echo: broadcast::Sender<OutputEcho>,
 
     /// Memory substrate — journal. Cloneable handle.
@@ -327,10 +327,12 @@ pub struct AppState {
     /// endpoint, the mind infers interruptions from its own clock.
     pub interrupts: InterruptRegistry,
 
-    /// Live-subscriber counts, shared with the reaction. Out-channel
-    /// handlers hold a [`crate::body::presence::PresenceGuard`] per connection; the
-    /// reaction renders the counts into each turn as human-model facts.
-    pub presence: crate::body::presence::Presence,
+    /// Live-subscriber counts, shared with the reaction. Out-channel handlers hold
+    /// a [`crate::body::attachments::Guard`] per connection. One question is asked
+    /// of it — is a speaker attached, so speech is worth synthesizing — and nothing
+    /// infers from it whether anyone is reading; see
+    /// [`crate::body::attachments`].
+    pub attachments: crate::body::attachments::Attachments,
 
     /// Phone-upload grants for the file-upload carrier. A QR encodes `/up/<token>`;
     /// holding a live token is what authorizes the upload. Short TTL, pruned on
@@ -344,20 +346,42 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Fold text into the authoritative appearance, then publish every channel
-    /// to the live observer tap. The observer send is best-effort and lossy.
-    pub fn echo_input(&self, channel: Channel, text: &str, is_final: bool) {
-        if channel == Channel::Text {
-            self.text_appearance.note_user(
-                text,
-                is_final,
-                self.interrupts.latest_turn_started(),
-            );
-        }
+    /// Append one message the person sent — a typed line, a recognized utterance,
+    /// or a handed file — and publish it to the live observer tap.
+    ///
+    /// `id` and `ts` are the ones the caller already journaled under, so the
+    /// message in the conversation and the entry in the log are the same thing
+    /// with the same key, and a reload rebuilds the list unchanged.
+    pub fn note_message(
+        &self,
+        channel: Channel,
+        id: String,
+        ts: DateTime<Utc>,
+        text: &str,
+        attachment: Option<Attachment>,
+    ) {
+        self.transcript.append(Message {
+            id,
+            ts,
+            role: Role::User,
+            text: transcript::strip_ref(text),
+            attachment,
+        });
         let _ = self.input_echo.send(InputEcho {
             channel,
             text: text.to_owned(),
-            is_final,
+            is_final: true,
+            ts,
+        });
+    }
+
+    /// A rolling recognition partial: a preview of a message, not a message.
+    pub fn note_interim(&self, channel: Channel, text: &str) {
+        self.transcript.note_interim(text);
+        let _ = self.input_echo.send(InputEcho {
+            channel,
+            text: text.to_owned(),
+            is_final: false,
             ts: Utc::now(),
         });
     }
@@ -376,6 +400,14 @@ impl AppState {
 /// batch of photos/scans/PDFs; the rest of the channels keep axum's small default.
 const MAX_UPLOAD: usize = 50 * 1024 * 1024;
 
+/// How far back the boot seed reads. The live window is bounded anyway, so this
+/// only has to be long enough that a quiet week still opens on a conversation
+/// rather than on nothing; older messages are reached by scrolling.
+const SEED_DAYS: i64 = 30;
+/// Journal lines the seed will consider. Most of them are not conversation and are
+/// filtered out, so this is generous relative to the window it fills.
+const SEED_SCAN_MAX: usize = 5000;
+
 pub fn build(
     memory: Memory,
     data_dir: PathBuf,
@@ -383,14 +415,37 @@ pub fn build(
     wire_tap: WireTap,
     tool_registry: ToolRegistry,
     interrupts: InterruptRegistry,
-    presence: crate::body::presence::Presence,
+    attachments: crate::body::attachments::Attachments,
     auth: Option<Arc<crate::foundation::auth::AuthState>>,
 ) -> (Router, ServerSeams) {
     let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
     // Warm-up requests: a presence GET asks the reaction to stand itself up ahead
     // of the first utterance (see `AppState::warm`).
     let (warm_tx, warm_rx) = mpsc::channel::<()>(1024);
-    let text_appearance = TextAppearance::new();
+    let transcript = Transcript::new();
+    // Fill the conversation from the journal, off the boot path. A restart shows
+    // what was already being said instead of an empty room — which is the whole
+    // reason the list is durable, and the failure the current-appearance state it
+    // replaced accepted by design.
+    {
+        let transcript = transcript.clone();
+        let memory = memory.clone();
+        tokio::spawn(async move {
+            let since = Utc::now() - chrono::Duration::days(SEED_DAYS);
+            match memory.journal.recent(since, SEED_SCAN_MAX).await {
+                Ok(entries) => {
+                    let messages = transcript::from_journal(entries);
+                    tracing::info!(messages = messages.len(), "conversation seeded from the journal");
+                    transcript.seed(messages);
+                }
+                Err(err) => {
+                    // The conversation starts empty and fills as it is spoken. A
+                    // readable log is not worth failing a boot over.
+                    tracing::error!(error = %err, "conversation seed failed; starting empty");
+                }
+            }
+        });
+    }
     let (audio_tx, _) = broadcast::channel::<AudioEvent>(64);
     // Inbound audio: small, frequent PCM frames, so a larger ring than the others.
     let (audio_in_tx, _) = broadcast::channel::<AudioInEvent>(256);
@@ -412,7 +467,7 @@ pub fn build(
     let (out_tx, out_rx) = mpsc::channel::<OutboundSignal>(1024);
     tokio::spawn(binder::bind_outbound(
         out_rx,
-        text_appearance.clone(),
+        transcript.clone(),
         audio_tx.clone(),
         view_bus.clone(),
         view_tx.clone(),
@@ -422,7 +477,7 @@ pub fn build(
     let state = Arc::new(AppState {
         inbound: inbound_tx,
         warm: warm_tx,
-        text_appearance: text_appearance.clone(),
+        transcript: transcript.clone(),
         audio_out: audio_tx.clone(),
         audio_in: audio_in_tx.clone(),
         audio_in_turn: AtomicU64::new(0),
@@ -441,7 +496,7 @@ pub fn build(
         auth: auth.clone(),
         tool_registry,
         interrupts,
-        presence,
+        attachments,
         handoffs: Mutex::new(HashMap::new()),
         face_presence: Mutex::new(FacePresence::default()),
     });
@@ -454,6 +509,8 @@ pub fn build(
     let router = Router::new()
         .route("/api/in/text", post(text::post_text).get(text::get_in_text))
         .route("/api/out/text", get(text::get_out_text))
+        .route("/api/messages", get(text::get_messages))
+        .route("/api/media/{*ref}", get(files::get_media))
         .route("/api/in/audio", post(audio::post_audio).get(audio::get_in_audio))
         .route("/api/in/audio/stream", get(audio::get_audio_stream))
         .route("/api/out/audio", get(audio::get_out_audio))
@@ -472,7 +529,6 @@ pub fn build(
         .route("/api/in/vision/presence", post(vision::post_presence))
         // The attention lane: the web face reports its own window coming forward
         // (visibility/focus) — the "they're checking on you" signal for presence.
-        .route("/api/in/attention", post(attention::post_attention))
         // The stage lane: the desktop window reports the frame it is showing, so
         // `review_view` renders a view at the size the person actually has rather
         // than at a constant matching no window. Not `/api/in/*` — a frame size is
@@ -572,7 +628,7 @@ pub fn build(
     let seams = ServerSeams {
         inbound_rx,
         warm_rx,
-        text_appearance,
+        transcript,
         out_tx,
         state,
     };
@@ -583,8 +639,8 @@ pub fn build(
 /// What `build` hands back to wire the reaction to the HTTP front. `inbound_rx`
 /// is the channel POSTs feed; `warm_rx` carries warm-up requests a presence
 /// GET raises; `out_tx` is the reaction's single transport-free outbound seam (the
-/// binder spawned in `build` carries it to the wire). The `text_appearance` is
-/// exposed only so integration tests can drive appearance changes directly
+/// binder spawned in `build` carries it to the wire). The `transcript` is
+/// exposed only so integration tests can append messages directly
 /// without standing up a reaction. `state` is the shared `AppState` (the same
 /// `Arc` the router holds), so
 /// a non-HTTP producer — the come-and-see-this gesture — can inject inbound
@@ -592,7 +648,7 @@ pub fn build(
 pub struct ServerSeams {
     pub inbound_rx: mpsc::Receiver<Signal>,
     pub warm_rx: mpsc::Receiver<()>,
-    pub text_appearance: TextAppearance,
+    pub transcript: Transcript,
     pub out_tx: mpsc::Sender<OutboundSignal>,
     pub state: Arc<AppState>,
 }

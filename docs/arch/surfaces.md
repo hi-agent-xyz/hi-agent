@@ -94,18 +94,20 @@ One rule covers every direction:
 
 > **Everything outbound is a tool call.** Looking, acting, showing — and speaking.
 
-**Speech was the last emission, and making it answerable is what gives the
-[presence gate](core.md#presence) somewhere to stand.** `say` returns, so the host can
-decline to voice an utterance the room cannot hear and **say so** — and Reaction finds
-out, in the same breath, where the words did land: aloud, on screen only, or waiting for
-them to come back. Fire-and-forget has nowhere to put that answer, which is the whole
-problem: an utterance you cannot be told the fate of is one you spend without knowing.
+**Speech was the last emission to become a call, and it stays one** — for the same
+reason as the rest: an emission that cannot be rejected cannot be length-checked, and
+`say` rejects a paragraph so Reaction splits it into messages.
 
-Note what this does *not* mean: the host holds no queue of things to say later. Text and
-views are the appearance's current state, so a newly attached surface receives what is
-present then, not a backlog; voice does not keep, so there is nothing worth holding.
-What waits for a better moment waits in Reaction's judgment, which is where the decision
-lives.
+What `say` no longer answers is *where the words landed*. It used to report aloud, on
+screen only, or waiting-for-their-return, and Reaction was expected to read that answer
+and go quiet on an empty room. That is gone with the presence gate — a message is
+appended to the [transcript](text-transcript.md), which keeps, so there is no such thing
+as an utterance spent on nobody. Speech that no speaker is attached for simply is not
+synthesized, which is a fact about the wire and needs no answer.
+
+Note what this does *not* mean: the host holds no queue of things to say later. Messages
+append the moment they are said and are there whenever anyone looks. What waits for a
+better moment waits in Reaction's judgment, which is where the decision lives.
 
 The same call also carries `back_in` — the size Reaction just put on a silence, which
 arms [the check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
@@ -114,24 +116,23 @@ own precisely because a promise is only a promise once it has been *said*: a sep
 call could arm a wake for a number nobody was ever told. Still one queue-free surface —
 what is held is a deadline, not an utterance.
 
-### Text appearance
+### Text transcript
 
-Outbound text is one backend-owned current exchange, rendered by any number of windows.
-The state contains the latest settled human line, an optional rolling recognition
-interim, and the agent's current text with whether its latest utterance boundary settled.
+The conversation is one backend-owned, append-only message list, rendered by any number
+of windows. Three things are messages: what the person typed or said, a file they handed
+over, and one `say` call. Nothing else — a view, a worker's report, a pulse — is
+conversation, and none of it appears here.
 
-`GET /api/out/text` returns one long-lived NDJSON response. The first object is the whole
-current state; every following object replaces it wholesale. The wire carries no message
-or client identity and accepts no cursor. Connecting synchronizes the present and then
-subscribes to changes. It does not replay earlier exchanges, and reading never changes
-the state.
+`GET /api/out/text` returns one long-lived NDJSON response. The first object is the
+current window whole; every following object appends one message or updates the single
+rolling recognition interim. The wire carries no client identity, no cursor, no
+acknowledgement and no read receipt. Connecting gives you the conversation and keeps you
+current; reading never changes anything.
 
-The text state is process-local and starts empty after restart. Durable conversation
-history belongs to the journal. This separation is deliberate: the face is not a mailbox
-or transcript browser. A settled human line also prevents any later text from the
-already-running prior reaction turn from reclaiming the appearance. See
-[`text-appearance.md`](text-appearance.md) for the complete transition and interruption
-contract.
+Messages carry the journal's uuidv7 as their id, so the list is seeded from the journal
+at boot and `GET /api/messages?before=<id>` scrolls further back through the same
+identifiers. An id on a message is not a delivery cursor: nothing sends one back to claim
+progress. See [`text-transcript.md`](text-transcript.md) for the complete contract.
 
 **Showing is a call for the same reason and one of its own.** Putting something on a screen
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.

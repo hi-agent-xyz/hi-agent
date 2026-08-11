@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { fileURLToPath } from "node:url";
 
@@ -148,13 +149,17 @@ const proxy: Record<string, ProxyOptions> = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: [react(), basicSsl(), emitImportMap(), devImportMap()],
+  plugins: [react(), tailwindcss(), basicSsl(), emitImportMap(), devImportMap()],
   // `@hi/core` (session hooks) and `@hi/ui` (static primitives) are the stable
   // import surface both host chrome and agent-authored views author against.
   resolve: {
     alias: {
       "@hi/core": r("./src/core/index.ts"),
       "@hi/ui": r("./src/ui/kit/index.tsx"),
+      // What the vendored shadcn components import. Build-time only: it is not a
+      // shared specifier, so it never enters the import map agent views resolve
+      // against — those still see exactly `react`, `@hi/core`, `@hi/ui`, `motion/react`.
+      "@": r("./src"),
     },
   },
   server: {

@@ -31,8 +31,13 @@ function useSession(): AgentSession {
 }
 
 /** The current exchange's visible lines (user prompt + rolling agent reply). */
-export function useSpeech() {
-  return useSession().sentences;
+export function useMessages() {
+  const session = useSession();
+  return {
+    messages: session.messages,
+    interim: session.interim,
+    loadOlder: session.loadOlder,
+  };
 }
 
 /** The agent's presence: animation/voice state plus the live audio + cadence. */

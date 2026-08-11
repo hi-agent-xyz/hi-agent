@@ -21,13 +21,18 @@ use crate::types::ViewEnvelope;
 /// reaction's entire output surface in human-channel terms.
 #[derive(Debug, Clone)]
 pub enum OutboundSignal {
-    /// A reaction turn has started. The text appearance uses this internal
-    /// boundary to reject stale output if newer human input lands before the
-    /// turn speaks. It carries no wire identity and changes no visible state.
-    TextTurnStart { turn: u64 },
-    /// A chunk of agent text on the /thought channel.
-    Text { chunk: String },
-    /// The boundary that settles the currently open /thought utterance.
+    /// One thing the agent said — a whole `say` call, which is a whole message.
+    ///
+    /// `id` and `ts` are the ones it was journaled under, carried here so the
+    /// message in the conversation and the entry in the log share a key. Nothing
+    /// downstream mints its own.
+    Text {
+        id: String,
+        ts: chrono::DateTime<chrono::Utc>,
+        text: String,
+    },
+    /// The end of an utterance, for the observability tap only. The conversation
+    /// needs no such boundary: a message is complete when it is appended.
     TextEnd,
     /// A span of synthesized speech begins; `codec` names the audio format
     /// (e.g. `audio/mpeg`). `turn` correlates this span's frames so the adapter

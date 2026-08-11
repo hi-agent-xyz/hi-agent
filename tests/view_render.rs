@@ -74,7 +74,7 @@ async fn harness(esbuild: PathBuf) -> Harness {
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
         hi_agent::body::reaction::InterruptRegistry::new(),
-        hi_agent::body::presence::Presence::new(),
+        hi_agent::body::attachments::Attachments::new(),
         None,
     );
 
@@ -230,7 +230,7 @@ async fn the_render_page_is_served_with_the_host_import_map() {
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
         hi_agent::body::reaction::InterruptRegistry::new(),
-        hi_agent::body::presence::Presence::new(),
+        hi_agent::body::attachments::Attachments::new(),
         None,
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");

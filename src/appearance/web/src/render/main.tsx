@@ -101,10 +101,21 @@ const stubSession: AgentSession = {
   reactive: false,
   bus: null,
   activity: new ActivityMeter(),
-  sentences: [
-    { id: 1, text: "How did spending go last month?", speaker: "user" },
-    { id: 2, text: "Groceries crept up; everything else held steady.", speaker: "agent" },
+  messages: [
+    {
+      id: "0199a000-0000-7000-8000-000000000001",
+      ts: "2026-08-11T09:31:04.000Z",
+      role: "user",
+      text: "How did spending go last month?",
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000002",
+      ts: "2026-08-11T09:31:09.000Z",
+      role: "agent",
+      text: "Groceries crept up; everything else held steady.",
+    },
   ],
+  loadOlder: async () => 0,
   woken: true,
   audioInput: false,
   audioError: null,
