@@ -105,8 +105,38 @@ pub struct Task {
     pub checked_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
+    /// Frontmatter lines this schema does not know, verbatim and in order.
+    ///
+    /// The agent writes facets whole and has always kept its own record on a task —
+    /// `report_to:`, and dated note keys running to tens of kilobytes. None of that is
+    /// schema, so a status change used to read the six fields it understood and write back
+    /// only those, silently deleting the rest of the ledger. **A writer that does not
+    /// understand a line is not thereby entitled to drop it.**
+    pub extra: Vec<String>,
     pub body: String,
 }
+
+/// Frontmatter keys [`parse`] consumes, current and legacy. These are the only lines
+/// [`render`] may re-author, because it re-emits each one canonically; every other line is
+/// somebody else's and passes through untouched.
+const SCHEMA_KEYS: [&str; 15] = [
+    "status",
+    "title",
+    "created_at",
+    "due_at",
+    "checked_at",
+    "completed_at",
+    "cancelled_at",
+    "verify",
+    "restart",
+    "owner",
+    "start_key",
+    // Legacy, re-emitted in current form.
+    "kind",
+    "state",
+    "due",
+    "checked",
+];
 
 impl Task {
     pub fn new(title: &str, status: TaskStatus) -> Self {
@@ -121,6 +151,7 @@ impl Task {
             checked_at: None,
             completed_at: (status == TaskStatus::Done).then_some(now),
             cancelled_at: (status == TaskStatus::Cancelled).then_some(now),
+            extra: Vec::new(),
             body: String::new(),
         }
     }
@@ -393,6 +424,7 @@ fn parse(subject: &str, content: &str) -> Task {
             .and_then(|value| parse_timestamp(&value)),
         completed_at: field("completed_at").and_then(|value| parse_timestamp(&value)),
         cancelled_at: field("cancelled_at").and_then(|value| parse_timestamp(&value)),
+        extra: foreign_frontmatter(content),
         body: strip_frontmatter(content).trim().to_owned(),
     }
 }
@@ -412,6 +444,38 @@ fn coerce_duty(status: TaskStatus, liveness: &Liveness) -> TaskStatus {
         return TaskStatus::Serving;
     }
     status
+}
+
+/// Every frontmatter line [`parse`] did not consume, verbatim and in order.
+///
+/// Line-based like [`frontmatter_field`] itself, with one allowance: an indented line
+/// continues the key above it, so it travels with that key — dropped when the key was
+/// schema and re-emitted canonically, kept when the key was somebody else's.
+fn foreign_frontmatter(content: &str) -> Vec<String> {
+    let Some(fm) = content.strip_prefix("---\n") else {
+        return Vec::new();
+    };
+    let Some(end) = fm.find("\n---\n") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut under_schema_key = false;
+    for line in fm[..end].lines() {
+        if line.starts_with([' ', '\t']) {
+            if !under_schema_key {
+                out.push(line.to_owned());
+            }
+            continue;
+        }
+        match line.split_once(':') {
+            Some((key, _)) if SCHEMA_KEYS.contains(&key.trim()) => under_schema_key = true,
+            _ => {
+                under_schema_key = false;
+                out.push(line.to_owned());
+            }
+        }
+    }
+    out
 }
 
 /// Compatibility for the retired `kind` + `state` schema.
@@ -475,6 +539,9 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
         if let Some(value) = value {
             field(key, value)?;
         }
+    }
+    for line in &task.extra {
+        let _ = writeln!(out, "{line}");
     }
     out.push_str("---\n\n");
     out.push_str(task.body.trim());
@@ -548,6 +615,59 @@ mod tests {
         assert_eq!(got.due_at, Some(at(30, 9)));
         assert_eq!(got.checked_at, Some(at(28, 10)));
         assert_eq!(got.body, "Boss asked for a daily digest of the ops group.");
+    }
+
+    /// The ledger a real task carries is mostly not schema: `report_to:`, and dated note
+    /// keys running to tens of kilobytes. Closing one used to write back only the fields
+    /// this file understands, so the button that files a task deleted its record — the
+    /// live `google-login-hi-agent-xyz` facet stood at 53KB of such keys against a 4KB
+    /// body. A status change must move the status and nothing else.
+    #[tokio::test]
+    async fn a_status_change_keeps_the_notes_it_does_not_understand() {
+        let dir = tempfile::tempdir().unwrap();
+        facets::update_facet(
+            dir.path(),
+            DIMENSION,
+            "google-login",
+            "---\n\
+             kind: wip\n\
+             state: open\n\
+             title: \"Google login\"\n\
+             report_to: prdo8qht\n\
+             checked: 2026-08-11T10:27:00+08:00\n\
+             SHIPPED_20260807: \"deployed, waiting on his own retry\"\n\
+             wrapped: |\n\
+             \x20 a value that runs on\n\
+             \x20 to a second line\n\
+             ---\n\n\
+             What he asked for, in his words.\n",
+        )
+        .await
+        .unwrap();
+
+        let mut task = read_task(dir.path(), "google-login").await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Doing, "legacy wip reads as doing");
+        task.set_status(TaskStatus::Done, at(11, 10));
+        write_task(dir.path(), &task).await.unwrap();
+
+        let raw = facets::read_facet(dir.path(), DIMENSION, "google-login")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(raw.contains("status: done"), "{raw}");
+        assert!(raw.contains("completed_at:"), "{raw}");
+        assert!(raw.contains("report_to: prdo8qht"), "{raw}");
+        assert!(
+            raw.contains("SHIPPED_20260807: \"deployed, waiting on his own retry\""),
+            "the note key survived verbatim: {raw}"
+        );
+        assert!(raw.contains("wrapped: |\n  a value that runs on\n  to a second line"), "{raw}");
+        assert!(raw.contains("What he asked for, in his words."), "{raw}");
+        // The legacy pair is re-authored, not carried alongside the status it became.
+        assert!(!raw.contains("\nkind:"), "{raw}");
+        assert!(!raw.contains("\nstate:"), "{raw}");
+        assert!(!raw.contains("\nchecked:"), "legacy `checked` became `checked_at`: {raw}");
+        assert_eq!(raw.matches("title:").count(), 1, "{raw}");
     }
 
     #[tokio::test]
