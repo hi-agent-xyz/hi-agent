@@ -251,7 +251,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T0** | the `core` → `host` rename | **done**, `cf69e06` |
 | **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
 | **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
-| **T2b** | the room: one capture slot at a time (invariant 7) | not started |
+| ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
 | **T3** | the community: registry, then relay + tunnel + the subpath prefix | not started |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
@@ -278,6 +278,29 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### ~~T2b — The room~~ · **cut 2026-08-12**
+
+`topology.md` was the only place it existed. **Scenes are gone from the code**
+(`grep -ri scene src/` is 0) and from every other arch doc; `attachments.rs` answers one
+question, whether a speaker is attached, and nothing arbitrates a capture slot. So
+building "one room at a time" would have been *new* machinery dressed as restoring
+something — the shape this file exists to catch.
+
+With scenes gone, most of the invariant is already true: one conversation, unlimited
+windows. What is left of it is only *two mics at once*, and a hard slot is the wrong
+answer to that anyway — the host would be picking a winner and telling the loser it
+lost, where this codebase's answer to "who is speaking" is soft evidence the agent
+weighs (voiceprints, faces). The room is removed from `topology.md`: the decision row,
+the section, the workflow and invariant 7 all go, and the invariants renumber.
+
+The `## Attachment` section keeps the state table and loses one more retired claim
+while it is open — it said ambient absence is "what presence already models", and
+presence was removed on 2026-08-11. Nothing is lost by being away because the
+conversation keeps, which is the transcript's answer, not presence's.
+
+(`host.md`'s five mentions of `Scene` are *not* stale — they are the deliberate record
+of what replaced it. Left alone.)
 
 #### T2 — The app · **on `feat/topology-app`**
 

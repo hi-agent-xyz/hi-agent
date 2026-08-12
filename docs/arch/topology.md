@@ -23,7 +23,6 @@ person**, never many people behind one surface, and never one person split acros
 | **The core checks auth; the community never does** | In two of the three shapes the community is not in the path at all. Auth at the community would not replace core-side auth, only add to it — two mechanisms to keep in agreement |
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
 | Registration is independent of the account | A BYOK install pays us nothing and must still get a name and be reachable. Sharing a key between the registry and billing would quietly make the address a paid feature |
-| One room at a time | Two live mics in one conversation is not a capacity problem, it is an incoherent one: the agent is in one room |
 
 ## The three roles
 
@@ -313,7 +312,7 @@ migration — never a second body.
 
 ---
 
-## Attachment and the room
+## Attachment
 
 | State | The app holds | The core sees |
 |---|---|---|
@@ -321,18 +320,14 @@ migration — never a second body.
 | **ambient** | the connection only | nobody is there |
 | **detached** | nothing | nobody is there |
 
-**The core gains no new states.** Ambient *is* absence, which presence already models — the
-voice holds an unprompted word for a return, exactly as designed.
+**The core gains no new states**, and nothing is lost by being away: the conversation is an
+append-only list, so a message said to nobody waits in it (see
+[`text-transcript.md`](text-transcript.md)). Attachment answers one question — is a speaker
+attached, so a spoken span is worth synthesizing.
 
 Windows are cheap: the conversation is one backend-owned list rendered by any number of
 them, so a Mac window, a popover and a phone are three subscribers to one list. Nothing
 forks, no session multiplies.
-
-> **One surface at a time is the room.** Everyone else is a window.
-
-Live capture and voice are a single slot, because the agent is in one room. Two mics in one
-conversation is not two inputs, it is an unanswerable question about where the agent is.
-Taking the room is explicit and visible: the surface that had it is told it lost it.
 
 ---
 
@@ -361,10 +356,6 @@ lease. Rename is the same call; the id underneath never changes.
 into that core's live connection as a stream; the core serves it from the tunnel listener —
 off-box, therefore gated — checks the credential, and answers. To the face this is
 indistinguishable from loopback.
-
-**Taking the room.** A second surface opens the mic. The core closes the previous capture
-slot and the surface that held it observes its stream end. One room, one holder, and the
-handover is an event rather than a silent overlap.
 
 **The core is asleep.** No live connection for the handle, so the community answers with a
 plain "asleep" page and `Retry-After` for HTML, and a JSON error for `/api/*`. Nothing is
@@ -400,8 +391,7 @@ Each is testable, and each has a real failure behind it.
 5. **One body per person.** One handle, one live core.
 6. **Off-box trust is structural** — decided by which listener accepted the request, never
    by a header and never by an address.
-7. **One room at a time.** Live capture and voice are a single slot; windows are unlimited.
-8. **Host and client are capabilities of an app instance**, never properties of a platform.
+7. **Host and client are capabilities of an app instance**, never properties of a platform.
 
 ---
 
