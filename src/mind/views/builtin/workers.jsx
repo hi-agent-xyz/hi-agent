@@ -20,6 +20,11 @@
 // 3. **Doing, not just said.** `tail` is the session's own words, and a worker grinding
 //    through shell commands says nothing for minutes — so a blank row read as a dead one.
 //    `doing` is the other half, and the two never share a line.
+// 4. **A row has one state, and which fields are meaningful is a function of it.** The
+//    three above are each a field earning its place; this one is about what happens when
+//    several of them are drawn as though they were independent. They were, and the row
+//    contradicted itself three separate times — see `LiveRow`. The server now sends one
+//    `state` word and this file gates on it.
 //
 // Clicking any row — live or ended — opens what that session did. Those frames have been
 // written for every session all along (`WireTap::with_durable_log`) and nothing could read
@@ -87,8 +92,11 @@ const T = {
     emptyBig: "Nothing is running right now.",
     emptySub: "That's the whole answer — not a page still loading.",
     noTask: "(no note on what it's doing)",
-    busy: "running", idle: "idle",
-    turns: (n) => `${n} turns`, queued: "mail waiting",
+    // One word for what a session is doing with itself — the server folds `busy`+`queued`
+    // into it, so there is nothing here to recombine and nothing to get wrong.
+    state: { running: "running", waiting: "mail waiting", idle: "idle" },
+    turns: (n) => (n === 1 ? "1 turn" : `${n} turns`),
+    up: (t) => `up ${t}`,
     live: "Live", endedHead: "Just ended",
     // An owner that shut down while its worker kept running. The condition behind the
     // dropped report, so it is named rather than shown as a row with no parent.
@@ -152,8 +160,9 @@ const T = {
     emptyBig: "现在没有活在跑。",
     emptySub: "这就是全部 —— 不是还没加载出来。",
     noTask: "（没写在做什么）",
-    busy: "在跑", idle: "闲着",
-    turns: (n) => `${n} 轮`, queued: "还有没读的",
+    state: { running: "在跑", waiting: "有没读的", idle: "闲着" },
+    turns: (n) => `${n} 轮`,
+    up: (t) => `已运行 ${t}`,
     live: "在跑", endedHead: "刚结束",
     orphans: "还在跑,派它的已经没了",
     orphanNote: (id) => `派它的 ${id} 已经不在了`,
@@ -414,32 +423,62 @@ function tree(rows) {
   return groups;
 }
 
+/** One live session.
+ *
+ *  **A row has one state, and which fields are meaningful is a function of it.** That rule
+ *  is the whole of this component, and it is here because the page has now produced the
+ *  same contradiction three times: the role pills once said `speaking`/`thinking` beside a
+ *  status of `idle` (fixed by renaming them to the rung); `doing` said `thinking` beside
+ *  `idle` one line down; and `queued` was drawn as a chip on a third axis, so a session
+ *  with work already in its inbox read as plain `idle` with an easily-missed word beside
+ *  it. Each was patched as its own bug. They are one bug: independent fields rendered as
+ *  though they were independent facts.
+ *
+ *  So the server now sends one `state` — `running` · `waiting` · `idle` — and the fields
+ *  below are gated on it rather than drawn unconditionally.
+ *
+ *  `doing` is the case that matters. It is *only* meaningful while a turn is in flight:
+ *  nothing clears it when one ends, and there is nothing it could honestly be cleared to,
+ *  because it is the last thing seen and that stays true. An idle session finished its
+ *  turn — there is no "what it is doing" — and what a reader wants from it is `tail`, what
+ *  it *said*, which is on the line below and was always there.
+ */
 function LiveRow({ row, open, setOpen, indent }) {
   // A live row is addressed by id with no run, so it cannot collide with an ended row that
   // happens to share the number — which, across runs, they routinely do.
   const isOpen = !!open && open.id === row.id && !open.run;
+  // An unknown state word from a newer server reads as idle rather than blanking the row:
+  // the roster showing a session at all is the load-bearing part.
+  const state = L.state[row.state] ? row.state : "idle";
+  const running = state === "running";
   return (
     <button
       type="button"
       className="hi-workers__row"
       data-indent={indent ? "true" : undefined}
       data-open={isOpen ? "true" : undefined}
+      data-state={state}
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: row.id, run: null })}
     >
       <span className="hi-workers__line">
-        <span className={`hi-workers__dot${row.busy ? " is-busy" : ""}`} aria-hidden />
+        <span className={`hi-workers__dot${running ? " is-busy" : ""}`} aria-hidden />
         <span className="hi-workers__pill">{label(row)}</span>
         <span className="hi-workers__task">{row.task || L.noTask}</span>
-        <span className="hi-workers__elapsed">{elapsed(row.started)}</span>
+        {/* The answer to the question this page exists to ask, so it takes the slot the eye
+            lands on. It reads `idle 4m`, not `5m`: `started` measures uptime, which is the
+            same number for a session quiet since breakfast and one that finished a turn two
+            seconds ago. How long it has been *like this* is the part that says whether
+            anything is wrong. */}
+        <span className="hi-workers__state">
+          {L.state[state]} {elapsed(row.state_since || row.started)}
+        </span>
       </span>
 
+      {/* The durable facts, and nothing that could contradict the line above. */}
       <span className="hi-workers__meta">
-        <span>{row.busy ? L.busy : L.idle}</span>
         {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
-        {/* `queued` is a bool: the registry merges a burst into one prompt, so it knows
-            there is mail waiting but never how much. */}
-        {row.queued && <span className="is-accent">{L.queued}</span>}
+        {row.started && <span>{L.up(elapsed(row.started))}</span>}
         {/* Only once the owner has gone. While it is live the indent already shows who it
             is, and repeating it on every child is noise. */}
         {row.owner && !row.owner_role && (
@@ -449,8 +488,19 @@ function LiveRow({ row, open, setOpen, indent }) {
 
       {/* Doing and said are different questions and never share a line. A row with a
           `doing` and no `tail` is a session working in silence — which is exactly what used
-          to be indistinguishable from a dead one. */}
-      {row.doing && <span className="hi-workers__doing">{row.doing}</span>}
+          to be indistinguishable from a dead one.
+
+          The age beside it is what separates working from hung: `$ cargo test` four minutes
+          in is a build, the same line forty minutes in is a session nothing will come back
+          from. No threshold is applied — the number is shown and the reader judges, because
+          picking the minute at which this page silently declares something dead is not a
+          call it is in a position to make. */}
+      {running && row.doing && (
+        <span className="hi-workers__doing">
+          {row.doing}
+          {row.doing_at && <span className="hi-workers__age"> · {elapsed(row.doing_at)}</span>}
+        </span>
+      )}
       {row.tail && <span className="hi-workers__tail">{row.tail}</span>}
     </button>
   );
@@ -1004,10 +1054,14 @@ const CSS = `
     background: var(--danger-wash);
   }
 
+  /* Wraps, because the frame here can be the window minus a ~400px conversation rail and
+     the state chip must not be bought out of the task's width. Below roughly 420px the
+     chip drops to its own row instead of squeezing the task to three characters. */
   .hi-workers__line {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 9px;
+    gap: 4px 9px;
     min-width: 0;
   }
 
@@ -1040,9 +1094,10 @@ const CSS = `
   }
 
   /* min-width:0 so the ellipsis can happen at all — a flex child sizes to its content by
-     default and would push the elapsed time off the row instead of truncating. */
+     default and would push the elapsed time off the row instead of truncating. The 140px
+     basis is what makes the line wrap rather than shrink the task past legibility. */
   .hi-workers__task {
-    flex: 1;
+    flex: 1 1 140px;
     min-width: 0;
     font-size: 14.5px;
     font-weight: 620;
@@ -1059,6 +1114,27 @@ const CSS = `
     color: var(--fg-mute);
   }
 
+  /* The live row's answer, in the slot the plain uptime used to hold. Pushed right so it
+     stays on the row's edge when the line wraps. */
+  .hi-workers__state {
+    flex: none;
+    margin-left: auto;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg-mute);
+  }
+
+  .hi-workers__row[data-state="running"] .hi-workers__state {
+    color: var(--accent);
+  }
+
+  /* Work sitting in an inbox nobody has picked up. Not an error — a session mid-turn will
+     take it next round — but it is the one state where a growing number means the drain
+     has stopped, so it does not read as quiet. */
+  .hi-workers__row[data-state="waiting"] .hi-workers__state {
+    color: var(--accent-2);
+  }
+
   .hi-workers__meta {
     display: flex;
     flex-wrap: wrap;
@@ -1066,11 +1142,6 @@ const CSS = `
     margin-top: 7px;
     font-size: 12px;
     color: var(--fg-mute);
-  }
-
-  .hi-workers__meta .is-accent {
-    color: var(--accent);
-    font-weight: 600;
   }
 
   .hi-workers__meta .is-warn {
@@ -1089,6 +1160,12 @@ const CSS = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* How long it has been on this one. Quieter than the line it qualifies — it is the
+     second question, asked only once the first has an answer. */
+  .hi-workers__age {
+    color: var(--fg-mute);
   }
 
   .hi-workers__tail {

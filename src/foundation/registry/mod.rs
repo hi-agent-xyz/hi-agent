@@ -110,6 +110,16 @@ pub struct Status {
     pub queued: bool,
     pub turns: u64,
     pub started: DateTime<Utc>,
+    /// When this session last **changed state** — opened a turn, finished one, or had mail
+    /// land on a quiet inbox.
+    ///
+    /// `started` cannot answer the question a reader is actually asking. A session that has
+    /// been quiet for five minutes and one that finished a turn two seconds ago have the
+    /// same `started`, so the only clock on the roster measured the wrong thing: uptime,
+    /// when what says whether anything is wrong is *how long it has been like this*. A turn
+    /// running for 12 seconds is working; one running for 40 minutes is stuck, and until
+    /// this field there was nothing on the wire that could tell them apart.
+    pub state_since: DateTime<Utc>,
     /// The last thing this session was seen **doing** — a tool call, a shell command, a
     /// thought — as one short line, or `None` before it has done anything.
     ///
@@ -121,6 +131,14 @@ pub struct Status {
     /// a shell command showed a blank line on the roster, which is the same "silence read as
     /// health" this whole surface exists to end.
     pub doing: Option<String>,
+    /// When [`doing`](Self::doing) was last replaced, or `None` alongside a `None` `doing`.
+    ///
+    /// A line with no age says a session is alive and nothing more. `$ cargo test` four
+    /// minutes in is working; the same line forty minutes in is hung, and those are the two
+    /// answers a reader wants from a busy row. Without this the roster could not distinguish
+    /// them — which is the same shape as the `tail`/`doing` split one level down: it is not
+    /// enough to know a thing happened, you have to know when.
+    pub doing_at: Option<DateTime<Utc>>,
 }
 
 /// One message in flight, with the return address the registry stamped on it.
@@ -196,16 +214,63 @@ struct Entry {
     busy: bool,
     turns: u64,
     started: DateTime<Utc>,
+    /// When `busy`, or the emptiness of `inbox.pending`, last changed — see
+    /// [`Status::state_since`].
+    state_since: DateTime<Utc>,
     inbox: Inbox,
     /// Bounded tail of what this session has said, for `SessionMessages`.
     output: String,
     /// The last thing it was seen doing — see [`Status::doing`].
     doing: Option<String>,
+    /// When `doing` was last replaced — see [`Status::doing_at`].
+    doing_at: Option<DateTime<Utc>>,
     /// The codex thread hosting this session, once `thread/start` has answered. `None`
     /// between registration and that moment — the session exists first, deliberately.
     thread: Option<String>,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
+}
+
+impl Entry {
+    /// This entry as the metadata a reader gets. One place, because there are three
+    /// callers ([`Registry::status`], [`Registry::session_of_role`],
+    /// [`Registry::statuses`]) and they were three copies of the same nine-field literal —
+    /// so a field added to `Status` had three chances to be forgotten in one.
+    fn status(&self, id: SessionId) -> Status {
+        Status {
+            id,
+            role: self.role,
+            owner: self.owner,
+            task: self.task.clone(),
+            busy: self.busy,
+            queued: !self.inbox.pending.is_empty(),
+            turns: self.turns,
+            started: self.started,
+            state_since: self.state_since,
+            doing: self.doing.clone(),
+            doing_at: self.doing_at,
+        }
+    }
+
+    /// Stamp a state change, if this is one.
+    ///
+    /// Every transition goes through here rather than each call site writing `Utc::now()`,
+    /// because the field only means anything if *all* of them stamp it: one path that
+    /// changes `busy` without moving the clock reports a turn as older than it is, and the
+    /// reading it exists to give — how long has it been like this — is silently wrong
+    /// exactly on the path that skipped it.
+    fn note_state_change(&mut self, changed: bool) {
+        if changed {
+            self.state_since = Utc::now();
+        }
+    }
+
+    /// Whether this entry is quiet: no turn in flight and nothing waiting. Mail landing on
+    /// a quiet session is a state change (idle → waiting); mail landing on a busy or
+    /// already-queued one is not.
+    fn is_quiet(&self) -> bool {
+        !self.busy && self.inbox.pending.is_empty()
+    }
 }
 
 /// A registration that ends when it goes out of scope.
@@ -315,9 +380,12 @@ impl Registry {
                     busy: false,
                     turns: 0,
                     started,
+                    // A fresh session is idle, and has been since it existed.
+                    state_since: started,
                     inbox: Inbox::default(),
                     output: String::new(),
                     doing: None,
+                    doing_at: None,
                     thread: None,
                     notify: notify.clone(),
                 },
@@ -498,6 +566,7 @@ impl Registry {
             if entry.inbox.closed {
                 return Delivery::Unknown;
             }
+            entry.note_state_change(entry.is_quiet());
             entry.inbox.pending.push(Message { from: Some(from), text: message });
             entry.notify.notify_one();
             Delivery::Delivered
@@ -574,6 +643,7 @@ impl Registry {
             if entry.inbox.closed {
                 return Delivery::Unknown;
             }
+            entry.note_state_change(entry.is_quiet());
             entry.inbox.pending.push(Message { from: None, text });
             entry.notify.notify_one();
             Delivery::Delivered
@@ -598,6 +668,7 @@ impl Registry {
             } else {
                 entry.busy = true;
                 entry.turns += 1;
+                entry.note_state_change(true);
                 true
             }
         };
@@ -615,6 +686,9 @@ impl Registry {
             if entry.inbox.pending.is_empty() {
                 return None;
             }
+            // Only when it was not already mid-turn: emptying the inbox of a *busy* session
+            // leaves it running, which is the state it was already in.
+            entry.note_state_change(!entry.busy);
             if !entry.busy {
                 entry.busy = true;
                 entry.turns += 1;
@@ -637,6 +711,8 @@ impl Registry {
             if entry.inbox.pending.is_empty() {
                 return None;
             }
+            // Waiting → idle. A busy session was, and stays, running.
+            entry.note_state_change(!entry.busy);
             std::mem::take(&mut entry.inbox.pending)
         };
         self.note_activity();
@@ -661,6 +737,7 @@ impl Registry {
                 entry.inbox.closed = true;
                 return None;
             }
+            entry.note_state_change(!entry.busy);
             if !entry.busy {
                 entry.busy = true;
                 entry.turns += 1;
@@ -684,6 +761,7 @@ impl Registry {
             if let Some(e) = map.get_mut(&id) {
                 let changed = e.busy;
                 e.busy = false;
+                e.note_state_change(changed);
                 changed
             } else {
                 false
@@ -732,6 +810,7 @@ impl Registry {
         };
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
             e.doing = Some(line);
+            e.doing_at = Some(Utc::now());
         }
     }
 
@@ -745,18 +824,7 @@ impl Registry {
     /// Metadata for one session. Cheap by construction — no content crosses.
     pub fn status(&self, id: SessionId) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
-        let e = map.get(&id)?;
-        Some(Status {
-            id,
-            role: e.role,
-            owner: e.owner,
-            task: e.task.clone(),
-            busy: e.busy,
-            queued: !e.inbox.pending.is_empty(),
-            turns: e.turns,
-            started: e.started,
-            doing: e.doing.clone(),
-        })
+        Some(map.get(&id)?.status(id))
     }
 
     /// The live session holding `role`, if there is one — for the **singleton** rungs,
@@ -774,37 +842,13 @@ impl Registry {
     pub fn session_of_role(&self, role: Role) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
         let id = map.iter().filter(|(_, e)| e.role == role).map(|(&id, _)| id).min()?;
-        let e = map.get(&id)?;
-        Some(Status {
-            id,
-            role: e.role,
-            owner: e.owner,
-            task: e.task.clone(),
-            busy: e.busy,
-            queued: !e.inbox.pending.is_empty(),
-            turns: e.turns,
-            started: e.started,
-            doing: e.doing.clone(),
-        })
+        Some(map.get(&id)?.status(id))
     }
 
     /// Metadata for every live session, ordered by id.
     pub fn statuses(&self) -> Vec<Status> {
         let map = self.sessions.lock().unwrap();
-        let mut rows: Vec<Status> = map
-            .iter()
-            .map(|(&id, e)| Status {
-                id,
-                role: e.role,
-                owner: e.owner,
-                task: e.task.clone(),
-                busy: e.busy,
-                queued: !e.inbox.pending.is_empty(),
-                turns: e.turns,
-                started: e.started,
-                doing: e.doing.clone(),
-            })
-            .collect();
+        let mut rows: Vec<Status> = map.iter().map(|(&id, e)| e.status(id)).collect();
         rows.sort_by_key(|status| status.id);
         rows
     }
@@ -1209,6 +1253,72 @@ mod tests {
 
         r.finish_turn(b);
         assert!(!r.status(b).unwrap().busy);
+    }
+
+    /// Every transition moves `state_since`, and the ones that are *not* transitions leave
+    /// it alone. The field is only worth having if all of them stamp: one path that flips
+    /// `busy` without moving the clock reports a turn as older than it is, on exactly the
+    /// path that skipped it.
+    #[test]
+    fn every_state_change_moves_its_clock_and_nothing_else_does() {
+        let r = reg();
+        let id = mint();
+        r.register(id, Role::Worker(WorkerType::General), None, String::new());
+        let registered = r.status(id).unwrap();
+        assert_eq!(registered.state_since, registered.started, "idle since it existed");
+
+        // idle → waiting
+        r.post(id, "go".into());
+        let waiting = r.status(id).unwrap();
+        assert!(waiting.queued && !waiting.busy);
+        assert!(waiting.state_since > registered.state_since);
+
+        // A second letter onto an already-queued inbox is not a state change.
+        r.post(id, "and also".into());
+        assert_eq!(r.status(id).unwrap().state_since, waiting.state_since, "still waiting");
+
+        // waiting → running
+        r.take_pending(id);
+        let running = r.status(id).unwrap();
+        assert!(running.busy);
+        assert!(running.state_since > waiting.state_since);
+
+        // Mail landing mid-turn leaves it running, so the clock holds.
+        r.post(id, "one more".into());
+        assert_eq!(r.status(id).unwrap().state_since, running.state_since, "still running");
+
+        // running → idle
+        r.finish_turn(id);
+        let done = r.status(id).unwrap();
+        assert!(!done.busy);
+        assert!(done.state_since > running.state_since);
+
+        // A second finish is not a transition.
+        r.finish_turn(id);
+        assert_eq!(r.status(id).unwrap().state_since, done.state_since);
+    }
+
+    /// `doing` without an age says a session is alive and nothing more — the line reads the
+    /// same four minutes in and forty minutes in.
+    #[test]
+    fn doing_carries_when_it_was_last_seen() {
+        let r = reg();
+        let id = mint();
+        r.register(id, Role::Worker(WorkerType::General), None, String::new());
+        assert!(r.status(id).unwrap().doing_at.is_none(), "nothing done, no clock");
+
+        r.record_activity(id, "$ cargo test");
+        let first = r.status(id).unwrap().doing_at.expect("stamped");
+
+        r.record_activity(id, "hi-agent/send_message");
+        let second = r.status(id).unwrap();
+        assert_eq!(second.doing.as_deref(), Some("hi-agent/send_message"));
+        assert!(second.doing_at.unwrap() >= first, "replaced, so re-stamped");
+
+        // A blank line is not activity and must not refresh the clock — a session that has
+        // gone quiet would otherwise look busy forever.
+        r.record_activity(id, "   ");
+        assert_eq!(r.status(id).unwrap().doing_at, second.doing_at);
     }
 
     #[test]

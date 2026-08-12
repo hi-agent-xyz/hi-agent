@@ -128,7 +128,9 @@ mod tests {
             queued,
             turns: 0,
             started: Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap(),
+            state_since: Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap(),
             doing: None,
+            doing_at: None,
         }
     }
 

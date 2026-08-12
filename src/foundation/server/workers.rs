@@ -50,12 +50,24 @@ use crate::foundation::registry::{self, SessionId, Status};
 
 /// One live session, as the review view reads it.
 ///
-/// One field does not map one-to-one onto [`Status`], and the difference is the
+/// **`state` is one word where the registry has two booleans, and the fold happens here
+/// rather than in the reader.** `busy` and `queued` are not two axes — they are three
+/// readings of one thing (running · mail waiting · idle) — and shipping them separately
+/// meant every reader had to recombine them, which the review view did not: it drew `idle`
+/// from one and a `mail waiting` chip from the other, so a session with work sitting in
+/// its inbox read as quiet. Folding server-side also means `curl /api/workers` during a
+/// journey test reads the same state word the page shows, which is the same reason the
+/// message fold lives in [`crate::foundation::codex::messages`] rather than in the view.
+///
+/// The registry keeps both booleans — they are what the loops branch on — and nothing else
+/// on the wire needs them.
+///
+/// One field still does not map one-to-one onto [`Status`], and the difference is the
 /// registry's, not this module's:
 ///
-/// - `queued` is a **bool** in `Status`, not a count: the registry answers "is
-///   anything waiting for its next turn", never how many. It merges a burst into one
-///   prompt, so a count would not survive being taken anyway.
+/// - `queued`, folded into `state` above, is a **bool** in `Status` and not a count: the
+///   registry answers "is anything waiting for its next turn", never how many. It merges a
+///   burst into one prompt, so a count would not survive being taken anyway.
 ///
 /// **`owner` used to be a label and is now the id, with the label beside it.** It rendered
 /// as the owner's *role word* when the owner was still registered and as the bare id only
@@ -89,11 +101,15 @@ struct WorkerDto {
     /// `owner` id above is kept either way.
     owner_role: Option<&'static str>,
     task: String,
-    busy: bool,
-    queued: bool,
+    /// `running` · `waiting` · `idle` — see the type doc. One word, derived here.
+    state: &'static str,
     turns: u64,
     /// RFC3339, whole seconds, UTC.
     started: String,
+    /// When it entered `state`, RFC3339. The elapsed figure a reader wants: `started`
+    /// measures uptime, which is the same for a session quiet for five minutes and one that
+    /// finished a turn two seconds ago.
+    state_since: String,
     /// The most recent non-blank line of the session's retained output, or `null` if
     /// it has not said anything yet. The full tail is on `GET /api/workers/{id}`.
     ///
@@ -106,7 +122,15 @@ struct WorkerDto {
     /// The field that answers "is this alive". `tail` could not: the switchboard's output
     /// tail is fed only from the session's own text, so a worker grinding through commands
     /// reported nothing for as long as it worked.
+    ///
+    /// **It is only meaningful while `state` is `running`.** Nothing clears it when a turn
+    /// ends, and there is nothing it could honestly be cleared to — it is the last thing
+    /// seen, which is a fact whenever it is read. A reader that draws it beside a
+    /// non-running state is what made a finished session say `idle` and `thinking` at once.
     doing: Option<String>,
+    /// When `doing` was last replaced, RFC3339. What separates a busy session that is
+    /// working from one that is hung: the line alone cannot.
+    doing_at: Option<String>,
 }
 
 /// `GET /api/workers` — every live session in the switchboard.
@@ -388,13 +412,34 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         owner: st.owner.map(|o| o.to_string()),
         owner_role: owner_role(st.owner),
         task: st.task.clone(),
-        busy: st.busy,
-        queued: st.queued,
+        state: state_of(st),
         turns: st.turns,
-        started: st.started.to_rfc3339_opts(SecondsFormat::Secs, true),
+        started: stamp(st.started),
+        state_since: stamp(st.state_since),
         tail,
         doing: st.doing.clone(),
+        doing_at: st.doing_at.map(stamp),
     }
+}
+
+/// The one word for what a session is doing with itself — see [`WorkerDto::state`].
+///
+/// `busy` wins over `queued`, because mail landing mid-turn changes nothing a reader can
+/// act on: it will be picked up by the turn after this one, and the session is running
+/// either way. `waiting` is the case worth naming — nothing in flight and work already
+/// sitting there — because a wait that keeps growing is a drain that has stopped.
+fn state_of(st: &Status) -> &'static str {
+    if st.busy {
+        "running"
+    } else if st.queued {
+        "waiting"
+    } else {
+        "idle"
+    }
+}
+
+fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// The owner's role word while the owner is still registered, else `None`.
@@ -432,7 +477,11 @@ mod tests {
             queued: false,
             turns: 3,
             started: Utc.with_ymd_and_hms(2026, 8, 5, 3, minute, 0).unwrap(),
+            // A minute after it started, so a test can tell the two clocks apart — which is
+            // the whole reason there are two.
+            state_since: Utc.with_ymd_and_hms(2026, 8, 5, 3, minute + 1, 0).unwrap(),
             doing: None,
+            doing_at: None,
         }
     }
 
@@ -467,11 +516,35 @@ mod tests {
         assert_eq!(v["owner_role"], serde_json::Value::Null);
         assert_eq!(v["doing"], serde_json::Value::Null);
         assert_eq!(v["task"], "check oil prices");
-        assert_eq!(v["busy"], true);
-        assert_eq!(v["queued"], false);
+        assert_eq!(v["state"], "running");
         assert_eq!(v["turns"], 3);
         assert_eq!(v["started"], "2026-08-05T03:12:00Z");
+        assert_eq!(v["state_since"], "2026-08-05T03:13:00Z");
+        assert_eq!(v["doing_at"], serde_json::Value::Null);
         assert_eq!(v["tail"], "last line");
+        assert!(v.get("busy").is_none(), "folded into `state`");
+        assert!(v.get("queued").is_none(), "folded into `state`");
+    }
+
+    /// The three states, and the precedence between them. `waiting` is the one the old
+    /// two-boolean shape could not say: a session with work already in its inbox reported
+    /// `busy: false`, which every reader spelled `idle`.
+    #[test]
+    fn two_booleans_fold_to_one_state_word() {
+        let cases = [
+            (false, false, "idle"),
+            (false, true, "waiting"),
+            (true, false, "running"),
+            // Mail landing mid-turn changes nothing a reader can act on: the next turn
+            // picks it up and this one is still running.
+            (true, true, "running"),
+        ];
+        for (busy, queued, want) in cases {
+            let mut st = status(1, busy, 0);
+            st.queued = queued;
+            assert_eq!(state_of(&st), want, "busy={busy} queued={queued}");
+            assert_eq!(serde_json::to_value(dto(&st, None)).unwrap()["state"], want);
+        }
     }
 
     /// Every role reaches a row, and a worker's row carries its specialism while a
@@ -540,9 +613,12 @@ mod tests {
     fn a_row_carries_what_it_is_doing_even_with_nothing_said() {
         let mut st = status(3, true, 0);
         st.doing = Some("$ cargo test".into());
+        st.doing_at = Some(Utc.with_ymd_and_hms(2026, 8, 5, 3, 4, 0).unwrap());
         let v = serde_json::to_value(dto(&st, None)).unwrap();
         assert_eq!(v["doing"], "$ cargo test");
         assert_eq!(v["tail"], serde_json::Value::Null, "said nothing, still visibly working");
+        // The age is what separates working from hung; the line alone says only "alive".
+        assert_eq!(v["doing_at"], "2026-08-05T03:04:00Z");
     }
 
     /// `run` reaches the filesystem as a path segment, so only a real run id passes. The
