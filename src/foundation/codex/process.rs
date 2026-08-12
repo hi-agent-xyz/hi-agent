@@ -319,6 +319,19 @@ impl Drop for TaskGuard {
     }
 }
 
+/// The thread id out of a `thread/start` or `thread/resume` response.
+///
+/// One reader for both, because both answer with the same `{ thread: { id } }` shape and a
+/// resume that came back without one would be exactly as broken as an open that did.
+fn thread_id_of(result: &Value, method: &str) -> anyhow::Result<String> {
+    result
+        .get("thread")
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("{method} returned no thread id: {result}"))
+}
+
 impl CodexProcess {
     /// Spawn `codex app-server --stdio` and complete the `initialize` handshake.
     ///
@@ -540,9 +553,16 @@ impl CodexProcess {
             "cwd": cwd.to_string_lossy(),
             // Approvals are a policy choice made here, not a prompt shown to the person.
             "approvalPolicy": "never",
-            // In-memory only: a rung opens a fresh thread per boot, exactly as the ACP
-            // path did, so there is no rollout file to garbage-collect under CODEX_HOME.
-            "ephemeral": true,
+            // Durable, so the thread outlives the process that opened it. This was
+            // `true` — inherited from the ACP path, on the reasoning that a rung opens a
+            // fresh thread per boot and an ephemeral one leaves no rollout to
+            // garbage-collect. That was a housekeeping argument answering a continuity
+            // question: a rung that reopens cannot remember what it was in the middle of,
+            // which `agents.md` already calls the failure worth preventing, and every
+            // restart reproduced it. Retention is the real cost and it is a real one — a
+            // single trivial turn writes ~45KB — but it is bounded work, and losing the
+            // thread was not.
+            "ephemeral": false,
         });
         // A profile carries its own sandbox, and codex rejects the pair outright, so the
         // two spellings are exclusive rather than merged.
@@ -558,13 +578,49 @@ impl CodexProcess {
         }
 
         let result = self.request("thread/start", params).await?;
-        let id = result
-            .get("thread")
-            .and_then(|t| t.get("id"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("thread/start returned no thread id: {result}"))?
-            .to_string();
+        let id = thread_id_of(&result, "thread/start")?;
         tracing::info!(thread_id = %id, "codex thread opened");
+        Ok(id)
+    }
+
+    /// Pick `thread_id` back up in this process, carrying `opts` exactly as
+    /// [`open_thread`](Self::open_thread) would.
+    ///
+    /// **`baseInstructions` rides the resume, and that is the load-bearing half.** Prompts
+    /// are reinstalled from the bundle every boot and a binary upgrade is the most common
+    /// reason to restart, so a thread resumed without them would run on the prompt of
+    /// whichever release first opened it — the oldest threads carrying the stalest
+    /// instructions. Verified against the 0.147 pin rather than the docs: a thread started
+    /// under one prompt and resumed under another answers as the second.
+    ///
+    /// Errors are the caller's to absorb, and one is entirely ordinary: a thread that never
+    /// took a turn has no rollout, and codex answers `no rollout found for thread id`. That
+    /// is a boot where nothing had happened yet, not a fault.
+    pub async fn resume_thread(&self, thread_id: &str, opts: SessionOpts) -> anyhow::Result<String> {
+        let mut params = json!({
+            "threadId": thread_id,
+            "approvalPolicy": "never",
+        });
+        if let Some(cwd) = opts.cwd {
+            params["cwd"] = json!(cwd.to_string_lossy());
+        }
+        match &opts.permission_profile {
+            Some(profile) => params["permissions"] = json!(profile),
+            None => params["sandbox"] = json!(opts.sandbox.as_str()),
+        }
+        if let Some(prompt) = opts.system_prompt {
+            params["baseInstructions"] = json!(prompt);
+        }
+        if !opts.config.is_empty() {
+            params["config"] = Value::Object(opts.config);
+        }
+
+        let result = self.request("thread/resume", params).await?;
+        // Resume appends to the thread's original rollout, so the id that comes back is the
+        // id that went in — read it from the response anyway rather than echoing the
+        // argument, so the session records what codex says it is on.
+        let id = thread_id_of(&result, "thread/resume")?;
+        tracing::info!(thread_id = %id, "codex thread resumed");
         Ok(id)
     }
 

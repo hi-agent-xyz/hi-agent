@@ -87,6 +87,25 @@ pub enum Record {
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<u64>,
     },
+    /// The codex thread behind a session, once it exists. Written from
+    /// [`Registry::note_thread`](super::Registry::note_thread).
+    ///
+    /// **Its own record rather than a field on `opened`, because the thread does not exist
+    /// yet when `opened` is written.** A session registers before its subprocess is
+    /// spawned — deliberately, so an address exists before anything can be told to use it
+    /// — and `thread/start` answers some hundreds of milliseconds later. Folding the id
+    /// into `opened` would mean delaying that write until the thread is up, which is
+    /// exactly the window a crash falls into and the reason `opened` is written on the way
+    /// in at all.
+    ///
+    /// The id is codex's, not ours: `thread/start` takes no path, so where the rollout
+    /// lands is its choice and `(run, session)` cannot address it. Recorded, never derived.
+    Thread {
+        run: String,
+        session: u64,
+        at: DateTime<Utc>,
+        thread_id: String,
+    },
     /// A session left the switchboard. Written from `unregister`, and self-contained on
     /// purpose — see the module doc.
     Closed {
@@ -110,7 +129,9 @@ impl Record {
     /// reportable as *which* one.
     fn session(&self) -> u64 {
         match self {
-            Record::Opened { session, .. } | Record::Closed { session, .. } => *session,
+            Record::Opened { session, .. }
+            | Record::Closed { session, .. }
+            | Record::Thread { session, .. } => *session,
         }
     }
 }
@@ -144,6 +165,15 @@ pub struct Ended {
     pub ended: Option<DateTime<Utc>>,
     pub how: EndedHow,
     pub turns: Option<u64>,
+    /// The codex thread this session ran on, if one was ever opened. `None` for a session
+    /// that died before `thread/start` answered, and for every row written before threads
+    /// were recorded.
+    ///
+    /// This is what makes a dead session's *mind* addressable, the way `run` + `session`
+    /// already makes its frames addressable. A resident rung's is what the next boot
+    /// resumes; a worker's is what the boot glance offers Cognition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
 }
 
 impl Ended {
@@ -348,6 +378,12 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
     let mut ends: Vec<Ended> = Vec::new();
     let mut opened: Vec<Ended> = Vec::new();
     let mut closed: HashSet<(String, u64)> = HashSet::new();
+    // Threads are folded in a second pass rather than as they arrive: a `thread` line
+    // always follows its `opened` (the thread cannot exist before the session that opens
+    // it) but may precede or follow the `closed`, and a tail-read can begin between any
+    // two of the three. Collecting first and attaching after makes the order irrelevant.
+    let mut threads: std::collections::HashMap<(String, u64), String> =
+        std::collections::HashMap::new();
 
     for line in text.lines() {
         let line = line.trim();
@@ -379,7 +415,11 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     ended: Some(at),
                     how: EndedHow::Closed,
                     turns: Some(turns),
+                    thread: None,
                 });
+            }
+            Record::Thread { run, session, thread_id, .. } => {
+                threads.insert((run, session), thread_id);
             }
             Record::Opened { run, session, at, role, worker_type, task, owner } => {
                 // A session in the current run with no close is *live*, not lost — the
@@ -398,6 +438,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     ended: None,
                     how: EndedHow::Restart,
                     turns: None,
+                    thread: None,
                 });
             }
         }
@@ -406,6 +447,11 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
     // An `opened` is only evidence of a restart-killed session once the whole window has
     // been read and no `closed` for it turned up.
     ends.extend(opened.into_iter().filter(|e| !closed.contains(&(e.run.clone(), e.session))));
+
+    // Attach each session's thread now that every line has been seen.
+    for end in &mut ends {
+        end.thread = threads.get(&(end.run.clone(), end.session)).cloned();
+    }
 
     // Most recent first, and stable on the id so two ends in the same second keep a
     // deterministic order rather than shuffling between polls.
@@ -429,6 +475,7 @@ pub fn ended_now(
     task: &str,
     turns: u64,
     started: DateTime<Utc>,
+    thread: Option<String>,
 ) -> Ended {
     Ended {
         run: run.to_string(),
@@ -441,6 +488,7 @@ pub fn ended_now(
         ended: Some(Utc::now()),
         how: EndedHow::Closed,
         turns: Some(turns),
+        thread,
     }
 }
 
@@ -479,6 +527,46 @@ pub fn opened_record(
     }
 }
 
+/// The `thread` record binding a session to the codex thread it opened.
+pub fn thread_record(run: &str, session: u64, thread_id: &str, at: DateTime<Utc>) -> Record {
+    Record::Thread {
+        run: run.to_string(),
+        session,
+        at,
+        thread_id: thread_id.to_string(),
+    }
+}
+
+/// The roles whose thread the next boot resumes, and the only ones.
+///
+/// **Residency is the whole criterion.** Both are one session for the life of the process,
+/// so "the last one" is unambiguous and picking it needs no judgment. Reflection is excluded
+/// because a pass that died is re-driven by the frontier cursor, which already points where
+/// it stopped; workers are excluded because whether a dead errand is still worth finishing is
+/// a judgment, and `agents.md` gives it to Cognition rather than to a list in code. Both
+/// still *have* threads — a worker's is on its row for the boot glance to offer. This governs
+/// what resumes **by itself**.
+const RESUMED_AT_BOOT: [Role; 2] = [Role::Reaction, Role::Cognition];
+
+/// The thread each resident rung should resume, from the seeded ends — most recent first,
+/// one per role.
+///
+/// Reads ends that are already sorted by recency, so the first row for a role is that
+/// rung's last session, whether it was closed cleanly or lost to a crash. A rung with no
+/// prior row (fresh install, or a run that never got a thread open) is simply absent, and
+/// its session opens cold.
+pub fn resumable(ends: &[Ended]) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for end in ends {
+        let Some(thread) = &end.thread else { continue };
+        if !RESUMED_AT_BOOT.iter().any(|r| r.as_str() == end.role) {
+            continue;
+        }
+        out.entry(end.role.clone()).or_insert_with(|| thread.clone());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +581,87 @@ mod tests {
         format!("{}\n", serde_json::to_string(record).unwrap())
     }
 
+    /// A thread line binds to its session's row whichever side of the close it lands on.
+    /// The tail-read can begin between any two lines, so the fold may see `thread` before
+    /// `closed` or after it, and a binding that only worked in one order would attach on
+    /// some boots and not others.
+    #[test]
+    fn a_thread_binds_to_its_row_in_either_order() {
+        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", 3, ts(1), None));
+        let thread = thread_record("run-a", 7, "th-cognition", ts(2));
+
+        for text in [
+            format!("{}{}", line(&closed), line(&thread)),
+            format!("{}{}", line(&thread), line(&closed)),
+        ] {
+            let ends = fold(&text, "run-b");
+            assert_eq!(ends.len(), 1, "the thread line is not a session of its own");
+            assert_eq!(ends[0].thread.as_deref(), Some("th-cognition"));
+        }
+    }
+
+    /// A session the process died under still carries its thread — that is the row the next
+    /// boot resumes from, and the case the whole record exists for.
+    #[test]
+    fn a_restart_row_keeps_its_thread() {
+        let opened = opened_record("run-a", 2, Role::Reaction, None, "the voice", ts(5));
+        let thread = thread_record("run-a", 2, "th-voice", ts(5));
+        let ends = fold(&format!("{}{}", line(&opened), line(&thread)), "run-b");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0].how, EndedHow::Restart);
+        assert_eq!(ends[0].thread.as_deref(), Some("th-voice"));
+    }
+
+    /// Only the resident rungs are resumed by themselves. A worker keeps its thread on
+    /// its row — that is what lets the boot glance offer it — but must never come back on
+    /// its own, because whether a dead errand is still worth finishing is Cognition's
+    /// judgment (`agents.md`).
+    #[test]
+    fn only_the_resident_rungs_resume_themselves() {
+        let mut text = String::new();
+        for (session, role) in [
+            (1u64, Role::Reaction),
+            (2, Role::Cognition),
+            (3, Role::Reflection),
+            (4, Role::Worker(WorkerType::General)),
+        ] {
+            text.push_str(&line(&opened_record("run-a", session, role, None, "", ts(1))));
+            text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), ts(1))));
+        }
+        let plan = resumable(&fold(&text, "run-b"));
+
+        assert_eq!(plan.get("reaction").map(String::as_str), Some("th-1"));
+        assert_eq!(plan.get("cognition").map(String::as_str), Some("th-2"));
+        assert!(plan.get("reflection").is_none(), "a dead pass is re-driven by the frontier cursor");
+        assert!(plan.get("worker").is_none(), "picking an errand back up is Cognition's call");
+    }
+
+    /// A rung with several past sessions resumes its most recent, not whichever the fold
+    /// happened to reach first.
+    #[test]
+    fn a_rung_resumes_its_latest_thread() {
+        let mut text = String::new();
+        for (session, at) in [(1u64, ts(1)), (2, ts(20)), (3, ts(10))] {
+            text.push_str(&line(&closed_record(&{
+                let mut e = ended_now("run-a", session, Role::Cognition, None, "", 1, at, None);
+                e.ended = Some(at);
+                e
+            })));
+            text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), at)));
+        }
+        let plan = resumable(&fold(&text, "run-b"));
+        assert_eq!(plan.get("cognition").map(String::as_str), Some("th-2"), "latest by recency");
+    }
+
+    /// A row from before threads were recorded has no thread, and must be skipped rather
+    /// than resumed as an empty one — an upgrade's first boot is exactly this case.
+    #[test]
+    fn a_row_without_a_thread_is_not_resumable() {
+        let closed = closed_record(&ended_now("run-a", 1, Role::Reaction, None, "", 4, ts(1), None));
+        let plan = resumable(&fold(&line(&closed), "run-b"));
+        assert!(plan.is_empty());
+    }
+
     /// A close with both ends pinned. [`ended_now`] stamps the end with `Utc::now()`, which
     /// is its whole contract — it is called at the moment of unregistering — so a test about
     /// *ordering* has to set the end itself rather than pass a start and hope.
@@ -503,7 +672,7 @@ mod tests {
         started: DateTime<Utc>,
         ended: DateTime<Utc>,
     ) -> Record {
-        let mut row = ended_now(run, session, role, None, "", 1, started);
+        let mut row = ended_now(run, session, role, None, "", 1, started, None);
         row.ended = Some(ended);
         closed_record(&row)
     }
@@ -520,6 +689,7 @@ mod tests {
             "build the workers view",
             4,
             ts(10),
+            None,
         ));
         let ends = fold(&line(&closed), "run-b");
         assert_eq!(ends.len(), 1);
@@ -552,7 +722,7 @@ mod tests {
     #[test]
     fn an_opened_that_later_closed_is_one_closed_row() {
         let opened = opened_record("run-a", 7, Role::Cognition, None, "", ts(1));
-        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", 12, ts(1)));
+        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", 12, ts(1), None));
         let ends = fold(&format!("{}{}", line(&opened), line(&closed)), "run-b");
         assert_eq!(ends.len(), 1, "one session, one row");
         assert_eq!(ends[0].how, EndedHow::Closed);
@@ -599,7 +769,7 @@ mod tests {
     /// the window still renders. One corrupt line must not blank the page.
     #[test]
     fn a_partial_or_corrupt_line_is_skipped_not_fatal() {
-        let good = closed_record(&ended_now("run-a", 5, Role::Cognition, None, "", 1, ts(1)));
+        let good = closed_record(&ended_now("run-a", 5, Role::Cognition, None, "", 1, ts(1), None));
         let text = format!("run\":\"run-a\",\"session\":4}}\n{}not json\n\n", line(&good));
         let ends = fold(&text, "run-b");
         assert_eq!(ends.len(), 1);
@@ -645,6 +815,7 @@ mod tests {
             "file it",
             2,
             ts(3),
+            None,
         )));
 
         writer.flush().await;
@@ -676,7 +847,7 @@ mod tests {
         let mut text = String::new();
         for i in 1..=(RECENT_CAP as u64 + 20) {
             let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
-            let mut e = ended_now("run-a", i, Role::Cognition, None, "", 1, at);
+            let mut e = ended_now("run-a", i, Role::Cognition, None, "", 1, at, None);
             e.ended = Some(at);
             text.push_str(&line(&closed_record(&e)));
         }

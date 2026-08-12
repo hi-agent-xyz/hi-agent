@@ -312,6 +312,52 @@ than a new dependency: every rung's state is *re-projected into every turn* — 
 it carries forward, who it can reach. A session that wedges is discarded and reopened cold; it
 loses the thread, never the truth. This is why a session may break loudly and the system is fine.
 
+### Across a restart
+
+The column above reasons only *within* a run. A restart used to end every thread — threads were
+opened `ephemeral`, so nothing was written and nothing could be resumed. That made the paragraph
+above true only until the process died, and the failure it describes — a rung that arranged a
+mechanism, forgot it had, and deleted it as redundant — recurred on every boot.
+
+**Every thread is opened durable. That part has no per-rung policy.** A rollout costs nothing
+until something resumes from it, and a rule is smaller than a table.
+
+**Who is resumed at boot is a separate decision, and it is not everyone:**
+
+| Rung | At boot |
+|---|---|
+| **Reaction**, **Cognition** | resumed from the previous run's thread |
+| **Reflection** | never — a dead pass is re-driven by the frontier cursor, which already points where it stopped |
+| Workers | **not** automatically; the thread is kept and offered, and Cognition decides per errand |
+
+**Workers are kept, not resumed.** An errand's thread is full of tool calls whose effects already
+landed, and forty minutes later most errands are stale — which is a judgment, not a rule code can
+apply. So the session directory carries the dead worker's thread id, and the boot glance offers
+it: Cognition reads "this errand died mid-flight, here is its mind" and picks the one worth
+finishing. Resuming one is then the same act as resuming a rung. What this replaces is the
+worker losing its context entirely and being recovered only if a task facet happened to exist.
+
+**A resumed thread is re-handed its prompt.** `baseInstructions` is passed on resume exactly as
+on open, so a thread resumed by a newer binary runs that binary's prompt — the rungs' prompts are
+reinstalled from the bundle every boot, and an upgrade is the most common reason to restart.
+Without this the oldest threads would be the ones running the most stale instructions.
+
+**A resume that fails is a cold open, and so is the turn after it.** Discarding a wedged session
+is the existing rule; this extends it to the one new way a session can arrive broken. It is what
+keeps "turn it off and on again" working: a thread poisoned badly enough to take the process down
+does not get to take the next one down too.
+
+Three facts about the wire this rests on, verified against the 0.147 pin rather than its docs:
+`thread/resume` accepts fresh `baseInstructions`; a resumed thread appends to its original
+rollout, so a thread id is stable for the life of the thread however many processes have hosted
+it; and a thread that never took a turn has no rollout at all, so resume answering *no rollout
+found* is an ordinary boot outcome and not an error worth surfacing.
+
+**The thread id is recorded, never derived.** `thread/start` takes no path, so where a rollout
+lands is codex's to choose — `(run, session)` cannot address it. The id comes back from
+`thread/start` and is written to the session directory, which is also what makes a dead worker's
+thread addressable at all, for the same reason its frames already are.
+
 ## Recall
 
 **Memory is one store, and every agent reading it reaches everything.** There is no

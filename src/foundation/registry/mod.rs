@@ -201,6 +201,9 @@ struct Entry {
     output: String,
     /// The last thing it was seen doing — see [`Status::doing`].
     doing: Option<String>,
+    /// The codex thread hosting this session, once `thread/start` has answered. `None`
+    /// between registration and that moment — the session exists first, deliberately.
+    thread: Option<String>,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
 }
@@ -261,6 +264,15 @@ pub struct Registry {
     /// set, which is the same split [`Registry::messages`] already makes against the frame
     /// log.
     recent: Mutex<Vec<index::Ended>>,
+    /// The thread each resident rung resumes at boot, keyed by role, seeded once by
+    /// [`Registry::attach_index`] and **taken** rather than read.
+    ///
+    /// Take-once is the discard rule, expressed as a data structure. The first session a
+    /// rung opens in a run is the resume; every later one — and every reopen after a turn
+    /// fails — finds the slot empty and opens cold. So a thread wedged badly enough to
+    /// break a turn cannot be handed back to the session replacing it, and a thread that
+    /// crashed the host is resumed exactly once before the next boot starts fresh.
+    resumable: Mutex<HashMap<String, String>>,
 }
 
 impl Default for Registry {
@@ -271,6 +283,7 @@ impl Default for Registry {
             activity,
             index: std::sync::OnceLock::new(),
             recent: Mutex::new(Vec::new()),
+            resumable: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -305,6 +318,7 @@ impl Registry {
                     inbox: Inbox::default(),
                     output: String::new(),
                     doing: None,
+                    thread: None,
                     notify: notify.clone(),
                 },
             );
@@ -340,10 +354,41 @@ impl Registry {
         }
         let found = seeded.len();
         let lost = seeded.iter().filter(|e| e.how == index::EndedHow::Restart).count();
+        let resumable = index::resumable(&seeded);
+        let resuming = resumable.len();
+        *self.resumable.lock().unwrap() = resumable;
         *self.recent.lock().unwrap() = seeded;
         // Worth a line at boot: `lost` is the count of sessions a previous run died
-        // underneath, which nothing used to be able to say out loud.
-        tracing::info!(run, recent = found, lost, "session directory attached");
+        // underneath, which nothing used to be able to say out loud. `resuming` is how many
+        // resident rungs are picking their previous thread back up — zero on a fresh
+        // install, and zero for any rung whose last run predates thread recording.
+        tracing::info!(run, recent = found, lost, resuming, "session directory attached");
+    }
+
+    /// Record the codex thread a session opened, in memory and in the directory.
+    ///
+    /// Called once per session, right after `thread/start` answers. A session that never
+    /// gets one (the spawn failed, the process died first) simply has no thread on its row,
+    /// which reads as "there is no mind to go back to" rather than as missing data.
+    pub fn note_thread(&self, id: SessionId, thread_id: &str) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+            e.thread = Some(thread_id.to_string());
+        }
+        if let Some(writer) = self.index.get() {
+            writer.write(index::thread_record(
+                crate::foundation::run::id(),
+                id,
+                thread_id,
+                Utc::now(),
+            ));
+        }
+    }
+
+    /// Take the thread `role` should resume, leaving nothing behind — see
+    /// [`Registry::resumable`](#structfield.resumable) for why taking rather than reading is
+    /// the discard rule.
+    pub fn take_resumable(&self, role: Role) -> Option<String> {
+        self.resumable.lock().unwrap().remove(role.as_str())
     }
 
     /// Unregister every live session, in id order.
@@ -403,6 +448,7 @@ impl Registry {
                 &e.task,
                 e.turns,
                 e.started,
+                e.thread.clone(),
             ))
         } else {
             None
@@ -1068,6 +1114,45 @@ mod tests {
         let who = r.reachable(worker);
         assert_eq!(who.len(), 1, "{who:?}");
         assert_eq!(who[0].1, owner);
+    }
+
+    /// **Take-once is the discard rule.** The first session a rung opens in a run gets the
+    /// previous thread; every later one — which is what a reopen after a failed turn is —
+    /// gets nothing and opens cold. Without this a thread wedged badly enough to break a
+    /// turn would be handed straight back to the session replacing it, and "turn it off and
+    /// on again" would stop working.
+    #[test]
+    fn a_resumable_thread_is_handed_out_exactly_once() {
+        let r = Registry::new();
+        r.resumable
+            .lock()
+            .unwrap()
+            .insert(Role::Cognition.as_str().to_string(), "th-1".to_string());
+
+        assert_eq!(r.take_resumable(Role::Cognition).as_deref(), Some("th-1"));
+        assert_eq!(r.take_resumable(Role::Cognition), None, "the second open is cold");
+    }
+
+    /// A rung with nothing seeded — a fresh install, or one whose last run predates thread
+    /// recording — simply opens cold rather than erroring.
+    #[test]
+    fn an_unseeded_rung_has_nothing_to_resume() {
+        assert_eq!(Registry::new().take_resumable(Role::Reaction), None);
+    }
+
+    /// The thread lands on the live entry, so the `closed` row written when the session ends
+    /// carries it too — a rung that quit cleanly must be as resumable as one that crashed.
+    #[test]
+    fn noting_a_thread_puts_it_on_the_live_session() {
+        let r = Registry::new();
+        let id = mint();
+        r.register(id, Role::Reaction, None, "the voice".into());
+        r.note_thread(id, "th-voice");
+
+        assert_eq!(
+            r.sessions.lock().unwrap().get(&id).and_then(|e| e.thread.clone()).as_deref(),
+            Some("th-voice"),
+        );
     }
 
     #[test]

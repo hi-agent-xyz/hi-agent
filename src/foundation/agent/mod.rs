@@ -166,17 +166,68 @@ impl AgentLayer {
         )
         .await?;
 
-        let id = process
-            .open_thread(SessionOpts {
-                system_prompt,
-                cwd,
-                sandbox: role.sandbox(),
-                permission_profile: permission_profile(role),
-                config: self.thread_config(&cfg, role, session_id),
-            })
-            .await?;
+        let opts = SessionOpts {
+            system_prompt,
+            cwd,
+            sandbox: role.sandbox(),
+            permission_profile: permission_profile(role),
+            config: self.thread_config(&cfg, role, session_id),
+        };
+
+        // **The whole of the resume policy is this one lookup.** Which rungs come back
+        // after a restart is decided by what `attach_index` seeded — the resident ones,
+        // per `agents.md` — so no call site branches and no rung can be given a
+        // different rule by accident. A worker is never in the map, so it opens cold here
+        // however its errand ended; picking a dead errand back up is Cognition's call, made
+        // from the session directory, not this function's.
+        //
+        // Taking rather than reading is what makes a bad thread survivable: the slot is
+        // empty for every later open in this run, so the session that replaces a wedged one
+        // is always cold.
+        let id = match crate::foundation::registry::global().take_resumable(role) {
+            Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
+            None => process.open_thread(opts).await?,
+        };
+        if let Some(session_id) = session_id {
+            crate::foundation::registry::global().note_thread(session_id, &id);
+        }
 
         Ok(AgentSession::new(id, process, rx, self.inner.data_dir.clone()))
+    }
+
+    /// Resume `thread`, falling back to a fresh one if it will not come back.
+    ///
+    /// **A failed resume is a cold open, never a failed session.** The reasons it can fail
+    /// are all ordinary: the thread never took a turn so has no rollout (a boot where
+    /// nothing had happened yet), the rollout was pruned, `CODEX_HOME` moved, or the pin
+    /// changed under it. None of those is a reason for the rung not to exist — losing the
+    /// thread costs what it was in the middle of, and the turn's own projection carries
+    /// what it owes regardless.
+    ///
+    /// `opts` is cloned because the fallback needs it whole; it is a prompt and a small map,
+    /// paid once per session open.
+    async fn resume_or_open(
+        &self,
+        process: &CodexProcess,
+        thread: &str,
+        role: Role,
+        opts: SessionOpts,
+    ) -> anyhow::Result<String> {
+        match process.resume_thread(thread, opts.clone()).await {
+            Ok(id) => {
+                tracing::info!(role = role.as_str(), thread_id = %id, "resumed the previous run's thread");
+                Ok(id)
+            }
+            Err(err) => {
+                tracing::info!(
+                    role = role.as_str(),
+                    thread_id = %thread,
+                    error = %err,
+                    "could not resume the previous thread; opening a fresh one"
+                );
+                process.open_thread(opts).await
+            }
+        }
     }
 
     /// The codex config a thread opens with: the model/provider from the credential
