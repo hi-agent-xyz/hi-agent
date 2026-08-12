@@ -133,7 +133,7 @@ impl AgentLayer {
         session_id: Option<u64>,
         opts: SessionOpts,
     ) -> anyhow::Result<AgentSession> {
-        let SessionOpts { system_prompt, cwd, .. } = opts;
+        let SessionOpts { system_prompt, cwd, resume, .. } = opts;
 
         // Never let a session root at the process cwd. An unset cwd falls through to
         // `std::env::current_dir()`, which for a Finder-launched `.app` is `/` and in dev
@@ -172,19 +172,29 @@ impl AgentLayer {
             sandbox: role.sandbox(),
             permission_profile: permission_profile(role),
             config: self.thread_config(&cfg, role, session_id),
+            // Consumed above; it is this function's parameter, not the wire's.
+            resume: None,
         };
 
-        // **The whole of the resume policy is this one lookup.** Which rungs come back
-        // after a restart is decided by what `attach_index` seeded — the resident ones,
-        // per `agents.md` — so no call site branches and no rung can be given a
-        // different rule by accident. A worker is never in the map, so it opens cold here
-        // however its errand ended; picking a dead errand back up is Cognition's call, made
-        // from the session directory, not this function's.
+        // **The resume policy is these two lookups, and they answer different questions.**
+        //
+        // `take_resumable` is the *host's* rule: which rungs come back after a restart,
+        // decided by what `attach_index` seeded — the resident ones, per `agents.md` — so no
+        // rung can be given a different rule by accident. A worker is never in that map.
+        //
+        // `resume` is the *caller's*, and a worker is the only session that ever carries one:
+        // Cognition taking up an errand the last restart killed, naming the thread the boot
+        // glance offered it. That is the "picking a dead errand back up is Cognition's call"
+        // half of `agents.md`, which until now had the thread recorded and no way to ask for
+        // it. It is checked first because an explicit request outranks a policy, and the two
+        // cannot collide in practice: nothing puts a worker in the map.
         //
         // Taking rather than reading is what makes a bad thread survivable: the slot is
         // empty for every later open in this run, so the session that replaces a wedged one
-        // is always cold.
-        let id = match crate::foundation::registry::global().take_resumable(role) {
+        // is always cold. An offered worker thread needs no such guard — the offer is a
+        // snapshot of the previous run and this run never adds to it.
+        let id = match resume.or_else(|| crate::foundation::registry::global().take_resumable(role))
+        {
             Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
             None => process.open_thread(opts).await?,
         };

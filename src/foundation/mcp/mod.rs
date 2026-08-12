@@ -136,6 +136,16 @@ fn create_worker_tool() -> Value {
                                     without the person, `file-filer` to put a handed-over file \
                                     into the drive.",
                 },
+                "resume": {
+                    "type": "string",
+                    "description": "Pick an errand back up where a restart cut it off, instead \
+                                    of starting cold. Only a thread from the offer in your first \
+                                    pulse after the host starts — anything else is refused. The \
+                                    session opens remembering what that one was doing, so `task` \
+                                    should say what has changed and what is left, not restate \
+                                    the job. Leave it out for new work, and for an errand stale \
+                                    enough that its half-done state is a liability.",
+                },
             },
             "required": ["task"],
         }),
@@ -1107,6 +1117,31 @@ async fn dispatch_tool(
                     }
                 },
             };
+            // **Only a thread the boot glance actually offered.** A resume is the one
+            // argument here whose value the model cannot derive from the task in front of
+            // it — it has to come off the offer — and a thread id is exactly the shape of
+            // thing that gets confabulated. Left unchecked it would still "work": the agent
+            // layer falls back to a cold open when a resume fails, so an invented id would
+            // produce a fresh session the caller believes carries context it has never
+            // seen. Refusing is the difference between resuming and being told you did.
+            let resume = match args.get("resume").and_then(|v| v.as_str()) {
+                None => None,
+                Some(thread) if thread.trim().is_empty() => None,
+                Some(thread) => {
+                    let offered = registry::global().lost_workers();
+                    if !offered.iter().any(|end| end.thread.as_deref() == Some(thread)) {
+                        return tool_error(&format!(
+                            "no errand from the last run is on thread `{thread}` — `resume` \
+                             takes a thread from the boot glance's offer, and there {}",
+                            match offered.len() {
+                                0 => "is no offer this run".to_string(),
+                                n => format!("are {n} on it"),
+                            }
+                        ));
+                    }
+                    Some(thread.to_string())
+                }
+            };
             // The id is minted **here**, before the session exists, and handed back in
             // this reply — the contract is `CreateWorker → a session id`, and a caller
             // that cannot name what it made cannot brief it, ask after it, or read it.
@@ -1122,10 +1157,16 @@ async fn dispatch_tool(
                     "the owning loop is not up, so there is nowhere to run a worker",
                 );
             };
+            let resumed = resume.is_some();
             return match sink
-                .send(LoopControl::CreateWorker { id, task, kind, owner: Some(owner) })
+                .send(LoopControl::CreateWorker { id, task, kind, owner: Some(owner), resume })
                 .await
             {
+                Ok(()) if resumed => tool_ok(&format!(
+                    "session {id} starting from the errand's own thread — it opens knowing \
+                     what that session knew, so brief it on what has *changed*, not on the \
+                     job from scratch"
+                )),
                 Ok(()) => tool_ok(&format!(
                     "session {id} starting; brief it with send_message, check it with \
                      session_status"

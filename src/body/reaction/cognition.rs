@@ -243,9 +243,10 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner }) => {
-                        if let Err(err) =
-                            workers.spawn_with_id(&reaction, worker, task, kind, owner).await
+                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume }) => {
+                        if let Err(err) = workers
+                            .spawn_with_id(&reaction, worker, task, kind, owner, resume)
+                            .await
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
                         }
@@ -310,9 +311,10 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     ctl = control_rx.recv() => match ctl {
-                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner }) => {
-                            if let Err(err) =
-                                workers.spawn_with_id(&reaction, worker, task, kind, owner).await
+                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume }) => {
+                            if let Err(err) = workers
+                                .spawn_with_id(&reaction, worker, task, kind, owner, resume)
+                                .await
                             {
                                 tracing::warn!(error = %err, "cognition failed to create a worker");
                             }
@@ -411,14 +413,92 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
     }
 
     let count = active.len();
-    let note = note_for(count, first, span);
+    // The offer rides the boot note and only the boot note: it describes a restart, and by
+    // the recurring pulse it is either taken or judged not worth taking. Repeating it every
+    // half hour would make it wallpaper, which for a thing that says "unfinished work here"
+    // is the one failure mode that matters.
+    let offer = if first {
+        offer_lost_errands(&registry::global().lost_workers())
+    } else {
+        String::new()
+    };
+    let note = wake_for(count, first, span, &offer);
     tracing::info!(
         active = count,
         first_wake = first,
+        offered = !offer.is_empty(),
         waking = note.is_some(),
         "cognition timer fired"
     );
     note
+}
+
+/// The errands the last restart killed, written for the rung that decides what to do about
+/// them.
+///
+/// **An offer, not an instruction**, and the wording has to carry that: `agents.md` gives the
+/// judgment to Cognition precisely because most dead errands are stale — their tool calls
+/// already landed, and forty minutes on the world has moved. So this says what died, when, and
+/// where its mind is, and stops. What it must never do is imply that resuming is the expected
+/// answer.
+///
+/// It also states the alternative, because the failure this whole path exists to end is not
+/// "the errand was not resumed" — it is the errand being **neither resumed nor reconsidered**,
+/// which is what a ledger entry with nobody on it looks like from the inside. Dropping one is
+/// a fine outcome; dropping one silently is the bug.
+fn offer_lost_errands(lost: &[registry::index::Ended]) -> String {
+    use std::fmt::Write as _;
+
+    if lost.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("## Errands the restart cut off\n");
+    s.push_str(
+        "These were mid-flight when the host went down, so nothing reported back and nothing \
+         closed them. Their sessions are gone; their threads are kept.\n",
+    );
+    for end in lost {
+        let Some(thread) = end.thread.as_deref() else { continue };
+        let task = end.task.as_deref().unwrap_or("(no task recorded)");
+        let _ = write!(s, "\n- \"{}\"", tail_of(task, 200));
+        if let Some(started) = end.started {
+            let _ = write!(s, "\n  started {}", started.format("%Y-%m-%d %H:%MZ"));
+        }
+        let _ = write!(s, "\n  thread `{thread}`");
+    }
+    s.push_str(
+        "\n\nFor each: decide. `create_worker` with `resume` set to the thread picks it up \
+         knowing what it knew — brief it on what has changed since, not on the job. Or judge it \
+         stale and let it go, in which case say so in the ledger, because a task left `doing` \
+         with nobody on it reads the same as one being worked on.\n",
+    );
+    s
+}
+
+/// The first `n` characters of a task line, flattened — a brief can run to a paragraph and the
+/// offer is a list, not the briefs themselves.
+fn tail_of(s: &str, n: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= n {
+        return flat;
+    }
+    flat.chars().take(n).collect::<String>() + "…"
+}
+
+/// Whether this timer fire becomes a turn, and what it carries — the pure half of
+/// [`glance_note`], so what wakes this rung can be pinned without standing up a `Reaction`.
+///
+/// **Two independent reasons to wake, and the offer is not the weaker one.** `note_for`
+/// declines to spend a subprocess on an empty ledger, which is right when nothing is owed. But
+/// an errand the restart cut off is something owed that the ledger *may never have been told
+/// about* — Cognition can dispatch before it writes, and a crash in that window leaves the
+/// session row as the only surviving trace. Making the offer ride on the ledger being non-empty
+/// would drop it in exactly the case where nothing else will ever mention that work again.
+fn wake_for(active: usize, first: bool, span: Duration, offer: &str) -> Option<String> {
+    match (note_for(active, first, span), offer.is_empty()) {
+        (_, false) => Some(format!("{}\n\n{offer}", pulse_line(first, span))),
+        (note, true) => note,
+    }
 }
 
 /// The pure half of [`glance_note`] — split out so the two things worth pinning can be
@@ -428,12 +508,22 @@ fn note_for(active: usize, first: bool, span: Duration) -> Option<String> {
     if active == 0 {
         return None;
     }
+    Some(pulse_line(first, span))
+}
+
+/// The situational fact a wake carries, with no opinion about whether to wake.
+///
+/// Split from [`note_for`] because there are now two reasons to wake — something owed, and an
+/// errand the restart cut off — and they must not each spell this sentence. The `(pulse)`
+/// marker and the "just come back up" phrasing are both load-bearing: `cognition.md` keys on
+/// them to tell a restart from an ordinary quiet moment.
+fn pulse_line(first: bool, span: Duration) -> String {
     let m = span.as_secs() / 60;
-    Some(super::render_pulse(&if first {
+    super::render_pulse(&if first {
         format!("you've just come back up (host process started {m}m ago)")
     } else {
         format!("nothing new for {m}m")
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -446,6 +536,86 @@ mod tests {
     fn an_empty_ledger_is_not_worth_waking_for() {
         assert_eq!(note_for(0, true, Duration::from_secs(0)), None);
         assert_eq!(note_for(0, false, Duration::from_secs(9_999)), None);
+    }
+
+    fn lost(task: &str, thread: &str) -> registry::index::Ended {
+        registry::index::Ended {
+            run: "run-prev".into(),
+            session: 5,
+            role: "worker".into(),
+            worker_type: Some("general".into()),
+            task: Some(task.into()),
+            owner: Some(3),
+            started: Some(chrono::Utc::now()),
+            ended: None,
+            how: registry::index::EndedHow::Restart,
+            turns: None,
+            thread: Some(thread.into()),
+        }
+    }
+
+    /// The offer has to carry the two things Cognition cannot act without: what the errand
+    /// *was*, and the handle that picks it back up. A list of thread ids with no tasks is
+    /// unreadable; a list of tasks with no threads cannot be taken.
+    #[test]
+    fn the_offer_names_the_errand_and_the_thread_that_holds_it() {
+        let text = offer_lost_errands(&[lost("Finish the KT8-056 placeholder work", "th-42")]);
+        assert!(text.contains("Finish the KT8-056 placeholder work"), "{text}");
+        assert!(text.contains("th-42"), "{text}");
+        assert!(text.contains("resume"), "it has to say how to take it: {text}");
+    }
+
+    /// **It stays an offer.** Most dead errands are stale — their tool calls already landed and
+    /// the world has moved — so `agents.md` gives the judgment to Cognition. Wording that reads
+    /// as an instruction would spend a subprocess on every errand any restart ever interrupted.
+    ///
+    /// And the alternative is stated, because the failure being fixed is not "the errand was
+    /// not resumed" but the errand being neither resumed nor reconsidered: a task left `doing`
+    /// with nobody on it looks exactly like one being worked on.
+    #[test]
+    fn the_offer_leaves_dropping_it_open_and_says_to_write_that_down() {
+        let text = offer_lost_errands(&[lost("Rebuild the deck", "th-7")]);
+        assert!(text.contains("stale"), "dropping it must be a named option: {text}");
+        assert!(text.contains("ledger"), "and it must be written down: {text}");
+    }
+
+    /// Nothing lost, nothing said. An empty section in a boot prompt is a heading that trains
+    /// the reader to skip the heading.
+    #[test]
+    fn nothing_lost_is_no_section_at_all() {
+        assert!(offer_lost_errands(&[]).is_empty());
+    }
+
+    /// **The offer wakes this rung by itself.** Cognition can dispatch an errand before it
+    /// writes the ledger entry, so a crash in that window leaves a mid-flight worker and
+    /// nothing owed — and if the offer only rode along with a ledger wake, that is the one
+    /// case where it would be dropped, and nothing would ever mention the work again.
+    #[test]
+    fn an_errand_cut_off_wakes_even_when_the_ledger_is_empty() {
+        let offer = offer_lost_errands(&[lost("chase the deploy", "th-9")]);
+        let note = wake_for(0, true, Duration::from_secs(60), &offer)
+            .expect("a lost errand is worth waking for on its own");
+
+        assert!(note.starts_with("(pulse) "), "{note}");
+        assert!(note.contains("just come back up"), "{note}");
+        assert!(note.contains("chase the deploy"), "{note}");
+    }
+
+    /// And with nothing lost, the empty-ledger rule is untouched — the offer must not become
+    /// a reason to wake for nothing.
+    #[test]
+    fn an_empty_ledger_with_no_offer_still_does_not_wake() {
+        assert_eq!(wake_for(0, true, Duration::from_secs(60), ""), None);
+    }
+
+    /// A brief can run to a paragraph — the one this was built from was 1,400 characters. The
+    /// offer is an index of what died, not a reprint of the briefs.
+    #[test]
+    fn a_long_brief_is_clipped_into_one_line() {
+        let text = offer_lost_errands(&[lost(&format!("start {}", "x ".repeat(400)), "th-1")]);
+        assert!(text.contains("start"), "{text}");
+        assert!(text.contains('…'), "the clip announces itself: {text}");
+        assert!(text.lines().count() < 12, "still a list: {text}");
     }
 
     /// Both notes are bare situational facts under the same `(pulse)` marker the conversation

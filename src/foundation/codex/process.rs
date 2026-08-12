@@ -89,6 +89,21 @@ pub struct SessionOpts {
     /// session's MCP attach carries per-session HTTP headers, which is what makes one
     /// `/mcp` endpoint serve five rungs with five different tool surfaces.
     pub config: serde_json::Map<String, Value>,
+
+    /// A specific codex thread this session should pick back up, overriding the per-role
+    /// resume policy.
+    ///
+    /// **Not a codex parameter** — it is consumed by
+    /// [`AgentLayer::session`](crate::foundation::agent::AgentLayer::session) and never
+    /// reaches the wire, which is why it can sit here beside fields that do. It lives on
+    /// `SessionOpts` rather than in `session`'s signature so the four call sites with no
+    /// opinion keep saying `..Default::default()`.
+    ///
+    /// The one caller is a working session created with `resume` — Cognition taking up an
+    /// errand the last restart killed. A rung never sets it: which thread a *rung* comes back
+    /// on is the host's decision and stays in `take_resumable`, where no call site can be
+    /// given a different rule by accident.
+    pub resume: Option<String>,
 }
 
 /// The sandbox modes codex offers, in its own spelling.

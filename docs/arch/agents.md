@@ -337,6 +337,24 @@ it: Cognition reads "this errand died mid-flight, here is its mind" and picks th
 finishing. Resuming one is then the same act as resuming a rung. What this replaces is the
 worker losing its context entirely and being recovered only if a task facet happened to exist.
 
+**The offer is taken with `CreateWorker(resume:)`, and only ever from the offer.** The handle is
+the thread id, and the host refuses one it did not just offer — a resume is the one argument a
+caller cannot derive from the work in front of it, and an unchecked thread id would fall back to
+a cold open that the caller believes carries context. Resuming yields a *new* session: new id,
+new registration, same prompt. Only where its mind starts differs, because to everything
+downstream — ownership, addressing, reporting — this is a session that began now.
+
+**Only the previous run's errands are offered, so the offer ages out by itself.** The directory
+is append-only and unpruned and nothing marks an offer as consumed, so any wider filter would
+re-offer a three-week-old errand at every boot until it read as furniture. One restart is the
+window.
+
+**What the offer is against is not lost context — it is the silent drop.** An errand resumed and
+an errand judged stale are equally fine outcomes; a task left `doing` with nobody on it is not,
+because it is indistinguishable from a task being worked on — to the person, to the voice, and
+to the rung that wrote it an hour later. So the offer names the alternative rather than leaving
+it implied, and asks for the disposition in the ledger either way.
+
 **A resumed thread is re-handed its prompt.** `baseInstructions` is passed on resume exactly as
 on open, so a thread resumed by a newer binary runs that binary's prompt — the rungs' prompts are
 reinstalled from the bundle every boot, and an upgrade is the most common reason to restart.

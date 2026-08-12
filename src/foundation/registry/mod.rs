@@ -338,6 +338,17 @@ pub struct Registry {
     /// break a turn cannot be handed back to the session replacing it, and a thread that
     /// crashed the host is resumed exactly once before the next boot starts fresh.
     resumable: Mutex<HashMap<String, String>>,
+    /// The errands the last restart killed, for the boot glance to offer Cognition.
+    ///
+    /// Snapshotted at [`Registry::attach_index`] rather than derived from `recent` on demand,
+    /// because `recent` grows this run's own ends as sessions close and
+    /// [`index::lost_workers`] reads the head of the list to decide which run "the previous
+    /// one" was. A read taken after the first session closes would answer about this run and
+    /// find nothing.
+    ///
+    /// Read, never taken: unlike `resumable` there is no discard rule to express here, since
+    /// the only reader is the one-shot boot note.
+    lost: Mutex<Vec<index::Ended>>,
 }
 
 impl Default for Registry {
@@ -349,6 +360,7 @@ impl Default for Registry {
             index: std::sync::OnceLock::new(),
             recent: Mutex::new(Vec::new()),
             resumable: Mutex::new(HashMap::new()),
+            lost: Mutex::new(Vec::new()),
         }
     }
 }
@@ -424,13 +436,27 @@ impl Registry {
         let lost = seeded.iter().filter(|e| e.how == index::EndedHow::Restart).count();
         let resumable = index::resumable(&seeded);
         let resuming = resumable.len();
+        // Before `recent` takes the list: `lost_workers` reads its head to decide which run
+        // was the previous one, and this run's first close would move that head.
+        let offered = index::lost_workers(&seeded);
+        let offering = offered.len();
+        *self.lost.lock().unwrap() = offered;
         *self.resumable.lock().unwrap() = resumable;
         *self.recent.lock().unwrap() = seeded;
         // Worth a line at boot: `lost` is the count of sessions a previous run died
         // underneath, which nothing used to be able to say out loud. `resuming` is how many
         // resident rungs are picking their previous thread back up — zero on a fresh
-        // install, and zero for any rung whose last run predates thread recording.
-        tracing::info!(run, recent = found, lost, resuming, "session directory attached");
+        // install, and zero for any rung whose last run predates thread recording. `offering`
+        // is the subset of `lost` that is a worker with a thread, which the boot glance hands
+        // to Cognition to pick from — never resumed by the host, only offered.
+        tracing::info!(
+            run,
+            recent = found,
+            lost,
+            resuming,
+            offering,
+            "session directory attached"
+        );
     }
 
     /// Record the codex thread a session opened, in memory and in the directory.
@@ -457,6 +483,14 @@ impl Registry {
     /// the discard rule.
     pub fn take_resumable(&self, role: Role) -> Option<String> {
         self.resumable.lock().unwrap().remove(role.as_str())
+    }
+
+    /// The errands the last restart killed, newest first — see [`index::lost_workers`].
+    ///
+    /// Offered, not resumed: the caller is the boot glance, and what it does with these is
+    /// put them in front of Cognition.
+    pub fn lost_workers(&self) -> Vec<index::Ended> {
+        self.lost.lock().unwrap().clone()
     }
 
     /// Unregister every live session, in id order.
@@ -892,6 +926,59 @@ mod tests {
 
     fn reg() -> Registry {
         Registry::new()
+    }
+
+    /// The offer survives the trip through `attach_index`, and survives this run's own
+    /// sessions closing on top of it.
+    ///
+    /// The ordering inside `attach_index` is the part worth pinning: [`index::lost_workers`]
+    /// reads the head of the ends list to decide which run was the previous one, and `recent`
+    /// grows this run's ends as sessions close. Snapshot it after `recent` takes the list — or
+    /// derive it on demand — and the first session to close moves that head to *this* run,
+    /// where there are no lost errands, and the offer silently empties. Which is exactly the
+    /// shape of bug that only shows up on a boot where something closed early.
+    #[tokio::test]
+    async fn the_offer_is_snapshotted_at_boot_and_outlives_this_runs_own_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let path = index::index_path(&data_dir);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+
+        let at = Utc::now();
+        let mut text = String::new();
+        for record in [
+            index::opened_record(
+                "run-prev",
+                4,
+                Role::Worker(WorkerType::General),
+                Some(3),
+                "chase the deploy",
+                at,
+            ),
+            index::thread_record("run-prev", 4, "th-errand", at),
+        ] {
+            text.push_str(&format!("{}\n", serde_json::to_string(&record).unwrap()));
+        }
+        tokio::fs::write(&path, text).await.unwrap();
+
+        let r = reg();
+        r.attach_index(data_dir).await;
+
+        let offered = r.lost_workers();
+        assert_eq!(offered.len(), 1, "the previous run's unfinished errand");
+        assert_eq!(offered[0].thread.as_deref(), Some("th-errand"));
+        assert_eq!(offered[0].task.as_deref(), Some("chase the deploy"));
+
+        // Now let this run close a session of its own, which pushes onto `recent`.
+        let id = mint();
+        r.register(id, Role::Cognition, None, "the shared brain".into());
+        r.unregister(id);
+
+        assert_eq!(
+            r.lost_workers().len(),
+            1,
+            "a close in this run must not empty the offer"
+        );
     }
 
     #[test]

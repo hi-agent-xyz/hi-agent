@@ -250,7 +250,10 @@ async fn dispatch(
     let brief = brief_for(&task, &arrived);
 
     match workers
-        .spawn_with_id(reaction, id, brief, WorkerType::General, owner)
+        // Never resumed. A duty handler is re-derived from the ledger, which is exactly what
+        // makes it free to die: the facet is the brief, so a cold session knows everything the
+        // dead one did. See this module's doc.
+        .spawn_with_id(reaction, id, brief, WorkerType::General, owner, None)
         .await
     {
         Ok(_) => {

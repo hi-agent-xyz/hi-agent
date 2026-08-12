@@ -207,6 +207,12 @@ impl WorkerRegistry {
     ///
     /// Returns once the session is open and its drive task is running; the work proceeds
     /// in the background and its report goes to `owner`.
+    ///
+    /// `resume` names a codex thread this session should pick back up instead of opening
+    /// cold — an errand the last restart killed, offered to Cognition by the boot glance. It
+    /// changes only where the session's *mind* starts; the id, the owner, the prompt and the
+    /// registration are the same as any other spawn, because to everything downstream this
+    /// **is** a new session. Resuming is not un-ending the old one.
     pub(super) async fn spawn_with_id(
         &mut self,
         reaction: &Reaction,
@@ -214,8 +220,9 @@ impl WorkerRegistry {
         task: String,
         kind: WorkerType,
         owner: Option<SessionId>,
+        resume: Option<String>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reaction, id, task, kind, owner).await
+        self.spawn_inner(reaction, id, task, kind, owner, resume).await
     }
 
     /// The one construction path for a working session: open it, record it, drive it.
@@ -231,8 +238,11 @@ impl WorkerRegistry {
         task: String,
         kind: WorkerType,
         owner: Option<SessionId>,
+        resume: Option<String>,
     ) -> anyhow::Result<SessionId> {
-        let (session, mail) = self.open_working_session(reaction, id, &task, kind, owner).await?;
+        let resumed = resume.is_some();
+        let (session, mail) =
+            self.open_working_session(reaction, id, &task, kind, owner, resume).await?;
 
         let observatory = reaction.inner.observatory.clone();
         observatory
@@ -268,6 +278,7 @@ impl WorkerRegistry {
         tracing::info!(
             session = id,
             owner = owner.map(|o| o.to_string()).unwrap_or_else(|| "conversation-loop".into()),
+            resumed,
             "spawned working session"
         );
         Ok(id)
@@ -280,6 +291,7 @@ impl WorkerRegistry {
         task: &str,
         kind: WorkerType,
         owner: Option<SessionId>,
+        resume: Option<String>,
     ) -> anyhow::Result<(Arc<AgentSession>, Arc<Notify>)> {
         // **One role drives all three things this function decides**: which prompt the
         // session opens with, what the switchboard records, and which tool surface it
@@ -305,6 +317,10 @@ impl WorkerRegistry {
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     cwd: Some(reaction.inner.views_dir.clone()),
+                    // The only place in the codebase that sets this. A failed resume falls
+                    // back to a cold open inside the agent layer, so an offer that has gone
+                    // stale on disk costs the errand its context and never its existence.
+                    resume,
                     ..Default::default()
                 },
             )
