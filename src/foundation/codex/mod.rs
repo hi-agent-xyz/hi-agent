@@ -23,10 +23,12 @@
 //! - **Every notification is kept verbatim** as [`SessionUpdate::Frame`]. Text and
 //!   thought are projections beside it, not instead of it.
 
+pub mod messages;
 pub mod process;
 pub mod tap;
 pub mod thread;
 
+pub use messages::{Folded, Message, fold};
 pub use process::{CodexProcess, ProcessRegistry, SessionOpts};
 pub use tap::{Dir, RawFrame, WireTap};
 pub use thread::{AgentSession, PromptResult, SessionRun, SessionUpdate, StopReason};

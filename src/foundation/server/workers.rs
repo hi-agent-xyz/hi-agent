@@ -31,6 +31,7 @@
 //! - `GET /api/workers/{id}` — one session plus its full retained message tail.
 //! - `GET /api/workers/ended` — sessions that are no longer live, most recent first.
 //! - `GET /api/workers/{id}/frames` — one session's verbatim wire log, live or ended.
+//! - `GET /api/workers/{id}/messages` — the same log folded into what happened.
 //!
 //! **The live roster and the ended list stay separate endpoints on purpose.** Everything on
 //! `GET /api/workers` is live by construction, which is the property this whole module
@@ -150,6 +151,11 @@ const MAX_ENDED: usize = 500;
 /// tens of thousands of lines. The tail is what a reader wants and the cap is what keeps one
 /// click off a multi-megabyte response.
 const MAX_FRAMES: usize = 2_000;
+/// Messages are the fold of those frames — twenty-odd frames to a message on the logs this
+/// was measured against — so a default that covers a whole working session is a few hundred
+/// rows, not a few thousand.
+const DEFAULT_MESSAGES: usize = 200;
+const MAX_MESSAGES: usize = 2_000;
 
 #[derive(Deserialize)]
 pub struct Paging {
@@ -197,34 +203,17 @@ pub async fn get_frames(
     Path(id): Path<String>,
     Query(q): Query<FramesQuery>,
 ) -> Response {
-    let Ok(session) = id.trim().parse::<SessionId>() else {
-        return err("a session id is a number");
+    let (run, text) = match read_log(&state, &id, q.run).await {
+        Ok(found) => found,
+        Err(response) => return response,
     };
-    let run = q.run.unwrap_or_else(|| crate::foundation::run::id().to_string());
-    // `run` lands in a path segment, so it is checked rather than trusted: a run id is
-    // twelve hex characters ([`crate::foundation::run::id`]) and anything else — a `..`,
-    // a separator, an absolute path — is refused before it reaches the filesystem.
-    if !is_run_id(&run) {
-        return err("a run id is twelve hex characters");
-    }
+    let Some(text) = text else {
+        return Json(serde_json::json!({
+            "run": run, "session": id, "frames": [], "truncated": false, "total": 0
+        }))
+        .into_response();
+    };
     let limit = q.limit.unwrap_or(MAX_FRAMES).clamp(1, MAX_FRAMES);
-
-    let path = crate::mind::memory::layout::session_frames_path(&state.data_dir, &run, session);
-    let text = match tokio::fs::read_to_string(&path).await {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Not an error: a session that never spoke to a subprocess has no log, and
-            // neither does one from a run whose files have been cleared.
-            return Json(serde_json::json!({
-                "run": run, "session": id, "frames": [], "truncated": false
-            }))
-            .into_response();
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, path = %path.display(), "cannot read a session frame log");
-            return err("that session's frame log could not be read");
-        }
-    };
 
     let (frames, truncated, total) = tail_frames(&text, limit);
     Json(serde_json::json!({
@@ -235,6 +224,90 @@ pub async fn get_frames(
         "total": total,
     }))
     .into_response()
+}
+
+/// `GET /api/workers/{id}/messages?run=<run>&limit=N` — the same log, read as what happened.
+///
+/// Same file, different question. `frames` answers *what crossed the wire*, which is the
+/// record and has to stay verbatim; this answers *what the session did*, which is what a
+/// person opening a session is asking. One agent message is an `item/started`, hundreds of
+/// deltas and an `item/completed` — six hundred rows saying one sentence — so the frame log
+/// rendered row-per-line is unreadable by construction, not by styling. The fold is in
+/// [`crate::foundation::codex::messages`] and lives server-side so that every reader gets
+/// the same reading: the view, `curl` during a journey test, and whatever comes next.
+///
+/// Nothing here is stored. The fold is derived on every read, which is what makes it safe
+/// for it to be opinionated — a mistake in it is a display bug, and the record it was folded
+/// from is still on disk, still whole.
+pub async fn get_messages(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<super::AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<FramesQuery>,
+) -> Response {
+    let (run, text) = match read_log(&state, &id, q.run).await {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
+    let Some(text) = text else {
+        return Json(serde_json::json!({
+            "run": run, "session": id, "messages": [], "turns": [],
+            "truncated": false, "total": 0, "frames": 0, "unreadable": 0
+        }))
+        .into_response();
+    };
+    let limit = q.limit.unwrap_or(DEFAULT_MESSAGES).clamp(1, MAX_MESSAGES);
+
+    let folded = crate::foundation::codex::messages::fold(&text);
+    let total = folded.messages.len();
+    let truncated = total > limit;
+    // The tail, like `frames` — the end of a session is what a reader came for, and the
+    // start of a long one is the standing prompt they have read a hundred times.
+    let messages = &folded.messages[total.saturating_sub(limit)..];
+
+    Json(serde_json::json!({
+        "run": run,
+        "session": id,
+        "messages": messages,
+        "turns": folded.turns,
+        "truncated": truncated,
+        "total": total,
+        // Both counts travel, because "4,000 frames and no messages" has to be readable as
+        // a fold that failed rather than as a session that did nothing.
+        "frames": folded.frames,
+        "unreadable": folded.unreadable,
+    }))
+    .into_response()
+}
+
+/// The front half both readers share: check the id, check the run, read the file.
+///
+/// `Ok((run, None))` is a session with no log — not an error. A session that never spoke to
+/// a subprocess has none, and neither does one whose run's files have been cleared.
+async fn read_log(
+    state: &super::AppState,
+    id: &str,
+    run: Option<String>,
+) -> Result<(String, Option<String>), Response> {
+    let Ok(session) = id.trim().parse::<SessionId>() else {
+        return Err(err("a session id is a number"));
+    };
+    let run = run.unwrap_or_else(|| crate::foundation::run::id().to_string());
+    // `run` lands in a path segment, so it is checked rather than trusted: a run id is
+    // twelve hex characters ([`crate::foundation::run::id`]) and anything else — a `..`,
+    // a separator, an absolute path — is refused before it reaches the filesystem.
+    if !is_run_id(&run) {
+        return Err(err("a run id is twelve hex characters"));
+    }
+
+    let path = crate::mind::memory::layout::session_frames_path(&state.data_dir, &run, session);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(text) => Ok((run, Some(text))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((run, None)),
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "cannot read a session frame log");
+            Err(err("that session's frame log could not be read"))
+        }
+    }
 }
 
 /// The last `limit` frames of a log, oldest first, plus whether anything was cut and how

@@ -153,6 +153,36 @@ session is made of.
 
 Historical messages come from the protocol's own session load, not from a second copy we keep.
 
+**Recording is not reading, and the reader folds.** The rule above is about what the host
+*stores* and what it *infers intent from* — both stay verbatim and neither is negotiable. It
+never said the frames are the right shape to show someone, and they are not: one sentence the
+agent says crosses the wire as an `item/started`, several hundred `delta`s and an
+`item/completed`, so a page rendering row-per-frame is a wall of fragments. Measured across
+twelve logs: **11,891 frames, 369 things that actually happened.**
+
+So a session's log has two readings, from one file, over one address:
+
+| | `GET /api/workers/{id}/frames` | `GET /api/workers/{id}/messages` |
+|---|---|---|
+| answers | what crossed the wire | what the session did |
+| shape | every line, verbatim, uninterpreted | items folded whole, in turns |
+| is | the record | derived on every read, stored nowhere |
+
+Three properties keep the fold from becoming the modelling this section rejects:
+
+- **It reads, it never writes.** Nothing folded is persisted, so a fold that is wrong is a
+  display bug — the record it was folded from is still on disk, still whole. That is what
+  makes it safe for the fold to be opinionated (empty items dropped, ANSI stripped, stderr
+  runs joined) where recording may not be.
+- **Nothing routes on it.** Intent is carried by `SendMessage`; the fold is for a person
+  reading a page, and no host decision depends on it.
+- **An unknown item still appears**, carrying the wire's own word for itself and its payload
+  verbatim. Codex's item vocabulary keeps growing, so "an item we do not know" is a permanent
+  condition; understanding is needed to render one *well*, never to show that it happened.
+
+Each message carries the frame span (`seq`..`through`) it was folded from, so the two
+readings name the same moments and a reader can cross from either to the other.
+
 ### The session directory
 
 The frames above are written per session under `raw/sessions/<run>/<session>.jsonl`. For a
