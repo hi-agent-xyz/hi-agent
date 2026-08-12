@@ -20,7 +20,17 @@ pub mod types;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The loopback port. Everything on this machine talks to the core here —
+    /// the face in dev, the codex subprocesses on `/mcp`, `HI_AGENT_BASE_URL`,
+    /// the headless renderer — and none of it is gated.
     pub port: u16,
+    /// Where to accept **off-box** requests, if anywhere. Unset by default: a
+    /// desktop install is reached over loopback and needs no open socket at all.
+    /// Set it for the directly-public shape (a core in Docker behind a domain),
+    /// and everything arriving here is gated. It cannot share [`Self::port`] —
+    /// one socket cannot tell loopback from the world, and that distinction is
+    /// the whole of the trust model (`docs/arch/topology.md`, invariant 6).
+    pub off_box: Option<std::net::SocketAddr>,
     pub data_dir: PathBuf,
     pub agent: foundation::config::AgentConfig,
     pub auth: foundation::auth::AuthConfig,
@@ -363,14 +373,54 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     if foundation::config::flag_on(foundation::config::tunables::get(
         foundation::config::KEY_GESTURES,
     )) {
-        body::gesture::install(seams.state);
+        body::gesture::install(seams.state.clone());
     } else {
         tracing::info!("attention gestures off (enable in the tray menu to arm them)");
     }
 
-    let addr = ("0.0.0.0", config.port);
-    let listener = TcpListener::bind(addr).await?;
-    tracing::info!("hi-agent listening on http://0.0.0.0:{}", config.port);
+    // Two acceptors, and which one took a request is the whole trust decision —
+    // never a header, never a source address (`docs/arch/topology.md`,
+    // invariant 6). The loopback listener binds `127.0.0.1` *only*, so "arrived
+    // here" is a fact about the socket that no sender can forge. Anything else is
+    // off-box and gated, whether it came over the public bind or (later) as a
+    // stream routed in over the community tunnel.
+    //
+    // This is why the two cannot share a port: a single `0.0.0.0` socket accepts
+    // loopback and the LAN indistinguishably, which is exactly the question the
+    // gate has to answer.
+    let listener = TcpListener::bind(("127.0.0.1", config.port)).await?;
+    tracing::info!("hi-agent listening on http://127.0.0.1:{} (loopback, ungated)", config.port);
+
+    let off_box_listener = match config.off_box {
+        Some(addr) => {
+            let l = TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding the off-box listener on {addr}"))?;
+            tracing::info!(%addr, "hi-agent accepting off-box requests (gated)");
+            Some(l)
+        }
+        None => {
+            tracing::info!(
+                "no off-box listener (set --off-box / HI_AGENT_OFF_BOX to be reachable \
+                 from anywhere but this machine)"
+            );
+            None
+        }
+    };
+
+    // Mint the bootstrap credential the first time this core runs, and say it out
+    // loud exactly once. Without it a core with no screen and no paired app — the
+    // Docker shape — could never admit its first surface. Only when the off-box
+    // listener exists: on a loopback-only install nothing is gated, so a
+    // credential nobody needs would be a secret printed for no reason.
+    if off_box_listener.is_some() {
+        if let Some(token) = seams.state.surfaces.ensure_first_boot_credential() {
+            tracing::info!(
+                credential = %token,
+                "first-boot surface credential — pair with it once, then revoke it in Settings"
+            );
+        }
+    }
 
     // Record the bound port so the native Settings "Sign in" button and the
     // account-link handlers can build the loopback callback URL (not a secret).
@@ -387,14 +437,41 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // so an unbounded graceful wait would never return.
     // `into_make_service_with_connect_info` exposes the peer address so the
     // account-link callback can enforce loopback-only (see server::account).
+    //
+    // Each listener serves the *same* router with one extra layer naming the
+    // acceptor. That layer is added outermost, so it is in place before the gate
+    // reads it, and it is the only thing that distinguishes the two — one router,
+    // one set of handlers, one behaviour, differing solely in who is allowed to
+    // reach them.
+    use foundation::surfaces::{Acceptor, accepted_on};
     let server_shutdown = shutdown.clone();
+    let loopback_router = accepted_on(router.clone(), Acceptor::Loopback);
     let mut server = tokio::spawn(async move {
         axum::serve(
             listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            loopback_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown_requested(server_shutdown))
         .await
+    });
+
+    // The off-box server drains on the same trigger. It is a separate task rather
+    // than a second `select!` arm because it may not exist at all, and the
+    // loopback one is the one whose exit means "we are done serving".
+    let off_box_server = off_box_listener.map(|l| {
+        let router = accepted_on(router, Acceptor::OffBox);
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let r = axum::serve(
+                l,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_requested(shutdown))
+            .await;
+            if let Err(e) = r {
+                tracing::error!(error = %e, "off-box HTTP server error");
+            }
+        })
     });
     let _ = server_ready_tx.send(true);
 
@@ -426,6 +503,16 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // (an HTTP error, not a signal) — idempotent, and it stops the reaction from
     // respawning sessions while we reap. No-op on the shutdown path (already fired).
     reaction_shutdown.trigger();
+
+    // Let the off-box acceptor finish its own drain, bounded by the same grace. It
+    // holds the identical long-lived connections (SSE, the long-polls), so an
+    // unbounded wait here would hang exit exactly as it would there.
+    if let Some(mut task) = off_box_server {
+        if tokio::time::timeout(SHUTDOWN_GRACE, &mut task).await.is_err() {
+            tracing::warn!("off-box drain grace elapsed; aborting its connections");
+            task.abort();
+        }
+    }
 
     // Reap every codex subprocess (one per live session) so none
     // are orphaned. Bounded so a stuck child can't hang exit.

@@ -65,7 +65,13 @@ export async function* subscribeViewState(
  * The server bumps the version, so every device's long-poll converges on empty
  * (there is no optimistic local change; the next snapshot drives the UI). */
 export async function clearViewState(): Promise<void> {
-  const res = await fetch("/api/out/view", { method: "DELETE" });
+  // A bodyless DELETE carries no content type, which is indistinguishable
+  // here from `text/plain`; the header is how it says it is not a
+  // cross-site form. See the note in `in/text.ts`.
+  const res = await fetch("/api/out/view", {
+    method: "DELETE",
+    headers: { "X-HI-Surface": "1" },
+  });
   if (!res.ok) {
     throw new Error(`/api/out/view clear failed: ${res.status} ${res.statusText}`);
   }

@@ -11,6 +11,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures::{Stream, StreamExt};
 use hi_agent::body::reaction::OutboundSignal;
+use hi_agent::foundation::surfaces::{Acceptor, accepted_on};
 use hi_agent::foundation::server::{self, ServerSeams};
 use hi_agent::mind::memory::Memory;
 use serde::Deserialize;
@@ -115,7 +116,7 @@ impl Feed {
 }
 
 fn serve(dir: &std::path::Path, memory: Memory) -> (Router, ServerSeams) {
-    server::build(
+    let (router, seams) = server::build(
         memory,
         dir.to_path_buf(),
         hi_agent::foundation::observatory::Observatory::new(None),
@@ -124,7 +125,10 @@ fn serve(dir: &std::path::Path, memory: Memory) -> (Router, ServerSeams) {
         hi_agent::body::reaction::InterruptRegistry::new(),
         hi_agent::body::attachments::Attachments::new(),
         None,
-    )
+    );
+    // A test is a local caller, and says so: without an acceptor the gate
+    // fails closed and every request here would be a 401.
+    (accepted_on(router, Acceptor::Loopback), seams)
 }
 
 async fn bind(router: Router) -> String {

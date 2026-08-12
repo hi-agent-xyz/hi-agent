@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use hi_agent::mind::memory::Memory;
 use hi_agent::body::reaction::OutboundSignal;
+use hi_agent::foundation::surfaces::{Acceptor, accepted_on};
 use hi_agent::foundation::server::{self, ServerSeams};
 use hi_agent::types::{ViewEnvelope, ViewOp};
 use tempfile::tempdir;
@@ -28,6 +29,9 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
+    // A test is a local caller, and says so: without an acceptor the gate
+    // fails closed and every request here would be a 401.
+    let router = accepted_on(router, Acceptor::Loopback);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");

@@ -24,5 +24,12 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates unzip \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=rust /build/target/release/hi-agent /usr/local/bin/hi-agent
+# A core in a container is reached from off its machine by definition — a
+# published port is not loopback — so it accepts on the gated acceptor and
+# nothing here is answered without a credential. The loopback listener keeps the
+# default port for the codex subprocesses and the renderer, which is why the two
+# cannot be the same number. The first-boot credential is printed to the log
+# once; pair with it, then revoke it.
+ENV HI_AGENT_OFF_BOX=0.0.0.0:8080
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/hi-agent"]

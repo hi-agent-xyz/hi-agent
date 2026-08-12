@@ -39,6 +39,7 @@ pub mod settings;
 pub mod skills;
 pub mod stage;
 pub mod stubs;
+pub mod surfaces;
 pub mod tasks;
 pub mod text;
 pub mod transcript;
@@ -343,6 +344,13 @@ pub struct AppState {
     /// updates this to decide when an appear/leave event is worth a signal. See
     /// [`FacePresence`] and [`vision::post_presence`].
     pub face_presence: Mutex<FacePresence>,
+
+    /// Who may reach this core: the surface credentials, their exchanged sessions,
+    /// and the outstanding pairing codes. Read by the gate on every off-box
+    /// request and by the four routes in [`surfaces`]. Not to be confused with
+    /// `auth` above, which links an account and gates nothing. See
+    /// [`crate::foundation::surfaces`].
+    pub surfaces: Arc<crate::foundation::surfaces::Surfaces>,
 }
 
 impl AppState {
@@ -418,6 +426,10 @@ pub fn build(
     attachments: crate::body::attachments::Attachments,
     auth: Option<Arc<crate::foundation::auth::AuthState>>,
 ) -> (Router, ServerSeams) {
+    // Who may reach this core. Built here rather than handed in: it is state the
+    // HTTP front owns end to end — the gate below is the only thing that reads it
+    // on the hot path, and `AppState` is how the four routes reach it.
+    let surface_reach = Arc::new(crate::foundation::surfaces::Surfaces::new(data_dir.clone()));
     let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
     // Warm-up requests: a presence GET asks the reaction to stand itself up ahead
     // of the first utterance (see `AppState::warm`).
@@ -499,6 +511,7 @@ pub fn build(
         attachments,
         handoffs: Mutex::new(HashMap::new()),
         face_presence: Mutex::new(FacePresence::default()),
+        surfaces: surface_reach.clone(),
     });
 
     // Channels are namespaced by boundary: `/api/in/*` is the world→agent side
@@ -507,6 +520,15 @@ pub fn build(
     // the backend-owned appearance state. `/api/sessions` is observability, not
     // a channel.
     let router = Router::new()
+        // Who may reach this core. `POST /api/session` is open by definition —
+        // it is how anything stops being unauthorized; the other three are gated
+        // like every other route, so pairing a phone is asked for from a surface
+        // that already has access. `/healthz` answers before anything is paired.
+        .route("/healthz", get(surfaces::get_healthz))
+        .route("/api/session", post(surfaces::post_session))
+        .route("/api/pair", post(surfaces::post_pair))
+        .route("/api/surfaces", get(surfaces::get_surfaces))
+        .route("/api/surfaces/{id}", axum::routing::delete(surfaces::delete_surface))
         .route("/api/in/text", post(text::post_text).get(text::get_in_text))
         .route("/api/out/text", get(text::get_out_text))
         .route("/api/messages", get(text::get_messages))
@@ -629,6 +651,20 @@ pub fn build(
         Some(auth) => crate::foundation::auth::mount(router, auth),
         None => router,
     };
+
+    // The gate, outside every route including the appearance router and the
+    // owner sign-in mount: an off-box request is answered only with a credential.
+    // Loopback passes untouched, which is why `make dev`, the curl journeys, the
+    // popover and the codex subprocesses on `/mcp` are unaffected.
+    //
+    // It goes *inside* the trace layer so a rejected request is still logged, and
+    // *outside* everything else so no route can be reached around it. Which
+    // acceptor took the request is marked by the listener (see
+    // [`crate::foundation::surfaces::Acceptor`]) — this layer only reads it.
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        surface_reach.clone(),
+        crate::foundation::surfaces::gate,
+    ));
     let router = router.layer(TraceLayer::new_for_http());
 
     let seams = ServerSeams {

@@ -2,13 +2,16 @@
 //!
 //! ## What this is (and is NOT)
 //!
-//! hi-agent has **no access gate**. The agent's face (`/` and its `/api/in/*` ·
-//! `/api/out/*` channels), the owner's Settings page, the inspect console — all of
-//! it is served without a login. A hi-agent instance is single-tenant: it *is*
-//! one person's agent, and whoever can reach the URL can use it. If you expose it
-//! on a shared network and want to keep the control surface private, put it behind
-//! your own reverse proxy / VPN — that's an operator concern, not something the
-//! app gates.
+//! **This is not the access gate.** That is
+//! [`crate::foundation::surfaces`]: a surface presents a credential, exchanges it
+//! for a session, and everything arriving on the off-box acceptor is answered
+//! only if it carries one. Loopback stays ungated, so a hi-agent reached from its
+//! own machine is as open as it ever was.
+//!
+//! Two mechanisms named "auth" in one tree is exactly the confusion
+//! `docs/arch/topology.md` warns about ("two mechanisms to keep in agreement"),
+//! so the split is worth stating plainly: **that one decides whether a request is
+//! answered; this one links an account and decides nothing.**
 //!
 //! The only thing this module does is let the owner **sign in to their
 //! xiaoyuanzhu account**, so the broker can (in future) mint a paid `sub`-tier

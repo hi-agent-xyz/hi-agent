@@ -16,6 +16,11 @@ export async function postInText(opts: {
     method: "POST",
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
+      // `text/plain` is one of the three content types a cross-site *simple*
+      // request can carry, so off-box the core will not accept it on a cookie
+      // alone. This header cannot be set without a preflight, which is the
+      // proof. Harmless on loopback, where nothing is gated.
+      "X-HI-Surface": "1",
     },
     body: opts.body,
     signal: opts.signal,

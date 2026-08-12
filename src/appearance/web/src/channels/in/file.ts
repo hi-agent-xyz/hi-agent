@@ -87,7 +87,11 @@ export async function postInFiles(opts: {
 
   const res = await fetch("/api/in/file", {
     method: "POST",
-        body: fd,
+    // `multipart/form-data` is a cross-site-simple content type, so off-box a
+    // cookie alone is not enough for it; see the note in `in/text.ts`. The
+    // browser sets the Content-Type (with its boundary) itself.
+    headers: { "X-HI-Surface": "1" },
+    body: fd,
     signal: opts.signal,
   });
 

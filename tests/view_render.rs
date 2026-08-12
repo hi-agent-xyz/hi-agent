@@ -23,6 +23,7 @@ use std::time::Duration;
 use hi_agent::body::capabilities::view_render::{self, RenderRequest, Verdict};
 use hi_agent::mind::memory::Memory;
 use hi_agent::mind::views::ViewCompiler;
+use hi_agent::foundation::surfaces::{Acceptor, accepted_on};
 use hi_agent::foundation::server::{self, ServerSeams};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -77,6 +78,9 @@ async fn harness(esbuild: PathBuf) -> Harness {
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
+    // A test is a local caller, and says so: without an acceptor the gate
+    // fails closed and every request here would be a 401.
+    let router = accepted_on(router, Acceptor::Loopback);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
@@ -233,6 +237,9 @@ async fn the_render_page_is_served_with_the_host_import_map() {
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
+    // A test is a local caller, and says so: without an acceptor the gate
+    // fails closed and every request here would be a 401.
+    let router = accepted_on(router, Acceptor::Loopback);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     tokio::spawn(async move {

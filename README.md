@@ -233,8 +233,13 @@ CLI flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--port` | `12358` | HTTP port to bind |
+| `--port` | `12358` | Loopback port. Everything on this machine reaches the agent here, ungated |
+| `--off-box` | *(unset)* | Also accept from off this machine, on `ADDR` (e.g. `0.0.0.0:12359`). Gated: a surface must present a credential. Also `HI_AGENT_OFF_BOX` |
 | `--data-dir` | `./data` | Where `journal.jsonl` / `intents.jsonl` / `mcp.sock` live |
+
+Two listeners, because which one accepted a request is what decides whether it is
+gated — a single `0.0.0.0` socket cannot tell loopback from the world. See
+[`docs/arch/topology.md`](docs/arch/topology.md#auth).
 
 ## Project layout
 
@@ -288,6 +293,16 @@ On first run the binary installs its own runtime (downloads the pinned Node and
 no separate agent container. First run therefore needs network access and
 the system `tar`. The image still needs `AI_API_KEY` supplied at
 runtime for cognition to work.
+
+The image publishes the **off-box** acceptor, so nothing it serves is answered
+without a credential. The first run prints one:
+
+```
+first-boot surface credential — pair with it once, then revoke it in Settings
+```
+
+Present it as `Authorization: Bearer <credential>`, or exchange it once for a
+session cookie at `POST /api/session`.
 
 ## Risks and known unverified things
 

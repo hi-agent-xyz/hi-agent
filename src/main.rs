@@ -8,9 +8,23 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "hi-agent", about = "Reference implementation of the human-interface spec")]
 #[command(version = version_string())]
 struct Cli {
-    /// HTTP port to bind on.
+    /// Loopback port to bind on. Everything on this machine reaches the agent
+    /// here, ungated.
     #[arg(long, default_value_t = 12358)]
     port: u16,
+
+    /// Also accept requests from off this machine, on `ADDR` (e.g.
+    /// `0.0.0.0:12359`). Everything arriving there is gated: a surface must
+    /// present a credential (`POST /api/session`). Unset by default — a desktop
+    /// install is reached over loopback and opens no socket to the world.
+    ///
+    /// It cannot be the same port as `--port`: one socket cannot tell loopback
+    /// from the world, and that distinction is the trust model.
+    /// Falls back to `HI_AGENT_OFF_BOX` in the environment or `.env` — read in
+    /// [`build_config`], not by clap, because `.env` is loaded after argument
+    /// parsing.
+    #[arg(long, value_name = "ADDR")]
+    off_box: Option<std::net::SocketAddr>,
 
     /// Root for memory (`memory/raw/…`), the soul, and runtime state. Unset: a
     /// packaged `.app` uses the OS data dir (`~/Library/Application Support/
@@ -64,7 +78,32 @@ fn default_data_dir() -> PathBuf {
 /// populated from `.env` by the time this runs). Split out so the macOS desktop
 /// path can defer it onto the server thread: a missing/invalid key then surfaces in
 /// the menu bar instead of aborting `main` before the tray ever appears.
-fn build_config(port: u16, data_dir: PathBuf) -> anyhow::Result<hi_agent::Config> {
+fn build_config(
+    port: u16,
+    off_box: Option<std::net::SocketAddr>,
+    data_dir: PathBuf,
+) -> anyhow::Result<hi_agent::Config> {
+    // Where off-box requests are accepted, if anywhere: the flag wins, else
+    // `HI_AGENT_OFF_BOX` (which is how the Docker image sets it). A malformed
+    // value is a hard error — silently falling back to "unreachable" would look
+    // exactly like a working install until someone tried to reach it.
+    let off_box = match off_box {
+        Some(addr) => Some(addr),
+        None => match std::env::var("HI_AGENT_OFF_BOX") {
+            Ok(v) if !v.trim().is_empty() => Some(
+                v.trim()
+                    .parse()
+                    .with_context(|| format!("HI_AGENT_OFF_BOX is not an address: {v}"))?,
+            ),
+            _ => None,
+        },
+    };
+    if off_box.is_some_and(|a| a.port() == port) {
+        anyhow::bail!(
+            "--off-box cannot use --port ({port}): one socket cannot tell loopback from \
+             the world, and that distinction is what decides whether a request is gated"
+        );
+    }
     // Resolve the upstream LLM credential BYOK-first: the user's key from the
     // credential store (`<data_dir>/credentials.json`) wins, else `.env`. Never
     // fails — with no key the agent boots unconfigured and Settings can set one.
@@ -72,7 +111,7 @@ fn build_config(port: u16, data_dir: PathBuf) -> anyhow::Result<hi_agent::Config
     // Owner xiaoyuanzhu sign-in config (the OIDC vars). Disabled unless
     // HI_AGENT_OIDC_ISSUER is set; then a missing OIDC var is a hard startup error.
     let auth = hi_agent::foundation::auth::AuthConfig::from_env()?;
-    Ok(hi_agent::Config { port, data_dir, agent, auth })
+    Ok(hi_agent::Config { port, off_box, data_dir, agent, auth })
 }
 
 /// Package-time: lay out the full managed runtime, the three recognition models,
@@ -270,6 +309,7 @@ fn main() -> anyhow::Result<()> {
     // macOS, where it selects the headless/server-owns-main-thread path.
     let no_tray = cli.no_tray;
     let port = cli.port;
+    let off_box = cli.off_box;
 
     // On macOS the default install shape is a desktop app: AppKit owns the main
     // thread and shows a menu-bar icon, while the HTTP server runs on a background
@@ -287,7 +327,7 @@ fn main() -> anyhow::Result<()> {
         if !headless {
             let data_dir_for_config = data_dir.clone();
             return hi_agent::run_with_tray(port, data_dir, move || {
-                build_config(port, data_dir_for_config)
+                build_config(port, off_box, data_dir_for_config)
             });
         }
         tracing::info!("tray skipped (headless); serving without a menu-bar icon");
@@ -295,7 +335,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(not(target_os = "macos"))]
     let _ = no_tray;
 
-    let config = build_config(port, data_dir)?;
+    let config = build_config(port, off_box, data_dir)?;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(hi_agent::run(config))
 }
