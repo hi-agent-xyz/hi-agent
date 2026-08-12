@@ -45,12 +45,27 @@ struct Cli {
     #[arg(long, hide = true, value_name = "DIR")]
     provision_into: Option<PathBuf>,
 
+    /// Where the **app** listens — the address the face is opened at. The app
+    /// holds the roster and forwards to whichever core is attached, adding this
+    /// install's credential; the core's own port stays an internal address.
+    ///
+    /// Defaults to on for a desktop install and off for a headless one, which is
+    /// a core and nothing else. `0` disables it explicitly.
+    #[arg(long, value_name = "PORT")]
+    app_port: Option<u16>,
+
     /// macOS only: run headless (no menu-bar icon), giving the HTTP server the main
     /// thread as on Linux/Docker. The tray is also auto-skipped under SSH (no window
     /// server). No effect on other platforms.
     #[arg(long)]
     no_tray: bool,
 }
+
+/// Where the app listens on a desktop install. Adjacent to the core's port so
+/// the pair reads as one install, and distinct because they are two roles that
+/// will one day be two processes. Only the desktop entry has a default to apply.
+#[cfg(target_os = "macos")]
+const DEFAULT_APP_PORT: u16 = 12357;
 
 /// Version line including the pinned runtime component versions.
 fn version_string() -> &'static str {
@@ -81,8 +96,13 @@ fn default_data_dir() -> PathBuf {
 fn build_config(
     port: u16,
     off_box: Option<std::net::SocketAddr>,
+    app_port: Option<u16>,
     data_dir: PathBuf,
 ) -> anyhow::Result<hi_agent::Config> {
+    // `0` is how you say "no app here" on a machine whose default would be to
+    // have one; `None` keeps the caller's default.
+    let app_port = app_port.filter(|p| *p != 0);
+    anyhow::ensure!(app_port != Some(port), "--app-port cannot be --port ({port})");
     // Where off-box requests are accepted, if anywhere: the flag wins, else
     // `HI_AGENT_OFF_BOX` (which is how the Docker image sets it). A malformed
     // value is a hard error — silently falling back to "unreachable" would look
@@ -111,7 +131,7 @@ fn build_config(
     // Owner xiaoyuanzhu sign-in config (the OIDC vars). Disabled unless
     // HI_AGENT_OIDC_ISSUER is set; then a missing OIDC var is a hard startup error.
     let auth = hi_agent::foundation::auth::AuthConfig::from_env()?;
-    Ok(hi_agent::Config { port, off_box, data_dir, agent, auth })
+    Ok(hi_agent::Config { port, off_box, app_port, data_dir, agent, auth })
 }
 
 /// Package-time: lay out the full managed runtime, the three recognition models,
@@ -310,6 +330,9 @@ fn main() -> anyhow::Result<()> {
     let no_tray = cli.no_tray;
     let port = cli.port;
     let off_box = cli.off_box;
+    // A desktop install is an app as well as a core, so it has a face address by
+    // default; a headless one is a core and only gets an app if asked for one.
+    let app_port = cli.app_port;
 
     // On macOS the default install shape is a desktop app: AppKit owns the main
     // thread and shows a menu-bar icon, while the HTTP server runs on a background
@@ -326,8 +349,9 @@ fn main() -> anyhow::Result<()> {
         let headless = no_tray || std::env::var_os("SSH_CONNECTION").is_some();
         if !headless {
             let data_dir_for_config = data_dir.clone();
-            return hi_agent::run_with_tray(port, data_dir, move || {
-                build_config(port, off_box, data_dir_for_config)
+            let app_port = Some(app_port.unwrap_or(DEFAULT_APP_PORT));
+            return hi_agent::run_with_tray(port, app_port, data_dir, move || {
+                build_config(port, off_box, app_port, data_dir_for_config)
             });
         }
         tracing::info!("tray skipped (headless); serving without a menu-bar icon");
@@ -335,7 +359,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(not(target_os = "macos"))]
     let _ = no_tray;
 
-    let config = build_config(port, off_box, data_dir)?;
+    let config = build_config(port, off_box, app_port, data_dir)?;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(hi_agent::run(config))
 }

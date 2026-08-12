@@ -248,7 +248,8 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 |---|---|---|
 | **T0** | the `core` → `host` rename | **done**, `cf69e06` |
 | **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
-| **T2** | the app: a roster, a local proxy, and the room (invariant 7) | not started |
+| **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
+| **T2b** | the room: one capture slot at a time (invariant 7) | not started |
 | **T3** | the community: registry, then relay + tunnel + the subpath prefix | not started |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
@@ -275,6 +276,52 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T2 — The app · **on `feat/topology-app`**
+
+There was no app. One binary was core *and* face, the face was served same-origin by
+the core it rendered, and there was no roster, no credential holder, and no way to be
+with a core that is not this one.
+
+Now: `src/app/` — a roster in `config.db` (`base_url, credential, label`, exactly the
+doc's triple), and a loopback proxy in front of it. **The face talks only to the app**
+(`--app-port`, 12357 on a desktop install; the tray's "Open" points there), and the
+app forwards to whichever core is attached, adding the credential. Three things follow
+and the third is the point: the webview never holds a credential; switching who you are
+with is the app repointing its proxy with no face involvement; and desktop and mobile
+can run identical face code.
+
+- **The local core is roster entry #1**, seeded on first boot with no credential —
+  loopback is not gated, which is what makes hosting-and-attaching one act rather than
+  a pairing dance with yourself. Host-and-client stay capabilities of an instance.
+- **The app exchanges the credential for a session once and caches it**, per entry.
+  That is what keeps the long-lived secret off the wire, and it matters in the relayed
+  shape where the community terminates TLS.
+- **WebSocket passes through** by bridging frames rather than splicing bytes: splicing
+  would need a TLS client of its own for the relayed shape, and nothing we serve
+  negotiates a subprotocol. This is what lets a remote surface hold a mic.
+- **`Set-Cookie` is not forwarded down** — the core's session is the app's to hold, and
+  handing it to the browser would put a credential in the one place the design keeps
+  them out of.
+
+**One thing T1 got wrong, found by running it:** the app is not a browser, and the CSRF
+rule was written as though every cookie-bearing request were one. A forwarded
+`POST /api/in/text` (`text/plain` + the session cookie) drew `403`. The app now asserts
+`X-HI-Surface` on its own traffic — a proxied request cannot be a cross-site simple
+request, because the browser talked to the *app* and the app constructed what goes
+upstream. Better there than in the face, which should not have to know the rule.
+
+**Live-verified** on the Mac mini, two cores at once (2026-08-12): core A with an app,
+core B off-box and gated. Observed — the roster seeded with "this machine", uncredentialed;
+`GET /` and `/api/tools` answered through the app; pairing with B using its first-boot
+credential, which B logged as `surface session opened`; attaching to B and posting text
+that landed in **B's** conversation while A's stayed as it was; `/api/out/text` through
+the one app URL showing whichever core was attached (B even answered, "Core B, I'm
+here."); attaching back; and a WebSocket to `/api/in/audio/stream` bridged through to B,
+whose `memory/raw/audio/` then held the bytes.
+
+**Not done here:** the roster has no UI yet — it is `POST /api/app/roster` and nothing
+renders it, which is Settings' job and lands with T2b.
 
 #### T1 — The gate · **on `feat/topology-auth`**
 
