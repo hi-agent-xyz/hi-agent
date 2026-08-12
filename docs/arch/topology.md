@@ -136,10 +136,10 @@ and the only one it gets.
 | directly public | `https://agent.example.com` | nobody |
 | relayed | `https://hi-agent.xyz/ana` | the community |
 
-The community addresses cores by **subpath**, not subdomain: one certificate, no wildcard
-issuance, no per-handle DNS.
+The community addresses cores by **subpath**: one certificate, no wildcard issuance, no
+per-handle DNS.
 
-Three requirements come with that choice, and none is optional:
+Two requirements come with that choice, and neither is optional:
 
 **Reserved paths.** A handle cannot collide with a community route — `/`, `/healthz`,
 `/api/*`, `/downloads/*` today, and whatever is added later. Because a handle cannot be
@@ -152,18 +152,17 @@ community is not enough: the core emits absolute paths for `/assets/*`, `/genera
 the import map that `index()` injects, and under a subpath those must render as
 `/ana/assets/*` or views will not resolve. `HI_AGENT_BASE_URL` is the precedent.
 
-**The shared-origin boundary is real and is accepted with a named trigger.** Every relayed
-core lives on one origin, so they share storage and a cookie jar; `Path=/ana` limits
-transmission but is not a security boundary. This matters more here than in a typical app
-because the core serves agent-generated code — and the usual mitigation is unavailable,
-since views deliberately keep bare imports resolved through the page's import map to the
-**host's shared React instance**, so they cannot be moved to a sandboxed origin without
-redesigning that.
+**One origin is shared, and that is a real property rather than a caveat.** Every relayed
+core lives on `hi-agent.xyz`, so they share storage and a cookie jar; `Path=/ana` decides
+what is *sent* where and is not a boundary. It matters more here than in a typical app
+because a core serves agent-generated code, and the usual mitigation is unavailable: views
+deliberately resolve bare imports through the page's import map to the **host's shared React
+instance**, so they cannot be moved to a sandboxed origin without redesigning that.
 
-Scoped honestly: several of *your own* cores on one origin is a self-inflicted risk and
-acceptable. A browser holding a session to your core while visiting **someone else's** core
-is not, and there is no boundary there. Visiting is already out of scope, so subpath stands —
-and **browser-visiting another person's core is the trigger that forces subdomains.**
+The scope this is safe in is the scope the app already draws. **Through an app the browser
+holds nothing** — it talks to the app's local proxy, the app holds the credentials, and no
+core's session is ever in a page. The shared jar exists only for a browser pointed straight
+at `hi-agent.xyz/ana`, which is the owner visiting their own agent.
 
 Two smaller consequences: `__Host-` cookies require `Path=/` and are therefore incompatible
 with per-core path scoping (take the scoping), and a LAN address like
@@ -192,6 +191,14 @@ automatically.
 Exchanging once rather than signing every request also keeps the long-lived secret off the
 wire, and makes `POST /api/session` the single seam where a stronger proof can be swapped in
 later without touching anything downstream.
+
+**Access is shareable, and sharing it shares everything.** A credential says *this surface
+may reach me* and never *and who is holding it* — so handing someone a pairing code is a
+thing a person may simply do, and what they get is the whole conversation, the whole memory,
+the whole ledger. That is what lending someone your laptop means, and it is the person's
+call rather than a capability the architecture withholds. There is no guest, no per-person
+scoping and no permission tier; who is *speaking* is a question the agent answers the way it
+answers it in a room — by voice, by face, by asking.
 
 **Storage.** `(id, label, hash, created_at, last_seen_at, revoked_at)`. The label is what
 makes a device list readable and revocation meaningful. Compare in constant time, and
@@ -223,17 +230,17 @@ state-changing endpoints additionally require a JSON content type or a custom he
 of which force a preflight a simple cross-site request cannot satisfy. Small, but it will
 not happen unless it is written down.
 
-### Credentials today, keys later
+### The credential is an opaque random token
 
-v1 uses opaque random credentials. The alternative — a keypair per app, proven at
-`POST /api/session` — buys one thing: a credential that a reader in the middle cannot walk
-away with. That matters only in the relayed shape, where the community terminates TLS; in
-the local and directly-public shapes there is no reader.
+Not a keypair. A keypair would buy one thing — a credential a reader in the middle cannot
+walk away with — and there is a reader in exactly one shape: relayed, where the community
+terminates TLS. That is a community we already trust to route our traffic honestly, so
+paying for it in every attach, every verify and a second credential type is paying for a
+guarantee we are not otherwise relying on.
 
-The table above holds either. Adding a key type is an additive change to one column and one
-verify function, not a redesign. **Core-to-core mail is the trigger that makes keys
-non-optional**, because signing for each other, verifiable without the community vouching,
-is the whole content of invariant 1.
+Stated plainly rather than hedged: **in the relayed shape the community is trusted not to
+replay what it forwards.** The storage table would hold a key type if that ever stopped
+being acceptable, but nothing is designed around the possibility.
 
 ---
 
@@ -379,14 +386,14 @@ superseded by a real revocation the moment the core is reachable.
 
 Each is testable, and each has a real failure behind it.
 
-1. **The community never signs as a person.** Anything it delivers on a core's behalf is
-   signed by that core, end to end.
+1. **The community is never a principal.** It has no name, cannot be addressed, holds no
+   person-credential, and nothing it serves is authored by it — it routes bytes and
+   forwards them unchanged.
 2. **The community may know you; it must never require billing you.** The registry and the
    broker share no key.
 3. **The core is the sole authority on who may reach it.** The community never issues,
-   checks or holds access. *Honest caveat while credentials are bearer tokens: in the
-   relayed shape the community is trusted not to replay what it forwards. Keys close that,
-   and are the stated upgrade path.*
+   checks or holds access. *Stated plainly: in the relayed shape it is trusted not to
+   replay what it forwards, because a bearer token is a bearer token.*
 4. **The core never learns of other cores.** The roster is app state and stays there.
 5. **One body per person.** One handle, one live core.
 6. **Off-box trust is structural** — decided by which listener accepted the request, never
@@ -395,26 +402,16 @@ Each is testable, and each has a real failure behind it.
 
 ---
 
-## Not in scope
+## Not built
 
-Each is deliberate, with the reason it is deferred:
+Two things, and each is a thing the design has a shape for and no code behind:
 
-- **A non-owner interlocutor.** A core has one conversation and no concept of a guest, so
-  someone else reaching it would arrive *as* the owner. That is architecture, not a
-  permission, and changing it touches presence, character and memory.
-- **Mail for a sleeping core**, and therefore core-to-core addressing. The community can
-  hold it; the core has nowhere to put it yet. This is also what makes keys non-optional.
-- **A community-held hint list** ("this app is paired with these handles", to help an app
-  rebuild a roster). Useful, and expressible as a directory rather than a permission — but
-  it is relationship state, which the community holds none of today.
-- **Roster sync between apps.** Each app is paired individually, which is what makes
-  revocation local.
-- **Subdomain addressing.** Held in reserve behind the named trigger above.
-- **Ending TLS at the core** (routing by SNI instead of terminating). It would make traffic
-  opaque to the community at the cost of certificate distribution, and a community that
-  holds mail and sends push is a participant anyway.
-- **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. Contingent,
-  not permanent.
+- **Mail for a sleeping core.** The community can hold it; the core has nowhere to put it
+  yet. Until then an inbound request for a sleeping core is answered "asleep" and nothing
+  is queued.
+- **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. Everything
+  above already treats hosting as a capability of an app instance rather than a property of
+  a platform, so the day that changes, nothing structural does.
 
 ## See also
 

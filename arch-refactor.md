@@ -279,27 +279,38 @@ mechanism:
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
 
-#### Addressing stays subpath · **a change that was made and reverted, 2026-08-12**
+#### Addressing is a subpath · **settled 2026-08-12, and the doc no longer hedges**
 
-`hi-agent.xyz/ana`, not `ana.hi-agent.xyz`. Written down because it was changed once
-already and reverting it cost a commit each way.
+`hi-agent.xyz/ana`. One certificate, no wildcard issuance, no per-handle DNS.
 
-**How it happened, since that is the reusable part:** the cookie question surfaced a real
-observation — sibling cores on one origin can toss cookies at each other, and `__Host-`
-would prevent it but needs `Path=/`, which per-core path scoping cannot have. I raised
-subdomains as a *choice to re-open* and then took it myself on an ambiguous "sounds good".
-That is the failure, not the analysis: **the design was already argued** — one certificate,
-no wildcard issuance, no per-handle DNS, with the shared-origin cost scoped honestly and a
-named trigger for revisiting. Overturning a settled decision needs the decision, not an
-adjacent approval.
+It was changed to subdomains and reverted (`f26f52f`, `37d87c0`) — recorded because the
+failure is reusable: I raised subdomains as *a choice to re-open* and then took it on an
+adjacent "sounds good". Overturning a settled decision needs the decision.
 
-Reverted whole (`f26f52f`): the doc, `__Host-hi_surface`, and the deletion of `base_path()`
-/ `X-Forwarded-Prefix`, which the subpath shape needs. Nothing about the addressing is open.
+The reserve apparatus went with it, on the user's instruction — *"not Not in scope, but
+please fix the design, and just delete things we don't use."* What was deleted:
 
-The observation that started it stands on its own and changes nothing here — `topology.md`
-already says outright that `Path=/ana` limits transmission and is not a security boundary,
-and names browser-visiting-another-person's-core as what would force subdomains. If that
-trigger ever fires, it fires as its own decision.
+- **"Subdomain addressing, held in reserve behind the named trigger"**, and the trigger
+  itself. The shared origin is now stated as a property with its real scope — *through an
+  app the browser holds nothing*, so the shared jar exists only for the owner pointing a
+  browser straight at their own core — rather than as a caveat waiting to be escalated.
+- **"Credentials today, keys later."** The keypair roadmap is gone; what stands is that the
+  credential is an opaque random token and, in the relayed shape, the community is trusted
+  not to replay what it forwards. Invariant 3's caveat says exactly that instead of naming
+  keys as the upgrade path, and **invariant 1 was rewritten**: "the community never signs as
+  a person" described signing machinery that does not exist and is not planned, so it now
+  says what is true and testable — the community is never a principal.
+- **A community-held hint list**, **roster sync** (already stated where it belongs, in the
+  App section), and **ending TLS at the core** — three speculations nothing was built
+  against.
+- **"A non-owner interlocutor"**, which argued from an owner the code does not have. Access
+  *is* shareable and always was: a credential says which surface may reach a core and never
+  who holds it. That now sits in Auth, where access is decided, and says the honest thing —
+  sharing shares everything, it is the person's call, and who is *speaking* is a perception
+  question the agent answers the way it does in a room.
+
+`## Not in scope` is now `## Not built`, and holds two items instead of seven: mail for a
+sleeping core, and a core on iOS.
 
 #### ~~T2b — The room~~ · **cut 2026-08-12**
 
