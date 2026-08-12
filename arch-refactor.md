@@ -239,6 +239,94 @@ failure itself, which predates this and belongs to whoever owns the broker.
 
 ## Next, in dependency order
 
+### T — Topology: core, app, community
+
+`docs/arch/topology.md` (`530ef8a`) is design-only. The implementation plan is four
+phases, ordered so each is worth having on its own rather than by what the doc lists first.
+
+| | | |
+|---|---|---|
+| **T0** | the `core` → `host` rename | **done**, `cf69e06` |
+| **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
+| **T2** | the app: a roster, a local proxy, and the room (invariant 7) | not started |
+| **T3** | the community: registry, then relay + tunnel + the subpath prefix | not started |
+| **T4** | post (push), and refusing to route for a surface reported lost | not started |
+
+**T1 delivers the directly-public shape end to end and needs no Go work**, which is why
+it is first: a core in Docker behind a domain is reachable and gated today. T2 is what
+makes a *second* core addressable at all; T3 is the largest single item (the tunnel);
+T4 is the only part that needs the community to hold state about a surface.
+
+Decisions taken while planning, each one a place the doc specifies a property and no
+mechanism:
+
+- **The tunnel is yamux over WSS, and control is not tunnel traffic** — register /
+  claim / renew are ordinary HTTPS calls. Written into `docs/arch/topology.md`, with
+  the reason reversed HTTP/2 loses (extended CONNECT, and `Upgrade` is exactly what
+  remote mic and camera capture ride).
+- **The app ships first as a module in this binary** (`src/app/`, T2), not as a second
+  process. `CLAUDE.md`'s Phase 1/2 sequencing says do not flip process ownership yet,
+  and the seam is the same one the Swift shell will hold later. The local core is
+  simply roster entry #1 — host-and-client-are-capabilities is preserved.
+- **Registry and relay live in the existing Go binary**, in their own packages with
+  their own tables and no shared key with the broker. Handles are subpaths of the
+  origin that already ends in an SPA catch-all on `/`, so one mux is the only place
+  the reserved-path rule can be mechanically enforced. Invariant 2 is about keys and
+  required links, not processes.
+- **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
+  bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T1 — The gate · **on `feat/topology-auth`**
+
+`auth/mod.rs` said it in its own header — *"hi-agent has **no access gate**… whoever
+can reach the URL can use it"* — while `lib.rs` bound `0.0.0.0`. So the Docker shape
+was open to whatever could route to it, and "reach a core that runs elsewhere" had no
+answer to give.
+
+**Two listeners, because trust is structural.** A single `0.0.0.0` socket cannot tell
+loopback from the world, and which acceptor took the request is the whole decision
+(invariant 6). `--port` binds `127.0.0.1` only; `--off-box` / `HI_AGENT_OFF_BOX` is a
+second socket, unset by default. One router, served twice, differing by an `Acceptor`
+extension the listener adds — which **fails closed**, so forgetting the layer costs
+access rather than granting it. No IP allowlist: in the relayed shape every request
+will share the community's address.
+
+**The consequence is deliberate and it lands on Docker.** A published port is not
+loopback, so an existing `docker compose up` is gated from this commit on. That is the
+design working, and the first-boot credential — logged once, only when an off-box
+listener exists — is what keeps it survivable.
+
+Three things worth keeping in mind when the next rung touches this:
+
+- **SHA-256, not argon2id**, with the reason in a comment. A 32-byte random credential
+  is not guessable, so a slow KDF buys nothing and costs latency on every attach. The
+  broker's argon2id is correct for what it hashes; someone will try to "fix" this to
+  match it.
+- **CSRF is narrower than "must be JSON".** A cross-site *simple* request can only
+  carry `x-www-form-urlencoded`, `multipart/form-data` or `text/plain` — that is the
+  entire exposure, and `X-HI-Surface` is the way through for the two routes that
+  legitimately use them. Only the cookie needs it; a bearer is never ambient.
+- **Revocation drops the sessions too**, not just the row. Half of it would leave a
+  revoked phone working until its session lapsed.
+
+**Live-verified** on an isolated `--data-dir` on the Mac mini, both listeners up
+(2026-08-12) — which is the thing this file keeps recording as missing. Observed over
+real sockets: loopback `200` and off-box `401` on the same route; the pairing page on
+an HTML navigation; `/healthz` open; the first-boot credential accepted as a bearer;
+`POST /api/session` returning a `hi_surface` cookie that then works; `403` on a
+cookie + `text/plain` POST and `202` with the header; a pairing code minted from
+loopback and spent off-box, appearing in the device list under its label; and
+`DELETE /api/surfaces/{id}` turning a working credential into a `401`. SIGTERM left
+zero orphaned `codex` processes.
+
+**Not covered by T1, and named:** the `Secure` cookie attribute is set only when the
+request actually arrived over TLS — always setting it would make a plain-HTTP off-box
+deployment silently keep no session at all, which is a worse failure than the one it
+prevents where there is no TLS to protect. And `POST /api/pair`'s QR half is not
+built: the code and its URL are returned, but nothing renders them yet, because the
+surface that would show them is T2's Settings.
+
+
 ### ~~N1 — Revive the soul seed~~ · **on `main`**
 
 `identity::load_soul` was **dead code** — built at startup, stored on `ReactionInner`, read only
@@ -1052,5 +1140,7 @@ Decision Maker. The prompts no longer name tools nobody holds: `ask`, `delegate`
 `look`-as-view-review are gone from them, and `render_status` — the last generated one — with
 them. What is left here is one question, not a gap: **Reflection is still a pass, not a rung**,
 so it can dispatch and cannot hear back, and `any_host` survives for exactly that reason.
-`SURFACES` — text and audio solid end to end. Vision and file journaled but half-connected — no
+`SURFACES` — **who may reach the core is now decided** (T1): two acceptors, one
+credential in two presentations, and the loopback path unchanged. Text and audio solid
+end to end. Vision and file journaled but half-connected — no
 wake, no locator. Apps and device-as-surface absent.
