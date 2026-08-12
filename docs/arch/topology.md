@@ -19,7 +19,7 @@ person**, never many people behind one surface, and never one person split acros
 | Three roles, not two | The client and the agent are separate processes with an API between them. Collapse them and "reach a core that runs elsewhere" cannot be said at all |
 | The core is headless and location-independent | It already compiles to exactly this shape on Linux/Docker. Making location a parameter costs one field; assuming locality costs a rewrite |
 | An app renders a core; it never *is* one | Identity lives in one place. An app that could be a person would need memory, a handle, and a life |
-| **An address is a base URL** | `http://localhost:12358` and `https://ana.hi-agent.xyz` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
+| **An address is a base URL** | `http://localhost:12358` and `https://hi-agent.xyz/ana` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
 | **The core checks auth; the community never does** | In two of the three shapes the community is not in the path at all. Auth at the community would not replace core-side auth, only add to it — two mechanisms to keep in agreement |
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
 | Registration is independent of the account | A BYOK install pays us nothing and must still get a name and be reachable. Sharing a key between the registry and billing would quietly make the address a paid feature |
@@ -134,50 +134,41 @@ and the only one it gets.
 |---|---|---|
 | local | `http://localhost:12358` | nobody |
 | directly public | `https://agent.example.com` | nobody |
-| relayed | `https://ana.hi-agent.xyz` | the community |
+| relayed | `https://hi-agent.xyz/ana` | the community |
 
-**The community addresses cores by subdomain, one origin each.** This reverses the original
-subpath decision, and the reversal is recorded rather than quietly rewritten because the
-reasoning that changed is worth keeping.
+The community addresses cores by **subpath**, not subdomain: one certificate, no wildcard
+issuance, no per-handle DNS.
 
-Subpath was chosen to avoid wildcard issuance and per-handle DNS. Both turned out to be
-nearly free: the community already terminates TLS behind Caddy with a DNS-01 challenge, so
-`*.hi-agent.xyz` is one certificate and one wildcard `A` record, not per-handle work. And the
-cost that was accepted in exchange got heavier. It was scoped as *"several of your own cores
-on one origin is self-inflicted and acceptable; a browser visiting someone else's core is
-not — and that is the trigger that forces subdomains."* **Access is shared, not owned** —
-nothing in a credential says whose core it reaches, and people will hand each other access
-because that is what access is for. So the exotic case is the ordinary one, and the trigger
-had already fired.
+Three requirements come with that choice, and none is optional:
 
-What one origin each buys, in order of weight:
+**Reserved paths.** A handle cannot collide with a community route — `/`, `/healthz`,
+`/api/*`, `/downloads/*` today, and whatever is added later. Because a handle cannot be
+reclaimed once held, the reserved list must be deliberately over-broad from day one
+(`admin`, `settings`, `login`, `help`, `about`, `assets`, `static`, `docs`, `status`, `up`,
+`auth`, …). This is the username-versus-route trap, and it is only cheap before launch.
 
-- **A real boundary between cores.** Separate storage, separate cookie jars, separate
-  everything the browser scopes by origin. This matters here more than in a typical app
-  because a core serves *agent-generated code*, and the usual mitigation is unavailable:
-  views deliberately resolve bare imports through the page's import map to the host's shared
-  React instance, so they cannot be moved to a sandboxed origin without redesigning that.
-- **`__Host-` cookies become available**, which subpath scoping made impossible. Without them
-  a sibling can set `Domain=hi-agent.xyz` and have its cookie sent to every other core;
-  `__Host-` forbids `Domain` outright, so a session cannot be tossed across siblings.
-- **The core needs no prefix at all.** Each core is at the root of its own origin, so
-  `/assets/*`, `/generated/*` and the import map `index()` injects all render unchanged.
-  Under a subpath every one of them had to be rewritten or views would not resolve.
+**The core is told its public base URL** at registration. Stripping the prefix at the
+community is not enough: the core emits absolute paths for `/assets/*`, `/generated/*` and
+the import map that `index()` injects, and under a subpath those must render as
+`/ana/assets/*` or views will not resolve. `HI_AGENT_BASE_URL` is the precedent.
 
-Two requirements come with it, and neither is optional:
+**The shared-origin boundary is real and is accepted with a named trigger.** Every relayed
+core lives on one origin, so they share storage and a cookie jar; `Path=/ana` limits
+transmission but is not a security boundary. This matters more here than in a typical app
+because the core serves agent-generated code — and the usual mitigation is unavailable,
+since views deliberately keep bare imports resolved through the page's import map to the
+**host's shared React instance**, so they cannot be moved to a sandboxed origin without
+redesigning that.
 
-**Reserved labels.** A handle cannot collide with a hostname the community needs — `www`,
-`api`, `app`, `admin`, `account`, `docs`, `status`, `mail`, `ns1`, `_acme-challenge`, and
-whatever is added later. Because a handle cannot be reclaimed once held, the reserved list
-must be deliberately over-broad from day one. This is the username-versus-route trap wearing
-a hostname, and it is only cheap before launch.
+Scoped honestly: several of *your own* cores on one origin is a self-inflicted risk and
+acceptable. A browser holding a session to your core while visiting **someone else's** core
+is not, and there is no boundary there. Visiting is already out of scope, so subpath stands —
+and **browser-visiting another person's core is the trigger that forces subdomains.**
 
-**The core is told its public base URL** at registration, so it can say where it is — for a
-pairing QR, for `/up/<token>`, for anything it hands someone. `HI_AGENT_BASE_URL` is the
-precedent. It no longer has to *rewrite* anything, which is the difference from subpath.
-
-One smaller consequence, unchanged: a LAN address like `http://192.168.1.5:12358` is not a
-secure context, so it gets no microphone or camera — `localhost` does.
+Two smaller consequences: `__Host-` cookies require `Path=/` and are therefore incompatible
+with per-core path scoping (take the scoping), and a LAN address like
+`http://192.168.1.5:12358` is not a secure context, so it gets no microphone or camera —
+`localhost` does.
 
 ---
 
@@ -189,7 +180,7 @@ A long-lived **credential**, exchanged once for a short session:
 
 ```
 POST /api/session      Authorization: Bearer <credential>
-  → 200, Set-Cookie: __Host-hi_surface=<session>; HttpOnly; Secure; SameSite=Lax; Path=/
+  → 200, Set-Cookie: hi_surface=<session>; HttpOnly; Secure; SameSite=Lax; Path=/…
 ```
 
 Two presentations of one credential, because a header alone cannot carry a browser:
@@ -197,12 +188,6 @@ Two presentations of one credential, because a header alone cannot carry a brows
 plain navigation — and the core serves all three. Apps and `curl` use the bearer header;
 anything browser-shaped rides the cookie, which SSE, WebSocket and navigation all send
 automatically.
-
-The name is the protection it can actually claim: `__Host-` requires `Secure` and `Path=/`
-and forbids `Domain`, which is what stops a sibling core tossing a session across the
-namespace — so it is used wherever the request arrived over TLS, and the plain `hi_surface`
-name is what a deployment without TLS gets. A cookie that claimed `__Host-` unconditionally
-would simply be dropped by the browser on such a deployment, silently.
 
 Exchanging once rather than signing every request also keeps the long-lived secret off the
 wire, and makes `POST /api/session` the single seam where a stronger proof can be swapped in
@@ -424,6 +409,7 @@ Each is deliberate, with the reason it is deferred:
   it is relationship state, which the community holds none of today.
 - **Roster sync between apps.** Each app is paired individually, which is what makes
   revocation local.
+- **Subdomain addressing.** Held in reserve behind the named trigger above.
 - **Ending TLS at the core** (routing by SNI instead of terminating). It would make traffic
   opaque to the community at the cost of certificate distribution, and a community that
   holds mail and sends push is a participant anyway.

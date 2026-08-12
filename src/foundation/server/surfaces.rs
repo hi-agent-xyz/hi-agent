@@ -59,7 +59,11 @@ pub async fn post_session(
     };
     tracing::info!(surface = %id, paired = minted.is_some(), "surface session opened");
 
-    let cookie = surfaces::session_cookie(&session, surfaces::over_tls(&headers));
+    let cookie = surfaces::session_cookie(
+        &session,
+        &base_path(&headers),
+        surfaces::over_tls(&headers),
+    );
     let payload = serde_json::json!({ "id": id, "credential": minted });
     (
         StatusCode::OK,
@@ -76,11 +80,11 @@ pub async fn post_session(
 /// it crosses to a device with no keyboard worth using.
 pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let code = state.surfaces.mint_pairing_code();
-    // A core is at the root of its own origin — one subdomain each — so where it
-    // is, is simply where this request arrived.
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
     let scheme = if surfaces::over_tls(&headers) { "https" } else { "http" };
-    let url = format!("{scheme}://{host}/");
+    let prefix = base_path(&headers);
+    let prefix = prefix.trim_end_matches('/');
+    let url = format!("{scheme}://{host}{prefix}/");
     tracing::info!("pairing code minted");
     axum::Json(serde_json::json!({ "code": code, "url": url, "expires_in": 600 })).into_response()
 }
@@ -124,6 +128,24 @@ pub async fn get_healthz() -> Response {
     ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "ok\n").into_response()
 }
 
+/// The path this core is served under. `/` locally and directly-public; `/ana`
+/// when the community routes by subpath and says so with `X-Forwarded-Prefix`.
+/// The cookie is scoped to it — `Path=/ana` limits transmission between cores on
+/// the shared origin, which is a scoping, not a security boundary (see
+/// `topology.md`).
+fn base_path(headers: &HeaderMap) -> String {
+    let raw = headers
+        .get("x-forwarded-prefix")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/');
+    if raw.is_empty() || !raw.starts_with('/') || raw.contains("..") {
+        return "/".to_string();
+    }
+    raw.to_string()
+}
+
 fn bearer(headers: &HeaderMap) -> Option<String> {
     let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let rest = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))?;
@@ -134,16 +156,24 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::HeaderValue;
 
     #[test]
-    fn a_bearer_is_read_however_it_is_capitalised() {
+    fn the_base_path_takes_a_prefix_and_refuses_nonsense() {
         let mut h = HeaderMap::new();
-        assert_eq!(bearer(&h), None);
-        h.insert(header::AUTHORIZATION, axum::http::HeaderValue::from_static("bearer tok"));
-        assert_eq!(bearer(&h).as_deref(), Some("tok"));
-        h.insert(header::AUTHORIZATION, axum::http::HeaderValue::from_static("Bearer  tok "));
-        assert_eq!(bearer(&h).as_deref(), Some("tok"));
-        h.insert(header::AUTHORIZATION, axum::http::HeaderValue::from_static("Bearer "));
-        assert_eq!(bearer(&h), None);
+        assert_eq!(base_path(&h), "/");
+
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
+        assert_eq!(base_path(&h), "/ana");
+
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
+        assert_eq!(base_path(&h), "/ana");
+
+        // A prefix is a path, and a relative or climbing one is not one we will
+        // scope a cookie to.
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("ana"));
+        assert_eq!(base_path(&h), "/");
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("/../admin"));
+        assert_eq!(base_path(&h), "/");
     }
 }

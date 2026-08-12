@@ -51,16 +51,7 @@ use sha2::{Digest, Sha256};
 
 /// Cookie carrying an exchanged session. `HttpOnly` so no script can read it,
 /// `SameSite=Lax` so the form-POST class of cross-site request cannot use it.
-///
-/// Two names for one cookie, and the name is **the protection it can actually
-/// claim**. `__Host-` requires `Secure` and `Path=/` and forbids `Domain` — which
-/// is precisely what stops one core setting `Domain=hi-agent.xyz` and having its
-/// session sent to every sibling. It is used wherever the request arrived over
-/// TLS. Claiming it unconditionally would be worse than not claiming it: a
-/// browser silently drops a `__Host-` cookie on an insecure origin, so a
-/// plain-HTTP deployment would keep no session at all and say nothing about why.
 pub const SESSION_COOKIE: &str = "hi_surface";
-pub const SESSION_COOKIE_SECURE: &str = "__Host-hi_surface";
 
 /// Header a browser-shaped client sets to prove its request could not have been a
 /// cross-site *simple* request. See [`Surfaces::csrf_ok`].
@@ -257,9 +248,7 @@ impl Surfaces {
             }
             self.note_failure();
         }
-        if let Some(session) =
-            cookie(headers, SESSION_COOKIE_SECURE).or_else(|| cookie(headers, SESSION_COOKIE))
-        {
+        if let Some(session) = cookie(headers, SESSION_COOKIE) {
             let live = {
                 let mut sessions = self.sessions.lock().unwrap();
                 let now = Instant::now();
@@ -508,17 +497,16 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 /// Render the `Set-Cookie` for an exchanged session.
 ///
-/// Always `Path=/`: a core is at the root of its own origin — one subdomain each
-/// — so there is no prefix to scope to, and `__Host-` requires `Path=/` anyway.
-///
-/// `Secure` (and with it the `__Host-` name) only when the request actually
-/// arrived over TLS. Always setting it would mean a plain-HTTP deployment
-/// silently keeps no session at all, which is a worse failure than the one it
-/// prevents where there is no TLS to protect in the first place.
-pub fn session_cookie(session: &str, secure: bool) -> String {
-    let name = if secure { SESSION_COOKIE_SECURE } else { SESSION_COOKIE };
-    let mut c =
-        format!("{name}={session}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}", SESSION_TTL.as_secs());
+/// `Secure` is set only when the request actually arrived over TLS. Always
+/// setting it would mean a plain-HTTP off-box test silently fails to keep any
+/// session at all — a browser drops a `Secure` cookie on an insecure origin
+/// without saying so — which is a worse failure than the one it prevents on a
+/// deployment that has no TLS to protect in the first place.
+pub fn session_cookie(session: &str, path: &str, secure: bool) -> String {
+    let mut c = format!(
+        "{SESSION_COOKIE}={session}; HttpOnly; SameSite=Lax; Path={path}; Max-Age={}",
+        SESSION_TTL.as_secs()
+    );
     if secure {
         c.push_str("; Secure");
     }
@@ -659,43 +647,9 @@ mod tests {
     }
 
     #[test]
-    fn a_session_cookie_claims_exactly_what_it_can_hold() {
-        let over_tls = session_cookie("s", true);
-        assert!(over_tls.starts_with("__Host-hi_surface=s"), "{over_tls}");
-        assert!(over_tls.contains("; Secure") && over_tls.contains("Path=/"));
-
-        // Without TLS the prefix would be a claim the browser rejects outright,
-        // and a rejected cookie is a session that silently never exists.
-        let plain = session_cookie("s", false);
-        assert!(plain.starts_with("hi_surface=s"), "{plain}");
-        assert!(!plain.contains("Secure"));
-    }
-
-    #[test]
-    fn either_cookie_name_is_accepted_and_the_guarded_one_wins() {
-        let s = surfaces();
-        let (_, token) = s.mint("the mac").unwrap();
-        let (session, _, _) = s.exchange(&token, "x").unwrap();
-
-        for name in [SESSION_COOKIE, SESSION_COOKIE_SECURE] {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::COOKIE,
-                HeaderValue::from_str(&format!("{name}={session}")).unwrap(),
-            );
-            assert_eq!(s.authorize(&headers), Some(Presented::Cookie), "{name}");
-        }
-
-        // Both present: the guarded name is the one that cannot have been set by
-        // a sibling, so it is the one read.
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::COOKIE,
-            HeaderValue::from_str(&format!(
-                "{SESSION_COOKIE}=tossed; {SESSION_COOKIE_SECURE}={session}"
-            ))
-            .unwrap(),
-        );
-        assert_eq!(s.authorize(&headers), Some(Presented::Cookie));
+    fn a_session_cookie_only_claims_secure_when_it_is() {
+        assert!(session_cookie("s", "/", true).contains("; Secure"));
+        assert!(!session_cookie("s", "/", false).contains("; Secure"));
+        assert!(session_cookie("s", "/ana", false).contains("Path=/ana"));
     }
 }

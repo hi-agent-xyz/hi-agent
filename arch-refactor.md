@@ -252,7 +252,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
 | **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
 | ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
-| **T3** | the community: registry, then relay + tunnel | addressing settled; registry next |
+| **T3** | the community: registry, then relay + tunnel + the subpath prefix | registry written (site repo), unpushed |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
 **T1 delivers the directly-public shape end to end and needs no Go work**, which is why
@@ -279,34 +279,27 @@ mechanism:
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
 
-#### T3 — Addressing: subdomains, not subpaths · **design change, `docs/arch/topology.md`**
+#### Addressing stays subpath · **a change that was made and reverted, 2026-08-12**
 
-The doc chose subpath (`hi-agent.xyz/ana`) to avoid wildcard issuance and per-handle DNS,
-and accepted a shared origin in exchange — scoping the risk as *"several of your own cores
-on one origin is self-inflicted and acceptable; a browser visiting **someone else's** core
-is the trigger that forces subdomains."*
+`hi-agent.xyz/ana`, not `ana.hi-agent.xyz`. Written down because it was changed once
+already and reverting it cost a commit each way.
 
-Both halves moved. The community already terminates TLS behind Caddy on a DNS-01
-challenge, so `*.hi-agent.xyz` is one certificate and one wildcard `A` record rather than
-per-handle work. And **access is shared, not owned** — nothing in a credential says whose
-core it reaches, and people hand each other access because that is what access is for. The
-case the trade called exotic is the ordinary one, so the trigger had already fired.
+**How it happened, since that is the reusable part:** the cookie question surfaced a real
+observation — sibling cores on one origin can toss cookies at each other, and `__Host-`
+would prevent it but needs `Path=/`, which per-core path scoping cannot have. I raised
+subdomains as a *choice to re-open* and then took it myself on an ambiguous "sounds good".
+That is the failure, not the analysis: **the design was already argued** — one certificate,
+no wildcard issuance, no per-handle DNS, with the shared-origin cost scoped honestly and a
+named trigger for revisiting. Overturning a settled decision needs the decision, not an
+adjacent approval.
 
-Three things fall out, and the third is why this is cheaper *now* than later:
+Reverted whole (`f26f52f`): the doc, `__Host-hi_surface`, and the deletion of `base_path()`
+/ `X-Forwarded-Prefix`, which the subpath shape needs. Nothing about the addressing is open.
 
-- Separate origins means a real boundary between cores — which matters here more than in a
-  typical app, because a core serves agent-generated code and views cannot be moved to a
-  sandboxed origin without redesigning the shared-React import map.
-- `__Host-` becomes available. Implemented: the cookie's **name is the protection it can
-  actually claim** — `__Host-hi_surface` where the request arrived over TLS, plain
-  `hi_surface` otherwise, and the reader takes either with the guarded one winning. Claiming
-  it unconditionally is worse than not claiming it, because a browser drops a `__Host-`
-  cookie on an insecure origin silently.
-- **The whole prefix problem disappears.** Each core sits at the root of its own origin, so
-  `/assets/*`, `/generated/*` and the import map render unchanged. `base_path()` and its
-  `X-Forwarded-Prefix` reader are deleted rather than left waiting for a producer.
-
-Reserved *labels* replace reserved paths, and are still only cheap before launch.
+The observation that started it stands on its own and changes nothing here — `topology.md`
+already says outright that `Path=/ana` limits transmission and is not a security boundary,
+and names browser-visiting-another-person's-core as what would force subdomains. If that
+trigger ever fires, it fires as its own decision.
 
 #### ~~T2b — The room~~ · **cut 2026-08-12**
 

@@ -123,7 +123,7 @@ async fn a_credential_opens_both_doors_it_is_supposed_to() {
         .next()
         .expect("the name=value pair")
         .to_string();
-    assert!(cookie.starts_with("hi_surface="), "plain HTTP cannot claim __Host-: {cookie}");
+    assert!(cookie.starts_with("hi_surface="));
 
     let res = client
         .get(format!("{off_box}/api/tools"))
@@ -211,38 +211,6 @@ async fn a_pairing_code_is_how_a_second_surface_gets_in() {
         .await
         .expect("send");
     assert_eq!(res.status(), 401, "revoked is revoked");
-}
-
-#[tokio::test]
-async fn over_tls_the_cookie_takes_the_name_that_a_sibling_cannot_toss() {
-    let (_loopback, off_box, _dir, seams) = spawn().await;
-    let client = reqwest::Client::new();
-    let (_id, token) = seams.state.surfaces.mint("the test").expect("mint");
-
-    // The community terminates TLS and says so; that is the condition under which
-    // `__Host-` is a claim the browser will honour rather than silently drop.
-    let res = client
-        .post(format!("{off_box}/api/session"))
-        .bearer_auth(&token)
-        .header("X-Forwarded-Proto", "https")
-        .send()
-        .await
-        .expect("send");
-    let cookie = res.headers().get("set-cookie").and_then(|v| v.to_str().ok()).expect("cookie");
-    assert!(cookie.starts_with("__Host-hi_surface="), "{cookie}");
-    assert!(cookie.contains("; Secure"));
-    assert!(cookie.contains("Path=/"), "__Host- requires it, and a core owns its whole origin");
-    assert!(!cookie.contains("Domain"), "__Host- forbids it — that is the whole point");
-
-    // And it is accepted back under that name.
-    let pair = cookie.split(';').next().unwrap();
-    let res = client
-        .get(format!("{off_box}/api/tools"))
-        .header("Cookie", pair)
-        .send()
-        .await
-        .expect("send");
-    assert_eq!(res.status(), 200);
 }
 
 #[tokio::test]
