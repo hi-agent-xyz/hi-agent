@@ -595,7 +595,14 @@ const CSS = `
     padding: 28px clamp(16px, 3vw, 44px) 128px;
   }
 
-  .hi-workers button {
+  /* Wrapped in :where() so the reset carries **zero** specificity. Written bare, this
+     selector is (0,1,1) — one class plus a type — which outranks every single-class rule
+     that styles a button here, and a reset that beats the components it exists to prepare
+     is not a reset. It silently ate the row's padding and surface (rows rendered as bare
+     text under a floating shadow, since box-shadow is the one thing it doesn't set), the
+     close button's centring, and the frame head's monospace, via `font: inherit`. It still
+     beats the UA sheet, which loses to any author rule regardless of specificity. */
+  :where(.hi-workers button) {
     appearance: none;
     border: none;
     background: none;
