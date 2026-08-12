@@ -70,11 +70,11 @@ const POLL_MS = 2000;
 // route's, and those are addresses, not headings.
 //
 // So unlike the old title, this one is a plain word rather than this system's own
-// vocabulary, and it is said in the reader's language. The rung labels under `role` were
-// always descriptions of what each one does, so those were already translated.
+// vocabulary, and it is said in the reader's language.
 //
-// The registry stores the **role**, and a worker's role carries its type, so a row can
-// say "做界面" rather than only "干活的".
+// **The rung names are not in these tables at all** — see `ROLE` below. They are the one
+// thing on this page that is this system's own vocabulary, so they are the same word in
+// both languages and there is nothing to translate.
 //
 // TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
 // runtime — the agent reads the surface and writes the variant — rather than shipped
@@ -86,24 +86,6 @@ const T = {
     endedN: (n) => `${n} ended`,
     emptyBig: "Nothing is running right now.",
     emptySub: "That's the whole answer — not a page still loading.",
-    // Short on purpose: these render inside a small pill beside the task, and the
-    // Chinese equivalents are two or three characters. A clause does not fit.
-    role: {
-      worker: "working",
-      cognition: "thinking",
-      deliberation: "mulling",
-      reflection: "filing",
-      reaction: "speaking",
-    },
-    // `general` is deliberately absent: a general worker is just "working", which the
-    // role label already says, and a second word for it would only add noise to the
-    // common row.
-    type: {
-      "view-builder": "building a view",
-      "view-reviewer": "reviewing a view",
-      "decision-maker": "deciding",
-      "file-filer": "filing a file",
-    },
     noTask: "(no note on what it's doing)",
     busy: "running", idle: "idle",
     turns: (n) => `${n} turns`, queued: "mail waiting",
@@ -169,19 +151,6 @@ const T = {
     endedN: (n) => `${n} 个结束了`,
     emptyBig: "现在没有活在跑。",
     emptySub: "这就是全部 —— 不是还没加载出来。",
-    role: {
-      worker: "干活的",
-      cognition: "想事情的",
-      deliberation: "琢磨的",
-      reflection: "整理记忆的",
-      reaction: "说话的",
-    },
-    type: {
-      "view-builder": "做界面",
-      "view-reviewer": "看界面",
-      "decision-maker": "拿主意",
-      "file-filer": "归档",
-    },
     noTask: "（没写在做什么）",
     busy: "在跑", idle: "闲着",
     turns: (n) => `${n} 轮`, queued: "还有没读的",
@@ -254,8 +223,40 @@ const L = words();
  *  after these rather than being dropped, so a sixth rung appears instead of vanishing. */
 const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
 
+/** What each rung and each kind of worker is **called** — `docs/arch/agents.md`, the same
+ *  words as the `role` field this page reads and the `X-HI-Role` header the sessions
+ *  themselves carry.
+ *
+ *  These used to be descriptions of what each rung *does*: `speaking`, `mulling`,
+ *  `thinking`, `filing`. Two things were wrong with that, and both showed up on screen at
+ *  once. A present participle reads as a live status, and the actual status sits two lines
+ *  below it — so a row said `speaking` and then `idle`, which is a contradiction if you
+ *  read the pill as it is written. And the task line beside it already names the rung, and
+ *  names it better: `speaking · the voice`, `thinking · the shared brain`. The pill was
+ *  saying the same thing twice, in the worse of the two words.
+ *
+ *  Not translated, in either direction. A rung's name is this system's own vocabulary
+ *  (`views/builtin.rs`, rule 3) — it names a part of this architecture, not an ordinary
+ *  object — so there is one table here rather than one per language. */
+const ROLE = {
+  reaction: "Reaction",
+  deliberation: "Deliberation",
+  cognition: "Cognition",
+  reflection: "Reflection",
+  worker: "Worker",
+};
+
+/** A worker's specialism, when it has one. A general worker is just a `Worker`, which the
+ *  role above already says. */
+const TYPE = {
+  "view-builder": "View builder",
+  "view-reviewer": "View reviewer",
+  "decision-maker": "Decision maker",
+  "file-filer": "File filer",
+};
+
 function label(row) {
-  return L.type?.[row.type] || L.role[row.role] || row.role;
+  return TYPE[row.type] || ROLE[row.role] || row.role;
 }
 
 export default function Workers() {
