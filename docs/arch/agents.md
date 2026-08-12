@@ -94,6 +94,28 @@ that owes the word.
 > wait — is worth nothing if it can quietly open a file. Restricting our own tool surface is
 > not sufficient on its own; the session's underlying toolset has to be restricted too, or
 > "cannot" means "was asked not to".
+>
+> **And it has to be checked against the wire, not against the config we sent.** Twice the
+> restriction was written, believed, and never in force — a setting the agent accepts,
+> ignores, and reports nowhere. Both times the symptom was not a shell command in the log;
+> it was a *silent voice*, because a rung holding a shell behaves like a coding agent and
+> writes its answer as prose. The tools a turn actually held are readable on the upstream
+> request; that is the only place this claim can be settled.
+
+**`say` is the only way out, and the host has no second one.** Text the model types is
+working-out; it reaches nobody, by design. So a turn that writes a reply and calls nothing
+to say it has not been thwarted on its way to the person — it has produced silence, which is
+a move this rung is allowed and often right to make. The host **notices and does not
+intervene**: no voicing of what was typed, which would make the contract a suggestion, and
+no second ask either. `say` answers a call that was made — too long, and send it as a few
+shorter ones. There is no ack for a call that wasn't, and a host-side retry standing in for
+one buys a whole extra generation on the turn already going wrong. A silent turn is logged
+as the fault it may be, server-side only, never a card in the UI.
+
+**The answer to a voice that writes instead of speaks is upstream**: find what put the turn
+in that register — a tool surface it should not have, a prompt that reads like a coding
+brief — and take it away. Asking twice does not move a session that has already decided
+what kind of agent it is.
 
 Not blind, because its memory is **prepared**: the bundled prompt for its role, plus the
 [generated one](data.md#memoryprompts) — what the conversation carries forward,

@@ -1748,7 +1748,7 @@ async fn run_reaction_turn(
                 unspoken_chars = text.chars().count(),
                 "reaction: turn done"
             );
-            recover_mute_turn(&session, voice_id, &speaking.said, before, &text).await;
+            note_unspoken_turn(speaking.said.load(Ordering::Relaxed) > before, &text);
             true
         }
         Err(err) => {
@@ -2059,63 +2059,33 @@ async fn open_reaction_session(
     Ok(session)
 }
 
-/// What a turn is told when it wrote a reply and never said it. Phrased as the one
-/// fact it got wrong plus both ways out, so the honest answer "I meant to stay quiet"
-/// stays available and the nudge cannot bully a silent turn into speaking.
-const MUTE_NUDGE: &str = "None of that reached them — writing is not speaking here, and \
-     only `say` carries. If any of it was meant for them, say it now: natural spoken \
-     language, no markdown, one chunk per call. If you meant to stay quiet, do nothing.";
-
-/// Give a turn that produced words but no utterance one chance to actually say them.
+/// Log a turn that wrote a reply and called nothing to say it.
 ///
-/// A turn speaks by calling `say`; text it merely types is working-out and reaches
-/// nobody. When the model writes its reply as message text instead, the person is
-/// answered with **silence and no error anywhere** — the exact failure `agents.md`
-/// accepted as the risk of making speech a call, seen live on 2026-08-10: a plain
-/// "the google login, is it done?" drew a complete 195-character answer that was
-/// typed, never said, and thrown away by a turn that logged success.
+/// **Noticing only.** `say` is the whole of the way out — `agents.md` — so a turn that
+/// did not call it has not been interrupted on its way to the person; it has produced
+/// silence, which is a move the rung is allowed and asked to make. The host records the
+/// shape of it and gets on with the next turn.
 ///
-/// So the host checks the one thing it can check — did the mouth accept anything
-/// between the start of this generation and now — and if not, hands the session back
-/// its own miss. Once. A second silence is the model's answer and is left alone; it is
-/// logged loudly because a mute voice is a server-side fault, never a card in the UI.
+/// It used to do more: 2026-08-10 added a nudge that re-prompted the session with "none
+/// of that reached them, say it now". That was a host-side retry standing in for an ack
+/// the tool could not return — `say`'s own [`tools::Spoken::TooLong`] answers a call that
+/// was *made*, and there is no channel for a call that wasn't. It cost a second full
+/// generation (37s, measured) on the turn already going wrong, and in the 2026-08-12
+/// incident it failed on all three turns, because a session in a coding-agent register
+/// writes prose whichever way it is asked. **The fix for a mute voice is upstream** —
+/// what put the turn in that register — and that is the tool surface
+/// ([`crate::foundation::agent::reaction_permissions`]), never a second ask.
 ///
-/// This is a backstop, not the mechanism. What is meant to make it rare is Reaction
-/// holding no tools but its own ([`crate::foundation::agent::reaction_permissions`]) —
-/// a session with a shell behaves like a coding agent and answers in prose.
-async fn recover_mute_turn(
-    session: &AgentSession,
-    voice_id: registry::SessionId,
-    said: &AtomicU64,
-    before: u64,
-    typed: &str,
-) {
-    if said.load(Ordering::Relaxed) > before {
+/// An empty generation says nothing here: choosing not to speak is the ordinary case,
+/// and most of what reaches the voice deserves nothing back.
+fn note_unspoken_turn(spoke: bool, typed: &str) {
+    if spoke || typed.trim().is_empty() {
         return;
     }
-    // Silence is a real move — most of what reaches the voice deserves nothing back,
-    // and the prompt spends a section saying so. An empty generation is that move,
-    // and nudging it would turn "say less" into "say something".
-    if typed.trim().is_empty() {
-        return;
-    }
-
-    tracing::warn!(
+    tracing::error!(
         typed_chars = typed.chars().count(),
-        "reaction: turn wrote a reply and said none of it; nudging"
+        "reaction: turn wrote a reply and said none of it; the person got nothing"
     );
-    match drive_voice(session, voice_id, MUTE_NUDGE.to_string()).await {
-        Ok(_) if said.load(Ordering::Relaxed) > before => {
-            tracing::info!("reaction: the nudge recovered the turn");
-        }
-        Ok(text) => tracing::error!(
-            typed_chars = text.chars().count(),
-            "reaction: voice stayed mute through the nudge; the person got nothing"
-        ),
-        // The turn itself succeeded, so its failure classifier has already run and its
-        // mail is already spent. A failed nudge only loses the recovery.
-        Err(err) => tracing::warn!(error = %err, "reaction: mute nudge failed"),
-    }
 }
 
 /// Prompt the reaction session and return its spoken text (every `agent_message_chunk`

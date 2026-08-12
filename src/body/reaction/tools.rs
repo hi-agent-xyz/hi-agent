@@ -92,11 +92,12 @@ pub(super) struct Mouth {
     /// How many utterances this mouth has accepted, ever. Only ever incremented.
     ///
     /// The turn loop reads it either side of a generation to answer one question the
-    /// beat stream cannot answer until `TurnEnd`: *did this turn speak at all?* It has
-    /// to be answerable **before** the bracket closes, because the answer decides
-    /// whether the turn gets a second try at speaking — see [`super::run_reaction_turn`].
-    /// A counter rather than a flag, so nothing has to reset it and two turns cannot
-    /// race over whose flag it was.
+    /// beat stream cannot answer until `TurnEnd`: *did this turn speak at all?* That
+    /// answer paces the [check-in](super::render_check_in) floor — a check-in that
+    /// produced speech is earning its cadence and one that came and went in silence
+    /// doubles its gap — and it is what a turn that typed a reply and said none of it
+    /// is noticed by. A counter rather than a flag, so nothing has to reset it and two
+    /// turns cannot race over whose flag it was.
     pub(super) said: Arc<AtomicU64>,
     /// When the voice next owes them a word. Written here, at the instant it makes the
     /// promise: it is a property of *this utterance*, and a turn can outlive the

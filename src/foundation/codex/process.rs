@@ -63,7 +63,23 @@ pub struct SessionOpts {
     /// **Kebab-case, and the spelling is load-bearing** — the app-server rejects
     /// `dangerFullAccess` outright even though the published protocol docs show
     /// camelCase for a later version. Pinned by [`Sandbox::as_str`].
+    ///
+    /// Ignored when [`permission_profile`](Self::permission_profile) names one: codex
+    /// answers `permissions cannot be combined with sandbox`, because a profile carries
+    /// its own sandbox. The profile's `sandbox` field is where the setting goes then.
     pub sandbox: Sandbox,
+
+    /// The named permission profile this thread opens under, defined by the caller in
+    /// [`config`](Self::config) under `permissions.<name>`.
+    ///
+    /// **This is a `thread/start` parameter, not a config key.** Setting the config's
+    /// `default_permissions` instead — which is how a profile is selected in
+    /// `config.toml` — is accepted, ignored, and never reported: 0.147 answers a
+    /// `thread/read` with `activePermissionProfile: null` and hands the thread every
+    /// built-in it has. That silent no-op is what left Reaction holding a shell for
+    /// months, and it is why the profile now rides the parameter that errors when it
+    /// cannot be honoured.
+    pub permission_profile: Option<String>,
 
     /// Codex config overrides for this thread — which model, over which provider, and
     /// which MCP servers to attach.
@@ -90,7 +106,9 @@ pub enum Sandbox {
 }
 
 impl Sandbox {
-    fn as_str(self) -> &'static str {
+    /// Also read by the permission profile the voice opens under, which carries its own
+    /// sandbox rather than the `thread/start` param.
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Sandbox::ReadOnly => "read-only",
             Sandbox::FullAccess => "danger-full-access",
@@ -490,7 +508,12 @@ impl CodexProcess {
                         "name": CLIENT_NAME,
                         "title": "hi-agent",
                         "version": env!("CARGO_PKG_VERSION"),
-                    }
+                    },
+                    // Gates `thread/start.permissions`, the only spelling that actually
+                    // pins a permission profile to a thread (see
+                    // [`SessionOpts::permission_profile`]). Without it that parameter is
+                    // refused outright with `requires experimentalApi capability`.
+                    "capabilities": { "experimentalApi": true },
                 }),
             )
             .await
@@ -515,13 +538,18 @@ impl CodexProcess {
 
         let mut params = json!({
             "cwd": cwd.to_string_lossy(),
-            "sandbox": opts.sandbox.as_str(),
             // Approvals are a policy choice made here, not a prompt shown to the person.
             "approvalPolicy": "never",
             // In-memory only: a rung opens a fresh thread per boot, exactly as the ACP
             // path did, so there is no rollout file to garbage-collect under CODEX_HOME.
             "ephemeral": true,
         });
+        // A profile carries its own sandbox, and codex rejects the pair outright, so the
+        // two spellings are exclusive rather than merged.
+        match &opts.permission_profile {
+            Some(profile) => params["permissions"] = json!(profile),
+            None => params["sandbox"] = json!(opts.sandbox.as_str()),
+        }
         if let Some(prompt) = opts.system_prompt {
             params["baseInstructions"] = json!(prompt);
         }
