@@ -21,10 +21,19 @@
 //    through shell commands says nothing for minutes — so a blank row read as a dead one.
 //    `doing` is the other half, and the two never share a line.
 //
-// Clicking any row — live or ended — opens its verbatim wire log. Those frames have been
+// Clicking any row — live or ended — opens what that session did. Those frames have been
 // written for every session all along (`WireTap::with_durable_log`) and nothing could read
 // them back: the path is keyed by (run, session), ids restart at 1 each boot, and an ended
 // session was gone from the roster that knew its id. This is the reader.
+//
+// It reads the log **folded into messages**, not frame by frame. The record is verbatim and
+// stays that way, but a record is not a reading of itself: one sentence the agent said
+// crosses the wire as an `item/started`, hundreds of deltas and an `item/completed`, so
+// row-per-frame is a wall of fragments — 11,891 frames on the logs this was measured
+// against, for 369 things that actually happened. The fold is the server's
+// (`foundation::codex::messages`, `GET /api/workers/{id}/messages`) rather than this file's,
+// so `curl` during a journey test sees exactly what the page sees. The verbatim log stays
+// one click away, because it is what the fold can be wrong about.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary). Polls, because
 // the whole value is that it is current.
@@ -33,11 +42,15 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 const api = {
   list: () => fetch("/api/workers").then((r) => r.json()),
   ended: () => fetch("/api/workers/ended?limit=40").then((r) => r.json()),
-  frames: (id, run) => {
-    const q = run ? `?run=${encodeURIComponent(run)}` : "";
-    return fetch(`/api/workers/${encodeURIComponent(id)}/frames${q}`).then((r) => r.json());
-  },
+  // The two readings of one session's log. `messages` is the fold — what happened —
+  // and `frames` is the record it was folded from. Same file, same address, and the
+  // folding is the server's so both readings are the same everywhere.
+  messages: (id, run) => fetch(`/api/workers/${enc(id)}/messages${runQ(run)}`).then((r) => r.json()),
+  frames: (id, run) => fetch(`/api/workers/${enc(id)}/frames${runQ(run)}`).then((r) => r.json()),
 };
+
+const enc = encodeURIComponent;
+const runQ = (run) => (run ? `?run=${enc(run)}` : "");
 
 /** How often the roster re-reads. Both endpoints are in-memory reads on the server — the
  *  live roster is a lock on a HashMap, the ended list a capped Vec — so this is cheap
@@ -107,13 +120,42 @@ const T = {
     lostNote: "The process ended underneath it — nothing got to report what it found.",
     ranFor: (t) => `ran ${t}`,
     noEnded: "No sessions have ended yet.",
-    // The frame log panel.
+    // The session panel: the fold first, the record behind it.
+    transcript: "What happened",
     frames: "Wire log",
+    messagesOf: (n) => `${n} messages`,
+    messagesTruncated: (shown, total) => `last ${shown} of ${total}`,
+    noMessages: "Nothing in this session's log reads as a message.",
+    noMessagesButFrames: (n) =>
+      `${n} frames are on disk — this build could not fold them. The wire log has them verbatim.`,
     framesOf: (n) => `${n} frames`,
     framesTruncated: (shown, total) => `last ${shown} of ${total}`,
     noFrames: "No frames were kept for this session.",
     noFramesNote: "Nothing crossed the wire under this id, or its run's files are gone.",
     framesFailed: "That session's wire log could not be read.",
+    // What each folded message was. Short: they sit in a fixed column beside the line.
+    kind: {
+      user: "prompt",
+      agent: "said",
+      thinking: "thought",
+      command: "ran",
+      edit: "edited",
+      tool: "tool",
+      search: "searched",
+      todo: "todo",
+      compaction: "compacted",
+      warning: "warning",
+      stderr: "stderr",
+      item: "item",
+    },
+    turnN: (n) => `Turn ${n}`,
+    turnOpen: "never finished",
+    tokens: (n) => `${n.toLocaleString()} tokens`,
+    exit: (n) => (n === 0 ? "ok" : `exit ${n}`),
+    tookMs: (ms) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`),
+    args: "arguments",
+    result: "result",
+    errored: "error",
     loading: "Reading…",
     close: "Close",
     send: "sent", recv: "received", stderr: "stderr",
@@ -152,12 +194,39 @@ const T = {
     lostNote: "进程在它下面结束了 —— 它做了什么没来得及报。",
     ranFor: (t) => `跑了 ${t}`,
     noEnded: "还没有结束的会话。",
+    transcript: "做了什么",
     frames: "原始帧",
+    messagesOf: (n) => `${n} 条`,
+    messagesTruncated: (shown, total) => `共 ${total} 条,这是最后 ${shown} 条`,
+    noMessages: "这个会话的日志里没有能读成消息的东西。",
+    noMessagesButFrames: (n) => `盘上有 ${n} 帧,这个版本折不出来。原始帧那边是全的。`,
     framesOf: (n) => `${n} 帧`,
     framesTruncated: (shown, total) => `共 ${total} 帧,这是最后 ${shown} 帧`,
     noFrames: "这个会话没留下帧。",
     noFramesNote: "这个 id 下没有东西走过线,或者那次运行的文件已经没了。",
     framesFailed: "读不到这个会话的原始帧。",
+    kind: {
+      user: "收到",
+      agent: "说",
+      thinking: "想",
+      command: "跑",
+      edit: "改文件",
+      tool: "工具",
+      search: "搜",
+      todo: "待办",
+      compaction: "压缩上下文",
+      warning: "警告",
+      stderr: "标准错误",
+      item: "条目",
+    },
+    turnN: (n) => `第 ${n} 轮`,
+    turnOpen: "没跑完",
+    tokens: (n) => `${n.toLocaleString()} tokens`,
+    exit: (n) => (n === 0 ? "成功" : `退出码 ${n}`),
+    tookMs: (ms) => (ms < 1000 ? `${ms} 毫秒` : `${(ms / 1000).toFixed(1)} 秒`),
+    args: "参数",
+    result: "结果",
+    errored: "报错",
     loading: "读取中…",
     close: "关闭",
     send: "发出", recv: "收到", stderr: "标准错误",
@@ -289,7 +358,7 @@ export default function Workers() {
         </section>
       </div>
 
-      {open && <Frames addr={open} onClose={() => setOpen(null)} />}
+      {open && <Session addr={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -422,15 +491,25 @@ function EndedRow({ row, open, setOpen }) {
   );
 }
 
-/** The zoom-in: one session's verbatim wire log.
+/** The zoom-in: one session, read two ways.
  *
- *  Every JSON-RPC line that crossed to or from that session's subprocess, in order,
- *  uninterpreted. A frame the server could not parse arrives as a string and is shown as
- *  one — this is the record, so the frame nobody can read is exactly the frame someone came
- *  looking for. */
-function Frames({ addr, onClose }) {
+ *  **Messages by default.** The frame log is the record and the record is not a reading of
+ *  itself: one sentence the agent said arrives as an `item/started`, hundreds of deltas and
+ *  an `item/completed`, so frame-per-row is a wall of fragments — 11,891 frames across the
+ *  logs this was measured on, against 369 things that actually happened. The fold is the
+ *  server's (`foundation::codex::messages`), not this file's, so `curl` sees the same
+ *  reading the page does.
+ *
+ *  **And the verbatim log is still one click away**, because it is the thing the fold can be
+ *  wrong about. Each message carries the frame span it was folded from (`seq`..`through`),
+ *  so a row here and a row there name the same moment. */
+function Session({ addr, onClose }) {
+  // Which reading is on screen. Messages first: it answers "what happened", which is why
+  // someone opened a session. The wire answers "what crossed", which is what you fall back
+  // to when you do not believe the first answer.
+  const [reading, setReading] = useState("messages");
   const [state, setState] = useState({ status: "loading" });
-  const [rawOf, setRawOf] = useState(null);
+  const [openRow, setOpenRow] = useState(null);
   const panel = useRef(null);
 
   useEffect(() => {
@@ -443,14 +522,35 @@ function Frames({ addr, onClose }) {
   useEffect(() => {
     let alive = true;
     setState({ status: "loading" });
-    setRawOf(null);
-    api.frames(addr.id, addr.run)
-      .then((d) => alive && setState({ status: "ok", ...d }))
-      .catch(() => alive && setState({ status: "failed" }));
+    setOpenRow(null);
+    const read = reading === "messages" ? api.messages : api.frames;
+    read(addr.id, addr.run)
+      // The payload says which reading it answers. Without that the render between the
+      // click and this effect draws the *previous* reading's payload through the new
+      // reading's shape — and the two disagree about the word `frames`, which is the array
+      // in one and the count of it in the other. That is not a mismatch that renders oddly;
+      // it is `frames.map is not a function` and a blank panel.
+      .then((d) => alive && setState({ status: "ok", of: reading, ...d }))
+      .catch(() => alive && setState({ status: "failed", of: reading }));
     return () => { alive = false; };
-  }, [addr.id, addr.run]);
+  }, [addr.id, addr.run, reading]);
 
-  const frames = state.frames || [];
+  // Anything from the other reading is still in flight as far as this one is concerned.
+  const shown = state.of === reading ? state : { status: "loading" };
+  const frames = shown.frames || [];
+  const messages = shown.messages || [];
+  const onMessages = reading === "messages";
+  const count = onMessages
+    ? shown.status === "ok" && messages.length
+      ? shown.truncated
+        ? L.messagesTruncated(messages.length, shown.total)
+        : L.messagesOf(shown.total)
+      : null
+    : shown.status === "ok" && frames.length
+      ? shown.truncated
+        ? L.framesTruncated(frames.length, shown.total)
+        : L.framesOf(shown.total)
+      : null;
 
   return (
     <div className="hi-workers__scrim" onClick={onClose}>
@@ -459,22 +559,32 @@ function Frames({ addr, onClose }) {
         className="hi-workers__panel"
         role="dialog"
         aria-modal="true"
-        aria-label={L.frames}
+        aria-label={onMessages ? L.transcript : L.frames}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="hi-workers__panel-head">
           <div className="hi-workers__panel-title">
-            <strong>{L.frames}</strong>
+            <div className="hi-workers__readings" role="tablist">
+              {[["messages", L.transcript], ["frames", L.frames]].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={reading === key}
+                  className="hi-workers__reading"
+                  data-on={reading === key ? "true" : undefined}
+                  onClick={() => setReading(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <span className="hi-workers__panel-sub">
               {[
                 L.sessionLabel(addr.id),
-                state.run ? L.runLabel(state.run) : null,
-                state.status === "ok" && frames.length
-                  ? state.truncated
-                    ? L.framesTruncated(frames.length, state.total)
-                    : L.framesOf(state.total)
-                  : null,
+                shown.run ? L.runLabel(shown.run) : null,
+                count,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -486,26 +596,192 @@ function Frames({ addr, onClose }) {
         </div>
 
         <div className="hi-workers__panel-body">
-          {state.status === "loading" && <div className="hi-workers__none">{L.loading}</div>}
-          {state.status === "failed" && <div className="hi-workers__none">{L.framesFailed}</div>}
-          {state.status === "ok" && frames.length === 0 && (
-            <div className="hi-workers__empty">
-              <div className="hi-workers__empty-big">{L.noFrames}</div>
-              <div className="hi-workers__empty-sub">{L.noFramesNote}</div>
-            </div>
+          {shown.status === "loading" && <div className="hi-workers__none">{L.loading}</div>}
+          {shown.status === "failed" && <div className="hi-workers__none">{L.framesFailed}</div>}
+
+          {shown.status === "ok" && onMessages && (
+            messages.length === 0 ? (
+              <div className="hi-workers__empty">
+                <div className="hi-workers__empty-big">{L.noMessages}</div>
+                {/* Frames on disk and nothing folded out of them is a *different* answer
+                    from an empty session, and the reader must not blur the two: it means
+                    this build could not read that log, and the wire tab still can. */}
+                <div className="hi-workers__empty-sub">
+                  {shown.frames ? L.noMessagesButFrames(shown.frames) : L.noFramesNote}
+                </div>
+              </div>
+            ) : (
+              <Transcript
+                messages={messages}
+                turns={shown.turns || []}
+                openRow={openRow}
+                setOpenRow={setOpenRow}
+              />
+            )
           )}
-          {frames.map((f, i) => (
-            <Frame
-              key={i}
-              frame={f}
-              open={rawOf === i}
-              onToggle={() => setRawOf(rawOf === i ? null : i)}
-            />
-          ))}
+
+          {shown.status === "ok" && !onMessages && (
+            frames.length === 0 ? (
+              <div className="hi-workers__empty">
+                <div className="hi-workers__empty-big">{L.noFrames}</div>
+                <div className="hi-workers__empty-sub">{L.noFramesNote}</div>
+              </div>
+            ) : (
+              frames.map((f, i) => (
+                <Frame
+                  key={i}
+                  frame={f}
+                  open={openRow === i}
+                  onToggle={() => setOpenRow(openRow === i ? null : i)}
+                />
+              ))
+            )
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+/** The messages, in wire order, with each turn drawn as a rule rather than a row.
+ *
+ *  A turn is the bracket around a stretch of the session, not a thing that happened in it —
+ *  and the one a reader most wants to see is the turn that never closed, because that is
+ *  where the session died. */
+function Transcript({ messages, turns, openRow, setOpenRow }) {
+  const byTurn = useMemo(() => {
+    const out = [];
+    for (const m of messages) {
+      const last = out[out.length - 1];
+      if (!last || last.turn !== m.turn) out.push({ turn: m.turn, rows: [m] });
+      else last.rows.push(m);
+    }
+    return out;
+  }, [messages]);
+
+  return (
+    <>
+      {byTurn.map((g) => {
+        const turn = turns.find((t) => t.n === g.turn);
+        return (
+          <div className="hi-workers__turn" key={`${g.turn}:${g.rows[0].seq}`}>
+            {g.turn > 0 && (
+              <div className="hi-workers__turn-rule" data-status={turn?.status}>
+                <span>{L.turnN(g.turn)}</span>
+                {turn?.tokens ? <span>{L.tokens(turn.tokens)}</span> : null}
+                {turn && turn.status !== "completed" && (
+                  <span className="is-warn">
+                    {turn.status === "inProgress" ? L.turnOpen : turn.status}
+                  </span>
+                )}
+              </div>
+            )}
+            {g.rows.map((m) => (
+              <Said
+                key={`${m.seq}:${m.kind}`}
+                m={m}
+                open={openRow === m.seq}
+                onToggle={() => setOpenRow(openRow === m.seq ? null : m.seq)}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** One message. The head is what it was; the body is the whole of it, on request.
+ *
+ *  Everything here collapses to a couple of lines and opens to its full text — a command's
+ *  output and a tool call's arguments are routinely thousands of characters, and a
+ *  transcript that pastes them inline is the wall this view exists to stop being. */
+function Said({ m, open, onToggle }) {
+  const detail = body(m);
+  const running = m.status && m.status !== "completed" && m.status !== "success";
+  return (
+    <div className="hi-workers__said" data-kind={m.kind} data-running={running ? "true" : undefined}>
+      <button
+        type="button"
+        className="hi-workers__said-head"
+        aria-expanded={open}
+        onClick={detail ? onToggle : undefined}
+        data-flat={detail ? undefined : "true"}
+      >
+        <span className="hi-workers__said-kind">{L.kind[m.kind] || m.kind}</span>
+        <span className="hi-workers__said-head-line">{head(m)}</span>
+        <span className="hi-workers__said-meta">
+          {[
+            m.kind === "command" && typeof m.exit === "number" ? L.exit(m.exit) : null,
+            typeof m.ms === "number" ? L.tookMs(m.ms) : null,
+            // A row still in progress at the end of the log is where it stopped, so the
+            // word is kept rather than shown as a spinner that will never resolve.
+            running ? m.status : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+      </button>
+      {open && detail && <pre className="hi-workers__said-body">{detail}</pre>}
+      {/* The peek is only for a body that says something the head does not — a command's
+          output, a tool's arguments. On a text message the body *is* the head, longer, and
+          a preview of it under it is the same sentence twice. */}
+      {!open && detail && !SAYS_ITSELF.has(m.kind) && (
+        <div className="hi-workers__said-peek">{oneLine(detail)}</div>
+      )}
+    </div>
+  );
+}
+
+/** Kinds whose whole body is the text already on the head line, at length. */
+const SAYS_ITSELF = new Set(["user", "agent", "thinking", "warning", "stderr"]);
+
+/** The one line that says what this message was. */
+function head(m) {
+  switch (m.kind) {
+    case "command":
+      return m.command || "";
+    case "edit":
+      // Basenames: the transcript is narrow and every path here shares a long prefix.
+      return (m.paths || []).map((p) => String(p).split("/").pop()).join(", ");
+    case "tool":
+      return m.server ? `${m.server}/${m.tool}` : m.tool || "";
+    case "search":
+      return m.query || "";
+    case "item":
+      return m.type || "";
+    default:
+      return oneLine(m.text || "");
+  }
+}
+
+/** Everything else there is of it — or `null` when the head already was the whole thing. */
+function body(m) {
+  switch (m.kind) {
+    case "command":
+      return m.output || null;
+    case "edit":
+      return m.diff || null;
+    case "tool": {
+      const parts = [];
+      if (m.arguments !== undefined) parts.push(`${L.args}\n${pretty(JSON.stringify(m.arguments))}`);
+      if (m.error) parts.push(`${L.errored}\n${pretty(JSON.stringify(m.error))}`);
+      else if (m.result !== undefined) parts.push(`${L.result}\n${pretty(JSON.stringify(m.result))}`);
+      return parts.join("\n\n") || null;
+    }
+    case "item":
+      return pretty(JSON.stringify(m.item));
+    default: {
+      const text = m.text || "";
+      // A message short enough to have been said in full by the head has no body — an
+      // expander that reveals the line above it is a lie about there being more.
+      return text.length > 160 || text.includes("\n") ? text : null;
+    }
+  }
+}
+
+function oneLine(s) {
+  return String(s).replace(/\s+/g, " ").trim();
 }
 
 const DIR = { send: L.send, recv: L.recv, stderr: L.stderr };
@@ -905,6 +1181,175 @@ const CSS = `
   .hi-workers__panel-sub {
     font-size: 12px;
     color: var(--fg-mute);
+  }
+
+  /* Two readings of one session, so they sit side by side rather than one being buried
+     behind a menu: which one you want depends on whether you believe the fold. */
+  .hi-workers__readings {
+    display: flex;
+    gap: 4px;
+  }
+
+  .hi-workers__reading {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--fg-mute);
+  }
+
+  .hi-workers__reading:hover {
+    color: var(--fg);
+  }
+
+  .hi-workers__reading[data-on="true"] {
+    color: var(--accent);
+    background: var(--accent-wash);
+  }
+
+  /* ── the transcript ───────────────────────────────────────────────────────── */
+
+  .hi-workers__turn + .hi-workers__turn {
+    margin-top: 4px;
+  }
+
+  /* A rule, not a row: a turn is the bracket around a stretch of the session. */
+  .hi-workers__turn-rule {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--fg-mute);
+  }
+
+  .hi-workers__turn-rule::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .hi-workers__turn-rule .is-warn {
+    color: var(--danger);
+  }
+
+  /* The one a reader is looking for: the turn the session died inside. */
+  .hi-workers__turn-rule[data-status="inProgress"],
+  .hi-workers__turn-rule[data-status="failed"] {
+    color: var(--danger);
+  }
+
+  .hi-workers__said {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hi-workers__said-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .hi-workers__said-head[data-flat="true"] {
+    cursor: default;
+  }
+
+  /* A fixed column, so the kinds line up down the left edge and the shape of a turn —
+     prompt, thought, ran, ran, ran, said — is legible without reading a word of it. */
+  .hi-workers__said-kind {
+    flex: none;
+    width: 64px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--fg-mute);
+    text-align: right;
+  }
+
+  .hi-workers__said-head-line {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hi-workers__said-meta {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--fg-mute);
+  }
+
+  /* What the agent said is the point of the page; the rest is how it got there. */
+  .hi-workers__said[data-kind="agent"] .hi-workers__said-head-line {
+    font-weight: 620;
+  }
+
+  .hi-workers__said[data-kind="user"] .hi-workers__said-head-line {
+    color: var(--fg-dim);
+  }
+
+  .hi-workers__said[data-kind="thinking"] .hi-workers__said-head-line {
+    color: var(--fg-mute);
+    font-style: italic;
+  }
+
+  .hi-workers__said[data-kind="command"] .hi-workers__said-head-line,
+  .hi-workers__said[data-kind="tool"] .hi-workers__said-head-line,
+  .hi-workers__said[data-kind="edit"] .hi-workers__said-head-line {
+    font-family: var(--w-mono);
+    font-size: 11.5px;
+  }
+
+  .hi-workers__said[data-kind="tool"] .hi-workers__said-head-line {
+    color: var(--accent-2);
+  }
+
+  .hi-workers__said[data-kind="warning"] .hi-workers__said-head-line,
+  .hi-workers__said[data-kind="stderr"] .hi-workers__said-head-line {
+    color: var(--danger);
+  }
+
+  .hi-workers__said[data-kind="stderr"] .hi-workers__said-head-line {
+    font-family: var(--w-mono);
+    font-size: 11.5px;
+  }
+
+  /* Still running when the log ended — the row that says where it stopped. */
+  .hi-workers__said[data-running="true"] .hi-workers__said-kind {
+    color: var(--accent);
+  }
+
+  .hi-workers__said-peek {
+    margin: 3px 0 0 74px;
+    font-family: var(--w-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--fg-mute);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hi-workers__said-body {
+    margin: 6px 0 4px 74px;
+    padding: 10px 12px;
+    max-height: 46vh;
+    overflow: auto;
+    background: var(--bg-0);
+    border-radius: 10px;
+    font-family: var(--w-mono);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--fg-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .hi-workers__close {

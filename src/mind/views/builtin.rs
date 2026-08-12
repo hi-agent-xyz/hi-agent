@@ -345,6 +345,10 @@ mod tests {
         let source = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "workers").unwrap().1;
         assert!(source.contains("/api/workers\""), "the live roster");
         assert!(source.contains("/api/workers/ended"), "what just ended");
+        // The panel opens on the *fold* — the frames are the fallback reading, not the
+        // first one. If this route goes, the page silently reverts to the wall of
+        // fragments the fold exists to replace.
+        assert!(source.contains("/messages"), "what the session did");
         assert!(source.contains("/frames"), "one session's verbatim wire log");
         // The run has to travel with the request: a frame log is addressed by (run, session)
         // and session ids restart at 1 each boot, so an ended row that dropped its run would
