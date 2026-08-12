@@ -15,7 +15,7 @@ The original architecture multiplexed N concurrent ACP sessions over one
 `claude-code` subprocess (shared stdio), and it was unverified whether
 `claude-code` ran concurrent prompts in parallel or serialized them. That
 question is moot now: each session runs in **its own subprocess**
-(`docs/arch/core.md`), so cross-session concurrency comes from the OS, not the
+(`docs/arch/host.md`), so cross-session concurrency comes from the OS, not the
 adapter. The by channel reaction loop still serializes one turn per conversation — that is
 a reaction policy, not a subprocess limit. The cost this introduces — a subprocess
 spawn per session — is tracked under "MCP attachment" below.

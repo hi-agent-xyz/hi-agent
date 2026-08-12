@@ -53,7 +53,7 @@ Two things follow, and both are load-bearing:
 
 Below the bottom of this ladder sits one more tempo that is *not* an agent: **reflex**, the
 sub-second path with no model in the loop — barge-in and taught quick-actions. It lives in
-the host, in [`core.md`](core.md#reflex), which is why it has no section here.
+the host, in [`host.md`](host.md#reflex), which is why it has no section here.
 
 **One rule runs the length of the ladder: a gap in the request is work, not a question.**
 [Invariant 9](arch.md#invariants) says irreversible or outward-facing → ask, and that is the
@@ -80,11 +80,11 @@ and needs a capable model.
 **It also owns the social layer** — the mouth, and the timing of anything unprompted.
 That was once a separate host component; its duties belong to whatever speaks, and this
 is what speaks. (A fourth duty, the presence gate, was retired rather than inherited —
-see [Attachment](core.md#attachment).) See
-[`core.md`](core.md#the-social-layer-lives-in-reaction-not-here).
+see [Attachment](host.md#attachment).) See
+[`host.md`](host.md#the-social-layer-lives-in-reaction-not-here).
 
 Owning that timing includes the one deadline in this host that fires at a named minute:
-`say`'s `back_in` arms the [check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
+`say`'s `back_in` arms the [check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
 that brings the voice back to keep a promise it made. It belongs here for the same
 reason the rest of the social layer does — the rung that named the number is the rung
 that owes the word.
@@ -202,7 +202,7 @@ outlives one:
 > messages Deliberation, which frames it, and Reaction voices it when the room is right.
 
 This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
-loop ([`core.md`](core.md#glancing-up)) — one wake shortly after
+loop ([`host.md`](host.md#glancing-up)) — one wake shortly after
 the process starts, then on the pulse cadence while anything is owed.
 
 Answers travel back the way they came: what Deliberation handed up returns to Deliberation.
@@ -269,7 +269,7 @@ bytes**.
 ### Session lifetime, per rung
 
 Specified here because it was previously specified nowhere, and two documents drifted apart in
-the gap: `core.md` described how a long-lived session is kept bounded, while Cognition
+the gap: `host.md` described how a long-lived session is kept bounded, while Cognition
 was built to reopen per wake. Both were defensible readings. This is the decision.
 
 | Rung | Session | Replaced when |
@@ -281,7 +281,7 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 | Workers | one per errand | the errand ends, or an idle TTL |
 
 **Nothing in this column is about size.** Context growth is bounded by the underlying agent,
-which compacts in place; see [`core.md`](core.md#session-layer) for why that is not ours to
+which compacts in place; see [`host.md`](host.md#session-layer) for why that is not ours to
 do. A session is replaced here only because it **broke**.
 
 Deliberation keeps the idle TTL it inherited from the worker machinery it shares: quiet for
@@ -318,7 +318,7 @@ memory underneath them was shared, so the partition bought a narrower thing than
 to — a separate *session window*, not a separate mind. What it did buy is worth naming now
 that it is gone: material from one exchange sits in the same window as the next, so the
 agent's judgment about what to bring up is doing work that structure used to do partway.
-That is the trade [`core.md`](core.md#one-conversation) took deliberately, and the place to
+That is the trade [`host.md`](host.md#one-conversation) took deliberately, and the place to
 revisit it is when a second party genuinely exists.
 
 ## Workers
@@ -424,7 +424,7 @@ what does not belong to its tempo, and the rung below absorbs the silence.
 
 ## See also
 
-[`core.md`](core.md) for the switchboard and glancing up ·
+[`host.md`](host.md) for the switchboard and glancing up ·
 [`data.md`](data.md) for what they read and write ·
 [`legacy/reaction-cognition-split.md`](legacy/reaction-cognition-split.md) for the three-tempo
 version this supersedes.

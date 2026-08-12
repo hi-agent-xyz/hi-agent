@@ -60,7 +60,7 @@ is responsible for. The bottom rung is the exception: **reflex runs no model at 
 a generation is far too slow for what it handles.
 
 There is **one of each**. The agent is one mind having one continuous conversation, so no
-rung is partitioned — see [One conversation](core.md#one-conversation).
+rung is partitioned — see [One conversation](host.md#one-conversation).
 
 | | Time | Job |
 |---|---|---|
@@ -71,7 +71,7 @@ rung is partitioned — see [One conversation](core.md#one-conversation).
 | **Reflection** | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
 
 Reflex is drawn on the ladder because it is a real tempo, but it is not an agent — it lives in
-the host, in [`core.md`](core.md#reflex).
+the host, in [`host.md`](host.md#reflex).
 
 Below the ladder sit **workers** — where the actual jobs get done.
 
@@ -82,7 +82,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   CHANNELS     in: text · audio · vision · file(by ref)
                out: say · show · act
   ─────────────────────────────────────────────────────────────────────────────
-  CORE         wire · channel mux · transcript ·
+  HOST         wire · channel mux · transcript ·
   (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
   AGENTS       the voice:  Reaction ⟷ Deliberation
@@ -120,7 +120,7 @@ Each is a statement we can test, and each has a real failure behind it.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
    glancing up — the pulse, the reflection backoff, Cognition's glance-up. Scheduling
    past that is the agent's to arrange with the shell it already has; see
-   [glancing up](core.md#glancing-up).
+   [glancing up](host.md#glancing-up).
 7. **Recovery is reconstruction, not continuation.** Workers are volatile, so anything
    valuable is written down before the crash.
 8. **A liveness probe that returns nothing means the thing is DOWN.** Count, don't check for
@@ -136,8 +136,9 @@ Each is a statement we can test, and each has a real failure behind it.
 
 | Doc | Covers |
 |---|---|
+| [`topology.md`](topology.md) | core, app and community — where the parts run, how a person is addressed, how an app proves it may reach one |
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
-| [`core.md`](core.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
+| [`host.md`](host.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |

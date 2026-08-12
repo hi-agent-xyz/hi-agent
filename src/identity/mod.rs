@@ -946,7 +946,7 @@ mod soul_tests {
     #[test]
     fn the_voice_has_exactly_one_timer_and_is_told_its_name() {
         // The retired clock stays retired: `alarm` was a general scheduler and its
-        // vocabulary must not creep back (`docs/arch/core.md#glancing-up`).
+        // vocabulary must not creep back (`docs/arch/host.md#glancing-up`).
         assert!(!REACTION_BASE.contains("set an alarm"));
         assert!(!REACTION_BASE.contains("When the alarm fires"));
 

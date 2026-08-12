@@ -9,7 +9,7 @@ hand — without any of that reaching the thinking layers as protocol.
 
 | Decision | Reasoning |
 |---|---|
-| Transport lives in the adapter, never in the core | The mind should know senses, not HTTP. Swap the wire and nothing above changes |
+| Transport lives in the adapter, never in the host | The mind should know senses, not HTTP. Swap the wire and nothing above changes |
 | A device is both a surface and an effector | Same hardware, two roles, told apart by who moved first |
 | File is a signal, but carries a **ref** — never content | A handed-over object, not something perceived |
 | Vision emits a ref; the agent decides whether to look | Perception is *pulled*, not pushed |
@@ -43,7 +43,7 @@ zero knowledge of the wire.
 |---|---|---|
 | text | in / out | content block · the `say` call |
 | audio | in | text after STT today; an audio block once we model paralinguistics |
-| audio | out | the same `say` call, rendered by TTS core-side |
+| audio | out | the same `say` call, rendered by TTS host-side |
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
 | surface (rich content) | out | the `show` call, by **path ref** |
@@ -110,7 +110,7 @@ append the moment they are said and are there whenever anyone looks. What waits 
 better moment waits in Reaction's judgment, which is where the decision lives.
 
 The same call also carries `back_in` — the size Reaction just put on a silence, which
-arms [the check-in](core.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
+arms [the check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
 that brings it back to keep the promise. It rides on `say` rather than on a verb of its
 own precisely because a promise is only a promise once it has been *said*: a separate
 call could arm a wake for a number nobody was ever told. Still one queue-free surface —
@@ -151,7 +151,7 @@ There is no marker vocabulary anywhere, and nothing is parsed back out of the mo
 
 What survives of "think, then organize words" is the half that mattered: **the voice is still
 natural language**. Reaction writes the sentence it means — it just hands it over instead of
-streaming it at the world. The thinking layers express intent; the core articulates it, and
+streaming it at the world. The thinking layers express intent; the host articulates it, and
 now it can also decline to.
 
 ## Batching
@@ -176,6 +176,6 @@ on. No live camera → a readable error that prompts the agent to ask them to tu
 
 ## See also
 
-[`core.md`](core.md) for what happens to a signal after it lands ·
+[`host.md`](host.md) for what happens to a signal after it lands ·
 [`foundation.md`](foundation.md#tools) for the outbound side ·
 [`legacy/runtime-dataflow.md`](legacy/runtime-dataflow.md) for the original derivation.

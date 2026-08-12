@@ -237,7 +237,7 @@ Four properties, each earned by a real failure:
 
    This is the property that lets an agent pick **any** timing mechanism it likes — cron,
    `launchd`, a parked worker — without the host knowing or caring, which is what lets the
-   host's timing surface stop at [glancing up](core.md#glancing-up). It only works
+   host's timing surface stop at [glancing up](host.md#glancing-up). It only works
    if `verify` names a **result**. *"a cron job with this id exists"* passes forever, including
    when the job has never once fired — a watch shipped exactly that way, reported healthy, and
    had never fetched a price. *"`checked` was stamped in the last 3h by a run that returned

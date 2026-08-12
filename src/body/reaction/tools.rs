@@ -33,7 +33,7 @@ pub(super) const SAY_MAX_CHARS: usize = 240;
 /// voice. The reaching ones are gone — a worker addresses its owner with the one verb
 /// now, through the switchboard, which needs no channel of its own.
 /// `Alarm` went with it: nothing in the host fires at a named time
-/// ([`glancing up`](../../../docs/arch/core.md)), and the agent arranges its own
+/// ([`glancing up`](../../../docs/arch/host.md)), and the agent arranges its own
 /// timing with the shell it already has. What is left is one variant, and it is
 /// here because the loop owns the state it touches.
 #[derive(Debug)]
@@ -134,7 +134,7 @@ pub(super) struct Owed {
 /// failure `reaction.md` calls out in its own words: *a check-in they have to ask for
 /// is already late*.
 ///
-/// **This is not the clock [`docs/arch/core.md`] removed, and must not grow into one.**
+/// **This is not the clock [`docs/arch/host.md`] removed, and must not grow into one.**
 /// It holds exactly one deadline, process-wide-per-voice; it fires nothing but the
 /// reaction loop; it carries no task, no target and no payload beyond a note; and the
 /// only moment it can name is one the voice just said out loud (or a floor under a

@@ -492,7 +492,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // written. That is an open decision, not an oversight: it needs a rung or it
         // needs deleting, and it is now visibly nobody's rather than sitting in an arm
         // that looked live. (`alarm` was the other, and it is gone outright — the host
-        // fires at no named time; see `docs/arch/core.md#glancing-up`.)
+        // fires at no named time; see `docs/arch/host.md#glancing-up`.)
         _ => vec![],
     }
 }

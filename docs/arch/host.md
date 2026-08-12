@@ -1,4 +1,4 @@
-# Core — the host
+# Host — the Rust host
 
 ## Goal
 
@@ -7,7 +7,7 @@ signals into the one conversation, decide *when* the agent may speak, own every 
 the cadence that [opens the agent's eyes](#glancing-up), and write everything down before
 anyone reacts to it.
 
-Nothing here consults a model. That is the point — the core has to keep working while the
+Nothing here consults a model. That is the point — the host has to keep working while the
 thinking layers are slow, confused, or dead.
 
 ## Decisions
@@ -372,5 +372,5 @@ where fix-forward genuinely does not apply.
 
 ## See also
 
-[`agents.md`](agents.md) for what the core drives ·
+[`agents.md`](agents.md) for what the host drives ·
 [`data.md`](data.md#tasks) for the ledger a glance-up reads, and the `verify` contract.

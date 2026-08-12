@@ -100,7 +100,7 @@ memory/
 ### Organized by channel
 
 `raw/` is sliced **by channel** — there is one shared conversation and it has no
-name (`docs/arch/core.md#one-conversation`), so nothing above the channel level
+name (`docs/arch/host.md#one-conversation`), so nothing above the channel level
 partitions it.
 Every directory name here is a code-supplied constant, which is why no path in this tree
 percent-encodes a user string any more.

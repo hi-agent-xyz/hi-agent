@@ -190,7 +190,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
 /// Voice is the one channel with no second chance: synthesized frames go out on the
 /// wire as they are made, and a span nobody is listening to is spent. That is a fact
 /// about the wire rather than a read of the room — see
-/// `docs/arch/core.md#attachment` — and it is *only* about this span.
+/// `docs/arch/host.md#attachment` — and it is *only* about this span.
 ///
 /// Note this is read per turn, not once for the process: a person who unplugs
 /// headphones mid-conversation stops being spoken to on the next `say`, with no

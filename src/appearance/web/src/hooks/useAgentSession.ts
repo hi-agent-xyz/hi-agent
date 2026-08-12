@@ -306,7 +306,7 @@ export function useAgentSession(): AgentSession {
   // ---- Window state --------------------------------------------------------
   // What our own window is doing, kept locally. It used to be *reported* to the
   // backend as well, on `POST /api/in/attention`, where it fed a belief about how
-  // present the person was. That belief is gone (`docs/arch/core.md#attachment`)
+  // present the person was. That belief is gone (`docs/arch/host.md#attachment`)
   // and so is the route.
   //
   // What it still does is the part that was always sound: while the window is not

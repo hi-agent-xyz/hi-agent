@@ -261,14 +261,23 @@ post when it wants to notify. The app never registers anything with the communit
 
 One outbound connection, dialed by the core, held open. It carries two kinds of traffic:
 
-| | Carries |
-|---|---|
-| **control** | register, claim, renew, push instructions, disconnect reason |
-| **routed** | inbound requests for this handle, one stream each |
+| | Carries | How |
+|---|---|---|
+| **control** | register, claim, renew, push instructions, disconnect reason | ordinary HTTPS requests to the community, dialed per call |
+| **routed** | inbound requests for this handle, one stream each | the held connection |
 
-Multiplexed, with per-stream flow control — a stalled audio stream must not freeze text.
-Each routed stream carries plain HTTP/1.1, so a WebSocket upgrade passes through as an
-ordinary `Upgrade` and the core hands the stream to the same router it already serves.
+**Control is not tunnel traffic.** The core can always dial out — that is the premise of the
+whole shape — so control is a REST call like any other. Putting it inside the tunnel would
+mean writing, versioning and debugging a second request/response protocol whose only
+advantage is sharing a socket.
+
+**The tunnel is a stream multiplexer over one WebSocket.** Multiplexed with per-stream flow
+control — a stalled audio stream must not freeze text — and each routed stream carries plain
+HTTP/1.1, so a WebSocket upgrade passes through as an ordinary `Upgrade` and the core hands
+the stream to the same router it already serves. Concretely: yamux over WSS, one implementation
+each side. The alternative was reversed HTTP/2, which is a better fit for everything *except*
+the `Upgrade` — carrying WebSocket over it needs extended CONNECT, and audio and vision capture
+from a remote surface are exactly the traffic that would ride it.
 
 **The connection is the liveness signal.** It renews the handle lease as a side effect of
 being reachable, so there is no separate heartbeat to drift out of agreement with reality.
@@ -416,14 +425,6 @@ Each is deliberate, with the reason it is deferred:
   holds mail and sends push is a participant anyway.
 - **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. Contingent,
   not permanent.
-
-## Pending rename
-
-This doc uses **core** for the whole headless agent, which collides with
-[`core.md`](core.md), where CORE names a *layer inside* it. That doc's own summary calls it
-"the Rust host", and the prose everywhere already says "the host" — so the rename is
-`core.md` → `host.md` and the band `CORE` → `HOST`, in [`arch.md`](arch.md) and the
-cross-references. Until that lands, "core" in this file always means the whole agent.
 
 ## See also
 

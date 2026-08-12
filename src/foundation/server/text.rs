@@ -100,7 +100,7 @@ pub async fn get_out_text(
     // Hold an attachment guard for as long as the body stream exists. This counts
     // toward one question only — whether a speaker is attached, which decides
     // whether speech is synthesized. Nothing infers from it whether anyone is
-    // reading; see `docs/arch/core.md#attachment`.
+    // reading; see `docs/arch/host.md#attachment`.
     let attached = state
         .attachments
         .connect(crate::body::attachments::OutChannel::Text);

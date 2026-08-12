@@ -26,7 +26,7 @@
 //! The address is registered **once, for the life of the process**; the agent session is
 //! opened once and **held across wakes**, replaced only when it breaks. Two different lifetimes for two different things: an address
 //! must be stable (nothing durable may hold a session id, and a prompt certainly cannot),
-//! while a session is *replaceable* — `docs/arch/core.md`: *"No session is a source of
+//! while a session is *replaceable* — `docs/arch/host.md`: *"No session is a source of
 //! truth — continuity lives in `data/`."*
 //!
 //! **This reverses the per-wake session this rung shipped with, and the reason is a
@@ -124,7 +124,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     // fires → Cognition wakes → reads active tasks → …"); this is the half of it that was
     // missing. It is **not** a scheduler and never becomes one — scheduling past this
     // cadence is the agent's own, arranged with the shell it already has
-    // (`docs/arch/core.md#glancing-up`).
+    // (`docs/arch/host.md#glancing-up`).
     //
     // Two wakes, deliberately different things: the **boot** one fires once because a
     // restart happened, and the **recurring** one fires into idleness because a duty

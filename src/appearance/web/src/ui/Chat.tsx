@@ -24,7 +24,7 @@ import { splitSpeechLinks } from "../lib/links";
  *
  * **There is no read receipt, and there will not be.** The scroller's own notion
  * of "you have not scrolled to this yet" stays in this component and is never
- * reported anywhere — see `docs/arch/core.md#attachment` for why that direction
+ * reported anywhere — see `docs/arch/host.md#attachment` for why that direction
  * is closed.
  */
 

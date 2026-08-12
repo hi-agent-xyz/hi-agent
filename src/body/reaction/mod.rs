@@ -92,7 +92,7 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 
 /// Default idle interval between host pulses — the conversation's recurring moment of
 /// self-attention. A pulse is not a schedule of work: it injects bare situational
-/// facts ("nothing new for 30m") and core.md tells the mind what such a moment is
+/// facts ("nothing new for 30m") and `reaction.md` tells the mind what such a moment is
 /// for (read down its active tasks, glance at setups it owns); most pulses should
 /// conclude with nothing to do or say. Override via `pulse`; `0`/`off`
 /// disables. Boot is not a special case — the first pulse after the host starts
@@ -685,7 +685,7 @@ enum LoopInput {
     Human(Signal),
     Worker(workers::WorkerReport),
     /// A host pulse firing — the recurring moment of self-attention. Carries
-    /// bare situational facts; what to do with such a moment is core.md's job.
+    /// bare situational facts; what to do with such a moment is `reaction.md`'s job.
     Pulse { note: String },
     /// The voice's own check-in coming due — it said they'd hear back by now, or it
     /// left a silence open-ended while its thinking ran and the host put a floor under

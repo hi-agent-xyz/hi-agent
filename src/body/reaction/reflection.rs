@@ -39,12 +39,12 @@
 //!    sink, so work it creates returns to Reflection rather than the voice or Cognition.
 //! 4. **Two kinds of wake.** Reflection is the one rung driven by a clock *and* by mail.
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
-//!    which is the only shape of timing the host has (`docs/arch/core.md#glancing-up`).
+//!    which is the only shape of timing the host has (`docs/arch/host.md#glancing-up`).
 //!
 //! ## Sessions per wake, registration per process
 //!
 //! Same rule as Cognition, for the same reason: an address must be stable, a session must
-//! be disposable (`docs/arch/core.md` — *"continuity lives in `data/`, not in a
+//! be disposable (`docs/arch/host.md` — *"continuity lives in `data/`, not in a
 //! process"*). A consolidation pass and a mail turn each open one and drop it.
 //!
 //! One red line survives from the old wording and is not negotiable: reflection may
