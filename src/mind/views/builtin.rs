@@ -37,9 +37,14 @@
 //! also lands on English. Further languages are meant to be *authored at runtime* rather
 //! than shipped here — see the `TODO(i18n)` in each view.
 //!
-//! **3. This system's own vocabulary is not translated.** Tools, Skills, Memory, Workers
-//! keep those words in both languages, because they name parts of this architecture rather
-//! than ordinary objects. Plain words do translate: Task is 任务, Drive is 文件.
+//! **3. This system's own vocabulary is not translated.** Tools, Skills, Memory keep those
+//! words in both languages, because they name parts of this architecture rather than
+//! ordinary objects. Plain words do translate: Task is 任务, Drive is 文件, Sessions is 会话.
+//!
+//! That last one used to be Workers, untranslated under this rule, and the rule was not
+//! what was wrong with it — the word was. The page lists every live session on the ladder
+//! with its workers nested underneath, and the ended ones; "Workers" named the bottom rung
+//! and dropped the rest. Its id is still `workers`, because that is the endpoint it reads.
 //!
 //! And one that is about honesty rather than style: a surface carries only the verbs its
 //! endpoint can actually honour. Workers is read-only because the registry has no stop —

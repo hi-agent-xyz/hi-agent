@@ -46,10 +46,19 @@ const api = {
 const POLL_MS = 2000;
 
 // ── words ─────────────────────────────────────────────────────────────────────
-// English is the default and the fallback. `Worker` is this system's own vocabulary —
-// the rung a session runs at — so the title stays the English word in both. The rung
-// labels under `role` are descriptions of what each one does, so those do get said in
-// the reader's language.
+// English is the default and the fallback.
+//
+// The title is **Sessions**, not "Workers". A worker is one rung — the bottom one — and
+// this page has not been only about that rung for a while: the roster it lists is every
+// live session on the ladder (Reaction, Deliberation, Cognition, Reflection) with the
+// workers each one spawned nested under it, plus the sessions that just ended, plus any
+// one of their wire logs. Titling all of that "Workers" named the leaves and dropped the
+// tree. The id stays `workers` — that is the endpoint's name (`/api/workers`) and the
+// route's, and those are addresses, not headings.
+//
+// So unlike the old title, this one is a plain word rather than this system's own
+// vocabulary, and it is said in the reader's language. The rung labels under `role` were
+// always descriptions of what each one does, so those were already translated.
 //
 // The registry stores the **role**, and a worker's role carries its type, so a row can
 // say "做界面" rather than only "干活的".
@@ -59,7 +68,7 @@ const POLL_MS = 2000;
 // here. Until that exists, an unsupported language lands on English.
 const T = {
   en: {
-    title: "Workers",
+    title: "Sessions",
     runningN: (n) => `${n} running`,
     endedN: (n) => `${n} ended`,
     emptyBig: "Nothing is running right now.",
@@ -113,7 +122,7 @@ const T = {
     secs: (n) => `${n}s`, mins: (n) => `${n}m`, hours: (n) => `${n}h`, days: (n) => `${n}d`,
   },
   zh: {
-    title: "Workers",
+    title: "会话",
     runningN: (n) => `${n} 个在跑`,
     endedN: (n) => `${n} 个结束了`,
     emptyBig: "现在没有活在跑。",
