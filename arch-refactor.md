@@ -252,7 +252,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
 | **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
 | ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
-| **T3** | the community: registry, then relay + tunnel + the subpath prefix | not started |
+| **T3** | the community: registry, then relay + tunnel | addressing settled; registry next |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
 **T1 delivers the directly-public shape end to end and needs no Go work**, which is why
@@ -278,6 +278,35 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T3 — Addressing: subdomains, not subpaths · **design change, `docs/arch/topology.md`**
+
+The doc chose subpath (`hi-agent.xyz/ana`) to avoid wildcard issuance and per-handle DNS,
+and accepted a shared origin in exchange — scoping the risk as *"several of your own cores
+on one origin is self-inflicted and acceptable; a browser visiting **someone else's** core
+is the trigger that forces subdomains."*
+
+Both halves moved. The community already terminates TLS behind Caddy on a DNS-01
+challenge, so `*.hi-agent.xyz` is one certificate and one wildcard `A` record rather than
+per-handle work. And **access is shared, not owned** — nothing in a credential says whose
+core it reaches, and people hand each other access because that is what access is for. The
+case the trade called exotic is the ordinary one, so the trigger had already fired.
+
+Three things fall out, and the third is why this is cheaper *now* than later:
+
+- Separate origins means a real boundary between cores — which matters here more than in a
+  typical app, because a core serves agent-generated code and views cannot be moved to a
+  sandboxed origin without redesigning the shared-React import map.
+- `__Host-` becomes available. Implemented: the cookie's **name is the protection it can
+  actually claim** — `__Host-hi_surface` where the request arrived over TLS, plain
+  `hi_surface` otherwise, and the reader takes either with the guarded one winning. Claiming
+  it unconditionally is worse than not claiming it, because a browser drops a `__Host-`
+  cookie on an insecure origin silently.
+- **The whole prefix problem disappears.** Each core sits at the root of its own origin, so
+  `/assets/*`, `/generated/*` and the import map render unchanged. `base_path()` and its
+  `X-Forwarded-Prefix` reader are deleted rather than left waiting for a producer.
+
+Reserved *labels* replace reserved paths, and are still only cheap before launch.
 
 #### ~~T2b — The room~~ · **cut 2026-08-12**
 
