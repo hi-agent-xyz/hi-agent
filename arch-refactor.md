@@ -252,7 +252,9 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T1** | the gate: two acceptors, the credential, the session, pairing | **done**, `cab4162` — 651 lib + 44 integration green, 0 warnings, **and live-verified** |
 | **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
 | ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
-| **T3** | the community: registry, then relay + tunnel + the subpath prefix | registry written (site repo), unpushed |
+| **T3a** | the registry, both halves | **done** — live-verified against the real service |
+| **T3b** | the tunnel + relay | next |
+| **T3c** | the subpath prefix in the core | after the relay |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
 **T1 delivers the directly-public shape end to end and needs no Go work**, which is why
@@ -278,6 +280,30 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T3a — A core can have a name · **on `feat/topology-handle`, and on the site repo (`7a379e8`)**
+
+Both halves, and they have talked to each other. The community side is the registry
+(handle ↔ core, leases, reserved paths, no broker dependency); the core side is
+`foundation::community` — **not** `foundation::registry`, which is the session
+switchboard and shares nothing but a word.
+
+A core registers **once, anonymously**, and keeps `(core_id, secret)` in its config store.
+Deliberately not the broker's `device_id`: reusing that would make the address depend on
+the account, which is the bug invariant 2 exists to prevent. `GET`/`POST /api/handle` is
+the surface, gated like everything else — claiming a name is something a surface that
+already has access does.
+
+The registry's refusals travel through verbatim rather than as a status code. A person
+choosing a name is entitled to *"that handle is in use"*.
+
+**Live-verified** on the Mac mini against the real Go service (not a stub): two hi-agent
+instances, one registry, one SQLite file. Observed — an unclaimed core answers with an
+empty handle rather than an error; A claims `ana` and is told
+`https://hi-agent.xyz/ana` with a lease a week out; B is refused `ana` with the
+registry's own words and refused `admin` as reserved; B takes `bob`; and **A restarted
+and came back as the same `core_id` still holding `ana`**, which is the failure that
+would have cost a person their name on every reboot.
 
 #### Addressing is a subpath · **settled 2026-08-12, and the doc no longer hedges**
 

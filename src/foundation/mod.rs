@@ -5,7 +5,8 @@
 //! - LLM/agent gateway: `codex` (JSON-RPC wire + threads), `agent` (one subprocess
 //!   per session), `mcp` (tool transport).
 //! - Transport + serving: `server` (HTTP front, channels, carriers), `surfaces`
-//!   (who may reach this core — the credential, the session, the gate).
+//!   (who may reach this core — the credential, the session, the gate),
+//!   `community` (the client for the shared infrastructure: the handle registry).
 //! - Vendor adapters: `vendors` (macOS, doubao, volcengine, ffmpeg, onnx fronts).
 //! - Plumbing: `config`, `credentials`, `models`, `observatory`, `channel_log`, `pcm`, `segment`.
 //!
@@ -24,6 +25,7 @@ pub mod agent;
 pub mod auth;
 pub mod broker;
 pub mod channel_log;
+pub mod community;
 pub mod config;
 pub mod credentials;
 pub mod energy_state;
