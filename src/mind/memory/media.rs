@@ -12,6 +12,13 @@
 //! `keep/`. The `.jsonl` line is never rewritten, so [`resolve`] does the
 //! best-available lookup on read — original blob, else nearest keepsake, else the
 //! caption alone.
+//!
+//! **A ref addresses one of two roots, and this module resolves both.** A signal's
+//! bytes live in the fading raw store above; an artifact the agent *made* lives in
+//! [`drive/`](drive_root), which never fades. One grammar spans them
+//! ([`resolve_ref`]) because one argument does — `image-to-image` takes a camera
+//! still, a handed file, or a picture it drew ten seconds ago, and the caller has no
+//! business knowing which store each came from.
 
 use std::path::{Path, PathBuf};
 
@@ -90,9 +97,19 @@ pub fn parse_ref(reff: &str) -> Option<(Channel, DateTime<Utc>, String)> {
     Some((channel, ts, format!("{hh}/{file}")))
 }
 
-/// Resolve a [`signal_ref`] to bytes on disk, through the same best-available lookup
-/// [`resolve`] does. `None` when the ref is malformed or nothing is there.
+/// Resolve any ref to bytes on disk — a [`signal_ref`] through the best-available
+/// lookup [`resolve`] does, or a [`drive_ref`] through the drive root. `None` when the
+/// ref is malformed or nothing is there.
+///
+/// The `drive/` arm is checked first and explicitly. It would fall through safely
+/// anyway (`drive` is no [`Channel`], and the three-segment legacy form needs the
+/// first segment to parse as a date) — but "safely" there means *by accident*, via a
+/// failed date parse two functions away, and a ref that names a real file must not
+/// depend on that.
 pub async fn resolve_ref(data_dir: &Path, reff: &str) -> Option<PathBuf> {
+    if let Some(rel) = reff.trim().strip_prefix(DRIVE_PREFIX) {
+        return resolve_in_drive(data_dir, rel).await;
+    }
     let (channel, ts, rel) = parse_ref(reff)?;
     resolve(data_dir, channel, ts, &rel).await
 }
@@ -115,6 +132,131 @@ pub async fn resolve(
         return Some(original);
     }
     nearest_keepsake(&dir.join("keep"), ts).await
+}
+
+// ── the drive: artifacts, which do not fade ───────────────────────────────────
+
+/// The prefix that marks a ref as addressing [`drive_root`] rather than a channel-day
+/// folder. Includes the separator so `strip_prefix` yields the drive-relative path.
+pub const DRIVE_PREFIX: &str = "drive/";
+
+/// Where [`store_artifact`] files what the agent produced, under [`drive_root`].
+/// A day folder keeps a long-lived tree browsable; the alternative — one flat
+/// directory — is fine for a week and unopenable after a year.
+const GENERATED_DIR: &str = "generated";
+
+/// `<data_dir>/drive` — the agent's own filing cabinet (`docs/arch/data.md#drive`).
+/// Sibling of the memory store, not part of it: nothing here is consolidated and
+/// nothing here fades.
+pub fn drive_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("drive")
+}
+
+/// Reject an empty path and any segment that is empty, `.` or `..`, so a joined path
+/// cannot climb out of its root. An absolute path fails too — a leading `/` produces
+/// an empty first segment.
+///
+/// The syntactic half of the guard; [`resolve_in_drive`] adds the half this cannot do.
+pub fn safe_rel_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\0')
+        && path.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
+/// Resolve a drive-relative path to a regular file inside [`drive_root`], or `None`.
+pub async fn resolve_in_drive(data_dir: &Path, rel: &str) -> Option<PathBuf> {
+    resolve_in_root(&drive_root(data_dir), rel).await
+}
+
+/// Resolve `rel` inside `root`, yielding the path only if it is a regular file that is
+/// *still inside the root after canonicalisation*.
+///
+/// Two guards, because these trees' names come from the agent. [`safe_rel_path`] stops
+/// `..`; canonicalising both sides stops what it cannot see — a symlink *inside* the
+/// root pointing at `~/.ssh` has no `..` anywhere in its path.
+pub async fn resolve_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
+    if !safe_rel_path(rel) {
+        return None;
+    }
+    // Canonicalise the root too: on macOS `/var/…` is a symlink to `/private/var/…`,
+    // so comparing an un-canonicalised root against a canonicalised file never matches.
+    let root = tokio::fs::canonicalize(root).await.ok()?;
+    let full = tokio::fs::canonicalize(root.join(rel)).await.ok()?;
+    if !full.starts_with(&root) {
+        return None;
+    }
+    tokio::fs::metadata(&full).await.ok()?.is_file().then_some(full)
+}
+
+/// Persist an artifact the agent produced — a generated image, a rendered clip — under
+/// `drive/generated/<day>/<HHMMSS>-<slug>.<ext>`, and return the [`drive_ref`] that
+/// addresses it.
+///
+/// **The drive, not the raw store, and that is the point.** Raw holds what was
+/// *perceived* and [fades](super::decay) once its day is cold; this holds what was
+/// *made*, and a picture that evaporates a week after it was drawn is not a picture
+/// anybody kept. `docs/arch/data.md#drive` already names this tree the home for
+/// "artifacts and bytes it produced or was given".
+///
+/// `slug` is free text (a prompt) and is reduced to something filename-safe; a
+/// same-second collision takes a `-2`, `-3` suffix rather than overwriting, because two
+/// images generated in one second is an ordinary batch, not an error.
+pub async fn store_artifact(
+    data_dir: &Path,
+    ts: DateTime<Utc>,
+    slug: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> anyhow::Result<String> {
+    let dir_rel = format!("{GENERATED_DIR}/{}", layout::day_key(ts));
+    let dir = drive_root(data_dir).join(&dir_rel);
+    tokio::fs::create_dir_all(&dir).await?;
+
+    let stem = format!("{}-{}", ts.format("%H%M%S"), slugify(slug));
+    let mut name = format!("{stem}.{ext}");
+    for n in 2..100 {
+        if !tokio::fs::try_exists(dir.join(&name)).await.unwrap_or(false) {
+            break;
+        }
+        name = format!("{stem}-{n}.{ext}");
+    }
+
+    let path = dir.join(&name);
+    let mut f = tokio::fs::File::create(&path).await?;
+    f.write_all(bytes).await?;
+    f.flush().await?;
+    f.sync_data().await?;
+    Ok(drive_ref(&format!("{dir_rel}/{name}")))
+}
+
+/// The locator for a file in the drive: `drive/<path>`, the counterpart of
+/// [`signal_ref`]. Wrapped as `⟨ref: …⟩` by whoever writes the sentence.
+pub fn drive_ref(rel: &str) -> String {
+    format!("{DRIVE_PREFIX}{rel}")
+}
+
+/// Reduce free text to one filename-safe path segment: alphanumerics kept, everything
+/// else collapsed to a single `-`, trimmed, capped at 40 characters.
+///
+/// **Unicode-aware, not ASCII-only.** `char::is_alphanumeric` keeps 中文, so a Chinese
+/// prompt yields a Chinese filename instead of an empty one — the whole point of a
+/// slug is that a human scanning the tree recognises the file. Text with nothing
+/// alphanumeric in it falls back to `image`, since an empty segment fails
+/// [`safe_rel_path`].
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars().filter(|c| !c.is_control()) {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.trim_end_matches('-').chars().count() >= 40 {
+            break;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() { "image".to_string() } else { out }
 }
 
 /// The keepsake in `keep_dir` nearest `ts` — one whose span contains it, else the
@@ -213,6 +355,80 @@ mod tests {
             resolve_ref(dir.path(), &as_vision).await.is_none(),
             "the camera channel holds nothing here — that mistake is what the channel prefix ends"
         );
+    }
+
+    #[tokio::test]
+    async fn a_stored_artifact_resolves_through_the_ref_it_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let reff = store_artifact(dir.path(), ts(), "a red bicycle", "png", b"x").await.unwrap();
+
+        assert_eq!(reff, "drive/generated/2026-06-25/142307-a-red-bicycle.png");
+        let path = resolve_ref(dir.path(), &reff).await.expect("must resolve");
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"x");
+    }
+
+    /// Two images in one second is an ordinary batch (`n=2`), not an error — the
+    /// second must not land on top of the first.
+    #[tokio::test]
+    async fn a_same_second_artifact_takes_a_suffix_rather_than_the_other_s_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = store_artifact(dir.path(), ts(), "a cat", "png", b"one").await.unwrap();
+        let second = store_artifact(dir.path(), ts(), "a cat", "png", b"two").await.unwrap();
+
+        assert_ne!(first, second);
+        assert!(second.ends_with("142307-a-cat-2.png"), "{second}");
+        let path = resolve_ref(dir.path(), &first).await.unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"one", "the first was overwritten");
+    }
+
+    /// A slug is derived from a prompt, and a prompt is whatever the person said. A
+    /// Chinese one must still name its file — dropping to ASCII would leave every
+    /// Chinese generation called `image`.
+    #[test]
+    fn a_slug_keeps_the_letters_it_is_given() {
+        assert_eq!(slugify("A Red Bicycle!"), "a-red-bicycle");
+        assert_eq!(slugify("  ...  "), "image");
+        assert_eq!(slugify("一只猫"), "一只猫");
+        assert!(slugify(&"x".repeat(200)).chars().count() <= 40);
+        assert!(safe_rel_path(&slugify("../../etc/passwd")));
+    }
+
+    /// The drive tree's names come from the agent, so the ref that addresses it is an
+    /// attack surface. Both guards are load-bearing: `..` is syntax, a symlink is not.
+    #[tokio::test]
+    async fn a_drive_ref_cannot_address_anything_outside_the_drive() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("secret"), b"s").await.unwrap();
+        let root = drive_root(dir.path());
+        tokio::fs::create_dir_all(&root).await.unwrap();
+
+        assert!(resolve_ref(dir.path(), "drive/../secret").await.is_none(), "climbed out");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.path().join("secret"), root.join("link")).unwrap();
+            assert!(
+                resolve_ref(dir.path(), "drive/link").await.is_none(),
+                "a symlink out of the drive has no `..` for the syntactic guard to catch"
+            );
+        }
+    }
+
+    /// The two roots share one grammar, so each must keep resolving where it lives —
+    /// a channel ref must not start reading the drive, or the reverse.
+    #[tokio::test]
+    async fn the_two_roots_do_not_shadow_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let rel = store_blob(dir.path(), Channel::Vision, ts(), MediaSlot::InputOneOff, "jpg", b"v")
+            .await
+            .unwrap();
+        let signal = signal_ref(Channel::Vision, ts(), &rel);
+        let artifact = store_artifact(dir.path(), ts(), "made", "png", b"a").await.unwrap();
+
+        let from_signal = resolve_ref(dir.path(), &signal).await.unwrap();
+        assert_eq!(tokio::fs::read(from_signal).await.unwrap(), b"v");
+        let from_drive = resolve_ref(dir.path(), &artifact).await.unwrap();
+        assert_eq!(tokio::fs::read(from_drive).await.unwrap(), b"a");
     }
 
     #[test]

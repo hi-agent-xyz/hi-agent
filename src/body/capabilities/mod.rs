@@ -70,18 +70,53 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
         eff.as_ref().and_then(|e| e.vision.model_opt()),
         eff.as_ref().and_then(|e| e.vision.wire_opt()),
     )?;
-    image_gen::init(
-        eff.as_ref().and_then(|e| e.image.key_opt()),
-        eff.as_ref().and_then(|e| e.image.base_url_opt()),
-        eff.as_ref().and_then(|e| e.image.model_opt()),
-        eff.as_ref().and_then(|e| e.image.wire_opt()),
-    )?;
-    video_gen::init(
-        eff.as_ref().and_then(|e| e.video.key_opt()),
-        eff.as_ref().and_then(|e| e.video.base_url_opt()),
-        eff.as_ref().and_then(|e| e.video.model_opt()),
-        eff.as_ref().and_then(|e| e.video.wire_opt()),
-    )?;
+    // The two generation capabilities take a *list* of providers carrying a *list* of
+    // models, because their caller names a model rather than inheriting one. The store
+    // yields one endpoint per capability today; the menu on it is what the agent
+    // chooses from, and each capability maps the credential vocabulary into its own —
+    // no shared model type across capabilities, by the same rule as everything else here.
+    image_gen::init(vec![image_gen::ProviderSpec {
+        wire: eff.as_ref().and_then(|e| e.image.wire_opt()).map(str::to_owned),
+        base_url: eff.as_ref().and_then(|e| e.image.base_url_opt()).map(str::to_owned),
+        api_key: eff.as_ref().and_then(|e| e.image.key_opt()).unwrap_or_default().to_owned(),
+        default_model: eff.as_ref().and_then(|e| e.image.model_opt()).map(str::to_owned),
+        models: eff
+            .as_ref()
+            .map(|e| {
+                e.image
+                    .models
+                    .iter()
+                    .map(|m| image_gen::ModelInfo {
+                        name: m.name.clone(),
+                        quality: m.quality,
+                        speed: m.speed,
+                        price: m.price,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }])?;
+    video_gen::init(vec![video_gen::ProviderSpec {
+        wire: eff.as_ref().and_then(|e| e.video.wire_opt()).map(str::to_owned),
+        base_url: eff.as_ref().and_then(|e| e.video.base_url_opt()).map(str::to_owned),
+        api_key: eff.as_ref().and_then(|e| e.video.key_opt()).unwrap_or_default().to_owned(),
+        default_model: eff.as_ref().and_then(|e| e.video.model_opt()).map(str::to_owned),
+        models: eff
+            .as_ref()
+            .map(|e| {
+                e.video
+                    .models
+                    .iter()
+                    .map(|m| video_gen::ModelInfo {
+                        name: m.name.clone(),
+                        quality: m.quality,
+                        speed: m.speed,
+                        price: m.price,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }])?;
     Ok(())
 }
 

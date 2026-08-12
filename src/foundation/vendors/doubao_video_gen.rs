@@ -17,21 +17,16 @@
 //! plus, on success, `content.video_url` (note: that URL expires ~24h after
 //! success, so a caller should download it promptly).
 
-use std::time::Duration;
-
 use anyhow::Context;
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::body::capabilities::video_gen::{ImageRef, VideoRequest, VideoStatus, VideoTask};
+use crate::body::capabilities::video_gen::{ImageRef, VideoParams, VideoStatus, VideoTask};
 
 /// The plan endpoint. The bare `/api/v3` variant bills as extra (per the docs),
 /// so it is intentionally not the default.
 const DEFAULT_API_BASE: &str = "https://ark.cn-beijing.volces.com/api/plan/v3";
-const DEFAULT_VIDEO_MODEL: &str = "doubao-seedance-2.0";
-/// Submit/poll calls are quick, but one generous timeout covers the slow path.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 impl ImageRef {
     /// Resolve to a URL the API accepts: a passthrough URL, or raw bytes encoded
@@ -47,44 +42,24 @@ impl ImageRef {
     }
 }
 
+/// One configured Ark video provider: where to post, and with what key. No model and
+/// no HTTP client — the model comes per call (the agent chooses it) and the client is
+/// shared by the capability.
 pub struct Config {
-    client: reqwest::Client,
     api_key: String,
     endpoint: String,
-    model: String,
 }
 
 impl Config {
-    /// Resolve config from the credential store. `key` is the vendor API key
-    /// (required — the caller builds a config only when a key is present); `base_url`,
-    /// when set, is the gateway's **full** task-submit endpoint (songguo, whose path
-    /// differs from the vendor's native one) and is used verbatim; with no `base_url`
-    /// (BYOK) the vendor's own endpoint is used. `model` overrides the seedance
-    /// default. No env.
-    pub fn from_store(
-        key: Option<&str>,
-        base_url: Option<&str>,
-        model: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        let api_key = key
-            .map(str::trim)
-            .filter(|k| !k.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("video generation (doubao) requires an API key"))?
-            .to_string();
+    /// `base_url`, when set, is the gateway's **full** task-submit endpoint (songguo,
+    /// whose path differs from the vendor's native one) and is used verbatim; with no
+    /// `base_url` (BYOK) the vendor's own endpoint is used.
+    pub fn new(api_key: &str, base_url: Option<&str>) -> Self {
         let endpoint = match base_url.map(str::trim).filter(|b| !b.is_empty()) {
             Some(base) => base.trim_end_matches('/').to_string(),
-            None => format!("{}/contents/generations/tasks", DEFAULT_API_BASE),
+            None => format!("{DEFAULT_API_BASE}/contents/generations/tasks"),
         };
-        let model = model
-            .map(str::trim)
-            .filter(|m| !m.is_empty())
-            .unwrap_or(DEFAULT_VIDEO_MODEL)
-            .to_string();
-        let client = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .context("building doubao video-gen HTTP client")?;
-        Ok(Self { client, api_key, endpoint, model })
+        Self { api_key: api_key.trim().to_string(), endpoint }
     }
 }
 
@@ -92,9 +67,14 @@ impl Config {
 /// unit-testable. The prompt is the first `content` part; a first-frame
 /// reference (image-to-video) is appended as an `image_url` part. Generation
 /// knobs ride as sibling fields, omitted when unset.
-fn build_create_request(cfg: &Config, req: &VideoRequest) -> Value {
-    let mut content = vec![json!({ "type": "text", "text": req.prompt })];
-    if let Some(frame) = &req.first_frame {
+fn build_create_request(
+    model: &str,
+    first_frame: Option<&ImageRef>,
+    prompt: &str,
+    params: &VideoParams,
+) -> Value {
+    let mut content = vec![json!({ "type": "text", "text": prompt })];
+    if let Some(frame) = first_frame {
         content.push(json!({
             "type": "image_url",
             "image_url": { "url": frame.to_url() },
@@ -102,21 +82,21 @@ fn build_create_request(cfg: &Config, req: &VideoRequest) -> Value {
         }));
     }
 
-    let mut body = json!({ "model": cfg.model, "content": content });
+    let mut body = json!({ "model": model, "content": content });
     let obj = body.as_object_mut().expect("json object");
-    if let Some(resolution) = &req.resolution {
+    if let Some(resolution) = &params.resolution {
         obj.insert("resolution".into(), json!(resolution));
     }
-    if let Some(ratio) = &req.ratio {
+    if let Some(ratio) = &params.ratio {
         obj.insert("ratio".into(), json!(ratio));
     }
-    if let Some(duration) = req.duration {
+    if let Some(duration) = params.duration {
         obj.insert("duration".into(), json!(duration));
     }
-    if let Some(watermark) = req.watermark {
+    if let Some(watermark) = params.watermark {
         obj.insert("watermark".into(), json!(watermark));
     }
-    if let Some(seed) = req.seed {
+    if let Some(seed) = params.seed {
         obj.insert("seed".into(), json!(seed));
     }
     body
@@ -128,11 +108,17 @@ fn tasks_url(cfg: &Config) -> String {
     cfg.endpoint.clone()
 }
 
-pub async fn submit(cfg: &Config, req: &VideoRequest) -> anyhow::Result<String> {
-    let body = build_create_request(cfg, req);
+pub async fn submit(
+    client: &reqwest::Client,
+    cfg: &Config,
+    model: &str,
+    first_frame: Option<&ImageRef>,
+    prompt: &str,
+    params: &VideoParams,
+) -> anyhow::Result<String> {
+    let body = build_create_request(model, first_frame, prompt, params);
 
-    let resp = cfg
-        .client
+    let resp = client
         .post(tasks_url(cfg))
         .bearer_auth(&cfg.api_key)
         .json(&body)
@@ -154,11 +140,14 @@ pub async fn submit(cfg: &Config, req: &VideoRequest) -> anyhow::Result<String> 
     Ok(parsed.id)
 }
 
-pub async fn poll(cfg: &Config, task_id: &str) -> anyhow::Result<VideoTask> {
+pub async fn poll(
+    client: &reqwest::Client,
+    cfg: &Config,
+    task_id: &str,
+) -> anyhow::Result<VideoTask> {
     let url = format!("{}/{task_id}", tasks_url(cfg));
 
-    let resp = cfg
-        .client
+    let resp = client
         .get(&url)
         .bearer_auth(&cfg.api_key)
         .send()
@@ -244,19 +233,22 @@ mod tests {
     use super::*;
     use bytes::Bytes;
 
-    fn video_gen() -> Config {
-        Config {
-            client: reqwest::Client::new(),
-            api_key: "test-key".to_string(),
-            endpoint: format!("{}/contents/generations/tasks", DEFAULT_API_BASE),
-            model: DEFAULT_VIDEO_MODEL.to_string(),
-        }
+    const MODEL: &str = "doubao-seedance-2.0";
+
+    #[test]
+    fn the_endpoint_is_the_vendor_default_or_the_gateway_verbatim() {
+        assert!(DEFAULT_API_BASE.contains("/api/plan/v3"));
+        let cfg = Config::new("k", None);
+        assert!(cfg.endpoint.ends_with("/api/plan/v3/contents/generations/tasks"), "{}", cfg.endpoint);
+        let cfg = Config::new("k", Some("https://gw.example/v1/video/tasks/"));
+        assert_eq!(cfg.endpoint, "https://gw.example/v1/video/tasks");
     }
 
     #[test]
     fn video_create_text_to_video_omits_unset_knobs() {
-        let body = build_create_request(&video_gen(), &VideoRequest::new("a cat running"));
-        assert_eq!(body["model"], DEFAULT_VIDEO_MODEL);
+        let body = build_create_request(MODEL, None, "a cat running", &VideoParams::default());
+        // The model is the caller's choice now, not the config's.
+        assert_eq!(body["model"], MODEL);
         let content = &body["content"];
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "a cat running");
@@ -269,16 +261,16 @@ mod tests {
 
     #[test]
     fn video_create_image_to_video_appends_first_frame_and_knobs() {
-        let req = VideoRequest {
-            prompt: "zoom out slowly".to_string(),
-            first_frame: Some(ImageRef::bytes(Bytes::from_static(b"\xff\xd8jpeg"), "image/jpeg")),
+        let frame = ImageRef::bytes(Bytes::from_static(b"\xff\xd8jpeg"), "image/jpeg");
+        let params = VideoParams {
             resolution: Some("1080p".to_string()),
             ratio: Some("16:9".to_string()),
             duration: Some(5),
             watermark: Some(false),
             seed: Some(7),
+            ..Default::default()
         };
-        let body = build_create_request(&video_gen(), &req);
+        let body = build_create_request(MODEL, Some(&frame), "zoom out slowly", &params);
 
         let frame = &body["content"][1];
         assert_eq!(frame["type"], "image_url");
@@ -295,11 +287,8 @@ mod tests {
 
     #[test]
     fn video_first_frame_url_passes_through() {
-        let req = VideoRequest {
-            first_frame: Some(ImageRef::url("https://example.com/frame.png")),
-            ..VideoRequest::new("pan left")
-        };
-        let body = build_create_request(&video_gen(), &req);
+        let frame = ImageRef::url("https://example.com/frame.png");
+        let body = build_create_request(MODEL, Some(&frame), "pan left", &VideoParams::default());
         assert_eq!(body["content"][1]["image_url"]["url"], "https://example.com/frame.png");
     }
 

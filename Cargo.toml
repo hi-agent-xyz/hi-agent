@@ -35,7 +35,9 @@ rust-embed = "8"
 # for the audio bytes flowing through them. `bytes` is also re-exported via
 # `Bytes` in axum extractors; keeping it explicit makes the voice traits
 # legible without depending on a particular axum version.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# `multipart` is for OpenAI's `/v1/images/edits`, the one image route that takes a
+# file part rather than JSON (see vendors/openai_image_gen.rs).
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
 bytes = "1"
 base64 = "0.22"

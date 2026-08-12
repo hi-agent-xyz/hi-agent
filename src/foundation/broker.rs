@@ -15,7 +15,9 @@ use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::foundation::credentials::{Credentials, Energy, Identity, LlmCredentials, Managed, Mode, Tokens, VendorKey};
+use crate::foundation::credentials::{
+    Credentials, Energy, Identity, LlmCredentials, Managed, ModelOffer, Mode, Tokens, VendorKey,
+};
 
 /// Env override for the broker base URL (default [`DEFAULT_BROKER_URL`]).
 const ENV_BROKER_URL: &str = "HI_AGENT_BROKER_URL";
@@ -132,21 +134,6 @@ struct WireDto {
 /// endpoint. Collapsed into the internal per-slot [`Managed`] by [`managed_from`].
 type ConfigsDto = std::collections::HashMap<String, std::collections::HashMap<String, WireDto>>;
 
-/// The `scheme://host[:port]` origin of a full URL, dropping the path. The vendor
-/// adapters re-append their own paths, so the internal `base_url` stays a bare origin
-/// — matching what the broker sent before it moved to full per-wire URLs. Falls back
-/// to the input if it isn't URL-shaped. (The LLM slot does *not* use this: codex wants
-/// the provider base *with* its `/v1` prefix, which [`openai_responses_base`] keeps.)
-fn origin_of(url: &str) -> String {
-    let u = url.trim();
-    if let Some(after) = u.find("://").map(|i| i + 3) {
-        if let Some(slash) = u[after..].find('/') {
-            return u[..after + slash].to_string();
-        }
-    }
-    u.to_string()
-}
-
 /// Reduce one task's `wire → endpoint` map to (wire, full url, api_key, model):
 /// the selected wire (or lexically-first for deterministic default behavior) and
 /// the highest-`quality` model, plus that model's optional `small` companion.
@@ -204,19 +191,53 @@ fn pick_llm_wire(c: &ConfigsDto) -> Option<(String, String, Option<String>, Opti
 /// capabilities use it verbatim; the LLM wire strips only the endpoint leaf, keeping
 /// the OpenAI `/v1` base that codex's provider block wants.
 fn managed_from(c: &ConfigsDto) -> Managed {
-    fn resolve(
-        c: &ConfigsDto,
-        task: &str,
-        full: bool,
-    ) -> Option<(String, String, Option<String>, Option<String>)> {
-        c.get(task).and_then(|w| pick_wire(w, None)).map(|(_wire, url, api_key, model, small)| {
-            (if full { url } else { origin_of(&url) }, api_key, model, small)
-        })
-    }
+    // The endpoint, the key, and the best-quality model — and **no wire id**.
+    //
+    // The blank wire is deliberate and load-bearing: the broker names wires in its own
+    // vocabulary (`volc-asr-stream-async`), which is not what these capabilities call
+    // their vendors, and each of them treats an unrecognised wire as fatal at startup.
+    // Passing it through cost a boot the first time it was tried. These slots take one
+    // vendor per capability and never choose, so the id buys nothing anyway.
     let vendor = |task: &str| -> VendorKey {
-        resolve(c, task, true)
-            .map(|(base_url, api_key, model, _small)| VendorKey { wire: String::new(), base_url, api_key, model })
+        c.get(task)
+            .and_then(|w| pick_wire(w, None))
+            .map(|(_wire, url, api_key, model, _small)| VendorKey {
+                wire: String::new(),
+                base_url: url,
+                api_key,
+                model,
+                models: Vec::new(),
+            })
             .unwrap_or_default()
+    };
+
+    // The generation slots keep the wire id **and the whole model list**, not just the
+    // best-quality pick. For them that list *is* the menu the agent chooses from —
+    // collapsing it here is what made "the agent picks the model" unimplementable,
+    // since nothing was left to pick from by the time the capability saw it. Both
+    // capabilities read the wire id loosely and fall back to the model name, so an
+    // unfamiliar spelling costs a log line rather than a boot.
+    let generative = |task: &str| -> VendorKey {
+        let Some(wires) = c.get(task) else { return VendorKey::default() };
+        let Some((wire, url, api_key, model, _small)) = pick_wire(wires, None) else {
+            return VendorKey::default();
+        };
+        let models = wires
+            .get(&wire)
+            .map(|w| {
+                w.models
+                    .iter()
+                    .filter(|m| !m.model.trim().is_empty())
+                    .map(|m| ModelOffer {
+                        name: m.model.trim().to_string(),
+                        quality: m.quality,
+                        speed: m.speed,
+                        price: m.price,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        VendorKey { wire, base_url: url, api_key, model, models }
     };
     let llm = pick_llm_wire(c)
         .map(|(base_url, api_key, model, small)| LlmCredentials {
@@ -232,8 +253,8 @@ fn managed_from(c: &ConfigsDto) -> Managed {
         stt: vendor("automatic-speech-recognition"),
         tts: vendor("text-to-speech"),
         vision: vendor("image-text-to-text"),
-        image: vendor("text-to-image"),
-        video: vendor("text-to-video"),
+        image: generative("text-to-image"),
+        video: generative("text-to-video"),
     }
 }
 

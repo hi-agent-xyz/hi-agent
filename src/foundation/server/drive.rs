@@ -21,7 +21,6 @@
 //! guards twice: a syntactic check on the path segments, then a canonicalised
 //! containment check that also defeats a symlink pointing out of the drive.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -35,43 +34,18 @@ use serde::Serialize;
 
 use crate::foundation::server::AppState;
 
-/// `<data_dir>/drive/` — the precious tree. Created at boot ([`crate::run`]), but this
-/// module never requires it to exist: a fresh install has nothing filed yet.
-fn drive_dir(data_dir: &std::path::Path) -> PathBuf {
-    data_dir.join("drive")
-}
-
 // ── path safety ───────────────────────────────────────────────────────────────
+//
+// The root and both guards live in [`crate::mind::memory::media`], because the drive
+// is now addressed from two directions: these routes, and the `⟨ref: …⟩` grammar that
+// resolves `drive/<path>` for the generation tools. One tree guarded two ways is one
+// guard too many — the copy that gets a fix is never reliably the copy in the path
+// under attack.
 
-/// First guard: reject an empty path and any segment that is empty, `.` or `..`, so
-/// the joined path cannot climb out of the drive root. An absolute path fails too — a
-/// leading `/` produces an empty first segment. Same rule the views tree uses
-/// ([`crate::foundation::server::generated`]).
-fn safe_rel_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.contains('\0')
-        && path
-            .split('/')
-            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
-}
+use crate::mind::memory::media::{drive_root as drive_dir, resolve_in_root};
 
-/// Both guards plus existence: resolve `rel` inside the drive root and hand back the
-/// path only if it is a regular file that is *still inside the root after
-/// canonicalisation*. The second check is what the syntactic one cannot do — a symlink
-/// inside `drive/` pointing at `~/.ssh` has no `..` in its path.
-async fn resolve_in_root(root: &std::path::Path, rel: &str) -> Option<PathBuf> {
-    if !safe_rel_path(rel) {
-        return None;
-    }
-    // Canonicalise the root too: on macOS `/var/…` is a symlink to `/private/var/…`,
-    // so comparing an un-canonicalised root against a canonicalised file never matches.
-    let root = tokio::fs::canonicalize(root).await.ok()?;
-    let full = tokio::fs::canonicalize(root.join(rel)).await.ok()?;
-    if !full.starts_with(&root) {
-        return None;
-    }
-    tokio::fs::metadata(&full).await.ok()?.is_file().then_some(full)
-}
+#[cfg(test)]
+use crate::mind::memory::media::safe_rel_path;
 
 /// A file's mtime as `2026-08-04T10:00:00Z`. Falls back to the epoch when the platform
 /// has no mtime — a missing timestamp must not drop the entry from the listing.

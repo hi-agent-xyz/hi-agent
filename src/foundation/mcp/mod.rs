@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use base64::Engine as _;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use bytes::Bytes;
@@ -506,10 +506,16 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 //       bundle. No model reached through the agent wire emits pixels, so these are
 //       always a provider call.
 //
-// The four generation tools are declared and return [`not_implemented`]. The surface
-// is settled here; the wiring waits on one unmade decision — where a generated
-// artifact lands and what ref it gets — and minting that ref format twice is exactly
-// the mistake this naming pass exists to stop.
+// The four generation tools are wired. The decision they waited on — where a
+// generated artifact lands and what ref it gets — is settled: the bytes go to
+// [`drive/`](crate::mind::memory::media::store_artifact), the tree that does not
+// fade, and the ref is `drive/<path>`, a second arm on the one ref grammar rather
+// than a second grammar. So `image-to-image` takes a camera still, a handed file and
+// its own last output through the same argument.
+//
+// They also differ from every other tool here in being **built per call**: the
+// `model` argument is described from the live menu, because "the agent chooses the
+// model" is only true if the agent is shown what there is.
 // ---------------------------------------------------------------------------
 
 /// `image-text-to-text` — an image plus an instruction in, text out.
@@ -553,39 +559,140 @@ fn video_text_to_text_tool() -> Value {
     )
 }
 
-/// `text-to-image` — a prompt in, a new image out. Backed by
-/// [`crate::body::capabilities::image_gen`], which is configured but has no caller.
+/// One menu entry, normalised out of whichever capability's `ModelInfo` it came from
+/// — the two are separate types on purpose (independent capabilities) and this is the
+/// only place that needs to treat them alike.
+struct MenuEntry {
+    name: String,
+    quality: i64,
+    speed: i64,
+    price: i64,
+}
+
+/// The `model` property, described from what is **actually reachable right now**.
+///
+/// Choosing the model is the agent's job, which only works if it is shown the menu —
+/// a name it was never told about is not a choice. The list comes from the credential
+/// store's published models, so it tracks what the broker minted for this account
+/// rather than a constant that rots.
+///
+/// The hints are ordinal, not raw scores. "highest quality" is a fact an agent can
+/// act on; `quality: 87` is a number it has no scale for.
+fn model_property(menu: Vec<MenuEntry>, default: Option<String>, verb: &str) -> Value {
+    let mut description = format!("Optional: which model to {verb} with.");
+    if menu.is_empty() {
+        description.push_str(
+            " No menu is published for this account, so any model name the provider \
+             serves is passed through as given.",
+        );
+    } else {
+        // Comparative tags only when there is something to compare against. One model
+        // labelled "highest quality, fastest, cheapest" is three words of noise about
+        // a choice that does not exist.
+        let compare = menu.len() > 1;
+        let tag = |f: fn(&MenuEntry) -> i64, want_max: bool| -> Option<String> {
+            if !compare {
+                return None;
+            }
+            let it = menu.iter().filter(|m| f(m) != 0);
+            if want_max { it.max_by_key(|m| f(m)) } else { it.min_by_key(|m| f(m)) }
+                .map(|m| m.name.clone())
+        };
+        let best = tag(|m| m.quality, true);
+        let fastest = tag(|m| m.speed, true);
+        let cheapest = tag(|m| m.price, false);
+        let listed: Vec<String> = menu
+            .iter()
+            .map(|m| {
+                let mut tags = Vec::new();
+                if Some(&m.name) == best.as_ref() {
+                    tags.push("highest quality");
+                }
+                if Some(&m.name) == fastest.as_ref() {
+                    tags.push("fastest");
+                }
+                if Some(&m.name) == cheapest.as_ref() {
+                    tags.push("cheapest");
+                }
+                if tags.is_empty() {
+                    m.name.clone()
+                } else {
+                    format!("{} ({})", m.name, tags.join(", "))
+                }
+            })
+            .collect();
+        description.push_str(&format!(" Reachable now: {}.", listed.join("; ")));
+    }
+    match default {
+        Some(d) => description.push_str(&format!(" Omit to use {d}.")),
+        None => description.push_str(" Omit to use the provider's default."),
+    }
+    json!({ "type": "string", "description": description })
+}
+
+fn image_model_property(verb: &str) -> Value {
+    let menu = image_gen::models()
+        .into_iter()
+        .map(|m| MenuEntry { name: m.name, quality: m.quality, speed: m.speed, price: m.price })
+        .collect();
+    model_property(menu, image_gen::default_model(), verb)
+}
+
+fn video_model_property() -> Value {
+    let menu = video_gen::models()
+        .into_iter()
+        .map(|m| MenuEntry { name: m.name, quality: m.quality, speed: m.speed, price: m.price })
+        .collect();
+    model_property(menu, video_gen::default_model(), "generate")
+}
+
+/// `text-to-image` — a prompt in, a new image out, filed in the drive.
 fn text_to_image_tool() -> Value {
     tool(
         "text-to-image",
-        "Draw a new image from a description. Say what it should show; `size` and `seed` are \
-         optional vendor knobs (a fixed seed makes a run repeatable).",
+        "Draw a new image from a description. Say what it should show; every other argument is \
+         a knob you may set or leave alone, and leaving one alone means the model decides. The \
+         picture is filed in the drive and you get back its `⟨ref: …⟩` — pass that to \
+         `image-to-image` to change it, to `image-text-to-text` to look at it, or report it to \
+         whoever asked so it can go on screen. A knob a model cannot honour comes back as an \
+         error naming one that can, so nothing is silently ignored.",
         json!({
             "type": "object",
             "properties": {
                 "prompt": { "type": "string", "description": "What the image should show." },
-                "size": { "type": "string", "description": "Optional, vendor-specific: e.g. \"1024x1024\", \"2K\", \"adaptive\"." },
+                "model": image_model_property("draw"),
+                "size": { "type": "string", "description": "Optional: e.g. \"1024x1024\", \"2K\", \"adaptive\". gpt-image models want both edges to be multiples of 16." },
+                "quality": { "type": "string", "description": "Optional cost/quality dial where the model has one: \"low\", \"medium\", \"high\"." },
+                "n": { "type": "integer", "description": "Optional: how many images to return. Default one." },
+                "background": { "type": "string", "description": "Optional: \"transparent\" for a cutout, \"opaque\", \"auto\". Not every model can." },
+                "output_format": { "type": "string", "description": "Optional: \"png\", \"jpeg\", \"webp\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+                "watermark": { "type": "boolean", "description": "Optional, doubao models only." },
             },
             "required": ["prompt"],
         }),
     )
 }
 
-/// `image-to-image` — an existing image plus an instruction in, a new image out. No
-/// capability behind it yet: [`crate::body::capabilities::image_gen::ImageRequest`]
-/// carries no input image, so editing is currently unrepresentable end to end.
+/// `image-to-image` — an existing image plus an instruction in, a new image out.
 fn image_to_image_tool() -> Value {
     tool(
         "image-to-image",
         "Edit an existing image — say what to change and it returns a new image, leaving the \
-         original untouched. Pass the `⟨ref: …⟩` of the image to work from.",
+         original untouched. Pass the `⟨ref: …⟩` of the image to work from: a camera still, a \
+         file someone handed over, or one you drew a moment ago. The result is filed in the \
+         drive and comes back as its own ref, so you can edit that in turn.",
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. vision/2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. vision/2026-06-25/14/23-07.jpg or drive/generated/2026-06-25/142307-a-red-bicycle.png." },
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
-                "size": { "type": "string", "description": "Optional, vendor-specific output size." },
+                "model": image_model_property("edit"),
+                "size": { "type": "string", "description": "Optional output size." },
+                "quality": { "type": "string", "description": "Optional cost/quality dial: \"low\", \"medium\", \"high\"." },
+                "n": { "type": "integer", "description": "Optional: how many variants to return. Default one." },
+                "background": { "type": "string", "description": "Optional: \"transparent\", \"opaque\", \"auto\"." },
+                "output_format": { "type": "string", "description": "Optional: \"png\", \"jpeg\", \"webp\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
             },
             "required": ["ref", "prompt"],
@@ -593,21 +700,23 @@ fn image_to_image_tool() -> Value {
     )
 }
 
-/// `text-to-video` — a prompt in, a clip out. Backed by
-/// [`crate::body::capabilities::video_gen`], which is configured but has no caller.
+/// `text-to-video` — a prompt in, a clip out, mailed back when it lands.
 fn text_to_video_tool() -> Value {
     tool(
         "text-to-video",
-        "Generate a short video clip from a description. Generation is slow — this enqueues the \
-         work and the clip arrives when it's done, so don't wait on it inline.",
+        "Generate a short video clip from a description. Generation runs for minutes, so this \
+         returns straight away and the finished clip arrives as a message carrying its \
+         `⟨ref: …⟩`. There is nothing to poll: get on with something else and you will be told.",
         json!({
             "type": "object",
             "properties": {
                 "prompt": { "type": "string", "description": "What the clip should show." },
+                "model": video_model_property(),
                 "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
                 "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
                 "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+                "watermark": { "type": "boolean", "description": "Optional." },
             },
             "required": ["prompt"],
         }),
@@ -615,31 +724,37 @@ fn text_to_video_tool() -> Value {
 }
 
 /// `image-to-video` — an image as first frame plus an optional prompt in, a clip out.
-/// The one generation task the capability layer already models:
-/// [`crate::body::capabilities::video_gen::VideoRequest::first_frame`].
 fn image_to_video_tool() -> Value {
     tool(
         "image-to-video",
         "Animate an existing still — it becomes the first frame of a short clip. Pass the \
-         `⟨ref: …⟩` of the image, and optionally say how it should move. Slow, like any \
-         generation: it enqueues and the clip arrives later.",
+         `⟨ref: …⟩` of the image, and optionally say how it should move. Like any generation \
+         this runs for minutes: it returns straight away and the clip arrives as a message \
+         carrying its own ref.",
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. vision/2026-06-25/14/23-07.jpg." },
+                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. vision/2026-06-25/14/23-07.jpg or one you generated." },
                 "prompt": { "type": "string", "description": "Optional: how it should move or what should happen." },
+                "model": video_model_property(),
                 "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
                 "ratio": { "type": "string", "description": "Optional: aspect ratio, e.g. \"16:9\", \"9:16\", \"1:1\"." },
                 "resolution": { "type": "string", "description": "Optional: e.g. \"480p\", \"720p\", \"1080p\"." },
                 "seed": { "type": "integer", "description": "Optional: fix the seed to make the result repeatable." },
+                "watermark": { "type": "boolean", "description": "Optional." },
             },
             "required": ["ref"],
         }),
     )
 }
 
-/// The four generation tasks, as one surface. Declared together because they share
-/// the blocker (no artifact home, no ref) and will be wired together.
+/// The four generation tasks, as one surface. Declared together because they share a
+/// shape no other tool here has: they produce an artifact, file it in `drive/`, and
+/// answer with a ref rather than with the thing itself.
+///
+/// **These four are built per call, not constant.** Their `model` argument is
+/// described from the live menu ([`model_property`]), so a `tools/list` reflects what
+/// this account can actually reach right now.
 fn generation_tools() -> Vec<Value> {
     vec![text_to_image_tool(), image_to_image_tool(), text_to_video_tool(), image_to_video_tool()]
 }
@@ -780,43 +895,13 @@ async fn dispatch_tool(
         "video-text-to-text" => {
             return do_video_text_to_text(data_dir, video_partial, args).await;
         }
-        // Declared, advertised, and not yet wired. They fail loudly rather than
-        // being absent, because an absent tool reads to the model as "this agent
-        // cannot" — a different claim, and the wrong one. Each names the seam that
-        // is actually missing and reports live provider state, so the message is
-        // checked rather than guessed.
-        "text-to-image" => {
-            return not_implemented(
-                "text-to-image",
-                "the vendor call `image_gen::text_to_image` exists; what is missing is the handler \
-                 that persists the result and mints a ref for it",
-                image_gen::available(),
-            );
-        }
-        "image-to-image" => {
-            return not_implemented(
-                "image-to-image",
-                "`image_gen::image_to_image` is declared but has no vendor arm, and no handler \
-                 persists a result",
-                image_gen::available(),
-            );
-        }
-        "text-to-video" => {
-            return not_implemented(
-                "text-to-video",
-                "the vendor call `video_gen::text_to_video` exists; what is missing is the handler \
-                 that polls the task to a terminal state and lands the clip",
-                video_gen::available(),
-            );
-        }
-        "image-to-video" => {
-            return not_implemented(
-                "image-to-video",
-                "the vendor call `video_gen::image_to_video` exists; what is missing is resolving \
-                 the input ref to bytes, plus the handler that polls and lands the clip",
-                video_gen::available(),
-            );
-        }
+        // The four generation tasks. Each files what it makes into `drive/` and
+        // answers with the ref; the two video ones answer immediately and mail the
+        // clip to this session when it lands.
+        "text-to-image" => return do_text_to_image(data_dir, args).await,
+        "image-to-image" => return do_image_to_image(data_dir, args).await,
+        "text-to-video" => return do_text_to_video(data_dir, session_id, args).await,
+        "image-to-video" => return do_image_to_video(data_dir, session_id, args).await,
         "review_view" => return do_review_view(data_dir, args).await,
         _ => {}
     }
@@ -1587,18 +1672,16 @@ async fn do_image_text_to_text(data_dir: &Path, args: &Value) -> Value {
             "image-text-to-text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. vision/2026-06-25/14/23-07.jpg (pass it whole, channel included)",
         );
     };
-    let Some(mime) = still_ref_mime(reff) else {
-        return tool_error(&format!(
-            "image-text-to-text: malformed ref {reff:?} \
-             (expected <channel>/<YYYY-MM-DD>/<HH>/<MM>-<SS>.<ext>)"
-        ));
-    };
-    let Some(path) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
-        return tool_error(&format!("image-text-to-text: no media at {reff} (it may have faded)"));
-    };
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(b) => Bytes::from(b),
-        Err(e) => return tool_error(&format!("image-text-to-text: reading {reff} failed: {e}")),
+    // Resolve first, sniff second — the same path the generation tools take.
+    //
+    // This used to derive the type from `parse_ref` *before* resolving, which meant
+    // only a channel ref could get through: an image the agent had just drawn was
+    // reported as a malformed ref, so "look at what you made" did not work on
+    // anything it made. Reading the bytes answers both questions at once, and answers
+    // the type question better — an extension is a claim, the magic number is a fact.
+    let (bytes, mime) = match read_ref(data_dir, "image-text-to-text", reff.trim()).await {
+        Ok(v) => v,
+        Err(e) => return e,
     };
     perceive_still(data_dir, bytes, &mime, prompt).await
 }
@@ -1728,29 +1811,279 @@ fn parse_last_secs(span: &str) -> Option<f64> {
     digits.parse::<f64>().ok().filter(|n| *n > 0.0)
 }
 
-/// Map a still image extension to its MIME, for the native image content block.
-fn ext_to_mime(ext: &str) -> String {
-    match ext.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        _ => "application/octet-stream",
+// ── generation ────────────────────────────────────────────────────────────────
+//
+// The four tasks that *make* something. What distinguishes them from every other
+// tool here is that they produce bytes with nowhere to be, so each handler ends the
+// same way: file the artifact in `drive/` — the tree that does not fade — and hand
+// back the `⟨ref: …⟩` that addresses it. The ref is the whole point of persisting
+// rather than returning base64: it is what `image-to-image`, `image-to-video`,
+// `image-text-to-text` and `show` all take, so one generation composes with
+// everything already built.
+
+/// Read the semantic knobs off the tool arguments. Absent stays absent — an omitted
+/// knob must reach the vendor as "you decide", never as a default we invented.
+fn image_params(args: &Value) -> image_gen::ImageParams {
+    let s = |k: &str| {
+        args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
+    };
+    image_gen::ImageParams {
+        model: s("model"),
+        size: s("size"),
+        quality: s("quality"),
+        n: args.get("n").and_then(Value::as_u64).map(|n| n as u32),
+        seed: args.get("seed").and_then(Value::as_i64),
+        background: s("background"),
+        output_format: s("output_format"),
+        watermark: args.get("watermark").and_then(Value::as_bool),
     }
-    .to_string()
 }
 
-/// The MIME a still `ref` implies, and — because it goes through
-/// [`crate::mind::memory::media::parse_ref`] — a check that the ref is well formed
-/// before anything tries to open it. `None` if the shape doesn't match.
+fn video_params(args: &Value) -> video_gen::VideoParams {
+    let s = |k: &str| {
+        args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
+    };
+    video_gen::VideoParams {
+        model: s("model"),
+        resolution: s("resolution"),
+        ratio: s("ratio"),
+        duration: args.get("duration").and_then(Value::as_u64).map(|n| n as u32),
+        seed: args.get("seed").and_then(Value::as_i64),
+        watermark: args.get("watermark").and_then(Value::as_bool),
+    }
+}
+
+/// Read a `⟨ref: …⟩` argument to bytes plus a content type, from either root.
+async fn read_ref(data_dir: &Path, task: &str, reff: &str) -> Result<(Bytes, String), Value> {
+    let Some(path) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
+        return Err(tool_error(&format!(
+            "{task}: no media at {reff} (a camera still may have faded; a drive path may be \
+             mistyped — pass the ref whole, channel or `drive/` included)"
+        )));
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => Bytes::from(b),
+        Err(e) => return Err(tool_error(&format!("{task}: reading {reff} failed: {e}"))),
+    };
+    // Sniffed, not taken from the extension: a `.jpg` that is really a PNG would be
+    // rejected by the provider with a content-type error nobody could act on.
+    let mime = image_gen::sniff_mime(&bytes);
+    Ok((bytes, mime))
+}
+
+/// File generated stills in the drive and report their refs.
 ///
-/// Where the ref *resolves* is no longer decided here. This function used to parse
-/// the shape and hand back a channel-day-relative path, which left the caller to
-/// supply the channel — and it supplied the camera, always.
-fn still_ref_mime(reff: &str) -> Option<String> {
-    let (_channel, _ts, rel) = crate::mind::memory::media::parse_ref(reff)?;
-    let (_stem, ext) = rel.rsplit_once('.')?;
-    Some(ext_to_mime(ext))
+/// `slug` is the prompt, which becomes part of the filename — the tree stays legible
+/// to a human scrolling it a year later, which an opaque id would not be.
+async fn land_images(
+    data_dir: &Path,
+    task: &str,
+    slug: &str,
+    images: Vec<image_gen::GeneratedImage>,
+) -> Value {
+    let now = chrono::Utc::now();
+    let mut lines = Vec::new();
+    for image in images {
+        let ext = image_gen::extension_for(&image.mime);
+        let reff = match crate::mind::memory::media::store_artifact(
+            data_dir, now, slug, ext, &image.bytes,
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return tool_error(&format!("{task}: the image was made but not saved: {e}")),
+        };
+        let path = crate::mind::memory::media::resolve_ref(data_dir, &reff)
+            .await
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        lines.push(format!("⟨ref: {reff}⟩\n  file: {path}\n  url: /api/drive/file/{}", &reff[6..]));
+    }
+    tool_ok(&format!(
+        "{}\n\nFiled in the drive, which does not fade. Pass a ref to `image-to-image` to \
+         change it, to `image-text-to-text` to look at what you made, or report it to \
+         whoever asked so they can put it on screen.",
+        lines.join("\n")
+    ))
+}
+
+async fn do_text_to_image(data_dir: &Path, args: &Value) -> Value {
+    let Some(prompt) =
+        args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    else {
+        return tool_error("text-to-image needs `prompt` — say what the image should show");
+    };
+    match image_gen::text_to_image(prompt, &image_params(args)).await {
+        Ok(images) => land_images(data_dir, "text-to-image", prompt, images).await,
+        Err(e) => tool_error(&format!("text-to-image failed: {e}")),
+    }
+}
+
+async fn do_image_to_image(data_dir: &Path, args: &Value) -> Value {
+    let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    else {
+        return tool_error(
+            "image-to-image needs `ref` — the ⟨ref: …⟩ of the image to work from (a camera \
+             still, a handed file, or one you generated)",
+        );
+    };
+    let Some(prompt) =
+        args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    else {
+        return tool_error("image-to-image needs `prompt` — say what to change");
+    };
+    let (bytes, mime) = match read_ref(data_dir, "image-to-image", reff.trim()).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let source = image_gen::SourceImage::bytes(bytes, mime);
+    match image_gen::image_to_image(&source, prompt, &image_params(args)).await {
+        Ok(images) => land_images(data_dir, "image-to-image", prompt, images).await,
+        Err(e) => tool_error(&format!("image-to-image failed: {e}")),
+    }
+}
+
+/// How long to keep asking about a submitted clip, and how often.
+///
+/// Generation runs to minutes, so the poll starts patient and grows; the ceiling
+/// exists because a task that has told us nothing for a quarter of an hour is a
+/// result too — one the session should hear rather than wait out forever.
+const VIDEO_POLL_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
+const VIDEO_POLL_MAX: std::time::Duration = std::time::Duration::from_secs(20);
+const VIDEO_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Submit a clip and arrange for its arrival to reach the session that asked.
+///
+/// **The clip comes back as mail, not as a return value.** A tool call that blocked
+/// for the minutes this takes would hold the session's turn open against a network
+/// timeout it does not control. `Registry::post` is the host putting something in an
+/// agent's inbox (`from: None`) — the same path a pulse takes — so the arrival wakes
+/// the worker exactly as any other message would.
+fn spawn_video_poller(
+    data_dir: PathBuf,
+    session_id: Option<u64>,
+    handle: video_gen::VideoHandle,
+    task: &'static str,
+    slug: String,
+) {
+    let started = tokio::time::Instant::now();
+    tokio::spawn(async move {
+        let mut wait = VIDEO_POLL_FIRST;
+        let outcome = loop {
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(VIDEO_POLL_MAX);
+
+            match video_gen::poll(&handle).await {
+                Ok(t) if t.status.is_terminal() => break Ok(t.status),
+                Ok(_) => {}
+                // A single failed poll is a network blip, not a failed generation.
+                // Only the deadline ends the wait.
+                Err(e) => tracing::warn!(error = %e, task = %handle.id, "video poll failed"),
+            }
+            if started.elapsed() > VIDEO_POLL_DEADLINE {
+                break Err(format!(
+                    "still not finished after {} minutes; it may yet land upstream",
+                    VIDEO_POLL_DEADLINE.as_secs() / 60
+                ));
+            }
+        };
+
+        let message = match outcome {
+            Ok(video_gen::VideoStatus::Succeeded { video_url, .. }) => {
+                match land_clip(&data_dir, &video_url, &slug).await {
+                    Ok(reff) => format!("The clip you asked {task} for is ready: ⟨ref: {reff}⟩"),
+                    Err(e) => format!("The {task} clip finished but could not be saved: {e}"),
+                }
+            }
+            Ok(video_gen::VideoStatus::Failed { message }) => {
+                format!("The {task} clip failed: {message}")
+            }
+            Ok(other) => format!("The {task} clip ended as {other:?}"),
+            Err(e) => format!("The {task} clip ({}) {e}", handle.id),
+        };
+
+        // No session to tell, or it has ended: the artifact is still on disk, and
+        // saying so in the log beats pretending the work was never done.
+        let Some(to) = session_id else {
+            tracing::info!(outcome = %message, "video generation finished with nobody to tell");
+            return;
+        };
+        if registry::global().post(to, message.clone()) != registry::Delivery::Delivered {
+            tracing::info!(session = to, outcome = %message, "video generation outlived its session");
+        }
+    });
+}
+
+/// Download a finished clip into the drive. Prompt, because the vendor's `video_url`
+/// expires roughly a day after it is issued.
+async fn land_clip(data_dir: &Path, url: &str, slug: &str) -> anyhow::Result<String> {
+    let bytes = video_gen::fetch(url).await?;
+    let reff = crate::mind::memory::media::store_artifact(
+        data_dir,
+        chrono::Utc::now(),
+        slug,
+        "mp4",
+        &bytes,
+    )
+    .await?;
+    Ok(reff)
+}
+
+async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value) -> Value {
+    let Some(prompt) =
+        args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    else {
+        return tool_error("text-to-video needs `prompt` — say what the clip should show");
+    };
+    match video_gen::text_to_video(prompt, &video_params(args)).await {
+        Ok(handle) => {
+            let id = handle.id.clone();
+            spawn_video_poller(
+                data_dir.to_path_buf(),
+                session_id,
+                handle,
+                "text-to-video",
+                prompt.to_string(),
+            );
+            tool_ok(&format!(
+                "Generating ({id}). This runs for minutes; the clip will arrive as a message \
+                 with its ⟨ref: …⟩ when it is done, so carry on with something else — there is \
+                 nothing to poll and nothing to wait for."
+            ))
+        }
+        Err(e) => tool_error(&format!("text-to-video failed: {e}")),
+    }
+}
+
+async fn do_image_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value) -> Value {
+    let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    else {
+        return tool_error("image-to-video needs `ref` — the ⟨ref: …⟩ of the still to animate");
+    };
+    let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
+    let (bytes, mime) = match read_ref(data_dir, "image-to-video", reff.trim()).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let frame = video_gen::ImageRef::bytes(bytes, mime);
+    match video_gen::image_to_video(&frame, prompt, &video_params(args)).await {
+        Ok(handle) => {
+            let id = handle.id.clone();
+            let slug = if prompt.trim().is_empty() { "animated".to_string() } else { prompt.to_string() };
+            spawn_video_poller(
+                data_dir.to_path_buf(),
+                session_id,
+                handle,
+                "image-to-video",
+                slug,
+            );
+            tool_ok(&format!(
+                "Animating ({id}). This runs for minutes; the clip will arrive as a message \
+                 with its ⟨ref: …⟩ when it is done."
+            ))
+        }
+        Err(e) => tool_error(&format!("image-to-video failed: {e}")),
+    }
 }
 
 fn result(id: Value, result: Value) -> Value {
@@ -1767,20 +2100,6 @@ fn tool_ok(text: &str) -> Value {
 
 fn tool_error(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": true })
-}
-
-/// A tool that is declared but not yet wired. `seam` names what is actually absent
-/// and `provider` reports whether a vendor is configured *right now* — both checked,
-/// neither guessed. The distinction is the whole point: a tool that reports a cause
-/// it did not verify gets that cause written into memory as a fact, and the wrong
-/// reason outlives the wrong result.
-fn not_implemented(task: &str, seam: &str, provider: bool) -> Value {
-    let provider =
-        if provider { "a provider is configured" } else { "no provider is configured" };
-    tool_error(&format!(
-        "`{task}` is not implemented yet — {seam}. Right now {provider}. The tool's shape is \
-         final and nothing about this call was wrong."
-    ))
 }
 
 #[cfg(test)]
@@ -1902,30 +2221,6 @@ mod screen_tool_tests {
 #[cfg(test)]
 mod vision_tool_tests {
     use super::*;
-
-    #[test]
-    fn reads_the_mime_off_a_well_formed_still_ref() {
-        assert_eq!(still_ref_mime("vision/2026-06-25/14/23-07.jpg").unwrap(), "image/jpeg");
-        assert_eq!(still_ref_mime("file/2026-06-25/14/23-07.png").unwrap(), "image/png");
-    }
-
-    #[test]
-    fn rejects_malformed_still_refs() {
-        assert!(still_ref_mime("not-a-ref").is_none());
-        assert!(
-            still_ref_mime("vision/2026-06-25/14/23.jpg").is_none(),
-            "minute file, not a one-off still"
-        );
-        assert!(still_ref_mime("vision/2026-06-25/14/23-07").is_none(), "no extension");
-        assert!(still_ref_mime("nosuchchannel/2026-06-25/14/23-07.jpg").is_none());
-    }
-
-    #[test]
-    fn ext_to_mime_covers_common_stills() {
-        assert_eq!(ext_to_mime("JPG"), "image/jpeg");
-        assert_eq!(ext_to_mime("png"), "image/png");
-        assert_eq!(ext_to_mime("bin"), "application/octet-stream");
-    }
 
     #[test]
     fn parse_last_secs_pulls_a_tail_length() {
@@ -2090,13 +2385,13 @@ mod surface_tests {
         assert!(names(Some("reflection")).contains(&"image-text-to-text".to_string()));
     }
 
-    /// Every advertised tool must dispatch. The four generation tasks are declared
-    /// before they are wired, so the failure this guards is real: a tool in the surface
-    /// with no arm falls through to "unknown tool", which tells the model its call was
-    /// malformed when the truth is the feature does not exist yet. Reporting a cause
-    /// you did not verify is how a wrong reason outlives a wrong result.
+    /// Every advertised tool must dispatch. A tool in the surface with no arm falls
+    /// through to "unknown tool", which tells the model its call was malformed when
+    /// the truth is something else entirely — and a wrong reason outlives a wrong
+    /// result. With no provider configured in a test process, the four generation
+    /// tasks must report *configuration*, never the fallback.
     #[tokio::test]
-    async fn the_generation_tasks_dispatch_to_a_not_implemented_error() {
+    async fn the_generation_tasks_dispatch_rather_than_falling_through() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
         let partial = Mutex::new(None);
@@ -2116,10 +2411,60 @@ mod surface_tests {
             .await;
             assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{name}");
             let text = got["content"][0]["text"].as_str().unwrap();
-            assert!(text.contains("not implemented yet"), "{name} got: {text}");
-            assert!(text.contains(name), "{name} must name itself: {text}");
             assert!(!text.contains("unknown tool"), "{name} fell through to the fallback: {text}");
+            assert!(text.contains(name), "{name} must name itself: {text}");
         }
+    }
+
+    /// Every argument is optional except the prompt, and an omitted knob must stay
+    /// omitted all the way down — a `None` here is "the model decides", and turning it
+    /// into a default is us deciding while reporting that the model did.
+    #[test]
+    fn omitted_knobs_do_not_become_defaults() {
+        let bare = image_params(&json!({ "prompt": "a cat" }));
+        assert!(bare.model.is_none() && bare.size.is_none() && bare.n.is_none());
+        assert!(bare.quality.is_none() && bare.background.is_none() && bare.seed.is_none());
+
+        // Blank strings are omissions too: a model that fills a field with "" has not
+        // chosen a size, and passing it on turns that into a vendor error.
+        let blank = image_params(&json!({ "prompt": "a cat", "model": "  ", "size": "" }));
+        assert!(blank.model.is_none() && blank.size.is_none());
+
+        let set = image_params(&json!({ "model": "gpt-image-2", "n": 2, "seed": 7 }));
+        assert_eq!(set.model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(set.n, Some(2));
+        assert_eq!(set.seed, Some(7));
+
+        let v = video_params(&json!({ "duration": 5, "ratio": "16:9" }));
+        assert_eq!(v.duration, Some(5));
+        assert_eq!(v.ratio.as_deref(), Some("16:9"));
+        assert!(v.model.is_none() && v.resolution.is_none());
+    }
+
+    /// The menu is the whole of what makes "you choose the model" a real instruction.
+    /// An empty one must say so plainly rather than leaving the agent to guess whether
+    /// silence means "no models" or "any model".
+    #[test]
+    fn the_model_property_describes_what_is_reachable() {
+        let menu = vec![
+            MenuEntry { name: "gpt-image-2".into(), quality: 90, speed: 40, price: 30 },
+            MenuEntry { name: "gpt-image-1-mini".into(), quality: 50, speed: 90, price: 5 },
+        ];
+        let prop = model_property(menu, Some("gpt-image-2".into()), "draw");
+        let d = prop["description"].as_str().unwrap();
+        assert!(d.contains("gpt-image-2 (highest quality)"), "{d}");
+        assert!(d.contains("gpt-image-1-mini (fastest, cheapest)"), "{d}");
+        assert!(d.contains("Omit to use gpt-image-2"), "{d}");
+
+        let empty = model_property(Vec::new(), None, "draw");
+        let d = empty["description"].as_str().unwrap();
+        assert!(d.contains("passed through as given"), "{d}");
+
+        // One model is not "highest quality, fastest, cheapest" — it is the only one.
+        let solo = vec![MenuEntry { name: "seedream".into(), quality: 9, speed: 9, price: 9 }];
+        let d = model_property(solo, None, "draw")["description"].as_str().unwrap().to_string();
+        assert!(d.contains("Reachable now: seedream."), "{d}");
+        assert!(!d.contains("highest quality"), "{d}");
     }
 
     /// Surface membership is a context optimization, not a rail — so the rungs that

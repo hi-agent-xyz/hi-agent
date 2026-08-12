@@ -195,6 +195,32 @@ pub struct VendorKey {
     /// Model override; None → the vendor's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Every model this endpoint serves, as the broker published them. **Empty under
+    /// BYOK**, where there is no menu — only the key its owner pasted.
+    ///
+    /// Here because the generation capabilities let the *agent* name a model, and an
+    /// agent can only choose from a list it has been shown. `model` above stays what
+    /// it was: the default when nobody names one.
+    ///
+    /// Not carried by the SQLite credential store (no column), only the JSON one. That
+    /// costs nothing: [`crate::foundation::broker::refresh`] runs at boot and refills
+    /// it, and a boot that cannot reach the broker degrades to pass-through — any
+    /// model name still reaches the sole configured provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<ModelOffer>,
+}
+
+/// One model on a broker-published menu, with its relative hints. Kept in the
+/// credential vocabulary rather than a capability's, so `credentials` stays free of
+/// any dependency on `image_gen`/`video_gen`; each capability maps this into its own
+/// type at the composition root.
+#[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct ModelOffer {
+    pub name: String,
+    pub quality: i64,
+    pub speed: i64,
+    pub price: i64,
 }
 
 impl VendorKey {
@@ -391,6 +417,12 @@ mod db {
             api_key  TEXT NOT NULL DEFAULT '',
             model    TEXT,
             small    TEXT,
+            -- The broker's published menu for this endpoint, as a JSON array. A
+            -- column rather than a derived-at-boot value because the fetch and the
+            -- read are not the same moment: `broker::refresh` saves here and
+            -- `capabilities::init` loads back, so anything not written is simply
+            -- gone by the time the capability asks.
+            models   TEXT,
             PRIMARY KEY (mode, feature)
         );
         CREATE TABLE IF NOT EXISTS account (
@@ -442,6 +474,9 @@ mod db {
         }
         if !column_exists(conn, "credential", "small")? {
             conn.execute_batch("ALTER TABLE credential ADD COLUMN small TEXT")?;
+        }
+        if !column_exists(conn, "credential", "models")? {
+            conn.execute_batch("ALTER TABLE credential ADD COLUMN models TEXT")?;
         }
         Ok(())
     }
@@ -604,9 +639,43 @@ mod db {
     }
 
     fn read_vendor(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<VendorKey> {
-        Ok(read_row(conn, mode, feature)?
-            .map(|(wire, base_url, api_key, model, _small)| VendorKey { wire, base_url, api_key, model })
-            .unwrap_or_default())
+        let Some((wire, base_url, api_key, model, _small)) = read_row(conn, mode, feature)? else {
+            return Ok(VendorKey::default());
+        };
+        Ok(VendorKey { wire, base_url, api_key, model, models: read_models(conn, mode, feature)? })
+    }
+
+    /// The published menu for one slot. Kept out of [`read_row`], whose five columns
+    /// are shared with the LLM slot and mean the same thing there; the menu does not.
+    ///
+    /// Malformed JSON reads as *no menu*, never as a failed load. The menu is a hint
+    /// for choosing a model; the key beside it is what makes the capability work at
+    /// all, and a garbled hint must not take the key down with it.
+    fn read_models(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<Vec<ModelOffer>> {
+        let raw: Option<Option<String>> = conn
+            .query_row(
+                "SELECT models FROM credential WHERE mode = ?1 AND feature = ?2",
+                params![mode_str(mode), feature],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(raw.flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+    }
+
+    /// Write the menu onto an already-inserted row. Separate statement because
+    /// [`write_row`] is shared with the LLM slot, which has no menu.
+    fn write_models(
+        conn: &Connection,
+        mode: Mode,
+        feature: &str,
+        models: &[ModelOffer],
+    ) -> anyhow::Result<()> {
+        let json = if models.is_empty() { None } else { Some(serde_json::to_string(models)?) };
+        conn.execute(
+            "UPDATE credential SET models = ?3 WHERE mode = ?1 AND feature = ?2",
+            params![mode_str(mode), feature, json],
+        )?;
+        Ok(())
     }
 
     fn read_llm(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<LlmCredentials> {
@@ -643,7 +712,8 @@ mod db {
     }
 
     fn write_vendor(conn: &Connection, mode: Mode, feature: &str, vk: &VendorKey) -> anyhow::Result<()> {
-        write_row(conn, mode, feature, &vk.wire, &vk.base_url, &vk.api_key, vk.model.as_deref(), None)
+        write_row(conn, mode, feature, &vk.wire, &vk.base_url, &vk.api_key, vk.model.as_deref(), None)?;
+        write_models(conn, mode, feature, &vk.models)
     }
 
     fn write_llm(conn: &Connection, mode: Mode, feature: &str, llm: &LlmCredentials) -> anyhow::Result<()> {
@@ -926,6 +996,39 @@ mod tests {
         // A second load reads purely from the DB (no re-import) and is unchanged.
         let again = Credentials::load(dir.path());
         assert_eq!(again.llm.api_key, "old-key");
+    }
+
+    /// The published model menu has to survive the store, and this is not academic:
+    /// `broker::refresh` fetches it, saves, and returns — every later reader, including
+    /// the capability init that builds the tool description from it, loads back from
+    /// disk. Dropped on write, the agent is told "no menu is published" while the
+    /// broker is publishing one.
+    #[test]
+    fn the_published_model_menu_survives_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = Credentials::default();
+        c.managed = Some(Managed {
+            image: VendorKey {
+                api_key: "k".into(),
+                model: Some("gpt-image-2".into()),
+                models: vec![
+                    ModelOffer { name: "gpt-image-2".into(), quality: 90, speed: 40, price: 30 },
+                    ModelOffer { name: "gpt-image-1-mini".into(), quality: 50, speed: 90, price: 5 },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        c.save(dir.path()).unwrap();
+
+        let back = Credentials::load(dir.path());
+        let image = &back.managed.as_ref().unwrap().image;
+        assert_eq!(image.models.len(), 2, "the menu was dropped on the way through");
+        assert_eq!(image.models[0].name, "gpt-image-2");
+        assert_eq!(image.models[1].price, 5);
+
+        // A slot with no menu stays empty rather than becoming a row of nothing.
+        assert!(back.managed.as_ref().unwrap().stt.models.is_empty());
     }
 
     #[test]
