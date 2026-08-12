@@ -197,6 +197,40 @@ mod tests {
         }
     }
 
+    /// **A backtick inside a view's `CSS` template ends the template.** Every bundled view
+    /// keeps its stylesheet in `` const CSS = `…` ``, so one backtick in a CSS comment —
+    /// quoting a property name, the natural thing to write — closes the string early and the
+    /// file stops being JavaScript. That shipped once: the whole Sessions view failed to
+    /// compile, and nothing caught it, because the Rust tests here read the source as *text*
+    /// and the view only meets a parser when esbuild compiles it at runtime, on a machine
+    /// that has esbuild.
+    ///
+    /// This is the cheap half of that check — no toolchain, and it names the one mistake
+    /// rather than waiting for a compile that may happen elsewhere.
+    #[test]
+    fn no_bundled_view_has_a_backtick_inside_its_css() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        for entry in std::fs::read_dir(&builtin).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|x| x != "jsx") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let Some(open) = source.find("const CSS = `") else { continue };
+            let body = &source[open + "const CSS = `".len()..];
+            let end = body.find("`;").unwrap_or(body.len());
+            let stray = body[..end].find('`');
+            assert!(
+                stray.is_none(),
+                "{}: a backtick inside the CSS template ends it — line {}",
+                path.file_name().unwrap().to_string_lossy(),
+                source[..open + stray.unwrap_or(0)].lines().count()
+            );
+        }
+    }
+
     /// The toolbox is read by scanning the tree for `// purpose:` lines
     /// (`docs/arch/data.md#views`), and `_builtin/` is the only part of it a fresh
     /// install has. A bundled view without the line degrades to a bare filename in

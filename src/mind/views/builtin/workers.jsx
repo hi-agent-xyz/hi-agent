@@ -609,7 +609,7 @@ const CSS = `
      that styles a button here, and a reset that beats the components it exists to prepare
      is not a reset. It silently ate the row's padding and surface (rows rendered as bare
      text under a floating shadow, since box-shadow is the one thing it doesn't set), the
-     close button's centring, and the frame head's monospace, via `font: inherit`. It still
+     close button's centring, and the frame head's monospace, via its font shorthand. It still
      beats the UA sheet, which loses to any author rule regardless of specificity. */
   :where(.hi-workers button) {
     appearance: none;
