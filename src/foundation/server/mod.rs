@@ -26,6 +26,7 @@ pub mod audio;
 pub mod binder;
 pub mod channels;
 pub mod drive;
+pub mod duty;
 pub mod facets;
 pub mod files;
 pub mod generated;
@@ -223,6 +224,15 @@ pub struct FacePresence {
 pub struct AppState {
     /// Inbound signals from every channel POST. The reaction consumes these.
     pub inbound: mpsc::Sender<Signal>,
+
+    /// Traffic a listener hands in for a standing duty (`POST /api/in/duty/{key}`).
+    ///
+    /// A separate seam from `inbound` because it is a separate boundary: `inbound`
+    /// carries what the person did, into the conversation; this carries what a machine
+    /// received, to the working session holding that duty. Folding them would put
+    /// machine traffic in the transcript, which is the failure `host.md` names when it
+    /// rules out `/api/in/text` as a wake channel.
+    pub duties: mpsc::Sender<crate::body::reaction::DutyDelivery>,
 
     /// Warm-up requests. A presence GET (`GET /api/out/*`, the long-polls a client
     /// opens when it attaches) asks here so the reaction stands itself up —
@@ -431,6 +441,10 @@ pub fn build(
     // on the hot path, and `AppState` is how the four routes reach it.
     let surface_reach = Arc::new(crate::foundation::surfaces::Surfaces::new(data_dir.clone()));
     let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
+    // Duty deliveries. Bounded like every other seam, and dropped rather than awaited
+    // when full — the door never holds a listener open (see `server::duty`).
+    let (duty_tx, duty_rx) =
+        mpsc::channel::<crate::body::reaction::DutyDelivery>(1024);
     // Warm-up requests: a presence GET asks the reaction to stand itself up ahead
     // of the first utterance (see `AppState::warm`).
     let (warm_tx, warm_rx) = mpsc::channel::<()>(1024);
@@ -488,6 +502,7 @@ pub fn build(
 
     let state = Arc::new(AppState {
         inbound: inbound_tx,
+        duties: duty_tx,
         warm: warm_tx,
         transcript: transcript.clone(),
         audio_out: audio_tx.clone(),
@@ -566,6 +581,11 @@ pub fn build(
         .route("/up/{token}", get(files::get_up_page))
         .route("/api/up/{token}", post(files::post_up).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
         .route("/api/qr", get(files::get_qr))
+        // A standing duty's own inbound door: the agent-provisioned listener keeping a
+        // `serving` task alive says something arrived, and the working session holding
+        // that duty picks it up. Not a sense, and not the conversation's — see
+        // `server::duty`.
+        .route("/api/in/duty/{key}", post(duty::post_duty))
         .route("/api/in/touch", post(stubs::post_touch))
         .route("/api/in/smell", post(stubs::post_smell))
         .route("/api/in/taste", post(stubs::post_taste))
@@ -669,6 +689,7 @@ pub fn build(
 
     let seams = ServerSeams {
         inbound_rx,
+        duty_rx,
         warm_rx,
         transcript,
         out_tx,
@@ -689,6 +710,7 @@ pub fn build(
 /// signals through the same path as a channel POST.
 pub struct ServerSeams {
     pub inbound_rx: mpsc::Receiver<Signal>,
+    pub duty_rx: mpsc::Receiver<crate::body::reaction::DutyDelivery>,
     pub warm_rx: mpsc::Receiver<()>,
     pub transcript: Transcript,
     pub out_tx: mpsc::Sender<OutboundSignal>,

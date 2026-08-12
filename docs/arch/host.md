@@ -308,15 +308,58 @@ worker that sleeps and messages home — and a crontab survives a reboot, which
 nothing living in this process does. Nothing is restricted to keep it that way: the
 agent keeps every tool it has.
 
-#### The two shapes, and what each needs from us
+#### The three shapes, and what each needs from us
 
 | Shape | How it runs | What the host provides |
 |---|---|---|
 | **Cadence** — check this every N hours | Cognition's glance-up *is* the executor: it wakes, reads the ledger, and does what is due. Or an agent-installed timer does the work and leaves a durable trace. | The glance-up, and nothing else. |
 | **Precise moment** — be somewhere at 07:00 | A parked worker sleeps and `send_message`s its owner; the ledger re-arms it after a restart. | `create_worker` + the one verb. |
+| **Arrival** — something reached the group | The agent's own listener holds the connection and posts what arrived to `/api/in/duty/<start_key>`; a working session handles it in seconds. | The duty inbox: coalesce, resolve the key against the ledger, open a handler from the facet if none is live. |
 
 The first covers the standing duties this system actually has. The second is rare
 and costs an idle subprocess, which is the right price for something rare.
+
+##### Arrival, and why it does not weaken any of the above
+
+A duty was reactive at its edge and cadence-paced at ours: the listener received a
+message the instant it was sent, wrote a row, and nothing read that row until the next
+glance — up to a pulse later. The third row closes that, under three constraints that
+keep it from becoming a second, weaker way of keeping a promise.
+
+**The nudge is not the truth.** A delivery carries what arrived, and the listener's own
+append-only ledger remains the record — `verify` still reads it on the cadence,
+unchanged. A nudge lost to a restart, a saturated inbox, a closed handler or an energy
+pause degrades to exactly row one. So arrival is an **optimisation over cadence, never a
+replacement for it**, and nothing on this path has to be reliable for a duty to be kept.
+That is the property that lets the door drop traffic rather than hold a listener open.
+
+**The ledger authorises.** A delivery names a `start_key`, and a key no `serving` task
+claims is dropped. This is not a door for making working sessions; it is a door for
+reaching one the ledger already says should exist.
+
+**Cognition is not in the path.** The handler takes its traffic straight from the inbox
+and its per-message report is dropped, so routine traffic wakes no rung. Its owner is
+Cognition so that what it *chooses* to raise — a decision that is not its to make,
+something needing the person — has somewhere to land, over `send_message` like any
+worker. Reaching the person is still two hops and both are load-bearing: Cognition
+decides whether it is worth saying, Reaction decides when the room is right.
+
+The handler is a **cache, not the carrier.** What persists is the ledger entry and the
+listener's rows; the session is re-derivable from both, and **the facet is the brief** on
+a cold open. So it may close on its idle TTL or die with the process, and the binding
+from key to session is held in memory and never written down — a delivery to a session
+that has gone is not an error but the signal to open a fresh one. A burst therefore
+continues in one warm session with full context, and a message the next morning starts
+from the ledger.
+
+Two clocks, and they are not the same kind of thing. The **settle** is the reaction
+loop's own commit-after-quiet, shared value and all: six lines pasted into a group are
+one thing to react to. The **floor** is a cost ceiling — an LLM turn per arrival is
+affordable for a person typing and is not affordable for a busy group, and the 402 gate
+is a cliff rather than a brake. A cap bounds the settle, because a trickle just faster
+than it would push the deadline forward forever and a watch that is permanently about to
+handle something is worse than a slow one; the floor outranks the cap, because spending
+is the failure waiting cannot undo.
 
 #### The rule that makes any of it safe: **`verify` is a result check**
 

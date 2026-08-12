@@ -351,6 +351,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         agent,
         seams.inbound_rx,
         seams.warm_rx,
+        seams.duty_rx,
         seams.out_tx,
         observatory,
         view_compiler,

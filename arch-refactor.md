@@ -619,6 +619,52 @@ empty-ledger gate and the note wording only). The re-test is the same journey: a
 standing duty, restart the host, watch for a Cognition wake and a respawned worker within
 `BOOT_WAKE_AFTER`, then ask how it is going and check the answer against the facet.
 
+### N4″ — Arrival: the duty inbox · **built on `feat/reactive-duty-inbox`, 726 lib green, 0 warnings — not pushed, not run live**
+
+**N4′ gave a duty a heartbeat; this gives it a doorbell.** A `serving` task was reactive
+at its edge and cadence-paced at ours: the Feishu listener received a message the instant
+it was sent, appended a row, and nothing read that row until the next glance — up to a
+pulse later. Real-time in, half an hour to notice.
+
+`POST /api/in/duty/<start_key>` closes it. The listener says what arrived; a working
+session handles it; **Cognition is not in the path**. `start_key` was already in
+`Liveness` with nothing reading it, and is now the one durable name a duty and its
+machinery share — session ids are minted per boot and nothing durable may hold one.
+
+- **`body/reaction/duties.rs`** — the inbox. Coalesces per key (settle = the reaction
+  loop's own `RESPONSE_SETTLE`, shared not copied; a 30s floor as the cost ceiling; a 5s
+  cap so a trickle cannot push the settle forward forever, with the floor outranking the
+  cap). Resolves the key against the ledger, posts to the live handler, or opens one with
+  **the facet as the brief**. Owner is Cognition so an escalation has an address; the
+  per-message terminal report goes to a drain, which is that decision expressed as a
+  channel rather than as a flag threaded back through `spawn_inner`.
+- **The handler is a cache, not the carrier.** key→session lives in memory and is never
+  written down; a `post` returning `Delivery::Unknown` is not an error but the signal to
+  re-derive from the facet. This is what makes it safe to have a per-duty session at all
+  — the objection to one is that a session cannot hold a duty, and this one does not.
+- **It gives `drive_worker`'s warm-idle path a client again.** That path lost its only
+  caller with Deliberation (`fbad7d3`), and it is exactly right here: a burst continues in
+  one session with full context, a message the next morning opens a fresh one.
+- **The nudge is not the truth.** The listener's append-only rows stay the record and
+  `verify` still reads them on the cadence, so every failure on this path — saturated
+  inbox, closed handler, energy pause, restart — degrades to the behaviour that existed
+  before it. Hence `try_send` at the door and a drop rather than a wait.
+- **The ledger authorises.** A key no `serving` task claims is dropped: this is a door for
+  reaching a session the ledger says should exist, not for making one. The routing key is
+  never interpolated into a prompt or a path (pinned by a test).
+- No new `Channel` variant, and nothing touches the transcript — `host.md`'s
+  "`/api/in/text` is not a wake channel" is honoured by not going near the conversation.
+
+`docs/arch/host.md` gains the third row and the constraints above; **this is a design
+change, stated rather than made quietly** — the two-shapes table said cadence covered the
+standing duties this system actually has, and arrival is a third shape it did not have.
+
+**Unverified — and it is the whole point:** no live run. The journey is Feishu-shaped:
+plant a `serving` facet with a `start_key`, POST a burst to the route, watch one handler
+open from the facet and one turn take all of it; then let it idle past the TTL and POST
+again to see it re-derive; then restart mid-burst and confirm the glance-up still finds
+the unhandled rows. Nothing pins the floor or the settle against a real clock.
+
 ### ~~R — Role prompts~~ · **on `main` (`a0aae29`), then superseded by the flattening (`85f1116`)**
 
 `42c1530` the voice's brief is one file · `a0aae29` a worker has a type.

@@ -52,6 +52,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 mod cognition;
+mod duties;
 mod heartbeat;
 mod reflection;
 mod interleave;
@@ -61,6 +62,7 @@ mod sequencer;
 mod tools;
 mod workers;
 
+pub use duties::DutyDelivery;
 pub use interrupts::InterruptRegistry;
 pub use outbound::OutboundSignal;
 pub use tools::{LoopControl, Said, Spoken, ToolOwner, ToolRegistry, ToolSink};
@@ -833,6 +835,7 @@ pub async fn start(
     agent: AgentLayer,
     mut inbound_rx: mpsc::Receiver<Signal>,
     mut warm_rx: mpsc::Receiver<()>,
+    duty_rx: mpsc::Receiver<DutyDelivery>,
     out: mpsc::Sender<OutboundSignal>,
     observatory: Observatory,
     view_compiler: crate::mind::views::ViewCompiler,
@@ -992,6 +995,12 @@ pub async fn start(
         "the shared brain".to_string(),
     );
     cognition::spawn(reaction.clone(), cognition_reg);
+
+    // The duty inbox: where a listener's traffic lands. Spawned after Cognition because a
+    // handler it opens is owned by Cognition, and an owner that resolves to nothing is an
+    // escalation addressed to nobody. Registration above is synchronous, so this line is
+    // ordered rather than merely likely.
+    duties::spawn(reaction.clone(), duty_rx);
 
     Ok(reaction)
 }
