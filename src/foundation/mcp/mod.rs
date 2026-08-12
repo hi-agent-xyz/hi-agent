@@ -904,8 +904,17 @@ async fn dispatch_tool(
             } else {
                 "idle"
             };
+            // `doing` is appended because `task` is what the worker was *given* and does not
+            // change, so an owner polling this got the same sentence back whether the worker
+            // was mid-command or wedged. That is the agent-facing half of the same blindness
+            // the roster had — and the reason a watch could be reported as healthy while
+            // nothing was running.
+            let doing = match &st.doing {
+                Some(what) => format!("; last seen doing: {what}"),
+                None => "; nothing observed yet".to_string(),
+            };
             return tool_ok(&format!(
-                "session {} — {state}; {} turn(s) so far; on: {}",
+                "session {} — {state}; {} turn(s) so far; on: {}{doing}",
                 st.id, st.turns, st.task
             ));
         }

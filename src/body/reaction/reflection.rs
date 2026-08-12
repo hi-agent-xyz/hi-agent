@@ -356,6 +356,9 @@ async fn turn(
     let mut run = session.prompt(prompt).await?;
     let mut full = String::new();
     while let Some(update) = run.next_update().await {
+        if let Some(what) = update.activity() {
+            registry::global().record_activity(id, &what);
+        }
         if let SessionUpdate::Text(text) = update {
             full.push_str(&text);
             registry::global().record_output(id, &text);

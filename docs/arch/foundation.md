@@ -98,8 +98,15 @@ That is what makes "the switchboard is the host" a mechanism rather than an aspi
 |---|---|---|
 | `SendMessage(to, message)` | every agent | One direction, **no reply**. Returns whether it was *delivered*, never a response. Queues per target and merges while the target is mid-turn, so a burst arrives as one prompt |
 | `CreateWorker(type)` | Cognition, Reflection | → a session id |
-| `SessionStatus(id)` | owners | alive · busy/idle · what it is on · turns. **Meta only** — free to call |
+| `SessionStatus(id)` | owners | alive · busy/idle · what it was given · **what it was last seen doing** · turns. **Meta only** — free to call |
 | `SessionMessages(id)` | owners | its actual output. Costs context, so it is a separate call from status |
+
+**"What it was given" and "what it is doing" are two fields, never merged.** A task is set once
+and does not change, so an owner polling status got the same sentence back whether its worker
+was mid-command or wedged — and the output tail could not fill the gap, because it is fed only
+from what a session *says* and a session can work for minutes in silence. Keeping them apart
+also keeps tool noise out of `SessionMessages`, which is what an owner reads to learn what the
+work found.
 
 **`from` is stamped by the registry, never passed by the caller.** The host knows who is
 calling; letting an agent name itself is letting it impersonate.
@@ -115,9 +122,15 @@ hopes something is behind it. Retrieval can miss, and here a miss is indistingui
 turn, so a rung that is cold is visible as cold *before* a message is sent at it, and the
 registry goes back to being a map lookup rather than a search.
 
-Session ids die with the process, so **nothing durable may hold one.** Durable work is
-recovered from [Tasks](data.md#tasks) and re-addressed to whatever session is live now; the
-projection is rebuilt every turn because that is the only rate at which it is true.
+Session ids die with the process, so **nothing durable may hold one as an address.** Durable
+work is recovered from [Tasks](data.md#tasks) and re-addressed to whatever session is live
+now; the projection is rebuilt every turn because that is the only rate at which it is true.
+
+The qualifier is load-bearing, and it is what [the session directory](#the-session-directory)
+turns on: a *record* of a session that ran may name it forever, because a row about something
+that has ended is never a destination anyone can send to. What the rule forbids is keeping an
+id in order to reach it later. Naming it in order to say what it did is the opposite —
+and a durable name needs the run alongside it, since the counter restarts at 1 every boot.
 
 One structural restriction, because it is routing rather than policy: **a worker may only
 address its owner.** Whether something is worth saying mid-task is a judgment and lives in
@@ -139,6 +152,43 @@ payload, which is exactly what [verification](#verification) needs and what a re
 session is made of.
 
 Historical messages come from the protocol's own session load, not from a second copy we keep.
+
+### The session directory
+
+The frames above are written per session under `raw/sessions/<run>/<session>.jsonl`. For a
+long time **nothing could read them back**, and the reason is structural rather than an
+oversight: the path is keyed by `(run, session)`, ids restart at 1 each boot, and the
+switchboard is live-by-construction — an entry exists between `register` and `unregister` and
+a session that has ended is simply *absent*. So the id needed to name a session's own frame
+log died at the moment the log became history. The frames outlived the session; the index did
+not exist.
+
+**One append-only file beside them fixes it: `raw/sessions/index.jsonl`.** The registry writes
+an `opened` line at `register` and a self-contained `closed` line at `unregister`; a bounded
+tail is folded into an in-memory list of recent ends at boot, so a poll costs no disk.
+
+Three properties, and each answers a specific failure:
+
+- **A `closed` line repeats its `opened`.** Recency is the only order anyone asks for, so the
+  common read must not have to pair each close with an open from earlier in the file — a
+  long-lived rung's `opened` sits at the top and its `closed` at the bottom, so folding would
+  mean reading all of it, every time.
+- **An `opened` with no `closed`, in a run that is over, is a session the process died
+  underneath.** It is reported as *lost*, not omitted. This is `worker report dropped;
+  reaction loop gone` given a name: a worker that vanished mid-flight is the single most
+  useful row on the page, and it was previously the one row that could not appear.
+- **It is a directory, not a second switchboard.** Every row in it has ended. Nothing routes
+  through it, which is why it can hold ids at all (see above).
+
+The live roster (`GET /api/workers`) and the ended list (`GET /api/workers/ended`) stay
+**separate endpoints**. Everything on the first is live by construction; merging the two would
+mean a caller could no longer tell *running* from *ran*, which is the confusion the directory
+was built to end. They are joined in the reader, where the difference stays visible.
+
+**Not a retention story.** Nothing prunes this file or the frame logs beside it — the
+forgetting pass skips `sessions/` entirely, by name. Bounding them is open work, and the
+index deliberately does not decide it quietly: a tail-read at boot keeps startup cheap
+without pretending the tail is all there is.
 
 ## Default tool surfaces
 

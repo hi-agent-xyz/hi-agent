@@ -581,7 +581,12 @@ pub fn build(
         .route("/api/facets/{dimension}/{subject}", get(facets::get_facet).put(facets::put_facet))
         .route("/api/episodes", get(facets::get_episodes))
         .route("/api/workers", get(workers::get_workers))
+        // Before `/{id}`: axum matches a literal segment ahead of a capture, but keeping
+        // them adjacent and in this order stops a later reader from reading `ended` as an
+        // id-shaped route.
+        .route("/api/workers/ended", get(workers::get_ended))
         .route("/api/workers/{id}", get(workers::get_worker))
+        .route("/api/workers/{id}/frames", get(workers::get_frames))
         .route("/api/activity", get(activity::get_activity))
         .route("/api/tools", get(tools::get_tools))
         .route("/api/drive", get(drive::get_drive))

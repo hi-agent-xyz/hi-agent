@@ -1738,7 +1738,7 @@ async fn run_reaction_turn(
 
     let before = speaking.said.load(Ordering::Relaxed);
     let mut turn_error = None;
-    let spoke = match drive_voice(&session, context).await {
+    let spoke = match drive_voice(&session, voice_id, context).await {
         Ok(text) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
             // sequencer while the turn was running. Anything the model *typed* is
@@ -1748,7 +1748,7 @@ async fn run_reaction_turn(
                 unspoken_chars = text.chars().count(),
                 "reaction: turn done"
             );
-            recover_mute_turn(&session, &speaking.said, before, &text).await;
+            recover_mute_turn(&session, voice_id, &speaking.said, before, &text).await;
             true
         }
         Err(err) => {
@@ -2083,7 +2083,13 @@ const MUTE_NUDGE: &str = "None of that reached them — writing is not speaking 
 /// This is a backstop, not the mechanism. What is meant to make it rare is Reaction
 /// holding no tools but its own ([`crate::foundation::agent::reaction_permissions`]) —
 /// a session with a shell behaves like a coding agent and answers in prose.
-async fn recover_mute_turn(session: &AgentSession, said: &AtomicU64, before: u64, typed: &str) {
+async fn recover_mute_turn(
+    session: &AgentSession,
+    voice_id: registry::SessionId,
+    said: &AtomicU64,
+    before: u64,
+    typed: &str,
+) {
     if said.load(Ordering::Relaxed) > before {
         return;
     }
@@ -2098,7 +2104,7 @@ async fn recover_mute_turn(session: &AgentSession, said: &AtomicU64, before: u64
         typed_chars = typed.chars().count(),
         "reaction: turn wrote a reply and said none of it; nudging"
     );
-    match drive_voice(session, MUTE_NUDGE.to_string()).await {
+    match drive_voice(session, voice_id, MUTE_NUDGE.to_string()).await {
         Ok(_) if said.load(Ordering::Relaxed) > before => {
             tracing::info!("reaction: the nudge recovered the turn");
         }
@@ -2118,10 +2124,21 @@ async fn recover_mute_turn(session: &AgentSession, said: &AtomicU64, before: u64
 /// loop just keeps streaming speech past them, exactly like a worker's loop; `wait()`
 /// then parks the session and surfaces any real prompt error (a gateway 402/429, a
 /// transport reset) to the caller's classifier.
-async fn drive_voice(session: &AgentSession, context: String) -> anyhow::Result<String> {
+async fn drive_voice(
+    session: &AgentSession,
+    voice_id: registry::SessionId,
+    context: String,
+) -> anyhow::Result<String> {
     let mut run = session.prompt(context).await?;
     let mut text = String::new();
     while let Some(update) = run.next_update().await {
+        // The voice was the one rung reporting nothing at all to the switchboard: its
+        // words go to the transcript rather than the output tail, so its roster row read
+        // "nothing said yet" for the whole life of the process. What it is *doing* is the
+        // honest answer to "is the mouth alive", and it is the only one available here.
+        if let Some(what) = update.activity() {
+            registry::global().record_activity(voice_id, &what);
+        }
         match update {
             SessionUpdate::Text(t) => text.push_str(&t),
             SessionUpdate::Thought(t) => {

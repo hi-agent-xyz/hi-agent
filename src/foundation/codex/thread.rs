@@ -98,6 +98,62 @@ impl SessionUpdate {
         }
         out
     }
+
+    /// One short human line for "what is this session doing right now", or `None` for a
+    /// frame that says nothing about activity.
+    ///
+    /// **Why this exists separately from [`Text`](Self::Text).** The switchboard's output
+    /// tail is fed only from `Text` — the session's own words — so a session grinding
+    /// through shell commands and tool calls reported *nothing* on the roster for as long
+    /// as it worked, and "no output" was indistinguishable from "dead". This is the other
+    /// half: what it is doing rather than what it has said, kept out of the tail so an
+    /// owner reading a worker's report does not get tool noise mixed into it.
+    ///
+    /// Deliberately partial. Codex's item vocabulary keeps growing, and a frame this build
+    /// has never seen returns `None` rather than a guess — an unknown method is a normal,
+    /// permanent condition here, not a gap to close.
+    pub fn activity(&self) -> Option<String> {
+        let Self::Frame(note) = self else { return None };
+        let method = note.get("method").and_then(Value::as_str)?;
+        let params = note.get("params");
+        // Deltas are fragments of one item; the item's own `started`/`completed` frame
+        // carries the whole thing, so nothing is lost by ignoring them here.
+        let item = params.and_then(|p| p.get("item"));
+
+        match method {
+            "item/started" | "item/completed" | "item/updated" => {
+                let item = item?;
+                let status = item.get("status").and_then(Value::as_str);
+                let line = match item.get("type").and_then(Value::as_str)? {
+                    "commandExecution" => {
+                        let cmd = item.get("command").and_then(Value::as_str).unwrap_or("a command");
+                        format!("$ {cmd}")
+                    }
+                    "mcpToolCall" => {
+                        let tool = item.get("tool").and_then(Value::as_str).unwrap_or("a tool");
+                        match item.get("server").and_then(Value::as_str) {
+                            Some(server) => format!("{server}/{tool}"),
+                            None => tool.to_string(),
+                        }
+                    }
+                    "fileChange" | "patchApply" => "editing files".to_string(),
+                    "webSearch" => match item.get("query").and_then(Value::as_str) {
+                        Some(q) => format!("searching: {q}"),
+                        None => "searching the web".to_string(),
+                    },
+                    "reasoning" => "thinking".to_string(),
+                    // A message item is what it *said*; the tail already has it.
+                    "agentMessage" | "userMessage" => return None,
+                    other => other.to_string(),
+                };
+                Some(match status {
+                    Some(s) if s != "completed" && s != "success" => format!("{line} ({s})"),
+                    _ => line,
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Result returned from [`SessionRun::wait`].
@@ -371,6 +427,80 @@ impl AgentSession {
             .request("turn/interrupt", json!({ "threadId": self.id, "turnId": turn_id }))
             .await
             .map(|_| true)
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    fn frame(json: serde_json::Value) -> SessionUpdate {
+        SessionUpdate::Frame(json)
+    }
+
+    /// The two that matter: a shell command and a tool call, named specifically enough
+    /// that a reader can tell one worker's work from another's.
+    #[test]
+    fn a_command_and_a_tool_call_each_read_as_what_it_is() {
+        let cmd = frame(serde_json::json!({
+            "method": "item/started",
+            "params": {"item": {"type": "commandExecution", "command": "rg --files -g '*.rs'", "status": "in_progress"}}
+        }));
+        assert_eq!(cmd.activity().as_deref(), Some("$ rg --files -g '*.rs' (in_progress)"));
+
+        let tool = frame(serde_json::json!({
+            "method": "item/completed",
+            "params": {"item": {"type": "mcpToolCall", "server": "hi", "tool": "review_view", "status": "completed"}}
+        }));
+        assert_eq!(tool.activity().as_deref(), Some("hi/review_view"));
+    }
+
+    /// What a session *said* is the output tail's job. Reporting it here too would put the
+    /// same words in two places and make the tail's meaning ambiguous.
+    #[test]
+    fn a_message_item_is_not_activity() {
+        let msg = frame(serde_json::json!({
+            "method": "item/completed",
+            "params": {"item": {"type": "agentMessage", "status": "completed"}}
+        }));
+        assert_eq!(msg.activity(), None);
+    }
+
+    /// Deltas are fragments. The item's own frame carries the whole thing, so ignoring
+    /// them loses nothing and saves a line rewritten per token.
+    #[test]
+    fn deltas_are_not_activity() {
+        for method in ["item/agentMessage/delta", "item/reasoning/summaryTextDelta"] {
+            let f = frame(serde_json::json!({"method": method, "params": {"delta": "abc"}}));
+            assert_eq!(f.activity(), None, "{method}");
+        }
+    }
+
+    /// An item type this build has never seen still produces a line — its own name — and
+    /// a method it has never seen produces none. Codex's vocabulary keeps growing; neither
+    /// case may panic or guess.
+    #[test]
+    fn an_unknown_item_names_itself_and_an_unknown_method_says_nothing() {
+        let unknown_item = frame(serde_json::json!({
+            "method": "item/started",
+            "params": {"item": {"type": "somethingNew"}}
+        }));
+        assert_eq!(unknown_item.activity().as_deref(), Some("somethingNew"));
+
+        let unknown_method = frame(serde_json::json!({"method": "turn/completed", "params": {}}));
+        assert_eq!(unknown_method.activity(), None);
+    }
+
+    /// A malformed frame is a `None`, not a panic. These arrive from a subprocess.
+    #[test]
+    fn a_frame_with_nothing_useful_is_none() {
+        assert_eq!(frame(serde_json::json!({})).activity(), None);
+        assert_eq!(frame(serde_json::json!({"method": "item/started"})).activity(), None);
+        assert_eq!(
+            frame(serde_json::json!({"method": "item/started", "params": {"item": {}}})).activity(),
+            None
+        );
+        assert_eq!(SessionUpdate::Text("hi".into()).activity(), None);
     }
 }
 

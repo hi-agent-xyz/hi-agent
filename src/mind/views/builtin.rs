@@ -295,4 +295,24 @@ mod tests {
         assert!(!by_name("tools").contains("method:"));
         assert!(!by_name("drive").contains("method:"));
     }
+
+    /// The Workers surface reads three routes, and two of them are the reason it can answer
+    /// anything about a session that is no longer live. If either is renamed, the page
+    /// degrades to the live-only roster that could not tell "ran" from "never existed" —
+    /// and it degrades *silently*, because a failed fetch there deliberately keeps the last
+    /// good state rather than blanking. This is what notices instead.
+    #[test]
+    fn the_workers_view_reads_the_ended_list_and_the_frame_log() {
+        let source = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "workers").unwrap().1;
+        assert!(source.contains("/api/workers\""), "the live roster");
+        assert!(source.contains("/api/workers/ended"), "what just ended");
+        assert!(source.contains("/frames"), "one session's verbatim wire log");
+        // The run has to travel with the request: a frame log is addressed by (run, session)
+        // and session ids restart at 1 each boot, so an ended row that dropped its run would
+        // silently read some *other* session's history under the same number.
+        assert!(source.contains("run="), "an ended row must pass its own run");
+        // And the restart case has to be rendered as itself. A row the process died under
+        // reading as a clean finish is the failure this whole surface exists to surface.
+        assert!(source.contains("\"restart\""), "a lost session must be told apart from a closed one");
+    }
 }

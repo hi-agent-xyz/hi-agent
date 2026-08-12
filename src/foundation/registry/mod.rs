@@ -42,6 +42,15 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// older is replayed from the protocol's own session load.
 const OUTPUT_TAIL_CHARS: usize = 4_000;
 
+/// How long a "what is it doing" line may be before it is cut.
+///
+/// It renders as one line on a roster beside the task, and the frame it renders in may be
+/// the window minus a ~400px conversation rail (`docs/arch/stage.md`), so a line that wraps
+/// three times pushes every other session off the page.
+const ACTIVITY_LINE_CHARS: usize = 120;
+
+pub mod index;
+
 /// The process's registry. One switchboard, as the design says.
 pub fn global() -> &'static Registry {
     static G: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
@@ -101,6 +110,17 @@ pub struct Status {
     pub queued: bool,
     pub turns: u64,
     pub started: DateTime<Utc>,
+    /// The last thing this session was seen **doing** — a tool call, a shell command, a
+    /// thought — as one short line, or `None` before it has done anything.
+    ///
+    /// Distinct from its output tail ([`Registry::messages`]), and the distinction is the
+    /// point. `output` is what a session has *said*, which is what its owner reads to learn
+    /// what it found; this is what it is *doing*, which is what a person reads to learn
+    /// whether it is alive. Folding the two would put tool noise into `SessionMessages` and
+    /// make a report unreadable — and leaving `doing` out is why a worker four minutes into
+    /// a shell command showed a blank line on the roster, which is the same "silence read as
+    /// health" this whole surface exists to end.
+    pub doing: Option<String>,
 }
 
 /// One message in flight, with the return address the registry stamped on it.
@@ -179,6 +199,8 @@ struct Entry {
     inbox: Inbox,
     /// Bounded tail of what this session has said, for `SessionMessages`.
     output: String,
+    /// The last thing it was seen doing — see [`Status::doing`].
+    doing: Option<String>,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
 }
@@ -226,6 +248,19 @@ pub fn register_scoped(
 pub struct Registry {
     sessions: Mutex<HashMap<SessionId, Entry>>,
     activity: watch::Sender<u64>,
+    /// The durable session directory, once [`Registry::attach_index`] has been called at
+    /// boot. Absent in tests and anywhere without a data dir, in which case the switchboard
+    /// behaves exactly as it did before — live-only, nothing kept.
+    index: std::sync::OnceLock<index::Writer>,
+    /// Sessions that are no longer live, newest first — seeded from the directory at boot
+    /// and appended to as sessions close.
+    ///
+    /// **In memory because the read is per-poll and the file is unpruned.** A roster
+    /// refreshing every few seconds must not re-read a months-old append-only log to answer
+    /// a question about this afternoon; the file is the durable copy and this is the working
+    /// set, which is the same split [`Registry::messages`] already makes against the frame
+    /// log.
+    recent: Mutex<Vec<index::Ended>>,
 }
 
 impl Default for Registry {
@@ -234,6 +269,8 @@ impl Default for Registry {
         Self {
             sessions: Mutex::new(HashMap::new()),
             activity,
+            index: std::sync::OnceLock::new(),
+            recent: Mutex::new(Vec::new()),
         }
     }
 }
@@ -253,6 +290,7 @@ impl Registry {
         task: String,
     ) -> std::sync::Arc<Notify> {
         let notify = std::sync::Arc::new(Notify::new());
+        let started = Utc::now();
         {
             let mut map = self.sessions.lock().unwrap();
             map.insert(
@@ -260,18 +298,95 @@ impl Registry {
                 Entry {
                     role,
                     owner,
-                    task,
+                    task: task.clone(),
                     busy: false,
                     turns: 0,
-                    started: Utc::now(),
+                    started,
                     inbox: Inbox::default(),
                     output: String::new(),
+                    doing: None,
                     notify: notify.clone(),
                 },
             );
         }
+        // Recorded on the way in, not only on the way out, because the way out is exactly
+        // what a crash skips. An `opened` with no `closed` is how a restart-killed session
+        // becomes visible at all — see [`index::EndedHow::Restart`].
+        if let Some(writer) = self.index.get() {
+            writer.write(index::opened_record(
+                crate::foundation::run::id(),
+                id,
+                role,
+                owner,
+                &task,
+                started,
+            ));
+        }
         self.note_activity();
         notify
+    }
+
+    /// Start recording sessions to the durable directory under `data_dir`, and seed the
+    /// recent-ends list from what previous runs left there.
+    ///
+    /// Called once at boot. Idempotent: a second call is ignored, because the writer owns a
+    /// spawned task and two of them would interleave lines into one file.
+    pub async fn attach_index(&self, data_dir: std::path::PathBuf) {
+        let run = crate::foundation::run::id();
+        let seeded = index::seed(&data_dir, run).await;
+        if self.index.set(index::Writer::start(data_dir)).is_err() {
+            tracing::warn!("the session index is already attached; ignoring");
+            return;
+        }
+        let found = seeded.len();
+        let lost = seeded.iter().filter(|e| e.how == index::EndedHow::Restart).count();
+        *self.recent.lock().unwrap() = seeded;
+        // Worth a line at boot: `lost` is the count of sessions a previous run died
+        // underneath, which nothing used to be able to say out loud.
+        tracing::info!(run, recent = found, lost, "session directory attached");
+    }
+
+    /// Unregister every live session, in id order.
+    ///
+    /// For the shutdown path: a graceful stop genuinely ends these, and the host is still
+    /// alive to say so. That is the whole difference between the directory reporting
+    /// [`index::EndedHow::Closed`] and [`index::EndedHow::Restart`] — the latter means
+    /// nothing got to record an end, and it only carries a warning if a clean exit does not
+    /// produce it.
+    ///
+    /// Ids are collected before unregistering because [`Registry::unregister`] takes the
+    /// same lock a snapshot would still be holding.
+    pub fn close_all(&self) {
+        let ids: Vec<SessionId> = {
+            let map = self.sessions.lock().unwrap();
+            let mut ids: Vec<SessionId> = map.keys().copied().collect();
+            ids.sort_unstable();
+            ids
+        };
+        if ids.is_empty() {
+            return;
+        }
+        tracing::info!(sessions = ids.len(), "closing the switchboard");
+        for id in ids {
+            self.unregister(id);
+        }
+    }
+
+    /// Wait until every record queued for the session directory has reached the disk.
+    ///
+    /// Pairs with [`close_all`](Self::close_all) on the shutdown path — see
+    /// [`index::Writer::flush`] for why closing without flushing would write the crash
+    /// signature on a clean exit. A no-op when no index is attached.
+    pub async fn flush_index(&self) {
+        if let Some(writer) = self.index.get() {
+            writer.flush().await;
+        }
+    }
+
+    /// Sessions that are no longer live, newest first, at most `limit`.
+    pub fn recent_ended(&self, limit: usize) -> Vec<index::Ended> {
+        let recent = self.recent.lock().unwrap();
+        recent.iter().take(limit).cloned().collect()
     }
 
     /// Drop a session. Anything still in its inbox goes with it — undelivered is the
@@ -280,11 +395,25 @@ impl Registry {
     pub fn unregister(&self, id: SessionId) {
         let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(&id) {
             e.inbox.closed = true;
-            true
+            Some(index::ended_now(
+                crate::foundation::run::id(),
+                id,
+                e.role,
+                e.owner,
+                &e.task,
+                e.turns,
+                e.started,
+            ))
         } else {
-            false
+            None
         };
-        if removed {
+        if let Some(ended) = removed {
+            // The file and the in-memory list get the same row. The list is what a poll
+            // reads; the file is what survives this process.
+            if let Some(writer) = self.index.get() {
+                writer.write(index::closed_record(&ended));
+            }
+            index::push_recent(&mut self.recent.lock().unwrap(), ended);
             self.note_activity();
         }
     }
@@ -541,6 +670,25 @@ impl Registry {
         }
     }
 
+    /// Note the last thing a session was seen **doing** — see [`Status::doing`].
+    ///
+    /// One line, replaced rather than appended: this answers "is it alive and on what",
+    /// which only the newest answer serves. Long lines are cut, because the caller is
+    /// summarizing a tool call and a shell command can be a screenful.
+    pub fn record_activity(&self, id: SessionId, what: &str) {
+        let what = what.trim();
+        if what.is_empty() {
+            return;
+        }
+        let line: String = match what.char_indices().nth(ACTIVITY_LINE_CHARS) {
+            Some((cut, _)) => format!("{}…", &what[..cut]),
+            None => what.to_string(),
+        };
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+            e.doing = Some(line);
+        }
+    }
+
     /// What a session has recently said. Costs context — which is exactly why it is a
     /// different call from [`status`](Self::status).
     pub fn messages(&self, id: SessionId) -> Option<String> {
@@ -561,6 +709,7 @@ impl Registry {
             queued: !e.inbox.pending.is_empty(),
             turns: e.turns,
             started: e.started,
+            doing: e.doing.clone(),
         })
     }
 
@@ -578,6 +727,7 @@ impl Registry {
                 queued: !e.inbox.pending.is_empty(),
                 turns: e.turns,
                 started: e.started,
+                doing: e.doing.clone(),
             })
             .collect();
         rows.sort_by_key(|status| status.id);

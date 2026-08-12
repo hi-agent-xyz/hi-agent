@@ -1,0 +1,687 @@
+//! The session directory — what ran, and where its frames are.
+//!
+//! The switchboard ([`super::Registry`]) is live by construction: an entry exists between
+//! `register` and `unregister`, and a session whose drive task has ended is simply absent.
+//! That is the right shape for "what is running now" and the wrong one for the two
+//! questions that kept going unanswered:
+//!
+//! - **What just ended?** `gaps.md` §2 records the agent calling a price watch
+//!   "挂着呢,一直在盯" while `GET /api/sessions` showed zero workers. The roster was
+//!   right; the reader had no way to see the watch that had already died.
+//! - **Where are that session's frames?** [`WireTap`](crate::foundation::codex::WireTap)
+//!   has kept every JSON-RPC line per session since it was given a data dir, under
+//!   [`session_frames_path`](crate::mind::memory::layout::session_frames_path). Nothing
+//!   read them back, and nothing could: the path is keyed by `(run, session)`, session ids
+//!   restart at 1 every boot ([`crate::foundation::run`]), and a session that has ended is
+//!   gone from the switchboard — so the id needed to name its own frame log died with it.
+//!   **The frames outlived the session; the index did not exist.**
+//!
+//! So: one append-only file next to the frame logs it points at, and an in-memory list of
+//! recent ends seeded from it at boot. Journal-seeded rather than authoritative-in-memory,
+//! the same shape [`docs/arch/text-transcript.md`](../../../../docs/arch/text-transcript.md)
+//! uses for the conversation and for the same reason — a restart must not be the thing
+//! that erases the evidence of the restart.
+//!
+//! **A `closed` record carries everything a reader needs, deliberately duplicating its
+//! `opened`.** Recency is the only order anyone asks for, so the common read is a scan of
+//! `closed` lines and must not have to pair each one with an `opened` line somewhere
+//! earlier in the file — a long-lived rung's `opened` sits at the top and its `closed` at
+//! the bottom, so folding would mean reading all of it. The duplication costs ~150 bytes
+//! per session and buys a read that never grows a fold.
+//!
+//! **What `opened` is still for: the sessions that never got a `closed`.** An `opened`
+//! with no matching `closed`, in a run that is not the current one, is a session the
+//! process died underneath — exactly `server.log`'s `worker report dropped; reaction loop
+//! gone worker=9`. Those are reported as [`EndedHow::Restart`] rather than quietly
+//! omitted, because a worker that vanished mid-flight is the single most useful row on the
+//! page.
+//!
+//! Not a retention story. Nothing prunes this file or the frame logs beside it — see
+//! [`crate::mind::memory::layout::is_signal_dir`], which exists so the forgetting pass
+//! skips `sessions/` entirely. Bounding it is open work, not something this module quietly
+//! decides.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+use crate::identity::Role;
+use crate::mind::memory::layout;
+
+/// How many recent ends the in-memory list holds.
+///
+/// A reader asking "what just ended" is asking about the last few minutes; a page showing
+/// five hundred is a page nobody scrolls. The file keeps everything regardless, so raising
+/// this is a display decision and never a data-loss one.
+const RECENT_CAP: usize = 500;
+
+/// How much of the tail of the index file to read at boot.
+///
+/// Bounded because the file is append-only and unpruned, so an install that has been up
+/// for months must not pay a full read to answer a question about this afternoon. A
+/// truncated first line is dropped by [`fold`] rather than guessed at.
+const SEED_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+
+/// One line in the index. Tagged, so a future kind can be added without the reader
+/// mistaking it for one of these.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Record {
+    /// A session joined the switchboard. Written from `register`.
+    Opened {
+        run: String,
+        session: u64,
+        at: DateTime<Utc>,
+        /// [`Role::as_str`] — the tool surface, the same word `GET /api/workers` and the
+        /// `X-HI-Role` header use.
+        role: String,
+        /// Which specialism, for the five sessions that share the `worker` surface;
+        /// `None` for a rung.
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+        worker_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+    },
+    /// A session left the switchboard. Written from `unregister`, and self-contained on
+    /// purpose — see the module doc.
+    Closed {
+        run: String,
+        session: u64,
+        at: DateTime<Utc>,
+        started: DateTime<Utc>,
+        role: String,
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+        worker_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner: Option<u64>,
+        turns: u64,
+    },
+}
+
+impl Record {
+    /// Only for the writer's error log — a record that would not serialize still has to be
+    /// reportable as *which* one.
+    fn session(&self) -> u64 {
+        match self {
+            Record::Opened { session, .. } | Record::Closed { session, .. } => *session,
+        }
+    }
+}
+
+/// How a session stopped running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndedHow {
+    /// It unregistered — the drive task finished, or its scope was dropped.
+    Closed,
+    /// It has an `opened` and no `closed`, in a run that is over. The process died
+    /// underneath it, so whatever it was doing was lost rather than reported.
+    Restart,
+}
+
+/// One session that is no longer live, as a reader reads it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Ended {
+    /// Which run it belonged to. Required to address its frame log, because session ids
+    /// restart at 1 every boot.
+    pub run: String,
+    pub session: u64,
+    pub role: String,
+    #[serde(rename = "type")]
+    pub worker_type: Option<String>,
+    pub task: Option<String>,
+    pub owner: Option<u64>,
+    pub started: Option<DateTime<Utc>>,
+    /// When it closed. `None` for a [`EndedHow::Restart`] row — nothing recorded an end,
+    /// which is the whole point of that variant; the reader orders those by `started`.
+    pub ended: Option<DateTime<Utc>>,
+    pub how: EndedHow,
+    pub turns: Option<u64>,
+}
+
+impl Ended {
+    /// What to sort by. A restart row has no end, so it takes its start — a session the
+    /// process died under is at least as recent as the run that killed it.
+    fn recency(&self) -> Option<DateTime<Utc>> {
+        self.ended.or(self.started)
+    }
+}
+
+/// `<memory>/raw/sessions/index.jsonl` — the directory, beside the per-session frame logs
+/// it indexes.
+pub fn index_path(data_dir: &Path) -> PathBuf {
+    layout::raw_root(data_dir).join(layout::SESSIONS_DIR).join("index.jsonl")
+}
+
+// ── writing ───────────────────────────────────────────────────────────────────
+
+/// The writer half: an unbounded channel drained by one task.
+///
+/// Unbounded and non-blocking for the same reason the wire tap's is
+/// ([`WireTap::with_durable_log`](crate::foundation::codex::WireTap::with_durable_log)):
+/// `register` and `unregister` are synchronous and run on paths that must not touch the
+/// filesystem — `unregister` is called from `Registration::drop`, where an await is not
+/// available and a blocking write would stall whatever is unwinding.
+pub struct Writer {
+    tx: mpsc::UnboundedSender<Msg>,
+}
+
+/// What crosses to the append task. A flush travels as a message rather than on its own
+/// channel so that it takes its place in the queue: the loop is FIFO, so a reply to a
+/// `Flush` proves every record queued before it is already on disk.
+enum Msg {
+    Record(Record),
+    Flush(tokio::sync::oneshot::Sender<()>),
+}
+
+impl Writer {
+    /// Start the index writer for `data_dir`, spawning its append task.
+    pub fn start(data_dir: PathBuf) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(append_loop(data_dir, rx));
+        Self { tx }
+    }
+
+    /// Queue one record. Never blocks; a dead writer is logged once per record and
+    /// otherwise ignored, because losing the directory must not take the agent down.
+    pub fn write(&self, record: Record) {
+        if self.tx.send(Msg::Record(record)).is_err() {
+            tracing::warn!("session index writer is gone; a session went unrecorded");
+        }
+    }
+
+    /// Wait until everything queued so far has reached the disk.
+    ///
+    /// **The shutdown path cannot do without this.** Closing the switchboard queues one
+    /// `closed` record per live session and the process then exits at once; with no flush
+    /// the runtime drops the append task while those records are still in the channel, and a
+    /// clean stop would leave exactly the `opened`-with-no-`closed` pattern that means
+    /// *crashed*. The one moment this file has to be durable is the moment the process ends.
+    pub async fn flush(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self.tx.send(Msg::Flush(tx)).is_err() {
+            return;
+        }
+        // A dropped sender means the loop is gone, which is as flushed as this will get.
+        let _ = rx.await;
+    }
+}
+
+/// Append records as they arrive, batching whatever is already queued into one write.
+///
+/// Failures are logged and the loop continues, matching the wire tap: a disk that has
+/// stopped accepting writes is not something a retry here can fix, and the index is
+/// evidence, never a dependency.
+async fn append_loop(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<Msg>) {
+    let path = index_path(&data_dir);
+    let mut batch: Vec<Record> = Vec::new();
+    // Flush replies are held until after the write below, never answered on receipt — a
+    // reply that outran the `write_all` would be a promise this cannot keep.
+    let mut waiting: Vec<tokio::sync::oneshot::Sender<()>> = Vec::new();
+
+    while let Some(first) = rx.recv().await {
+        match first {
+            Msg::Record(r) => batch.push(r),
+            Msg::Flush(tx) => waiting.push(tx),
+        }
+        while let Ok(more) = rx.try_recv() {
+            match more {
+                Msg::Record(r) => batch.push(r),
+                Msg::Flush(tx) => waiting.push(tx),
+            }
+        }
+
+        let mut buf = String::new();
+        for record in batch.drain(..) {
+            match serde_json::to_string(&record) {
+                Ok(line) => {
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+                Err(err) => tracing::error!(
+                    error = %err,
+                    session = record.session(),
+                    "a session index record would not serialize"
+                ),
+            }
+        }
+
+        if !buf.is_empty() {
+            append(&path, &buf).await;
+        }
+
+        // **Always**, on every path out of the write — including a failed one and an empty
+        // batch. A `flush` that is never answered parks the caller forever, and its one
+        // caller is the shutdown path, so an unanswered reply is a process that will not
+        // exit. A failed write is reported by the log above; the flush only ever promised
+        // that the attempt is over.
+        for tx in waiting.drain(..) {
+            let _ = tx.send(());
+        }
+    }
+}
+
+/// Append `buf` to `path`, creating the directory and file if needed.
+///
+/// Failures are logged and swallowed: a disk that has stopped accepting writes is not
+/// something a retry here can fix, and the directory is evidence, never a dependency.
+async fn append(path: &Path, buf: &str) {
+    use tokio::io::AsyncWriteExt as _;
+
+    if let Some(parent) = path.parent()
+        && let Err(err) = tokio::fs::create_dir_all(parent).await
+    {
+        tracing::error!(error = %err, path = %parent.display(), "cannot make the session index dir");
+        return;
+    }
+    match tokio::fs::OpenOptions::new().create(true).append(true).open(path).await {
+        Ok(mut f) => {
+            if let Err(err) = f.write_all(buf.as_bytes()).await {
+                tracing::error!(error = %err, path = %path.display(), "session index write failed");
+            }
+        }
+        Err(err) => {
+            tracing::error!(error = %err, path = %path.display(), "cannot open the session index");
+        }
+    }
+}
+
+// ── reading ───────────────────────────────────────────────────────────────────
+
+/// Read the tail of the index and fold it into recent ends, most recent first.
+///
+/// `current_run` is excluded from restart detection: its sessions have no `closed` yet
+/// because they are still running, which is the switchboard's answer, not this one's.
+pub async fn seed(data_dir: &Path, current_run: &str) -> Vec<Ended> {
+    let path = index_path(data_dir);
+    let text = match read_tail(&path, SEED_TAIL_BYTES).await {
+        Ok(text) => text,
+        // A fresh install has no index. That is not a failure and must not log as one.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(err) => {
+            tracing::warn!(error = %err, path = %path.display(), "cannot read the session index");
+            return Vec::new();
+        }
+    };
+    fold(&text, current_run)
+}
+
+/// Read at most `limit` bytes from the end of `path`, starting at a line boundary.
+///
+/// Seeking into the middle of a line is expected — the first partial line is dropped by
+/// starting after the first newline. A file shorter than `limit` is read whole and keeps
+/// its first line.
+async fn read_tail(path: &Path, limit: u64) -> std::io::Result<String> {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+
+    let mut f = tokio::fs::File::open(path).await?;
+    let len = f.metadata().await?.len();
+    let whole = len <= limit;
+    if !whole {
+        f.seek(std::io::SeekFrom::Start(len - limit)).await?;
+    }
+    let mut buf = Vec::with_capacity(limit.min(len) as usize);
+    f.read_to_end(&mut buf).await?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if whole {
+        return Ok(text);
+    }
+    // Drop the partial first line.
+    Ok(match text.find('\n') {
+        Some(i) => text[i + 1..].to_string(),
+        None => String::new(),
+    })
+}
+
+/// Fold index lines into recent ends, most recent first.
+///
+/// Unparseable lines are skipped rather than failing the read: the first line of a
+/// tail-read is routinely a fragment, and one corrupt line must not blank the page.
+fn fold(text: &str, current_run: &str) -> Vec<Ended> {
+    let mut ends: Vec<Ended> = Vec::new();
+    let mut opened: Vec<Ended> = Vec::new();
+    let mut closed: HashSet<(String, u64)> = HashSet::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<Record>(line) else { continue };
+        match record {
+            Record::Closed {
+                run,
+                session,
+                at,
+                started,
+                role,
+                worker_type,
+                task,
+                owner,
+                turns,
+            } => {
+                closed.insert((run.clone(), session));
+                ends.push(Ended {
+                    run,
+                    session,
+                    role,
+                    worker_type,
+                    task,
+                    owner,
+                    started: Some(started),
+                    ended: Some(at),
+                    how: EndedHow::Closed,
+                    turns: Some(turns),
+                });
+            }
+            Record::Opened { run, session, at, role, worker_type, task, owner } => {
+                // A session in the current run with no close is *live*, not lost — the
+                // switchboard reports it, and claiming it here would double-count it.
+                if run == current_run {
+                    continue;
+                }
+                opened.push(Ended {
+                    run,
+                    session,
+                    role,
+                    worker_type,
+                    task,
+                    owner,
+                    started: Some(at),
+                    ended: None,
+                    how: EndedHow::Restart,
+                    turns: None,
+                });
+            }
+        }
+    }
+
+    // An `opened` is only evidence of a restart-killed session once the whole window has
+    // been read and no `closed` for it turned up.
+    ends.extend(opened.into_iter().filter(|e| !closed.contains(&(e.run.clone(), e.session))));
+
+    // Most recent first, and stable on the id so two ends in the same second keep a
+    // deterministic order rather than shuffling between polls.
+    ends.sort_by(|a, b| b.recency().cmp(&a.recency()).then(b.session.cmp(&a.session)));
+    ends.truncate(RECENT_CAP);
+    ends
+}
+
+/// Push one just-closed session onto a seeded list, newest first, holding the cap.
+pub fn push_recent(recent: &mut Vec<Ended>, ended: Ended) {
+    recent.insert(0, ended);
+    recent.truncate(RECENT_CAP);
+}
+
+/// Build the [`Ended`] row for a session leaving the switchboard.
+pub fn ended_now(
+    run: &str,
+    session: u64,
+    role: Role,
+    owner: Option<u64>,
+    task: &str,
+    turns: u64,
+    started: DateTime<Utc>,
+) -> Ended {
+    Ended {
+        run: run.to_string(),
+        session,
+        role: role.as_str().to_string(),
+        worker_type: role.worker_type().map(|t| t.as_str().to_string()),
+        task: Some(task.to_string()).filter(|t| !t.is_empty()),
+        owner,
+        started: Some(started),
+        ended: Some(Utc::now()),
+        how: EndedHow::Closed,
+        turns: Some(turns),
+    }
+}
+
+/// The `closed` record for the same event, for the file.
+pub fn closed_record(ended: &Ended) -> Record {
+    Record::Closed {
+        run: ended.run.clone(),
+        session: ended.session,
+        at: ended.ended.unwrap_or_else(Utc::now),
+        started: ended.started.unwrap_or_else(Utc::now),
+        role: ended.role.clone(),
+        worker_type: ended.worker_type.clone(),
+        task: ended.task.clone(),
+        owner: ended.owner,
+        turns: ended.turns.unwrap_or(0),
+    }
+}
+
+/// The `opened` record for a session joining the switchboard.
+pub fn opened_record(
+    run: &str,
+    session: u64,
+    role: Role,
+    owner: Option<u64>,
+    task: &str,
+    at: DateTime<Utc>,
+) -> Record {
+    Record::Opened {
+        run: run.to_string(),
+        session,
+        at,
+        role: role.as_str().to_string(),
+        worker_type: role.worker_type().map(|t| t.as_str().to_string()),
+        task: Some(task.to_string()).filter(|t| !t.is_empty()),
+        owner,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::WorkerType;
+    use chrono::TimeZone;
+
+    fn ts(minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 11, 4, minute, 0).unwrap()
+    }
+
+    fn line(record: &Record) -> String {
+        format!("{}\n", serde_json::to_string(record).unwrap())
+    }
+
+    /// A close with both ends pinned. [`ended_now`] stamps the end with `Utc::now()`, which
+    /// is its whole contract — it is called at the moment of unregistering — so a test about
+    /// *ordering* has to set the end itself rather than pass a start and hope.
+    fn closed_at(
+        run: &str,
+        session: u64,
+        role: Role,
+        started: DateTime<Utc>,
+        ended: DateTime<Utc>,
+    ) -> Record {
+        let mut row = ended_now(run, session, role, None, "", 1, started);
+        row.ended = Some(ended);
+        closed_record(&row)
+    }
+
+    /// A `closed` line alone is enough to render a row. This is the property the
+    /// duplication buys: no pairing, so no full-file read.
+    #[test]
+    fn a_closed_line_needs_no_opened_line() {
+        let closed = closed_record(&ended_now(
+            "run-a",
+            7,
+            Role::Worker(WorkerType::ViewBuilder),
+            Some(3),
+            "build the workers view",
+            4,
+            ts(10),
+        ));
+        let ends = fold(&line(&closed), "run-b");
+        assert_eq!(ends.len(), 1);
+        let e = &ends[0];
+        assert_eq!((e.run.as_str(), e.session), ("run-a", 7));
+        assert_eq!(e.role, "worker");
+        assert_eq!(e.worker_type.as_deref(), Some("view-builder"));
+        assert_eq!(e.task.as_deref(), Some("build the workers view"));
+        assert_eq!(e.owner, Some(3));
+        assert_eq!(e.turns, Some(4));
+        assert_eq!(e.how, EndedHow::Closed);
+    }
+
+    /// The regression this module exists for: a session whose process died has an
+    /// `opened` and no `closed`, and must be reported as lost rather than dropped.
+    /// `server.log` 2026-08-03 — `worker report dropped; reaction loop gone worker=9`.
+    #[test]
+    fn an_opened_with_no_closed_from_a_dead_run_reads_as_a_restart() {
+        let opened = opened_record("run-a", 9, Role::Worker(WorkerType::General), Some(3), "watch the price", ts(5));
+        let ends = fold(&line(&opened), "run-b");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0].how, EndedHow::Restart);
+        assert_eq!(ends[0].session, 9);
+        assert_eq!(ends[0].ended, None, "nothing recorded an end, so none is claimed");
+        assert_eq!(ends[0].started, Some(ts(5)), "and the reader orders it by its start");
+    }
+
+    /// A session that opened *and* closed appears once, as a close — not twice, and not
+    /// as a restart. The `closed` may arrive after the `opened` in the same window.
+    #[test]
+    fn an_opened_that_later_closed_is_one_closed_row() {
+        let opened = opened_record("run-a", 7, Role::Cognition, None, "", ts(1));
+        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", 12, ts(1)));
+        let ends = fold(&format!("{}{}", line(&opened), line(&closed)), "run-b");
+        assert_eq!(ends.len(), 1, "one session, one row");
+        assert_eq!(ends[0].how, EndedHow::Closed);
+        assert_eq!(ends[0].turns, Some(12));
+    }
+
+    /// A live session in the current run is the switchboard's answer, not this one's.
+    /// Counting it here would show every running worker twice on the page.
+    #[test]
+    fn a_live_session_in_the_current_run_is_not_an_end() {
+        let opened = opened_record("run-a", 4, Role::Reflection, None, "", ts(2));
+        assert!(fold(&line(&opened), "run-a").is_empty());
+    }
+
+    /// Same session id, two runs — the case the run id exists for. Both rows survive and
+    /// neither is confused for the other.
+    #[test]
+    fn the_same_session_id_in_two_runs_is_two_sessions() {
+        let a = closed_at("run-a", 1, Role::Cognition, ts(1), ts(5));
+        let b = closed_at("run-b", 1, Role::Cognition, ts(2), ts(9));
+        let ends = fold(&format!("{}{}", line(&a), line(&b)), "run-c");
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0].run, "run-b", "most recent first");
+        assert_eq!(ends[1].run, "run-a");
+    }
+
+    /// Most recent first, and a restart row sorts by its start against a close's end —
+    /// otherwise a lost worker sinks below everything and is never seen.
+    #[test]
+    fn recency_orders_closes_and_restarts_together() {
+        let early = closed_at("run-a", 1, Role::Cognition, ts(0), ts(1));
+        let lost = opened_record("run-a", 2, Role::Worker(WorkerType::General), Some(1), "", ts(30));
+        let late = closed_at("run-a", 3, Role::Cognition, ts(0), ts(20));
+        let text = format!("{}{}{}", line(&early), line(&lost), line(&late));
+        let ends = fold(&text, "run-b");
+        assert_eq!(
+            ends.iter().map(|e| e.session).collect::<Vec<_>>(),
+            vec![2, 3, 1],
+            "lost at :30, closed at :20, closed at :01"
+        );
+    }
+
+    /// A fragment — the routine first line of a tail read — is skipped, and the rest of
+    /// the window still renders. One corrupt line must not blank the page.
+    #[test]
+    fn a_partial_or_corrupt_line_is_skipped_not_fatal() {
+        let good = closed_record(&ended_now("run-a", 5, Role::Cognition, None, "", 1, ts(1)));
+        let text = format!("run\":\"run-a\",\"session\":4}}\n{}not json\n\n", line(&good));
+        let ends = fold(&text, "run-b");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0].session, 5);
+    }
+
+    /// The tail read starts at a line boundary and keeps the whole file when it is small
+    /// enough — the two cases every poll takes.
+    #[tokio::test]
+    async fn a_tail_read_drops_the_partial_line_and_keeps_a_short_file_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.jsonl");
+        tokio::fs::write(&path, "aaaa\nbbbb\ncccc\n").await.unwrap();
+
+        assert_eq!(read_tail(&path, 1024).await.unwrap(), "aaaa\nbbbb\ncccc\n");
+        // 10 bytes lands mid-`bbbb`; that line is dropped, not half-parsed.
+        assert_eq!(read_tail(&path, 10).await.unwrap(), "cccc\n");
+    }
+
+    /// A fresh install has no index file, and that is not an error worth logging.
+    #[tokio::test]
+    async fn a_missing_index_seeds_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(seed(dir.path(), "run-a").await.is_empty());
+    }
+
+    /// Round trip through the file the writer actually writes — the serialize and
+    /// deserialize halves are a pair here, unlike the observatory's journal.
+    ///
+    /// Also the flush contract: `flush().await` returning is the promise that everything
+    /// queued before it is readable, with no polling and no sleep. The shutdown path has
+    /// nothing else to wait on.
+    #[tokio::test]
+    async fn what_the_writer_writes_is_readable_the_moment_a_flush_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = Writer::start(dir.path().to_path_buf());
+        writer.write(opened_record("run-a", 2, Role::Worker(WorkerType::FileFiler), Some(1), "file it", ts(3)));
+        writer.write(closed_record(&ended_now(
+            "run-a",
+            2,
+            Role::Worker(WorkerType::FileFiler),
+            Some(1),
+            "file it",
+            2,
+            ts(3),
+        )));
+
+        writer.flush().await;
+
+        let ends = seed(dir.path(), "run-b").await;
+        assert_eq!(ends.len(), 1, "opened + closed for one session is one row");
+        assert_eq!(ends[0].worker_type.as_deref(), Some("file-filer"));
+        assert_eq!(ends[0].how, EndedHow::Closed);
+    }
+
+    /// A flush with nothing queued still returns, and a second one after it does too.
+    /// Both are the shutdown path: `close_all` on an empty switchboard queues no records,
+    /// and a flush that only answers when it has work to do would park the process forever.
+    #[tokio::test]
+    async fn a_flush_with_nothing_to_write_still_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = Writer::start(dir.path().to_path_buf());
+        writer.flush().await;
+        writer.write(opened_record("run-a", 1, Role::Cognition, None, "", ts(1)));
+        writer.flush().await;
+        writer.flush().await;
+        assert!(index_path(dir.path()).exists());
+    }
+
+    /// The cap is a display bound, applied after ordering — so it keeps the newest, never
+    /// whatever happened to be parsed first.
+    #[test]
+    fn the_cap_keeps_the_newest() {
+        let mut text = String::new();
+        for i in 1..=(RECENT_CAP as u64 + 20) {
+            let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
+            let mut e = ended_now("run-a", i, Role::Cognition, None, "", 1, at);
+            e.ended = Some(at);
+            text.push_str(&line(&closed_record(&e)));
+        }
+        let ends = fold(&text, "run-b");
+        assert_eq!(ends.len(), RECENT_CAP);
+        assert_eq!(ends[0].session, RECENT_CAP as u64 + 20, "newest survives");
+    }
+}

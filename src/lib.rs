@@ -159,6 +159,13 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // the raw session inspector.
     let wire_tap = foundation::codex::WireTap::with_durable_log(config.data_dir.clone());
 
+    // The session directory — what ran and where its frames are. The tap above has always
+    // kept the frames; nothing could address them once a session left the switchboard,
+    // because session ids restart at 1 each run. Attaching this also seeds the
+    // recent-ends list from previous runs, which is what makes a worker the process died
+    // underneath visible instead of simply absent.
+    foundation::registry::global().attach_index(config.data_dir.clone()).await;
+
     // Resolve all keyed capabilities BYOK-first: each vendor's key from the
     // credential store (`<data_dir>/credentials.json`) wins, else its `.env` key.
     // Unconfigured capabilities are fine; gates affect /audio (STT) and the speak
@@ -427,6 +434,28 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .is_err()
     {
         tracing::warn!("codex subprocess reaping timed out");
+    }
+
+    // Close whatever is still on the switchboard, so the session directory records that
+    // *we* ended these rather than leaving them to be read as lost.
+    //
+    // Only two of the four rungs unregistered on their own here: Reflection and
+    // Deliberation hold scope-bound `Registration`s whose `Drop` runs when their task
+    // winds down, while Reaction and Cognition are registered for the life of the process
+    // and simply stop existing with it. Without this, every clean stop left them with an
+    // `opened` and no `closed` — which is the exact signature of a crash, so the roster
+    // would report "lost to a restart" after an ordinary quit and the warning would stop
+    // meaning anything.
+    foundation::registry::global().close_all();
+    // And wait for them to land: the records are queued to a writer task that the runtime
+    // is about to drop. Bounded, because a stuck disk must not hang exit — a lost record
+    // reads as a crash, which is a worse outcome than a slow quit but a better one than
+    // never quitting.
+    if tokio::time::timeout(SHUTDOWN_GRACE, foundation::registry::global().flush_index())
+        .await
+        .is_err()
+    {
+        tracing::warn!("session directory flush timed out; the last closes may read as lost");
     }
 
     tracing::info!("hi-agent shut down");

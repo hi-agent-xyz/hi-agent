@@ -589,6 +589,12 @@ async fn turn(
     let mut full = String::new();
     let mut sent = 0usize;
     while let Some(update) = run.next_update().await {
+        // What it is *doing*, kept apart from what it has *said* below. Cognition can spend
+        // a long turn dispatching and reading with nothing to show on the tail, so without
+        // this the roster reports the outward brain as silent while it works.
+        if let Some(what) = update.activity() {
+            registry::global().record_activity(id, &what);
+        }
         match update {
             SessionUpdate::Text(text) => {
                 full.push_str(&text);

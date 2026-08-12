@@ -972,8 +972,15 @@ async fn run_worker(
                 registry::global().record_output(id, &text);
             }
             // Thoughts, tool calls, and unmodelled events don't enter the
-            // transcript — only the worker's text output does.
-            Some(_) => {}
+            // transcript — only the worker's text output does. They do feed the
+            // switchboard's "doing" line, which is the other question a reader asks: a
+            // worker four minutes into a shell command has said nothing, and its silence
+            // used to be indistinguishable from being dead.
+            Some(update) => {
+                if let Some(what) = update.activity() {
+                    registry::global().record_activity(id, &what);
+                }
+            }
             None => break,
         }
     }
