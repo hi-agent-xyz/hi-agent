@@ -599,8 +599,8 @@ async fn turn(
             SessionUpdate::Text(text) => {
                 full.push_str(&text);
                 // Mirror it into the switchboard's bounded tail, or `session_messages`
-                // answers "nothing yet" forever — and a Deliberation that handed work up has
-                // no other way to see what became of it.
+                // answers "nothing yet" forever — and the voice's `## Still looking into`
+                // line has no other way to see what this rung is making of the question.
                 registry::global().record_output(id, &text);
             }
             // Counted from the raw frame rather than the tool dispatch, because what is

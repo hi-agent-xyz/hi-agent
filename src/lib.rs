@@ -564,10 +564,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // Close whatever is still on the switchboard, so the session directory records that
     // *we* ended these rather than leaving them to be read as lost.
     //
-    // Only two of the four rungs unregistered on their own here: Reflection and
-    // Deliberation hold scope-bound `Registration`s whose `Drop` runs when their task
-    // winds down, while Reaction and Cognition are registered for the life of the process
-    // and simply stop existing with it. Without this, every clean stop left them with an
+    // Not every rung unregisters on its own here: Reflection holds a scope-bound
+    // `Registration` whose `Drop` runs when its task winds down, while Reaction and
+    // Cognition are registered for the life of the process and simply stop existing with
+    // it. Without this, every clean stop left them with an
     // `opened` and no `closed` — which is the exact signature of a crash, so the roster
     // would report "lost to a restart" after an ordinary quit and the warning would stop
     // meaning anything.

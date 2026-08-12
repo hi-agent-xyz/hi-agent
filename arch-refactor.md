@@ -105,8 +105,9 @@ being wrong first:
 |---|---|
 | **One verb: `SendMessage(to, message)`** | `delegate`, `ask`, `surface`, `handoff`, `notify`, and a pull-only worker channel — all were this verb wearing a name that described one use of it |
 | **The arbiter is retired into Reaction** | a host module arbitrating a mouth that one per-scene agent already owns |
-| **Deliberation has no workers** | it was the scene's actual doer; one dispatcher is the point |
-| **Deliberation's hand-up is async** | a scene waiting on the one global session serializes every scene — invariant 3 |
+| **Deliberation is retired into Cognition** | its *reason* (the voice cannot read) was real and moved; its *scoping* was per-scene, and once scene went it was a singleton in front of a singleton. Two rungs meant two hops for one answer. Safe only with its replacement rule below |
+| **Cognition never grinds** | what "one session held free for the conversation" was really buying. A brain that dispatches every artifact, side effect and long errand stays as free as a rung reserved for it, in one hop instead of two |
+| **A hand-down is a reply owed** | Deliberation's answer was must-relay *structurally* (the host framed the report). Cognition's is mail, and its prompt says mail is a proposal — so the host marks the answer to a hand-down as owed, or a mute-by-default voice is entitled to drop the reply the person is waiting for |
 | **Cognition is sole ledger writer and sole worker creator** | two writers to one ledger means one is wrong with no way to tell which |
 | **Perception needs no tool** | `see` retired — a ref is a path, and an agent that reads files can open it. What it needs is knowing where things land |
 | **Full frames, not modelled events** | modelling existed so the host could infer intent; intent is now explicit |
@@ -134,6 +135,7 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 
 | | |
 |---|---|
+| *(this branch)* | **Deliberation is retired into Cognition.** Four rungs become three. `Role::Deliberation`, `deliberation.md`, `deliberation_prompt`, the `is_deliberation` flag threaded through spawn/drive/report, `warm_deliberation`, `deliberate`, the `deliberation` MCP arm and the per-conversation warm-up all go. The hand-down is now one `post` into Cognition's standing inbox — no session to open, no warm one to resume, no fallback spawn — and `follow_up` died with it, taking the warm-idle path that had exactly one client. `Worker` drops to two handles (`session`, `drive`); its `task`/`transcript`/`busy` were copies of switchboard state whose last reader was the voice's status line, which now asks `registry::session_of_role(Cognition)`. Two jobs moved intact: opening refs, and writing the conversation's brief. One was rebuilt: must-relay, as `LoopInput::Mail { owed }`. **720 tests green, 0 warnings.** Not run against a live instance |
 | `d78b350` | **W0 compile pass.** Ten blind commits: 0 errors, 0 warnings. The one red test was stale (`STT_PROVIDER` after BYOK), not breakage. The two feared parallel-authorship collisions never happened |
 | `c110aff` | Per-scene rung renamed **Deliberation**. The *cognition tunables* keep the word in its other sense |
 | `a1c0a75` | **The scene's memory has a writer.** `memory/prompts/scenes/<id>.md` had a reader since `bcf9781` and none in `src/` |

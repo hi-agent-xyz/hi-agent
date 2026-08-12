@@ -85,7 +85,7 @@ impl UploadResult {
 /// **The locator is the whole point of the signal.** `docs/arch/agents.md` retires
 /// the perception tool on the grounds that "a photo or a file arrives as a **ref**,
 /// a ref is a path, and an agent that can read files can open it" — and
-/// `deliberation.md` teaches exactly that, naming this line as an example. It was
+/// `cognition.md` teaches exactly that, naming this line as an example. It was
 /// not true: the body said `The user handed you a file: passport.jpg` and nothing
 /// else, while the bytes landed under a generated name that is not `passport.jpg`.
 /// The one rung that can read was told a file existed and given no way to reach it.

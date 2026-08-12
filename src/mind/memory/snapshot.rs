@@ -156,10 +156,9 @@ async fn speaking_up_unprompted(data_dir: &Path) -> String {
 }
 
 /// One generated prompt, read and bounded. Missing, unreadable or blank ⇒ `""`, which
-/// the join drops — **absence is the normal case today**, since nothing writes these
-/// files until Deliberation is given the job
-/// (`docs/arch/data.md#memoryprompts`). The floor underneath is what makes that
-/// survivable.
+/// the join drops — **absence is ordinary**: the brief is written when there is
+/// something worth carrying and not otherwise (`docs/arch/data.md#memoryprompts`). The
+/// floor underneath is what makes that survivable.
 ///
 /// Over [`CARRIED_FORWARD_CHARS`] the text is cut and the cut is *announced in the
 /// injected text itself*, addressed to the agent whose file it is: it is the only one
@@ -190,13 +189,13 @@ go without.]"
     s
 }
 
-// What a window carries forward is [`carried_forward`] — the generated prompt
-// Deliberation writes at `memory/prompts/conversation.md` — and nothing beside it.
+// What a window carries forward is [`carried_forward`] — the generated prompt Cognition
+// writes at `memory/prompts/conversation.md` — and nothing beside it.
 // Two files used to be injected here as well (`self.md` as "Who I am to this person",
-// a recency digest as "Lately on my mind"); their injection went when Deliberation took
-// over the writer's job, and their writers are gone too. If the brief turns out thinner
-// in practice than what those carried, the fix is to `deliberation.md` — the rung that
-// writes it — and not a second source of the same thing.
+// a recency digest as "Lately on my mind"); their injection went when that writer's job
+// was taken up, and their writers are gone too. If the brief turns out thinner in
+// practice than what those carried, the fix is to `cognition.md` — the rung that writes
+// it — and not a second source of the same thing.
 
 
 /// The floor: the recent signals, straight off the log. Never empty — an

@@ -37,17 +37,17 @@ const HISTORY_CAP: usize = 1000;
 /// the wire as a gap, never blocks the producer).
 const BROADCAST_CAP: usize = 512;
 
-/// **A role, on this module's wire, is its word.** `"reaction"`, `"deliberation"`,
-/// `"worker"`, `"reflection"`, `"cognition"` — exactly [`Role::as_str`], which is also
+/// **A role, on this module's wire, is its word.** `"reaction"`, `"worker"`,
+/// `"reflection"`, `"cognition"` — exactly [`Role::as_str`], which is also
 /// what the `X-HI-Role` header and `GET /api/workers` say, so one session reads the same
 /// in all three places.
 ///
-/// **This replaced a `SessionKind` enum**: five variants that were [`Role`]'s five
-/// variants with the worker payload dropped, a `From<Role>` to convert, and a test to
-/// stop the two drifting. It was the last of four copies of one concept, and its own doc
-/// admitted the job — *"it mirrors `SessionRole` and must keep doing so"*. A mirror that
-/// must be kept in sync by hand is the thing that let Deliberation be reported as a
-/// worker for as long as it was.
+/// **This replaced a `SessionKind` enum**: variants that were [`Role`]'s variants with
+/// the worker payload dropped, a `From<Role>` to convert, and a test to stop the two
+/// drifting. It was the last of four copies of one concept, and its own doc admitted the
+/// job — *"it mirrors `SessionRole` and must keep doing so"*. A mirror that must be kept
+/// in sync by hand is the thing that let a rung be reported as a worker for as long as it
+/// was.
 ///
 /// It is a **projection, not a type**, so it lives here as a function rather than in
 /// [`crate::identity`] as a lossy `Serialize`. The loss is deliberate and local: a
@@ -280,15 +280,12 @@ impl Observatory {
                     });
                 }
                 // Worker open is mirrored by WorkerSpawned; a reflection pass is a
-                // throwaway we don't surface as a standing session. Deliberation and
-                // Cognition are not the voice, so they are history-only — which is
-                // where a rung nobody is listening to honestly belongs. They are
-                // *recorded* either way: the event log is what names a rung, and
-                // until it did, Deliberation was indistinguishable from a worker.
-                Role::Worker(_)
-                | Role::Deliberation
-                | Role::Reflection
-                | Role::Cognition => {}
+                // throwaway we don't surface as a standing session. Cognition is not the
+                // voice, so it is history-only — which is where a rung nobody is
+                // listening to honestly belongs. It is *recorded* either way: the event
+                // log is what names a rung, and until it did, a rung was
+                // indistinguishable from a worker.
+                Role::Worker(_) | Role::Reflection | Role::Cognition => {}
             },
             EventKind::SessionClosed { kind: Role::Reaction, id } => {
                 if view.reaction_session.as_ref().map(|session| session.id.as_str())

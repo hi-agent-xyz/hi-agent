@@ -2,8 +2,8 @@
 //!
 //! One mpsc per conversation, one task per conversation; turns run serially against a single
 //! Reaction agent session that is opened and primed when the conversation stands up, then
-//! reused as the conversation's continuous voice. Deliberation has its own prewarmed
-//! session and runs off the floor; Reaction never blocks on it.
+//! reused as the conversation's continuous voice. The reading and thinking is Cognition's,
+//! which stands in its own loop and answers by mail; Reaction never blocks on it.
 //!
 //! ## Turn-taking lives here, not in the client
 //!
@@ -699,7 +699,23 @@ enum LoopInput {
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
-    Mail(Vec<crate::foundation::registry::Message>),
+    Mail {
+        mail: Vec<crate::foundation::registry::Message>,
+        /// Whether this mail answers a question the voice handed down and the person is
+        /// still waiting on — in which case it is **a reply owed**, not one signal among
+        /// many.
+        ///
+        /// **This flag replaces `WorkerReport::is_deliberation`, and it exists for the
+        /// same failure.** Deliberation's answer arrived on the report path, where the
+        /// host could frame it as must-relay; Cognition's arrives as ordinary mail, and
+        /// Cognition's own prompt tells it that everything it sends is *a proposal, never
+        /// a delivery*. That is right for a finding it raised on its own and wrong for an
+        /// answer to a question a person asked thirty seconds ago: a mute-by-default
+        /// voice reading a proposal is entitled to drop it, and dropping it means the
+        /// person who asked never hears back. So the host, which is the only thing that
+        /// knows a hand-down is outstanding, says which kind of message this is.
+        owed: bool,
+    },
 }
 
 /// Parse a duration token: a bare integer is seconds, or an integer with an
@@ -1271,19 +1287,13 @@ async fn reaction_loop(
     let voice_mail = voice.mail.clone();
     tracing::info!(voice = voice_id, "reaction per-reaction loop up");
 
-    // Pull both the voice's rungs' cold starts ahead of the person's first message. Reaction
-    // and Deliberation each open a subprocess, initialize the wire + MCP, and pre-send their
-    // system prompt. Input and recovery mail queue while the two independent warm-ups
-    // run in parallel.
+    // Pull the voice's cold start ahead of the person's first message: it opens a
+    // subprocess, initializes the wire + MCP, and pre-sends its system prompt. Input and
+    // recovery mail queue while it runs. Cognition warms itself in its own loop.
     let mut startup_warm_pending = false;
     if reaction.wait_for_server_ready().await {
-        startup_warm_pending = warm_sessions(
-            &reaction,
-            voice_id,
-            &mut reaction_session,
-            &mut workers,
-        )
-        .await;
+        startup_warm_pending =
+            warm_sessions(&reaction, voice_id, &mut reaction_session).await;
     }
 
     // Pulse bookkeeping: the host's recurring self-attention timer. `last_activity`
@@ -1301,6 +1311,13 @@ async fn reaction_loop(
     let check_in_base = check_in_interval();
     let mut check_in_gap = check_in_base;
 
+    // Whether the voice has handed something down that the person is still waiting on.
+    // Set when a turn hands the human request to Cognition, cleared when Cognition's
+    // answer comes back — which is the moment that answer must be relayed rather than
+    // weighed. See [`LoopInput::Mail::owed`] for why the host has to be the one holding
+    // this rather than either rung.
+    let mut reply_owed = false;
+
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
     // drop the mail it was attempting to deliver. Cleared on a successful turn (the
@@ -1314,13 +1331,8 @@ async fn reaction_loop(
         'wait: loop {
             let gate = reaction.inner.vendor.turn_gate();
             if startup_warm_pending && matches!(gate, TurnGate::Go) {
-                startup_warm_pending = warm_sessions(
-                    &reaction,
-                    voice_id,
-                    &mut reaction_session,
-                    &mut workers,
-                )
-                .await;
+                startup_warm_pending =
+                    warm_sessions(&reaction, voice_id, &mut reaction_session).await;
                 continue 'wait;
             }
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1393,11 +1405,25 @@ async fn reaction_loop(
                 // an empty inbox and simply goes back to waiting.
                 Woke::Mail => {
                     if let Some(mail) = registry::global().drain_pending(voice_id) {
+                        // A reply is owed only if one was outstanding *and* this mail is
+                        // from the rung it was handed to. Mail from Reflection, or an
+                        // unsolicited finding Cognition raised on its own, stays a
+                        // proposal the voice weighs — that judgment is the voice's and
+                        // this must not overrule it.
+                        let from_brain = registry::global()
+                            .session_of_role(Role::Cognition)
+                            .is_some_and(|brain| {
+                                mail.iter().any(|m| m.from == Some(brain.id))
+                            });
+                        let owed = reply_owed && from_brain;
+                        if owed {
+                            reply_owed = false;
+                        }
                         enqueue(
                             &reaction,
                             &mut workers,
                             &mut batch,
-                            LoopInput::Mail(mail),
+                            LoopInput::Mail { mail, owed },
                         )
                         .await;
                         if !down {
@@ -1519,22 +1545,20 @@ async fn reaction_loop(
         let by_floor = batch
             .iter()
             .any(|i| matches!(i, LoopInput::CheckIn { owed } if !owed.promised));
-        // The conversation's own thinking coming back — the thing a promise made *about*
-        // it was for. Captured with what was armed going in, so the discharge below can
-        // tell an untouched promise from a fresh one this turn just made.
-        let by_thinking_back = batch
-            .iter()
-            .any(|i| matches!(i, LoopInput::Worker(r) if r.is_deliberation));
+        // The agent's own thinking coming back — the thing a promise made *about* it was
+        // for. Captured with what was armed going in, so the discharge below can tell an
+        // untouched promise from a fresh one this turn just made.
+        let by_thinking_back = batch.iter().any(|i| matches!(i, LoopInput::Mail { owed: true, .. }));
         let armed_before = speaking.next_word.peek();
         let said_before = speaking.said.load(Ordering::Relaxed);
 
         let turn_result = run_reaction_turn(
             &reaction,
             &batch,
-            &mut workers,
             &mut reaction_session,
             voice_id,
             &speaking,
+            &mut reply_owed,
         )
         .await;
         registry::global().finish_turn(voice_id);
@@ -1617,7 +1641,7 @@ async fn reaction_loop(
         // workers are not this loop's to describe, and their substance comes back down
         // the report path, which drives a turn of its own.
         if let Some(gap) = check_in_gap
-            && workers.thinking()
+            && workers::thinking()
         {
             speaking.next_word.floor(gap);
         }
@@ -1639,9 +1663,9 @@ async fn reaction_loop(
     }
 }
 
-/// Render just the human requests in a batch (skipping worker reports and
-/// pulses) — the text handed to Deliberation as the turn's task. Skipping reports is
-/// what keeps it from re-ingesting its own prior output (a feedback loop).
+/// Render just the human requests in a batch (skipping worker reports and pulses) — the
+/// text handed down to Cognition as the turn's task. Skipping reports is what keeps it
+/// from re-ingesting its own prior output (a feedback loop).
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
     use std::fmt::Write as _;
@@ -1664,20 +1688,22 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 /// voiced. The speed comes from the small model + a single generation, not from
 /// bypassing the adapter.
 ///
-/// Deliberation — the conversation's reading and thinking — runs in parallel: the turn's human
-/// request is handed to it ([`workers::WorkerRegistry::deliberate`]),
-/// which works off the floor and reports back as an ordinary `LoopInput::Worker` the
-/// reaction voices on a later turn. So the reaction stays the single fast voice.
+/// Cognition — the reading and thinking — runs in parallel: the turn's human request is
+/// handed down to it ([`hand_down_to_cognition`]), which works off the floor and answers
+/// by mail, driving a turn of its own. So the reaction stays the single fast voice.
+///
+/// `handed_down` is set when this turn actually handed something down, so the loop knows
+/// a reply is outstanding and can frame the answer as one when it arrives.
 ///
 /// v1 keeps it simple — no mid-turn reorganization. A turn is one fast generation, so a
 /// human speaking during it just queues and the serial loop folds it into the next turn.
 async fn run_reaction_turn(
     reaction: &Reaction,
     batch: &[LoopInput],
-    workers: &mut workers::WorkerRegistry,
     reaction_session: &mut Option<Arc<AgentSession>>,
     voice_id: registry::SessionId,
     speaking: &Speaking,
+    handed_down: &mut bool,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     reaction.inner.interrupts.note_turn_started(turn_id);
@@ -1691,7 +1717,7 @@ async fn run_reaction_turn(
     // the belief could not be derived — a window behind an editor and a person leaning in
     // are the same subscription. What replaced it is not a better estimate: messages keep,
     // so nothing has to be decided about whether anyone is there.
-    let worker_status = workers.render_status().await;
+    let worker_status = workers::render_status();
     let interrupted = reaction
         .inner
         .interrupts
@@ -1813,15 +1839,17 @@ async fn run_reaction_turn(
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
         let _ = reaction.inner.vendor.note_success();
-        // Hand the turn's human request to Deliberation — the conversation's reader — so it works
-        // off the floor while the voice moves on; its report rides back as a WorkerReport
-        // the reaction voices on a later turn. Spawned once per conversation, then followed up.
-        // Nothing to hand off on a pure report/pulse turn.
+        // Hand the turn's human request down to Cognition — the reading and thinking the
+        // voice cannot do — so it works off the floor while the voice moves on. Its answer
+        // comes back as mail, which drives a turn of its own.
+        //
+        // **This is a post, not a spawn.** It used to open (or resume) a whole session
+        // per conversation; Cognition is already standing, already has an inbox, and
+        // already wakes on it, so the hand-down is one line into machinery that existed
+        // anyway. Nothing to hand off on a pure report/pulse turn.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
-            if let Err(e) = workers.deliberate(reaction, task).await {
-                tracing::warn!(error = %e, "deliberation spawn/follow-up failed");
-            }
+            *handed_down = hand_down_to_cognition(reaction, task).await;
         }
     }
     if let Some(err) = turn_error {
@@ -1924,27 +1952,60 @@ mod turn_context_tests {
     }
 }
 
-/// Open and prime the conversation's Reaction and Deliberation sessions together.
+/// Hand this turn's human request down to Cognition, and report whether it landed —
+/// which is whether the person is now waiting on an answer.
 ///
-/// Both operations are idempotent, so the managed-energy Resume edge can call this
-/// again after a startup pause without replacing sessions that are already live.
+/// **One post into a standing inbox.** Cognition is already up, already has a mailbox,
+/// and already wakes on it, so this is the whole of the hand-down: no session to open, no
+/// warm one to resume, no fallback spawn. That is what retiring Deliberation bought.
+///
+/// Posted on the **host's** behalf (`from: None`) rather than sent from the voice. The
+/// distinction is not cosmetic: `send` applies the addressing rules that govern one agent
+/// reaching another, and this is the host driving its own loop. It also renders bare, so
+/// the request reaches Cognition as the request rather than as a colleague quoting it.
+///
+/// `false` when there is nobody to hand to — Cognition has not warmed yet, or died — and
+/// the caller must not then wait for an answer that cannot come. The request is not lost:
+/// it is in the transcript the next hand-down carries.
+async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
+    let Some(brain) = registry::global().session_of_role(Role::Cognition) else {
+        tracing::warn!("no cognition session to hand down to; the voice answers alone this turn");
+        return false;
+    };
+    let delivery = registry::global().post(brain.id, task.clone());
+    reaction
+        .inner
+        .observatory
+        .record(EventKind::MessageSent {
+            from: None,
+            to: brain.id,
+            delivery,
+            message: task,
+        })
+        .await;
+    match delivery {
+        registry::Delivery::Delivered => true,
+        other => {
+            tracing::warn!(cognition = brain.id, delivery = ?other, "hand-down did not land");
+            false
+        }
+    }
+}
+
+/// Open and prime the conversation's Reaction session.
+///
+/// Idempotent, so the managed-energy Resume edge can call this again after a startup
+/// pause without replacing a session that is already live.
 async fn warm_sessions(
     reaction: &Reaction,
     voice_id: registry::SessionId,
     reaction_session: &mut Option<Arc<AgentSession>>,
-    workers: &mut workers::WorkerRegistry,
 ) -> bool {
     let blocked_before = crate::foundation::energy_state::is_out();
-    let (_, deliberation) = tokio::join!(
-        warm_reaction_session(reaction, voice_id, reaction_session),
-        workers.warm_deliberation(reaction),
-    );
-    if let Err(err) = deliberation {
-        tracing::warn!(
-            error = %err,
-            "deliberation warm-up failed; first task will cold-start"
-        );
-    }
+    // One warm-up, not two. The second was Deliberation's, and Cognition — which now
+    // holds that job — warms itself inside its own loop rather than being stood up from
+    // the conversation's.
+    warm_reaction_session(reaction, voice_id, reaction_session).await;
     let blocked_after = crate::foundation::energy_state::is_out();
     if blocked_after {
         // `SessionRun::wait` records the durable 402 edge. Apply its scheduler level
@@ -2292,8 +2353,21 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::CheckIn { owed } => {
                 let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
             }
-            LoopInput::Mail(mail) => {
+            LoopInput::Mail { mail, owed: false } => {
                 let _ = writeln!(s, "{}", registry::render(mail));
+            }
+            // The must-relay framing Deliberation's report used to carry, on the path the
+            // answer actually travels now. "Relay it" is not "dump it verbatim": the
+            // voice still says it in its own plain words and reconciles with whatever it
+            // already said — what it may not do is read this and stay quiet.
+            LoopInput::Mail { mail, owed: true } => {
+                let _ = writeln!(
+                    s,
+                    "Your thinking is back — this is the answer you owe the person, so relay \
+what matters here in your own plain words now (don't leave them waiting, and don't just \
+acknowledge it — tell them what you found):\n{}",
+                    registry::render(mail)
+                );
             }
         }
     }
@@ -2350,7 +2424,7 @@ fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
 ///
 /// The rest reach the mind without crossing a wire, so this is their only chance to
 /// be written down. Each goes on the channel that names its origin — a heartbeat is
-/// not something the person said, and neither is deliberation's answer coming back.
+/// not something the person said, and neither is the brain's answer coming back.
 /// A worker's row keeps the substance and drops the framing [`workers::render_report`]
 /// wraps it in for the prompt; that framing is an instruction to the voice, not part
 /// of the signal.
@@ -2372,7 +2446,12 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             render_check_in(owed, Instant::now()),
         )),
         // Mail crosses no wire, so this is its only chance to be written down.
-        LoopInput::Mail(mail) => Some((Channel::Worker, Origin::Worker, registry::render(mail))),
+        // The `owed` framing is deliberately dropped: it is an instruction to the voice
+        // about this turn, not part of the signal, and a later reader of the journal is
+        // not the voice.
+        LoopInput::Mail { mail, .. } => {
+            Some((Channel::Worker, Origin::Worker, registry::render(mail)))
+        }
     }
 }
 
@@ -2544,6 +2623,55 @@ fn render_view_line(id: &str, op: ViewOp, module_url: Option<&str>) -> String {
     match module_url {
         Some(url) => format!("{verb} \"{id}\" ({url})"),
         None => format!("{verb} \"{id}\""),
+    }
+}
+
+/// The hand-down's return path, pinned at the point where it can silently go wrong.
+///
+/// Killing Deliberation moved the conversation's answer from the **report** path, where
+/// the host framed it as must-relay, onto the **mail** path, where Cognition's own prompt
+/// says everything it sends is *a proposal, never a delivery*. Both halves of that need
+/// to keep being true at once: an answer the person is waiting for must be framed as owed,
+/// and an unsolicited finding must not be — otherwise the voice either drops replies or
+/// loses the judgment about when to speak that makes it worth having.
+#[cfg(test)]
+mod hand_down_tests {
+    use super::*;
+    use crate::foundation::registry::Message;
+
+    fn mail(text: &str, from: Option<registry::SessionId>) -> Message {
+        Message { from, text: text.to_string() }
+    }
+
+    #[test]
+    fn an_answer_the_person_is_waiting_for_is_framed_as_owed() {
+        let rendered =
+            render_batch(&[LoopInput::Mail { mail: vec![mail("the label says 500mg", Some(7))], owed: true }]);
+        assert!(rendered.contains("the label says 500mg"), "{rendered}");
+        assert!(rendered.contains("the answer you owe the person"), "{rendered}");
+        assert!(rendered.contains("don't leave them waiting"), "{rendered}");
+    }
+
+    /// The other half, and the one that would rot quietly: if every message from the
+    /// brain were framed as owed, "everything you send is a proposal" would be a lie the
+    /// prompt tells and the host contradicts, and the voice would narrate every
+    /// background finding at the person.
+    #[test]
+    fn an_unsolicited_finding_stays_a_proposal() {
+        let rendered =
+            render_batch(&[LoopInput::Mail { mail: vec![mail("the backup job died", Some(7))], owed: false }]);
+        assert!(rendered.contains("the backup job died"), "{rendered}");
+        assert!(!rendered.contains("owe the person"), "{rendered}");
+    }
+
+    /// A promise made *about* the thinking is discharged by the thinking coming back —
+    /// which is now an owed mail rather than a report, and the check-in pacing keys on it.
+    #[test]
+    fn owed_mail_is_what_counts_as_the_thinking_coming_back() {
+        let back = LoopInput::Mail { mail: vec![mail("done", Some(7))], owed: true };
+        let unsolicited = LoopInput::Mail { mail: vec![mail("fyi", Some(7))], owed: false };
+        assert!(matches!(back, LoopInput::Mail { owed: true, .. }));
+        assert!(!matches!(unsolicited, LoopInput::Mail { owed: true, .. }));
     }
 }
 

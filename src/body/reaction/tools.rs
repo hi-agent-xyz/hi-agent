@@ -200,9 +200,8 @@ impl NextWord {
 
 /// The standing loop that owns a tool sink.
 ///
-/// Deliberation and workers do not own loop state reached through MCP. Keeping
-/// this narrower than the session-role enum makes an accidental registration for
-/// either impossible.
+/// Workers do not own loop state reached through MCP. Keeping this narrower than the
+/// session-role enum makes an accidental registration for one impossible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolOwner {
     Reaction,

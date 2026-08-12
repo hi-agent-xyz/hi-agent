@@ -33,27 +33,33 @@ lives here so that none of it exists above.
 
 ### One conversation
 
-**There is no context-isolation key.** One Reaction, one [Deliberation](agents.md#deliberation--seconds),
-one memory, one continuous thread — the same conversation whether it arrives by voice from a
+**There is no context-isolation key.** One Reaction, one
+[Cognition](agents.md#cognition--minutes-and-beyond), one memory, one continuous thread —
+the same conversation whether it arrives by voice from a
 browser tab, by a screenshot from the ⌘⌘ gesture, or by a file from a phone. Everything
 inbound joins it; everything outbound reaches every attached client.
 
 Signals reach Reaction, which is the mind's front door. Everything deeper is reached by
 [message](foundation.md#the-agent-session-registry), agent to agent, through the registry:
-Reaction hands down to Deliberation, Deliberation hands up to
-[Cognition](agents.md#cognition--minutes-and-beyond), and answers come back the way they went.
+Reaction hands the turn's request down to
+[Cognition](agents.md#cognition--minutes-and-beyond), and answers come back the way they
+went. That used to be two hops through a Deliberation between them; it is one since that
+rung was [retired](agents.md#deliberation-was-retired-into-cognition).
 
 Participants are *soft*, inferred from content, never a structural key. The person the agent
 recognizes by face or voice is content it knows, not a partition it lives in — someone
 walking into the room does not start a second conversation.
 
 > **This replaced `Scene`, which was removed.** A scene was "the situation a signal belongs
-> to", the isolation unit keying a Reaction, a Deliberation, a memory slice, and a tag on
+> to", the isolation unit keying a Reaction, a Deliberation (the rung then between the
+> voice and the brain), a memory slice, and a tag on
 > every tool attach. It was removed for three reasons, in increasing order of weight:
 >
 > 1. **It isolated two rungs of four.** Cognition and Reflection are global by design and
 >    memory was always shared, so a scene only ever partitioned Reaction and Deliberation —
->    while costing a parameter on almost every function in the tree.
+>    while costing a parameter on almost every function in the tree. (One of those two has
+>    since been retired for a related reason: once there was one conversation, a
+>    per-conversation reading rung was a singleton in front of a singleton.)
 > 2. **It had no derivation rule.** The design said what a scene *meant* and never who
 >    decided one, so the browser decided, with a random id in `localStorage`. Every scene
 >    that ever existed on a real install was a browser profile wearing the name of a
@@ -193,8 +199,8 @@ pool absorbs spawn latency for the sessions that are created per delegation.
 first message, not a preamble the agent's own persona frames — the system prompt. Anything
 less means the rung's character is advice layered over somebody else's.
 
-**Every thinking rung holds one long-lived session, from the moment it is created.** Reaction,
-Deliberation and Cognition each keep a single session across turns rather than opening one per
+**Every thinking rung holds one long-lived session, from the moment it is created.** Reaction
+and Cognition each keep a single session across turns rather than opening one per
 piece of work: a rung that reopens every time cannot remember what it was in the middle of, and
 "what I was in the middle of" is not a fact the ledger holds — the ledger holds what is *owed*,
 not what has already been tried, ruled out, or half-arranged. A rung that forgets that re-derives
@@ -229,7 +235,7 @@ the thread, never the truth. The session carries the thread; `data/` carries the
 
 One **process-wide** view of whether the upstream model is reachable, read before a turn is
 taken. The vendor is a shared resource, so an outage discovered by one rung must steer every
-rung — Reaction, Deliberation, Cognition, Reflection and every worker share one upstream.
+rung — Reaction, Cognition, Reflection and every worker share one upstream.
 
 - **It gates the turn, not the reply.** During an outage no generation starts at all;
   incoming mail is held rather than answered badly or dropped.

@@ -62,7 +62,7 @@ pub struct RawFrame {
     /// host before the subprocess starts, so it names every frame including the first —
     /// which is what makes a durable per-session file possible at all.
     pub agent_session: Option<u64>,
-    /// The rung this subprocess hosts (`reaction`, `deliberation`, `worker`, …).
+    /// The rung this subprocess hosts (`reaction`, `cognition`, `worker`, …).
     pub role: String,
     pub dir: Dir,
     /// `threadId` parsed from `params`/`result`, when present. The `initialize`
@@ -336,14 +336,14 @@ mod tests {
     #[tokio::test]
     async fn subscribe_replays_then_streams_live() {
         let tap = WireTap::new();
-        tap.record(0, Some(7), "deliberation", Dir::Send, r#"{"method":"initialize","id":0}"#);
+        tap.record(0, Some(7), "cognition", Dir::Send, r#"{"method":"initialize","id":0}"#);
         let (replay, mut rx) = tap.subscribe();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].seq, 1);
         assert_eq!(replay[0].conn, 0);
         assert_eq!(replay[0].dir, Dir::Send);
 
-        tap.record(0, Some(7), "deliberation", Dir::Recv, r#"{"id":0,"result":{}}"#);
+        tap.record(0, Some(7), "cognition", Dir::Recv, r#"{"id":0,"result":{}}"#);
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live frame follows replay with no gap or dup");
         assert_eq!(live.dir, Dir::Recv);

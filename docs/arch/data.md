@@ -84,14 +84,14 @@ surfaces — lossy and disposable by design. That difference is argued once, the
 
 ## `prompts/`
 
-The text for each role — Reaction, Deliberation, Cognition, Worker. Character and voice
+The text for each role — Reaction, Cognition, Worker. Character and voice
 merge in here rather than living apart; a role's manner is part of its prompt.
 
 **One slot: what the app installs from the binary.** Factory-authored, reinstalled every boot,
 replaced on upgrade, disposable — the binary is the original, so nothing here is worth backing
 up.
 
-**A file per role.** Reaction, Deliberation, Cognition, Reflection, the workers — each gets its
+**A file per role.** Reaction, Cognition, Reflection, the workers — each gets its
 own bundled prompt, which is where [character](arch.md#character) is set. So `prompts/cognition.md`
 (bundled, ours) sits alongside `memory/prompts/cognition.md` (generated, its own): same leaf
 name, different parent, which is the whole pattern.
@@ -166,9 +166,9 @@ agent remembers to bring.
 
 **Who writes the conversation's.** Reaction holds `say` and `show` and nothing else, so it has
 no file access and cannot write its own. The conversation's memory is therefore *consumed* by
-Reaction and *written by* [Deliberation](agents.md#deliberation--seconds) — the rung that
+Reaction and *written by* [Cognition](agents.md#cognition--minutes-and-beyond) — the rung that
 already reads around and works out what was asked. That falls out of the tool surfaces rather
-than being imposed on them, and it hands Deliberation its second job: deciding what the
+than being imposed on them, and it hands Cognition its second job: deciding what the
 conversation carries forward. No new tool is needed — it has file access, and writes that
 memory the way reflection writes a facet.
 

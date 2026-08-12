@@ -27,7 +27,7 @@ use tokio::sync::{watch, Notify};
 /// Handle for one agent session, unique process-wide.
 ///
 /// It names a *session*, not a role: a role has many sessions over a run, and a
-/// Deliberation replaced after a failure is a second session of one role. One namespace
+/// Cognition replaced after a failure is a second session of one role. One namespace
 /// for every rung and every worker, because ownership crosses rungs — an owner holds
 /// sessions no per-rung counter could
 /// name without collision.
@@ -484,8 +484,8 @@ impl Registry {
                     out.push(("the session that asked for this work".to_string(), owner));
                 }
             }
-            // The voice's rungs hand work up, and that is all they address.
-            Role::Reaction | Role::Deliberation => {
+            // The voice hands work up, and that is all it addresses.
+            Role::Reaction => {
                 if let Some((id, _)) = map.iter().find(|(_, e)| e.role == Role::Cognition) {
                     out.push(("cognition — the shared brain".to_string(), *id));
                 }
@@ -650,9 +650,9 @@ impl Registry {
 
     /// Replace the human-readable task attached to a live session.
     ///
-    /// Deliberation is registered and warmed before it receives its first real task,
-    /// so the switchboard entry must move from its startup placeholder to the work the
-    /// the voice actually handed down.
+    /// A session is registered before it receives its first real task, so the
+    /// switchboard entry must be able to move from a startup placeholder to the work it
+    /// was actually handed.
     pub fn set_task(&self, id: SessionId, task: String) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
             e.task = task;
@@ -699,6 +699,35 @@ impl Registry {
     /// Metadata for one session. Cheap by construction — no content crosses.
     pub fn status(&self, id: SessionId) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
+        let e = map.get(&id)?;
+        Some(Status {
+            id,
+            role: e.role,
+            owner: e.owner,
+            task: e.task.clone(),
+            busy: e.busy,
+            queued: !e.inbox.pending.is_empty(),
+            turns: e.turns,
+            started: e.started,
+            doing: e.doing.clone(),
+        })
+    }
+
+    /// The live session holding `role`, if there is one — for the **singleton** rungs,
+    /// where "the Cognition" names a thing rather than a category.
+    ///
+    /// Lowest id wins if two are somehow up, which is a tie that should not happen and is
+    /// resolved deterministically rather than arbitrarily: a `HashMap` iteration order
+    /// would make the answer differ between two calls in one turn, and a caller asking
+    /// "is it busy" twice and getting two sessions is worse than a caller consistently
+    /// reading the older one.
+    ///
+    /// **Only meaningful for a rung.** Asking for `Role::Worker(_)` gets an arbitrary
+    /// worker, which is never a useful question — a worker is addressed by the id its
+    /// creator holds.
+    pub fn session_of_role(&self, role: Role) -> Option<Status> {
+        let map = self.sessions.lock().unwrap();
+        let id = map.iter().filter(|(_, e)| e.role == role).map(|(&id, _)| id).min()?;
         let e = map.get(&id)?;
         Some(Status {
             id,
@@ -845,7 +874,7 @@ mod tests {
     fn the_host_can_post_without_being_a_sender() {
         let r = reg();
         let (owner, w) = (mint(), mint());
-        r.register(owner, Role::Deliberation, None, String::new());
+        r.register(owner, Role::Cognition, None, String::new());
         r.register(w, Role::Worker(WorkerType::General), Some(owner), String::new());
 
         // A worker may not address itself as an agent — that is not its owner.
@@ -930,23 +959,22 @@ mod tests {
         );
     }
 
-    /// The projection that replaced name-a-destination addressing. The voice's rungs are
-    /// offered the shared
-    /// brain and nothing else, because handing work up is the only edge it has.
+    /// The projection that replaced name-a-destination addressing. The voice is offered
+    /// the shared brain and nothing else, because handing work up is the only edge it has.
     #[test]
-    fn the_voices_rungs_are_offered_the_shared_brain() {
+    fn the_voice_is_offered_the_shared_brain() {
         let r = reg();
-        let (dl, cog) = (mint(), mint());
-        r.register(dl, Role::Deliberation, None, String::new());
+        let (rx, cog) = (mint(), mint());
+        r.register(rx, Role::Reaction, None, String::new());
         r.register(cog, Role::Cognition, None, "thinking".into());
 
-        let who = r.reachable(dl);
+        let who = r.reachable(rx);
         assert_eq!(who.len(), 1, "{who:?}");
         assert_eq!(who[0].1, cog);
         assert!(who[0].0.contains("shared brain"), "{who:?}");
 
         // And the id it was handed is one it can actually send to.
-        assert_eq!(r.send(dl, who[0].1, "a real errand".into()), Delivery::Delivered);
+        assert_eq!(r.send(rx, who[0].1, "a real errand".into()), Delivery::Delivered);
         assert_eq!(r.take_pending(cog).expect("delivered")[0].text, "a real errand");
     }
 
@@ -956,9 +984,9 @@ mod tests {
     #[test]
     fn a_rung_that_is_not_up_is_not_offered() {
         let r = reg();
-        let dl = mint();
-        r.register(dl, Role::Deliberation, None, String::new());
-        assert!(r.reachable(dl).is_empty());
+        let rx = mint();
+        r.register(rx, Role::Reaction, None, String::new());
+        assert!(r.reachable(rx).is_empty());
     }
 
     /// Cognition is offered the live voice, because that is the one way anything it
@@ -966,17 +994,65 @@ mod tests {
     #[test]
     fn cognition_is_offered_the_voice_and_its_own_workers() {
         let r = reg();
-        let (cog, rx, dl, w) = (mint(), mint(), mint(), mint());
+        let (cog, rx, other, w) = (mint(), mint(), mint(), mint());
         r.register(cog, Role::Cognition, None, "thinking".into());
         r.register(rx, Role::Reaction, None, String::new());
-        r.register(dl, Role::Deliberation, None, String::new());
+        r.register(other, Role::Worker(WorkerType::General), Some(rx), String::new());
         r.register(w, Role::Worker(WorkerType::General), Some(cog), "file the receipts".into());
 
         let who = r.reachable(cog);
         let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
         assert!(ids.contains(&rx), "the voice: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
-        assert!(!ids.contains(&dl), "deliberation is reached through the voice: {who:?}");
+        assert!(!ids.contains(&other), "someone else's worker is not offered: {who:?}");
+    }
+
+    /// The lookup the hand-down rides on. Reaction has no id for Cognition — nothing
+    /// hands it one, and `reachable` rebuilds its list per turn precisely because a
+    /// stored id goes stale — so the host asks the switchboard by role at the moment it
+    /// posts.
+    #[test]
+    fn a_singleton_rung_can_be_found_by_its_role() {
+        let r = reg();
+        assert!(r.session_of_role(Role::Cognition).is_none(), "nothing is up yet");
+
+        let (rx, cog) = (mint(), mint());
+        r.register(rx, Role::Reaction, None, String::new());
+        r.register(cog, Role::Cognition, None, "thinking".into());
+
+        let found = r.session_of_role(Role::Cognition).expect("cognition is up");
+        assert_eq!(found.id, cog);
+        assert_eq!(found.task, "thinking");
+        assert_eq!(r.session_of_role(Role::Reaction).map(|s| s.id), Some(rx));
+    }
+
+    /// A rung that has gone is *absent*, not stale — the caller must be able to tell
+    /// "nobody to hand to" from "handed and waiting", because only one of those means
+    /// the person is owed an answer that is coming.
+    #[test]
+    fn a_rung_that_unregistered_is_no_longer_found_by_role() {
+        let r = reg();
+        let cog = mint();
+        r.register(cog, Role::Cognition, None, String::new());
+        r.unregister(cog);
+        assert!(r.session_of_role(Role::Cognition).is_none());
+    }
+
+    /// Two of one rung should not happen; if it does, the answer must not depend on hash
+    /// order. A caller that asks twice in one turn and gets two different sessions would
+    /// post the request to one and then read the other's status.
+    #[test]
+    fn two_of_one_rung_resolve_to_the_same_session_every_time() {
+        let r = reg();
+        let (first, second) = (mint(), mint());
+        r.register(second, Role::Cognition, None, "second".into());
+        r.register(first, Role::Cognition, None, "first".into());
+
+        let id = r.session_of_role(Role::Cognition).map(|s| s.id);
+        assert_eq!(id, Some(first.min(second)));
+        for _ in 0..8 {
+            assert_eq!(r.session_of_role(Role::Cognition).map(|s| s.id), id);
+        }
     }
 
     /// A worker is offered its owner and nothing else — which is also the only thing the
@@ -1015,7 +1091,7 @@ mod tests {
     fn an_owner_with_live_children_is_not_idle() {
         let r = reg();
         let (owner, child) = (mint(), mint());
-        r.register(owner, Role::Deliberation, None, String::new());
+        r.register(owner, Role::Cognition, None, String::new());
         assert!(!r.has_live_children(owner));
 
         r.register(child, Role::Worker(WorkerType::General), Some(owner), String::new());
@@ -1054,12 +1130,7 @@ mod tests {
     fn a_prewarmed_session_can_replace_its_placeholder_task() {
         let r = reg();
         let id = mint();
-        r.register(
-            id,
-            Role::Deliberation,
-            None,
-            "waiting for the first question".into(),
-        );
+        r.register(id, Role::Cognition, None, "waiting for the first question".into());
 
         r.set_task(id, "review the restart behavior".into());
 

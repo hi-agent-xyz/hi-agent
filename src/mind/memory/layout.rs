@@ -57,15 +57,15 @@ pub fn raw_root(data_dir: &Path) -> PathBuf {
 /// the agent, precious, and rebuildable by nothing else. See
 /// `docs/arch/data.md#memoryprompts`.
 ///
-/// **Nothing writes here yet.** Deliberation gets that job in a later change, so
-/// every reader today must treat an absent file as ordinary and degrade to the log
-/// tail rather than raise it as an error.
+/// **An absent file is ordinary**, not an error: Cognition writes the brief when it has
+/// something worth carrying and leaves it alone otherwise, and it has written nothing at
+/// all before the first exchange. Every reader degrades to the log tail.
 pub fn generated_prompts_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("prompts")
 }
 
 /// `<memory>/prompts/conversation.md` — what the conversation carries forward,
-/// written by Deliberation and injected into every one of Reaction's turns.
+/// written by Cognition and injected into every one of Reaction's turns.
 pub fn conversation_prompt_path(data_dir: &Path) -> PathBuf {
     generated_prompts_dir(data_dir)
         .join("conversation.md")

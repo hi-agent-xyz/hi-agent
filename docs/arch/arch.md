@@ -66,8 +66,7 @@ rung is partitioned — see [One conversation](host.md#one-conversation).
 |---|---|---|
 | **Reflex** | sub-second | taught quick-actions and barge-in — **no model in the loop** |
 | **Reaction** | one generation | speaks, holds the floor, manages the interaction |
-| **Deliberation** | seconds | works out what was actually asked — reads a little, checks a file, looks at the photo |
-| **Cognition** | minutes+ | the outward brain: owns Tasks, dispatches workers, stays idle and responsive |
+| **Cognition** | seconds to minutes+ | the outward brain: reads what arrived and works out what was actually asked, owns Tasks, dispatches everything heavy, stays idle and responsive |
 | **Reflection** | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
 
 Reflex is drawn on the ladder because it is a real tempo, but it is not an agent — it lives in
@@ -85,7 +84,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   HOST         wire · channel mux · transcript ·
   (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
-  AGENTS       the voice:  Reaction ⟷ Deliberation
+  AGENTS       the voice:  Reaction
                the brain:  Cognition · Reflection
                workers:    general · view builder · view reviewer · decision maker
                all of the above = one agent session, differing only by prompt + tools
@@ -110,8 +109,13 @@ Each is a statement we can test, and each has a real failure behind it.
    [tool surfaces](foundation.md#default-tool-surfaces) are a *context optimization* — a
    smaller window and a faster turn — not a rail deciding which agent may call which tool.
 3. **The voice never waits on a slower rung.** Reaction hands work down and reads the answer
-   when it arrives; it does not block on Deliberation, Cognition, or a worker. A mouth that
-   waits is a person left staring at silence, and no result is worth going deaf for.
+   when it arrives; it does not block on Cognition or a worker. A mouth that waits is a
+   person left staring at silence, and no result is worth going deaf for.
+
+   Its counterpart, which is what makes one brain safe to put on the conversation's path:
+   **Cognition never grinds.** It reads and answers, and everything with an artifact, a
+   side effect or a long tail goes to a worker — so its turns stay short and the
+   conversation is never queued behind its own errand.
 4. **Open tasks are projected, not retrieved.** Retrieval can miss, and a missed duty is a
    silently broken promise. The general form — what earns a place in any window at all — is
    the [projection test](data.md#what-earns-a-place).
@@ -159,5 +163,4 @@ Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
 - [`legacy/faculties.md`](legacy/faculties.md) — the built-vs-grown organization. Its
   placement test survives as the authorship rule above.
 - [`legacy/reaction-cognition-split.md`](legacy/reaction-cognition-split.md) — the three-tempo
-  split. Superseded by the ladder above, which adds Deliberation and draws reflex as the
-  rung below Reaction.
+  split. Superseded by the ladder above, which draws reflex as the rung below Reaction.

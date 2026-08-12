@@ -13,14 +13,15 @@ prompt, not new machinery.
 | Decision | Reasoning |
 |---|---|
 | Fast means *no fetch*, not *no knowledge* | Reaction runs a capable model; it is fast because it cannot wait on anything |
-| Deliberation is separate from Reaction | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and the voice may not go deaf while that happens |
+| The reading is separate from the voice | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and the voice may not go deaf while that happens. That someone is Cognition |
+| Cognition never grinds | It is on the conversation's path, so a turn it spends *doing* is a turn the person waits through. It reads and answers; anything with an artifact, a side effect or a long tail is a worker's |
 | Cognition stays idle | Someone has to be awake when nobody is talking, and it must be free when they are |
 | Only workers act | The moment there is an artifact or a side effect, that is a worker. A division of labour, not a security boundary — [tool surfaces](foundation.md#default-tool-surfaces) are sized for context, not to fence anyone out |
 | Cognition never speaks | Single-voice coherence: it proposes, Reaction voices |
 | The switchboard is the host | No agent↔agent link; all routing and timers are Rust |
 | A worker belongs to the session that created it | Ownership is what makes delegation addressable at all — a report has exactly one place to go, and it is not "the conversation" by default |
 | Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches the person except through Reaction |
-| An id names a **session**, not a role | A role has many sessions over a run; a Deliberation replaced after a failure is a second session of one role |
+| An id names a **session**, not a role | A role has many sessions over a run; a Cognition replaced after a failure is a second session of one role |
 | **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
 | A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
 | Cognition is the sole writer of the ledger | Two writers to one ledger means one of them is wrong and no way to tell which |
@@ -123,55 +124,49 @@ open tasks, the recent log tail — all in context before the first word. **Code
 every turn and caps it**, so it cannot grow with usage. Two hundred open tasks project as a
 summary, not a list.
 
-It does not write that memory; it has no file access to write anything with. Deliberation
+It does not write that memory; it has no file access to write anything with. Cognition
 writes it. And because this is the one rung that cannot go and look, it is also
 the measure for everything else: **projected = what Reaction must know without reading** —
 [the test](data.md#what-earns-a-place).
 
-### Deliberation — seconds
+#### Deliberation was retired into Cognition
 
-**The conversation's reading and thinking.** It exists because Reaction can speak and show
-but not *read*: someone has to read a little, check a file, look at the photo that just
-arrived, and work out what was actually asked, before anything reaches the shared brain. That
-gap is the whole reason for this rung. Reaction follows up with it every turn.
-
-Anything heavy — a real task, a standing duty, a long errand — is handed **up to Cognition**
-rather than done here, by message. **Deliberation has no workers of its own**, and that is
-deliberate: one dispatcher, so no two rungs can spawn against each other unseen. Its own
-surface enforces it — reads and one write, no shell and no editor, so heavy work has nowhere
-to go but up.
-
-The hand-up must be **asynchronous**, and that is a requirement rather than a convenience: a
-voice that waited on Cognition would go deaf for as long as the brain took to think, which is
-[invariant 3](arch.md#invariants) broken where it matters most. `SendMessage` does not wait,
-so it cannot happen.
-
-Perception needs no tool here. A photo or a file arrives as a **ref**, a ref is a path, and
-an agent that can read files can open it. What Deliberation needs is not a grant but knowing
-where things land.
-
-**Its second job is the conversation's memory.** Reaction consumes a generated system prompt
-it cannot write, so someone has to decide what the conversation carries forward — and that is
-a judgment made out of having read around, which is exactly this rung. It writes
-[`memory/prompts/conversation.md`](data.md#memoryprompts) the way reflection
-writes a facet: no new tool, no new machinery, file access it already has.
-
-Nothing **addresses** Deliberation except Reaction — that is the direction of
-the call stack, and it is a stack in *addressing* only, not in **lifetime**: it can be woken
-independently and surface upward. Handing work up to Cognition is not a contradiction; that
-is Deliberation calling out, not something calling in.
-
-> **A naming correction, now carried out.** This rung existed for a while as the follow-up
-> the reaction drives each turn, under the name "cognition" — now the name of the brain
-> below. The conversation's reading is *Deliberation*; the brain that outlives any one
-> exchange is *Cognition*. The rename landed in the code; the unrelated *cognition tunables*
-> (the agentic model config) keep the word in its other sense.
+> A fourth rung sat here: the conversation's
+> own reading, one per conversation, handing work up to the brain. Its *reason* — Reaction
+> can speak but not read — was real and is now Cognition's job. Its *scoping* was not: it
+> was per-conversation because [scene](host.md#one-conversation) was, and when scene went
+> there was one of it and one of Cognition, two singletons in a row on the same path. What
+> it bought over the merge was a session guaranteed free for the conversation; what it cost
+> was a hop, and every hop between rungs is a place substance gets lost or restated.
+>
+> The merge is safe only because of the rule it came with: **Cognition never grinds**
+> (above). A brain that dispatches everything heavy stays as free as a rung reserved for
+> the purpose, and answers in one hop instead of two.
+>
+> Two things moved rather than died, and both are load-bearing: opening what arrived (a ref
+> is a path) and writing the conversation's brief. One thing had to be rebuilt — the
+> must-relay framing of an answer the person is waiting for, which used to be structural on
+> the report path and is now the host marking a hand-down as owed. See
+> [the hand-down](#the-hand-down) below.
 
 ### Cognition — minutes and beyond
 
-**The brain.** One of it for the whole agent, and Deliberation hands work up to it. It does its heavy lifting by **delegating** — owns [Tasks](data.md#tasks),
-dispatches workers, reasons across everything in memory, and tries hard to stay idle so it
-is free the moment something arrives.
+**The brain, and the conversation's reading.** One of it for the whole agent. The voice
+hands the turn's request down to it, and it does its heavy lifting by **delegating** — owns
+[Tasks](data.md#tasks), dispatches workers, reasons across everything in memory, and stays
+idle so it is free the moment something arrives.
+
+**Reading is done here; doing is handed out.** Opening the photo that just arrived, reading
+a file, checking what a page says, working out what was actually meant — that is seconds of
+work with a person waiting on it, and handing it to a worker would cost a whole round-trip
+to learn something this rung could have read itself. Past that the line is hard: the moment
+there is an artifact to produce, a side effect to cause, a shell to run, or a stretch long
+enough that it would stop answering, it goes to a worker.
+
+That rule is not tidiness, it is what makes one brain safe on the conversation's path. This
+rung used to have [Deliberation](#deliberation-was-retired-into-cognition) in front of it
+absorbing the fast reads, and the argument for keeping that rung was that a brain busy with
+an errand leaves the person waiting. Staying free is now a duty rather than a rung.
 
 It is the **only** thing that creates workers, and the **only** writer of the task ledger.
 Both follow from the same idea: durable work is what it means for something to be real, and
@@ -199,15 +194,27 @@ outlives one:
 > **After a restart, before any user input:** the glance-up fires → Cognition wakes → reads
 > open tasks → runs each one's `verify` and believes the answer → checks what already landed
 > so nothing is redone → does or re-arms what is still wanted → for the user-facing ones,
-> messages Deliberation, which frames it, and Reaction voices it when the room is right.
+> messages Reaction, which voices it when the room is right.
 
 This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
 loop ([`host.md`](host.md#glancing-up)) — one wake shortly after
 the process starts, then on the pulse cadence while anything is owed.
 
-Answers travel back the way they came: what Deliberation handed up returns to Deliberation.
-Cognition's results arrive unframed — Deliberation is what turns "the build failed" into
-something that fits the conversation.
+#### The hand-down
+
+Answers travel back the way they came: what the voice handed down is answered to the voice.
+Cognition's results arrive **unframed** — Reaction is what turns "the build failed" into
+something that fits the room it is in.
+
+**An answer the person is waiting for is a reply owed, not a proposal**, and that is the one
+place the previous line inverts. Everything else Cognition sends is a proposal Reaction may
+decide not to voice; an answer to a question asked thirty seconds ago is not, because a
+voice entitled to drop it means the person who asked never hears back. The host is what
+knows the difference — it posted the hand-down, so it marks the answer as owed when it
+returns, and Reaction relays it in its own words rather than weighing whether to.
+
+This was structural before the merge: Deliberation's answer came back on the report path,
+which the host framed. It is still structural; only the path changed.
 
 Cognition never calls `say`. Everything it wants said is a **proposal** Reaction schedules.
 Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, Reaction asks
@@ -275,7 +282,6 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 | Rung | Session | Replaced when |
 |---|---|---|
 | **Reaction** | one, process-wide, long-lived | a turn fails |
-| **Deliberation** | one, process-wide, long-lived | a turn fails, or it sits idle past a TTL |
 | **Cognition** | one, process-wide, long-lived | a turn fails |
 | **Reflection** | **one per pass** | never — the pass ends |
 | Workers | one per errand | the errand ends, or an idle TTL |
@@ -284,12 +290,11 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 which compacts in place; see [`host.md`](host.md#session-layer) for why that is not ours to
 do. A session is replaced here only because it **broke**.
 
-Deliberation keeps the idle TTL it inherited from the worker machinery it shares: quiet for
-long enough drops it, and the next turn opens a fresh one. That is a **resource** bound — it
-exists so an install nobody has spoken to since Tuesday does not hold a subprocess forever,
-which is the one cost a resident rung carries.
+The idle TTL that used to appear in this table belonged to Deliberation, which shared the
+worker machinery and inherited its warm-idle drop. Nothing inherits it now: the rungs left
+here are resident by construction, and workers keep their own.
 
-**The three thinking rungs are long-lived from creation.** A rung that reopens each time cannot
+**The two thinking rungs are long-lived from creation.** A rung that reopens each time cannot
 remember what it was in the middle of — and that is not something the ledger can hand back,
 because the ledger records what is **owed**, not what has already been tried, ruled out, or
 half-arranged. The failure this prevents is specific and was observed: a rung that arranged a

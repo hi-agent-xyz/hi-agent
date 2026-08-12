@@ -68,7 +68,7 @@ use crate::foundation::registry::{self, SessionId, Status};
 struct WorkerDto {
     id: String,
     /// The role, as the `X-HI-Role` header and `tools_for_role` spell it — `reaction`,
-    /// `deliberation`, `cognition`, `reflection`, `worker` — so a row here and a tool
+    /// `cognition`, `reflection`, `worker` — so a row here and a tool
     /// surface line up by eye.
     role: &'static str,
     /// Which kind of working session, for the five that share the `worker` surface;

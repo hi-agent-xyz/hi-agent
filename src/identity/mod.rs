@@ -1,7 +1,7 @@
 //! identity — who the agent is.
 //!
-//! The factory-authored character, as **one whole prompt per role**: four rungs
-//! (`reaction`, `deliberation`, `cognition`, `reflection`) and five worker types under
+//! The factory-authored character, as **one whole prompt per role**: three rungs
+//! (`reaction`, `cognition`, `reflection`) and five worker types under
 //! `workers/`. Standing duties are not here at all — they are tasks
 //! ([`crate::mind::memory::tasks`]), one ledger, projected into every window rather
 //! than pointed at by a path.
@@ -21,9 +21,9 @@
 //! Nor is there a second place identity lives. `self.md`, the recency digest `hot.md`
 //! and the duty ledger `commitments.md` were each read by nothing by the end: under
 //! `docs/arch/data.md#memoryprompts` who this install is is a *section of a generated
-//! prompt*, Deliberation writes that prompt, and duties are
-//! [`crate::mind::memory::tasks`]. Their readers went when Deliberation took the
-//! writer's job; their writers are gone now too. Existing data dirs keep whatever they
+//! prompt*, Cognition writes that prompt, and duties are
+//! [`crate::mind::memory::tasks`]. Their readers went when that writer's job was taken
+//! up; their writers are gone now too. Existing data dirs keep whatever they
 //! already have on disk — nothing deletes a file someone may have authored — and
 //! `snapshot`'s `leftover_legacy_files_are_never_inlined` pins that a leftover can
 //! never climb back into a window.
@@ -44,7 +44,6 @@ use std::path::{Path, PathBuf};
 /// for.
 const REACTION_BASE: &str = include_str!("reaction.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
-const DELIBERATION_BASE: &str = include_str!("deliberation.md");
 const COGNITION_BASE: &str = include_str!("cognition.md");
 
 /// The worker prompts, under `workers/` — one file per **type**, each whole.
@@ -160,9 +159,8 @@ pub enum Role {
     /// The mouth: one generation, speaks and shows, cannot wait on anything.
     #[default]
     Reaction,
-    /// The conversation's reading and thinking, between the voice and the brain.
-    Deliberation,
-    /// The shared brain — owns the task ledger, dispatches, never speaks.
+    /// The shared brain — reads for the conversation, owns the task ledger,
+    /// dispatches everything heavy, never speaks.
     Cognition,
     /// The inward brain — curates `data/`, answers to nobody, never speaks.
     Reflection,
@@ -177,7 +175,6 @@ impl Role {
     /// easy: a worker prompt was never held to the sweeps the rungs were.
     pub const ALL: &'static [Self] = &[
         Self::Reaction,
-        Self::Deliberation,
         Self::Cognition,
         Self::Reflection,
         Self::Worker(WorkerType::General),
@@ -197,7 +194,6 @@ impl Role {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Reaction => "reaction",
-            Self::Deliberation => "deliberation",
             Self::Cognition => "cognition",
             Self::Reflection => "reflection",
             Self::Worker(_) => "worker",
@@ -215,7 +211,6 @@ impl Role {
     pub fn prompt_name(self) -> &'static str {
         match self {
             Self::Reaction => "reaction",
-            Self::Deliberation => "deliberation",
             Self::Cognition => "cognition",
             Self::Reflection => "reflection",
             Self::Worker(WorkerType::General) => "workers/general",
@@ -231,7 +226,6 @@ impl Role {
     pub(crate) fn base(self) -> &'static str {
         match self {
             Self::Reaction => REACTION_BASE,
-            Self::Deliberation => DELIBERATION_BASE,
             Self::Cognition => COGNITION_BASE,
             Self::Reflection => REFLECTION_BASE,
             Self::Worker(t) => t.base(),
@@ -322,7 +316,7 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
 /// are one concept. What it replaced — `worker_prompt(data_dir, kind)` beside three
 /// per-rung wrappers — already routed through the same loader with `workers/<type>`
 /// pasted in as a name; the type just had nowhere to live. The remaining wrappers below
-/// exist only where a rung needs something more than its file: Deliberation interpolates
+/// exist only where a rung needs something more than its file: Cognition interpolates
 /// the brief's path, Reaction is read raw and tools-off.
 ///
 /// Only the directory placeholders [`installed_prompt`] expands are interpolated. Former
@@ -397,39 +391,27 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
     out
 }
 
-/// **Deliberation**'s role layer — what it is beyond being a working session, and the
-/// job that makes it load-bearing: writing its conversation's
-/// [generated prompt](../../docs/arch/data.md#memoryprompts), the brief Reaction reads
-/// every turn and cannot write for itself.
-///
-/// This is a *layer*, not a whole prompt. Deliberation genuinely is a working session —
-/// same tools, same capability guidance — so the caller appends this to the worker base
-/// rather than replacing it. Read fresh each spawn (operator-overridable via
-/// `deliberation.local.md`), so an edit takes effect without a restart.
-///
-/// `{conversation_memory}` is interpolated to the **absolute** path of the file it must
-/// write, because an agent-facing path that is relative is a path to the wrong file.
-pub async fn deliberation_prompt(data_dir: &Path) -> String {
-    let text = role_prompt(data_dir, Role::Deliberation).await;
-    let target = crate::mind::memory::layout::conversation_prompt_path(&abs(data_dir));
-    text.replace("{conversation_memory}", &target.display().to_string())
-}
-
-/// **Cognition**'s role layer — the brain that owns the task ledger, hands
-/// work out, and never speaks (`docs/arch/agents.md#cognition`).
+/// **Cognition**'s whole prompt — the brain that reads for the conversation, owns the
+/// task ledger, hands every heavy thing out, and never speaks
+/// (`docs/arch/agents.md#cognition`).
 ///
 /// Cognition's **whole** prompt, like every other rung's: the character and the role
 /// arrive together, which is what makes the rung *the agent* rather than a generic
-/// assistant. It carries the ledger pen — the instruction that lived in
-/// `deliberation.md` marked "for now, yours" until Cognition existed to take it back.
+/// assistant. It carries the ledger pen, and — since Deliberation was retired into it —
+/// the two jobs that rung existed for: opening what arrived (a ref is a path) and
+/// writing the conversation's brief.
 ///
-/// Nothing is interpolated here. What Cognition
-/// carries forward arrives in the **window** with the projected ledger
+/// `{conversation_memory}` is interpolated to the **absolute** path of the brief it must
+/// write, because an agent-facing path that is relative is a path to the wrong file.
+/// That is the *only* interpolation of substance here: what Cognition carries forward
+/// arrives in the **window** with the projected ledger
 /// ([`crate::mind::memory::snapshot::agent_window`]), not in this layer — the same
 /// content in both places would be one copy going stale against the other, and the window
 /// is the half that is rebuilt every turn.
 pub async fn cognition_prompt(data_dir: &Path) -> String {
-    role_prompt(data_dir, Role::Cognition).await
+    let text = role_prompt(data_dir, Role::Cognition).await;
+    let target = crate::mind::memory::layout::conversation_prompt_path(&abs(data_dir));
+    text.replace("{conversation_memory}", &target.display().to_string())
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -674,11 +656,7 @@ mod soul_tests {
             assert!(base.len() > 2_000, "{name} looks too thin to be self-contained");
         }
         // And the interpolations resolve rather than reaching the model raw.
-        for text in [
-            deliberation_prompt(dir.path()).await,
-            cognition_prompt(dir.path()).await,
-            reflection_prompt(dir.path()).await,
-        ] {
+        for text in [cognition_prompt(dir.path()).await, reflection_prompt(dir.path()).await] {
             assert!(!text.contains("{skills_dir}"), "an unresolved placeholder reached the rung");
             assert!(!text.contains("{conversation_memory}"));
             let skills = crate::mind::skills::skills_dir(dir.path());
@@ -709,12 +687,15 @@ mod soul_tests {
         }
     }
 
-    /// Nine roles, one namespace, no duplicates — and every worker type reachable as a
-    /// role. The list is what `install_prompts` and the sweeps both walk, so a variant
-    /// missing from it is a prompt that is never installed and never checked.
+    /// Eight roles — three rungs and five worker types — in one namespace, no duplicates,
+    /// and every worker type reachable as a role. The list is what `install_prompts` and
+    /// the sweeps both walk, so a variant missing from it is a prompt that is never
+    /// installed and never checked.
+    ///
+    /// It was nine until Deliberation was retired into Cognition.
     #[test]
     fn every_role_is_in_the_one_list_exactly_once() {
-        assert_eq!(Role::ALL.len(), 4 + WorkerType::ALL.len());
+        assert_eq!(Role::ALL.len(), 3 + WorkerType::ALL.len());
         let mut names: Vec<&str> = Role::ALL.iter().map(|r| r.prompt_name()).collect();
         names.sort_unstable();
         let mut deduped = names.clone();
@@ -929,13 +910,13 @@ mod soul_tests {
     /// path to nothing, and the rung reports the file missing rather than empty.
     #[tokio::test]
     async fn the_rungs_that_open_a_ref_are_told_where_refs_start() {
-        assert!(DELIBERATION_BASE.contains("{raw_dir}"), "deliberation must name the root");
+        assert!(COGNITION_BASE.contains("{raw_dir}"), "cognition must name the root");
         assert!(WORKER_FILE_FILER_BASE.contains("{raw_dir}"), "the filer must name the root");
 
         let dir = tempfile::tempdir().unwrap();
         let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
         for text in [
-            deliberation_prompt(dir.path()).await,
+            cognition_prompt(dir.path()).await,
             role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await,
         ] {
             assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
@@ -968,34 +949,60 @@ mod soul_tests {
 
 
 
-    /// The handover, pinned from both ends. "Sole writer of the ledger" is not enforced
-    /// by any rail — it is enforced by exactly one prompt carrying the instruction. So
-    /// the thing that can silently go wrong is the instruction existing in two places, or
-    /// in none: two writers means one is wrong with no way to tell which, and none means
-    /// every promise the agent makes dies at the next restart.
+    /// "Sole writer of the ledger" is not enforced by any rail — it is enforced by exactly
+    /// one prompt carrying the instruction. So the thing that can silently go wrong is the
+    /// instruction existing in two places, or in none: two writers means one is wrong with
+    /// no way to tell which, and none means every promise the agent makes dies at the next
+    /// restart. The sweep over every role is
+    /// [`exactly_one_prompt_hands_out_the_ledger_pen`]; this pins the positive half.
     #[test]
     fn exactly_one_rung_is_told_to_write_the_ledger() {
         assert!(
             COGNITION_BASE.contains("only writer of the task ledger"),
             "Cognition must be told the pen is its"
         );
+    }
+
+    /// **The reply that used to be structural is now guidance, so it is pinned here.**
+    /// Deliberation's answer came back as a `WorkerReport` whether or not it chose to
+    /// send one — the host delivered it. Cognition has no such path: the only thing that
+    /// leaves the rung is `send_message`, and everywhere else in its prompt silence is a
+    /// legitimate outcome it is explicitly trusted to choose. That trust is correct for a
+    /// glance-up and catastrophic for a hand-down, where a person is sitting in front of
+    /// the voice waiting. `cognition::turn` carries a host-side backstop for it; this
+    /// asserts the prompt asks for the right thing in the first place, because a backstop
+    /// that fires every turn means the guidance is not working.
+    #[test]
+    fn a_hand_down_from_the_voice_is_always_answered() {
         assert!(
-            !DELIBERATION_BASE.contains("goes in the task ledger"),
-            "Deliberation must not still be opening tasks"
+            COGNITION_BASE.contains("A hand-down from the voice is always answered"),
+            "Cognition must be told the one case where silence is not an option"
         );
-        // And what replaced it has to be strictly stronger than what it removed —
-        // Deliberation used to record the duty itself, so "you may hand up" would be a
-        // regression dressed as a handover. Asserted on the instruction and the verb
-        // rather than on a name: nobody is reachable by name any more, so a name in this
-        // prompt would be the stale thing, not the load-bearing one.
         assert!(
-            DELIBERATION_BASE.contains("Hand it up")
-                && DELIBERATION_BASE.contains("send_message"),
-            "Deliberation must be told to hand what's owed up, and with what"
+            COGNITION_BASE.contains("Someone is waiting on the other end of that"),
+            "and must be told why — a hand-down is a person mid-conversation, not a memo"
+        );
+    }
+
+    /// The two jobs Deliberation existed for, now Cognition's. Both are the kind of thing
+    /// that reads as decoration and is load-bearing: without the first, the rung that can
+    /// open the photo does not know it should; without the second, Reaction's brief has no
+    /// writer at all and the voice walks into every turn blank.
+    #[test]
+    fn cognition_carries_what_deliberation_was_for() {
+        assert!(
+            COGNITION_BASE.contains("A ref is a path"),
+            "Cognition must be told that looking is opening a path, not calling a tool"
         );
         assert!(
-            !DELIBERATION_BASE.contains("to `cognition`"),
-            "and not by a name, which is no longer an address"
+            COGNITION_BASE.contains("{conversation_memory}"),
+            "Cognition must be pointed at the brief it writes"
+        );
+        // The read/dispatch line is the whole reason this merge is safe: a Cognition that
+        // grinds is a Cognition the conversation waits behind.
+        assert!(
+            COGNITION_BASE.contains("reading versus doing"),
+            "Cognition must be told where its own hands stop"
         );
     }
 
@@ -1030,12 +1037,12 @@ mod soul_tests {
     }
 
     /// The one thing in this prompt that can silently be wrong: the path. A relative
-    /// one would have Deliberation write a real file that no reader ever looks at —
+    /// one would have Cognition write a real file that no reader ever looks at —
     /// the failure would look like "the agent never bothered", not like a bug.
     #[tokio::test]
-    async fn deliberation_is_told_the_absolute_path_of_the_file_it_must_write() {
+    async fn cognition_is_told_the_absolute_path_of_the_file_it_must_write() {
         let dir = tempfile::tempdir().unwrap();
-        let prompt = deliberation_prompt(dir.path()).await;
+        let prompt = cognition_prompt(dir.path()).await;
 
         let expected = crate::mind::memory::layout::conversation_prompt_path(dir.path());
         assert!(expected.is_absolute(), "the target path must be absolute");
@@ -1047,18 +1054,16 @@ mod soul_tests {
             !prompt.contains("{conversation_memory}"),
             "the placeholder must be interpolated"
         );
-
-        // Two conversations must not be handed the same file.
     }
 
     #[tokio::test]
-    async fn deliberation_prompt_takes_the_operator_override() {
+    async fn cognition_prompt_takes_the_operator_override() {
         let dir = tempfile::tempdir().unwrap();
         let prompts = dir.path().join("prompts");
         std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("deliberation.local.md"), "Keep the brief in French.").unwrap();
+        std::fs::write(prompts.join("cognition.local.md"), "Keep the brief in French.").unwrap();
         install_prompts(dir.path()).unwrap();
-        let prompt = deliberation_prompt(dir.path()).await;
+        let prompt = cognition_prompt(dir.path()).await;
         assert!(prompt.contains("Keep the brief in French."));
     }
 

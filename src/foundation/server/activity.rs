@@ -57,7 +57,7 @@ fn project(statuses: &[Status]) -> AgentActivity {
         statuses.iter().map(|status| (status.id, status)).collect();
     let delegated_roots: HashSet<SessionId> = statuses
         .iter()
-        .filter(|status| matches!(status.role, Role::Deliberation | Role::Cognition))
+        .filter(|status| status.role == Role::Cognition)
         .map(|status| status.id)
         .collect();
 
@@ -68,14 +68,14 @@ fn project(statuses: &[Status]) -> AgentActivity {
         .filter(|status| status.role == Role::Reaction)
         .any(|status| status.busy || status.queued);
 
-    // There is one user-facing voice. Deliberation, Cognition, and their descendants
-    // are delegated work. Reflection and its descendants are maintenance, not a
-    // user-facing obligation represented by this status.
+    // There is one user-facing voice. Cognition and its descendants are delegated work.
+    // Reflection and its descendants are maintenance, not a user-facing obligation
+    // represented by this status.
     let delegated_busy_count = statuses
         .iter()
         .filter(active)
         .filter(|status| match status.role {
-            Role::Deliberation | Role::Cognition => true,
+            Role::Cognition => true,
             Role::Worker(_) => owner_chain_reaches(status.owner, &delegated_roots, &by_id),
             Role::Reaction | Role::Reflection => false,
         })
@@ -136,7 +136,7 @@ mod tests {
     fn separates_reaction_from_relevant_delegated_work() {
         let statuses = vec![
             status(1, Role::Reaction, None, true, false),
-            status(2, Role::Deliberation, None, true, false),
+            status(2, Role::Cognition, None, true, false),
             status(3, Role::Worker(WorkerType::General), Some(2), true, false),
             status(4, Role::Reflection, None, true, false),
             status(5, Role::Worker(WorkerType::General), Some(4), true, false),
@@ -156,17 +156,17 @@ mod tests {
     fn queued_conversation_work_counts_before_its_turn_starts() {
         let statuses = vec![
             status(1, Role::Reaction, None, false, false),
-            status(2, Role::Deliberation, None, false, true),
+            status(2, Role::Cognition, None, false, true),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);
     }
 
     #[test]
-    fn nested_deliberation_work_remains_conversation_work() {
+    fn nested_brain_work_remains_conversation_work() {
         let statuses = vec![
             status(1, Role::Reaction, None, false, false),
-            status(2, Role::Deliberation, None, false, false),
+            status(2, Role::Cognition, None, false, false),
             status(3, Role::Worker(WorkerType::General), Some(2), false, false),
             status(4, Role::Worker(WorkerType::General), Some(3), true, false),
         ];

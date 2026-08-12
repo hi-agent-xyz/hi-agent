@@ -279,8 +279,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         ]
         .into_iter()
         // Generation belongs to the rung that does the job. Reaction must stay a
-        // voice (its surface is the one hard rail), Deliberation reads, Cognition
-        // dispatches — a worker is the only rung that produces artifacts.
+        // voice (its surface is the one hard rail) and Cognition reads and dispatches —
+        // a worker is the only rung that produces artifacts.
         .chain(generation_tools())
         .collect(),
         // The reflection ("sleep") surface: a voice-less session that consolidates
@@ -438,7 +438,13 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // The ledger it owns needs no tool — a task is a plain facet on disk, and it has
         // the adapter's own Read/Write. That is why "sole writer of the ledger" is a
         // matter of which rung is *told* to write it, and why that instruction moving out
-        // of `deliberation.md` and into `cognition.md` is the whole of the handover.
+        // in `cognition.md` is what makes it true.
+        //
+        // **It reads with the adapter's own Read/Write, and that is why looking needs no
+        // tool here.** A photo arrives as a ref, a ref is a path, and the rung that must
+        // open it already can (`docs/arch/foundation.md`). The retired Deliberation had
+        // exactly this surface minus the dispatch verbs; folding it in added nothing to
+        // declare.
         //
         // No `say`, no `show`: it proposes, Reaction voices. Enforced three ways
         // that agree — absent here, refused at dispatch above, and its sink carries no
@@ -450,24 +456,6 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             session_status_tool(),
             session_messages_tool(),
         ],
-        // **Deliberation** — the conversation's reading and thinking. One tool, which is the
-        // whole shape of the rung: it hands work *up*, and everything else it does it
-        // does with the adapter's own Read/Write/fetch (`docs/arch/foundation.md`:
-        // "SendMessage · reads · write **only** its conversation's brief").
-        //
-        // No `session_status`/`session_messages`: those belong to owners, and
-        // Deliberation owns nothing — it creates no workers, and the hand-up to
-        // Cognition is one-way by design (invariant 3: a conversation that waited on the one
-        // global session would serialize every other conversation). The answer comes back as
-        // mail, not as something to poll for.
-        //
-        // No `look`/`act`/`video-text-to-text` either, and that is the correction this arm exists
-        // for. Until now a deliberation session was **opened as a worker**,
-        // so it got the effector surface and its `X-HI-Role` said `worker` — a rung
-        // wearing another rung's clothes. Its built-ins stay on: `foundation.md` is
-        // explicit that only Reaction's surface is a rail, and this one is sized for
-        // context.
-        Some("deliberation") => vec![send_message_tool()],
         // **Reaction** — the mouth. Its two expression channels plus the one verb that
         // reaches another agent, and nothing else: no reads, no fetches, no built-ins
         // (`docs/arch/agents.md#reaction`). A stale comment stood above the arm before
@@ -481,10 +469,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // the previous occupant of this arm survived: it held the legacy agentic
         // reaction's kit — `say`, `show`, `record_reflex`, and the two understanding tools —
         // long after no live role mapped to it, and read as a live surface in every
-        // review. It was also a live hazard, not just clutter: `SessionRole::Deliberation`
-        // stringifies to `deliberation`, which had no arm until the one above, so the
-        // moment anything constructed that role it would have landed *here* and been
-        // handed `say` (refused at dispatch) with no `send_message` at all.
+        // review.
         //
         // One tool lost its only declaration with this and was already unreachable:
         // `record_reflex`, which still has **no live role** — the recognizer and the
@@ -998,8 +983,8 @@ async fn dispatch_tool(
         }
         "create_worker" => {
             // Workers belong to the standing rungs — Cognition and Reflection, per
-            // `docs/arch/foundation.md`. Reaction speaks and Deliberation reads; neither
-            // dispatches, and a conversation-bound rung that could would be a second dispatcher
+            // `docs/arch/foundation.md`. Reaction speaks and does not dispatch; a
+            // conversation-bound rung that could would be a second dispatcher
             // (`docs/arch/agents.md`: "one dispatcher is the point").
             //
             // Structural, not just absent from the advertised surface — the same reason
@@ -1981,13 +1966,7 @@ mod surface_tests {
     /// The one verb has to be on every rung, or an agent is unreachable by design.
     #[test]
     fn every_role_can_send_a_message() {
-        for role in [
-            Some("reaction"),
-            Some("worker"),
-            Some("deliberation"),
-            Some("cognition"),
-            Some("reflection"),
-        ] {
+        for role in [Some("reaction"), Some("worker"), Some("cognition"), Some("reflection")] {
             assert!(
                 names(role).contains(&"send_message".to_string()),
                 "{role:?} must hold send_message"
@@ -1995,28 +1974,13 @@ mod surface_tests {
         }
     }
 
-    /// Deliberation's whole surface, pinned — and the reason it needed pinning: the
-    /// rung was **opened as a worker**, so its `X-HI-Role` said `worker`
-    /// and it was handed the effector kit (`look`, `act`, `video-text-to-text`) that belongs to the
-    /// rung that does the job. It reads and it hands up; that is one tool.
-    ///
-    /// No `session_status`: status reads belong to owners, and Deliberation owns
-    /// nothing. The hand-up to Cognition is one-way on purpose (invariant 3), so the
-    /// answer arrives as mail rather than as something to poll for.
-    #[test]
-    fn deliberation_hands_up_and_holds_nothing_else() {
-        assert_eq!(names(Some("deliberation")), vec!["send_message".to_string()]);
-    }
-
     /// An unknown role gets **nothing**, and that is the point.
     ///
     /// This arm used to hold the legacy agentic reaction's kit — `say`, `show`,
     /// `record_reflex`, and the understanding tools — with a comment saying no live role
-    /// mapped here. It was not merely dead: `Role::Deliberation` stringifies to
-    /// `deliberation`, which had no arm, so the moment that role was constructed it
-    /// would have landed here and been handed `say` (refused at dispatch) and no
-    /// `send_message` at all. A fallback that hands out someone else's surface turns a
-    /// missing arm into a silently wrong one.
+    /// mapped here. A fallback that hands out someone else's surface turns a missing arm
+    /// into a silently wrong one — which is exactly what happened when a rung was opened
+    /// under a role string with no arm and picked up `say` it could not use.
     #[test]
     fn an_unknown_role_gets_no_tools() {
         assert!(names(None).is_empty());
@@ -2028,7 +1992,7 @@ mod surface_tests {
     /// degrading to the empty fallback above.
     #[test]
     fn every_session_role_has_its_own_arm() {
-        for role in ["reaction", "worker", "deliberation", "cognition", "reflection"] {
+        for role in ["reaction", "worker", "cognition", "reflection"] {
             assert!(!names(Some(role)).is_empty(), "`{role}` fell through to the empty fallback");
         }
     }
@@ -2118,7 +2082,7 @@ mod surface_tests {
         let worker = names(Some("worker"));
         for task in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
             assert!(worker.contains(&task.to_string()), "worker must hold `{task}`");
-            for role in [Some("reaction"), Some("deliberation"), Some("cognition")] {
+            for role in [Some("reaction"), Some("cognition")] {
                 assert!(!names(role).contains(&task.to_string()), "{role:?} must not hold `{task}`");
             }
         }
@@ -2172,7 +2136,7 @@ mod surface_tests {
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
-        for role in [Some("reaction"), Some("worker"), Some("deliberation"), None] {
+        for role in [Some("reaction"), Some("worker"), None] {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),

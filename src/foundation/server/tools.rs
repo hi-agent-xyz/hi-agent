@@ -10,7 +10,7 @@
 //! caller's, taken from the `X-HI-Role` header on its `/mcp` connection — so a session
 //! can only ever see its own surface, and comparing two rungs meant opening two sessions
 //! with two headers, or reading the source. `GET /api/tools` returns every arm at once,
-//! which is the form the question is actually asked in: what does Deliberation have that
+//! which is the form the question is actually asked in: what does Cognition have that
 //! Reaction doesn't, and who can dispatch work.
 //!
 //! Names and descriptions only. The input schemas are most of the bytes and none of the
@@ -34,8 +34,8 @@ use crate::foundation::mcp::tools_for_role;
 /// precisely so that emptiness is visible — the arm previously held the legacy agentic
 /// reaction's toolset long after no live role mapped to it, and read as a live surface in
 /// every review.
-pub(crate) const ROLES: [&str; 6] =
-    ["worker", "reflection", "cognition", "deliberation", "reaction", "other"];
+pub(crate) const ROLES: [&str; 5] =
+    ["worker", "reflection", "cognition", "reaction", "other"];
 
 /// The role a listed surface is served under. `other` is the `_` arm, reached with no
 /// role at all.
@@ -146,8 +146,7 @@ mod tests {
         };
         assert!(names("reaction").contains(&"say".to_string()));
         assert!(!names("cognition").contains(&"say".to_string()), "only Reaction speaks");
-        assert_eq!(names("deliberation"), vec!["send_message".to_string()]);
-        for role in ["worker", "deliberation", "reaction"] {
+        for role in ["worker", "reaction"] {
             assert!(
                 !names(role).contains(&"create_worker".to_string()),
                 "`{role}` must not be able to dispatch work"

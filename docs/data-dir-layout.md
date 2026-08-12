@@ -37,7 +37,7 @@ data/
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
     tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
     prompts/         #   GENERATED system prompts, one per agent that needs state — agent-written, precious
-      conversation.md #    what the conversation carries forward (written by Deliberation)
+      conversation.md #    what the conversation carries forward (written by Cognition)
       cognition.md   #     the brain's
 
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
@@ -93,7 +93,7 @@ reconstructive part of this tree — it rewrites facets whole, but never the log
 Two things under `memory/` are **not** reconstructive and not reflection's: `tasks/` is the
 one ledger of what is owed (nothing else records a duty), and `memory/prompts/` holds the
 **generated** system prompts — one per agent that needs state, written by that agent, injected
-and capped by code, and rebuildable by nothing else. The conversation's is written by Deliberation,
+and capped by code, and rebuildable by nothing else. The conversation's is written by Cognition,
 because Reaction has no file access to write its own. It shares a leaf name with the bundled
 `prompts/` at the root because it is the same kind of thing; the parent directory is the whole
 of the difference. Contract in [`arch/data.md`](arch/data.md#memoryprompts).
