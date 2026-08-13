@@ -8,10 +8,17 @@
 //
 // 1. **Structure, because a flat list hid the delegation.** Every row was a sibling, so a
 //    worker and the rung that spawned it read as peers and there was no way to see that
-//    Cognition had three sessions out. Workers nest under their owner. One indent, rows not
-//    columns — the frame here is the window *minus* the conversation rail
-//    (`docs/arch/stage.md`, ~320-460px), so horizontal lanes would be unreadable at the
-//    width this actually renders at.
+//    Cognition had three sessions out. Workers nest under their owner, one indent, one
+//    level deep.
+//
+//    That nest sits in one of **three columns** — the outward ladder, Reflection, and what
+//    just ended, at 4 · 4 · 2 — rather than in one long page of full-width rows. A row
+//    spent the frame's whole width on a line that was mostly empty and then bought the
+//    task out of what was left, which is how a worker's instructions rendered as four
+//    words and an ellipsis. A column-width card gives each field its own line instead.
+//    The frame here is the window *minus* the conversation rail (`docs/arch/stage.md`,
+//    ~320-460px), which is what the columns fold on: three, then two, then one, off a
+//    container query, because the rail changes this frame without changing the window.
 // 2. **"Ended" is an answer, not an absence.** The switchboard is live-by-construction — an
 //    entry exists between register and unregister, and a finished worker is simply gone — so
 //    a watch that died thirty seconds ago looked identical to one that never existed. That is
@@ -341,6 +348,7 @@ export default function Workers() {
   }
 
   const running = live.length;
+  const [outward, inward] = split(groups);
 
   return (
     <div className="hi-workers">
@@ -356,43 +364,85 @@ export default function Workers() {
           </span>
         </header>
 
-        {running === 0 ? (
-          <div className="hi-workers__empty">
-            <div className="hi-workers__empty-big">{L.emptyBig}</div>
-            <div className="hi-workers__empty-sub">{L.emptySub}</div>
-          </div>
-        ) : (
-          <section className="hi-workers__section">
-            <h2 className="hi-workers__section-head">{L.live}</h2>
-            {groups.map((g) => (
-              <div className="hi-workers__group" key={g.key}>
-                {g.orphaned && <div className="hi-workers__group-note">{L.orphans}</div>}
-                {g.owner && <LiveRow row={g.owner} open={open} setOpen={setOpen} />}
-                {g.children.length > 0 && (
-                  <div className="hi-workers__kids" data-rooted={g.owner ? "true" : undefined}>
-                    {g.children.map((c) => (
-                      <LiveRow key={c.id} row={c} open={open} setOpen={setOpen} indent />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </section>
-        )}
+        {/* Three columns, and a card's column is a function of what it is — see `split`.
+            Each column is its own stack, so a worker appearing under Cognition two
+            seconds from now lengthens one column instead of re-flowing the page. */}
+        <div className="hi-workers__cols">
+          <h2 className="hi-workers__section-head hi-workers__col-head--live">{L.live}</h2>
+          <h2 className="hi-workers__section-head hi-workers__col-head--ended">{L.endedHead}</h2>
 
-        <section className="hi-workers__section">
-          <h2 className="hi-workers__section-head">{L.endedHead}</h2>
-          {ended.length === 0 ? (
-            <div className="hi-workers__none">{L.noEnded}</div>
+          {running === 0 ? (
+            <div className="hi-workers__empty">
+              <div className="hi-workers__empty-big">{L.emptyBig}</div>
+              <div className="hi-workers__empty-sub">{L.emptySub}</div>
+            </div>
           ) : (
-            ended.map((e) => (
-              <EndedRow key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
-            ))
+            <>
+              <div className="hi-workers__col hi-workers__col--outward">
+                {outward.map((g) => (
+                  <Group key={g.key} group={g} open={open} setOpen={setOpen} />
+                ))}
+              </div>
+              <div className="hi-workers__col hi-workers__col--inward">
+                {inward.map((g) => (
+                  <Group key={g.key} group={g} open={open} setOpen={setOpen} />
+                ))}
+              </div>
+            </>
           )}
-        </section>
+
+          <div className="hi-workers__col hi-workers__col--ended">
+            {ended.length === 0 ? (
+              <div className="hi-workers__none">{L.noEnded}</div>
+            ) : (
+              ended.map((e) => (
+                <EndedRow key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       {open && <Session addr={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+/** Which live column a group belongs in.
+ *
+ *  By what the rung is *for*, not by how many there are. The outward ladder — the
+ *  voice, the thinking behind it, the outward brain — is what someone opens this
+ *  page to watch, so it takes the first column. Reflection is the housekeeping rung
+ *  and takes the second, so its workers (a filer, a view-builder) can never push the
+ *  outward ladder down the page.
+ *
+ *  A rung this file has never heard of lands in the outward column rather than
+ *  nowhere — the same rule `tree` follows for an unknown role, and for the same
+ *  reason: a live session missing from this page is the one failure it cannot have.
+ *  Orphans keep that placement too, since their warning belongs where the eye is.
+ */
+const INWARD = new Set(["reflection"]);
+
+function split(groups) {
+  const outward = [];
+  const inward = [];
+  for (const g of groups) (g.owner && INWARD.has(g.owner.role) ? inward : outward).push(g);
+  return [outward, inward];
+}
+
+/** An owner and what it spawned — the unit that sits in a column. */
+function Group({ group, open, setOpen }) {
+  return (
+    <div className="hi-workers__group">
+      {group.orphaned && <div className="hi-workers__group-note">{L.orphans}</div>}
+      {group.owner && <LiveRow row={group.owner} open={open} setOpen={setOpen} />}
+      {group.children.length > 0 && (
+        <div className="hi-workers__kids" data-rooted={group.owner ? "true" : undefined}>
+          {group.children.map((c) => (
+            <LiveRow key={c.id} row={c} open={open} setOpen={setOpen} indent />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -485,10 +535,12 @@ function LiveRow({ row, open, setOpen, indent }) {
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: row.id, run: null })}
     >
-      <span className="hi-workers__line">
+      {/* The card's top strip: what this is, and how it is. The two facts that are true
+          of the session as a whole, in a fixed place on every card, so a column of them
+          is scannable without reading any of the prose below. */}
+      <span className="hi-workers__top">
         <span className={`hi-workers__dot${running ? " is-busy" : ""}`} aria-hidden />
         <span className="hi-workers__pill">{label(row)}</span>
-        <span className="hi-workers__task">{row.task || L.noTask}</span>
         {/* The answer to the question this page exists to ask, so it takes the slot the eye
             lands on. It reads `idle 4m`, not `5m`: `started` measures uptime, which is the
             same number for a session quiet since breakfast and one that finished a turn two
@@ -498,6 +550,11 @@ function LiveRow({ row, open, setOpen, indent }) {
           {L.state[state]} {elapsed(row.state_since || row.started)}
         </span>
       </span>
+
+      {/* Its own line, and it wraps. A worker's task is a paragraph of instruction — on
+          one shared line it was a clause and an ellipsis, which is the half that says
+          least. Two lines in a column this wide is most of a sentence. */}
+      <span className="hi-workers__task">{row.task || L.noTask}</span>
 
       {/* The durable facts, and nothing that could contradict the line above. */}
       <span className="hi-workers__meta">
@@ -550,14 +607,15 @@ function EndedRow({ row, open, setOpen }) {
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: String(row.session), run: row.run })}
     >
-      <span className="hi-workers__line">
+      <span className="hi-workers__top">
         <span className="hi-workers__dot" aria-hidden />
         <span className="hi-workers__pill">{label(row)}</span>
-        <span className="hi-workers__task">{row.task || L.noTask}</span>
         <span className="hi-workers__elapsed">
           {lost ? L.lostToRestart : when ? L.endedAgo(elapsed(when)) : ""}
         </span>
       </span>
+
+      <span className="hi-workers__task">{row.task || L.noTask}</span>
 
       <span className="hi-workers__meta">
         {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
@@ -948,6 +1006,13 @@ const CSS = `
     font-family: var(--font-display);
     --w-shadow: 0 1px 2px var(--shadow), 0 8px 22px var(--shadow);
     --w-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* The columns below fold on the width of *this frame*, not the window's. The two
+       are different by a rail: the same 1200px window is a 1200px frame with the
+       conversation collapsed and an ~800px one with it open, and a media query cannot
+       tell those apart. It is already the containing block (position: relative), so
+       inline-size containment adds no layout the panel depends on. */
+    container-type: inline-size;
+    container-name: workers;
   }
 
   /* The scroller is a child, not the root: the root stays the positioning context for the
@@ -1006,12 +1071,27 @@ const CSS = `
     text-align: right;
   }
 
-  .hi-workers__section + .hi-workers__section {
-    margin-top: 26px;
+  /* ── the three columns ────────────────────────────────────────────────────
+     4 · 4 · 2. The outward ladder and the housekeeping one get equal width because
+     both hold cards with a task paragraph on them; the ended column holds a title and
+     two chips, so it takes half of one of those and gives the width back.
+
+     Every item is placed explicitly — row and column — rather than flowed. With
+     auto-placement the "Just ended" heading lands wherever the item before it left
+     off, which is beside the live cards at one width and above them at another; the
+     heading of a column must sit on the column.
+
+     A short column simply ends: align-items:start so a stack of two does not
+     stretch to the height of a stack of six, and nothing re-orders when it grows. */
+  .hi-workers__cols {
+    display: grid;
+    grid-template-columns: 4fr 4fr 2fr;
+    align-items: start;
+    gap: 10px 18px;
   }
 
   .hi-workers__section-head {
-    margin: 0 0 10px;
+    margin: 0 0 4px;
     font-size: 11.5px;
     font-weight: 700;
     letter-spacing: .08em;
@@ -1019,8 +1099,56 @@ const CSS = `
     color: var(--fg-mute);
   }
 
-  .hi-workers__group + .hi-workers__group {
-    margin-top: 10px;
+  .hi-workers__col-head--live { grid-row: 1; grid-column: 1 / 3; }
+  .hi-workers__col-head--ended { grid-row: 1; grid-column: 3; }
+
+  .hi-workers__col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    grid-row: 2;
+  }
+
+  .hi-workers__col--outward { grid-column: 1; }
+  .hi-workers__col--inward { grid-column: 2; }
+  .hi-workers__col--ended { grid-column: 3; }
+
+  /* Nothing live: the answer takes both live columns rather than sitting in the
+     first one with an empty column beside it. */
+  .hi-workers__empty {
+    grid-row: 2;
+    grid-column: 1 / 3;
+  }
+
+  /* One column is not enough for three of them side by side — a card whose title is a
+     paragraph needs roughly 280px before it reads as a card at all. The ended column
+     goes under the two live ones first, since it is the one nobody opened this page
+     for; below that, everything stacks. */
+  @container workers (max-width: 900px) {
+    .hi-workers__cols { grid-template-columns: 1fr 1fr; }
+    .hi-workers__col-head--live { grid-row: 1; grid-column: 1 / 3; }
+    .hi-workers__col--outward { grid-row: 2; grid-column: 1; }
+    .hi-workers__col--inward { grid-row: 2; grid-column: 2; }
+    .hi-workers__empty { grid-row: 2; grid-column: 1 / 3; }
+    .hi-workers__col-head--ended { grid-row: 3; grid-column: 1 / 3; margin-top: 12px; }
+    .hi-workers__col--ended { grid-row: 4; grid-column: 1 / 3; }
+  }
+
+  @container workers (max-width: 560px) {
+    .hi-workers__cols { grid-template-columns: 1fr; }
+    .hi-workers__col-head--live,
+    .hi-workers__col--outward,
+    .hi-workers__col--inward,
+    .hi-workers__empty,
+    .hi-workers__col-head--ended,
+    .hi-workers__col--ended { grid-column: 1; }
+    .hi-workers__col-head--live { grid-row: 1; }
+    .hi-workers__col--outward { grid-row: 2; }
+    .hi-workers__empty { grid-row: 2; }
+    .hi-workers__col--inward { grid-row: 3; }
+    .hi-workers__col-head--ended { grid-row: 4; margin-top: 12px; }
+    .hi-workers__col--ended { grid-row: 5; }
   }
 
   .hi-workers__group-note {
@@ -1030,28 +1158,32 @@ const CSS = `
     color: var(--danger);
   }
 
-  /* One indent, and a rule to carry the eye from an owner down to what it spawned. The
-     frame here can be the window minus a ~400px conversation rail, so the inset stays small
-     and the nesting is one level only — depth would cost width the task line needs. */
+  /* One indent, and a rule to carry the eye from an owner down to what it spawned. A
+     column is a third of the frame, so the inset is smaller than it would be across the
+     page and the nesting stays one level only — depth would cost width the task needs. */
   .hi-workers__kids {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-top: 6px;
+    gap: 8px;
+    margin-top: 8px;
   }
 
   .hi-workers__kids[data-rooted="true"] {
-    margin-left: 14px;
-    padding-left: 14px;
+    margin-left: 10px;
+    padding-left: 10px;
     border-left: 2px solid var(--line);
   }
 
+  /* A card, not a row. The difference is not the corner radius: a row puts every field
+     on one line and buys the last one out of the first one's width, which is how a
+     worker's task became four words and an ellipsis. A card gives each field its own
+     line and lets the ones that are prose wrap. */
   .hi-workers__row {
     display: block;
     width: 100%;
-    padding: 12px 14px;
+    padding: 13px 15px 14px;
     background: var(--surface-strong);
-    border-radius: 14px;
+    border-radius: 16px;
     box-shadow: var(--w-shadow);
     transition: background 120ms var(--ease, ease);
   }
@@ -1076,19 +1208,16 @@ const CSS = `
     box-shadow: none;
   }
 
-  .hi-workers__row.is-ended + .hi-workers__row.is-ended {
-    margin-top: 6px;
-  }
-
   .hi-workers__row.is-ended[data-lost="true"] {
     border-color: var(--danger-line);
     background: var(--danger-wash);
   }
 
-  /* Wraps, because the frame here can be the window minus a ~400px conversation rail and
-     the state chip must not be bought out of the task's width. Below roughly 420px the
-     chip drops to its own row instead of squeezing the task to three characters. */
-  .hi-workers__line {
+  /* The card's top strip. Two short things at opposite ends, and it still wraps: the
+     ended column is a fifth of the frame, narrow enough that "Reflection" and
+     "ended 16h ago" do not always share a line, and wrapping is the right answer there
+     rather than shrinking either. */
+  .hi-workers__top {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1124,29 +1253,37 @@ const CSS = `
     border: 1px solid var(--line);
   }
 
-  /* min-width:0 so the ellipsis can happen at all — a flex child sizes to its content by
-     default and would push the elapsed time off the row instead of truncating. The 140px
-     basis is what makes the line wrap rather than shrink the task past legibility. */
+  /* The card's title, on its own line and wrapping to two. Two is the compromise the
+     column width forces: a rung's task is a phrase and fits in one, a worker's is the
+     instruction it was sent with and never fits at all — two lines is where the reader
+     has the subject and the verb, and where a wall of prose starts. The whole of it is
+     one click away in the panel. */
   .hi-workers__task {
-    flex: 1 1 140px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    margin-top: 9px;
     min-width: 0;
     font-size: 14.5px;
     font-weight: 620;
+    line-height: 1.35;
     letter-spacing: -.01em;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
+  /* Pushed to the strip's far end, opposite the pill — the same slot the live card's
+     state word holds, because they answer the same question one tense apart. */
   .hi-workers__elapsed {
     flex: none;
+    margin-left: auto;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--fg-mute);
   }
 
-  /* The live row's answer, in the slot the plain uptime used to hold. Pushed right so it
-     stays on the row's edge when the line wraps. */
+  /* The live card's answer. Pushed right so it stays on the card's edge when the strip
+     wraps. */
   .hi-workers__state {
     flex: none;
     margin-left: auto;
@@ -1181,16 +1318,20 @@ const CSS = `
   }
 
   /* Monospace, because it is nearly always a command or a tool name and proportional type
-     makes those hard to scan. One line: the panel is where the whole of it lives. */
+     makes those hard to scan. Two lines, not one: a card is a third of the frame wide, and
+     one line of mono at this size stops inside the shell invocation — before the command
+     it is running, which is the only part worth reading. The panel still has the whole. */
   .hi-workers__doing {
-    display: block;
-    margin-top: 8px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    margin-top: 9px;
     font-family: var(--w-mono);
     font-size: 11.5px;
+    line-height: 1.45;
     color: var(--accent);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   /* How long it has been on this one. Quieter than the line it qualifies — it is the
@@ -1199,15 +1340,19 @@ const CSS = `
     color: var(--fg-mute);
   }
 
+  /* What it said, clamped to three lines. On one line in a column this wide it was
+     about six words — not enough to tell two sessions apart, which is the only thing
+     this line is here to do. */
   .hi-workers__tail {
-    display: block;
-    margin-top: 6px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    margin-top: 7px;
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--fg-dim);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .hi-workers__lost {
