@@ -151,8 +151,8 @@ Three things are messages: what the person typed or said, a file they handed ove
 one `say` call. **One `say` is one message, whole** — the call already carries its
 complete text, so nothing is assembled from streamed chunks. Sentence splitting still
 happens, but only to pace TTS, and it never reaches the list. Views, worker reports,
-pulses, recognition signals and tool calls are not conversation and are not in it; they
-have the view slot, the journal and the inspector.
+mail between rungs, clock wakes, recognition signals and tool calls are not conversation
+and are not in it; they have the view slot, the journal and the inspector.
 
 **Nothing is ever rewritten or cleared**, which is what makes the ownership rule simple
 enough to keep. The previous contract had to decide what happened when a human line
@@ -259,15 +259,25 @@ to [`data/`](data.md); it appears here because it sits on the hot path.
 
 ### Glancing up
 
-**The host's whole timing surface is opening the agent's eyes on a cadence.** Three
-loops do that, each pacing itself from inside its own subsystem — the **pulse** for
-the conversation, the **reflection backoff** for consolidation, and **Cognition's
-glance-up** (one wake shortly after the process starts, then on the pulse cadence
-whenever anything is owed).
+**The host's whole timing surface is opening the agent's eyes on a cadence.** Two loops
+do that, each pacing itself from inside its own subsystem — **Cognition's glance-up** (one
+wake shortly after the process starts, then on the `pulse` cadence whenever anything is
+owed) and the **reflection backoff** for consolidation.
 
-Beside them sits the one deadline that is *not* a cadence: **the voice's own
-check-in**, below. It is not a fourth loop and not a scheduler — one slot, one
-deadline, one wake, no target and no payload.
+**The voice has no cadence, and that absence is deliberate.** A pulse used to wake the
+conversation loop on the same knob and run a turn into an empty room. Reaction is
+tools-off, so the wake handed it nothing it could not already see in the window it gets on
+*every* turn — the least-informed rung was the one deciding whether to speak. The journeys
+measured what that produced: two post-restart pulses, both concluding without a `say`,
+while a standing duty sat unread in the ledger ([gaps #1](../user-journeys/gaps.md)). It
+was also the most expensive wake in the system, because the projected window rides every
+turn and accumulates in the session. Unprompted speech comes instead from the rung that
+can actually check — Cognition glances up, reads the ledger, and messages Reaction, which
+is invariant 5 doing its job. **Reaction wakes on three things and no clock: input from
+the person, mail from another rung, and its own check-in.**
+
+That check-in is the one deadline that is *not* a cadence. It is not a third loop and not
+a scheduler — one slot, one deadline, one wake, no target and no payload.
 
 #### The check-in — the only thing that fires at a named time
 
@@ -279,13 +289,15 @@ a number nobody was told.
 
 **Why this is not the clock this design removed.** It holds exactly one deadline per
 voice, it fires nothing but that voice's own loop, it carries no task and no target,
-and a task's `due` still fires nothing. It is a second deadline in a `select!` that
-already carries the pulse's. Every property the removal was protecting survives:
-scheduling past a cadence remains the agent's own, arranged with the shell it has.
+and a task's `due` still fires nothing. With the pulse gone it is the only deadline in
+Reaction's `select!` that is not vendor recovery — which is an argument for keeping it
+exactly this small, never for letting it grow into the removed clock's replacement. Every
+property the removal was protecting survives: scheduling past a cadence remains the
+agent's own, arranged with the shell it has.
 
 **And a floor beneath it, because a promise can go unmade.** While the conversation's
 own thinking is still running and the voice left the silence open-ended, the host arms
-a check-in itself — five minutes, doubling to the pulse. **The dial on that gap is
+a check-in itself — five minutes, doubling to the glance-up cadence. **The dial on that gap is
 whether the last one was worth it**: a check-in that produced speech keeps the base
 cadence, one that passed in silence widens it. The voice is the only thing that knows
 whether there was anything to say, so it is the thing that sets the pace.
@@ -393,7 +405,7 @@ door at all. If a genuine need appears, the answer is a channel that says what i
 
 A deadline is met **at the next glance, not at its minute** — `due` is read by the
 projection and orders what is shown, and nothing in the host fires on it. At a
-30-minute pulse that is fine for a filing deadline and wrong for a wake-me-at-07:00
+30-minute glance-up that is fine for a filing deadline and wrong for a wake-me-at-07:00
 alarm, which is the agent's to arrange per the table above.
 
 What used to stand here as the second cost — *nothing wakes the voice when a promise

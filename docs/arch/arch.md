@@ -121,8 +121,9 @@ Each is a statement we can test, and each has a real failure behind it.
    the [projection test](data.md#what-earns-a-place).
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
    through Reaction, which decides whether it is worth saying and says it as a message.
-6. **The host opens the agent's eyes; the agent owns its own timers.** Three loops pace
-   glancing up — the pulse, the reflection backoff, Cognition's glance-up. Scheduling
+6. **The host opens the agent's eyes; the agent owns its own timers.** Two loops pace
+   glancing up — Cognition's glance-up and the reflection backoff. The voice has no
+   cadence of its own: it wakes on input, on mail, and on its own check-in. Scheduling
    past that is the agent's to arrange with the shell it already has; see
    [glancing up](host.md#glancing-up).
 7. **Recovery is reconstruction, not continuation.** Workers are volatile, so anything

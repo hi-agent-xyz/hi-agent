@@ -141,7 +141,7 @@ pub enum EventKind {
         id: String,
     },
     /// `input` is the human-readable incoming message(s) for this turn — the new
-    /// signals batch (human utterances, worker reports, pulses), not the
+    /// signals batch (human utterances, worker reports, mail, check-in wakes), not the
     /// full seeded prompt.
     TurnStarted { turn: u64, input: String },
     /// `reply` is the agent's spoken text for this turn (markers stripped).

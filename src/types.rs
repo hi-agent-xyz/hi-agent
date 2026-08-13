@@ -33,7 +33,8 @@ pub enum Channel {
     /// view, it *shows* one. Recorded so a restart can tell what is already up
     /// (and so it doesn't show the same thing twice).
     View,
-    /// The host's own pacing: a pulse firing, a return observed.
+    /// The host noticing the time: today a check-in coming due, and nothing else since
+    /// the voice's pulse was cut.
     /// Inbound, because it drives a turn exactly like an utterance does — but it
     /// came from no one, which is why it gets its own channel rather than being
     /// mixed into `text` where it would read as something the person said.
@@ -136,9 +137,9 @@ pub enum Origin {
     #[serde(alias = "reactor")]
     Reaction,
     Worker,
-    /// The host process itself — the pulse. No mind produced it; the machinery
-    /// did. Kept distinct from `Reaction` so a reader can tell what a rung emitted
-    /// from what it simply received.
+    /// The host process itself — a deadline coming due. No mind produced it; the
+    /// machinery did. Kept distinct from `Reaction` so a reader can tell what a rung
+    /// emitted from what it simply received.
     Host,
 }
 

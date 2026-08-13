@@ -120,7 +120,7 @@ what is held is a deadline, not an utterance.
 
 The conversation is one backend-owned, append-only message list, rendered by any number
 of windows. Three things are messages: what the person typed or said, a file they handed
-over, and one `say` call. Nothing else — a view, a worker's report, a pulse — is
+over, and one `say` call. Nothing else — a view, a worker's report, a clock wake — is
 conversation, and none of it appears here.
 
 `GET /api/out/text` returns one long-lived NDJSON response. The first object is the

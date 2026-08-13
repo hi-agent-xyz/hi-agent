@@ -193,7 +193,7 @@ const SCROLLBACK_DAYS: i64 = 30;
 const SCROLLBACK_DEFAULT: usize = 50;
 const SCROLLBACK_MAX: usize = 200;
 /// Journal lines to consider per scrollback request. Generous because most of what
-/// it reads is not conversation (views, pulses, recognition) and is filtered out.
+/// it reads is not conversation (views, clock wakes, recognition) and is filtered out.
 const JOURNAL_SCAN_MAX: usize = 5000;
 
 #[derive(serde::Deserialize)]

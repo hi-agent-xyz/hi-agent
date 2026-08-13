@@ -5,8 +5,8 @@
 //! `foundation`. Holds:
 //! - `capabilities` — the senses and actions (STT/TTS, vision, input, screen, …),
 //!   over the vendor adapters in `crate::foundation::vendors`.
-//! - `reaction` — the per-reaction loops: turn-taking, the pulse and reflection clocks,
-//!   the loader/assembler, the output sequencer, and delegated workers.
+//! - `reaction` — the per-reaction loops: turn-taking, the glance-up and reflection
+//!   clocks, the loader/assembler, the output sequencer, and delegated workers.
 //! - `reflex` — taught teach-and-fire quick actions that run with no model in the
 //!   loop (the cerebellum fast-path).
 //! - `attachments` — which out-channels have a live subscriber right now.

@@ -33,7 +33,7 @@ generation streams. Sentence splitting still happens downstream, but only to pac
 it never reaches the list.
 
 Everything else that moves through the system is not conversation and stays out: views
-(they have the view slot), worker reports, mail between rungs, pulses, check-in wakes,
+(they have the view slot), worker reports, mail between rungs, glance-up and check-in wakes,
 face and voice recognition, tool calls, the activity meter, wire frames. Each already
 has a home in the journal or the inspector. A check-in appears here only if it produced
 a `say` — which is correct, because then it is a thing that was said.

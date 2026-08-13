@@ -92,21 +92,34 @@ use uuid::Uuid;
 /// follows.
 const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 
-/// Default idle interval between host pulses — the conversation's recurring moment of
-/// self-attention. A pulse is not a schedule of work: it injects bare situational
-/// facts ("nothing new for 30m") and `reaction.md` tells the mind what such a moment is
-/// for (read down its active tasks, glance at setups it owns); most pulses should
-/// conclude with nothing to do or say. Override via `pulse`; `0`/`off`
-/// disables. Boot is not a special case — the first pulse after the host starts
-/// simply carries that fact.
+/// Default idle interval between glance-ups — the agent's recurring moment of
+/// self-attention, and **Cognition's alone**. It is not a schedule of work: it injects
+/// bare situational facts ("nothing new for 30m") and `cognition.md` tells the brain
+/// what such a moment is for (read down the ledger, glance at the setups it owns); most
+/// of them should conclude with nothing to do. Override via `pulse`; `0`/`off` silences
+/// the recurring arm and never the boot one, which is restart recovery rather than a
+/// cadence (see [`cognition`]).
+///
+/// **The voice has no pulse, and that absence is deliberate.** The conversation loop used
+/// to wake itself on this same cadence and run a turn into an empty room. Three things
+/// killed it. Reaction is tools-off, so a wake handed it nothing it could not already see
+/// in the window it gets on *every* turn — the least-informed rung was the one deciding
+/// whether to speak. The measured outcome was silence at the exact moment there was
+/// something to do: two post-restart pulses, both concluding without a `say`, while a
+/// standing duty sat unread in the ledger (`docs/user-journeys/gaps.md#1`). And it was the
+/// most expensive wake in the system, because the projected window rides every turn and
+/// accumulates in the session. Unprompted speech now comes from the rung that can
+/// actually check: Cognition glances up, reads the ledger, and mails the voice — which
+/// drives a turn like any other reason to speak.
 const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
 
-/// Resolve the pulse interval from the stored `pulse` tunable in duration grammar
-/// if set (`None` for `0`/`off` — pulses disabled), else [`DEFAULT_PULSE`].
-/// Shared with [`cognition`], which paces its own glance-up on the same knob: one
-/// "how often does this agent look up from what it's doing" setting, not a conversation one
-/// plus a brain one that can disagree. It also keeps journey testing honest — dropping
-/// `pulse` for a session speeds up every wake there is, rather than all but one.
+/// Resolve the glance-up interval from the stored `pulse` tunable in duration grammar
+/// if set (`None` for `0`/`off` — the recurring arm disabled), else [`DEFAULT_PULSE`].
+/// Read by [`cognition`], which paces itself on it, and by [`check_in_cap`], which takes
+/// it as the ceiling the check-in floor widens to: one "how often does this agent look up
+/// from what it's doing" setting, not a brain one plus a conversation one that can
+/// disagree. It also keeps journey testing honest — dropping `pulse` for a session
+/// speeds up every cadence there is, rather than all but one.
 pub(super) fn pulse_interval() -> Option<Duration> {
     duration_tunable(config::tunables::get(config::KEY_PULSE), DEFAULT_PULSE)
 }
@@ -130,9 +143,9 @@ fn check_in_interval() -> Option<Duration> {
 
 /// The ceiling the floor backs off to. A job that runs for hours should not be
 /// interrupted every five minutes, so each consecutive host-armed check-in doubles the
-/// gap — the reflection backoff's shape — and stops at the pulse, which is already the
-/// answer to "how often does this agent look up from what it's doing". A word from the
-/// voice or the person resets it: the conversation is live again.
+/// gap — the reflection backoff's shape — and stops at the glance-up cadence, which is
+/// already the answer to "how often does this agent look up from what it's doing". A word
+/// from the voice or the person resets it: the conversation is live again.
 fn check_in_cap() -> Duration {
     pulse_interval().unwrap_or(DEFAULT_PULSE)
 }
@@ -686,17 +699,14 @@ const LOOP_QUEUE_CAPACITY: usize = 64;
 enum LoopInput {
     Human(Signal),
     Worker(workers::WorkerReport),
-    /// A host pulse firing — the recurring moment of self-attention. Carries
-    /// bare situational facts; what to do with such a moment is `reaction.md`'s job.
-    Pulse { note: String },
     /// The voice's own check-in coming due — it said they'd hear back by now, or it
     /// left a silence open-ended while its thinking ran and the host put a floor under
     /// it ([`tools::NextWord`]).
     ///
-    /// Its own variant, not a `Pulse` with a different note: a pulse is a quiet moment
-    /// the prompt says almost nothing is worth breaking, while this is the moment a
-    /// word was *owed*. Rendering it as `(pulse)` would tell the voice to stay quiet at
-    /// precisely the instant it should speak.
+    /// **The only clock this loop still answers to**, and it never wears the `(pulse)`
+    /// marker Cognition's glance-up does. That marker means a quiet moment almost nothing
+    /// is worth breaking; this is the moment a word was *owed*, and rendering the two the
+    /// same would tell the voice to stay quiet at precisely the instant it should speak.
     CheckIn { owed: tools::Owed },
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
@@ -1006,28 +1016,25 @@ pub async fn start(
 }
 
 /// Channels that do **not** count as a conversation being alive. Exactly one: `clock`,
-/// where the host's own wakes are recorded — a pulse firing, a return observed.
+/// where the host's own wakes are recorded — today a check-in coming due, and nothing
+/// else since the voice's pulse was cut.
 ///
-/// This is load-bearing. Pulses are journaled (a restart otherwise sees a turn with
-/// no cause), but a heartbeat is not a conversation, and anything that spends money
-/// on the strength of "this conversation looks busy" would otherwise feed itself: the
-/// re-warm gate below re-warms an idle conversation, whose first act is a pulse, whose row
-/// makes the conversation look freshly active, so it is re-warmed again next boot —
-/// forever, each one costing a subprocess and an LLM call. Reflection has the same
-/// shape (see [`heartbeat::reflectable`]): a conversation left alone would tick its way over
-/// the frontier threshold on heartbeats and reflect on nothing.
+/// This is load-bearing. Those wakes are journaled (a restart otherwise sees a turn with
+/// no cause), but the host noticing the time is not a conversation, and anything that
+/// spends money on the strength of "this conversation looks busy" would feed itself: a
+/// conversation left alone would tick its way over the frontier threshold on its own clock
+/// rows and reflect on nothing. [`heartbeat::reflectable`] is the reader that makes that
+/// concrete — and now the only one, the re-warm gate that used to be the other having gone
+/// when the boot warm-up became unconditional.
 ///
 /// Excluding the channel is exact rather than a heuristic on entry bodies: nothing
 /// but the clock is ever written there, which is the reason the clock got a channel
 /// of its own. Note this excludes clock rows from being a *reason* to act — never
 /// from being read; a reconstruction still sees every wake.
 ///
-/// **Only the clock belongs here, and `worker` specifically does not** — this list is
-/// read by two questions, and they want different answers. "Is the conversation alive?" (the
-/// re-warm gate below) and "is there enough here to consolidate?"
-/// ([`heartbeat::reflectable`]) share it, and a worker report is not presence but *is*
-/// content worth settling into an episode. Excluding it here would silently stop
-/// finished work from ever reaching the episodes.
+/// **Only the clock belongs here, and `worker` specifically does not**: a worker report is
+/// not presence but *is* content worth settling into an episode. Excluding it here would
+/// silently stop finished work from ever reaching the episodes.
 const NON_ACTIVITY_CHANNELS: [&str; 1] = ["clock"];
 
 
@@ -1231,9 +1238,9 @@ enum Woke {
     /// The process-wide vendor gate changed level. Re-read [`Vendor::turn_gate`];
     /// the notification carries no state and therefore cannot go stale.
     Vendor,
-    /// A deadline came up: the pulse, a vendor-recovery probe, or the voice's own
-    /// check-in ([`tools::NextWord`]). Which one is worked out on the far side, from
-    /// the deadlines themselves, so all three keep one arm.
+    /// A deadline came up: a vendor-recovery probe, or the voice's own check-in
+    /// ([`tools::NextWord`]). Which one is worked out on the far side, from the
+    /// deadlines themselves, so both keep one arm.
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,
@@ -1305,15 +1312,6 @@ async fn reaction_loop(
             warm_sessions(&reaction, voice_id, &mut reaction_session).await;
     }
 
-    // Pulse bookkeeping: the host's recurring self-attention timer. `last_activity`
-    // resets on every turn, so pulses only fire into genuine quiet; the first pulse
-    // after the loop stands up also carries how long ago the host process started,
-    // which is all "wake on boot" amounts to.
-    let pulse_every = pulse_interval();
-    let loop_started = Instant::now();
-    let mut last_activity = Instant::now();
-    let mut pulsed_once = false;
-
     // The check-in floor's current gap, doubling while the voice keeps leaving an
     // open-ended silence over running work and resetting the moment either side speaks
     // to it. `None` = `check_in: off`, i.e. only the check-ins the voice arms itself.
@@ -1351,12 +1349,9 @@ async fn reaction_loop(
                 break 'wait;
             }
             let down = !matches!(gate, TurnGate::Go);
-            // While down, suppress pulses — they call the model and would just fail.
-            let pulse_at = if down { None } else { pulse_every.map(|d| last_activity + d) };
-            // The voice's own check-in. Suppressed while down for the same reason as the
-            // pulse, but *not* dropped: unlike a return — a moment, stale once it has
-            // passed — an owed word is still owed after an outage, and later rather than
-            // never is the whole point of it.
+            // The voice's own check-in. Suppressed while down — it calls the model and
+            // would just fail — but *not* dropped: an owed word is still owed after an
+            // outage, and later rather than never is the whole point of it.
             let check_in_at = if down { None } else { speaking.next_word.due_at() };
             // While down, the recovery timer: the backoff retry deadline (429/generic).
             // Up → no such timer.
@@ -1366,10 +1361,7 @@ async fn reaction_loop(
                 // No conversation-local deadline: the process-wide gate owns recovery.
                 TurnGate::Hold => None,
             };
-            let deadline = [pulse_at, recover_at, check_in_at]
-                .into_iter()
-                .flatten()
-                .min();
+            let deadline = [recover_at, check_in_at].into_iter().flatten().min();
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
@@ -1470,24 +1462,6 @@ async fn reaction_loop(
                         }
                         continue 'wait;
                     }
-                    if let Some(at) = pulse_at
-                        && at <= now
-                    {
-                        let idle_m = (now - last_activity).as_secs() / 60;
-                        let note = if pulsed_once {
-                            format!("nothing new here for {idle_m}m")
-                        } else {
-                            let up_m = (now - loop_started).as_secs() / 60;
-                            format!(
-                                "nothing new here for {idle_m}m — you've just come back up (host process started {up_m}m ago)"
-                            )
-                        };
-                        pulsed_once = true;
-                        // Reset so a swallowed pulse doesn't re-fire in a tight loop.
-                        last_activity = now;
-                        tracing::info!("pulse fired");
-                        enqueue(&reaction, &mut workers, &mut batch, LoopInput::Pulse { note }).await;
-                    }
                     // The word the voice owes them. Taking it disarms it, so a voice that
                     // reads the room and stays quiet is not re-woken for the same overdue
                     // promise on the next iteration.
@@ -1498,7 +1472,6 @@ async fn reaction_loop(
                         // and both of those went with the presence gate. What the voice
                         // says now lands in the conversation and waits there.
                         tracing::info!(promised = owed.promised, "check-in fired");
-                        last_activity = now;
                         enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
                             .await;
                     }
@@ -1509,9 +1482,10 @@ async fn reaction_loop(
             }
         }
 
-        // A timer can resolve with nothing actually due; don't run an empty turn.
-        // (While Down, the probe only breaks 'wait with non-empty mail, so this
-        // guard is for the Up path's pulse timer.)
+        // A wake can resolve with nothing to run — [`enqueue`] hands a worker's report to
+        // another owner without ever pushing it, and a check-in can be cleared between the
+        // deadline and the take. Don't run an empty turn. (While Down, the probe only
+        // breaks 'wait with non-empty mail, so this guard is the Up path's.)
         if batch.is_empty() {
             continue;
         }
@@ -1611,10 +1585,6 @@ async fn reaction_loop(
             }
         }
 
-        // Any completed turn is activity: the pulse clock restarts, so pulses
-        // only ever fire into genuine quiet.
-        last_activity = Instant::now();
-
         // A promise is discharged by the thing it was about coming back. This turn was
         // handed its own thinking with an instruction to relay it, so waking the voice
         // later to say "you told them they'd hear by now" would be the host arguing with
@@ -1629,8 +1599,8 @@ async fn reaction_loop(
         // worth it**. A word from the person, a number the voice just named, or a check-in
         // that actually produced speech all mean the cadence is earning its keep, so it
         // stays at the base gap. One that came and went in silence doubles it, up to the
-        // pulse — a job running for hours must not be interrupted every five minutes, and
-        // the voice is the only thing that knows whether there was anything to say.
+        // glance-up cadence — a job running for hours must not be interrupted every five
+        // minutes, and the voice is the only thing that knows whether there was anything to say.
         // (The reflection backoff's shape, for the same reason.)
         let spoke = speaking.said.load(Ordering::Relaxed) > said_before;
         if by_human || spoke || speaking.next_word.peek().is_some_and(|o| o.promised) {
@@ -1644,9 +1614,9 @@ async fn reaction_loop(
         // from resting entirely on the model remembering to. A promise the voice made
         // itself outranks it — `floor` leaves an armed slot alone.
         //
-        // Only while the conversation's own thinking is still running. A quiet agent
-        // with nothing in flight owes nobody a word, and the pulse is already the wake
-        // for that. **Work handed further up is out of scope on purpose**: Cognition's
+        // Only while the conversation's own thinking is still running. A quiet agent with
+        // nothing in flight owes nobody a word — and nothing else wakes this loop into an
+        // empty room. **Work handed further up is out of scope on purpose**: Cognition's
         // workers are not this loop's to describe, and their substance comes back down
         // the report path, which drives a turn of its own.
         if let Some(gap) = check_in_gap
@@ -1662,8 +1632,7 @@ async fn reaction_loop(
         // instead of one redundant turn each. Without this, each nudge that landed
         // mid-turn ("好了吗?" → "准备好了吗?") pops alone on re-entry and re-answers.
         // Up only: while down, mail is held deliberately and the backoff path owns
-        // catch-up, so leave the queue for it. `try_recv` never surfaces a pulse
-        // (those are generated inside `'wait`, not sent over `inbound`).
+        // catch-up, so leave the queue for it.
         if !reaction.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
                 enqueue(&reaction, &mut workers, &mut batch, extra).await;
@@ -1672,9 +1641,9 @@ async fn reaction_loop(
     }
 }
 
-/// Render just the human requests in a batch (skipping worker reports and pulses) — the
-/// text handed down to Cognition as the turn's task. Skipping reports is what keeps it
-/// from re-ingesting its own prior output (a feedback loop).
+/// Render just the human requests in a batch (skipping worker reports and the host's own
+/// wakes) — the text handed down to Cognition as the turn's task. Skipping reports is what
+/// keeps it from re-ingesting its own prior output (a feedback loop).
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
     use std::fmt::Write as _;
@@ -1855,7 +1824,7 @@ async fn run_reaction_turn(
         // **This is a post, not a spawn.** It used to open (or resume) a whole session
         // per conversation; Cognition is already standing, already has an inbox, and
         // already wakes on it, so the hand-down is one line into machinery that existed
-        // anyway. Nothing to hand off on a pure report/pulse turn.
+        // anyway. Nothing to hand off on a turn nobody spoke into — a report, a check-in.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
             *handed_down = hand_down_to_cognition(reaction, task).await;
@@ -2239,7 +2208,7 @@ async fn record_out_as(
 }
 
 /// Append one turn-driving signal that reached the mind without crossing a wire —
-/// a pulse, a return, a worker's report. Without these the log shows a turn's
+/// a check-in coming due, a worker's report, mail. Without these the log shows a turn's
 /// output with nothing that could have caused it, and a restart cannot tell that
 /// the turn happened at all, let alone why.
 async fn record_in(
@@ -2356,9 +2325,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Worker(report) => {
                 let _ = writeln!(s, "{}", workers::render_report(report));
             }
-            LoopInput::Pulse { note } => {
-                let _ = writeln!(s, "{}", render_pulse(note));
-            }
             LoopInput::CheckIn { owed } => {
                 let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
             }
@@ -2381,13 +2347,6 @@ acknowledge it — tell them what you found):\n{}",
         }
     }
     s
-}
-
-/// Shared with [`cognition`] so both rungs' quiet moments arrive under the same
-/// `(pulse)` marker — the prompts already key on that word, and a brain-only variant
-/// would be a second vocabulary for one thing.
-pub(super) fn render_pulse(note: &str) -> String {
-    format!("(pulse) {note}")
 }
 
 /// What a check-in looks like in the turn's "New signals".
@@ -2445,10 +2404,9 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             Origin::Worker,
             workers::render_report_plainly(report),
         )),
-        LoopInput::Pulse { note } => Some((Channel::Clock, Origin::Host, render_pulse(note))),
-        // On `Channel::Clock` with the pulse and the return, and for the same reason:
-        // a check-in is the host noticing the time, not something the person said. It
-        // must not hold a conversation warm by itself.
+        // On `Channel::Clock`, and the only thing left there: a check-in is the host
+        // noticing the time, not something the person said. It must not hold a
+        // conversation warm by itself ([`NON_ACTIVITY_CHANNELS`]).
         LoopInput::CheckIn { owed } => Some((
             Channel::Clock,
             Origin::Host,
@@ -2747,12 +2705,14 @@ mod check_in_tests {
         assert!(note.contains("11m"), "10m promised + 1m late: {note}");
     }
 
-    /// A pulse says almost nothing is worth breaking a silence for; a check-in is the
-    /// moment a word was owed. Sharing the `(pulse)` marker would tell the voice to
-    /// stay quiet at precisely the instant it should speak.
+    /// The voice's only clock wake must read as the moment a word was *owed*. Cognition's
+    /// `(pulse)` marker means the opposite — a quiet moment almost nothing is worth
+    /// breaking — and wearing it here would tell the voice to stay quiet at precisely the
+    /// instant it should speak.
     #[test]
-    fn a_check_in_is_not_a_pulse() {
+    fn a_check_in_never_wears_the_glance_up_marker() {
         let note = render_check_in(&owed(300, false), Instant::now());
         assert!(!note.contains("(pulse)"), "{note}");
+        assert!(note.contains("(check-in)"), "{note}");
     }
 }

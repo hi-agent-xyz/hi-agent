@@ -113,7 +113,7 @@ NDJSON stream: the first line is the current window whole, and later lines appen
 
 Three things become messages and nothing else does: what the person typed or said, a
 file they handed over, and one `say` call — whole, never streamed in as it is generated.
-Views, worker reports, pulses and tool calls are not conversation and stay out.
+Views, worker reports, clock wakes and tool calls are not conversation and stay out.
 
 The backend owns the list. There are no client IDs, cursors, acknowledgements or read
 receipts, and no window ever tells the backend what it has seen. The list is seeded from

@@ -36,8 +36,11 @@ pub const ENV_LLM_KEY: &str = "HI_AGENT_LLM_KEY";
 /// Reasoning effort for a thread's turns (e.g. low | medium | high), passed through as
 /// codex's `model_reasoning_effort`.
 pub const KEY_EFFORT: &str = "effort";
-/// Idle interval between host pulses. Duration grammar (`90s`/`30m`/`1h`);
-/// `0`/`off` disables pulses; unset / unparseable → the built-in default.
+/// Idle interval between Cognition's glance-ups — how often the brain looks up from what
+/// it is doing and reads down the ledger. Duration grammar (`90s`/`30m`/`1h`); `0`/`off`
+/// silences the recurring arm but never the one wake shortly after boot, which is restart
+/// recovery rather than a cadence; unset / unparseable → the built-in default. The voice
+/// has no cadence of its own — it is woken by input, mail, and its own check-in.
 pub const KEY_PULSE: &str = "pulse";
 /// How long the voice may leave an open-ended silence standing while its own thinking
 /// is still running, before the host wakes it to say where things stand. Duration

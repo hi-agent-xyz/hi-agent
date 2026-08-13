@@ -65,7 +65,7 @@ Four properties, each earned:
    surviving. This is the claim the rest rests on — recovery reads the log, never a live
    process.
 2. **Both directions, everything that crossed.** In *and* out: what was said and what was
-   shown, not just what was sent to us, and pulse-driven wakes and worker reports alongside
+   shown, not just what was sent to us, and the host's own wakes and worker reports alongside
    them. A restart that cannot reconstruct what the agent already said will say it again.
    **The honest gap today is outbound**, which is barely recorded — the concept is decided,
    the coverage is not there yet.

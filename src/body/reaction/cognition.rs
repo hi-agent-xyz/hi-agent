@@ -129,7 +129,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     // Two wakes, deliberately different things: the **boot** one fires once because a
     // restart happened, and the **recurring** one fires into idleness because a duty
     // can die quietly at any time. `last_turn` resets on every turn, so the second is
-    // a quiet-moment glance rather than a metronome — the conversation pulse's shape.
+    // a quiet-moment glance rather than a metronome.
     let started = Instant::now();
     let mut last_turn = started;
     let mut woke_at_boot = false;
@@ -384,8 +384,8 @@ async fn sleep_until_opt(at: Option<Instant>) {
 
 /// What a timer wake carries into the turn, or `None` when nothing is owed.
 ///
-/// Bare situational facts, exactly like the conversation pulse — *what a quiet moment is for*
-/// is `cognition.md`'s job, and it already says: read down the active tasks, check the
+/// Bare situational facts and nothing else — *what a quiet moment is for* is
+/// `cognition.md`'s job, and it already says: read down the active tasks, check the
 /// things we own are actually alive, and read each check's real output because a probe
 /// that returns nothing means **down**, not fine. That guidance has been in the prompt
 /// since before anything could deliver a pulse to this rung.
@@ -398,7 +398,7 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
         // opposite reading is the whole failure this arm exists to fix, one level up.
         Err(err) => {
             tracing::warn!(error = %err, "cognition could not read the ledger; waking anyway");
-            return Some(super::render_pulse(
+            return Some(render_pulse(
                 "I couldn't read the task ledger just now — whatever is active is not in front of me",
             ));
         }
@@ -519,11 +519,19 @@ fn note_for(active: usize, first: bool, span: Duration) -> Option<String> {
 /// them to tell a restart from an ordinary quiet moment.
 fn pulse_line(first: bool, span: Duration) -> String {
     let m = span.as_secs() / 60;
-    super::render_pulse(&if first {
+    render_pulse(&if first {
         format!("you've just come back up (host process started {m}m ago)")
     } else {
         format!("nothing new for {m}m")
     })
+}
+
+/// The marker a quiet moment arrives under, and **this rung's alone**. It lived in
+/// [`super`] while the conversation loop had a pulse of its own; that loop no longer wakes
+/// itself, so the word now names exactly one thing — the brain glancing up — and lives
+/// with it. `cognition.md` keys on it.
+fn render_pulse(note: &str) -> String {
+    format!("(pulse) {note}")
 }
 
 #[cfg(test)]
@@ -618,9 +626,9 @@ mod tests {
         assert!(text.lines().count() < 12, "still a list: {text}");
     }
 
-    /// Both notes are bare situational facts under the same `(pulse)` marker the conversation
-    /// loop uses — `cognition.md` keys on that word, and on "the first pulse after the
-    /// host process starts" to know a restart is what it is looking at.
+    /// Both notes are bare situational facts under the `(pulse)` marker — `cognition.md`
+    /// keys on that word, and on "the first pulse after the host process starts" to know a
+    /// restart is what it is looking at.
     #[test]
     fn the_boot_note_says_a_restart_happened_and_the_others_do_not() {
         let boot = note_for(3, true, Duration::from_secs(120)).unwrap();

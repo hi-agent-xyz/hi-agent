@@ -139,8 +139,8 @@ pub(super) struct Owed {
 /// couple of minutes, I'll tell you when it's up") and, in the same breath, that the
 /// number is decorative: *"You have no timer — nothing taps you on the shoulder at the
 /// minute you named."* What actually woke the voice was the work coming back, the
-/// person speaking, the person returning to the window, or the pulse — half an hour by
-/// default. A promise made in minutes against a wake measured in half-hours is one the
+/// person speaking, the person returning to the window, or the pulse the voice then had —
+/// half an hour by default. A promise made in minutes against a wake measured in half-hours is one the
 /// host cannot keep, and the person closes the gap by asking "progress?", which is the
 /// failure `reaction.md` calls out in its own words: *a check-in they have to ask for
 /// is already late*.
@@ -149,8 +149,9 @@ pub(super) struct Owed {
 /// It holds exactly one deadline, process-wide-per-voice; it fires nothing but the
 /// reaction loop; it carries no task, no target and no payload beyond a note; and the
 /// only moment it can name is one the voice just said out loud (or a floor under a
-/// silence it left open). A task's `due` still fires nothing. What it adds is a second
-/// deadline in a `select!` that already carries the pulse's.
+/// silence it left open). A task's `due` still fires nothing. Since the voice's pulse was
+/// cut it is the *only* cadence-free deadline that loop holds — which is an argument for
+/// keeping it exactly this small, not for letting it take the pulse's place.
 ///
 /// Written from the `/mcp` task (`say`) and read by the loop, so it is a shared cell
 /// rather than loop-private state. A `std::sync::Mutex` because every critical section

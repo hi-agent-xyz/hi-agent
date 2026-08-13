@@ -5,8 +5,8 @@
 //! is there too: a reconstruction holding one side of the conversation will happily
 //! say the same thing again, and show the same view again. So this writes a mixed
 //! run of everything that can cross the conversation — the person typing, the agent's worded
-//! reply, that reply going out as speech, a view put on screen, a pulse, cognition
-//! reporting back — and reads it out through the snapshot path a fresh session is
+//! reply, that reply going out as speech, a view put on screen, a check-in coming due,
+//! cognition reporting back — and reads it out through the snapshot path a fresh session is
 //! actually opened with.
 
 use chrono::{DateTime, Duration, Utc};
@@ -67,7 +67,13 @@ async fn a_fresh_session_reads_back_what_was_said_and_shown() {
         signal_in("0001", Channel::Text, Origin::Human, at(0), "how did Q3 land?"),
         signal_out("0002", Channel::Text, at(1), "pulling the numbers now."),
         signal_out("0003", Channel::Audio, at(1), "spoke the reply aloud (audio/mpeg, 18432 bytes)"),
-        signal_in("0004", Channel::Clock, Origin::Host, at(3), "(pulse) nothing new here for 3m"),
+        signal_in(
+            "0004",
+            Channel::Clock,
+            Origin::Host,
+            at(3),
+            "(check-in) You've been quiet 3m while your own thinking runs",
+        ),
         signal_in(
             "0005",
             Channel::Worker,
@@ -93,7 +99,7 @@ async fn a_fresh_session_reads_back_what_was_said_and_shown() {
 
     // Why a turn happened at all, when nobody said anything: the host's own clock,
     // and its own thinking coming back.
-    let pulsed = find(&recon, ">/clock (pulse) nothing new here for 3m");
+    let woken = find(&recon, ">/clock (check-in) You've been quiet 3m");
     let thought = find(&recon, ">/worker cognition finished");
 
     // What was shown — the half that used to leave no trace at all, so a restart
@@ -107,7 +113,7 @@ async fn a_fresh_session_reads_back_what_was_said_and_shown() {
     // Order is the only clock a reconstruction has (the transcript carries no
     // timestamps), so it has to survive the cross-channel merge.
     assert!(
-        asked < replied && replied < spoke && spoke < pulsed && pulsed < thought && thought < shown,
+        asked < replied && replied < spoke && spoke < woken && woken < thought && thought < shown,
         "reconstruction is out of order:\n{recon}"
     );
 }
@@ -127,7 +133,7 @@ async fn the_new_channels_use_the_same_on_disk_layout() {
         .await
         .expect("append");
     mem.journal
-        .append(signal_in("0002", Channel::Clock, Origin::Host, ts, "(pulse) quiet"))
+        .append(signal_in("0002", Channel::Clock, Origin::Host, ts, "(check-in) quiet"))
         .await
         .expect("append");
 

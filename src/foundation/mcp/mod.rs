@@ -1998,8 +1998,8 @@ const VIDEO_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 /// **The clip comes back as mail, not as a return value.** A tool call that blocked
 /// for the minutes this takes would hold the session's turn open against a network
 /// timeout it does not control. `Registry::post` is the host putting something in an
-/// agent's inbox (`from: None`) — the same path a pulse takes — so the arrival wakes
-/// the worker exactly as any other message would.
+/// agent's inbox (`from: None`) — so the arrival wakes the worker exactly as any other
+/// message would.
 fn spawn_video_poller(
     data_dir: PathBuf,
     session_id: Option<u64>,

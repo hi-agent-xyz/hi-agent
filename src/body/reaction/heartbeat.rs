@@ -66,11 +66,10 @@ use super::Reaction;
 const MIN_REFLECT_SIGNALS: usize = 4;
 
 /// How many of a frontier's signals count toward [`MIN_REFLECT_SIGNALS`]: everything
-/// except the host's own clock (see [`super::NON_ACTIVITY_CHANNELS`]). The pulses stay
+/// except the host's own clock (see [`super::NON_ACTIVITY_CHANNELS`]). Those wakes stay
 /// *in* the frontier — "then it was quiet for three hours" is worth settling — they
 /// just may not be the reason a session opens. Otherwise a conversation left alone would
-/// tick its way over the threshold on heartbeats alone and reflect on nothing, the
-/// same self-feeding loop the re-warm gate has to avoid.
+/// tick its way over the threshold on its own clock rows and reflect on nothing.
 fn reflectable(tail: &[JournalEntry]) -> usize {
     tail.iter()
         .filter(|e| {
@@ -610,14 +609,17 @@ mod frontier_tests {
     }
 
     #[test]
-    fn heartbeats_alone_never_reach_the_threshold() {
+    fn clock_wakes_alone_never_reach_the_threshold() {
         let tail: Vec<JournalEntry> =
             (0..MIN_REFLECT_SIGNALS * 3).map(|_| on(Channel::Clock)).collect();
-        assert_eq!(reflectable(&tail), 0, "a conversation left alone must not reflect on its own pulses");
+        assert_eq!(
+            reflectable(&tail), 0,
+            "a conversation left alone must not reflect on its own clock"
+        );
     }
 
     #[test]
-    fn real_signals_count_even_with_pulses_mixed_in() {
+    fn real_signals_count_even_with_clock_wakes_mixed_in() {
         let tail = vec![
             on(Channel::Clock),
             on(Channel::Text),

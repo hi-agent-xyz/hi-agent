@@ -1,7 +1,7 @@
 //! The conversation — an append-only list of whole messages, owned by the host.
 //!
 //! Three things are messages and nothing else is: what the person typed or said, a
-//! file they handed over, and one `say` call. Views, worker reports, pulses,
+//! file they handed over, and one `say` call. Views, worker reports, clock wakes,
 //! recognition signals and tool calls all move through this process and none of
 //! them are conversation; they have the view slot, the journal and the inspector.
 //!
@@ -244,7 +244,7 @@ fn trim(messages: &mut VecDeque<Message>) {
 /// with the live append sites or the conversation would change shape when it
 /// reloads. Three shapes get in and everything else is dropped: a human line
 /// (typed on `Text`, recognized on `Audio`), a handed `File`, and Reaction's own
-/// worded output. A pulse on `Clock`, a face seen on `Vision`, a view put up on
+/// worded output. A check-in on `Clock`, a face seen on `Vision`, a view put up on
 /// `View` — all journaled, none of them things anybody said.
 pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
     entries
@@ -498,9 +498,9 @@ mod tests {
     /// nobody *said* has to stay out of it, or reloading the page would fill the
     /// chat with machinery.
     #[test]
-    fn pulses_faces_and_views_are_journaled_but_are_not_messages() {
+    fn clock_wakes_faces_and_views_are_journaled_but_are_not_messages() {
         let msgs = from_journal(vec![
-            sig_in("1", Channel::Clock, "nothing new here for 30m", Some(Origin::Host)),
+            sig_in("1", Channel::Clock, "(check-in) quiet 5m", Some(Origin::Host)),
             sig_in("2", Channel::Vision, "赵力 appeared on camera.", Some(Origin::Human)),
             sig_in("3", Channel::Text, "a worker reported in", Some(Origin::Worker)),
             sig_out("4", Channel::View, "view show · tasks"),
