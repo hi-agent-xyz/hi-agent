@@ -1,9 +1,10 @@
 //! Compile-time embed of the built SPA.
 //!
-//! The folder path is relative to the crate root. During development the
-//! folder may be empty (just `.keep`), in which case `WebAssets::get` returns
+//! The folder path is relative to the crate root, and must exist when this derive
+//! expands or the crate does not compile — `build.rs` creates it for that reason.
+//! During development it may be empty, in which case `WebAssets::get` returns
 //! `None` for everything and our handlers fall through to the dev placeholder.
-//! In release builds, `pnpm build` populates `dist/` before `cargo build`.
+//! In release builds, `npm run build` populates `dist/` before `cargo build`.
 
 use rust_embed::RustEmbed;
 

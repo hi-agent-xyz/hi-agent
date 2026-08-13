@@ -1,8 +1,7 @@
 /target
 data/
 src/appearance/web/node_modules/
-src/appearance/web/dist/*
-!src/appearance/web/dist/.keep
+src/appearance/web/dist/
 .DS_Store
 .env
 .env.local

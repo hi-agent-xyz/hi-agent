@@ -2,6 +2,18 @@ fn main() {
     println!("cargo:rerun-if-changed=src/appearance/web/dist");
     println!("cargo:rerun-if-changed=src/runtime/manifest.toml");
 
+    // `#[derive(RustEmbed)]` in src/appearance/embed.rs resolves this folder while the
+    // derive expands, and hard-errors if it is absent — so a clean checkout that has not
+    // run `vite build` yet cannot compile at all:
+    //
+    //     error: #[derive(RustEmbed)] folder '.../src/appearance/web/dist/' does not exist
+    //
+    // build.rs runs before the crate compiles, so creating it here is the whole fix.
+    // A tracked `dist/.keep` placeholder did this job three times and was deleted twice
+    // as an unused empty file; this cannot be mistaken for one. `create_dir_all` is a
+    // no-op when the folder exists, so it never disturbs the rerun-if-changed above.
+    let _ = std::fs::create_dir_all("src/appearance/web/dist");
+
     // Pinned-version stamps surfaced by `--version`. Each also derives its
     // component's download URL. The runtime is fetched on first run (see
     // src/runtime), not embedded.
