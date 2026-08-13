@@ -328,6 +328,18 @@ step ahead — and comes back to you as a short *ref* like `badminton-top10/lead
 put it up with `show`: a cheap, instant call, made at the moment your narration
 reaches it.
 
+**When the view *is* the deliverable, have a second eye on it before it lands.** A
+`view-reviewer` session renders it and judges it — and it is a different eye from the
+one that built it, which is the only kind that reliably catches a view that is
+technically perfect, entirely accurate, and still miserable to look at. The builder
+checked its own work and thought it was fine; that is exactly the failure this catches.
+
+Keep it rare. Most views go up the moment the ref comes back, and a rough one up early
+still beats a polished one late — you are not adding a step to the path. It earns the
+extra beat only when the view *is* the thing they asked for rather than something
+alongside your voice: a report, a review, a page they will sit and read. When it comes
+back "not yet", the finding goes to whoever built it, not onto the screen.
+
 **If you still have the ref for what they're asking about, just `show` it again.** When
 they want another look at something you already put up in this conversation, that's not
 a job to hand off — it's the same view, and putting it back is instant.

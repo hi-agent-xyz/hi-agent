@@ -62,6 +62,38 @@ build.
 A view can pass the first and fail the second. Say which one you are talking about
 every time.
 
+# Unreadable is its own failure, and it is the one that gets missed
+
+Between broken and dull sits the view that renders perfectly, says something worth
+saying, and is physically uncomfortable to read. It is the failure that slips through
+most often, because everything about it looks deliberate in the source and nothing
+about it trips an error. Whoever built this looked at the same screenshot you are
+looking at and concluded it was fine — so do not assume that because it shipped, it
+reads.
+
+These are not matters of taste. Check every one, and name the ones that fail:
+
+- **Body text 16px or larger.** Small type is the most common cause by a distance.
+- **Prose is not in monospace.** Mono belongs on identifiers, paths, payloads, columns
+  of figures. A page set entirely in it cannot be scanned, and a technical subject is
+  not an excuse — it is the usual excuse.
+- **The most important text is not the smallest text.** Rank what is on screen by size
+  and look at both ends. Conclusions in the smallest type on the page, under a headline
+  four times their size, is a hierarchy pointing backwards.
+- **A few type sizes with real steps between them**, not six crowded into a 3px band
+  where nothing can stand out because nothing recedes.
+- **Lines of roughly 45–90 characters**, not a sentence run the whole width of the
+  frame.
+- **The background is quiet under the words that matter.** A tinted callout at 8% alpha
+  lets almost all of whatever is beneath it through the text. Look for the inversion in
+  particular: opaque cards protecting themselves while the one conclusion that matters
+  sits on bare pattern.
+- **Dim and muted greys carry incidental text**, not the substance.
+
+Any of these failing is a *finding*, phrased as a number, not a mood: "the three
+findings — the actual output of this review — are set at 10.5px, smaller than anything
+else on the page" is actionable. "It feels cramped" is not.
+
 # What to actually look for
 
 - **Does it say the thing?** A person glancing at this for two seconds — do they get

@@ -307,6 +307,16 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
             compose_prompt(role.base(), &dir, &format!("{name}.local.md")),
         )?;
     }
+    for gone in RETIRED_PROMPTS {
+        let at = dir.join(gone);
+        match std::fs::remove_file(&at) {
+            Ok(()) => tracing::info!(file = %at.display(), "removed retired prompt"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!(file = %at.display(), error = %e, "could not remove retired prompt")
+            }
+        }
+    }
 
     tracing::info!(
         dir = %dir.display(),
@@ -315,6 +325,22 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     );
     Ok(())
 }
+
+/// Prompt files this binary used to install and no longer does.
+///
+/// Writing only the live set leaves the dead ones behind forever: a box that ran an
+/// older build keeps `appearance.md` and `aesthetic.md` in `prompts/` indefinitely, and
+/// a retired prompt sitting beside the live ones reads as authoritative to anyone —
+/// operator or agent — who opens the directory to find out what the agent is told. The
+/// tests below assert a fresh install has none of them; this is what makes that true of
+/// an *upgraded* install too.
+const RETIRED_PROMPTS: &[&str] = &[
+    "core.md",
+    "meaning.md",
+    "appearance.md",
+    "aesthetic.md",
+    "workers/common.md",
+];
 
 /// A role's **whole** system prompt: its installed `.md`, entire and interpolated.
 ///
@@ -616,9 +642,31 @@ mod soul_tests {
                 role.prompt_name()
             );
         }
-        for gone in ["core.md", "meaning.md", "appearance.md", "aesthetic.md", "workers/common.md"] {
+        for gone in RETIRED_PROMPTS {
             assert!(!p.join(gone).exists(), "{gone} should be retired");
         }
+    }
+
+    /// The upgrade path, which the test above cannot see: a fresh temp dir never had the
+    /// retired files, so "they aren't there" passed for years on boxes that were keeping
+    /// `appearance.md` on disk and reading it as current. Install has to *remove* them.
+    #[test]
+    fn install_removes_a_retired_prompt_left_by_an_older_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prompts");
+        std::fs::create_dir_all(p.join("workers")).unwrap();
+        for gone in RETIRED_PROMPTS {
+            std::fs::write(p.join(gone), "what an older build installed here").unwrap();
+        }
+
+        install_prompts(dir.path()).unwrap();
+
+        for gone in RETIRED_PROMPTS {
+            assert!(!p.join(gone).exists(), "{gone} survived the upgrade");
+        }
+        // The live ones are untouched by the sweep.
+        assert!(p.join("reaction.md").exists());
+        assert!(p.join("workers/view-builder.md").exists());
     }
 
     /// An operator override reaches a worker exactly as it reaches a rung. Worth pinning

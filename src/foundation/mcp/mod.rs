@@ -1392,16 +1392,31 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     // pass/fail check in the build. Contrast is deliberately *not* scored here for the
     // same reason: the eye that catches "the names went invisible" is the one looking
     // at both frames, not a threshold.
+    // "Nothing is broken" used to be the whole sentence, and a builder answered it and
+    // shipped: its own note back was "the first render is clean and readable", for a page
+    // whose body was 12px mono. So the good/bad half now arrives as questions rather than
+    // as an adjective — the checkable ones, since those are what a screenshot can settle.
+    // Contrast still isn't scored here: the eye that catches "the names went invisible" is
+    // the one looking at both frames, not a threshold.
+    const FLOORS: &str = "body 16px or larger, prose not in mono, the most important text \
+                          not the smallest on the page, lines of 45–90 characters, and the \
+                          background quiet under the words that matter";
     let summary = if !failures.is_empty() {
         format!("`{view_ref}` did not render properly — {}", failures.join("; "))
     } else if shots.len() > 1 {
         format!(
-            "`{view_ref}` rendered in both skins. Nothing is broken — now judge whether it is \
-             any good, and compare the two frames: anything that fades out, disappears or \
-             turns unreadable in one of them is a colour that only works in the other."
+            "`{view_ref}` rendered in both skins — nothing is broken. That is the only \
+             question this tool answers; whether anyone can comfortably read it is yours. \
+             Look at the pictures against the floors ({FLOORS}), then compare the two \
+             frames: anything that fades out, disappears or turns unreadable in one of them \
+             is a colour that only works in the other."
         )
     } else {
-        format!("`{view_ref}` rendered. Nothing is broken — now judge whether it is any good.")
+        format!(
+            "`{view_ref}` rendered — nothing is broken. That is the only question this tool \
+             answers; whether anyone can comfortably read it is yours. Look at the picture \
+             against the floors ({FLOORS})."
+        )
     };
 
     let mut content = vec![json!({ "type": "text", "text": summary })];
