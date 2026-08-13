@@ -288,6 +288,36 @@ mod tests {
         }
     }
 
+    /// **A path in an attribute goes through `url()`.** Served under the community's
+    /// subpath this page is at `/ana`, and a bare `src="/views/…"` then asks the
+    /// community for the file and renders a broken image. `fetch` is covered by the
+    /// host (`lib/base.ts`, `installBase`); an attribute has no such seam, so the
+    /// bundled views have to say it, and the guidance in
+    /// `identity/workers/view-builder.md` tells authored views the same.
+    ///
+    /// Matched on the literal attribute openers rather than every `"/` in the file:
+    /// a path inside a `fetch` is fine, and flagging it would teach the wrong rule.
+    #[test]
+    fn no_bundled_view_puts_a_bare_absolute_path_in_an_attribute() {
+        let dir = tempfile::tempdir().unwrap();
+        install_builtin_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("_builtin");
+        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
+        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
+        for name in names {
+            let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
+            for bare in ["src=\"/", "href=\"/", "src={\"/", "href={\"/", "src={`/", "href={`/"] {
+                assert!(
+                    !source.contains(bare),
+                    "{name}.jsx has a bare `{bare}…` — wrap the path in url() from @hi/core"
+                );
+            }
+        }
+
+        // And the one this was written for: the welcome poster's mark.
+        assert!(WELCOME.contains(r#"url("/views/_builtin/hi-mark.svg")"#));
+    }
+
     /// Full-bleed is the frame every view gets, so owning the canvas is no longer
     /// something a view declares — and a sidecar that exists only to say "fill" is
     /// a file that can be forgotten. What this keeps is that none of them carries

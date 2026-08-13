@@ -27,6 +27,8 @@
 // module, which `addModule` fetches and evaluates in the audio thread.
 import workletUrl from "./pcmWorklet.js?url";
 
+import { url } from "./base";
+
 // Reconnect backoff: first retry is quick, then doubles to a ceiling so a server
 // that's down (e.g. a dev rebuild) isn't hammered. Reset once a socket opens.
 const RECONNECT_BASE_MS = 500;
@@ -41,7 +43,8 @@ const loaded = new WeakSet<BaseAudioContext>();
 
 async function ensureWorklet(ctx: BaseAudioContext): Promise<void> {
   if (loaded.has(ctx)) return;
-  await ctx.audioWorklet.addModule(workletUrl);
+  // `addModule` is neither fetch nor EventSource, so the subpath goes on here.
+  await ctx.audioWorklet.addModule(url(workletUrl));
   loaded.add(ctx);
 }
 
@@ -72,7 +75,8 @@ export class AudioStreamer {
 
   private constructor(ctx: AudioContext, source: AudioNode) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    this.url = `${proto}://${location.host}/api/in/audio/stream`;
+    // Built by hand from `location`, so the community's subpath goes on by hand.
+    this.url = `${proto}://${location.host}${url("/api/in/audio/stream")}`;
     this.open();
 
     this.node = new AudioWorkletNode(ctx, "pcm-stream", {

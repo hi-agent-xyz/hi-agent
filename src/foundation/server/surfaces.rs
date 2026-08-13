@@ -61,7 +61,7 @@ pub async fn post_session(
 
     let cookie = surfaces::session_cookie(
         &session,
-        &base_path(&headers),
+        &cookie_path(&headers),
         surfaces::over_tls(&headers),
     );
     let payload = serde_json::json!({ "id": id, "credential": minted });
@@ -82,9 +82,17 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
     let code = state.surfaces.mint_pairing_code();
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
     let scheme = if surfaces::over_tls(&headers) { "https" } else { "http" };
-    let prefix = base_path(&headers);
-    let prefix = prefix.trim_end_matches('/');
-    let url = format!("{scheme}://{host}{prefix}/");
+    // No trailing slash on a prefixed address: `https://hi-agent.xyz/ana` is what
+    // the community calls this core, and what a person reads off a QR should be
+    // the same string, not a variant of it. Only a core at its own root gets the
+    // bare `/`, because `https://host` with no path at all is a stranger thing to
+    // hand someone than `https://host/`.
+    let prefix = surfaces::base_path(&headers);
+    let url = if prefix.is_empty() {
+        format!("{scheme}://{host}/")
+    } else {
+        format!("{scheme}://{host}{prefix}")
+    };
     tracing::info!("pairing code minted");
     axum::Json(serde_json::json!({ "code": code, "url": url, "expires_in": 600 })).into_response()
 }
@@ -128,22 +136,14 @@ pub async fn get_healthz() -> Response {
     ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "ok\n").into_response()
 }
 
-/// The path this core is served under. `/` locally and directly-public; `/ana`
-/// when the community routes by subpath and says so with `X-Forwarded-Prefix`.
-/// The cookie is scoped to it — `Path=/ana` limits transmission between cores on
-/// the shared origin, which is a scoping, not a security boundary (see
-/// `topology.md`).
-fn base_path(headers: &HeaderMap) -> String {
-    let raw = headers
-        .get("x-forwarded-prefix")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    if raw.is_empty() || !raw.starts_with('/') || raw.contains("..") {
-        return "/".to_string();
-    }
-    raw.to_string()
+/// The cookie's `Path` — [`surfaces::base_path`] as a path, so the root case is
+/// `/` rather than the empty string a URL wants.
+///
+/// `Path=/ana` limits transmission between cores on the shared origin, which is a
+/// scoping, not a security boundary (see `topology.md`).
+fn cookie_path(headers: &HeaderMap) -> String {
+    let prefix = surfaces::base_path(headers);
+    if prefix.is_empty() { "/".to_string() } else { prefix }
 }
 
 fn bearer(headers: &HeaderMap) -> Option<String> {
@@ -159,21 +159,21 @@ mod tests {
     use axum::http::HeaderValue;
 
     #[test]
-    fn the_base_path_takes_a_prefix_and_refuses_nonsense() {
+    fn the_cookie_path_takes_a_prefix_and_refuses_nonsense() {
         let mut h = HeaderMap::new();
-        assert_eq!(base_path(&h), "/");
+        assert_eq!(cookie_path(&h), "/");
 
         h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
-        assert_eq!(base_path(&h), "/ana");
+        assert_eq!(cookie_path(&h), "/ana");
 
         h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
-        assert_eq!(base_path(&h), "/ana");
+        assert_eq!(cookie_path(&h), "/ana");
 
         // A prefix is a path, and a relative or climbing one is not one we will
         // scope a cookie to.
         h.insert("x-forwarded-prefix", HeaderValue::from_static("ana"));
-        assert_eq!(base_path(&h), "/");
+        assert_eq!(cookie_path(&h), "/");
         h.insert("x-forwarded-prefix", HeaderValue::from_static("/../admin"));
-        assert_eq!(base_path(&h), "/");
+        assert_eq!(cookie_path(&h), "/");
     }
 }

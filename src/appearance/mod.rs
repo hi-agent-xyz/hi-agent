@@ -156,17 +156,11 @@ fn inject_lang(html: String) -> String {
 ///
 /// Read per request rather than stored, because the same core answers on
 /// loopback *and* through the community, and the answer differs.
+///
+/// One parse for the whole core — [`crate::foundation::surfaces::base_path`] —
+/// because the page, the cookie and the QR must agree on where here is.
 fn forwarded_prefix(headers: &axum::http::HeaderMap) -> String {
-    let raw = headers
-        .get("x-forwarded-prefix")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    if raw.is_empty() || !raw.starts_with('/') || raw.contains("..") || raw.contains('"') {
-        return String::new();
-    }
-    raw.to_string()
+    crate::foundation::surfaces::base_path(headers)
 }
 
 /// Rewrite the root-absolute URLs a built page emits so they start at `prefix`.

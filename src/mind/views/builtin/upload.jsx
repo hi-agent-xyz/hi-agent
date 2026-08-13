@@ -4,6 +4,7 @@
 // the agent looks at — both doors post to the `file` channel, which wakes the
 // agent. Seeded at `_builtin/upload`; the agent may adapt it like any view.
 import { useState, useEffect, useRef } from "react";
+import { url } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. This surface used to be Chinese-only; the
@@ -45,7 +46,7 @@ function words() {
 const L = words();
 
 export default function Upload() {
-  const [url, setUrl] = useState(null);
+  const [handoff, setHandoff] = useState(null);
   const [qrFailed, setQrFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [items, setItems] = useState([]); // { key, name, state: sending|done|error }
@@ -62,7 +63,7 @@ export default function Upload() {
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d) => {
         if (!alive) return;
-        if (d?.url) setUrl(d.url);
+        if (d?.url) setHandoff(d.url);
         else setQrFailed(true);
       })
       .catch(() => alive && setQrFailed(true));
@@ -123,9 +124,9 @@ export default function Upload() {
         </div>
 
         <div style={S.qrCol}>
-          {url ? (
+          {handoff ? (
             <>
-              <img alt={L.qrAlt} width={148} height={148} style={S.qrImg} src={"/api/qr?data=" + encodeURIComponent(url)} />
+              <img alt={L.qrAlt} width={148} height={148} style={S.qrImg} src={url("/api/qr?data=" + encodeURIComponent(handoff))} />
               <div style={S.hint}>{L.qrHint}</div>
             </>
           ) : qrFailed ? (

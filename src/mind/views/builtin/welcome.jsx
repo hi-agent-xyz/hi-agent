@@ -5,6 +5,7 @@
 // with it, it remembers you, it uses your tools, and — the point — it can be taught). No
 // wall of text, no tour. Seeded at `_builtin/welcome`; the agent may adapt it like any view.
 import { motion } from "motion/react";
+import { url } from "@hi/core";
 
 const CORAL = "#fd605e";
 const INK = "#3a352c"; // the house ink, pinned — see `tagline` below
@@ -12,7 +13,9 @@ const EASE = [0.22, 0.7, 0.2, 1];
 
 // The real, sealed mark (red h + blue i, white die-cut, soft shadow), seeded beside this
 // file and served from the views tree — never re-typed in a system font, never hotlinked.
-const MARK = "/views/_builtin/hi-mark.svg";
+// Through `url()` because the path is root-absolute: served under the community's subpath
+// this poster is at `/ana`, and a bare `/views/…` would ask the community for it instead.
+const MARK = url("/views/_builtin/hi-mark.svg");
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. The tagline is three separate segments on

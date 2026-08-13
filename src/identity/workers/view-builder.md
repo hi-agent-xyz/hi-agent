@@ -221,7 +221,7 @@ what you need as bare modules:
   their own.
 - `@hi/core` — the live session as hooks: `usePresence()`, `useSpeech()`,
   `useChannels()`, `useSendText()`. Read or drive the conversation from inside a view
-  with these.
+  with these. Also `url()`, for a path you put in a `src` or an `href` — see below.
 - `motion/react` — Motion, when (and only when) a moment earns movement.
 - `react` itself.
 
@@ -304,8 +304,18 @@ leaving an ugly broken box. Instead **download the image into your project folde
 with your own tools (find it via web/image search, then `curl`/fetch it to a file
 next to your view), and reference it by its served path: anything you save in the
 views tree is served at `/views/<the same relative path>`, so a file you write to
-`badminton-top10/leader.jpg` is `<img src="/views/badminton-top10/leader.jpg">`.
+`badminton-top10/leader.jpg` is `<img src={url("/views/badminton-top10/leader.jpg")}>`.
 That path always loads and keeps your source small.
+
+**A path in an attribute goes through `url()`.** `import { url } from "@hi/core"` and
+wrap any path you put in a `src` or an `href` — an image, a download link, a QR. This
+page is not always at the root of its address: reached from outside, the agent is served
+under its name (`https://hi-agent.xyz/ana`), and a bare `/views/…` then asks that site
+for the file instead of asking the agent, which is a broken image every time. `url()`
+turns the path into one that starts where the page does, and does nothing at all when
+the page is already at a root — so it is never wrong to use and only sometimes wrong to
+leave out. Your `fetch` calls need no such care: the host has already put the prefix on
+those.
 
 **The conversation shares the screen with you.** While your view is on stage the host
 keeps the whole conversation up beside it — normally a column down the left of the

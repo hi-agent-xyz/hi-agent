@@ -4,12 +4,18 @@ import { App } from "./App";
 import { Inspect } from "./inspect/Inspect";
 import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
+import { installBase, inCore } from "./lib/base";
 import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
 import { installNativeFeel } from "./lib/nativeFeel";
 import { installStageReport } from "./lib/stageReport";
 import "./ui/tailwind.css";
 import "./ui/global.css";
+
+// Where this core is served from. First, and before anything can make a request:
+// under the community's subpath a bare `/api/x` is the community's route, not
+// ours. No-op at the core's own root.
+installBase();
 
 // If the login gate is on, a 401 (session expired) bounces the tab to sign-in.
 // No-op when auth is disabled.
@@ -29,7 +35,7 @@ installStageReport();
 // The face reads as an app, not a web page: no double-click word-select, no
 // right-click page menu. Only the face — the inspect console below is an
 // operator's browser tool, where Reload and "open in new tab" are the point.
-if (!window.location.pathname.startsWith("/inspect")) installNativeFeel();
+if (!inCore().startsWith("/inspect")) installNativeFeel();
 
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
 // serves the page in prod; this only covers the dev seam, where Vite serves index.html

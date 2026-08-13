@@ -10,6 +10,7 @@
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect } from "react";
+import { url } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. `Drive` is an ordinary word for the shelf of
@@ -135,7 +136,7 @@ export default function Drive() {
           ) : (
             <div style={S.list}>
               {list.map((f) => (
-                <a key={f.path} style={S.row} href={`/api/drive/file/${f.path.split("/").map(encodeURIComponent).join("/")}`}
+                <a key={f.path} style={S.row} href={url(`/api/drive/file/${f.path.split("/").map(encodeURIComponent).join("/")}`)}
                   target="_blank" rel="noreferrer">
                   <span style={S.ext}>{(f.ext || "·").slice(0, 4)}</span>
                   <span style={S.name}>{top === LOOSE ? f.path : f.path.split("/").slice(1).join("/")}</span>

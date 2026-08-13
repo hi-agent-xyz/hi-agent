@@ -11,6 +11,8 @@
 // This replaces the old VisionCapture, which sampled one JPEG every couple
 // seconds client-side — hard-coding perception fidelity the backend should own.
 
+import { url } from "./base";
+
 // Candidate recorder formats, best first — picked at runtime via
 // `MediaRecorder.isTypeSupported` (no build-time codec choice). The ordering is
 // the energy story: prefer fragmented-MP4 with a codec the platform encodes in
@@ -75,10 +77,12 @@ export class VideoStreamer {
     const actualMime = this.recorder.mimeType || mime;
 
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url =
-      `${proto}://${location.host}/api/in/vision/stream` +
+    // Built by hand from `location`, so the community's subpath has to be put on
+    // by hand too — a WebSocket has no interception seam the way fetch does.
+    const endpoint =
+      `${proto}://${location.host}${url("/api/in/vision/stream")}` +
       `?mime=${encodeURIComponent(actualMime)}`;
-    this.ws = new WebSocket(url);
+    this.ws = new WebSocket(endpoint);
     this.ws.binaryType = "arraybuffer";
     this.ws.onopen = () => {
       for (const blob of this.backlog) void this.send(blob);

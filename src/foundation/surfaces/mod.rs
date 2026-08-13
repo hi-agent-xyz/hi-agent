@@ -382,7 +382,8 @@ fn unauthorized(headers: &HeaderMap, method: &axum::http::Method) -> Response {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|a| a.contains("text/html"));
     if wants_html {
-        return (StatusCode::UNAUTHORIZED, Html(pairing_page())).into_response();
+        return (StatusCode::UNAUTHORIZED, Html(pairing_page(&base_path(headers))))
+            .into_response();
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -394,8 +395,22 @@ fn unauthorized(headers: &HeaderMap, method: &axum::http::Method) -> Response {
 
 /// The "enter your pairing code" page. Self-contained on purpose: it is served to
 /// a browser that is not allowed to fetch `/assets/*` yet.
-fn pairing_page() -> String {
-    r##"<!doctype html>
+///
+/// `base` is where this core is served from ([`base_path`]) and the form posts to
+/// `{base}/api/session` — an absolute path, never a relative one. A relative
+/// `api/session` resolves against the *directory* of the current URL, so it only
+/// reaches the core at `https://hi-agent.xyz/ana/` and posts to the community's
+/// own `/api/session` at `https://hi-agent.xyz/ana`. The address a person is given
+/// has no trailing slash, so the relative form was broken in exactly the shape
+/// this page exists for.
+fn pairing_page(base: &str) -> String {
+    // A token swap rather than `format!`: the page is mostly CSS and JS braces,
+    // and doubling every one of them to satisfy a format string would make it
+    // unreadable for one substitution.
+    PAIRING_PAGE.replace("__HI_BASE__", base)
+}
+
+const PAIRING_PAGE: &str = r##"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pair this surface</title>
@@ -426,7 +441,7 @@ document.getElementById("f").addEventListener("submit", async (e) => {
   err.textContent = "";
   const code = document.getElementById("code").value.trim();
   if (!code) return;
-  const res = await fetch("api/session", {
+  const res = await fetch("__HI_BASE__/api/session", {
     method: "POST",
     headers: { "Authorization": "Bearer " + code, "Content-Type": "application/json" },
     body: JSON.stringify({ label: navigator.userAgent.slice(0, 80) }),
@@ -436,9 +451,7 @@ document.getElementById("f").addEventListener("submit", async (e) => {
 });
 </script>
 </body></html>
-"##
-    .to_string()
-}
+"##;
 
 /// SHA-256, hex. **Not argon2id, deliberately** — a slow KDF exists to frustrate
 /// guessing of low-entropy *passwords*, and a 32-byte random credential is not
@@ -513,6 +526,26 @@ pub fn session_cookie(session: &str, path: &str, secure: bool) -> String {
     c
 }
 
+/// Where this core is served from, from `X-Forwarded-Prefix` — `""` at its own
+/// root, `"/ana"` when the community routes it by subpath. Never trailing.
+///
+/// **A path prefix, or nothing.** A value that is relative (`ana`), climbing
+/// (`/../admin`) or quote-bearing is not a prefix this core will adopt: it
+/// arrives from a hop in front and is pasted into URLs and a cookie `Path`, so a
+/// nonsense one is dropped rather than repaired.
+pub fn base_path(headers: &HeaderMap) -> String {
+    let raw = headers
+        .get("x-forwarded-prefix")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/');
+    if raw.is_empty() || !raw.starts_with('/') || raw.contains("..") || raw.contains('"') {
+        return String::new();
+    }
+    raw.to_string()
+}
+
 /// Whether the request reached us over TLS. `X-Forwarded-Proto` is the community's
 /// word for it in the relayed shape; it is only ever read to decide whether to
 /// *add* a cookie attribute, never to decide access.
@@ -579,6 +612,38 @@ mod tests {
         // The minted credential is a real one from here on.
         assert_eq!(s.verify(&token).as_deref(), Some(id.as_str()));
         assert_eq!(store::list(s.data_dir()).unwrap()[0].label, "the phone");
+    }
+
+    #[test]
+    fn the_pairing_page_posts_to_an_absolute_path_under_the_prefix() {
+        // At the core's own root there is no prefix, and `/api/session` is right.
+        assert!(pairing_page("").contains(r#"fetch("/api/session""#));
+
+        // Relayed, the same page is served at `https://hi-agent.xyz/ana` — with no
+        // trailing slash, because that is the address the community hands out. A
+        // relative `api/session` would resolve to the *community's* route; only an
+        // absolute path under the prefix reaches this core.
+        let relayed = pairing_page("/ana");
+        assert!(relayed.contains(r#"fetch("/ana/api/session""#));
+        assert!(!relayed.contains(r#"fetch("api/session""#));
+    }
+
+    #[test]
+    fn the_base_path_takes_a_prefix_and_refuses_nonsense() {
+        let mut h = HeaderMap::new();
+        assert_eq!(base_path(&h), "");
+
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
+        assert_eq!(base_path(&h), "/ana");
+        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
+        assert_eq!(base_path(&h), "/ana");
+
+        // Relative, climbing, or able to break out of the attribute it is pasted
+        // into: not a prefix, and not repaired into one.
+        for bad in ["ana", "/../admin", r#"/a"onload="#] {
+            h.insert("x-forwarded-prefix", HeaderValue::from_str(bad).unwrap());
+            assert_eq!(base_path(&h), "", "{bad}");
+        }
     }
 
     #[test]
