@@ -95,13 +95,12 @@ such. Pin the image and command after first end-to-end Docker test.
 **Status:** mechanism in place; verify on first round-trip.
 
 `build.rs` declares `cargo:rerun-if-changed=src/appearance/web/dist`, so
-modifying the SPA, running `pnpm build`, then `cargo build` should re-embed
-the new `dist/` into the binary.
+`make build` — which rebuilds the SPA and then the binary, in that order —
+should re-embed the new `dist/`.
 
-**Verify by:** running `cargo build --release`, noting the embedded asset
-hash (or just open `GET /` and view-source), then editing
-`src/appearance/web/src/App.tsx`, re-running `pnpm build`, re-running
-`cargo build --release`, and confirming the served HTML changed without
+**Verify by:** running `make build`, noting the embedded asset hash (or just
+open `GET /` and view-source), then editing `src/appearance/web/src/App.tsx`,
+re-running `make build`, and confirming the served HTML changed without
 needing `cargo clean`.
 
 ## v0 acceptance checklist
@@ -109,9 +108,8 @@ needing `cargo clean`.
 When the user runs first-build, walk this list. If anything fails, the
 issue is implementation-side, not docs-side.
 
-- [ ] `cargo check` passes
-- [ ] `cargo build --release` produces `./target/release/hi-agent`
-- [ ] `cargo test` passes (the `#[ignore]`-d tests stay ignored)
+- [ ] `make build` produces `./target/release/hi-agent`
+- [ ] `make test` passes (the `#[ignore]`-d tests stay ignored)
 - [ ] concurrent inputs from three attached windows route with parallel
       timing roughly equal to single-session timing (concurrency works —
       see "Concurrent ACP sessions" above)

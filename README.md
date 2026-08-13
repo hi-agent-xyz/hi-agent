@@ -25,22 +25,22 @@ design v0.1 · 2026-05-28 · v0 implementation complete · not load-tested.
 
 ### Build and run
 
-```sh
-# 1. build the SPA so rust-embed has something to embed
-cd src/appearance/web && npm ci && npm run build && cd ../../..
-
-# 2. build the Rust binary
-cargo build --release
-
-# 3. start the agent (creates ./data on first run)
-./target/release/hi-agent
-```
-
-Or, with `make`:
+Everything goes through the [`Makefile`](Makefile) — it is the supported way to
+build, run, test, and package this repo. `make help` lists every target.
 
 ```sh
-make build && make run
+make build   # build the SPA, then the release binary
+make run     # start the agent (creates ./data on first run)
+make dev     # rust + vite dev servers, for working on the app
+make test    # rust + web tests
 ```
+
+`make build` runs `npm ci && npm run build` in `src/appearance/web` (so
+rust-embed has a `dist/` to embed) and then `cargo build --release`, after
+checking that every committed version stamp agrees with [`VERSION`](VERSION).
+Running those commands by hand skips that ordering and those checks, so prefer
+the target — a bare `cargo build --release` will happily produce a binary with a
+stale or empty SPA.
 
 ### Versions and release artifacts
 

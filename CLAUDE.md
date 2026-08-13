@@ -26,15 +26,30 @@ Do all work for a task in its own fresh git worktree branched from `origin/main`
 
 The working tree may hold the user's in-progress work that is unrelated to your task. Don't entangle with it: keep your changes in new files where possible, put additive config (e.g. a new Cargo dependency) in its own separate block rather than interleaved with theirs, and at commit time stage only the files/hunks your task owns — never `git add -A`. Leave their WIP untouched in the tree for them to commit.
 
-## Running locally
+## Building, running, testing: always through `make`
 
-Use `make dev` — it runs both halves together (Ctrl-C stops both):
+**The [Makefile](Makefile) is the only supported way to build, run, test, or package this repo.** Every such action has a target; use it. Do not hand-roll the underlying `cargo` / `npm` / `docker` / cross-compile invocation, and do not add a new way to build — if something needs building differently, add or change a target.
+
+| Target | What it does |
+|---|---|
+| `make dev` | run rust + vite dev servers together (Ctrl-C stops both) |
+| `make build` | `npm ci` + build SPA, then `cargo build --release` |
+| `make run` | run the release binary |
+| `make test` | `cargo test` + web tests |
+| `make docker` | build the docker image |
+| `make dmg` / `make app` | macOS `.dmg` / local ad-hoc-signed `.app` |
+| `make exe` / `make installer` | Windows cross-compile build check / installer |
+| `make bump-version V=x.y.z` / `make version` | version stamps / cut a release |
+| `make help` | the authoritative list — read it instead of guessing |
+
+**A bare command failing is expected, and is not a bug to fix.** Each target does setup the raw command does not: `build`/`dmg`/`exe`/`installer` run `check-version` first; `cargo build --release` only embeds a *previously built* SPA, so on its own it silently produces a binary with a stale or empty `dist/`; `make exe` needs the empty-`c++.lib` shim, the Homebrew-LLVM `PATH`, and the `cargo xwin` env before the compiler will link. So if a hand-typed `cargo …` or `npm …` errors out, **that is the missing setup talking, not a defect** — don't investigate it, don't "repair" the tree, don't work around it. Re-run the `make` target. Only a failure of the `make` target itself is a real failure worth reporting or fixing.
+
+Dev-server detail, since `make dev` is where most local work happens:
 - **Rust backend** on `:12358` via `cargo watch -x 'run -- --port 12358'` (auto-rebuilds/restarts on Rust changes).
 - **Vite dev server** on `:12359` (`npm run dev` in `src/appearance/web`) — this is the page you open in dev.
+- The browser talks only to Vite (`:12359`), which proxies `/api/*` and `/generated/*` to the backend. Caveat: `cargo watch` restarts the backend on Rust edits, but **Vite config changes (`vite.config.ts`) are NOT hot-reloaded** — restart `make dev` (or just the Vite process) after editing it.
 
-In dev the browser talks only to Vite (`:12359`), which proxies `/api/*` and `/generated/*` to the backend. Caveat: `cargo watch` restarts the backend on Rust edits, but **Vite config changes (`vite.config.ts`) are NOT hot-reloaded** — restart `make dev` (or just the Vite process) after editing it.
-
-Other targets: `make build` (npm ci + build SPA, then `cargo build --release`), `make run` (release binary), `make test` (cargo + vitest), `make docker`.
+(Bare commands still appear below when describing *what the build does* — that is explanation of mechanism, not an instruction to run them.)
 
 ## Dev vs. prod serving (important)
 
@@ -109,7 +124,7 @@ The engine's outbound API grows from config CRUD into a **bidirectional perceive
 
 ## Testing user journeys live (Mac mini)
 
-Journeys in [docs/user-journeys/](docs/user-journeys/) are specs of *intended* behavior — test them against a real running instance, not by code-reading. Standing setup: clone at `~/projects/hi-agent` on the Mac mini (`ssh macmini`), `cargo build --release`, run from the repo root. Model credentials are no longer in `.env`: the default `xiaoyuanzhu` mode auto-bootstraps a broker account and mints the LLM key OOTB, so a fresh box just works; to force BYOK keys (or tune agent behaviour) headlessly, write into the config store (`sqlite3 data/config.db` — the `app_settings` KV holds the mode flag + cognition tunables; `credential` rows hold vendor keys) or set them in Settings. The `.env` now carries only infra knobs (auth, dirs, `RUST_LOG`, etc.):
+Journeys in [docs/user-journeys/](docs/user-journeys/) are specs of *intended* behavior — test them against a real running instance, not by code-reading. Standing setup: clone at `~/projects/hi-agent` on the Mac mini (`ssh macmini`), `make build`, run from the repo root. Model credentials are no longer in `.env`: the default `xiaoyuanzhu` mode auto-bootstraps a broker account and mints the LLM key OOTB, so a fresh box just works; to force BYOK keys (or tune agent behaviour) headlessly, write into the config store (`sqlite3 data/config.db` — the `app_settings` KV holds the mode flag + cognition tunables; `credential` rows hold vendor keys) or set them in Settings. The `.env` now carries only infra knobs (auth, dirs, `RUST_LOG`, etc.):
 
     nohup ./target/release/hi-agent --port 12358 > server.log 2>&1 &
 
