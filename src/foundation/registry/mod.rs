@@ -198,6 +198,25 @@ pub fn render(batch: &[Message]) -> String {
 ///
 /// Empty when there is nobody — an empty section is worse than none, because a heading
 /// with nothing under it reads as a load that failed rather than as an honest "no one".
+/// What a worker's line says about the task it serves, if anything.
+///
+/// **The unlinked case is the one that has to speak.** A worker with a subject is already
+/// reported on its task's own projected line, so naming the task here just ties the two
+/// together by id. A worker *without* one appears on no task line at all — so from the ledger's
+/// side its task reads `nobody on it` while the work is running, and the natural response to
+/// that line is to start a second worker on it. Saying "not linked to any task" is what puts
+/// the two halves of that mistake in one window: a task claiming nobody, and a session claiming
+/// no task.
+fn link_note(e: &Entry) -> String {
+    if !e.role.is_worker() {
+        return String::new();
+    }
+    match e.subject.as_deref() {
+        Some(subject) => format!(" — on task `{subject}`"),
+        None => " — not linked to any task".to_string(),
+    }
+}
+
 pub fn render_reachable(who: &[(String, SessionId)]) -> String {
     if who.is_empty() {
         return String::new();
@@ -676,13 +695,29 @@ impl Registry {
                 }
                 for (id, e) in map.iter() {
                     if e.owner == Some(asker) {
-                        out.push((format!("your worker: {}", e.task.trim()), *id));
+                        out.push((format!("your worker: {}{}", e.task.trim(), link_note(e)), *id));
                     }
                 }
             }
         }
         out.sort_by_key(|(_, id)| *id);
         out
+    }
+
+    /// Whether any live worker owned by `asker` is running without a task subject.
+    ///
+    /// The one question the ledger cannot answer about itself. A worker created without a
+    /// `subject` is invisible to the task↔worker join, so its task reads *nobody on it* while
+    /// the work is genuinely in flight — and the obvious reading of that line is to put
+    /// someone on it, which starts a second worker on work already running. That duplicate is
+    /// the real cost of a missed label, and it is worse than the silence the join was built to
+    /// end, so the omission has to be visible from the same window that invites the mistake.
+    pub fn has_unlinked_worker(&self, asker: SessionId) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.owner == Some(asker) && e.role.is_worker() && e.subject.is_none())
     }
 
     /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of
@@ -1208,6 +1243,73 @@ mod tests {
         assert!(ids.contains(&rx), "the voice: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
         assert!(!ids.contains(&other), "someone else's worker is not offered: {who:?}");
+    }
+
+    /// **A worker linked to no task says so, on the same line that offers it.**
+    ///
+    /// This is the half of the task↔worker join the ledger cannot report about itself. A
+    /// worker created without a `subject` never appears on any task's projected line, so its
+    /// task reads *nobody on it* while the work is running — and the natural response to that
+    /// line is to start a second worker on it. The duplicate is the real cost of a missed
+    /// label, so the omission has to be visible from the same window that invites the mistake.
+    #[test]
+    fn a_worker_on_no_task_says_so_and_one_on_a_task_names_it() {
+        let r = reg();
+        let (cog, linked, unlinked) = (mint(), mint(), mint());
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(
+            linked,
+            Role::Worker(WorkerType::General),
+            Some(cog),
+            "chase the deploy".into(),
+            Some("ktv-doubao-ref-only".into()),
+        );
+        r.register(
+            unlinked,
+            Role::Worker(WorkerType::General),
+            Some(cog),
+            "chase the deploy".into(),
+            None,
+        );
+
+        let who = r.reachable(cog);
+        let line = |id: SessionId| {
+            who.iter().find(|(_, i)| *i == id).map(|(l, _)| l.clone()).expect("offered")
+        };
+        assert!(line(linked).contains("ktv-doubao-ref-only"), "{:?}", line(linked));
+        assert!(!line(linked).contains("not linked"), "{:?}", line(linked));
+        assert!(line(unlinked).contains("not linked to any task"), "{:?}", line(unlinked));
+    }
+
+    /// The rungs are standing and belong to no task. Marking them unlinked would put the
+    /// warning on every window, on rows where it is not a fault — which is how a warning stops
+    /// being read before it is ever needed.
+    #[test]
+    fn a_rung_is_never_marked_as_linked_to_nothing() {
+        let r = reg();
+        let (cog, rx) = (mint(), mint());
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(rx, Role::Reaction, None, "the voice".into(), None);
+
+        let who = r.reachable(cog);
+        assert!(
+            who.iter().all(|(label, _)| !label.contains("not linked")),
+            "the voice is not an unlabelled worker: {who:?}"
+        );
+        assert!(!r.has_unlinked_worker(cog), "a rung is not an unlinked worker");
+    }
+
+    /// The cheap half of the same question, for the check that runs before staffing a task.
+    #[test]
+    fn an_unlinked_worker_is_visible_to_its_owner_alone() {
+        let r = reg();
+        let (cog, refl, w) = (mint(), mint(), mint());
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(refl, Role::Reflection, None, "housekeeping".into(), None);
+        r.register(w, Role::Worker(WorkerType::General), Some(cog), "an errand".into(), None);
+
+        assert!(r.has_unlinked_worker(cog));
+        assert!(!r.has_unlinked_worker(refl), "not someone else's to answer for");
     }
 
     /// The lookup the hand-down rides on. Reaction has no id for Cognition — nothing

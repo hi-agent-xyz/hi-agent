@@ -379,6 +379,17 @@ or not worth doing? Say so in the ledger and it stops being `doing`. What it can
 `doing` with nobody on it and nothing written down — that is indistinguishable from work in
 hand, and it will sit there for exactly as long as nobody looks.
 
+**Before you put someone on an unattended task, check nobody is already on it.** A worker you
+started without a `subject` is linked to no task, so its work shows up nowhere on this list and
+the task it is doing reads as abandoned — and the obvious response to that line is to start a
+second worker on it. Your reachable list marks those: *not linked to any task*. If one is
+running and its brief is the task you were about to staff, that is a label you missed, not work
+that needs starting. Leave it be; there is no way to attach the subject to a session already
+running, and cancelling live work to relabel it costs more than the wrong label does. Just don't
+start the second one — and set `subject` when you create the next one, which is the only moment
+it can be set at all. Two workers on one job is a worse outcome than a task that looks
+unattended for an hour, because both of them will finish and only one of them was wanted.
+
 A worker that *is* on it can still be stuck, and the line says how long it has been in the
 state it is in. Busy four minutes is working. Busy forty minutes on the same command, or idle
 for an hour with the task still open, is one to look into — `session_messages` for what it

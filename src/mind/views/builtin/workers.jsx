@@ -102,6 +102,11 @@ const T = {
     // dropped report, so it is named rather than shown as a row with no parent.
     orphans: "Still running, owner gone",
     orphanNote: (id) => `owner ${id} is no longer registered`,
+    // Which ledger task this session serves, and — the case worth seeing — that it serves
+    // none. An unlinked worker is missing from its task's own line, so that task reads as
+    // having nobody on it while this session is working it.
+    onTask: (subject) => `on ${subject}`,
+    unlinked: "not linked to any task",
     // On an ended row the tree is gone, so the owner is named by id — the only address
     // there is, and the one a reader can match against another row on the page.
     ownedBy: (id) => `owned by ${id}`,
@@ -166,6 +171,8 @@ const T = {
     live: "在跑", endedHead: "刚结束",
     orphans: "还在跑,派它的已经没了",
     orphanNote: (id) => `派它的 ${id} 已经不在了`,
+    onTask: (subject) => `做 ${subject}`,
+    unlinked: "没挂到任何任务",
     ownedBy: (id) => `归 ${id}`,
     endedAgo: (t) => `${t}前结束`,
     lostToRestart: "重启时丢了",
@@ -266,6 +273,23 @@ const TYPE = {
 
 function label(row) {
   return TYPE[row.type] || ROLE[row.role] || row.role;
+}
+
+/* Which ledger task a session serves, as a meta chip — and, for a worker serving none, that
+ *  it serves none.
+ *
+ *  Only workers are asked. The three rungs are standing and belong to no task; marking them
+ *  "not linked" would put the warning on every page, on rows where it is not a fault, which
+ *  is how a warning stops being read.
+ *
+ *  The unlinked case is the one this exists for. A worker with no subject is absent from its
+ *  task's own line in the ledger, so that task reads as having nobody on it while this
+ *  session is working it — and the natural response to that is to start a second worker.
+ *  Here it is the only place both facts are on one screen. */
+function taskLink(row) {
+  if (row.role !== "worker") return null;
+  if (row.subject) return { text: L.onTask(row.subject), warn: false };
+  return { text: L.unlinked, warn: true };
 }
 
 export default function Workers() {
@@ -479,6 +503,12 @@ function LiveRow({ row, open, setOpen, indent }) {
       <span className="hi-workers__meta">
         {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
         {row.started && <span>{L.up(elapsed(row.started))}</span>}
+        {(() => {
+          const link = taskLink(row);
+          return link ? (
+            <span className={link.warn ? "is-warn" : undefined}>{link.text}</span>
+          ) : null;
+        })()}
         {/* Only once the owner has gone. While it is live the indent already shows who it
             is, and repeating it on every child is noise. */}
         {row.owner && !row.owner_role && (
@@ -532,6 +562,7 @@ function EndedRow({ row, open, setOpen }) {
       <span className="hi-workers__meta">
         {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
         {row.started && row.ended && <span>{L.ranFor(between(row.started, row.ended))}</span>}
+        {row.subject && <span>{L.onTask(row.subject)}</span>}
         {row.owner && <span>{L.ownedBy(row.owner)}</span>}
       </span>
 

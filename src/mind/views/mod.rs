@@ -306,7 +306,10 @@ mod tests {
     /// Locate an esbuild native binary if one is provisioned on this host — either the
     /// standalone view-tool install or the copy that ships with a managed runtime.
     /// Returns `None` to skip the spawning tests where esbuild isn't provisioned.
-    fn esbuild_probe() -> Option<PathBuf> {
+    ///
+    /// `pub(crate)` so [`super::builtin`]'s tests can compile the bundled views through the
+    /// real compiler rather than keeping a second copy of this walk.
+    pub(crate) fn esbuild_probe() -> Option<PathBuf> {
         let (os, arch) = crate::runtime::npm_target().ok()?;
         let rel = crate::runtime::esbuild_rel();
         let cache = directories::ProjectDirs::from("dev", "human-interface", "hi-agent")?

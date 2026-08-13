@@ -231,6 +231,32 @@ mod tests {
         }
     }
 
+    /// **Every bundled view actually compiles.** The rest of this module's tests read the
+    /// sources as text — a purpose line, a stray backtick, a placement key — and text checks
+    /// cannot see a syntax error. A bundled view with broken JSX ships, installs, and fails
+    /// only when a person opens it, which is the worst place to find out and the one place
+    /// nothing is watching.
+    ///
+    /// Skipped where esbuild is not provisioned, the same way [`super::super::tests`] skips
+    /// its compile test — a host without the runtime is not a host this can answer for.
+    #[tokio::test]
+    async fn every_bundled_view_compiles() {
+        let Some(esbuild_bin) = super::super::tests::esbuild_probe() else {
+            eprintln!("skipping: esbuild not provisioned on this host");
+            return;
+        };
+        let tmp = std::env::temp_dir().join(format!("hi-builtin-compile-{}", std::process::id()));
+        let compiler = super::super::ViewCompiler::with_paths(esbuild_bin, tmp.clone());
+
+        for (name, source) in REVIEW_VIEWS {
+            compiler
+                .compile(source)
+                .await
+                .unwrap_or_else(|err| panic!("bundled view `{name}` does not compile: {err}"));
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// The toolbox is read by scanning the tree for `// purpose:` lines
     /// (`docs/arch/data.md#views`), and `_builtin/` is the only part of it a fresh
     /// install has. A bundled view without the line degrades to a bare filename in
