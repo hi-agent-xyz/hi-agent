@@ -1,11 +1,12 @@
 # Topology — core, app, community
 
-**Status:** proposed August 11, 2026; **most of it built, deployed and live-verified against
-the real community by August 13** —
-see [Status](#status) at the end for what is real, what is written but unwitnessed, and what
-has no code. Defines the split of the system into three roles, how a person is addressed, and
-how an app proves it may reach one. Nothing here changes what the agent *is*; it says where
-the parts of it run and how they find each other.
+Defines the split of the system into three roles, how a person is addressed, and how an app
+proves it may reach one. Nothing here changes what the agent *is*; it says where the parts of
+it run and how they find each other.
+
+This is the goal state, in the present tense throughout, as design here always is. It says
+nothing about what is built — the worklist tracks that, and a design document that doubles as
+a status report goes stale in a way that makes readers distrust the design too.
 
 ## Goal
 
@@ -45,8 +46,7 @@ the one conversation, `data/` as the whole agent — is the core. This doc adds 
 except a name, an address, and the fact that it has no opinion about where it runs.
 
 **Headless by construction.** No GUI, no window server, no OS-session dependency. It runs on
-a laptop, on a server, in Docker, and on a phone the day a platform can host one. It is
-already this on every platform but macOS.
+a laptop, on a server, in Docker, and on a phone the day a platform can host one.
 
 **Scope:**
 
@@ -102,8 +102,8 @@ On iOS the same is done with a `WKURLSchemeHandler` rather than a local port. Cr
 live in the OS keychain, never a plist or `localStorage`.
 
 **Host and client are capabilities of an app instance, never properties of a platform.** An
-app asks "can I host a core here?" and today a mobile app answers no. When that answer
-changes, nothing structural does.
+app asks "can I host a core here?" and a mobile app answers no. When that answer changes,
+nothing structural does.
 
 ## Community
 
@@ -114,7 +114,7 @@ services, independent, deliberately not sharing keys:
 |---|---|---|
 | **registry** | handle ↔ account; claim, rename | the namespace |
 | **relay** | routes an inbound request by handle into that core's live connection | the routing table |
-| **broker** | provider role: LLM credentials and energy (`foundation/broker.rs` today) | accounts, billing |
+| **broker** | provider role: LLM credentials and energy | accounts, billing |
 | **post** | push to a surface, on a core's instruction; later, mail for a sleeping core | push tokens |
 
 **The registry knows accounts and must never know billing.** A handle is owned by an account,
@@ -237,22 +237,22 @@ not happen unless it is written down.
 
 ### Nothing behind the gate is `public`
 
-A gated `200` was served *because* a credential checked out, so labelling it `public` invites
+A gated `200` is served *because* a credential checked out, so labelling it `public` invites
 any shared cache to keep it and hand it to the next caller — who was never asked for one. The
 gate is then intact and bypassed at the same time, and the core never sees the request that
 walked around it.
 
 This is not a hypothetical about some future CDN. **Relayed, there is always one**: the
-community terminates TLS, and hi-agent.xyz sits behind an edge besides. Measured against the
-real one, an authorized fetch of `/<handle>/assets/*` turned a later *unauthenticated* fetch
-of the same path from the core's `401` into a `200` served from the edge.
+community terminates TLS, and the origin sits behind an edge besides. An authorized fetch of
+`/<handle>/assets/*` populates that cache; the next fetch of the same path, carrying no
+credential at all, is answered out of it, and the core's `401` never runs.
 
 So every cacheable response the gate protects is **`private`** — the browser cache, which is
 all it was ever for, without the shared one. Content-addressed names are why a module may be
 cached *forever*; they were never a reason to cache it *shared*, and the two properties read
 so alike that this is worth stating rather than assuming.
 
-**The fix belongs at the core, not the relay.** The community forwards bytes unchanged and
+**This belongs at the core, not the relay.** The community forwards bytes unchanged and
 decides nothing about access — a cache-control rewrite at the relay would be exactly the
 second authorization mechanism invariant 3 exists to prevent.
 
@@ -438,63 +438,6 @@ Each is testable, and each has a real failure behind it.
 7. **Host and client are capabilities of an app instance**, never properties of a platform.
 
 ---
-
-## Status
-
-The rest of this document is the goal state and is written in the present tense throughout,
-as design here always is. This section is the exception: it says what is actually true of the
-code, as of **August 13, 2026**.
-
-### Real, and watched working
-
-Verified against running processes — a real core, a real community, real sockets — not by
-reading the code.
-
-| | What was seen |
-|---|---|
-| **local** | unchanged; always worked |
-| **directly public** | a second, gated acceptor. Loopback `200` and off-box `401` on the same route, the pairing page on an HTML navigation, `/healthz` open |
-| **relayed** | `hi-agent.xyz/ana` reaching a core that only ever dialed out — text in, the conversation streamed back, a WebSocket audio stream through the tunnel, and the asleep page when the core stops |
-| **the gate** | one credential in two presentations, the CSRF rule, all three pairing paths, the device list, and revocation taking a working credential to `401` |
-| **the app** | a roster and a local proxy; two cores at once, switching between them, the face never holding a credential |
-| **a name** | claimed by a signed-in account, permanent, refused to a second account and to an anonymous one, and surviving a wiped data directory |
-| **the subpath** | the page at `/ana/` emitting `/ana/assets/*` and an import map to match, all of it serving through the tunnel |
-| **`_builtin/reach`** | the one screen for all of the above — name, address, devices, add, revoke — rendered in a real browser |
-| **deployed** | the community running on the real box, behind the real CDN: a name claimed against the production registry, a tunnel dialled from a Mac to `wss://hi-agent.xyz`, and the whole conversation driven from a third machine that had only the address |
-
-**What the edge changed, and nothing on a laptop could have shown.** Relayed, the community
-is not the only thing in the path — hi-agent.xyz terminates TLS at a CDN. Three things were
-open until it was deployed, and all three are now measured rather than assumed: the `Upgrade`
-passes (yamux came up first try), SSE is **not** buffered (the `reset` frame on connect, then
-each `append` as it happened), and a gated response is no longer shared-cacheable — which it
-was, and which is the one real defect the deploy found. See
-[Nothing behind the gate is `public`](#nothing-behind-the-gate-is-public).
-
-### Written, not witnessed
-
-Each of these is built and green, and nothing has watched it do its job.
-
-- **The relayed page has never been opened in a browser.** The bytes are right; React
-  mounting, view import-map resolution and SSE reconnect under a prefix are inferred.
-- **A genuinely new machine keeping its name** is covered by a test, not by a live run — the
-  device id is machine-derived, so two data directories on one Mac share an account.
-- **The Docker shape's gate.** A published port is off-box, so an existing deployment is
-  gated from first run; that path has been reasoned about, not exercised.
-
-### No code at all
-
-- **post** — the push service, and with it "waking a surface". The app hands its token to the
-  core and the core instructs post: none of that exists.
-- **Refusing to route for a surface reported lost** — the one revocation case a sleeping core
-  cannot serve.
-- **Mail for a sleeping core**, and therefore core-to-core addressing. Nothing is queued; an
-  inbound request is answered "asleep".
-- **The roster on a screen.** Switching between cores is an API call with no surface, and the
-  surface belongs to the app rather than to any core.
-- **Credentials in the OS keychain.** An app keeps them in its config store today.
-- **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. Everything
-  above already treats hosting as a capability of an app instance rather than a property of a
-  platform, so the day that changes, nothing structural does.
 
 ## See also
 

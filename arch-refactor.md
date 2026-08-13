@@ -347,6 +347,43 @@ and the new name answered the core's own `401` immediately, while `topoverify` w
 been *rendered* in a browser — every check above is bytes, so React mounting, view
 import-map resolution and SSE reconnect under a prefix remain inferred.
 
+#### Where T stands — the ledger `topology.md` used to carry
+
+`docs/arch/topology.md` had a Status section. It is gone: that doc is the goal state, and a
+design document that doubles as a status report goes stale in a way that makes readers
+distrust the design too. The ledger lives here, where the rest of the worklist already is.
+
+**Watched working**, against running processes rather than by reading code — local; the
+directly-public acceptor; the relayed shape end to end through the deployed community and its
+CDN; the gate in both credential presentations, with CSRF, all three pairing paths, the device
+list and revocation; the app's roster and local proxy across two cores; a name claimed by a
+signed-in account, permanent, refused to a second account and to an anonymous one, surviving a
+wiped data directory, and released back; the subpath, emitting its own prefix and serving
+through the tunnel; `_builtin/reach`; **the roster screen at the app's own `/app`**, listing,
+probing, attaching and refusing to add an address that answers but is not a core; and **the
+relayed page rendered in a real browser** — React mounting, views resolving through the
+prefixed import map, SSE reconnecting.
+
+**Built, not yet watched:**
+
+- **A genuinely new machine keeping its name** — covered by `TestRegistryNameSurvivesANewMachine`,
+  not by a live run. `device_id` is machine-derived, so two data directories on one Mac share an
+  account and the live run could not tell the cases apart.
+- **The Docker shape's gate.** A published port is off-box, so an existing deployment is gated
+  from first run. Reasoned about, not exercised.
+
+**No code at all:**
+
+- **post** — the push service, and with it "waking a surface". Deliberately not next: push exists
+  to wake a surface holding no channel, which is the normal state of a phone *app*, and there is
+  no phone app. A phone browser opening the relayed address needs no waking to be useful.
+- **Refusing to route for a surface reported lost** — the one revocation case a sleeping core
+  cannot serve.
+- **Mail for a sleeping core**, and therefore core-to-core addressing. Nothing is queued; an
+  inbound request is answered "asleep". This is also the trigger that makes keypairs non-optional.
+- **Credentials in the OS keychain.** An app keeps them in its config store.
+- **A core on iOS.** Blocked by the wire being a spawned binary, not by effort.
+
 #### T4a — Reach, the surface · **on `feat/reach-view`**
 
 All of this was curl-only: a person could not see what their agent was called, could not
