@@ -104,6 +104,22 @@ pub struct Status {
     pub owner: Option<SessionId>,
     /// What it is working on, in its own words.
     pub task: String,
+    /// The ledger subject this session was created to serve, for a worker created against a
+    /// task. `None` for the rungs, and for an errand nobody wrote down.
+    ///
+    /// **This is the whole of the task↔worker join, and it is deliberately live-only.** The
+    /// alternative was a field on the task facet naming its worker, and that would be a second
+    /// copy of a fact the switchboard already holds — free to disagree with it, and unable to
+    /// be right after a restart, when the session it names no longer exists. Here the join is
+    /// computed from whatever is actually registered, every turn, and stored nowhere: a task
+    /// with no live worker reads as *nobody on it* because there genuinely is nobody, not
+    /// because a field went stale.
+    ///
+    /// It is the **subject**, not the title: the subject is the ledger's key and the directory
+    /// name under `memory/facets/tasks/`, so it survives a retitling that would break a match
+    /// on prose. Which is what [`task`](Self::task) is — a brief written for a reader, never a
+    /// key.
+    pub subject: Option<String>,
     /// Mid-turn right now, versus idle and waiting.
     pub busy: bool,
     /// Whether anything is queued for its next turn.
@@ -211,6 +227,8 @@ struct Entry {
     role: Role,
     owner: Option<SessionId>,
     task: String,
+    /// The ledger subject this session serves — see [`Status::subject`].
+    subject: Option<String>,
     busy: bool,
     turns: u64,
     started: DateTime<Utc>,
@@ -242,6 +260,7 @@ impl Entry {
             role: self.role,
             owner: self.owner,
             task: self.task.clone(),
+            subject: self.subject.clone(),
             busy: self.busy,
             queued: !self.inbox.pending.is_empty(),
             turns: self.turns,
@@ -308,7 +327,9 @@ pub fn register_scoped(
     owner: Option<SessionId>,
     task: String,
 ) -> Registration {
-    let mail = global().register(id, role, owner, task);
+    // Rungs only — the scope-bound form is for sessions whose lifetime is a scope, and a
+    // worker's is a task. So there is no ledger subject to record here.
+    let mail = global().register(id, role, owner, task, None);
     Registration { id, mail }
 }
 
@@ -378,6 +399,7 @@ impl Registry {
         role: Role,
         owner: Option<SessionId>,
         task: String,
+        subject: Option<String>,
     ) -> std::sync::Arc<Notify> {
         let notify = std::sync::Arc::new(Notify::new());
         let started = Utc::now();
@@ -389,6 +411,7 @@ impl Registry {
                     role,
                     owner,
                     task: task.clone(),
+                    subject: subject.clone(),
                     busy: false,
                     turns: 0,
                     started,
@@ -413,6 +436,7 @@ impl Registry {
                 role,
                 owner,
                 &task,
+                subject.as_deref(),
                 started,
             ));
         }
@@ -548,6 +572,7 @@ impl Registry {
                 e.role,
                 e.owner,
                 &e.task,
+                e.subject.as_deref(),
                 e.turns,
                 e.started,
                 e.thread.clone(),
@@ -953,6 +978,7 @@ mod tests {
                 Role::Worker(WorkerType::General),
                 Some(3),
                 "chase the deploy",
+                None,
                 at,
             ),
             index::thread_record("run-prev", 4, "th-errand", at),
@@ -971,7 +997,7 @@ mod tests {
 
         // Now let this run close a session of its own, which pushes onto `recent`.
         let id = mint();
-        r.register(id, Role::Cognition, None, "the shared brain".into());
+        r.register(id, Role::Cognition, None, "the shared brain".into(), None);
         r.unregister(id);
 
         assert_eq!(
@@ -985,8 +1011,8 @@ mod tests {
     fn a_message_reaches_the_target_inbox() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, "thinking".into());
-        r.register(b, Role::Worker(WorkerType::General), Some(a), "the errand".into());
+        r.register(a, Role::Cognition, None, "thinking".into(), None);
+        r.register(b, Role::Worker(WorkerType::General), Some(a), "the errand".into(), None);
 
         assert_eq!(r.send(a, b, "go".into()), Delivery::Delivered);
         let mail = r.take_pending(b).expect("delivered");
@@ -1002,8 +1028,8 @@ mod tests {
     fn messages_landing_together_merge_into_one_prompt() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new());
+        r.register(a, Role::Cognition, None, String::new(), None);
+        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new(), None);
 
         r.send(a, b, "first".into());
         r.send(a, b, "second".into());
@@ -1022,8 +1048,8 @@ mod tests {
     fn taking_or_closing_never_loses_the_racing_message() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new());
+        r.register(a, Role::Cognition, None, String::new(), None);
+        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new(), None);
 
         // Mail present: it is taken, and the inbox stays open for more.
         r.send(a, b, "one more thing".into());
@@ -1051,8 +1077,8 @@ mod tests {
     fn the_host_can_post_without_being_a_sender() {
         let r = reg();
         let (owner, w) = (mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new());
-        r.register(w, Role::Worker(WorkerType::General), Some(owner), String::new());
+        r.register(owner, Role::Cognition, None, String::new(), None);
+        r.register(w, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
 
         // A worker may not address itself as an agent — that is not its owner.
         assert_eq!(r.send(w, w, "self".into()), Delivery::NotPermitted);
@@ -1072,7 +1098,7 @@ mod tests {
     #[test]
     fn a_scoped_registration_ends_with_its_scope() {
         let sender = mint();
-        global().register(sender, Role::Cognition, None, String::new());
+        global().register(sender, Role::Cognition, None, String::new(), None);
 
         let id = {
             let voice =
@@ -1098,7 +1124,7 @@ mod tests {
     fn a_notifier_is_reachable_after_registration() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Reaction, None, String::new());
+        r.register(a, Role::Reaction, None, String::new(), None);
         assert!(r.notifier(a).is_some());
         assert!(r.notifier(9_999).is_none());
     }
@@ -1110,11 +1136,11 @@ mod tests {
     fn an_absent_target_is_reported_not_swallowed() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Cognition, None, String::new());
+        r.register(a, Role::Cognition, None, String::new(), None);
         assert_eq!(r.send(a, 9_999, "hello".into()), Delivery::Unknown);
 
         let gone = mint();
-        r.register(gone, Role::Worker(WorkerType::General), Some(a), String::new());
+        r.register(gone, Role::Worker(WorkerType::General), Some(a), String::new(), None);
         r.unregister(gone);
         assert_eq!(r.send(a, gone, "hello".into()), Delivery::Unknown);
     }
@@ -1125,9 +1151,9 @@ mod tests {
     fn a_worker_may_address_only_its_owner() {
         let r = reg();
         let (owner, other, worker) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new());
-        r.register(other, Role::Reaction, None, String::new());
-        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new());
+        r.register(owner, Role::Cognition, None, String::new(), None);
+        r.register(other, Role::Reaction, None, String::new(), None);
+        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
 
         assert_eq!(r.send(worker, owner, "done".into()), Delivery::Delivered);
         assert_eq!(
@@ -1142,8 +1168,8 @@ mod tests {
     fn the_voice_is_offered_the_shared_brain() {
         let r = reg();
         let (rx, cog) = (mint(), mint());
-        r.register(rx, Role::Reaction, None, String::new());
-        r.register(cog, Role::Cognition, None, "thinking".into());
+        r.register(rx, Role::Reaction, None, String::new(), None);
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
 
         let who = r.reachable(rx);
         assert_eq!(who.len(), 1, "{who:?}");
@@ -1162,7 +1188,7 @@ mod tests {
     fn a_rung_that_is_not_up_is_not_offered() {
         let r = reg();
         let rx = mint();
-        r.register(rx, Role::Reaction, None, String::new());
+        r.register(rx, Role::Reaction, None, String::new(), None);
         assert!(r.reachable(rx).is_empty());
     }
 
@@ -1172,10 +1198,10 @@ mod tests {
     fn cognition_is_offered_the_voice_and_its_own_workers() {
         let r = reg();
         let (cog, rx, other, w) = (mint(), mint(), mint(), mint());
-        r.register(cog, Role::Cognition, None, "thinking".into());
-        r.register(rx, Role::Reaction, None, String::new());
-        r.register(other, Role::Worker(WorkerType::General), Some(rx), String::new());
-        r.register(w, Role::Worker(WorkerType::General), Some(cog), "file the receipts".into());
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(rx, Role::Reaction, None, String::new(), None);
+        r.register(other, Role::Worker(WorkerType::General), Some(rx), String::new(), None);
+        r.register(w, Role::Worker(WorkerType::General), Some(cog), "file the receipts".into(), None);
 
         let who = r.reachable(cog);
         let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
@@ -1194,8 +1220,8 @@ mod tests {
         assert!(r.session_of_role(Role::Cognition).is_none(), "nothing is up yet");
 
         let (rx, cog) = (mint(), mint());
-        r.register(rx, Role::Reaction, None, String::new());
-        r.register(cog, Role::Cognition, None, "thinking".into());
+        r.register(rx, Role::Reaction, None, String::new(), None);
+        r.register(cog, Role::Cognition, None, "thinking".into(), None);
 
         let found = r.session_of_role(Role::Cognition).expect("cognition is up");
         assert_eq!(found.id, cog);
@@ -1210,7 +1236,7 @@ mod tests {
     fn a_rung_that_unregistered_is_no_longer_found_by_role() {
         let r = reg();
         let cog = mint();
-        r.register(cog, Role::Cognition, None, String::new());
+        r.register(cog, Role::Cognition, None, String::new(), None);
         r.unregister(cog);
         assert!(r.session_of_role(Role::Cognition).is_none());
     }
@@ -1222,8 +1248,8 @@ mod tests {
     fn two_of_one_rung_resolve_to_the_same_session_every_time() {
         let r = reg();
         let (first, second) = (mint(), mint());
-        r.register(second, Role::Cognition, None, "second".into());
-        r.register(first, Role::Cognition, None, "first".into());
+        r.register(second, Role::Cognition, None, "second".into(), None);
+        r.register(first, Role::Cognition, None, "first".into(), None);
 
         let id = r.session_of_role(Role::Cognition).map(|s| s.id);
         assert_eq!(id, Some(first.min(second)));
@@ -1238,9 +1264,9 @@ mod tests {
     fn a_worker_is_offered_only_its_owner() {
         let r = reg();
         let (owner, worker, other) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new());
-        r.register(other, Role::Reaction, None, String::new());
-        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new());
+        r.register(owner, Role::Cognition, None, String::new(), None);
+        r.register(other, Role::Reaction, None, String::new(), None);
+        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
 
         let who = r.reachable(worker);
         assert_eq!(who.len(), 1, "{who:?}");
@@ -1277,7 +1303,7 @@ mod tests {
     fn noting_a_thread_puts_it_on_the_live_session() {
         let r = Registry::new();
         let id = mint();
-        r.register(id, Role::Reaction, None, "the voice".into());
+        r.register(id, Role::Reaction, None, "the voice".into(), None);
         r.note_thread(id, "th-voice");
 
         assert_eq!(
@@ -1307,10 +1333,10 @@ mod tests {
     fn an_owner_with_live_children_is_not_idle() {
         let r = reg();
         let (owner, child) = (mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new());
+        r.register(owner, Role::Cognition, None, String::new(), None);
         assert!(!r.has_live_children(owner));
 
-        r.register(child, Role::Worker(WorkerType::General), Some(owner), String::new());
+        r.register(child, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
         assert!(r.has_live_children(owner));
         assert_eq!(r.children(owner), vec![child]);
 
@@ -1322,8 +1348,8 @@ mod tests {
     fn status_carries_meta_and_never_content() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new());
-        r.register(b, Role::Worker(WorkerType::General), Some(a), "file the receipts".into());
+        r.register(a, Role::Cognition, None, String::new(), None);
+        r.register(b, Role::Worker(WorkerType::General), Some(a), "file the receipts".into(), None);
 
         let s = r.status(b).expect("registered");
         assert_eq!(s.role, Role::Worker(WorkerType::General));
@@ -1350,7 +1376,7 @@ mod tests {
     fn every_state_change_moves_its_clock_and_nothing_else_does() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Worker(WorkerType::General), None, String::new());
+        r.register(id, Role::Worker(WorkerType::General), None, String::new(), None);
         let registered = r.status(id).unwrap();
         assert_eq!(registered.state_since, registered.started, "idle since it existed");
 
@@ -1391,7 +1417,7 @@ mod tests {
     fn doing_carries_when_it_was_last_seen() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Worker(WorkerType::General), None, String::new());
+        r.register(id, Role::Worker(WorkerType::General), None, String::new(), None);
         assert!(r.status(id).unwrap().doing_at.is_none(), "nothing done, no clock");
 
         r.record_activity(id, "$ cargo test");
@@ -1412,7 +1438,7 @@ mod tests {
     fn a_prewarmed_session_can_replace_its_placeholder_task() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Cognition, None, "waiting for the first question".into());
+        r.register(id, Role::Cognition, None, "waiting for the first question".into(), None);
 
         r.set_task(id, "review the restart behavior".into());
 
@@ -1426,7 +1452,7 @@ mod tests {
     fn output_is_a_bounded_tail_not_an_archive() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Worker(WorkerType::General), None, String::new());
+        r.register(a, Role::Worker(WorkerType::General), None, String::new(), None);
         r.record_output(a, "hello ");
         r.record_output(a, "world");
         assert_eq!(r.messages(a).as_deref(), Some("hello world"));

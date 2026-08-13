@@ -136,6 +136,17 @@ fn create_worker_tool() -> Value {
                                     without the person, `file-filer` to put a handed-over file \
                                     into the drive.",
                 },
+                "subject": {
+                    "type": "string",
+                    "description": "The ledger subject of the task this errand is for — the \
+                                    directory name under `memory/facets/tasks/`, not the title. \
+                                    Set it whenever the work belongs to a task you are tracking: \
+                                    it is what makes that task show as *being worked on* rather \
+                                    than as owed by nobody, and what lets a later glance tell a \
+                                    task with someone on it from one that has quietly stalled. \
+                                    Leave it out only for work that is genuinely not in the \
+                                    ledger.",
+                },
                 "resume": {
                     "type": "string",
                     "description": "Pick an errand back up where a restart cut it off, instead \
@@ -1157,9 +1168,26 @@ async fn dispatch_tool(
                     "the owning loop is not up, so there is nowhere to run a worker",
                 );
             };
+            // Not validated against the ledger. A subject that names no task is a mislabelled
+            // worker, which is visible and fixable; refusing the call over it would mean a
+            // typo costs the work rather than the label. The projection simply finds no live
+            // worker for that task, which is the same answer as not setting it at all.
+            let subject = args
+                .get("subject")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             let resumed = resume.is_some();
             return match sink
-                .send(LoopControl::CreateWorker { id, task, kind, owner: Some(owner), resume })
+                .send(LoopControl::CreateWorker {
+                    id,
+                    task,
+                    kind,
+                    owner: Some(owner),
+                    resume,
+                    subject,
+                })
                 .await
             {
                 Ok(()) if resumed => tool_ok(&format!(

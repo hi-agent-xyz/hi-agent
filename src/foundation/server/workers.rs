@@ -101,6 +101,9 @@ struct WorkerDto {
     /// `owner` id above is kept either way.
     owner_role: Option<&'static str>,
     task: String,
+    /// The ledger task this session serves, when it was created against one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject: Option<String>,
     /// `running` · `waiting` · `idle` — see the type doc. One word, derived here.
     state: &'static str,
     turns: u64,
@@ -412,6 +415,7 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         owner: st.owner.map(|o| o.to_string()),
         owner_role: owner_role(st.owner),
         task: st.task.clone(),
+        subject: st.subject.clone(),
         state: state_of(st),
         turns: st.turns,
         started: stamp(st.started),
@@ -473,6 +477,7 @@ mod tests {
             role: Role::Worker(WorkerType::General),
             owner: None,
             task: "check oil prices".into(),
+            subject: None,
             busy,
             queued: false,
             turns: 3,
@@ -571,7 +576,7 @@ mod tests {
     #[test]
     fn a_specialist_is_reportable_as_one() {
         let id = registry::mint();
-        registry::global().register(id, Role::Worker(WorkerType::ViewReviewer), None, "judge it".into());
+        registry::global().register(id, Role::Worker(WorkerType::ViewReviewer), None, "judge it".into(), None);
         let st = registry::global().status(id).unwrap();
         let v = serde_json::to_value(dto(&st, None)).unwrap();
         assert_eq!(v["role"], "worker");
@@ -585,7 +590,7 @@ mod tests {
     #[test]
     fn an_owner_keeps_its_id_and_only_loses_its_role_word() {
         let owner = registry::mint();
-        registry::global().register(owner, Role::Cognition, None, String::new());
+        registry::global().register(owner, Role::Cognition, None, String::new(), None);
         assert_eq!(owner_role(Some(owner)), Some("cognition"));
 
         let worker = status_owned_by(owner);
@@ -696,7 +701,7 @@ mod tests {
     #[test]
     fn the_tail_is_the_last_nonblank_line() {
         let id = registry::mint();
-        registry::global().register(id, Role::Worker(WorkerType::General), None, "an errand".into());
+        registry::global().register(id, Role::Worker(WorkerType::General), None, "an errand".into(), None);
         assert_eq!(tail(id), None, "nothing said yet");
 
         registry::global().record_output(id, "first\n\nsecond\n\n");

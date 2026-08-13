@@ -243,9 +243,9 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume }) => {
+                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume, subject }) => {
                         if let Err(err) = workers
-                            .spawn_with_id(&reaction, worker, task, kind, owner, resume)
+                            .spawn_with_id(&reaction, worker, task, kind, owner, resume, subject)
                             .await
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
@@ -311,9 +311,9 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     ctl = control_rx.recv() => match ctl {
-                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume }) => {
+                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume, subject }) => {
                             if let Err(err) = workers
-                                .spawn_with_id(&reaction, worker, task, kind, owner, resume)
+                                .spawn_with_id(&reaction, worker, task, kind, owner, resume, subject)
                                 .await
                             {
                                 tracing::warn!(error = %err, "cognition failed to create a worker");
@@ -461,6 +461,13 @@ fn offer_lost_errands(lost: &[registry::index::Ended]) -> String {
         let Some(thread) = end.thread.as_deref() else { continue };
         let task = end.task.as_deref().unwrap_or("(no task recorded)");
         let _ = write!(s, "\n- \"{}\"", tail_of(task, 200));
+        // The ledger entry it belonged to, when it had one. Without this the brief is all
+        // there is, and matching a paragraph of prose back to a task is exactly the reading
+        // the subject exists to replace — that task is on the active list two sections up,
+        // already marked as having nobody on it, and this is what ties the two together.
+        if let Some(subject) = end.subject.as_deref() {
+            let _ = write!(s, "\n  for task `{subject}`");
+        }
         if let Some(started) = end.started {
             let _ = write!(s, "\n  started {}", started.format("%Y-%m-%d %H:%MZ"));
         }
@@ -468,9 +475,10 @@ fn offer_lost_errands(lost: &[registry::index::Ended]) -> String {
     }
     s.push_str(
         "\n\nFor each: decide. `create_worker` with `resume` set to the thread picks it up \
-         knowing what it knew — brief it on what has changed since, not on the job. Or judge it \
-         stale and let it go, in which case say so in the ledger, because a task left `doing` \
-         with nobody on it reads the same as one being worked on.\n",
+         knowing what it knew — brief it on what has changed since, not on the job, and pass \
+         the same `subject` so the task shows as worked again. Or judge it stale and let it \
+         go, in which case say so in the ledger, because a task left `doing` with nobody on \
+         it reads the same as one being worked on.\n",
     );
     s
 }
@@ -553,6 +561,7 @@ mod tests {
             role: "worker".into(),
             worker_type: Some("general".into()),
             task: Some(task.into()),
+            subject: Some("chase-harbor".into()),
             owner: Some(3),
             started: Some(chrono::Utc::now()),
             ended: None,

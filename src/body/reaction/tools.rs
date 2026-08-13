@@ -51,12 +51,18 @@ pub enum LoopControl {
     /// cold — an errand the last restart killed, named by the boot glance that offered it.
     /// It is a fresh session either way: a new id, a new registration, and the same prompt.
     /// Only where its mind starts differs.
+    ///
+    /// `subject` is the ledger task this errand serves, and it is what makes "is anyone on
+    /// this task" a lookup instead of a reading. It rides the creation call because that is
+    /// the only moment anyone knows the answer: the rung asking for the work is the ledger's
+    /// writer, and by the time the session is running, the association exists nowhere else.
     CreateWorker {
         id: u64,
         task: String,
         kind: crate::identity::WorkerType,
         owner: Option<u64>,
         resume: Option<String>,
+        subject: Option<String>,
     },
     /// Stop the turn a working session is running (the `cancel_worker` tool).
     ///
@@ -520,6 +526,7 @@ mod tests {
                     kind: crate::identity::WorkerType::default(),
                     owner: None,
                     resume: None,
+                    subject: None,
                 })
                 .await
                 .unwrap();

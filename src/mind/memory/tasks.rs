@@ -273,11 +273,41 @@ pub async fn active_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     Ok(all)
 }
 
-pub async fn projection(data_dir: &Path) -> anyhow::Result<String> {
-    Ok(render_projection(&active_tasks(data_dir).await?, Utc::now()))
+/// What the switchboard says is working a task **right now**.
+///
+/// Handed in rather than looked up: `mind::memory` does not depend on the registry, and more
+/// to the point this is not memory's fact to hold. Who is on a task is a question about the
+/// present, answered by whatever is actually registered — so it is computed at the join
+/// ([`super::snapshot::agent_window`]) each turn and written down nowhere. A facet field
+/// naming its worker would be a second copy, free to disagree with the switchboard, and wrong
+/// by construction after a restart: it would still name a session that no longer exists.
+#[derive(Debug, Clone)]
+pub struct WorkingOnIt {
+    pub session: u64,
+    pub busy: bool,
+    /// The last thing it was seen doing, already clipped by the registry.
+    pub doing: Option<String>,
+    /// When it last changed state, for "how long has it been like this".
+    pub since: DateTime<Utc>,
 }
 
-fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
+/// The active ledger as the agent reads it, annotated with who is on each task.
+///
+/// `working` is keyed by task subject. An empty map is the honest answer immediately after a
+/// restart — nothing is registered yet — and every `doing` task then correctly reads as
+/// having nobody on it, which is the state this whole annotation exists to make visible.
+pub async fn projection(
+    data_dir: &Path,
+    working: &std::collections::HashMap<String, WorkingOnIt>,
+) -> anyhow::Result<String> {
+    Ok(render_projection(&active_tasks(data_dir).await?, Utc::now(), working))
+}
+
+fn render_projection(
+    active: &[Task],
+    now: DateTime<Utc>,
+    working: &std::collections::HashMap<String, WorkingOnIt>,
+) -> String {
     use std::fmt::Write as _;
 
     if active.is_empty() {
@@ -296,6 +326,9 @@ fn render_projection(active: &[Task], now: DateTime<Utc>) -> String {
     for task in &ordered[..shown] {
         out.push_str(&clip(&line(task, now), PROJECTED_LINE_CHARS));
         if let Some(note) = trailing_note(task, now) {
+            let _ = write!(out, " · {note}");
+        }
+        if let Some(note) = worker_note(task, working.get(&task.subject), now) {
             let _ = write!(out, " · {note}");
         }
         out.push('\n');
@@ -388,6 +421,45 @@ fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
     let created = task.created_at?;
     let days = (now - created).num_days();
     (days >= 1).then(|| format!("open {days}d"))
+}
+
+/// Who is on this task, or — where that is the alarming answer — that nobody is.
+///
+/// **"Nobody" is only said where nobody is a problem.** A `todo` with no worker is what a
+/// `todo` *is*, and a `serving` duty spends most of its life with no live handler because a
+/// handler is spawned per burst and idles out. Printing "nobody on it" on those would put the
+/// phrase on most of the list and teach the reader to skip it — and then it would be skipped
+/// on the one line where it means something.
+///
+/// That line is `doing`. `doing` is a claim that work is in flight, and the failure this
+/// exists to end is the claim outliving the worker: a restart, a crash, a session that idled
+/// out, an errand nobody ever started. From the outside those are indistinguishable from work
+/// in progress, and stay that way until someone happens to look.
+///
+/// A live worker is reported wherever there is one, `todo` and `serving` included, because
+/// that is positive information and cannot be a false alarm.
+fn worker_note(task: &Task, on_it: Option<&WorkingOnIt>, now: DateTime<Utc>) -> Option<String> {
+    match on_it {
+        Some(w) => {
+            let state = if w.busy { "busy" } else { "idle" };
+            let mut note = format!("worker {} — {state} {}", w.session, ago_short(now, w.since));
+            // What it is *doing*, not what it has said: a worker four minutes into a shell
+            // command has produced no output, and its silence is the thing most easily
+            // mistaken for death.
+            if let Some(doing) = w.doing.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                note.push_str(", ");
+                note.push_str(doing);
+            }
+            Some(note)
+        }
+        None if task.status == TaskStatus::Doing => Some("nobody on it".to_owned()),
+        None => None,
+    }
+}
+
+/// `ago` without the trailing word, for a note that already supplies its own verb.
+fn ago_short(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+    ago(now, then).trim_end_matches(" ago").to_owned()
 }
 
 fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
@@ -657,6 +729,16 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The common case for the projection tests that predate the join: nothing registered, so
+    /// every task is unattended. `doing` rows then carry "nobody on it", which is correct.
+    fn nobody() -> std::collections::HashMap<String, WorkingOnIt> {
+        std::collections::HashMap::new()
+    }
+
+    fn on_it(session: u64, busy: bool, doing: Option<&str>, since: DateTime<Utc>) -> WorkingOnIt {
+        WorkingOnIt { session, busy, doing: doing.map(str::to_string), since }
+    }
     use chrono::Duration;
 
     fn at(day: u32, hour: u32) -> DateTime<Utc> {
@@ -674,6 +756,77 @@ mod tests {
         // boundary unless a test puts it there.
         task.status_since = Some(now() - Duration::hours(1));
         task
+    }
+
+    fn staffed(task: &Task, w: WorkingOnIt) -> std::collections::HashMap<String, WorkingOnIt> {
+        std::collections::HashMap::from([(task.subject.clone(), w)])
+    }
+
+    /// **The line this whole join exists for.** `doing` claims work is in flight; when the
+    /// worker is gone — a restart, a crash, an idle-out, or an errand nobody ever started —
+    /// the claim outlives it and reads exactly like work in progress. Nothing said so before,
+    /// and the only way to find out was to notice.
+    #[test]
+    fn a_doing_task_with_no_worker_says_nobody_is_on_it() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let text = render_projection(std::slice::from_ref(&owed), now(), &nobody());
+        assert!(text.contains("nobody on it"), "{text}");
+    }
+
+    /// And when someone *is* on it, the line carries the three facts that separate working
+    /// from wedged: which session, whether it is mid-turn, and how long it has been that way.
+    #[test]
+    fn a_staffed_task_names_its_worker_and_how_long_it_has_been_like_that() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let text = render_projection(
+            std::slice::from_ref(&owed),
+            now(),
+            &staffed(&owed, on_it(9, true, Some("$ docker push harbor/ktv"), now() - Duration::minutes(4))),
+        );
+        assert!(text.contains("worker 9"), "{text}");
+        assert!(text.contains("busy 4m"), "{text}");
+        assert!(text.contains("$ docker push harbor/ktv"), "the tool line, not the output tail: {text}");
+        assert!(!text.contains("nobody on it"), "{text}");
+    }
+
+    /// A worker idle for forty minutes is the shape of a wedge, and it must not read as busy.
+    #[test]
+    fn an_idle_worker_is_not_reported_as_working() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let text = render_projection(
+            std::slice::from_ref(&owed),
+            now(),
+            &staffed(&owed, on_it(9, false, None, now() - Duration::minutes(40))),
+        );
+        assert!(text.contains("idle 40m"), "{text}");
+        assert!(!text.contains("busy"), "{text}");
+    }
+
+    /// **"Nobody" is only said where nobody is a problem.** A `todo` with no worker is what a
+    /// `todo` is, and a `serving` duty spends most of its life between handler bursts. Saying
+    /// it on those would put the phrase on most of the list, and a phrase on most of the list
+    /// is one the reader stops seeing — including on the `doing` line where it means
+    /// something.
+    #[test]
+    fn an_unattended_todo_or_duty_is_not_flagged() {
+        for status in [TaskStatus::Todo, TaskStatus::Serving] {
+            let owed = task("Watch the ops group", status);
+            let text = render_projection(std::slice::from_ref(&owed), now(), &nobody());
+            assert!(!text.contains("nobody on it"), "{status:?}: {text}");
+        }
+    }
+
+    /// A live worker is reported wherever there is one, though — that is positive information
+    /// and cannot be a false alarm. A duty with a handler up is worth seeing.
+    #[test]
+    fn a_live_handler_shows_on_a_duty() {
+        let duty = task("Watch the ops group", TaskStatus::Serving);
+        let text = render_projection(
+            std::slice::from_ref(&duty),
+            now(),
+            &staffed(&duty, on_it(12, true, None, now() - Duration::seconds(30))),
+        );
+        assert!(text.contains("worker 12"), "{text}");
     }
 
     #[tokio::test]
@@ -808,7 +961,7 @@ mod tests {
         let got = read_task(dir.path(), "watch-the-ops-group").await.unwrap().unwrap();
         assert_eq!(got.status, TaskStatus::Serving);
 
-        let text = render_projection(std::slice::from_ref(&got), now());
+        let text = render_projection(std::slice::from_ref(&got), now(), &nobody());
         assert!(text.contains("- [serving] Watch the ops group"), "{text}");
         assert!(text.contains("last confirmed alive 2h ago"), "{text}");
 
@@ -849,13 +1002,13 @@ mod tests {
     fn the_boundary_reads_time_in_status_not_age_since_creation() {
         let mut fresh = task("Ship Google login", TaskStatus::Doing);
         fresh.created_at = Some(now() - Duration::days(30));
-        let text = render_projection(std::slice::from_ref(&fresh), now());
+        let text = render_projection(std::slice::from_ref(&fresh), now(), &nobody());
         assert!(text.contains("· open 30d"), "{text}");
         assert!(!text.contains("close it with"), "{text}");
 
         let mut stuck = fresh.clone();
         stuck.status_since = Some(now() - Duration::days(4));
-        let text = render_projection(std::slice::from_ref(&stuck), now());
+        let text = render_projection(std::slice::from_ref(&stuck), now(), &nobody());
         assert!(text.contains("last moved 4d ago"), "{text}");
         assert!(
             text.contains("close it with what you did verify, or ask once, or cancel it"),
@@ -867,7 +1020,7 @@ mod tests {
         // The boundary itself: an hour short of it says nothing.
         let mut short = fresh.clone();
         short.status_since = Some(now() - Duration::hours(IDLE_BOUNDARY_HOURS - 1));
-        let text = render_projection(std::slice::from_ref(&short), now());
+        let text = render_projection(std::slice::from_ref(&short), now(), &nobody());
         assert!(!text.contains("close it with"), "{text}");
     }
 
@@ -881,13 +1034,13 @@ mod tests {
             task.status_since = Some(old);
             task.liveness.verify = Some("latest row is under 30m old".into());
             task.liveness.start_key = Some("watch-the-ops-group".into());
-            let text = render_projection(std::slice::from_ref(&task), now());
+            let text = render_projection(std::slice::from_ref(&task), now(), &nobody());
             assert!(!text.contains("close it with"), "{exempt:?}: {text}");
         }
 
         let mut work = task("Draft the report", TaskStatus::Doing);
         work.status_since = Some(old);
-        let text = render_projection(std::slice::from_ref(&work), now());
+        let text = render_projection(std::slice::from_ref(&work), now(), &nobody());
         assert!(text.contains("close it with"), "{text}");
     }
 
@@ -933,7 +1086,7 @@ mod tests {
         stuck.status_since = Some(now() - Duration::days(4));
         tasks.push(stuck);
 
-        let text = render_projection(&tasks, now());
+        let text = render_projection(&tasks, now(), &nobody());
         let first = text.lines().find(|line| line.starts_with("- [")).unwrap();
         assert!(first.contains("zzz last alphabetically"), "{text}");
         assert!(first.contains("close it with"), "{text}");
@@ -1010,7 +1163,7 @@ mod tests {
         let plain = task("Write the brief", TaskStatus::Todo);
         let mut late = task("Renew the domain", TaskStatus::Doing);
         late.due_at = Some(at(20, 8));
-        let text = render_projection(&[plain, late], now());
+        let text = render_projection(&[plain, late], now(), &nobody());
         assert!(text.contains("# Active tasks"));
         assert!(text.contains("- [todo] Write the brief"));
         assert!(text.contains("- [doing, overdue since 2026-07-20 08:00Z] Renew the domain"));
@@ -1022,28 +1175,28 @@ mod tests {
     #[test]
     fn a_duty_is_judged_by_liveness_and_plain_work_never_is() {
         let plain = task("Draft the report", TaskStatus::Doing);
-        let text = render_projection(std::slice::from_ref(&plain), now());
+        let text = render_projection(std::slice::from_ref(&plain), now(), &nobody());
         assert!(!text.contains("checked"), "{text}");
 
         let mut duty = task("Watch the queue", TaskStatus::Serving);
         duty.liveness.verify = Some("latest ledger row is under 30m old".into());
-        let text = render_projection(std::slice::from_ref(&duty), now());
+        let text = render_projection(std::slice::from_ref(&duty), now(), &nobody());
         assert!(text.contains("- [serving] Watch the queue"), "{text}");
         assert!(text.contains("never checked"), "{text}");
 
         duty.checked_at = Some(now() - Duration::hours(3));
-        let text = render_projection(std::slice::from_ref(&duty), now());
+        let text = render_projection(std::slice::from_ref(&duty), now(), &nobody());
         assert!(text.contains("last confirmed alive 3h ago"), "{text}");
 
         // A duty with nothing recorded to check it says so, rather than going quiet.
         let mut unverifiable = task("Watch the queue", TaskStatus::Serving);
         unverifiable.liveness = Liveness::default();
-        let text = render_projection(std::slice::from_ref(&unverifiable), now());
+        let text = render_projection(std::slice::from_ref(&unverifiable), now(), &nobody());
         assert!(text.contains("never checked, and no recorded way to"), "{text}");
 
         // Carrying the fields is not what makes it a duty; the status is.
         duty.status = TaskStatus::Doing;
-        let text = render_projection(std::slice::from_ref(&duty), now());
+        let text = render_projection(std::slice::from_ref(&duty), now(), &nobody());
         assert!(!text.contains("confirmed alive"), "{text}");
     }
 
@@ -1056,7 +1209,7 @@ mod tests {
         let unconfirmed = task("zzz silent watch", TaskStatus::Serving);
         let work = task("mmm plain work", TaskStatus::Doing);
 
-        let text = render_projection(&[confirmed, work, unconfirmed], now());
+        let text = render_projection(&[confirmed, work, unconfirmed], now(), &nobody());
         let order: Vec<&str> = text
             .lines()
             .filter(|line| line.starts_with("- ["))
@@ -1074,7 +1227,7 @@ mod tests {
             tasks.push(task(&format!("doing {i}"), TaskStatus::Doing));
             tasks.push(task(&format!("serving {i}"), TaskStatus::Serving));
         }
-        let text = render_projection(&tasks, now());
+        let text = render_projection(&tasks, now(), &nobody());
         let listed = text
             .lines()
             .filter(|line| line.starts_with("- ["))
@@ -1130,7 +1283,7 @@ mod tests {
     fn long_titles_clip_on_character_boundaries() {
         let mut task = task("long", TaskStatus::Doing);
         task.title = "任务".repeat(200);
-        let text = render_projection(std::slice::from_ref(&task), now());
+        let text = render_projection(std::slice::from_ref(&task), now(), &nobody());
         let line = text.lines().find(|line| line.starts_with("- ")).unwrap();
         // The trailing note is appended after the clip, so only the title half is bounded.
         let (title, _note) = line.split_once(" · ").unwrap();
@@ -1141,26 +1294,26 @@ mod tests {
     fn plain_work_carries_how_long_it_has_been_open() {
         let mut fresh = task("Draft the report", TaskStatus::Doing);
         fresh.created_at = Some(now() - Duration::hours(5));
-        let text = render_projection(std::slice::from_ref(&fresh), now());
+        let text = render_projection(std::slice::from_ref(&fresh), now(), &nobody());
         assert!(!text.contains("open "), "{text}");
 
         let mut stale = task("Draft the report", TaskStatus::Doing);
         stale.created_at = Some(now() - Duration::days(6));
-        let text = render_projection(std::slice::from_ref(&stale), now());
+        let text = render_projection(std::slice::from_ref(&stale), now(), &nobody());
         assert!(text.contains("· open 6d"), "{text}");
 
         // A watch is meant to be old, so its line stays about whether it is still alive.
         let mut duty = stale.clone();
         duty.status = TaskStatus::Serving;
         duty.liveness.verify = Some("latest ledger row is under 30m old".into());
-        let text = render_projection(std::slice::from_ref(&duty), now());
+        let text = render_projection(std::slice::from_ref(&duty), now(), &nobody());
         assert!(!text.contains("open 6d"), "{text}");
         assert!(text.contains("never checked"), "{text}");
 
         // A record with no `created_at:` gets no note rather than a guessed one.
         let mut undated = stale.clone();
         undated.created_at = None;
-        let text = render_projection(std::slice::from_ref(&undated), now());
+        let text = render_projection(std::slice::from_ref(&undated), now(), &nobody());
         assert!(!text.contains("open "), "{text}");
     }
 }

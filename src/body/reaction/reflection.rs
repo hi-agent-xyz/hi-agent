@@ -202,9 +202,9 @@ async fn run(reaction: Reaction, registration: Registration) {
             _ = mail.notified() => Wake::Turn,
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume }) => {
+                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume, subject }) => {
                         if let Err(err) = workers
-                            .spawn_with_id(&reaction, worker, task, kind, owner, resume)
+                            .spawn_with_id(&reaction, worker, task, kind, owner, resume, subject)
                             .await
                         {
                             tracing::warn!(error = %err, "reflection failed to create a worker");

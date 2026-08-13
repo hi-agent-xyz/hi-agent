@@ -124,6 +124,7 @@ mod tests {
             role,
             owner,
             task: String::new(),
+            subject: None,
             busy,
             queued,
             turns: 0,

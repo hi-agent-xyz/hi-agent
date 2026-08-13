@@ -196,6 +196,33 @@ outlives one:
 > so nothing is redone → does or re-arms what is still wanted → for the user-facing ones,
 > messages Reaction, which voices it when the room is right.
 
+**Who is on a task is projected with the task, and it is computed, never stored.** A worker
+records the ledger subject it was created for (`CreateWorker(subject:)`), so each projected line
+carries whether a session is working it, whether that session is mid-turn, and how long it has
+been in that state. The join is derived from the switchboard on every turn and written down
+nowhere: a facet field naming its worker would be a second copy of a fact the registry already
+holds, free to disagree with it, and wrong by construction after a restart — still naming a
+session that no longer exists.
+
+That makes **`doing` with nobody on it** a fact the ledger reports rather than an inference
+someone has to draw. It is the shape every unfinished task takes after a restart, a crash, an
+idle-out, or a hand-off that never happened, and until it was projected it was indistinguishable
+from work in hand. It is a question, not an alarm — put someone on it, or write down that it is
+finished, blocked, or dropped — but it is not a state a task may sit in silently.
+
+"Nobody on it" is said only where nobody is a problem, which is `doing`. An unattended `todo` is
+what a `todo` is, and a `serving` duty is between handler bursts for most of its life, so
+flagging those would put the phrase on most of the list and train the reader straight past it —
+including on the one line where it means something. A live worker is reported wherever there is
+one, since that is positive information and cannot be a false alarm.
+
+**Judging a worker stuck stays Cognition's**, not a host watchdog's. The host supplies the facts
+that make the judgment possible — busy or idle, what it was last seen doing, how long it has
+been that way — and stops there. A timer that killed sessions on a threshold would be code
+making the call `agents.md` gives to the rung, and it would be wrong about exactly the work worth
+protecting: a build that legitimately runs for an hour looks identical to a wedge until someone
+reads what it is doing.
+
 This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
 loop ([`host.md`](host.md#glancing-up)) — one wake shortly after
 the process starts, then on the pulse cadence while anything is owed.

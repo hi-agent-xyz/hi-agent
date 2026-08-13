@@ -97,7 +97,7 @@ That is what makes "the switchboard is the host" a mechanism rather than an aspi
 | Call | Who | Contract |
 |---|---|---|
 | `SendMessage(to, message)` | every agent | One direction, **no reply**. Returns whether it was *delivered*, never a response. Queues per target and merges while the target is mid-turn, so a burst arrives as one prompt |
-| `CreateWorker(type, resume?)` | Cognition, Reflection | → a session id. `resume` picks an errand back up where a restart cut it off, and accepts **only** a thread from this boot's offer ([agents.md](agents.md#across-a-restart)) |
+| `CreateWorker(type, subject?, resume?)` | Cognition, Reflection | → a session id. `subject` is the ledger task this errand serves, and is what makes "is anyone on this task" a lookup instead of a reading. `resume` picks an errand back up where a restart cut it off, and accepts **only** a thread from this boot's offer ([agents.md](agents.md#across-a-restart)) |
 | `SessionStatus(id)` | owners | alive · busy/idle · what it was given · **what it was last seen doing** · turns. **Meta only** — free to call |
 | `SessionMessages(id)` | owners | its actual output. Costs context, so it is a separate call from status |
 

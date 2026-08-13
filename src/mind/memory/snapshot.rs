@@ -70,7 +70,7 @@ pub async fn window(
 ) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::conversation_prompt_path(data_dir)).await;
-    let owed = match tasks::projection(data_dir).await {
+    let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
             tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
@@ -116,7 +116,7 @@ pub async fn agent_window(
 ) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::agent_prompt_path(data_dir, agent)).await;
-    let owed = match tasks::projection(data_dir).await {
+    let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
             tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
@@ -131,6 +131,40 @@ pub async fn agent_window(
         &crate::foundation::registry::global().reachable(id),
     );
     join(&[carried.as_str(), owed.as_str(), reach.as_str()])
+}
+
+
+/// Who is working which task, right now — the task↔worker join, computed fresh.
+///
+/// **The switchboard is the only source, and nothing is written down.** "Is anyone on this
+/// task" is a question about the present, so the answer is derived from what is actually
+/// registered at the moment the window is built. That is what makes it impossible for this to
+/// be stale: after a restart the switchboard is empty, so every `doing` task reads *nobody on
+/// it*, which is exactly true and exactly the thing that needs saying.
+///
+/// Keyed by subject, last writer wins. Two live workers on one task is a mistake worth seeing
+/// rather than an invariant worth enforcing here — the ledger line will name one of them, and
+/// the roster (`GET /api/workers`) shows both.
+fn working_on_tasks() -> std::collections::HashMap<String, tasks::WorkingOnIt> {
+    crate::foundation::registry::global()
+        .statuses()
+        .into_iter()
+        .filter(|st| st.role.is_worker())
+        .filter_map(|st| {
+            let subject = st.subject.clone()?;
+            Some((
+                subject,
+                tasks::WorkingOnIt {
+                    session: st.id,
+                    busy: st.busy,
+                    doing: st.doing.clone(),
+                    // The state clock, not the `doing` clock: what a reader is asking is how
+                    // long this session has been in the shape it is in.
+                    since: st.state_since,
+                },
+            ))
+        })
+        .collect()
 }
 
 /// The learned read on speaking up unprompted (`proactivity.md`), projected rather

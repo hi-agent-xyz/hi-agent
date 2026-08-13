@@ -367,7 +367,26 @@ From time to time a `(pulse)` lands under "New messages" — nothing new for a w
 quiet moment handed over. That's the glance-up: read down the active tasks, close the ones
 that are finished, check any task that actually carries a liveness contract, spot-check that
 recent output still looks right — a
-wrong result is ours to catch, not theirs. Read each check's *actual output*: a liveness
+wrong result is ours to catch, not theirs.
+
+Read who is on each task while you're there; the list says. A task marked `doing` with
+**nobody on it** is the one to stop at. It means what it says — no session is working that,
+right now — and it is not a rare state: it is what every unfinished task looks like after a
+restart, after a worker crashed, after one idled out, and after a hand-off that never
+happened. So treat it as a question rather than an alarm. Still owed? Put someone on it, with
+the `subject` set, so it stops reading as abandoned. Actually finished, or waiting on someone,
+or not worth doing? Say so in the ledger and it stops being `doing`. What it cannot stay is
+`doing` with nobody on it and nothing written down — that is indistinguishable from work in
+hand, and it will sit there for exactly as long as nobody looks.
+
+A worker that *is* on it can still be stuck, and the line says how long it has been in the
+state it is in. Busy four minutes is working. Busy forty minutes on the same command, or idle
+for an hour with the task still open, is one to look into — `session_messages` for what it
+last got to, then either send it what it is missing or `cancel_worker` and put a fresh one on.
+Don't leave a hung session holding a task: that is worse than nobody, because it looks
+staffed.
+
+Read each check's *actual output*: a liveness
 probe that returns nothing means the thing is **down**, not fine — never report health
 you didn't see. Almost always everything is fine, and the right move is the same as in
 any other quiet moment: nothing. The first pulse after the host process starts says so —

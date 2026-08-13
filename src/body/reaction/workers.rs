@@ -221,8 +221,9 @@ impl WorkerRegistry {
         kind: WorkerType,
         owner: Option<SessionId>,
         resume: Option<String>,
+        subject: Option<String>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reaction, id, task, kind, owner, resume).await
+        self.spawn_inner(reaction, id, task, kind, owner, resume, subject).await
     }
 
     /// The one construction path for a working session: open it, record it, drive it.
@@ -239,10 +240,12 @@ impl WorkerRegistry {
         kind: WorkerType,
         owner: Option<SessionId>,
         resume: Option<String>,
+        subject: Option<String>,
     ) -> anyhow::Result<SessionId> {
         let resumed = resume.is_some();
-        let (session, mail) =
-            self.open_working_session(reaction, id, &task, kind, owner, resume).await?;
+        let (session, mail) = self
+            .open_working_session(reaction, id, &task, kind, owner, resume, subject)
+            .await?;
 
         let observatory = reaction.inner.observatory.clone();
         observatory
@@ -292,6 +295,7 @@ impl WorkerRegistry {
         kind: WorkerType,
         owner: Option<SessionId>,
         resume: Option<String>,
+        subject: Option<String>,
     ) -> anyhow::Result<(Arc<AgentSession>, Arc<Notify>)> {
         // **One role drives all three things this function decides**: which prompt the
         // session opens with, what the switchboard records, and which tool surface it
@@ -306,7 +310,7 @@ impl WorkerRegistry {
 
         // The address exists before subprocess startup so mail can queue during both
         // eager warm-up and an ordinary create_worker spawn.
-        let mail = registry::global().register(id, role, owner, task.to_string());
+        let mail = registry::global().register(id, role, owner, task.to_string(), subject);
 
         let opened = reaction
             .inner
