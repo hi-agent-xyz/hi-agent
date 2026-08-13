@@ -20,10 +20,10 @@ struct ClaimBody {
     handle: String,
 }
 
-/// `GET /api/handle` — what this core is called and where it is reachable.
+/// `GET /api/handle` — the names this account owns, and how many it may.
 ///
-/// Answers with an empty handle rather than an error when nothing is claimed: a
-/// core with no name is a normal core, working, reachable from its own machine.
+/// An empty list is a normal answer: a core with no name works, and is simply
+/// reachable from its own machine only.
 pub async fn get_handle(State(state): State<Arc<AppState>>) -> Response {
     match community::current(&state.data_dir).await {
         Ok(h) => axum::Json(h).into_response(),
@@ -34,11 +34,11 @@ pub async fn get_handle(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
-/// `POST /api/handle` — claim a handle, or rename to a different one.
+/// `POST /api/handle` — claim a name, permanently.
 ///
-/// The registry's refusal travels through verbatim: "that handle is in use" is
-/// the whole content of a conflict, and a person choosing a name is entitled to
-/// the reason rather than a status code.
+/// The registry's refusal travels through verbatim: "that handle is in use", or
+/// "sign in first", is the whole content of the answer, and a person choosing a
+/// name is entitled to the reason rather than a status code.
 pub async fn post_handle(State(state): State<Arc<AppState>>, body: String) -> Response {
     let Ok(req) = serde_json::from_str::<ClaimBody>(&body) else {
         return (StatusCode::BAD_REQUEST, "expected {handle}\n").into_response();

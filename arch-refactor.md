@@ -282,7 +282,46 @@ mechanism:
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
 
-#### T3a — A core can have a name · **on `feat/topology-handle`, and on the site repo (`7a379e8`)**
+#### T3a′ — A name belongs to an account, permanently · **the lease is deleted**
+
+The user's call, 2026-08-13: *"let's require an account to claim a subpath / not a lease,
+adds too much mental burden for use."* `topology.md` changed to match — the decision row,
+the Identity section, invariant 2, and the liveness sentence in the tunnel section.
+
+Two things the lease got wrong, and the second is the one that decided it:
+
+- **A lease loses you your name for going quiet**, and every link and QR you handed out
+  then points at a stranger — worse than the squatting it guarded against.
+- **A name bound to a core dies with the laptop.** The core credential lived in that
+  machine's `config.db`. Replacing a machine is ordinary; losing your address to it is not.
+
+So the core credential went with the lease: if the account owns the name, a second identity
+for the core was doing nothing. Deleted — the `cores` table, anonymous registration,
+`AuthCore`, `SeeCore`, `/api/registry/checkin`, the expiry-release path, and the Rust
+`identity()`/`check_in()`.
+
+**Recoverable, not merely authenticated.** Every install bootstraps an anonymous device
+account, so requiring "an account" without requiring a way back into it would be requiring
+nothing. An unbound account is refused with what to do about it. That is the one thing this
+asks of a person before giving them an address.
+
+**The line that survives invariant 2:** the registry now knows accounts and must never know
+billing. Nothing on the claim path reads a tier, a balance or a payment — pinned by a test.
+
+Squatting is bounded at three handles per account.
+
+**Live-verified** end to end on the Mac mini against the real Go service: an anonymous core
+is refused with *"sign in first"*; binding an email to that same account and claiming
+returns `https://hi-agent.xyz/ana`; the name shows in the account's list with its limit; and
+a **wiped data dir keeps the name** without migrating anything off the old one.
+
+⚠️ **What the live run could *not* show:** genuinely new *hardware*. `device_id` is
+machine-derived, so a second data dir on the same Mac bootstraps into the same account — the
+fresh-install case is real and was verified, the new-laptop case is covered by the Go test
+(`TestRegistryNameSurvivesANewMachine`, distinct device ids through the real adoption flow)
+and not by the live run.
+
+#### ~~T3a — A core can have a name~~ · superseded by T3a′ above · **on `feat/topology-handle`, and on the site repo (`7a379e8`)**
 
 Both halves, and they have talked to each other. The community side is the registry
 (handle ↔ core, leases, reserved paths, no broker dependency); the core side is

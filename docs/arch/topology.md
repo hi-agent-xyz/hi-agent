@@ -22,7 +22,8 @@ person**, never many people behind one surface, and never one person split acros
 | **An address is a base URL** | `http://localhost:12358` and `https://hi-agent.xyz/ana` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
 | **The core checks auth; the community never does** | In two of the three shapes the community is not in the path at all. Auth at the community would not replace core-side auth, only add to it — two mechanisms to keep in agreement |
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
-| Registration is independent of the account | A BYOK install pays us nothing and must still get a name and be reachable. Sharing a key between the registry and billing would quietly make the address a paid feature |
+| **A handle is owned by an account, permanently** | An address is only worth handing out if it survives a new laptop and a quiet month. Permanence needs an owner that outlives any one machine, and the only such thing is an account. A lease would put the burden on the person to keep proving they still want their own name |
+| Claiming may require an account; it must never require a **paid** one | A BYOK install pays us nothing and must still get a name. "Free" is the load-bearing word — sign-up is a cost the person pays once, billing is a cost that would make the address a product |
 
 ## The three roles
 
@@ -108,14 +109,15 @@ services, independent, deliberately not sharing keys:
 
 | Service | Does | State |
 |---|---|---|
-| **registry** | handle ↔ core; claim, rename, lease | the namespace |
+| **registry** | handle ↔ account; claim, rename | the namespace |
 | **relay** | routes an inbound request by handle into that core's live connection | the routing table |
 | **broker** | provider role: LLM credentials and energy (`foundation/broker.rs` today) | accounts, billing |
 | **post** | push to a surface, on a core's instruction; later, mail for a sleeping core | push tokens |
 
-**The registry does not depend on the broker.** Separate tables, no foreign key, and
-registration paths that never touch billing code. An optional link between a core and an
-account is allowed; a required one is the bug this rule exists to prevent.
+**The registry knows accounts and must never know billing.** A handle is owned by an account,
+so the two share an identity — but nothing on the claim path reads a tier, a balance or a
+payment, and a free account claims a name exactly as a paid one does. That is the line: the
+community may require you to be someone; it may never require you to be a customer.
 
 **The community never issues, checks, or holds access.** It has no ACL, no notion of which
 app may reach which core, and no roster. It routes by handle and forwards bytes.
@@ -285,8 +287,8 @@ each side. The alternative was reversed HTTP/2, which is a better fit for everyt
 the `Upgrade` — carrying WebSocket over it needs extended CONNECT, and audio and vision capture
 from a remote surface are exactly the traffic that would ride it.
 
-**The connection is the liveness signal.** It renews the handle lease as a side effect of
-being reachable, so there is no separate heartbeat to drift out of agreement with reality.
+**The connection is the liveness signal**, and the only one: a handle with no live connection
+is asleep, not lost. There is no heartbeat and nothing to renew.
 
 Dialing out is what makes this work behind NAT with no configuration: anywhere the core can
 already reach the community, it can be reached back.
@@ -297,21 +299,30 @@ already reach the community, it can be reached back.
 
 | | Where | Means |
 |---|---|---|
-| **handle** | the registry | the address |
+| **handle** | the registry, owned by an account | the address |
 | **credential** | issued by a core, held by an app | this app may reach that core |
 
 **Naming is three layers**, and collapsing them is the classic mistake:
 
 | | Mutable | Unique | For |
 |---|---|---|---|
-| core id | never | yes | references, audit. Never reused |
+| account id | never | yes | who owns the name. Never reused |
 | handle | renameable | yes | the address |
 | display name | freely | no | what it calls itself |
 
-**A handle is a lease, not a deed.** It is held while the core checks in and released after
-prolonged dormancy — generous, months not days, and a claimed-but-never-seen handle expires
-far sooner than a live one gone quiet. That is what lets registration be free without
-inviting bulk squatting: a hoarded handle has to be kept alive by a running core.
+**A handle belongs to an account, and it is permanent.** Not a lease: an address that has to
+be kept alive is one a person can lose by going quiet, and every link and QR they ever handed
+out then points at a stranger. Nothing expires, and nothing has to be renewed.
+
+That is also what makes replacing a machine survivable. A handle bound to a *core* would be
+lost with the laptop it was minted on — an ordinary event, and a worse outcome than the
+squatting a lease was guarding against. Bound to an account, a new install claims the same
+name back by signing in.
+
+**Squatting is bounded by the account instead**, which is where the cost naturally sits: a
+small number of handles per account, and an account you have to be able to sign back into.
+The account may be free and must be — see the decision above — but it cannot be anonymous,
+because permanence you cannot recover is not permanence.
 
 **One body per person.** Two machines running one handle would be one identity with two
 memories, two ledgers and two presences. A second machine is either a second person or a
@@ -345,8 +356,10 @@ and starts one, then attaches over loopback — ungated, so nothing is needed ye
 handle and dialing the community are separate, optional steps: an offline core with no
 handle works, unreachable.
 
-**Claiming a handle.** The core asks the registry, which records the handle and starts the
-lease. Rename is the same call; the id underneath never changes.
+**Claiming a handle.** The core presents its account and asks; the registry records the name
+against that account and it is theirs from then on. Rename is the same call, and the account
+underneath never changes. A core with no account has no handle and works fine without one —
+it is simply reachable from its own machine only.
 
 **Pairing a second app — three paths, and all three are needed.**
 
@@ -389,8 +402,8 @@ Each is testable, and each has a real failure behind it.
 1. **The community is never a principal.** It has no name, cannot be addressed, holds no
    person-credential, and nothing it serves is authored by it — it routes bytes and
    forwards them unchanged.
-2. **The community may know you; it must never require billing you.** The registry and the
-   broker share no key.
+2. **The community may require you to be someone; never to be a customer.** Claiming a handle
+   needs an account, and no path from claiming reaches a tier, a balance or a payment.
 3. **The core is the sole authority on who may reach it.** The community never issues,
    checks or holds access. *Stated plainly: in the relayed shape it is trusted not to
    replay what it forwards, because a bearer token is a bearer token.*
