@@ -440,7 +440,10 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             let listener = TcpListener::bind(("127.0.0.1", app_port))
                 .await
                 .with_context(|| format!("binding the app on 127.0.0.1:{app_port}"))?;
-            tracing::info!("the app is at http://127.0.0.1:{app_port} — open this, not the core");
+            tracing::info!(
+                "the app is at http://127.0.0.1:{app_port} — open this, not the core; \
+                 its roster is at http://127.0.0.1:{app_port}/app"
+            );
             let router = app::proxy::router(app);
             let shutdown = shutdown.clone();
             Some(tokio::spawn(async move {

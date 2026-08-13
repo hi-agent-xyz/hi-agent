@@ -32,6 +32,7 @@
 
 pub mod proxy;
 pub mod roster;
+pub mod screen;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -109,6 +110,35 @@ impl App {
         Some(pair)
     }
 
+    /// Whether a core answers, and how — the one thing a roster has to say
+    /// besides which entries exist.
+    ///
+    /// Asks `/healthz`, which is open by definition in every shape, so this needs
+    /// no credential and reports honestly on a core this app is not paired with.
+    /// Three answers rather than a bool, because "asleep" is an ordinary state
+    /// with an ordinary fix and "unreachable" is not: a claimed handle whose core
+    /// is not dialled in gets the community's `503`, and a laptop that is off
+    /// gets nothing at all.
+    ///
+    /// **Observed, never supervised.** A remote core is not this app's to start,
+    /// so this reports and offers nothing. The timeout is short because it feeds
+    /// a status dot; a slow answer and no answer mean the same thing to a person
+    /// deciding who to be with.
+    pub async fn reachable(&self, base_url: &str) -> &'static str {
+        let res = self
+            .client
+            .get(format!("{}/healthz", base_url.trim_end_matches('/')))
+            .timeout(std::time::Duration::from_secs(4))
+            .send()
+            .await;
+        match res {
+            Ok(r) if r.status().is_success() => "here",
+            Ok(r) if r.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => "asleep",
+            Ok(_) => "here", // answering at all means something is listening
+            Err(_) => "unreachable",
+        }
+    }
+
     /// Forget the cached session for `id`, so the next request exchanges again.
     /// Called when a core answers `401`: the credential may still be good and the
     /// session merely lapsed, and the two look identical from here.
@@ -143,12 +173,64 @@ impl App {
             "{base} did not accept that pairing code ({})",
             res.status()
         );
+        // A `200` is not enough to conclude we reached a core. Every site answers
+        // something, and an address that is not a core — a typo, an unclaimed
+        // handle falling through to the community's own pages — answers its
+        // catch-all. What settles it is the one thing only a core replies with:
+        // a session body carrying the credential. Falling back to the code the
+        // person typed would store a roster entry that looks paired, can never
+        // work, and says so at no point.
         let body: serde_json::Value = res.json().await.unwrap_or(serde_json::Value::Null);
         let credential = body
             .get("credential")
             .and_then(|v| v.as_str())
-            .unwrap_or(code)
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("{base} answered, but not like a core — check the address"))?
             .to_string();
         roster::add(&self.data_dir, label, base, &credential)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pairing has to reach a *core*, and a status code cannot tell you that.
+    ///
+    /// Every website answers something. An address that is not a core — a typo, or
+    /// an unclaimed handle falling through to the community's own pages — answers
+    /// its catch-all with a cheerful `200` and a page. Accepting that stored a
+    /// roster entry whose credential was the pairing code the person typed: it
+    /// looked paired, could never work, and never said so.
+    #[tokio::test]
+    async fn a_200_from_something_that_is_not_a_core_is_not_pairing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // The roster shares `config.db` with the settings table, which a real
+        // install has open from startup.
+        crate::foundation::credentials::set_setting(dir.path(), "seed", "1").expect("seed");
+        let app = App::new(dir.path().to_path_buf()).expect("app");
+
+        // A server that answers everything 200 with a page, the way a site does.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let site = axum::Router::new().fallback(axum::routing::any(|| async {
+                axum::response::Html("<!doctype html><title>a website</title>")
+            }));
+            let _ = axum::serve(listener, site).await;
+        });
+
+        let err = app
+            .pair(&format!("http://{addr}"), "some-code", "not a core")
+            .await
+            .expect_err("a page is not a session");
+        assert!(
+            err.to_string().contains("not like a core"),
+            "the reason should name the address, got: {err}"
+        );
+        assert!(
+            roster::list(dir.path()).expect("roster").is_empty(),
+            "nothing that cannot work belongs on the roster"
+        );
     }
 }

@@ -37,8 +37,14 @@ const HOP_BY_HOP: &[HeaderName] = &[
 
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
+        // The app's own screen. `/app` is the app's and never forwarded, which is
+        // why it has to be a path no core serves — a browser pointed straight at a
+        // core gets nothing here, correctly: a core has no roster.
+        .route("/app", get(get_screen))
+        .route("/app/", get(get_screen))
         .route("/api/app/roster", get(get_roster).post(post_roster))
         .route("/api/app/roster/{id}", axum::routing::delete(delete_roster))
+        .route("/api/app/roster/{id}/health", get(get_health))
         .route("/api/app/roster/{id}/attach", post(post_attach))
         .with_state(app.clone())
         .fallback(axum::routing::any(forward))
@@ -48,6 +54,12 @@ pub fn router(app: Arc<App>) -> Router {
 // -----------------------------------------------------------------------------
 // The app's own surface
 // -----------------------------------------------------------------------------
+
+/// `GET /app` — the roster, as a page. See [`crate::app::screen`] for why the
+/// app serves this itself and why it carries no assets.
+async fn get_screen() -> Response {
+    axum::response::Html(crate::app::screen::page()).into_response()
+}
 
 /// `GET /api/app/roster` — the cores this app may be with, and which one it is
 /// with now. Credentials are never in it: the face renders this, and the face is
@@ -100,6 +112,22 @@ async fn delete_roster(State(app): State<Arc<App>>, Path(id): Path<String>) -> R
             (StatusCode::INTERNAL_SERVER_ERROR, "could not forget it\n").into_response()
         }
     }
+}
+
+/// `GET /api/app/roster/{id}/health` — does this core answer, and how.
+///
+/// Per entry rather than folded into the roster listing: a core that is off takes
+/// the whole timeout to say so, and one unreachable entry must not hold up the
+/// list of the others.
+async fn get_health(State(app): State<Arc<App>>, Path(id): Path<String>) -> Response {
+    let Ok(entries) = roster::list(app.data_dir()) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "could not read the roster\n").into_response();
+    };
+    let Some(entry) = entries.into_iter().find(|e| e.id == id) else {
+        return (StatusCode::NOT_FOUND, "no such entry\n").into_response();
+    };
+    let state = app.reachable(&entry.base_url).await;
+    axum::Json(serde_json::json!({ "state": state })).into_response()
 }
 
 /// `POST /api/app/roster/{id}/attach` — be with this one now.
@@ -313,6 +341,7 @@ fn is_websocket(headers: &HeaderMap) -> bool {
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+    use tower::ServiceExt as _;
 
     #[test]
     fn this_hop_stays_on_this_hop() {
@@ -334,5 +363,39 @@ mod tests {
         assert!(!is_websocket(&h));
         h.insert(header::UPGRADE, HeaderValue::from_static("WebSocket"));
         assert!(is_websocket(&h));
+    }
+
+    /// The roster screen is the app's, and it is reachable when nothing else is.
+    ///
+    /// Both facts are one route: `/app` must be answered by the app rather than
+    /// forwarded, because the attached core neither serves it nor knows what a
+    /// roster is — and because the two moments this screen exists for are adding
+    /// your first core and finding the attached one asleep, when forwarding would
+    /// reach nobody.
+    #[tokio::test]
+    async fn the_roster_screen_is_the_apps_own_and_needs_no_core() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No roster entry at all: the emptiest an app gets, and exactly when a
+        // person needs somewhere to add one.
+        let app = Arc::new(App::new(dir.path().to_path_buf()).expect("app"));
+        let router = router(app);
+
+        for path in ["/app", "/app/"] {
+            let res = router
+                .clone()
+                .oneshot(
+                    Request::builder().uri(path).body(axum::body::Body::empty()).unwrap(),
+                )
+                .await
+                .expect("response");
+            assert_eq!(res.status(), StatusCode::OK, "{path} is the app's own");
+            let kind = res
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            assert!(kind.starts_with("text/html"), "{path} serves a page, got {kind:?}");
+        }
     }
 }
