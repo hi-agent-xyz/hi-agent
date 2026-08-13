@@ -675,8 +675,16 @@ button {
 
 /* When the camera pip holds the lower-left corner, push the dock's left edge past
    it (the pip is clamp(180px, 24vw, 520px) wide from the left margin, and tall
-   enough to reach the dock's rows) so the words never sit on the live feed. */
-.hi-stage.hi-stage--captions[data-camera="pip"] {
+   enough to reach the dock's rows) so the words never sit on the live feed.
+
+   Keyed on the pip being *rendered* — the same `:has` the input line below uses —
+   and not on the layout pass's `camera` word. That word is `pip` whenever a view
+   leads, camera on or off (`core/layout.ts`: `input.content ? "pip" : "fill"`),
+   because it answers "which shape would the self-view take", not "is one there".
+   Read as a gutter it stepped the words ~400px right of centre with nothing in
+   the corner to step past. `CameraPreview` renders nothing without a stream, so
+   the class is present exactly when the corner is actually occupied. */
+.hi-root:has(.hi-selfview--pip) .hi-stage.hi-stage--captions {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
 
@@ -1022,9 +1030,10 @@ button {
 
 @media (max-width: 640px) {
   /* Too narrow to step past the camera pip and still leave a readable measure:
-     the caption takes the full width and simply sits over the pip's top edge. */
+     the caption takes the full width and simply sits over the pip's top edge.
+     Both selectors, because the stepped-past rule outranks the plain one. */
   .hi-stage.hi-stage--captions,
-  .hi-stage.hi-stage--captions[data-camera="pip"] {
+  .hi-root:has(.hi-selfview--pip) .hi-stage.hi-stage--captions {
     left: 14px;
     right: 14px;
     bottom: calc(var(--hi-safe-bottom) + 66px);

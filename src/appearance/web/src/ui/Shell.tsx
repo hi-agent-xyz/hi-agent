@@ -132,13 +132,15 @@ export function Shell() {
         </div>
 
         {layout.conversation === "pill" && (
-          <div
-            className="hi-stage hi-stage--captions"
-            // Tells the dock to pull its left edge past the camera pip
-            // (bottom-left) so the bottom bar's three zones — pip · captions ·
-            // controls — never overlap.
-            data-camera={layout.camera === "pip" ? "pip" : undefined}
-          >
+          // The dock steps past the camera pip (bottom-left) so the bottom
+          // bar's three zones — pip · captions · controls — never overlap, and
+          // that step is keyed in the stylesheet on the pip *being on screen*
+          // (`:has(.hi-selfview--pip)`), the same way the input line does it.
+          // It used to be this element's `data-camera`, read off the layout
+          // pass — which says `pip` whenever a view leads, camera or no camera.
+          // With the camera off the words then stepped past nothing and sat
+          // ~400px right of centre.
+          <div className="hi-stage hi-stage--captions">
             <SpeechText items={lastSpoken} />
           </div>
         )}
