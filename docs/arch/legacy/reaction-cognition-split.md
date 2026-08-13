@@ -119,7 +119,7 @@ reaction's cheap memory prep is the only synchronous part; cognition's warm is b
   observation. Single mouth preserved: cognition still never `hi_say`s — it proposes, the
   reaction voices.
 - **Stage 3b — full switchboard (DEFERRED).** The remaining, larger pieces: promoting
-  cognition from a mute `Worker` into a **first-class session with its own driver task and
+  cognition from a voiceless `Worker` into a **first-class session with its own driver task and
   independent timer wake-source** (so it can surface from *idle*, not only while a turn or a
   worker report pokes it); a cognition→worker **`dispatch`** verb (restores the 3rd tier —
   today cognition does multi-step work inline, no fan-out); and the **two-session
@@ -258,7 +258,7 @@ conversation, not presence.
   (spawn once, follow-up each turn) seeded with the turn's human request; it thinks/works
   off the floor and reports back as an ordinary `LoopInput::Worker` the reaction voices. So
   the reaction is the single fast voice; cognition (agentic) does the work in parallel. No
-  MCP/role surgery — a worker is already channel-mute (it reports, never `hi_say`s), and the
+  MCP/role surgery — a worker already holds no `hi_say` (it reports, never speaks), and the
   human-only task render keeps cognition from re-ingesting its own report.
 
 ## Remaining (fix-forward + next)

@@ -941,14 +941,14 @@ async fn turn(
         tracing::warn!(
             cognition = id,
             closed,
-            reply_chars = full.chars().count(),
+            typed_chars = full.chars().count(),
             "cognition closed a task and sent nothing; the report reached no one",
         );
     }
 
     tracing::info!(
         cognition = id,
-        reply_chars = full.chars().count(),
+        typed_chars = full.chars().count(),
         sent,
         "cognition turn done"
     );

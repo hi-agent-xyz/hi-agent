@@ -107,7 +107,7 @@ being wrong first:
 | **The arbiter is retired into Reaction** | a host module arbitrating a mouth that one per-scene agent already owns |
 | **Deliberation is retired into Cognition** | its *reason* (the voice cannot read) was real and moved; its *scoping* was per-scene, and once scene went it was a singleton in front of a singleton. Two rungs meant two hops for one answer. Safe only with its replacement rule below |
 | **Cognition never grinds** | what "one session held free for the conversation" was really buying. A brain that dispatches every artifact, side effect and long errand stays as free as a rung reserved for it, in one hop instead of two |
-| **A hand-down is a reply owed** | Deliberation's answer was must-relay *structurally* (the host framed the report). Cognition's is mail, and its prompt says mail is a proposal — so the host marks the answer to a hand-down as owed, or a mute-by-default voice is entitled to drop the reply the person is waiting for |
+| **A hand-down is a reply owed** | Deliberation's answer was must-relay *structurally* (the host framed the report). Cognition's is mail, and its prompt says mail is a proposal — so the host marks the answer to a hand-down as owed, or a voice that speaks only what it chooses to is entitled to drop the reply the person is waiting for |
 | **Cognition is sole ledger writer and sole worker creator** | two writers to one ledger means one is wrong with no way to tell which |
 | **Perception needs no tool** | `see` retired — a ref is a path, and an agent that reads files can open it. What it needs is knowing where things land |
 | **Full frames, not modelled events** | modelling existed so the host could infer intent; intent is now explicit |
@@ -1097,9 +1097,10 @@ condition this file already wrote down — *"polish, live-testing and the fix-up
 the shape is right, and they are cheap then."* The shape is right. They are cheap now and get
 more expensive with every further commit, because each one adds a candidate to the blame set.
 
-The two things at the top of the backlog **fail silently**: an unadopted `say` is a mute agent
-with no error, and a ledger nobody writes is an agent that simply never records a promise. No
-type checker and no test on this machine can ask either question.
+The two things at the top of the backlog **fail silently**: a rung that never adopts `say`
+raises no error — it just stays quiet, and quiet is a legal move — and a ledger nobody writes
+is an agent that simply never records a promise. No type checker and no test on this machine
+can ask either question.
 
 One first meeting on a fresh `--data-dir` on the Mac mini exercises items 1, 1b, 4, 5, 6, 7, 8
 and 9 of the backlog at once. Method is in `CLAUDE.md` — terse boss, don't lead the witness,
@@ -1314,11 +1315,13 @@ is gone; what remains is deciding when to reach for `session/load` at all.
 **This is now the work itself, not a backlog behind it — see L1.** Ordered by what breaks worst
 if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 and 9.
 
-1. ~~**`say` adoption.**~~ **Run 2026-08-10 against the live instance. It was mute — the risk as
-   written, exactly.** Four reaction turns in the day's `data/memory/raw/sessions/*/2.jsonl`:
-   four `agentMessage`s, **zero `say` calls**. A plain "the google login, is it done?" drew a
-   complete 195-character answer that was typed, thrown away by `drive_voice`, and logged as
-   `turn done unspoken_chars=195` — a successful turn that reached nobody.
+1. ~~**`say` adoption.**~~ **Run 2026-08-10 against the live instance. The rung never adopted
+   `say` at all — the risk as written, exactly.** Four reaction turns in the day's
+   `data/memory/raw/sessions/*/2.jsonl`: four `agentMessage`s, **zero `say` calls**. A plain
+   "the google login, is it done?" drew a complete 195-character answer that was typed and
+   never left the process. Note what is and is not the defect: one turn that types without
+   saying is ordinary and correct. **Zero `say` in a whole run, against direct questions, is
+   the register being wrong** — and only the pattern shows that, never a single turn.
 
    **The cause was not prompt adherence; it was the tool surface.** The voice was holding
    codex's built-ins (one turn ran `nl -ba views/people/voice-roster.jsx | sed …` mid-sentence),
@@ -1327,10 +1330,12 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
    built-ins on → 0 `say` in 4 turns; built-ins off → `say` from the first turn on.
 
    Fixed in `voice-never-mute`, two parts: the enforcement below, and a host-side backstop —
-   a turn that produced text and no utterance is handed its own miss once
-   (`recover_mute_turn`), then logged at ERROR if it stays silent. Note the backstop **did not
-   rescue the built-ins-on arm** — it nudged and the model still would not call `say`. The
-   surface is the fix; the nudge only catches the stray turn.
+   a turn that produced text and no utterance was handed its own miss once
+   (`recover_mute_turn`), then logged at ERROR if it stayed silent. The backstop **did not
+   rescue the built-ins-on arm** — it nudged and the model still would not call `say`.
+   **Both halves of the backstop are gone now**: the nudge on 2026-08-12, and the ERROR log
+   after it taught every reader that an ordinary quiet turn was a fault. The tool surface is
+   the whole fix.
 1b. **The ledger gets written at all** (N3). Second only to `say`, and for the same reason: the
    pen moved out of `deliberation.md`, so between that commit and a Deliberation actually
    handing up, **nothing writes the ledger**. Failure looks like an agent that simply never
@@ -1445,7 +1450,7 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
 - **A worker's `Bash` can read the auth token from its own env.** Non-hacker threat model.
 - ~~**`_meta` tool restriction is vendor-specific.**~~ ~~**Moot since the codex swap** — Codex offers
   no built-in-tool switch at all, so the Reaction's tools-off voice is now soft guidance plus a
-  read-only sandbox.~~ **Wrong, and it cost us the mute voice above (2026-08-10).** Codex has the
+  read-only sandbox.~~ **Wrong, and it cost us the `say`-less run above (2026-08-10).** Codex has the
   switch; it is spelled as a *permission profile*, not a tool list:
 
       "permissions": { "hi-agent-voice": { "default_tools_enabled": false } },

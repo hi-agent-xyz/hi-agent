@@ -99,24 +99,32 @@ that owes the word.
 > **And it has to be checked against the wire, not against the config we sent.** Twice the
 > restriction was written, believed, and never in force — a setting the agent accepts,
 > ignores, and reports nowhere. Both times the symptom was not a shell command in the log;
-> it was a *silent voice*, because a rung holding a shell behaves like a coding agent and
-> writes its answer as prose. The tools a turn actually held are readable on the upstream
-> request; that is the only place this claim can be settled.
+> it was a stretch of turns that stopped calling `hi_say` at all, because a rung holding a
+> shell behaves like a coding agent and writes its answer as prose. The tools a turn
+> actually held are readable on the upstream request; that is the only place this claim can
+> be settled.
 
 **`hi_say` is the only way out, and the host has no second one.** Text the model types is
-working-out; it reaches nobody, by design. So a turn that writes a reply and calls nothing
-to say it has not been thwarted on its way to the person — it has produced silence, which is
-a move this rung is allowed and often right to make. The host **notices and does not
-intervene**: no voicing of what was typed, which would make the contract a suggestion, and
-no second ask either. `hi_say` answers a call that was made — too long, and send it as a few
-shorter ones. There is no ack for a call that wasn't, and a host-side retry standing in for
-one buys a whole extra generation on the turn already going wrong. A silent turn is logged
-as the fault it may be, server-side only, never a card in the UI.
+working-out; it reaches nobody, by design. So a turn that writes prose and calls nothing to
+say it has not been thwarted on its way to the person — it has produced silence, which is a
+move this rung is allowed and often right to make. **This is the ordinary case, not a fault
+state, and it has no name of its own** — there is no "silent voice", no "mute" condition to
+detect. Requiring an explicit `hi_say` is the whole design: it is what lets the rung think
+in the open without narrating itself at the person.
 
-**The answer to a voice that writes instead of speaks is upstream**: find what put the turn
-in that register — a tool surface it should not have, a prompt that reads like a coding
-brief — and take it away. Asking twice does not move a session that has already decided
-what kind of agent it is.
+So the host **observes and does not intervene**: no voicing of what was typed, which would
+make the contract a suggestion, and no second ask either. `hi_say` answers a call that was
+made — too long, and send it as a few shorter ones. There is no ack for a call that wasn't,
+and a host-side retry standing in for one buys a whole extra generation for nothing. **Nor
+is a turn that typed without saying logged as a failure**: the turn-done line carries
+`typed_chars` as a size, and that is all it means. Logging it as an error taught readers —
+people and agents both — to hunt for a defect in a working design.
+
+**When it is genuinely wrong, it is wrong in bulk and the answer is upstream**: a rung that
+was calling `hi_say` and stops for a whole stretch has been put in the wrong register by
+something — a tool surface it should not have, a prompt that reads like a coding brief — and
+that is what to take away. One quiet turn says nothing at all; only the pattern does. Asking
+twice does not move a session that has already decided what kind of agent it is.
 
 Not blind, because its memory is **prepared**: the bundled prompt for its role, plus the
 [generated one](data.md#memoryprompts) — what the conversation carries forward,

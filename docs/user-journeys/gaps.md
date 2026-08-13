@@ -36,7 +36,7 @@
 **症状。** 接下一件"长期盯着"的活、写进台账、重启主机——**没有任何东西会把它捡回来**。pulse 照常跳、turn 照常空跑,而那条职责静静躺在台账里,永远不会被读到。
 
 **证据(2026-08-03)。** 老板 13:50 说"帮我盯着油价",13:52 答完细节;`memory/facets/tasks/oil-price-watch/facet.md` 确实建出来了。13:56 重启主机。之后:
-- 13:58:06 与 14:00:18 各跳了一次 pulse,两个 turn 都**静默收场**(`unspoken_chars` 134 / 42,没有 `hi_say`)。
+- 13:58:06 与 14:00:18 各跳了一次 pulse,两个 turn 都没调 `hi_say`(`typed_chars` 134 / 42)。**沉默本身是设计内的正常动作**,不是这条 gap 的症状;症状是下面三条。
 - **没有任何 worker 被重新拉起**——盯的动作从未恢复。
 - 逐字帧可证 **Cognition 在重启后被唤醒 0 次**。
 - Reaction 在 pulse 那一轮拿到的窗口小节是:`What I carry forward` · `Who you can reach right now` · `Recent (last 30 minutes)` · `On screen now` · `Presence` · `New signals`。**没有任何一节是开放职责。**

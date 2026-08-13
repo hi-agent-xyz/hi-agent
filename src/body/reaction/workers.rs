@@ -2,13 +2,13 @@
 //!
 //! The reaction keeps a single voice and must never block the floor on slow
 //! work, so heavy or long-running tasks are delegated here. A worker is a
-//! *voice-mute capability within the conversation*: it has the full substrate — the
-//! conversation's memory, tools, code execution, and its own sub-agents — but no voice
-//! of its own. Those sub-agents live *inside* its session and are invisible here:
+//! *voiceless capability within the conversation*: it has the full substrate — the
+//! conversation's memory, tools, code execution, and its own sub-agents — but holds no
+//! `hi_say`. Those sub-agents live *inside* its session and are invisible here:
 //! they get no hi-agent session id, no address, and no registry entry, which is
 //! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
-//! cannot emit on the reaction's expression channels (thought, audio, view). That
-//! mute-ness is what preserves single-voice coherence: only the reaction expresses
+//! cannot emit on the reaction's expression channels (thought, audio, view). Holding
+//! no voice is what preserves single-voice coherence: only the reaction expresses
 //! to the person.
 //!
 //! It is *not*, however, channel-blind. Over hi-agent's own HTTP surface
@@ -208,8 +208,8 @@ impl WorkerRegistry {
         }
     }
 
-    /// Start a channel-mute working session for `task`, under an id the **caller
-    /// already holds**.
+    /// Start a working session for `task` — one that holds no `hi_say` — under an id the
+    /// **caller already holds**.
     ///
     /// `create_worker` answers with the id before the session is open, because a caller
     /// that cannot name what it made cannot brief it, ask after it, or read it. So the
@@ -565,9 +565,9 @@ impl Drop for WorkerRegistry {
 /// to show a view instead of narrating.
 ///
 /// This function used to have a second, must-relay shape for Deliberation's reports,
-/// because the conversation's own thinking came back on this path and a mute-by-default
-/// voice was entitled to drop it. The reading rung is Cognition now and it answers by
-/// mail, so that framing moved to where the answer actually travels
+/// because the conversation's own thinking came back on this path and a voice that speaks
+/// only what it chooses to was entitled to drop it. The reading rung is Cognition now and
+/// it answers by mail, so that framing moved to where the answer actually travels
 /// ([`super::LoopInput::Mail::owed`]). The failure it guards against is unchanged; only
 /// the path is.
 pub(super) fn render_report(report: &WorkerReport) -> String {

@@ -375,6 +375,6 @@ async fn turn(
     }
     run.wait().await?;
 
-    tracing::info!(reflection = id, reply_chars = full.chars().count(), "reflection turn done");
+    tracing::info!(reflection = id, typed_chars = full.chars().count(), "reflection turn done");
     Ok(())
 }

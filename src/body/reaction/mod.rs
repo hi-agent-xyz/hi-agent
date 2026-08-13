@@ -39,8 +39,8 @@
 //! The mind keeps a single voice, so it must never block the floor on slow
 //! work. When a turn needs research, multi-step tool use, or anything
 //! long-running, the mind calls the `delegate` tool with the task; the reaction
-//! spawns a channel-mute [`workers`] session for it and keeps talking. The worker
-//! runs with the same substrate (memory, tools) but no voice of its own, and
+//! spawns a [`workers`] session for it and keeps talking. The worker
+//! runs with the same substrate (memory, tools) but holds no `hi_say`, and
 //! posts its result — or a question, if it gets stuck — back into this conversation's
 //! queue, where it lands as just another input the next turn folds into what the
 //! mind says.
@@ -722,9 +722,9 @@ enum LoopInput {
         /// host could frame it as must-relay; Cognition's arrives as ordinary mail, and
         /// Cognition's own prompt tells it that everything it sends is *a proposal, never
         /// a delivery*. That is right for a finding it raised on its own and wrong for an
-        /// answer to a question a person asked thirty seconds ago: a mute-by-default
-        /// voice reading a proposal is entitled to drop it, and dropping it means the
-        /// person who asked never hears back. So the host, which is the only thing that
+        /// answer to a question a person asked thirty seconds ago: a voice that speaks
+        /// only what it chooses to is entitled to drop a proposal, and dropping it means
+        /// the person who asked never hears back. So the host, which is the only thing that
         /// knows a hand-down is outstanding, says which kind of message this is.
         owed: bool,
     },
@@ -1747,19 +1747,16 @@ async fn run_reaction_turn(
         .send(sequencer::Beat::TurnStart { turn: turn_id })
         .await;
 
-    let before = speaking.said.load(Ordering::Relaxed);
     let mut turn_error = None;
-    let spoke = match drive_voice(&session, voice_id, context).await {
+    let completed = match drive_voice(&session, voice_id, context).await {
         Ok(text) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
             // sequencer while the turn was running. Anything the model *typed* is
             // working-out, not utterance — voicing it too would say every reply twice,
-            // and the tool's own description promises plain text is not spoken.
-            tracing::info!(
-                unspoken_chars = text.chars().count(),
-                "reaction: turn done"
-            );
-            note_unspoken_turn(speaking.said.load(Ordering::Relaxed) > before, &text);
+            // and the tool's own description promises plain text is not spoken. So this
+            // count is a size, not a shortfall: a turn that typed and called no `say`
+            // chose silence, which is an ordinary move and not the host's to correct.
+            tracing::info!(typed_chars = text.chars().count(), "reaction: turn done");
             true
         }
         Err(err) => {
@@ -1820,7 +1817,9 @@ async fn run_reaction_turn(
     let reply = done_rx.await.unwrap_or_default();
     reaction.inner.interrupts.end_turn(turn_id, &reply).await;
 
-    if spoke {
+    // `completed` is about the generation, not about speech: a turn that finished
+    // without erroring counts, whether or not it chose to call `hi_say`.
+    if completed {
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
         let _ = reaction.inner.vendor.note_success();
@@ -2105,41 +2104,13 @@ async fn open_reaction_session(
     Ok(session)
 }
 
-/// Log a turn that wrote a reply and called nothing to say it.
-///
-/// **Noticing only.** `say` is the whole of the way out — `agents.md` — so a turn that
-/// did not call it has not been interrupted on its way to the person; it has produced
-/// silence, which is a move the rung is allowed and asked to make. The host records the
-/// shape of it and gets on with the next turn.
-///
-/// It used to do more: 2026-08-10 added a nudge that re-prompted the session with "none
-/// of that reached them, say it now". That was a host-side retry standing in for an ack
-/// the tool could not return — `say`'s own [`tools::Spoken::TooLong`] answers a call that
-/// was *made*, and there is no channel for a call that wasn't. It cost a second full
-/// generation (37s, measured) on the turn already going wrong, and in the 2026-08-12
-/// incident it failed on all three turns, because a session in a coding-agent register
-/// writes prose whichever way it is asked. **The fix for a mute voice is upstream** —
-/// what put the turn in that register — and that is the tool surface
-/// ([`crate::foundation::agent::reaction_permissions`]), never a second ask.
-///
-/// An empty generation says nothing here: choosing not to speak is the ordinary case,
-/// and most of what reaches the voice deserves nothing back.
-fn note_unspoken_turn(spoke: bool, typed: &str) {
-    if spoke || typed.trim().is_empty() {
-        return;
-    }
-    tracing::error!(
-        typed_chars = typed.chars().count(),
-        "reaction: turn wrote a reply and said none of it; the person got nothing"
-    );
-}
-
-/// Prompt the reaction session and return its spoken text (every `agent_message_chunk`
-/// concatenated). Tool calls — `say`, `show`, `send_message` — are dispatched
-/// server-side through hi-agent's `/mcp` (which emits the beats), so the drive
-/// loop just keeps streaming speech past them, exactly like a worker's loop; `wait()`
-/// then parks the session and surfaces any real prompt error (a gateway 402/429, a
-/// transport reset) to the caller's classifier.
+/// Prompt the reaction session and return the text it **typed** (every
+/// `agent_message_chunk` concatenated) — which is its working-out, not its speech.
+/// Speech is only ever what went through the `say` tool. Tool calls — `say`, `show`,
+/// `send_message` — are dispatched server-side through hi-agent's `/mcp` (which emits
+/// the beats), so the drive loop just keeps streaming text past them, exactly like a
+/// worker's loop; `wait()` then parks the session and surfaces any real prompt error
+/// (a gateway 402/429, a transport reset) to the caller's classifier.
 async fn drive_voice(
     session: &AgentSession,
     voice_id: registry::SessionId,
@@ -2171,12 +2142,11 @@ async fn drive_voice(
     let result = run.wait().await?;
     tracing::info!(
         stop = ?result.stop_reason,
-        reply_chars = text.chars().count(),
+        typed_chars = text.chars().count(),
         "reaction: turn complete"
     );
     Ok(text)
 }
-
 
 /// Append one signal the agent *emitted* — worded text, a voiced span, a view it
 /// put up — to the durable log, then carry on. Every carrier that puts something

@@ -37,7 +37,7 @@ _机制:`image_gen`/`video_gen` 两个能力 + `drive/` 产物家 + `drive/<path
 
 ## 实测 2026-08-12 · feat/image-generation(Mac mini,`--data-dir /tmp/j30`,xiaoyuanzhu 开箱账号)
 
-工具层跑通,**agent 自主那一段没测到**——这台实例的 Reaction 压根没开口(`turns_total: 0`,日志 `turn wrote a reply and said none of it`),没派 worker,生成工具一次也没被调到。那是本次改动之外的既有问题。于是直接以 worker 身份打 `/mcp`,验的是工具层本身:
+工具层跑通,**agent 自主那一段没测到**——这台实例的 Reaction 没派 worker,生成工具一次也没被调到(`turns_total: 0`)。那几轮 turn 只写了文字、没有调 `hi_say`,但那是设计内的沉默,不是故障;缺的是委派与调用。那是本次改动之外的既有问题。于是直接以 worker 身份打 `/mcp`,验的是工具层本身:
 
 - ✅ **`hi_text_to_image` 真出图**:Doubao seedream 回来 2048×2048 JPEG(245 KB),落 `drive/generated/2026-08-12/084941-an-orange-cat-wearing-a-red-scarf.jpg`,`/api/drive/file/…` 200 + `content-type: image/jpeg`。文件名带提示词、扩展名 **由字节嗅出来**(没要 png 它给 jpeg,如实记 jpg)。
 - ✅ **菜单进了工具描述**:`tools/list` 里 `model` 写着 "Reachable now: doubao-seedream-5.0-lite. Omit to use doubao-seedream-5.0-lite."

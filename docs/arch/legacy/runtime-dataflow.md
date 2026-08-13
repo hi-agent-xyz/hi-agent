@@ -19,7 +19,7 @@ The critical decisions, each with its reasoning, in roughly descending importanc
 | **Transport lives in the owner, not the reaction** | Keep the mind aligned to the continuous human model; HTTP is just one batch transport, swappable for WebSocket or local audio |
 | **One persistent reaction session per scene, hot-swapped** | A warm, continuous mind rather than a cold per-turn rebuild; the journal is the durable backstop that makes persistence safe |
 | **One subprocess per session** (session-level isolation) | Contain blast radius to a single session; no `session_id` demux. Cost: a fresh spawn + ACP `initialize` per session |
-| **Working sessions are capability peers, but channel-mute** | Single-voice coherence — many sub-minds may think, but one mouth speaks |
+| **Working sessions are capability peers, but hold no `hi_say`** | Single-voice coherence — many sub-minds may think, but one mouth speaks |
 | **Fix-forward, no real cancel** | More human than a hard cancel; fits ACP's one-in-flight-prompt-per-session constraint |
 | **Emission via natural language; action/perception via tools** | "Think, then organize words"; humans don't speak JSON, but do take deliberate, answerable actions |
 
@@ -66,7 +66,7 @@ Five layers, each with a single responsibility and a clean contract to the layer
  │   │ Reaction session  — the persistent brain      │    │  speaks; owns channels
  │   └─────────────────────────────────────────────┘    │
  │   ┌─────────────────────────────────────────────┐    │
- │   │ Working sessions — ephemeral, channel-mute   │    │  deliberate, use tools
+ │   │ Working sessions — ephemeral, no `hi_say`    │    │  deliberate, use tools
  │   └─────────────────────────────────────────────┘    │
  └──────┬───────────────────────────────────────────────┘
         ▲ │   independent session handles (one subprocess each)
@@ -239,7 +239,7 @@ Other load-bearing terms:
 - **channel** — one sense or expression stream (text, audio, vision, surface, …).
 - **reaction module** — the transport-agnostic Rust mux/demux and presence loop.
 - **reaction session** — the persistent per-scene brain.
-- **working session** — an ephemeral, channel-mute, delegated cognition unit.
+- **working session** — an ephemeral delegated cognition unit that holds no `hi_say`.
 - **transport adapter** (a.k.a. the reaction *owner* / host) — binds continuous channel signals to a concrete wire.
 - **agent session layer** — spawns one subprocess per session, exposing independent session handles.
 - **scene** — the situation a signal belongs to (with a person, a group, or alone); the context-isolation unit. One reaction session and one memory slice per scene; each session runs in its own subprocess. Participants — the humans or devices in a scene — are soft, inferred from content, not a structural key.

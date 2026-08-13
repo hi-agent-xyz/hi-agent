@@ -131,8 +131,7 @@ pub(super) struct Mouth {
     /// beat stream cannot answer until `TurnEnd`: *did this turn speak at all?* That
     /// answer paces the [check-in](super::render_check_in) floor — a check-in that
     /// produced speech is earning its cadence and one that came and went in silence
-    /// doubles its gap — and it is what a turn that typed a reply and said none of it
-    /// is noticed by. A counter rather than a flag, so nothing has to reset it and two
+    /// doubles its gap. A counter rather than a flag, so nothing has to reset it and two
     /// turns cannot race over whose flag it was.
     pub(super) said: Arc<AtomicU64>,
     /// When the voice next owes them a word. Written here, at the instant it makes the
