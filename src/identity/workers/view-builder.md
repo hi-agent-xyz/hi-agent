@@ -282,16 +282,16 @@ top-left corner and the title beside them. The bottom band is shared too — the
 pills sit bottom-centre and the mic/camera controls hold the bottom-right corner, both
 floating *over* your view.
 
-The host pads the layer clear of the titlebar and of the control cluster, so ordinary
-flowed content is clear of *those* for free. A background is meant to bleed *through*
-the padding — so if you bring one, pin it with `position: absolute; inset: 0` and it
-runs corner to corner as it should. Setting it on your flowed root instead paints only
-the padded box, and the paper around it reads as a frame you didn't draw: a hard line
-across the top strip and down both sides. But pinning readable *content* with
-`position: absolute/fixed; top: 0` escapes the padding and lands it under the traffic
+The host insets your root clear of the titlebar and of the control cluster, so ordinary
+flowed content is clear of *those* for free — and it does it with a transparent border
+on your root rather than by handing you a smaller box, so a background you set on that
+root paints *under* the inset and runs corner to corner anyway. Ground the composition
+however you like: on your flowed root, or pinned with `position: absolute; inset: 0`.
+Either bleeds. What does not is pinning readable *content* with
+`position: absolute/fixed; top: 0` — that escapes the inset and lands under the traffic
 lights; pin that to `var(--hi-safe-top)` instead.
 
-The caption pills are the one thing no padding holds off you, deliberately: they carry
+The caption pills are the one thing no inset holds off you, deliberately: they carry
 their own dark scrim so they stay legible over anything, and reserving room for them
 would cost you a slice of frame on every view whether or not there is anything to
 caption. They dock bottom-centre and rise from roughly 70px up to about 200px above the

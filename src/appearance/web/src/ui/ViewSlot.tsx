@@ -62,10 +62,12 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * (the agent's content, then the host's condition notice), and each gets the same
  * `.hi-view-fill` layer with its own layout. The frame's non-negotiable insets are
  * the window chrome, the bottom band the controls float in, and — while the
- * conversation holds a rail — the rail, all of which `.hi-view-fill` supplies as
- * padding. So a view that lays out nothing of its own still lands legible and
- * clear of the chrome, while a background pinned at `inset: 0` still bleeds edge
- * to edge.
+ * conversation holds a rail — the rail, all of which `.hi-view-fill` puts on the
+ * view's own root as a transparent border rather than as padding of its own (see
+ * the stylesheet: a view returning several roots keeps the padding instead). So a
+ * view that lays out nothing still lands legible and clear of the chrome, and a
+ * ground it paints — pinned at `inset: 0` or simply set on the root it flows —
+ * paints under that border and reaches every edge.
  *
  * The slot is the `view` plane's whole occupant and carries no `z-index` of its
  * own: paint order inside a plane is DOM order, which here is already the wire's
@@ -73,11 +75,11 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * plane and no further — it can never reach the conversation or the controls.
  * See `docs/arch/stage.md`.
  *
- * The layer also carries the ground (`--paper`, the presence's own), painted under
- * that padding so it reaches the window edge. A themed view therefore paints no
- * background at all; only a view with a palette that isn't the theme's brings one,
- * and it pins it. The rule it replaces — every view paints its own flat `--bg-0` —
- * is what put a lighter frame around the padding on the dark theme.
+ * The layer also carries the ground (`--paper`, the presence's own), so a themed
+ * view paints no background at all and one that ends short still stands on paper.
+ * A view with a palette that isn't the theme's brings its own, and the border-not-
+ * padding inset is what lets that one melt into the window instead of sitting in a
+ * frame of paper the view never drew.
  */
 export function ViewSlot() {
   const { views } = useViews();

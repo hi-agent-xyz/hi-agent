@@ -739,30 +739,75 @@ button {
    lights + centred title), the bottom band is shared with the pill, the camera pip
    and the channel controls, and the left edge is the conversation rail whenever
    one is open — all of them on the `cover` plane, all of them above this one.
-   Padding — not a smaller box — is what reserves them, so a background the view
-   pins with `position:absolute; inset:0` still bleeds to every edge the way the
-   seamless window wants, while flowed content stays clear of the chrome. A view
-   that absolutely-positions its *content* at `top:0` opts back out of this; the
+
+   Those insets ride on the view's own root as a **transparent border**, not as
+   padding on this layer, and the difference is the whole point: a border is inside
+   the element's background box (`background-clip: border-box` is the default), so
+   a root that paints a ground paints it under the border, corner to corner, while
+   its content still starts clear of the chrome. Padding on the layer put the root
+   *inside* a box the layer painted, so a view with its own ground — `#f5f5f1`, a
+   photo, any palette that isn't the theme's — stopped at the padded box and the
+   paper around it read as a frame the view never drew: a hard line across the top
+   strip and down both gutters. Painting `--paper` on the layer only hid that for
+   views whose ground was already the theme's. Now every ground reaches every edge,
+   whether the view pins it at `inset: 0` or simply sets it on the root it flows.
+
+   The border is additive: the root's own padding still applies inside it, so a view
+   composes as though the frame were the window, which it is. A view that
+   absolutely-positions its *content* at `top: 0` opts back out (an absolute child
+   resolves against this layer's padding box, which is the full frame); the
    view-builder guide says to place with `var(--hi-safe-top)` instead.
 
-   The layer also brings its own `--paper`, the ground the presence stands on, and
-   that is what closes the frame. Padding is the trap here: a view that simply
-   paints `--bg-0` on its flowed root fills the *content* box, so the padding it
-   was given showed as a lighter border of the layer behind it — a hard-edged
-   frame across the top strip and both gutters, plain in dark (`--bg-1` vs
-   `--bg-0`) and invisible in light, where the two are the same white. Because the
-   layer's own background paints under its padding, the same paper now runs corner
-   to corner, and a themed view needs no ground of its own at all. A view with a
-   palette that isn't the theme's (a poster) still pins its background at
-   `inset: 0` to cover this one edge to edge. */
+   Two details finish the job, because a ground that reaches three edges is still a
+   seam at the fourth. **Grid** stretches the root to the frame's full height, so a
+   poster whose content ends early paints its ground all the way down instead of
+   stopping where its text does — and it does that by stretching the used height
+   rather than by forcing a `min-height`, so a view's own `min-height` still wins.
+   **`background-origin: border-box`** makes an image or gradient ground *size*
+   itself to the same box it paints, so `cover` covers the frame; the default
+   (`padding-box`) would size it to the inside of the border and then either tile
+   the remainder into the inset band or, with `no-repeat`, leave it bare. It is the
+   one `!important` on the stage, and it earns it: every `background:` shorthand
+   resets this longhand to `padding-box`, inline styles included, and writing
+   `background: url(…)` is how anyone sane writes a ground. The value it would win
+   back means "inside a border the host invented and the view cannot see", which is
+   never what a view meant — the view's box is the frame, and this makes the
+   geometry say so.
+
+   The border is scoped to a lone root, and the old padding stays as the fallback
+   for a view that returns several sibling roots — bordering each of those would
+   give every one of them a full inset and open a chrome-sized gap between them.
+   One root is what every view we ship has, and what JSX makes natural.
+
+   The layer keeps `--paper` behind it all — the ground the presence stands on — so
+   a themed view needs no background of its own at all. */
 .hi-view-fill {
   position: absolute;
   inset: 0;
+  /* The several-roots fallback (see above): inset them as a group, as this layer
+     always did. The lone-root rule below turns this off for the usual shape. */
   padding: var(--hi-safe-top)
     max(20px, var(--hi-safe-right))
     calc(var(--hi-safe-bottom) + 76px)
     calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
   background: var(--paper);
+}
+
+.hi-view-fill:has(> :only-child) {
+  padding: 0;
+  display: grid;
+  grid-template-rows: 1fr; /* = minmax(auto, 1fr): stretches, never clips */
+}
+
+.hi-view-fill > :only-child {
+  box-sizing: border-box;
+  border-style: solid;
+  border-color: transparent;
+  border-width: var(--hi-safe-top)
+    max(20px, var(--hi-safe-right))
+    calc(var(--hi-safe-bottom) + 76px)
+    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
+  background-origin: border-box !important;
 }
 
 /* --- Keyboard fallback ------------------------------------------------
@@ -1134,6 +1179,9 @@ button {
   }
   .hi-view-fill {
     padding: var(--hi-safe-top) 12px calc(var(--hi-safe-bottom) + 60px) 12px;
+  }
+  .hi-view-fill > :only-child {
+    border-width: var(--hi-safe-top) 12px calc(var(--hi-safe-bottom) + 60px) 12px;
   }
   .hi-channels {
     right: max(12px, var(--hi-safe-right));
