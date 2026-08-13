@@ -282,6 +282,37 @@ mechanism:
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
 
+#### T4a — Reach, the surface · **on `feat/reach-view`**
+
+All of this was curl-only: a person could not see what their agent was called, could not
+tell which of their devices still had a way in, and had no way to take one back.
+`_builtin/reach` is the sibling of tasks/skills/memories/tools/drive and carries exactly
+the three verbs its endpoints can honour — claim a name, let a device in (code + QR),
+revoke one.
+
+**The app's roster is deliberately not on it.** It is the app's state, not the agent's,
+and a view bundled into the core asking for it reaches across the boundary this design
+exists to draw. It also 404s on every core with no app in front of it — which is how the
+renderer found it.
+
+**The render test found two real things**, which is the point of having one:
+
+- `GET /api/handle` answered **502** on a core with no account. That is the ordinary state
+  of a fresh install, not a gateway failure, and it made a first run look broken on the one
+  screen whose job is to say what is there. Now 200 with an empty list and the reason in
+  `why`.
+- The roster probe, as above.
+
+**And the test that found them was itself dead.** `esbuild_probe()` in
+`tests/view_render.rs` looked in the node adapter's `node_modules` — a layout deleted with
+the codex swap — so **all three render tests had been skipping and reporting `ok` ever
+since**. Fixed to look where the runtime actually puts esbuild; the file now takes ~2s
+instead of ~0.03s, which is the tell. This is the file whose own header says a blank render
+must not read as success.
+
+`@hi/core` gains `base`/`url`: a view calling the agent's API needs the prefix for the same
+reason the host does.
+
 #### T3c — The core knows it is under a subpath · **on `feat/prefix`**
 
 A browser pointed straight at `hi-agent.xyz/ana` got a page whose every absolute path

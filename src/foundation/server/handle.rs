@@ -27,9 +27,18 @@ struct ClaimBody {
 pub async fn get_handle(State(state): State<Arc<AppState>>) -> Response {
     match community::current(&state.data_dir).await {
         Ok(h) => axum::Json(h).into_response(),
+        // No account, or no community to ask: this core has no name, which is a
+        // normal state and not a failure. Answering with an error would make a
+        // first run look broken on a screen whose whole job is to say what is
+        // there. The reason rides along so the page can show it.
         Err(e) => {
-            tracing::warn!(error = %e, "reading this core's handle");
-            (StatusCode::BAD_GATEWAY, format!("{e}\n")).into_response()
+            tracing::debug!(error = %e, "this core has no name");
+            axum::Json(serde_json::json!({
+                "handles": [],
+                "limit": 0,
+                "why": e.to_string(),
+            }))
+            .into_response()
         }
     }
 }

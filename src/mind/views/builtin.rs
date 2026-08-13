@@ -96,7 +96,10 @@ const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 ///
 /// They are siblings of `people-review`, and they exist for the same reason it does — the
 /// agent's own state was only inspectable by reading files over its shoulder, so nothing
-/// could be corrected. Each surface carries only the verbs its endpoint can honestly
+/// could be corrected. `reach` is the newest and the odd one in a second way: two of its
+/// three sections are about the *outside* — the agent's address in the community and the
+/// devices that hold a way in — and the third is the app's roster, which is not the
+/// agent's state at all and simply is not there when no app is holding the page. Each surface carries only the verbs its endpoint can honestly
 /// honour: tasks change status, a skill deletes, a facet is rewritten; workers, tools and
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
@@ -107,6 +110,7 @@ const REVIEW_VIEWS: &[(&str, &str)] = &[
     ("workers", include_str!("builtin/workers.jsx")),
     ("tools", include_str!("builtin/tools.jsx")),
     ("drive", include_str!("builtin/drive.jsx")),
+    ("reach", include_str!("builtin/reach.jsx")),
 ];
 
 /// The ref and the sequencer id the host shows it under. One id, reused, so the
@@ -359,6 +363,16 @@ mod tests {
         assert!(!by_name("workers").contains("method: \"POST\""));
         assert!(!by_name("tools").contains("method:"));
         assert!(!by_name("drive").contains("method:"));
+        // Reach carries three writes and each has to keep reaching for its endpoint —
+        // a name that silently 404s looks exactly like a name that was refused.
+        let reach = by_name("reach");
+        assert!(reach.contains("/api/handle"), "reach must be able to claim a name");
+        assert!(reach.contains("/api/pair"), "reach must be able to let a device in");
+        assert!(reach.contains("/api/surfaces/"), "reach must be able to take one back");
+        assert!(reach.contains("DELETE"));
+        // Every one of them is a state change, and off-box the core refuses a bare
+        // one as something a cross-site form could have sent.
+        assert!(reach.contains("X-HI-Surface"), "reach's writes must be provably not cross-site");
     }
 
     /// The Workers surface reads three routes, and two of them are the reason it can answer

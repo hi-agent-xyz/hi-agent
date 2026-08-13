@@ -115,6 +115,21 @@ fn esbuild_probe() -> Option<PathBuf> {
         .cache_dir()
         .to_path_buf();
 
+    // Where the runtime puts it today: one `esbuild` beside the codex binary.
+    // The two `node_modules` layouts below are older shapes — the view-tool
+    // install and the node adapter's — and the adapter is gone. This probe kept
+    // looking only there after the codex swap moved it, so every test in this
+    // file skipped and reported `ok`, which is the exact failure the file was
+    // written to catch, wearing a different hat.
+    if let Ok(entries) = std::fs::read_dir(cache.join("runtime")) {
+        for entry in entries.flatten() {
+            let bin = entry.path().join("esbuild/bin/esbuild");
+            if bin.exists() {
+                return Some(bin);
+            }
+        }
+    }
+
     let view_tool = cache.join("view-tool");
     if let Ok(entries) = std::fs::read_dir(&view_tool) {
         for entry in entries.flatten() {
@@ -260,4 +275,35 @@ async fn the_render_page_is_served_with_the_host_import_map() {
     for spec in ["\"react\"", "\"@hi/ui\"", "\"@hi/core\"", "\"motion/react\""] {
         assert!(html.contains(spec), "the map must bind {spec}");
     }
+}
+
+/// The `reach` surface renders, and that is not a formality: it is the one
+/// bundled view whose module scope touches `@hi/core`, and a bad import there
+/// fails at *runtime* — the view compiles, the page loads, and the panel is
+/// blank with the reason only in a console nobody reads.
+///
+/// It is rendered against a core with no name, no devices and no app, which is
+/// exactly a first run: every section has to hold its shape while every fetch
+/// behind it answers empty or 404.
+#[tokio::test]
+#[ignore = "launches a real browser; run with --ignored"]
+async fn the_reach_surface_renders_on_a_core_that_has_nothing_yet() {
+    let Some(h) = ready().await else { return };
+
+    let source = include_str!("../src/mind/views/builtin/reach.jsx");
+    let module_url = h.compiler.compile(source).await.expect("reach compiles");
+    let out = view_render::render(&RenderRequest::new(h.base_url.as_str(), module_url.as_str()))
+        .await
+        .expect("render succeeds");
+
+    assert_eq!(
+        out.verdict(),
+        Verdict::Rendered,
+        "reach should render cleanly; problems: {:?}",
+        out.problems
+    );
+    assert!(
+        !view_render::is_blank_png(&out.png),
+        "reach rendered blank — its module scope probably threw"
+    );
 }

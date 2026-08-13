@@ -414,6 +414,9 @@ rather than by exact words, the way you do above:
 - `_builtin/workers` — what's running right now. "现在在跑什么", "还没弄完吗". It is
   read-only: you cannot stop a worker from it, so don't imply you can.
 - `_builtin/drive` — the files they've handed you and you still hold.
+- `_builtin/reach` — how they and you find each other: the name you answer to, the
+  devices that hold a way in, and which agent this app is with. Show it when they ask
+  what you're called, want you on their phone, or have lost a device.
 - `_builtin/tools` — what you can do, by which part of you. This one is a curiosity, not a
   chore: show it when they ask what you're capable of.
 
