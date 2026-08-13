@@ -1,8 +1,10 @@
 # Topology — core, app, community
 
-**Status:** proposed August 11, 2026. Defines the split of the system into three roles, how
-a person is addressed, and how an app proves it may reach one. Nothing here changes what the
-agent *is*; it says where the parts of it run and how they find each other.
+**Status:** proposed August 11, 2026; **most of it built and live-verified by August 13** —
+see [Status](#status) at the end for what is real, what is written but unwitnessed, and what
+has no code. Defines the split of the system into three roles, how a person is addressed, and
+how an app proves it may reach one. Nothing here changes what the agent *is*; it says where
+the parts of it run and how they find each other.
 
 ## Goal
 
@@ -415,16 +417,55 @@ Each is testable, and each has a real failure behind it.
 
 ---
 
-## Not built
+## Status
 
-Two things, and each is a thing the design has a shape for and no code behind:
+The rest of this document is the goal state and is written in the present tense throughout,
+as design here always is. This section is the exception: it says what is actually true of the
+code, as of **August 13, 2026**.
 
-- **Mail for a sleeping core.** The community can hold it; the core has nowhere to put it
-  yet. Until then an inbound request for a sleeping core is answered "asleep" and nothing
-  is queued.
+### Real, and watched working
+
+Verified against running processes — a real core, a real community, real sockets — not by
+reading the code.
+
+| | What was seen |
+|---|---|
+| **local** | unchanged; always worked |
+| **directly public** | a second, gated acceptor. Loopback `200` and off-box `401` on the same route, the pairing page on an HTML navigation, `/healthz` open |
+| **relayed** | `hi-agent.xyz/ana` reaching a core that only ever dialed out — text in, the conversation streamed back, a WebSocket audio stream through the tunnel, and the asleep page when the core stops |
+| **the gate** | one credential in two presentations, the CSRF rule, all three pairing paths, the device list, and revocation taking a working credential to `401` |
+| **the app** | a roster and a local proxy; two cores at once, switching between them, the face never holding a credential |
+| **a name** | claimed by a signed-in account, permanent, refused to a second account and to an anonymous one, and surviving a wiped data directory |
+| **the subpath** | the page at `/ana/` emitting `/ana/assets/*` and an import map to match, all of it serving through the tunnel |
+| **`_builtin/reach`** | the one screen for all of the above — name, address, devices, add, revoke — rendered in a real browser |
+
+### Written, not witnessed
+
+Each of these is built and green, and nothing has watched it do its job.
+
+- **The relayed page has never been opened in a browser.** The bytes are right; React
+  mounting, view import-map resolution and SSE reconnect under a prefix are inferred.
+- **The registry and relay have never been deployed.** They are in the community's binary and
+  have only ever run on a laptop, against a laptop.
+- **A genuinely new machine keeping its name** is covered by a test, not by a live run — the
+  device id is machine-derived, so two data directories on one Mac share an account.
+- **The Docker shape's gate.** A published port is off-box, so an existing deployment is
+  gated from first run; that path has been reasoned about, not exercised.
+
+### No code at all
+
+- **post** — the push service, and with it "waking a surface". The app hands its token to the
+  core and the core instructs post: none of that exists.
+- **Refusing to route for a surface reported lost** — the one revocation case a sleeping core
+  cannot serve.
+- **Mail for a sleeping core**, and therefore core-to-core addressing. Nothing is queued; an
+  inbound request is answered "asleep".
+- **The roster on a screen.** Switching between cores is an API call with no surface, and the
+  surface belongs to the app rather than to any core.
+- **Credentials in the OS keychain.** An app keeps them in its config store today.
 - **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. Everything
-  above already treats hosting as a capability of an app instance rather than a property of
-  a platform, so the day that changes, nothing structural does.
+  above already treats hosting as a capability of an app instance rather than a property of a
+  platform, so the day that changes, nothing structural does.
 
 ## See also
 
