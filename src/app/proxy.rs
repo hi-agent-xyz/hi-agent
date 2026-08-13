@@ -161,10 +161,48 @@ async fn forward(State(app): State<Arc<App>>, req: Request) -> Response {
     forward_http(app, entry, req).await
 }
 
+/// Split a base URL into its origin and its path prefix, if it has one.
+/// `https://hi-agent.xyz/ana` → `("https://hi-agent.xyz", "/ana")`;
+/// `http://localhost:12358` → `("http://localhost:12358", "")`.
+fn split_base(base_url: &str) -> (&str, &str) {
+    let base = base_url.trim_end_matches('/');
+    let after_scheme = base.find("://").map(|i| i + 3).unwrap_or(0);
+    match base[after_scheme..].find('/') {
+        Some(i) => base.split_at(after_scheme + i),
+        None => (base, ""),
+    }
+}
+
+/// Where a path the face asked for actually lives.
+///
+/// A relayed core is under a subpath and is told so by the relay's
+/// `x-forwarded-prefix`, so every root-absolute path it emits — `/ana/assets/*`,
+/// the import map, `window.__HI_BASE__` — already carries the prefix. The face
+/// asks this app for those paths verbatim, so pasting them onto a base URL that
+/// *ends* in `/ana` requests `/ana/ana/assets/*`, which is a 404 from the core.
+/// The prefix belongs to the address, not to the request: strip the one the path
+/// already carries before the base URL puts it back.
+///
+/// A path that merely starts with the same letters (`/analytics`) is not
+/// prefixed by `/ana` — only a whole segment counts.
+fn upstream_url(base_url: &str, path_and_query: &str) -> String {
+    let (origin, prefix) = split_base(base_url);
+    if prefix.is_empty() {
+        return format!("{origin}{path_and_query}");
+    }
+    let rest = match path_and_query.strip_prefix(prefix) {
+        Some(r) if r.is_empty() => "/",
+        Some(r) if r.starts_with('/') || r.starts_with('?') => r,
+        _ => path_and_query,
+    };
+    let sep = if rest.starts_with('?') { "/" } else { "" };
+    format!("{origin}{prefix}{sep}{rest}")
+}
+
 async fn forward_http(app: Arc<App>, entry: roster::Entry, req: Request) -> Response {
     let (parts, body) = req.into_parts();
     let path_and_query = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    let url = format!("{}{}", entry.base_url, path_and_query);
+    let url = upstream_url(&entry.base_url, path_and_query);
 
     let mut out = app.client.request(parts.method.clone(), &url);
     for (name, value) in forwardable(&parts.headers) {
@@ -228,11 +266,11 @@ async fn forward_ws(app: Arc<App>, entry: roster::Entry, req: Request) -> Respon
         Err(e) => return e.into_response(),
     };
     let path_and_query = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    let upstream = format!(
-        "{}{}",
-        entry.base_url.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1),
-        path_and_query
-    );
+    // Resolved as a URL first, then re-schemed: the prefix rule is the same one
+    // the request path follows, and it must not be re-derived here.
+    let upstream = upstream_url(&entry.base_url, path_and_query)
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
     let cookie = app.session(&entry).await;
 
     ws.on_upgrade(move |client| async move {
@@ -355,6 +393,45 @@ mod tests {
         let out = forwardable(&h);
         let names: Vec<_> = out.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["accept"], "the app supplies the credential, not the face");
+    }
+
+    /// A relayed core lives under a subpath, and the paths it emits already carry
+    /// it. Concatenation asked the community for `/ana/ana/assets/*` and got a
+    /// 404 for every asset, view and channel on the page — invisible until an
+    /// entry's base URL has a path at all, which no loopback one does.
+    #[test]
+    fn a_subpath_is_part_of_the_address_and_is_added_once() {
+        let relayed = "https://hi-agent.xyz/ana";
+
+        // The first load, and then everything that page goes on to ask for.
+        assert_eq!(upstream_url(relayed, "/"), "https://hi-agent.xyz/ana/");
+        assert_eq!(
+            upstream_url(relayed, "/ana/assets/index-abc.js"),
+            "https://hi-agent.xyz/ana/assets/index-abc.js"
+        );
+        assert_eq!(
+            upstream_url(relayed, "/ana/api/out/text?since=3"),
+            "https://hi-agent.xyz/ana/api/out/text?since=3"
+        );
+        // The bare prefix, with and without a query, still names the page.
+        assert_eq!(upstream_url(relayed, "/ana"), "https://hi-agent.xyz/ana/");
+        assert_eq!(upstream_url(relayed, "/ana?x=1"), "https://hi-agent.xyz/ana/?x=1");
+
+        // A whole segment, or nothing: `/analytics` is not under `/ana`.
+        assert_eq!(
+            upstream_url(relayed, "/analytics"),
+            "https://hi-agent.xyz/ana/analytics"
+        );
+
+        // A core with no prefix is untouched — loopback and directly-public both.
+        assert_eq!(
+            upstream_url("http://localhost:12358", "/api/messages"),
+            "http://localhost:12358/api/messages"
+        );
+        assert_eq!(
+            upstream_url("https://agent.example.com/", "/api/messages"),
+            "https://agent.example.com/api/messages"
+        );
     }
 
     #[test]
