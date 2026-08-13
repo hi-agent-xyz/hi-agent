@@ -154,7 +154,10 @@ before you hand anything over:
 
 - **Body text is 16px or larger.** Not 15. This is the single most common way a view
   comes out unreadable, and it never looks wrong in the source — 12px reads as
-  reasonable in a stylesheet and as fine print on a screen.
+  reasonable in a stylesheet and as fine print on a screen. Genuinely incidental marks
+  — an axis tick, a unit, a footnote, a figure in a dense column — may sit around 13px,
+  but only where losing them outright would cost the reader nothing. The moment
+  something carries meaning it is body text, whatever you named the class.
 - **Monospace is for code** — identifiers, paths, wire payloads, numbers in a column.
   Prose set in mono has no word-shape to scan, so a page that is entirely mono is a page
   nobody reads, *including* one whose subject is code. Sentences go in `--font-display`.
@@ -328,12 +331,13 @@ you actually render the words; otherwise the person's speech goes invisible.
 **It's theirs the moment they reach for it.** If they scroll or tap, the view should
 yield — let them look, and don't fight it.
 
-**See it before you hand it back.** You have no screen of your own, so a view you never
-render is one you're shipping blind. Call `review_view` and look at the screenshot, with
-the eye you'd use on someone else's work — the section above has the details. Don't try
-to build your own renderer: a compiled view keeps its bare imports unresolved on
-purpose, so it only runs inside the host page that carries the import map. `review_view`
-is that page.
+**Don't build your own renderer.** A compiled view keeps its bare imports unresolved on
+purpose, so it only runs inside the host page that carries the import map — `review_view`
+is that page, and it is the only one. A headless browser you install yourself, or a
+thumbnail of the file taken some other way, gives you a picture of something that is not
+what the person will see, and the differences are exactly where the failures live. The
+procedure is the section above, whole; this is only the reminder that there is no
+substitute for it.
 
 # Saving it and handing it back
 
@@ -359,6 +363,15 @@ earlier you — made something close, the same kind of card, last month's versio
 this very deck, start from it and adapt rather than redrawing it cold. That reuse is
 how the workshop earns its keep: the stock you build up is yours to draw on, and it
 keeps the house style consistent for free.
+
+**What you inherit that way is structure, not standards.** The tree goes back a long
+time and most of what is in it was built before the floors above existed — plenty of it
+is 11px mono, a wall of cards, conclusions set smaller than the headline. Starting from
+one of those is still the right move; *keeping* its type scale is not. So when you adapt
+something, run the floors over what you inherited before you run them over what you
+added: a page that fails them fails them just as hard for having been copied, and an
+old view is the easiest possible way to talk yourself into small type without ever
+deciding to.
 
 A view with no `purpose:` line still counts. Older ones won't have one, and then its
 filename is all you get — so open anything whose name looks close enough to matter.
@@ -459,8 +472,8 @@ to what you're showing this time: a bright, high-key page is as valid as a dark 
 rich, polychrome palette is right when the subject earns it, and restraint is right when
 colour would just be noise; type and hierarchy are choices, never a default. Second,
 respect the medium: it's a landscape screen someone glances at, so fill the frame with no
-dead gaps, leave room to breathe, keep it legible (comfortable line-height, body 16px or
-larger), and make sure it actually renders. The conversation's live words also share that
+dead gaps, leave room to breathe, keep it legible (the floors above are the whole of what
+that means here), and make sure it actually renders. The conversation's live words also share that
 screen — they dock as captions over your view (the mechanics are above), so
 compose with them in mind and leave them a quiet region rather than letting them sit on
 your subject. Past that, vary freely — two views on two

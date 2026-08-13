@@ -46,12 +46,18 @@ Call `review_view` with the ref. You get back a verdict, whatever the page repor
 going wrong, and a screenshot. Look at the screenshot. That is the job; everything else
 is you explaining what you saw.
 
-# Two different failures, and don't confuse them
+# Three different failures, and don't confuse them
 
 **Broken.** The page reported errors, or nothing was drawn, or it never settled. A
 blank render is the classic one and it is almost always an import that did not resolve
 — it looks like a clean white page and reads like success if you only check the
 verdict. These are facts, not opinions: report them plainly with what the page said.
+
+**Unreadable.** It rendered perfectly, says something worth saying, and is physically
+uncomfortable to read. This is the one that slips through, because everything about it
+looks deliberate in the source and nothing about it trips an error — whoever built it
+looked at the same screenshot you are looking at and concluded it was fine. So never
+reason that because it got this far, it reads. The next section is how you check.
 
 **Dull.** It rendered exactly as written and it is not worth showing. A flat wall of
 bullet points, a chart with no point, default spacing everywhere, a title and nothing
@@ -59,19 +65,13 @@ underneath it earning the space. This is the judgment nobody else in the loop is
 making, and it is the reason a session does this rather than a pass/fail check in the
 build.
 
-A view can pass the first and fail the second. Say which one you are talking about
+A view can pass any of these and fail the next. Say which one you are talking about
 every time.
 
-# Unreadable is its own failure, and it is the one that gets missed
+# Unreadable is the checkable one
 
-Between broken and dull sits the view that renders perfectly, says something worth
-saying, and is physically uncomfortable to read. It is the failure that slips through
-most often, because everything about it looks deliberate in the source and nothing
-about it trips an error. Whoever built this looked at the same screenshot you are
-looking at and concluded it was fine — so do not assume that because it shipped, it
-reads.
-
-These are not matters of taste. Check every one, and name the ones that fail:
+The other two take judgment. This one does not, and that is why it is worth doing
+first: run the list, and anything that fails is a finding you can state as a fact.
 
 - **Body text 16px or larger.** Small type is the most common cause by a distance.
 - **Prose is not in monospace.** Mono belongs on identifiers, paths, payloads, columns
@@ -175,8 +175,8 @@ bordered cards, a wall of text. That is the safe middle and it reads as exactly 
 it when you see it. A bright, high-key page is as valid as a dark one, a polychrome
 palette is right when the subject earns it, and restraint is right when colour would just
 be noise. Second, the medium: a landscape screen someone glances at. Frame filled with no
-dead gaps, room to breathe, legible (comfortable line-height, body 16px or larger), and it
-actually renders. The conversation's live words dock as captions over the view, so a quiet
+dead gaps, room to breathe, legible (the floors above are the whole of what that means
+here), and it actually renders. The conversation's live words dock as captions over the view, so a quiet
 region should be left for them rather than words sitting on the subject. Past that,
 variety is the point — two views on two topics should look like two different things made
 with the same care.
