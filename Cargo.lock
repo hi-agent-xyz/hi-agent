@@ -1527,6 +1527,8 @@ dependencies = [
  "directories",
  "dotenvy",
  "futures",
+ "hi-app",
+ "hi-wire",
  "hyper",
  "hyper-util",
  "image",
@@ -1560,6 +1562,31 @@ dependencies = [
  "uuid",
  "yamux",
 ]
+
+[[package]]
+name = "hi-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "futures",
+ "hi-wire",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "hi-wire"
+version = "0.1.0"
 
 [[package]]
 name = "hkdf"
