@@ -545,7 +545,12 @@ pub fn build(
         .route("/api/pair", post(surfaces::post_pair))
         // This core's address in the community: what it is called, and claiming
         // or renaming it. The id underneath never changes.
-        .route("/api/handle", get(handle::get_handle).post(handle::post_handle))
+        .route(
+            "/api/handle",
+            get(handle::get_handle)
+                .post(handle::post_handle)
+                .delete(handle::delete_handle),
+        )
         .route("/api/surfaces", get(surfaces::get_surfaces))
         .route("/api/surfaces/{id}", axum::routing::delete(surfaces::delete_surface))
         .route("/api/in/text", post(text::post_text).get(text::get_in_text))

@@ -354,10 +354,22 @@ fn serve_embedded(path: &str) -> Response {
             // safe to cache forever. Everything else gets a conservative
             // short cache — index.html is served by `index()` directly so
             // it isn't routed through here.
+            //
+            // **`private`, not `public`, and the hash is not what decides that.**
+            // A content hash says the bytes will never change; it says nothing
+            // about who may have them. Every path through here is behind the gate
+            // (`surfaces::open_path` opens only `/healthz`, `POST /api/session`
+            // and the upload pair), so `public` invites a shared cache to store a
+            // response that was served *because* a credential was checked and then
+            // hand it to someone with none. That is not hypothetical: relayed, the
+            // core sits behind a CDN, and an authorized fetch of an asset made an
+            // unauthenticated fetch of the same asset answer `200` from the edge
+            // instead of the core's `401`. `private` keeps the browser cache —
+            // which is all this was ever for — and forbids the shared one.
             let cache = if path.starts_with("assets/") {
-                "public, max-age=31536000, immutable"
+                "private, max-age=31536000, immutable"
             } else {
-                "public, max-age=300"
+                "private, max-age=300"
             };
             if let Ok(value) = HeaderValue::from_str(cache) {
                 resp.headers_mut().insert(header::CACHE_CONTROL, value);

@@ -59,8 +59,15 @@ pub async fn views_file(
         .insert(CONTENT_TYPE, HeaderValue::from_static(views_content_type(&path)));
     // Compiled modules under _compiled/ are content-addressed → immutable; source files
     // change in place, so they must not be cached.
+    //
+    // **`private`, because this is the agent's own code, written for one person.**
+    // Content-addressing makes a module safe to cache *forever*; it does not make
+    // it safe to cache *shared*. This path is gated, so `public` would let a CDN
+    // store a view it only received because a credential checked out, and then
+    // serve it to a request carrying none. Same reasoning, and the same fix, as
+    // the embedded assets in `appearance::serve_embedded`.
     let cache = if path.starts_with("_compiled/") {
-        "public, max-age=31536000, immutable"
+        "private, max-age=31536000, immutable"
     } else {
         "no-store"
     };

@@ -1,6 +1,7 @@
 # Topology — core, app, community
 
-**Status:** proposed August 11, 2026; **most of it built and live-verified by August 13** —
+**Status:** proposed August 11, 2026; **most of it built, deployed and live-verified against
+the real community by August 13** —
 see [Status](#status) at the end for what is real, what is written but unwitnessed, and what
 has no code. Defines the split of the system into three roles, how a person is addressed, and
 how an app proves it may reach one. Nothing here changes what the agent *is*; it says where
@@ -234,6 +235,27 @@ state-changing endpoints additionally require a JSON content type or a custom he
 of which force a preflight a simple cross-site request cannot satisfy. Small, but it will
 not happen unless it is written down.
 
+### Nothing behind the gate is `public`
+
+A gated `200` was served *because* a credential checked out, so labelling it `public` invites
+any shared cache to keep it and hand it to the next caller — who was never asked for one. The
+gate is then intact and bypassed at the same time, and the core never sees the request that
+walked around it.
+
+This is not a hypothetical about some future CDN. **Relayed, there is always one**: the
+community terminates TLS, and hi-agent.xyz sits behind an edge besides. Measured against the
+real one, an authorized fetch of `/<handle>/assets/*` turned a later *unauthenticated* fetch
+of the same path from the core's `401` into a `200` served from the edge.
+
+So every cacheable response the gate protects is **`private`** — the browser cache, which is
+all it was ever for, without the shared one. Content-addressed names are why a module may be
+cached *forever*; they were never a reason to cache it *shared*, and the two properties read
+so alike that this is worth stating rather than assuming.
+
+**The fix belongs at the core, not the relay.** The community forwards bytes unchanged and
+decides nothing about access — a cache-control rewrite at the relay would be exactly the
+second authorization mechanism invariant 3 exists to prevent.
+
 ### The credential is an opaque random token
 
 Not a keypair. A keypair would buy one thing — a credential a reader in the middle cannot
@@ -438,6 +460,15 @@ reading the code.
 | **a name** | claimed by a signed-in account, permanent, refused to a second account and to an anonymous one, and surviving a wiped data directory |
 | **the subpath** | the page at `/ana/` emitting `/ana/assets/*` and an import map to match, all of it serving through the tunnel |
 | **`_builtin/reach`** | the one screen for all of the above — name, address, devices, add, revoke — rendered in a real browser |
+| **deployed** | the community running on the real box, behind the real CDN: a name claimed against the production registry, a tunnel dialled from a Mac to `wss://hi-agent.xyz`, and the whole conversation driven from a third machine that had only the address |
+
+**What the edge changed, and nothing on a laptop could have shown.** Relayed, the community
+is not the only thing in the path — hi-agent.xyz terminates TLS at a CDN. Three things were
+open until it was deployed, and all three are now measured rather than assumed: the `Upgrade`
+passes (yamux came up first try), SSE is **not** buffered (the `reset` frame on connect, then
+each `append` as it happened), and a gated response is no longer shared-cacheable — which it
+was, and which is the one real defect the deploy found. See
+[Nothing behind the gate is `public`](#nothing-behind-the-gate-is-public).
 
 ### Written, not witnessed
 
@@ -445,8 +476,6 @@ Each of these is built and green, and nothing has watched it do its job.
 
 - **The relayed page has never been opened in a browser.** The bytes are right; React
   mounting, view import-map resolution and SSE reconnect under a prefix are inferred.
-- **The registry and relay have never been deployed.** They are in the community's binary and
-  have only ever run on a laptop, against a laptop.
 - **A genuinely new machine keeping its name** is covered by a test, not by a live run — the
   device id is machine-derived, so two data directories on one Mac share an account.
 - **The Docker shape's gate.** A published port is off-box, so an existing deployment is

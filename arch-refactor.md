@@ -256,6 +256,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T3a** | the registry, both halves | **done** — live-verified against the real service |
 | **T3b** | the tunnel + relay | **done** — live-verified end to end |
 | **T3c** | the subpath prefix in the core | **done** — live-verified through the relay |
+| **T3d** | **deploy the community, and survive the CDN** | **done 2026-08-13** — `740e93b` live on xyz-bj-1; two defects found and fixed on `fix/relay-edge-cache` |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
 **T1 delivers the directly-public shape end to end and needs no Go work**, which is why
@@ -281,6 +282,70 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T3d — Deployed, and the CDN found two things · **on `fix/relay-edge-cache`**
+
+The relayed shape had only ever run laptop-to-laptop. Deployed, `hi-agent.xyz` is not
+just the community — it terminates TLS at **Tencent EdgeOne**, which forwards to Caddy
+over plain HTTP. Three properties the design assumes were unmeasured until then, and a
+Go binary on a laptop could not have measured any of them.
+
+**Live, against the real service, from three machines** — a core on the Mac mini that
+only ever dialled out, the community on xyz-bj-1, and a Linux box that had nothing but
+the address:
+
+    claim, production registry   -> https://hi-agent.xyz/topoverify
+    wss://.../api/relay/tunnel   -> tunnel open; yamux across languages, through the CDN
+    /topoverify/api/tools        -> 401, the core's own, end to end
+    HTML navigation              -> the pairing page
+    code spent at the address    -> credential + Set-Cookie Path=/topoverify; Secure
+    POST /topoverify/api/in/text -> 202, landed in the conversation
+    GET  .../api/out/text        -> reset on connect, then append as it happened
+    page under the prefix        -> __HI_BASE__="/topoverify", import map to match
+
+So the two that were flagged as risks are closed: **the `Upgrade` passes** and **SSE is
+not buffered**. The third was not a risk anyone had written down, and it was real.
+
+**A gated response was shared-cacheable, which is an auth bypass.** Measured:
+
+    no credential, cold edge  ->  401
+    authed                    ->  200  cache-control: public, immutable, max-age=31536000
+    no credential, warm edge  ->  200  eo-cache-status: HIT
+
+One authorized fetch teaches the edge the response and the edge then serves it to
+requests carrying nothing — the gate intact and walked around at once, with the core
+never seeing the request. `/assets/*` is the host bundle, but the same header sat on
+`/generated/_compiled/*`, **the agent's own compiled views, written for one person**.
+
+`public` → `private` in both places (`appearance::serve_embedded`,
+`server::generated`). `private` keeps the browser cache, which is all either was for,
+and forbids the shared one. `files.rs:187` and `people.rs:109` already said `private` —
+the rule existed and these two missed it, so it is now a test rather than a habit:
+nothing answered off-box with a credential may carry `public`. **Re-measured against the
+real edge: `401 MISS` where it was `200 HIT`.** EdgeOne honours `private`, which was the
+one thing that could still have defeated the fix (a CDN rule caching by extension would
+have ignored the header).
+
+The design gains the rule — `topology.md` §*Nothing behind the gate is `public`* — and
+states where it belongs: **at the core, not the relay.** A cache-control rewrite at the
+community would be the second authorization mechanism invariant 3 exists to prevent.
+
+**And a claimed name did not work until the next restart.** `tunnel::start_if_named` ran
+once at boot and `post_handle` only wrote to the registry, so the community began routing
+a name for a core that had never dialled — `503 asleep` from a core that was running the
+whole time. An address that needs a restart is not an address.
+
+The fix is a supervisor task owning the `Router`, fed by an `mpsc` seam
+(`tunnel::serve`), because the alternative — a `Router` in `AppState` — is a cycle: the
+router owns the state. It also gives renaming somewhere to live, one live handle per
+core: a second claim drops the first tunnel rather than answering to both names out of
+one memory. **Live:** claiming `topolive2` on a running core opened its tunnel in 74ms
+and the new name answered the core's own `401` immediately, while `topoverify` went
+`asleep`.
+
+**Not done, and still the next thing:** T4. Also unwitnessed: the relayed page has never
+been *rendered* in a browser — every check above is bytes, so React mounting, view
+import-map resolution and SSE reconnect under a prefix remain inferred.
 
 #### T4a — Reach, the surface · **on `feat/reach-view`**
 

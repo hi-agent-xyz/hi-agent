@@ -33,9 +33,11 @@
 
 pub mod ws;
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::Router;
+use tokio::sync::mpsc;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tower::ServiceExt as _;
 
@@ -50,10 +52,15 @@ const REDIAL_MAX: Duration = Duration::from_secs(60);
 
 /// Hold a tunnel open for `handle`, redialing forever.
 ///
-/// Spawned at startup when this core has a name. Returns immediately; the work
-/// is a background task that ends only when the process does.
-pub fn spawn(data_dir: std::path::PathBuf, router: Router, handle: String) {
-    tokio::spawn(async move {
+/// Returns immediately, handing back the [`tokio::task::AbortHandle`] for the
+/// background task so the supervisor can drop this tunnel when the name changes.
+/// Nothing else ends it; a core serves its name for as long as it runs.
+pub fn spawn(
+    data_dir: std::path::PathBuf,
+    router: Router,
+    handle: String,
+) -> tokio::task::AbortHandle {
+    let task = tokio::spawn(async move {
         let router = accepted_on(router, Acceptor::OffBox);
         let mut backoff = REDIAL_MIN;
         loop {
@@ -70,6 +77,7 @@ pub fn spawn(data_dir: std::path::PathBuf, router: Router, handle: String) {
             tokio::time::sleep(backoff).await;
         }
     });
+    task.abort_handle()
 }
 
 /// Dial once and serve until the connection ends.
@@ -137,28 +145,89 @@ fn tunnel_url(base: &str, handle: &str) -> String {
     format!("{ws}/api/relay/tunnel?handle={handle}")
 }
 
-/// Open a tunnel at startup if this core has a name.
+/// The seam [`serve`] speaks through. Set once, by [`start`].
+///
+/// A channel rather than a `Router` in `AppState`, because the router owns the
+/// state and the state would then own the router. The supervisor holds the only
+/// clone and nothing else needs one.
+static SERVE: OnceLock<mpsc::UnboundedSender<Option<String>>> = OnceLock::new();
+
+/// Serve `handle` from now on, without a restart.
+///
+/// **This is what a claim calls.** Claiming a name used to write it to the
+/// registry and stop there, so the core dialled nothing until it was next
+/// restarted — the community routed the name and answered "asleep" for a core
+/// that was running the whole time. A name that does not work until you restart
+/// is not an address.
+///
+/// Quiet when no supervisor is running (a test, or a core built without one):
+/// the name is still claimed, and the next start will serve it.
+pub fn serve(handle: &str) {
+    match SERVE.get() {
+        Some(tx) => {
+            let _ = tx.send(Some(handle.to_string()));
+        }
+        None => tracing::debug!(handle, "no tunnel supervisor; this name is served at next start"),
+    }
+}
+
+/// Stop serving any name — what giving a name up calls.
+///
+/// The registry frees the name immediately, so a tunnel left open would be this
+/// core still answering to something it no longer owns.
+pub fn stop() {
+    if let Some(tx) = SERVE.get() {
+        let _ = tx.send(None);
+    }
+}
+
+/// Start the tunnel supervisor, and open one now if this core already has a name.
 ///
 /// Best-effort and quiet: a core with no handle, no account, or no reachable
 /// community is a working core that is simply reachable from its own machine.
 /// Nothing here is allowed to hold up boot.
-pub async fn start_if_named(data_dir: &std::path::Path, router: Router) {
-    let names = match community::current(data_dir).await {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::debug!(error = %e, "no handle to serve (this core is local-only)");
-            return;
-        }
-    };
-    // One live core per handle, and this core is one core: it serves the first
-    // name its account holds. Choosing among several is a thing an app asks for,
-    // and nothing asks yet.
-    let Some(first) = names.handles.first() else {
-        tracing::info!("no handle claimed; reachable from this machine only");
+pub async fn start(data_dir: &std::path::Path, router: Router) {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Option<String>>();
+    if SERVE.set(tx).is_err() {
+        tracing::warn!("the tunnel supervisor is already running");
         return;
-    };
-    tracing::info!(handle = %first.handle, base_url = %first.base_url, "serving a handle");
-    spawn(data_dir.to_path_buf(), router, first.handle.clone());
+    }
+
+    let dir = data_dir.to_path_buf();
+    tokio::spawn(async move {
+        // One live core per handle, and one live handle per core: a rename
+        // replaces the tunnel rather than adding a second, or the old name would
+        // keep answering from the same memory under a name its owner gave up.
+        let mut current: Option<(String, tokio::task::AbortHandle)> = None;
+        while let Some(wanted) = rx.recv().await {
+            if let Some(handle) = wanted.as_ref() {
+                if current.as_ref().is_some_and(|(held, _)| held == handle) {
+                    continue;
+                }
+            }
+            if let Some((held, abort)) = current.take() {
+                match wanted.as_ref() {
+                    Some(handle) => {
+                        tracing::info!(from = %held, to = %handle, "the name changed; dropping the old tunnel")
+                    }
+                    None => tracing::info!(handle = %held, "the name was given up; closing the tunnel"),
+                }
+                abort.abort();
+            }
+            let Some(handle) = wanted else { continue };
+            tracing::info!(handle = %handle, "serving a handle");
+            let abort = spawn(dir.clone(), router.clone(), handle.clone());
+            current = Some((handle, abort));
+        }
+    });
+
+    match community::current(data_dir).await {
+        Ok(names) => match names.handles.first() {
+            Some(first) => serve(&first.handle),
+            None => tracing::info!("no handle claimed; reachable from this machine only"),
+        },
+        Err(e) => tracing::debug!(error = %e, "no handle to serve (this core is local-only)"),
+    }
 }
 
 #[cfg(test)]

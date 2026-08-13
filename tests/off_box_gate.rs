@@ -270,3 +270,46 @@ async fn a_cookie_alone_cannot_drive_a_state_change_from_another_site() {
         .expect("send");
     assert_eq!(res.status(), 202);
 }
+
+/// **Nothing the gate protects may be labelled `public`.**
+///
+/// A gated `200` was served *because* a credential checked out, so a shared cache
+/// storing it and replaying it to the next caller hands out exactly what the gate
+/// refused. This is not theoretical: relayed, a core sits behind a CDN, and an
+/// authorized fetch of `/assets/*` turned a later unauthenticated fetch of the
+/// same path from the core's `401` into a `200` served from the edge.
+///
+/// `private` is the fix rather than `no-store`, because the browser cache was the
+/// whole point and only the *shared* one is the problem. Content-addressed names
+/// are why these may be cached *forever*; they have never been a reason to cache
+/// them *shared*.
+#[tokio::test]
+async fn nothing_behind_the_gate_is_cacheable_by_a_shared_cache() {
+    let (_loopback, off_box, _dir, seams) = spawn().await;
+    let client = reqwest::Client::new();
+    let (_id, token) = seams.state.surfaces.mint("the test").expect("mint");
+
+    // Everything static enough to carry a long TTL, which is the whole risk set:
+    // the host bundle, a non-hashed embedded file, and the agent's own compiled
+    // views. A 404 is fine — the header is what is on trial, not the body.
+    for path in ["/assets/index.js", "/vite.svg", "/generated/_compiled/anything.mjs", "/api/tools"] {
+        let res = client
+            .get(format!("{off_box}{path}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("send");
+        let cache = res
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        assert!(
+            !cache.contains("public"),
+            "{path} answered {} with cache-control: {cache:?} — a shared cache may keep this \
+             and serve it to a request with no credential at all",
+            res.status(),
+        );
+    }
+}

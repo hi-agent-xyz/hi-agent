@@ -461,7 +461,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     {
         let data_dir = config.data_dir.clone();
         let router = router.clone();
-        tokio::spawn(async move { foundation::tunnel::start_if_named(&data_dir, router).await });
+        tokio::spawn(async move { foundation::tunnel::start(&data_dir, router).await });
     }
 
     // Record the bound port so the native Settings "Sign in" button and the
