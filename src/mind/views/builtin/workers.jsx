@@ -277,12 +277,19 @@ const ROLE = {
 };
 
 /** A worker's specialism, when it has one. A general worker is just a `Worker`, which the
- *  role above already says. */
+ *  role above already says.
+ *
+ *  Every type in `identity::WorkerType` except `general` belongs here. A type missing from
+ *  this table does not fail — it falls through to the bare `Worker` the role gives, which is
+ *  indistinguishable from a general session on screen. That is how every `person-reader` a
+ *  settling pass dispatched read as an unnamed worker: the variant was added to the enum and
+ *  never here. */
 const TYPE = {
   "view-builder": "View builder",
   "view-reviewer": "View reviewer",
   "decision-maker": "Decision maker",
   "file-filer": "File filer",
+  "person-reader": "Person reader",
 };
 
 function label(row) {
@@ -299,10 +306,21 @@ function label(row) {
  *  The unlinked case is the one this exists for. A worker with no subject is absent from its
  *  task's own line in the ledger, so that task reads as having nobody on it while this
  *  session is working it — and the natural response to that is to start a second worker.
- *  Here it is the only place both facts are on one screen. */
+ *  Here it is the only place both facts are on one screen.
+ *
+ *  And it is asked only of the kinds that serve the ledger at all. A `person-reader` is one
+ *  of Reflection's organizers — one per person present in a stretch, keyed to a
+ *  `people/<name>` facet, never a task anyone is owed — so it has no subject to be missing.
+ *  Marking every one of them is the same mistake as marking the rungs, at fan-out scale: the
+ *  settling pass starts a reader per person, and a page of red warnings on rows where none is
+ *  a fault is a page with no warnings on it. The rule lives in
+ *  `WorkerType::expects_a_subject`; this is its half. */
+const NO_SUBJECT_EXPECTED = new Set(["person-reader"]);
+
 function taskLink(row) {
   if (row.role !== "worker") return null;
   if (row.subject) return { text: L.onTask(row.subject), warn: false };
+  if (NO_SUBJECT_EXPECTED.has(row.type)) return null;
   return { text: L.unlinked, warn: true };
 }
 

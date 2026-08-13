@@ -157,7 +157,9 @@ fn create_worker_tool() -> Value {
                                     `view-reviewer` to render one and judge it before it ships, \
                                     `decision-maker` to get a call made so work can continue \
                                     without the person, `file-filer` to put a handed-over file \
-                                    into the drive.",
+                                    into the drive, `person-reader` to read one person out of \
+                                    the record and write their facet — the settling pass's, and \
+                                    not yours to start unless you are it.",
                 },
                 "subject": {
                     "type": "string",

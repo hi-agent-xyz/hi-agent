@@ -629,6 +629,16 @@ restart kills it. So write what a colleague would call it — "recover the stall
 deploy" — never the brief's first sentence, and never paths, ids or digests. The brief can
 be as long as the work needs; the line is what makes a screenful of them readable.
 
+**And if the work belongs to a task, set `subject` in the same call.** It is the ledger
+subject — the directory name under `memory/facets/tasks/`, not the title — and it is the
+whole join between a task and the session doing it. Set, the task reads as being worked on
+and by whom. Left out, the worker runs fine and the task it is doing reads as owed by
+nobody, which is what an abandoned task looks like too — so the next glance at that list,
+yours or a later one, sees work nobody is on and staffs it a second time. Both workers
+finish and only one of them was wanted. **This is the only moment it can be set**: there is
+no way to attach a subject to a session already running, and cancelling live work to
+relabel it costs more than the wrong label does. So it is set here or it is not set.
+
 Then let it work. `hi_session_status` is free and tells
 you whether it is still going; `hi_session_messages` costs context and tells you what it has
 actually found, so reach for the first often and the second when you mean it.

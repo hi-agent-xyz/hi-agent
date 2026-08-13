@@ -241,13 +241,18 @@ pub fn render(batch: &[Message]) -> String {
 /// that line is to start a second worker on it. Saying "not linked to any task" is what puts
 /// the two halves of that mistake in one window: a task claiming nobody, and a session claiming
 /// no task.
+///
+/// Said only of a worker whose kind serves the ledger at all
+/// ([`crate::identity::WorkerType::expects_a_subject`]). An organizer has no task to be
+/// missing, and marking one is how the phrase stops being read.
 fn link_note(e: &Entry) -> String {
-    if !e.role.is_worker() {
+    let Some(kind) = e.role.worker_type() else {
         return String::new();
-    }
+    };
     match e.subject.as_deref() {
         Some(subject) => format!(" — on task `{subject}`"),
-        None => " — not linked to any task".to_string(),
+        None if kind.expects_a_subject() => " — not linked to any task".to_string(),
+        None => String::new(),
     }
 }
 
@@ -755,12 +760,16 @@ impl Registry {
     /// someone on it, which starts a second worker on work already running. That duplicate is
     /// the real cost of a missed label, and it is worse than the silence the join was built to
     /// end, so the omission has to be visible from the same window that invites the mistake.
+    ///
+    /// Asked only of the kinds that serve the ledger — same rule as [`link_note`], because a
+    /// disagreement between the two would mean a rung told there is an unlabelled worker and
+    /// shown a roster where none is marked.
     pub fn has_unlinked_worker(&self, asker: SessionId) -> bool {
-        self.sessions
-            .lock()
-            .unwrap()
-            .values()
-            .any(|e| e.owner == Some(asker) && e.role.is_worker() && e.subject.is_none())
+        self.sessions.lock().unwrap().values().any(|e| {
+            e.owner == Some(asker)
+                && e.subject.is_none()
+                && e.role.worker_type().is_some_and(|k| k.expects_a_subject())
+        })
     }
 
     /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of
@@ -1355,6 +1364,36 @@ mod tests {
             "the voice is not an unlabelled worker: {who:?}"
         );
         assert!(!r.has_unlinked_worker(cog), "a rung is not an unlinked worker");
+    }
+
+    /// **An organizer has no task to be missing, so it is not marked as missing one.**
+    ///
+    /// A `person-reader` is Reflection's housekeeping — one per person present in a stretch,
+    /// keyed to a `people/<name>` facet, never work the ledger owes anyone. It is also the
+    /// worker type dispatched in the largest fan-out there is, so marking it would print the
+    /// warning once per person on a page where none of them is a fault. Both halves are pinned
+    /// here: the roster line and the cheap predicate, which must not disagree.
+    #[test]
+    fn an_organizer_is_not_marked_as_linked_to_nothing() {
+        let r = reg();
+        let (refl, reader) = (mint(), mint());
+        r.register(refl, Role::Reflection, None, "housekeeping".into(), None);
+        r.register(
+            reader,
+            Role::Worker(WorkerType::PersonReader),
+            Some(refl),
+            "read 赵力".into(),
+            None,
+        );
+
+        let who = r.reachable(refl);
+        let line = who
+            .iter()
+            .find(|(_, i)| *i == reader)
+            .map(|(l, _)| l.clone())
+            .expect("offered");
+        assert!(!line.contains("not linked"), "{line:?}");
+        assert!(!r.has_unlinked_worker(refl), "an organizer is not an unlinked worker");
     }
 
     /// The cheap half of the same question, for the check that runs before staffing a task.

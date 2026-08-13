@@ -126,6 +126,22 @@ impl WorkerType {
         Self::ALL.iter().copied().find(|t| t.as_str() == s.trim())
     }
 
+    /// Whether a session of this kind is expected to name a ledger task.
+    ///
+    /// Almost all of them are: a worker is how a task gets done, so one created without a
+    /// `subject` leaves its task reading as owed by nobody, and that is worth saying out
+    /// loud wherever a worker is listed.
+    ///
+    /// `person-reader` is the exception, and it is the exception by design. It is one of
+    /// Reflection's **organizers** (`docs/arch/agents.md`) — housekeeping keyed to a
+    /// `people/<name>` facet, dispatched one per person present in a stretch, and never
+    /// work the ledger owes anyone. There is no task for it to name. Flagging it would put
+    /// the phrase on every settling pass's fan-out, which is the same mistake the ledger
+    /// side already refuses: "nobody on it" is said only where nobody is a problem.
+    pub fn expects_a_subject(self) -> bool {
+        !matches!(self, Self::PersonReader)
+    }
+
     /// The embedded base for this type's layer.
     fn base(self) -> &'static str {
         match self {

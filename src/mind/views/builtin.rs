@@ -173,6 +173,33 @@ mod tests {
         assert!(source.contains("消息都已保留"));
     }
 
+    /// **Every worker specialism is named on the roster, or it shows up as a bare `Worker`.**
+    ///
+    /// The sessions view labels a row `TYPE[row.type] || ROLE[row.role]`, so a type missing
+    /// from that table does not fail — it falls through to the word `Worker` and becomes
+    /// indistinguishable from a general session on screen. That is not hypothetical: it is
+    /// what `person-reader` did for as long as it existed, and the whole reason the type is
+    /// carried on the wire at all is to answer "which kind of session was that".
+    ///
+    /// `general` is the one that must *not* be there — the role word already says `Worker`,
+    /// and a `General` entry would print it twice.
+    #[test]
+    fn the_sessions_view_names_every_worker_specialism() {
+        let source = REVIEW_VIEWS
+            .iter()
+            .find(|(name, _)| *name == "workers")
+            .map(|(_, src)| *src)
+            .expect("the sessions view is bundled");
+        for t in crate::identity::WorkerType::ALL {
+            let entry = format!("\"{}\":", t.as_str());
+            if *t == crate::identity::WorkerType::General {
+                assert!(!source.contains(&entry), "`general` is spelled by the role word alone");
+            } else {
+                assert!(source.contains(&entry), "{} has no label in the sessions view", t.as_str());
+            }
+        }
+    }
+
     #[test]
     fn seeds_the_welcome_hero_and_its_mark() {
         let dir = tempfile::tempdir().unwrap();
