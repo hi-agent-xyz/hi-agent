@@ -1,5 +1,5 @@
 import { url } from "../lib/base";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -7,6 +7,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "./shadcn/message-scroller";
 import { Message, MessageContent, MessageGroup } from "./shadcn/message";
 import { Bubble, BubbleContent } from "./shadcn/bubble";
@@ -157,48 +158,65 @@ export interface ChatProps {
 
 export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  // What is at the foot right now: the newest message, and the partial being
+  // recognized under it. Either one changing means the tail moved.
+  const tail = `${messages[messages.length - 1]?.id ?? ""}|${interim ?? ""}`;
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
       <MessageScroller className="hi-chat">
-        <ScrollbackTrigger onLoadOlder={onLoadOlder} oldestId={messages[0]?.id} />
-        <MessageScrollerViewport preserveScrollOnPrepend className="px-4 py-6">
+        <ScrollbackTrigger
+          onLoadOlder={onLoadOlder}
+          oldestId={messages[0]?.id}
+          viewportRef={viewportRef}
+        />
+        <StickToBottom tail={tail} viewportRef={viewportRef} />
+        <MessageScrollerViewport ref={viewportRef} preserveScrollOnPrepend className="px-4 py-6">
           <MessageScrollerContent className="mx-auto w-full max-w-[52rem] gap-6">
+            {/* One group is one item, and the item is a DIRECT child of the content.
+                The scroller reads `data-message-id` off its own children only, so
+                the wrapper div that used to hold the day separator hid every message
+                from it — which quietly made `preserveScrollOnPrepend` a no-op, and
+                scrolling back landed at the top of the page just fetched instead of
+                holding the line being read. The separator goes inside the item.
+
+                No `scrollAnchor`: that pins the newest item to the TOP of the
+                viewport, which is the shape for a reply unfolding under your
+                question. A messenger follows its foot instead — see `StickToBottom`. */}
             {groups.map((group) => (
-              <div key={group.key}>
+              <MessageScrollerItem key={group.key} messageId={group.key}>
                 {group.daySeparator && (
                   <div className="my-4 text-center text-xs text-muted-foreground">
                     {group.daySeparator}
                   </div>
                 )}
-                <MessageScrollerItem messageId={group.key} scrollAnchor>
-                  <Message align={group.role === "user" ? "end" : "start"}>
-                    <MessageContent>
-                      <MessageGroup>
-                        {group.messages.map((message) => (
-                          <Bubble
-                            key={message.id}
-                            align={group.role === "user" ? "end" : "start"}
-                            variant={group.role === "user" ? "secondary" : "default"}
-                          >
-                            <BubbleContent>
-                              {message.attachment && (
-                                <AttachmentView attachment={message.attachment} />
-                              )}
-                              {message.text && <Body text={message.text} />}
-                            </BubbleContent>
-                          </Bubble>
-                        ))}
-                      </MessageGroup>
-                      <time
-                        className="mt-1 block text-[11px] text-muted-foreground"
-                        dateTime={group.messages[group.messages.length - 1]?.ts}
-                      >
-                        {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
-                      </time>
-                    </MessageContent>
-                  </Message>
-                </MessageScrollerItem>
-              </div>
+                <Message align={group.role === "user" ? "end" : "start"}>
+                  <MessageContent>
+                    <MessageGroup>
+                      {group.messages.map((message) => (
+                        <Bubble
+                          key={message.id}
+                          align={group.role === "user" ? "end" : "start"}
+                          variant={group.role === "user" ? "secondary" : "default"}
+                        >
+                          <BubbleContent>
+                            {message.attachment && (
+                              <AttachmentView attachment={message.attachment} />
+                            )}
+                            {message.text && <Body text={message.text} />}
+                          </BubbleContent>
+                        </Bubble>
+                      ))}
+                    </MessageGroup>
+                    <time
+                      className="mt-1 block text-[11px] text-muted-foreground"
+                      dateTime={group.messages[group.messages.length - 1]?.ts}
+                    >
+                      {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
+                    </time>
+                  </MessageContent>
+                </Message>
+              </MessageScrollerItem>
             ))}
 
             {/* The line being recognized: a preview, so it sits outside the list
@@ -223,6 +241,59 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
 }
 
 /**
+ * How far from the foot still counts as being at it. A hair more than the
+ * scroller's own edge threshold, because a fractional device pixel or a momentum
+ * bounce landing three pixels short must not read as "they scrolled away to read".
+ */
+const AT_FOOT_SLACK = 24;
+
+/**
+ * Keep the conversation on its newest message while the reader is at the foot of it.
+ *
+ * The scroller stops following the foot the moment it sees a wheel, a touch drag
+ * or an arrow key — any of those means "I am reading, hold still" — and starts
+ * following again only when a *scroll event* lands back at the foot. A gesture
+ * that scrolls nothing emits no such event, so one trackpad flick at the bottom
+ * of the list, where there was nowhere further to go, turned following off for
+ * good. Every message after it appended below the fold behind an easily-missed
+ * jump button, and the conversation looked like it had stopped — which is how a
+ * `say` the backend holds, journalled and served, goes missing from the chat.
+ *
+ * So position decides, not gesture: while the last scroll left us at the foot, a
+ * new message brings the foot back into view.
+ */
+function StickToBottom({
+  tail,
+  viewportRef,
+}: {
+  /** Changes whenever the foot of the list does. */
+  tail: string;
+  viewportRef: RefObject<HTMLDivElement | null>;
+}) {
+  const { scrollToEnd } = useMessageScroller();
+  const atFootRef = useRef(true);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const read = () => {
+      atFootRef.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= AT_FOOT_SLACK;
+    };
+    read();
+    viewport.addEventListener("scroll", read, { passive: true });
+    return () => viewport.removeEventListener("scroll", read);
+  }, [viewportRef]);
+
+  // Before paint, so a message never shows up half a screen down and then jumps.
+  useLayoutEffect(() => {
+    if (atFootRef.current) scrollToEnd({ behavior: "auto" });
+  }, [tail, scrollToEnd]);
+
+  return null;
+}
+
+/**
  * Ask for older messages when the viewport is scrolled near the top.
  *
  * Lives inside the provider because that is where the scroll state is, and it
@@ -232,9 +303,11 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
 function ScrollbackTrigger({
   onLoadOlder,
   oldestId,
+  viewportRef,
 }: {
   onLoadOlder?: (() => Promise<number>) | undefined;
   oldestId?: string | undefined;
+  viewportRef: RefObject<HTMLDivElement | null>;
 }) {
   const exhaustedRef = useRef(false);
   // A different oldest message means the conversation grew backwards, so there
@@ -245,7 +318,10 @@ function ScrollbackTrigger({
 
   useEffect(() => {
     if (!onLoadOlder) return;
-    const viewport = document.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+    // This conversation's own viewport, held by ref rather than found in the
+    // document: an agent view on the stage may have a scroller of its own, and a
+    // document-wide query would happily drive that one instead.
+    const viewport = viewportRef.current;
     if (!viewport) return;
     const onScroll = () => {
       if (exhaustedRef.current || viewport.scrollTop > 200) return;
@@ -255,7 +331,7 @@ function ScrollbackTrigger({
     };
     viewport.addEventListener("scroll", onScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", onScroll);
-  }, [onLoadOlder]);
+  }, [onLoadOlder, viewportRef]);
 
   return null;
 }
