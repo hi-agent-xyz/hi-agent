@@ -207,6 +207,115 @@ async fn speaking_up_unprompted(data_dir: &Path) -> String {
 /// Over [`CARRIED_FORWARD_CHARS`] the text is cut and the cut is *announced in the
 /// injected text itself*, addressed to the agent whose file it is: it is the only one
 /// who can do anything about it, and it can only act on what it can see.
+/// Hard cap, in characters, on one record projected into a worker's opening prompt.
+///
+/// Smaller than [`CARRIED_FORWARD_CHARS`] and per-record rather than per-window, because
+/// a worker's brief is the thing it is actually there to read and this rides in front of
+/// it. Three thousand is a page: enough for "here is the script, here is what bit us last
+/// time", not enough to bury the job.
+pub const WORK_RECORD_CHARS: usize = 3_000;
+
+/// The dimension holding what the agent knows about a system it operates — one subject
+/// per system, `systems/<name>`.
+///
+/// **The gap this fills is not storage, it is delivery.** Episodes already recorded that
+/// songguo had been deployed before, and a facet could always have been written; what did
+/// not exist was any path from that record to the rung with its hands on the machine. A
+/// worker is prompted with its brief and nothing else, so *how a thing is operated* could
+/// only reach it by being retyped into that brief from someone's memory of a conversation
+/// — and a procedure that travels by retyping is a procedure that drifts. The second
+/// deploy of a system should start from the first one's record, not from recall.
+pub const SYSTEMS: &str = "systems";
+
+/// Frontmatter key on a task naming the systems it touches, comma-separated.
+///
+/// Deliberately *not* part of [`tasks::Task`]'s schema: it stays an unknown frontmatter
+/// line, preserved verbatim by the writer like every other note the agent keeps on a
+/// task, and is read here on the way past. A field the status-writer had to understand is
+/// a field the status-writer could drop.
+const SYSTEMS_KEY: &str = "systems";
+
+/// What the rung actually doing the work must know without going to look: the standing
+/// record for the systems this job touches, then the task's own record.
+///
+/// **Systems first, task second, and that is the same decision the voice's window makes
+/// with conduct.** What stands is read as framing; what is in flight is read as the
+/// situation. A procedure that arrives after two pages of ledger is a procedure that gets
+/// skimmed — and skimming it is how a canonical script ends up reinvented.
+///
+/// Empty is the ordinary answer and never an error: a task with no `systems:` line, a
+/// system with no record yet, a first-ever job. The worker then gets exactly what it got
+/// before this existed, which is its brief.
+pub async fn work_record(data_dir: &Path, subject: &str) -> String {
+    let facets = layout::facets_dir(data_dir);
+    let task_path = facets.join(tasks::DIMENSION).join(subject).join("facet.md");
+    let task = tokio::fs::read_to_string(&task_path).await.unwrap_or_default();
+
+    let mut sections: Vec<String> = Vec::new();
+    for name in named_systems(&task) {
+        let path = facets.join(SYSTEMS).join(&name).join("facet.md");
+        let Ok(body) = tokio::fs::read_to_string(&path).await else {
+            // Named but not written yet. Say so rather than staying silent: "we have no
+            // record of how this is operated" is the sentence that gets one written, and
+            // its absence is what let a script be re-derived from scratch.
+            sections.push(format!(
+                "### {name}\nNo record of this system yet. If you learn how it is \
+                 operated, that is worth writing down."
+            ));
+            continue;
+        };
+        sections.push(format!("### {name}\n{}", clip(body.trim())));
+    }
+
+    let mut out = String::new();
+    if !sections.is_empty() {
+        out.push_str("## The systems this touches\n");
+        out.push_str(&sections.join("\n\n"));
+    }
+    let task = crate::mind::memory::episodes::strip_frontmatter(&task).trim();
+    if !task.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str("## The record on this task\n");
+        out.push_str(&clip(task));
+    }
+    out
+}
+
+/// The `systems:` names on a task, in written order, deduplicated.
+///
+/// Both spellings the agent actually writes are accepted — `systems: a, b` and
+/// `systems: [a, b]` — because the frontmatter here is hand-written prose, not something
+/// a serializer produced, and refusing one of two natural spellings would fail silently.
+fn named_systems(task: &str) -> Vec<String> {
+    let Some(raw) = crate::mind::memory::episodes::frontmatter_field(task, SYSTEMS_KEY) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for name in raw.trim().trim_start_matches('[').trim_end_matches(']').split(',') {
+        let name = name.trim().trim_matches('"').trim();
+        // A name is a directory component; anything that could climb out of the facet
+        // store is not a system name, whatever it is.
+        if name.is_empty() || name.contains('/') || name.contains("..") {
+            continue;
+        }
+        if !out.iter().any(|seen| seen == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+fn clip(body: &str) -> String {
+    if body.chars().count() <= WORK_RECORD_CHARS {
+        return body.to_string();
+    }
+    let mut s: String = body.chars().take(WORK_RECORD_CHARS).collect();
+    s.push_str("\n[Cut here by the host; the rest is in the facet on disk.]");
+    s
+}
+
 async fn carried_forward(path: &Path) -> String {
     use std::fmt::Write as _;
 
@@ -565,5 +674,80 @@ mod window_tests {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
         assert!(agent_window(&memory, "cognition", 0).await.trim().is_empty());
+    }
+
+    async fn write_facet(dir: &Path, dimension: &str, subject: &str, body: &str) {
+        let path = layout::facets_dir(dir).join(dimension).join(subject);
+        tokio::fs::create_dir_all(&path).await.unwrap();
+        tokio::fs::write(path.join("facet.md"), body).await.unwrap();
+    }
+
+    /// **The line this whole projection exists for.** A worker used to open with its brief
+    /// and nothing else, so how a system is operated could only reach it by being retyped
+    /// — and the canonical script went unrun while its own container was stopped to satisfy
+    /// a precondition invented in the retyping.
+    #[tokio::test]
+    async fn the_record_for_a_named_system_reaches_the_work() {
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(
+            dir.path(),
+            "tasks",
+            "deploy-songguo",
+            "---\nstatus: doing\nsystems: songguo\n---\nDeploy it.",
+        )
+        .await;
+        write_facet(dir.path(), "systems", "songguo", "Deployed by `./deploy.sh`. Nothing else.")
+            .await;
+
+        let text = work_record(dir.path(), "deploy-songguo").await;
+        assert!(text.contains("./deploy.sh"), "the script must reach the doer: {text}");
+        assert!(text.contains("Deploy it."), "so must the task's own record: {text}");
+        assert!(
+            text.find("./deploy.sh") < text.find("Deploy it."),
+            "what stands is read before the situation: {text}"
+        );
+    }
+
+    /// Both spellings the agent actually writes, several systems, and no duplicates. The
+    /// frontmatter here is hand-written prose, so refusing one natural spelling would fail
+    /// silently — the record would simply not arrive.
+    #[tokio::test]
+    async fn systems_are_read_in_either_spelling() {
+        assert_eq!(
+            named_systems("---\nsystems: songguo, hi-agent-xyz\n---\nx"),
+            vec!["songguo".to_string(), "hi-agent-xyz".to_string()]
+        );
+        assert_eq!(
+            named_systems("---\nsystems: [songguo, songguo]\n---\nx"),
+            vec!["songguo".to_string()],
+            "named twice is one system"
+        );
+        assert!(named_systems("---\nstatus: doing\n---\nx").is_empty());
+        assert!(
+            named_systems("---\nsystems: ../../etc\n---\nx").is_empty(),
+            "a name is a directory component, not a path"
+        );
+    }
+
+    /// A system named but never written up says so. Silence would read as "nothing to
+    /// know", which is the state that gets a procedure re-derived from scratch.
+    #[tokio::test]
+    async fn a_named_system_with_no_record_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(dir.path(), "tasks", "deploy-songguo", "---\nsystems: songguo\n---\nGo.").await;
+
+        let text = work_record(dir.path(), "deploy-songguo").await;
+        assert!(text.contains("No record of this system yet"), "{text}");
+    }
+
+    /// The ordinary case on a fresh install and on any task that names nothing: the worker
+    /// gets its brief, exactly as before. An empty projection must not become a heading
+    /// with nothing under it.
+    #[tokio::test]
+    async fn no_named_systems_and_no_task_record_projects_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(work_record(dir.path(), "never-heard-of-it").await.is_empty());
+        write_facet(dir.path(), "tasks", "bare", "---\nstatus: doing\n---\n").await;
+        assert!(work_record(dir.path(), "bare").await.is_empty());
     }
 }

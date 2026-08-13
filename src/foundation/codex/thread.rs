@@ -428,6 +428,40 @@ impl AgentSession {
             .await
             .map(|_| true)
     }
+
+    /// Put `text` in front of the turn that is *already running*, without stopping it.
+    ///
+    /// **This is the difference between reaching someone and cancelling them.** The only
+    /// way into a busy session used to be [`cancel`](Self::cancel) — which throws away the
+    /// work in flight, and with a shell command mid-run throws away something that is
+    /// still happening out in the world. `turn/steer` hands the model another user message
+    /// where it stands, so the correction lands at its next step and the command it
+    /// already started is left alone.
+    ///
+    /// **Returns whether it landed**, and returning `false` rather than erroring is the
+    /// point: this is a best-effort path over an optional codex feature. `Ok(false)` means
+    /// no turn was running (it finished in the moment between deciding to steer and
+    /// saying so — the same race [`cancel`](Self::cancel) reports). An `Err` means codex
+    /// refused: the `steer` feature is off, the turn is a review or compact turn, or it
+    /// stopped being steerable. Every one of those is a reason for the caller to fall back
+    /// to delivering at the next turn boundary, never a reason to fail a turn — so no
+    /// caller may treat this as fatal, and the message must survive the `false`.
+    pub async fn steer(&self, text: String) -> anyhow::Result<bool> {
+        let Some(turn_id) = self.current_turn.lock().await.clone() else {
+            return Ok(false);
+        };
+        self.process
+            .request(
+                "turn/steer",
+                json!({
+                    "threadId": self.id,
+                    "expectedTurnId": turn_id,
+                    "input": [{ "type": "text", "text": text, "text_elements": [] }],
+                }),
+            )
+            .await
+            .map(|_| true)
+    }
 }
 
 #[cfg(test)]

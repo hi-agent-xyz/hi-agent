@@ -72,6 +72,10 @@ use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, workers};
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
 
+/// How long a `turn/steer` may go unanswered before the message it carried is put back on
+/// the next-turn path instead. See the call site for why this is bounded at all.
+const STEER_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Cognition's restart-recovery wake is immediate once the reaction exists.
 ///
 /// Runtime provisioning and broker refresh finish before `reaction::start`, and
@@ -309,15 +313,85 @@ async fn run(reaction: Reaction, registration: Registration) {
         // turn — and `hi_session_status` truthfully answered "no live session" the whole
         // time, which reads as a dead worker rather than an undelivered one.
         //
-        // Only the control arm belongs here. Serving the wake or mail arms would start a
-        // second turn on top of this one; those stay outside, where a turn boundary
-        // separates them. Worker *reports* stay outside too — they need `&mut pending`,
-        // which this turn has borrowed, and they are next-turn input by design.
-        let result = {
-            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &pending, &mut session));
+        // The wake arm stays outside — serving it would start a second turn on top of this
+        // one, and a turn boundary is what separates them. Worker *reports* stay outside
+        // too: they are next-turn input by design.
+        //
+        // **Mail is served here, and it does not start a turn — it walks into the one that
+        // is running** ([`AgentSession::steer`]). What it answers was measured: the person
+        // said "what? we backup sqlite before every deploy??", the voice relayed it in
+        // eight seconds, and it sat in this inbox for seven minutes because the turn it
+        // contradicted was still going. It was read twenty-seven seconds after the step it
+        // would have prevented. A rung holding a shell for sixteen minutes with no way in
+        // is a rung with no supervisor, and the person is the only supervisor there is.
+        //
+        // **Only the voice steers.** What a person just said is the one input that can
+        // invalidate work in flight; a worker's message is a report about work that is
+        // going fine, and letting reports interrupt would turn every busy stretch into a
+        // stutter. Everything not steered — and everything steering *failed* to deliver —
+        // goes into `arrived` and is folded into the next turn, which is exactly what used
+        // to happen to all of it. Nothing here can lose a message.
+        let mut arrived: Vec<String> = Vec::new();
+        let result: anyhow::Result<()> = async {
+            let live = ensure_session(&reaction, id, &mut session).await?;
+            let steerable = live.clone();
+            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &pending, live));
             loop {
                 tokio::select! {
                     done = &mut turn_fut => break done,
+                    _ = mail.notified() => {
+                        let Some(batch) = registry::global().take_pending(id) else { continue };
+                        let (voice, rest): (Vec<_>, Vec<_>) =
+                            batch.into_iter().partition(from_the_voice);
+                        if !rest.is_empty() {
+                            arrived.push(registry::render(&rest));
+                        }
+                        if voice.is_empty() {
+                            continue;
+                        }
+                        // The heading is a fact about *delivery* — the model is mid-turn
+                        // and needs to know this reached it there rather than at the start
+                        // of a fresh one. What that obliges it to do is `cognition.md`'s
+                        // to say, not the host's.
+                        let rendered = registry::render(&voice);
+                        // **Bounded, because a request to this app-server is not
+                        // guaranteed to be answered.** Probed against the pinned 0.147:
+                        // a method it knows, addressed to a thread that no longer exists,
+                        // produces no response at all rather than an error — so the
+                        // oneshot behind `request` would never resolve. Awaited bare, that
+                        // would park this arm forever and, with it, the polling of the
+                        // turn future beside it: a worse version of the stall this whole
+                        // path exists to end. A live thread answers in milliseconds, so
+                        // five seconds is "it is never coming".
+                        let steered = tokio::time::timeout(
+                            STEER_TIMEOUT,
+                            steerable.steer(format!(
+                                "## New message — arrived while you are working\n{rendered}"
+                            )),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in {STEER_TIMEOUT:?}")));
+                        match steered {
+                            Ok(true) => tracing::info!(
+                                cognition = id,
+                                chars = rendered.chars().count(),
+                                "steered the running turn",
+                            ),
+                            // No turn to steer (it ended in the gap), or codex refused —
+                            // the `steer` feature off, or a turn that stopped being
+                            // steerable. Either way the message is owed, so it takes the
+                            // path it always took.
+                            Ok(false) => arrived.push(rendered),
+                            Err(err) => {
+                                tracing::warn!(
+                                    cognition = id,
+                                    error = %err,
+                                    "could not steer; message waits for the next turn",
+                                );
+                                arrived.push(rendered);
+                            }
+                        }
+                    }
                     ctl = control_rx.recv() => match ctl {
                         Some(LoopControl::CreateWorker {
                             id: worker, title, task, kind, owner, resume, subject,
@@ -351,7 +425,8 @@ async fn run(reaction: Reaction, registration: Registration) {
                     },
                 }
             }
-        };
+        }
+        .await;
 
         match result {
             Ok(()) => pending.clear(),
@@ -382,6 +457,16 @@ async fn run(reaction: Reaction, registration: Registration) {
                     "cognition turn failed; mail held"
                 );
             }
+        }
+
+        // Mail that landed mid-turn and was not steered in — a worker's report, or a
+        // steer codex refused. It is owed either way, so it joins the next turn's batch,
+        // *after* the clear above so a turn that succeeded does not carry it off. The
+        // notify is what makes "next turn" mean now rather than at the next pulse: this
+        // mail was taken out of the inbox by hand, so nothing else will wake for it.
+        if !arrived.is_empty() {
+            pending.append(&mut arrived);
+            mail.notify_one();
         }
 
         // After the turn, not before it: the glance is for quiet moments, and a turn
@@ -756,22 +841,45 @@ async fn open_session(
 /// cannot have remembered, because it did not exist yet. Injecting per turn is what makes
 /// "projected, not retrieved" true rather than true-at-open — the same correction the
 /// reaction loop's prompt builder carries.
+/// Was this message put here by the voice?
+///
+/// The one sender whose word can invalidate work already in flight, because it is the only
+/// one carrying what a *person* just said. Host-posted mail (`from: None`) is not a
+/// colleague and does not steer; neither does a worker, whose messages are reports about
+/// work that is going to plan. A sender that has since gone (no registry entry) reads as
+/// not-the-voice, which is the safe way round: the cost is a message waiting for the turn
+/// boundary it would have waited for anyway.
+fn from_the_voice(m: &registry::Message) -> bool {
+    m.from
+        .and_then(|from| registry::global().status(from))
+        .is_some_and(|st| st.role == Role::Reaction)
+}
+
+/// Reuse the held session, or open one — first turn after start, or after a failure or
+/// wedge dropped it.
+///
+/// **Split out of [`turn`] so the caller holds the handle while the turn runs.** A turn
+/// that opens its own session owns it for the duration, and a rung nothing can reach for
+/// sixteen minutes is what that costs; steering needs a handle from outside the future.
+async fn ensure_session(
+    reaction: &Reaction,
+    id: registry::SessionId,
+    held: &mut Option<Arc<AgentSession>>,
+) -> anyhow::Result<Arc<AgentSession>> {
+    if let Some(existing) = held.as_ref() {
+        return Ok(existing.clone());
+    }
+    let opened = open_session(reaction, id).await?;
+    *held = Some(opened.clone());
+    Ok(opened)
+}
+
 async fn turn(
     reaction: &Reaction,
     id: registry::SessionId,
     pending: &[String],
-    held: &mut Option<Arc<AgentSession>>,
+    session: Arc<AgentSession>,
 ) -> anyhow::Result<()> {
-    // Reuse the held session; open one only when there isn't one — first turn after
-    // start, or after a failure/wedge dropped it.
-    let session = if let Some(existing) = held.as_ref() {
-        existing.clone()
-    } else {
-        let opened = open_session(reaction, id).await?;
-        *held = Some(opened.clone());
-        opened
-    };
-
     let window = snapshot::agent_window(&reaction.inner.memory, COGNITION_AGENT, id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {

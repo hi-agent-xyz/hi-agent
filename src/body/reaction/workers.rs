@@ -36,6 +36,8 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::mind::memory::snapshot;
+
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::task::JoinHandle;
 
@@ -259,6 +261,35 @@ impl WorkerRegistry {
         subject: Option<String>,
     ) -> anyhow::Result<SessionId> {
         let resumed = resume.is_some();
+        // **The brief is not the only thing a worker knows any more.** It used to be, and
+        // `cognition.md` still says so out loud — "it starts knowing nothing but what you
+        // tell it" — which made every fact about *how a system is operated* travel by
+        // being retyped into a brief from someone's memory. What travels by retyping
+        // drifts: a note that a particular script needed a snapshot before its
+        // `rsync --delete` came back an hour later, in a brief, as a snapshot before any
+        // deploy at all, and the canonical script for the next system went unrun while its
+        // own container was stopped to satisfy the invented precondition.
+        //
+        // So the standing record for the systems this task touches goes in front of the
+        // brief ([`snapshot::work_record`]). Only on the **opening** prompt: a follow-up
+        // lands in a session that has already read it.
+        let opening = match subject.as_deref() {
+            Some(subject) => {
+                let record =
+                    snapshot::work_record(reaction.inner.memory.data_dir(), subject).await;
+                match record.is_empty() {
+                    true => task.clone(),
+                    // Labelled, because a record and an instruction read differently and
+                    // must not blur: one is what is known, the other is what is asked.
+                    false => format!("{record}\n\n## What you are asked to do\n{task}"),
+                }
+            }
+            // No subject means no task to look the record up by. That is a real gap and it
+            // is `create_worker`'s to close — the tool's `subject` is how a worker is
+            // linked to the work at all, and an unlinked worker is already reported as a
+            // problem on the ledger.
+            None => task.clone(),
+        };
         let (session, mail) = self
             .open_working_session(reaction, id, &title, kind, owner, resume, subject)
             .await?;
@@ -281,7 +312,7 @@ impl WorkerRegistry {
         let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
             id,
-            Some(task.clone()),
+            Some(opening),
             session,
             transcript.clone(),
             self.inbound.clone(),

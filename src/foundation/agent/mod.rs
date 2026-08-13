@@ -287,6 +287,17 @@ impl AgentLayer {
                 }
             }),
         );
+        // **Steering is asked for on every thread, and it is the host that needs it.**
+        // `turn/steer` is what lets a message reach a rung that is already working
+        // ([`AgentSession::steer`](crate::foundation::codex::AgentSession::steer)); without
+        // the feature, codex refuses the call and the caller falls back to the next turn
+        // boundary — which is the wait that let a correction sit for seven minutes while
+        // the work it contradicted went ahead. Set for every role rather than for Cognition
+        // alone: the key names a *capability of the thread*, and a rung that cannot be
+        // reached mid-turn should be that way because nothing steers it, not because its
+        // thread was opened unable to hear.
+        let mut features = serde_json::Map::new();
+        features.insert("steer".into(), json!(true));
         if role == Role::Reaction {
             let (name, profile) = reaction_permissions();
             config.insert("permissions".into(), json!({ name: profile }));
@@ -299,9 +310,11 @@ impl AgentLayer {
             // `update_plan` is left alone deliberately: its key takes a struct, not a
             // bool (`expected struct UpdatePlanToolConfig`), and a planning scratchpad
             // nobody reads is not what makes a voice slow.
-            config.insert("features".into(), json!({ "shell_tool": false, "view_image": false }));
+            features.insert("shell_tool".into(), json!(false));
+            features.insert("view_image".into(), json!(false));
             config.insert("tools".into(), json!({ "web_search": false }));
         }
+        config.insert("features".into(), serde_json::Value::Object(features));
         config
     }
 
@@ -444,10 +457,26 @@ mod tests {
 
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             let config = layer().thread_config(&config(), *role, Some(1));
+            assert!(!config.contains_key("permissions"), "{role:?} works, and working needs tools");
+            // `features` is no longer Reaction's alone — `steer` is asked for on every
+            // thread — so the sweep is over the switches that *remove* a built-in rather
+            // than over the key that carries them.
             assert!(
-                !config.contains_key("permissions") && !config.contains_key("features"),
+                config["features"].get("shell_tool").is_none()
+                    && config["features"].get("view_image").is_none(),
                 "{role:?} works, and working needs tools"
             );
+        }
+    }
+
+    /// Every rung opens able to be reached mid-turn, whether or not anything reaches it
+    /// yet. A thread that cannot be steered is one where a correction has to wait for the
+    /// turn to end, and the turn it most needs to reach is the long one.
+    #[test]
+    fn every_rung_opens_steerable() {
+        for role in Role::ALL {
+            let config = layer().thread_config(&config(), *role, Some(1));
+            assert_eq!(config["features"]["steer"], true, "{role:?} must be reachable mid-turn");
         }
     }
 
