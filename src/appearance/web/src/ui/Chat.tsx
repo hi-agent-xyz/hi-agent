@@ -1,3 +1,4 @@
+import { url } from "../lib/base";
 import { useEffect, useMemo, useRef } from "react";
 import {
   MessageScroller,
@@ -125,7 +126,7 @@ function Body({ text }: { text: string }) {
 
 /** A file the person handed over, shown as the thing they sent. */
 function AttachmentView({ attachment }: { attachment: NonNullable<ChatMessage["attachment"]> }) {
-  const src = `/api/media/${attachment.ref}`;
+  const src = url(`/api/media/${attachment.ref}`);
   if (attachment.mime.startsWith("image/")) {
     return (
       <img

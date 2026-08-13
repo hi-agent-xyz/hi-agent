@@ -1,3 +1,4 @@
+import { url } from "./base";
 // Client for the stage lane — tell the backend the frame this window is showing.
 //
 // The one consumer is `review_view`: it renders a view at whatever we last
@@ -38,7 +39,7 @@ function currentFrame(): StageFrame {
 
 async function send(frame: StageFrame): Promise<void> {
   try {
-    await fetch("/api/stage", {
+    await fetch(url("/api/stage"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(frame),

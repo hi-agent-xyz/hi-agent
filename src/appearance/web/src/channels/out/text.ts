@@ -1,3 +1,4 @@
+import { url } from "../../lib/base";
 // Subscriber for the backend-owned conversation.
 //
 // GET /api/out/text is one long-lived NDJSON response. Its first line is the
@@ -111,7 +112,7 @@ export function parseFrame(value: unknown): Frame | null {
  * keeps this response open for everything said after it.
  */
 export async function* subscribeOutText(opts: SubscribeOpts): AsyncGenerator<Frame, void, void> {
-  const res = await fetch("/api/out/text", {
+  const res = await fetch(url("/api/out/text"), {
     method: "GET",
     headers: { Accept: "application/x-ndjson" },
     signal: opts.signal,
@@ -138,7 +139,7 @@ export async function fetchOlderMessages(
 ): Promise<Message[]> {
   const params = new URLSearchParams({ before });
   if (opts?.limit) params.set("limit", String(opts.limit));
-  const res = await fetch(`/api/messages?${params}`, {
+  const res = await fetch(url(`/api/messages?${params}`), {
     method: "GET",
     headers: { Accept: "application/json" },
     ...(opts?.signal ? { signal: opts.signal } : {}),

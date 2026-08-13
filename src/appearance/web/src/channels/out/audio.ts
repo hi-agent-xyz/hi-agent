@@ -1,3 +1,4 @@
+import { url } from "../../lib/base";
 // Subscriber for the outbound audio channel — the agent's synthesized voice.
 
 export interface SubscribeAudioOpts {
@@ -26,7 +27,7 @@ export async function* subscribeAudioTurns(
   opts: SubscribeAudioOpts,
 ): AsyncGenerator<AudioTurn, void, void> {
   while (!opts.signal.aborted) {
-    const res = await fetch("/api/out/audio", {
+    const res = await fetch(url("/api/out/audio"), {
       method: "GET",
       headers: { Accept: "audio/*" },
       signal: opts.signal,

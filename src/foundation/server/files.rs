@@ -291,7 +291,16 @@ pub async fn post_handoff(
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("http");
-    let url = format!("{scheme}://{host}/up/{token}");
+    // Under the community's subpath the core is not at the origin's root, and
+    // this URL is about to be scanned off a screen by a phone that has no other
+    // way to guess.
+    let prefix = headers
+        .get("x-forwarded-prefix")
+        .and_then(|v| v.to_str().ok())
+        .map(|p| p.trim_end_matches('/'))
+        .filter(|p| p.starts_with('/'))
+        .unwrap_or("");
+    let url = format!("{scheme}://{host}{prefix}/up/{token}");
 
     {
         let mut map = state.handoffs.lock().unwrap();

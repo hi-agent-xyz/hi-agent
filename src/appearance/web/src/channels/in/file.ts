@@ -1,3 +1,4 @@
+import { url } from "../../lib/base";
 // Client for the inbound file channel.
 //
 // Files are handed artifacts: POST multipart bytes to /api/in/file with the
@@ -85,7 +86,7 @@ export async function postInFiles(opts: {
     fd.append("file", file, file.name || "file");
   }
 
-  const res = await fetch("/api/in/file", {
+  const res = await fetch(url("/api/in/file"), {
     method: "POST",
     // `multipart/form-data` is a cross-site-simple content type, so off-box a
     // cookie alone is not enough for it; see the note in `in/text.ts`. The

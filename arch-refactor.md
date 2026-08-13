@@ -255,7 +255,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
 | **T3a** | the registry, both halves | **done** — live-verified against the real service |
 | **T3b** | the tunnel + relay | **done** — live-verified end to end |
-| **T3c** | the subpath prefix in the core | after the relay |
+| **T3c** | the subpath prefix in the core | **done** — live-verified through the relay |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
 **T1 delivers the directly-public shape end to end and needs no Go work**, which is why
@@ -281,6 +281,37 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T3c — The core knows it is under a subpath · **on `feat/prefix`**
+
+A browser pointed straight at `hi-agent.xyz/ana` got a page whose every absolute path
+started at the community's root. The pairing page worked (it is self-contained on
+purpose), so this only bit *after* pairing — and never through an app, which proxies from
+its own root. That is why nothing in T3b caught it.
+
+`X-Forwarded-Prefix` was already arriving from the relay; now it is used. Two halves:
+
+- **The served page is rerooted**, targeted at `src="/…`, `href="/…` and the import map's
+  `": "/…` rather than every `"/` in the document — a blunt replace would also hit
+  strings inside inline scripts and fail silently and weirdly. Protocol-relative URLs
+  (`//somewhere/x`) are another origin and are left alone, which a test pins.
+- **The page is told where it is** (`window.__HI_BASE__`, injected before the import map
+  so nothing loads first), and `lib/base.ts`'s `url()` is what the face's fifteen fetches,
+  the runtime view `import()` and the media `<img>` go through. Empty in every ordinary
+  shape, so it costs nothing locally.
+
+Also prefixed: the phone-upload URL, which is about to be scanned off a screen by a device
+that has no other way to guess.
+
+**Live-verified through the relay:** the page at `/ana/` carries
+`__HI_BASE__ = "/ana"`, `src="/ana/assets/index-*.js"` and an import map whose `react`
+resolves to `/ana/assets/…`; all three actually serve `200` through the tunnel; the
+handoff URL comes back as `/ana/up/<token>` and opens; and the same core on loopback still
+emits `src="/assets/…"` unchanged.
+
+⚠️ **Not opened in a real browser.** Everything above is the bytes being right — no page
+has been *rendered* under a prefix, so React mounting, the view import map resolving and
+the SSE reconnect are inferred rather than seen.
 
 #### T3b — The tunnel · **on `feat/tunnel` + the site's `feat/relay`**
 

@@ -1,3 +1,4 @@
+import { url } from "../../lib/base";
 // Client for the outbound view channel — the conversation's retained appearance state.
 //
 // GET /api/out/view serves the conversation's whole appearance (active views in
@@ -45,7 +46,7 @@ export async function* subscribeViewState(
   let since: number | undefined;
   while (!opts.signal.aborted) {
     const query = since === undefined ? "" : `?since=${since}`;
-    const res = await fetch(`/api/out/view${query}`, {
+    const res = await fetch(url(`/api/out/view${query}`), {
       method: "GET",
       headers: { Accept: "application/json" },
       signal: opts.signal,
@@ -68,7 +69,7 @@ export async function clearViewState(): Promise<void> {
   // A bodyless DELETE carries no content type, which is indistinguishable
   // here from `text/plain`; the header is how it says it is not a
   // cross-site form. See the note in `in/text.ts`.
-  const res = await fetch("/api/out/view", {
+  const res = await fetch(url("/api/out/view"), {
     method: "DELETE",
     headers: { "X-HI-Surface": "1" },
   });

@@ -1,3 +1,4 @@
+import { url } from "../lib/base";
 import { Component, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { useViews } from "../core/views";
 
@@ -16,7 +17,10 @@ function ViewMount({ moduleUrl }: { moduleUrl: string }) {
     setComp(null);
     setFailed(false);
     // The URL is only known at runtime; tell Vite not to try to analyze it.
-    import(/* @vite-ignore */ moduleUrl)
+    // It comes from the backend as a root-absolute path, which is the core's
+    // root — not necessarily this page's, when the community serves the core
+    // under a subpath.
+    import(/* @vite-ignore */ url(moduleUrl))
       .then((mod) => {
         if (!alive) return;
         setComp(() => mod.default as ComponentType);
