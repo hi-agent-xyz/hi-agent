@@ -125,10 +125,15 @@ pub struct Signal {
 // Origin — which mind produced a signal
 // -----------------------------------------------------------------------------
 
-/// Mechanical provenance: which mind produced a signal. NOT the speaker's
-/// identity (that stays soft, inferred from content). Inbound human signals are
-/// `Human`, the reaction's own articulation is `Reaction`, and delegated workers
-/// (once they journal) are `Worker`.
+/// Mechanical provenance: which *kind* of mind produced a signal — not which
+/// person. Inbound human signals are `Human`, the reaction's own articulation is
+/// `Reaction`, and delegated workers (once they journal) are `Worker`.
+///
+/// **Which person is [`Sender`], and it is decided at the boundary.** This used to
+/// say the speaker's identity "stays soft, inferred from content", and that is
+/// exactly the sentence that put one person's words on another person's facet: an
+/// inferred name is indistinguishable from a verified one the moment it is written.
+/// See [`docs/arch/signal-attribution.md`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
@@ -141,6 +146,84 @@ pub enum Origin {
     /// machinery did. Kept distinct from `Reaction` so a reader can tell what a rung
     /// emitted from what it simply received.
     Host,
+}
+
+// -----------------------------------------------------------------------------
+// Sender — which person a signal came from, and how that was decided
+// -----------------------------------------------------------------------------
+
+/// How a signal's sender was arrived at. **The basis is the load-bearing half**: a
+/// default that is *labelled* a default can be defeated by evidence later; a bare
+/// name cannot be told apart from one that was verified, ever again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SenderBasis {
+    /// The addressed-channel default — `text` and `file` are things somebody sent
+    /// *to* the agent, and absent evidence otherwise that somebody is the owner.
+    Owner,
+    /// A face or voiceprint cluster matched. The subject may still be an opaque
+    /// cluster id rather than a name; that is a person we can tell apart but cannot
+    /// yet call anything.
+    Cluster,
+    /// The carrier said who sent it.
+    Stated,
+    /// Not grounded. **A complete answer, not a degraded one** — ambient capture is
+    /// mostly unattributable, and an install with no declared owner has no default
+    /// to fall back on either.
+    Unknown,
+}
+
+/// Who an inbound signal came from. Absent entirely on machine channels (`clock`,
+/// `worker`, `view`): those are not a person's *absence* but a person's
+/// non-involvement, and a stretch made only of them must produce no person record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sender {
+    /// The `people/` subject, without its dimension (`赵力`, or a cluster id like
+    /// `7j2wa4r8`). `None` whenever [`SenderBasis::Unknown`] — someone sent this and
+    /// we cannot say who.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub basis: SenderBasis,
+}
+
+impl Sender {
+    /// The addressed-channel default when an owner is declared, else unattributed.
+    /// The one constructor `text` and `file` ingress use, so the fallback cannot
+    /// drift between them.
+    pub fn owner_or_unknown(owner: Option<&str>) -> Self {
+        match owner {
+            Some(o) if !o.trim().is_empty() => {
+                Self { subject: Some(o.trim().to_owned()), basis: SenderBasis::Owner }
+            }
+            _ => Self::unknown(),
+        }
+    }
+
+    /// Someone sent this and we cannot say who.
+    pub fn unknown() -> Self {
+        Self { subject: None, basis: SenderBasis::Unknown }
+    }
+
+    /// Whether this names a person the record may act on. **Ungrounded senders are
+    /// not people**: nothing may open a facet, dispatch a reader, or attach a
+    /// `people/` subject on the strength of one.
+    pub fn is_grounded(&self) -> bool {
+        self.subject.is_some() && self.basis != SenderBasis::Unknown
+    }
+
+    /// How this reads on a frontier line. **The basis is shown, never just the
+    /// name** — the settling pass has to be able to tell a default it may defeat
+    /// from a recognition it should trust, and a bare name tells it neither.
+    pub fn label(&self) -> String {
+        match (&self.subject, self.basis) {
+            (Some(s), SenderBasis::Owner) => format!("{s} (owner, by default)"),
+            (Some(s), SenderBasis::Cluster) => format!("{s} (recognized)"),
+            (Some(s), SenderBasis::Stated) => format!("{s} (stated)"),
+            // Including `(None, _)` for any basis: a sender with no subject is
+            // unattributed whatever claimed to ground it.
+            _ => "unknown".to_string(),
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -187,6 +270,12 @@ pub enum JournalEntry {
         media: Option<Media>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Origin>,
+        /// Which person this came from — see [`Sender`]. Absent on machine channels,
+        /// and absent on every entry written before attribution existed: **those read
+        /// as unattributed and are never backfilled**, because who sent them is not
+        /// recoverable and inventing it is the failure this field exists to stop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sender: Option<Sender>,
     },
     SignalOut {
         id: String,
@@ -278,4 +367,68 @@ pub struct ViewEnvelope {
     /// can only ever be restored as the artifact it compiled to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_ref: Option<String>,
+}
+
+#[cfg(test)]
+mod sender_tests {
+    use super::*;
+
+    /// Every line already in the log predates attribution. It must still load, and it
+    /// must load as *unattributed* — never as anybody. There is no backfill: who sent
+    /// those signals is not recoverable, and inventing it is the whole failure.
+    #[test]
+    fn a_pre_attribution_journal_line_still_loads_and_names_nobody() {
+        let line = r#"{"kind":"signal_in","id":"019ffabf-32e6-7c92-bbbe-9216732ef264",
+            "ts":"2026-08-13T10:51:02.246936Z","channel":"text",
+            "body":"show me the sessions view","origin":"human"}"#;
+        let entry: JournalEntry = serde_json::from_str(line).expect("old lines still parse");
+        let JournalEntry::SignalIn { sender, body, .. } = entry else {
+            panic!("expected a signal_in");
+        };
+        assert!(sender.is_none(), "an old line names nobody");
+        assert!(body.contains("sessions"));
+    }
+
+    /// The absent field must stay absent on the way back out, so a machine-channel
+    /// entry and a pre-attribution one both keep reading as "no sender" rather than
+    /// gaining a null that later code could misread as a person.
+    #[test]
+    fn no_sender_serializes_to_no_field() {
+        let entry = JournalEntry::SignalIn {
+            id: "1".into(),
+            ts: Utc::now(),
+            channel: Channel::Clock,
+            body: "check-in due".into(),
+            stream: None,
+            media: None,
+            origin: Some(Origin::Host),
+            sender: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("sender"), "{json}");
+    }
+
+    #[test]
+    fn a_declared_owner_grounds_an_addressed_signal() {
+        let s = Sender::owner_or_unknown(Some("赵力"));
+        assert!(s.is_grounded());
+        assert_eq!(s.basis, SenderBasis::Owner);
+        assert_eq!(s.subject.as_deref(), Some("赵力"));
+    }
+
+    /// A subject with `Unknown` behind it is not a person to act on. Belt and braces:
+    /// nothing constructs this today, and if something ever does it must not qualify.
+    #[test]
+    fn an_unknown_basis_is_never_grounded_even_with_a_subject() {
+        let s = Sender { subject: Some("赵力".into()), basis: SenderBasis::Unknown };
+        assert!(!s.is_grounded());
+        assert_eq!(s.label(), "unknown");
+    }
+
+    #[test]
+    fn a_recognized_cluster_reads_as_recognized() {
+        let s = Sender { subject: Some("7j2wa4r8".into()), basis: SenderBasis::Cluster };
+        assert!(s.is_grounded());
+        assert_eq!(s.label(), "7j2wa4r8 (recognized)");
+    }
 }

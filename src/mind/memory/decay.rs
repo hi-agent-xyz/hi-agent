@@ -382,6 +382,7 @@ mod tests {
                 stream: None,
                 media: None,
                 origin: None,
+                sender: None,
             })
             .await
             .unwrap();

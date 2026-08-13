@@ -34,7 +34,7 @@ use uuid::Uuid;
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::foundation::server::AppState;
-use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
 
 /// How long a minted phone-upload token stays valid. Long enough to pick up your
 /// phone and scan; short enough that a leaked QR doesn't linger.
@@ -122,6 +122,12 @@ async fn ingest_file(
         stream: None,
         media: Some(Media { file: rel, mime: mime.to_string(), duration_ms: None, width: None, height: None }),
         origin: Some(Origin::Human),
+        // Addressed, like text: a file is *handed over*, and the hander is the owner
+        // unless something says otherwise. `Channel::File`'s own definition already
+        // promised "the signal says who handed over what"; this is that field.
+        sender: Some(Sender::owner_or_unknown(
+            crate::foundation::config::tunables::owner().as_deref(),
+        )),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting file anyway");

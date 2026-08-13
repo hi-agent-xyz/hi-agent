@@ -93,6 +93,36 @@ What belongs to this person goes in their facet. What belongs to anyone does not
 is a thing that should be true of the agent before it ever meets them, so put it in
 your report as something to be fixed properly, and do not quietly keep a local copy.
 
+There is a second question, and it catches more than the first one does: **is this a
+fact about them, or the state of your work for them?**
+
+> *"He wants the dashboard in Chinese"* is a fact about him.
+> *"The dashboard was delivered, and the cards are still unread"* is the state of the work.
+
+Delivery status, what shipped, what is still outstanding, what a worker got wrong and
+then fixed — none of that is a person. It belongs to the task, where it is already
+recorded in more detail than you would put here, and it goes stale the moment anything
+moves. A person's facet carrying it needs correcting every time the work advances, which
+is not a facet at all — it is a status report filed under somebody's name.
+
+So: **if it changes when the work progresses, it is not theirs.** Leave it out, and say
+in your report where it actually belongs.
+
+# Who the stretch belongs to
+
+You are told which person to read. That was decided before you started, from who the
+signals say sent them — not from whose name appears in them.
+
+**Do not re-derive it.** If the stretch reads as though it concerns somebody else, that
+is a topic and not a sender: a person can spend all day asking you to do things for a
+colleague without one signal being from that colleague. Read the person you were given,
+or come back and say the assignment looks wrong. Never quietly read somebody else.
+
+A stretch can also turn out to hold nothing about the person at all — the work in it was
+the agent's own, and they only asked for it. **That is a complete answer.** Report it and
+change nothing. A pass that finds nothing and writes nothing is worth more than one that
+went looking for something to write.
+
 # Write it into the person's facet
 
 Their understanding lives in one file and one file only:

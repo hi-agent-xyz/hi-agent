@@ -156,6 +156,16 @@ pub fn entry_id(entry: &JournalEntry) -> &str {
     }
 }
 
+/// Who an inbound signal came from, or `None` — for an outbound signal (the agent
+/// itself), for a machine channel where there was no person, and for every entry
+/// written before attribution existed. See [`crate::types::Sender`].
+pub fn entry_sender(entry: &JournalEntry) -> Option<&crate::types::Sender> {
+    match entry {
+        JournalEntry::SignalIn { sender, .. } => sender.as_ref(),
+        JournalEntry::SignalOut { .. } => None,
+    }
+}
+
 /// Walk every channel folder under `raw/`, appending parsed entries. Each
 /// immediate sub-directory is a channel (`text/`, `audio/`, …); `files/` is
 /// skipped (artifacts, not signals), `sessions/` is skipped (frame logs, not
@@ -258,6 +268,7 @@ mod after_cursor_tests {
             stream: None,
             media: None,
             origin: None,
+            sender: None,
         })
         .await
         .unwrap();

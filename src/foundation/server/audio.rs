@@ -70,7 +70,7 @@ use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
 use crate::foundation::segment::{Segmenter, Speech};
-use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
 use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";
@@ -650,6 +650,11 @@ async fn deliver_transcript(
         stream,
         media,
         origin: Some(Origin::Human),
+        // **Ambient — never the owner default.** A microphone picks up whoever is in
+        // range: the person, someone else in the room, a television. Who spoke is
+        // voiceprint clustering's answer to give (during consolidation, once there is
+        // enough of a turn to match), and until it does, unknown is the true one.
+        sender: Some(Sender::unknown()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");

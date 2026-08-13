@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, observe, transcript};
 use crate::mind::memory::journal;
-use crate::types::{Channel, JournalEntry, Origin, Signal};
+use crate::types::{Channel, JournalEntry, Origin, Sender, Signal};
 use futures::stream::unfold;
 
 pub async fn post_text(
@@ -68,6 +68,12 @@ pub async fn post_text(
         stream: signal.stream.clone(),
         media: None,
         origin: Some(Origin::Human),
+        // Addressed: somebody typed this *to* the agent, so absent evidence otherwise
+        // it is the owner. Labelled `owner` rather than written bare, so a later pass
+        // can tell the default from a recognition — see `docs/arch/signal-attribution.md`.
+        sender: Some(Sender::owner_or_unknown(
+            crate::foundation::config::tunables::owner().as_deref(),
+        )),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");

@@ -52,7 +52,7 @@ use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::{AppState, FacePresence, PartialMinute, VideoInEvent, VideoSource};
-use crate::types::{Channel, JournalEntry, Media, Origin, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
 
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";
@@ -177,6 +177,9 @@ pub async fn post_presence(
         stream: Some(PRESENCE_STREAM.to_string()),
         media: None,
         origin: Some(Origin::Human),
+        // Ambient, like audio: a camera sees whoever is in frame. Face clustering
+        // names them or nothing does.
+        sender: Some(Sender::unknown()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::warn!(error = %err, "presence: journal append failed");
@@ -390,6 +393,8 @@ fn spawn_perceive(
             stream: None,
             media: Some(Media { file: blob_rel, mime, duration_ms, width: None, height: None }),
             origin: Some(Origin::Human),
+            // Ambient. "Someone's on camera" is precisely a person we cannot name.
+            sender: Some(Sender::unknown()),
         };
         if let Err(err) = state.memory.journal.append(entry).await {
             tracing::warn!(error = %err, "journal append failed for vision perception");

@@ -462,6 +462,7 @@ mod tests {
             stream: None,
             media: None,
             origin,
+            sender: None,
         }
     }
 
@@ -534,6 +535,7 @@ mod tests {
                 height: None,
             }),
             origin: Some(Origin::Human),
+            sender: None,
         };
         let msgs = from_journal(vec![entry]);
         assert_eq!(msgs.len(), 1);
@@ -570,6 +572,7 @@ mod tests {
                 height: None,
             }),
             origin: Some(Origin::Human),
+            sender: None,
         };
         let msgs = from_journal(vec![entry]);
         assert_eq!(msgs.len(), 1);

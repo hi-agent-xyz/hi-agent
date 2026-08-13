@@ -30,6 +30,12 @@ pub struct Memory {
 impl Memory {
     pub async fn open(data_dir: &Path) -> anyhow::Result<Self> {
         let journal = Journal::open(data_dir.to_path_buf()).await?;
+        // Fold any legacy flat facets into the one supported shape before anything
+        // reads them. Best-effort: a store that cannot be tidied is still a store
+        // worth opening, and the next boot tries again.
+        if let Err(err) = facets::adopt_flat_facets(data_dir).await {
+            tracing::warn!(error = %err, "flat-facet adoption failed; leaving them as they are");
+        }
         Ok(Self { journal })
     }
 

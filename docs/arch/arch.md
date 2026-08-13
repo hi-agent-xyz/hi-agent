@@ -136,6 +136,10 @@ Each is a statement we can test, and each has a real failure behind it.
 10. **Secrets never enter the brain.** They live in env or keychain and are decrypted at call
     time.
 11. **No absolute host path is persisted into `data/`.** The directory has to stay portable.
+12. **Who a signal came from is decided at the boundary, never derived from what it says** —
+    and *unknown* is an answer the record keeps. A name inferred from content is
+    indistinguishable from one that was verified, so the inference is not available; see
+    [`signal-attribution.md`](signal-attribution.md).
 
 ## Contents
 
@@ -143,6 +147,7 @@ Each is a statement we can test, and each has a real failure behind it.
 |---|---|
 | [`topology.md`](topology.md) | core, app and community — where the parts run, how a person is addressed, how an app proves it may reach one |
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
+| [`signal-attribution.md`](signal-attribution.md) | who a signal came from — the three source classes, the owner, and keeping "unknown" |
 | [`host.md`](host.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |

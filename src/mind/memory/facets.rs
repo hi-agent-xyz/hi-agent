@@ -114,6 +114,71 @@ fn task_with_created_at(content: &str) -> Cow<'_, str> {
     Cow::Owned(format!("---\ncreated_at: {stamp}\n---\n\n{content}"))
 }
 
+/// Fold legacy flat facets — `<dim>/<subject>.md` — into the one shape everything
+/// else here speaks, `<dim>/<subject>/facet.md`.
+///
+/// **There has only ever been one supported shape, and stores in the wild hold two.**
+/// An older layout wrote the prose straight into `people/boss.md`; nothing reads that
+/// any more. [`facet_path`] resolves `people/boss` to `people/boss/facet.md`, so
+/// [`read_facet`] returns "no facet yet", [`facet_subject_index`] skips it as "a stray
+/// file under `<dim>/`", and the file becomes bytes no code path can reach. Four such
+/// files sat in one store — including the one describing the person the agent talks to
+/// every day — which is a large part of how a settling pass came to be handed a people
+/// list that could not contain its own owner, and filed his words under a colleague.
+///
+/// Runs once at [`super::Memory::open`]. Idempotent, and **never overwrites**: where a
+/// dir facet already exists the flat file is left alone rather than merged, because
+/// picking a winner between two prose files is a judgment and this is a rename.
+pub async fn adopt_flat_facets(data_dir: &Path) -> anyhow::Result<()> {
+    let root = layout::facets_dir(data_dir);
+    let mut dims = match tokio::fs::read_dir(&root).await {
+        Ok(rd) => rd,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    while let Some(dim_ent) = dims.next_entry().await? {
+        if !dim_ent.file_type().await?.is_dir() {
+            continue;
+        }
+        let Ok(dim_name) = dim_ent.file_name().into_string() else {
+            continue;
+        };
+        let mut subs = tokio::fs::read_dir(dim_ent.path()).await?;
+        while let Some(s) = subs.next_entry().await? {
+            if !s.file_type().await?.is_file() {
+                continue;
+            }
+            let Ok(file_name) = s.file_name().into_string() else {
+                continue;
+            };
+            let Some(subject) = file_name.strip_suffix(".md") else {
+                continue;
+            };
+            // `.tmp-…` scratch from an interrupted `update_facet`, not a facet.
+            if subject.is_empty() || file_name.starts_with('.') {
+                continue;
+            }
+            let dest = facet_path(data_dir, &dim_name, subject);
+            if tokio::fs::try_exists(&dest).await.unwrap_or(false) {
+                tracing::warn!(
+                    facet = %format!("{dim_name}/{subject}"),
+                    "flat facet left in place: the dir facet already has prose",
+                );
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::rename(s.path(), &dest).await?;
+            tracing::info!(
+                facet = %format!("{dim_name}/{subject}"),
+                "adopted flat facet into the one supported shape",
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Every facet that exists, as `<dim>/<subject>` refs, sorted. Seeded into the
 /// reflection prompt so the mind reuses an existing subject instead of spawning a
 /// near-duplicate under a slightly different name. Empty before any facet exists.
@@ -189,6 +254,68 @@ pub(crate) fn slug(s: &str) -> String {
         out.pop();
     }
     out
+}
+
+#[cfg(test)]
+mod adoption_tests {
+    use super::*;
+
+    async fn write_flat(dir: &Path, dim: &str, subject: &str, body: &str) {
+        let d = layout::facets_dir(dir).join(dim);
+        tokio::fs::create_dir_all(&d).await.unwrap();
+        tokio::fs::write(d.join(format!("{subject}.md")), body).await.unwrap();
+    }
+
+    /// The bug in one test: a flat facet is unreadable and unlistable, and the person
+    /// it describes is therefore invisible to the pass that has to decide who spoke.
+    #[tokio::test]
+    async fn a_flat_facet_is_invisible_until_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        write_flat(dir.path(), "people", "boss", "# Boss\n\nThe adult who runs the session.").await;
+
+        assert!(
+            read_facet(dir.path(), "people", "boss").await.unwrap().is_none(),
+            "the old shape is unreachable through the only reader there is"
+        );
+        assert!(
+            facet_subject_index(dir.path()).await.unwrap().is_empty(),
+            "and it never reaches the subject index the settling pass is handed"
+        );
+
+        adopt_flat_facets(dir.path()).await.unwrap();
+
+        let text = read_facet(dir.path(), "people", "boss").await.unwrap();
+        assert!(text.unwrap().contains("The adult who runs the session"));
+        assert_eq!(facet_subject_index(dir.path()).await.unwrap(), vec!["people/boss".to_string()]);
+    }
+
+    /// Two prose files for one subject is a judgment, and this is a rename. Keep both
+    /// rather than silently picking a winner.
+    #[tokio::test]
+    async fn adoption_never_overwrites_prose_that_is_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        update_facet(dir.path(), "people", "boss", "the current understanding").await.unwrap();
+        write_flat(dir.path(), "people", "boss", "the old understanding").await;
+
+        adopt_flat_facets(dir.path()).await.unwrap();
+
+        let text = read_facet(dir.path(), "people", "boss").await.unwrap().unwrap();
+        assert!(text.contains("the current understanding"), "{text}");
+        assert!(
+            layout::facets_dir(dir.path()).join("people/boss.md").exists(),
+            "the flat file stays put for a human to reconcile, rather than vanishing"
+        );
+    }
+
+    #[tokio::test]
+    async fn adoption_is_idempotent_and_survives_an_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        adopt_flat_facets(dir.path()).await.unwrap();
+        write_flat(dir.path(), "people", "boss", "prose").await;
+        adopt_flat_facets(dir.path()).await.unwrap();
+        adopt_flat_facets(dir.path()).await.unwrap();
+        assert_eq!(facet_subject_index(dir.path()).await.unwrap(), vec!["people/boss".to_string()]);
+    }
 }
 
 #[cfg(test)]

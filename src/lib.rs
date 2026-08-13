@@ -88,8 +88,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     tracing::debug!(?config, "starting hi-agent");
 
     // Snapshot the cognition tunables (pulse, reflection cadence, compact ceiling,
-    // vendor-down thresholds, …) from the config store into the process global the
-    // reaction's argless helpers read. Once, before anything reads them.
+    // vendor-down thresholds, …) and the declared owner from the config store into the
+    // process global the reaction's argless helpers read. Once, before anything reads
+    // them — and for the owner that ordering is load-bearing rather than tidy: every
+    // addressed signal is attributed at the instant it arrives, so this must be in
+    // place before the server can bind.
     foundation::config::tunables::init(&config.data_dir);
 
     // Restore an observed managed 402 before asking the broker for fresh account

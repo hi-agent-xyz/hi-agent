@@ -18,6 +18,7 @@ fn signal_in(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str, media: O
         stream: None,
         media,
         origin: Some(Origin::Human),
+        sender: None,
     }
 }
 

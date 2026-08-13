@@ -84,6 +84,24 @@ pub const KEY_THEME: &str = "theme";
 /// the other cognition tunables. Set from Settings ▸ General ▸ Language.
 pub const KEY_LANGUAGE: &str = "language";
 
+/// **Who this install belongs to** — the `people/` facet subject naming the one person
+/// whose agent this is (e.g. `赵力`), or unset.
+///
+/// This is the default sender for the *addressed* channels — `text` and `file`, the
+/// things somebody deliberately sends to the agent — per
+/// [`docs/arch/signal-attribution.md`]. Ambient channels (`audio`, `vision`) never use
+/// it: whoever a room contains is a question for recognition, not for config.
+///
+/// **It is config rather than memory because it is an identity, not an instruction.**
+/// `docs/arch/data.md` retires the user prompt slot on the grounds that what the person
+/// *tells* the agent must land as a facet or a task and go through its judgment. Who the
+/// person *is* was never in that category — it sits with the handle and the credential,
+/// and an agent that has to work out whose it is will sometimes work it out wrong and
+/// then be unable to tell that it guessed.
+///
+/// Unset is legitimate and means addressed signals are unattributed. Nothing infers it.
+pub const KEY_OWNER: &str = "owner";
+
 /// The theme options offered in Settings, as `(stored value, menu label)`. `system`
 /// is first (the default). Shared by the picker and the applier so they can't drift.
 pub const THEMES: &[(&str, &str)] = &[("system", "System"), ("light", "Light"), ("dark", "Dark")];
@@ -150,6 +168,13 @@ pub mod tunables {
         let map = TUNABLES.get()?;
         let v = map.get(key)?.trim();
         (!v.is_empty()).then(|| v.to_string())
+    }
+
+    /// The declared owner's `people/` subject, or `None` when this install has none.
+    /// The one read behind every addressed-channel attribution — see
+    /// [`super::KEY_OWNER`].
+    pub fn owner() -> Option<String> {
+        get(super::KEY_OWNER)
     }
 }
 

@@ -288,6 +288,14 @@ fn render_frontier(s: &mut String, g: &Frontier) {
     let cooccur = cooccurring_faces(&g.tail, &g.face_ids);
     for (i, e) in g.tail.iter().enumerate() {
         let mut line = render_signal(e);
+        // **Who it came from, stated — never left for the pass to work out.** A
+        // signal with no `⟨from: …⟩` is one the machinery raised (a clock wake, a
+        // worker report): nobody sent it, so nobody is owed a person record for it.
+        // An unattributed *person* signal says `unknown` out loud, because silence
+        // here is what invited a guess in the first place.
+        if let Some(sender) = crate::mind::memory::journal::entry_sender(e) {
+            let _ = write!(line, " ⟨from: {}⟩", sender.label());
+        }
         match g.face_ids.get(&i).filter(|v| !v.is_empty()) {
             Some(ids) => {
                 let _ = write!(line, " ⟨faces: {}⟩", ids.join(", "));
@@ -605,6 +613,7 @@ mod frontier_tests {
             stream: None,
             media: None,
             origin: None,
+            sender: None,
         }
     }
 
@@ -628,6 +637,91 @@ mod frontier_tests {
             on(Channel::View),
         ];
         assert_eq!(reflectable(&tail), 3);
+    }
+
+    use crate::types::Sender;
+
+    fn from(channel: Channel, body: &str, sender: Option<Sender>) -> JournalEntry {
+        JournalEntry::SignalIn {
+            id: "x".into(),
+            ts: Utc::now(),
+            channel,
+            body: body.into(),
+            stream: None,
+            media: None,
+            origin: None,
+            sender,
+        }
+    }
+
+    fn frontier_of(tail: Vec<JournalEntry>) -> String {
+        let mut s = String::new();
+        render_frontier(
+            &mut s,
+            &Frontier {
+                tail,
+                prior: Vec::new(),
+                face_ids: HashMap::new(),
+                voice_ids: HashMap::new(),
+                pressure: Vec::new(),
+            },
+        );
+        s
+    }
+
+    /// The default is shown *as* a default. A pass that cannot tell an assumption
+    /// from a recognition has no way to prefer evidence over it — which is how a
+    /// guess became indistinguishable from a fact in the first place.
+    #[test]
+    fn an_owner_default_renders_with_its_basis() {
+        let s = frontier_of(vec![from(
+            Channel::Text,
+            "save this blog",
+            Some(Sender::owner_or_unknown(Some("赵力"))),
+        )]);
+        assert!(s.contains("⟨from: 赵力 (owner, by default)⟩"), "{s}");
+    }
+
+    /// Unattributed says so out loud. Silence is what invited the guess.
+    #[test]
+    fn an_ungrounded_sender_says_unknown_rather_than_nothing() {
+        let s = frontier_of(vec![from(Channel::Audio, "…someone talking", Some(Sender::unknown()))]);
+        assert!(s.contains("⟨from: unknown⟩"), "{s}");
+    }
+
+    /// A machine channel is not an unknown person — it is *no* person, and the
+    /// absence of the mark is how the pass tells those two apart.
+    #[test]
+    fn machine_channels_carry_no_from_mark_at_all() {
+        let s = frontier_of(vec![
+            from(Channel::Clock, "check-in due", None),
+            from(Channel::Worker, "worker 3 reported", None),
+        ]);
+        assert!(!s.contains("⟨from:"), "machine traffic has no sender: {s}");
+    }
+
+    /// A name in a body is a topic. Nothing may promote it to a sender — this is the
+    /// exact shape that put one person's words on a colleague's facet.
+    #[test]
+    fn a_name_in_the_body_never_becomes_the_sender() {
+        let s = frontier_of(vec![from(
+            Channel::Text,
+            "rewrite xuwenhan's basketball note for the team",
+            Some(Sender::owner_or_unknown(Some("赵力"))),
+        )]);
+        assert!(s.contains("⟨from: 赵力 (owner, by default)⟩"), "{s}");
+        assert!(!s.contains("⟨from: xuwenhan"), "a mentioned name is not a sender: {s}");
+    }
+
+    /// With no owner declared there is nothing to default to, and the honest answer
+    /// is unknown rather than the nearest plausible person.
+    #[test]
+    fn no_declared_owner_leaves_addressed_signals_unattributed() {
+        for owner in [None, Some(""), Some("   ")] {
+            let sender = Sender::owner_or_unknown(owner);
+            assert!(!sender.is_grounded(), "{owner:?} must not ground a sender");
+            assert_eq!(sender.label(), "unknown");
+        }
     }
 }
 
@@ -656,6 +750,7 @@ mod cooccur_tests {
                 height: None,
             }),
             origin: None,
+            sender: None,
         }
     }
 
@@ -674,6 +769,7 @@ mod cooccur_tests {
                 height: None,
             }),
             origin: None,
+            sender: None,
         }
     }
 

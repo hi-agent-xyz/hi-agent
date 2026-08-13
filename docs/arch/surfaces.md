@@ -49,6 +49,12 @@ zero knowledge of the wire.
 | surface (rich content) | out | the `hi_show` call, by **path ref** |
 | action | out | tool call — request/response |
 
+**An inbound channel also says who a signal came from.** `text` and `file` are *addressed* —
+someone sent them to the agent — so they default to the owner; `audio` and `vision` are
+*ambient*, so their sender is a recognized cluster or nobody at all. That is a property of
+how the signal arrived and never of what it says:
+[`signal-attribution.md`](signal-attribution.md).
+
 ### Why a ref and not the bytes
 
 A photo arriving does not mean the agent looked at it. The signal says *"a photo arrived,

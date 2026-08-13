@@ -2202,6 +2202,11 @@ async fn record_in(
         stream: None,
         media: None,
         origin: Some(origin),
+        // **Machine channels take no sender at all** — `clock` and `worker` are the
+        // agent's own machinery moving, not a person doing something. `None` here is
+        // not "we don't know who": it is "there was nobody", which is why a stretch of
+        // pure clock and worker traffic must teach the record nothing about anyone.
+        sender: None,
     };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(channel = %channel, error = %err, "journal append failed for internal signal");
