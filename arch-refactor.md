@@ -254,7 +254,7 @@ phases, ordered so each is worth having on its own rather than by what the doc l
 | **T2** | the app: a roster and a local proxy | **done**, `feat/topology-app` — live-verified |
 | ~~**T2b**~~ | ~~the room~~ | **cut 2026-08-12 — there is nothing to restore; see below** |
 | **T3a** | the registry, both halves | **done** — live-verified against the real service |
-| **T3b** | the tunnel + relay | next |
+| **T3b** | the tunnel + relay | **done** — live-verified end to end |
 | **T3c** | the subpath prefix in the core | after the relay |
 | **T4** | post (push), and refusing to route for a surface reported lost | not started |
 
@@ -281,6 +281,47 @@ mechanism:
   required links, not processes.
 - **A fresh `core_id`, not `credentials.device_id`** — that one is the broker
   bootstrap seed, and reusing it would make the address quietly depend on the account.
+
+#### T3b — The tunnel · **on `feat/tunnel` + the site's `feat/relay`**
+
+The relayed shape works: a core that only ever dialed out is reachable at
+`/<handle>` from anywhere.
+
+One WebSocket to the community, read as a byte stream (`tunnel/ws.rs`, ninety lines
+rather than a dependency), carrying a **yamux** session in which the community opens
+streams and the core accepts them. Each stream carries plain HTTP/1.1 into the same
+axum router, marked `Acceptor::OffBox` — so a request arriving through the community is
+gated by the same code as one on a public bind, and an `Upgrade` inside the tunnel is
+just an upgrade.
+
+**yamux across languages worked first try** — the Rust `yamux` crate as server against
+`hashicorp/yamux` as client. That was the flagged risk and it is closed.
+
+Two decisions the design left to the code:
+
+- **Routing is a middleware, not a `/{handle}/` mux pattern.** That pattern would have
+  swallowed the SPA's client-side routes; `/pricing/x` is not a person. Unknown first
+  segments fall through to the site, pinned by a test.
+- **The relay checks that a core owns the name it serves, and nothing else.** Every
+  request is forwarded whole for the core to accept or refuse — two mechanisms deciding
+  who may reach a person would be two to keep in agreement.
+
+**Live-verified** on the Mac mini, real community + real core:
+
+    /ana/api/tools, no credential   -> 401, the core's own, through the tunnel
+    /ana/ as a browser              -> the core's pairing page
+    /healthz, /pricing              -> still the site's
+    pairing code spent at /ana      -> a credential handed back
+    POST /ana/api/in/text           -> landed in the core's conversation
+    GET  /ana/api/out/text          -> the conversation streamed back
+    WS   /ana/api/in/audio/stream   -> 101, and the core logged the stream
+    kill the core                   -> asleep page + Retry-After; the name stays hers
+
+**Not done, and it is the next thing:** T3c, the subpath prefix. The core is told
+`X-Forwarded-Prefix: /ana` and does not yet use it, so a browser pointed straight at
+`/ana/` gets a page whose `/assets/*` and import map resolve at the root. Through an
+app this never arises — the app proxies from its own root — which is why it did not
+show up in any of the checks above.
 
 #### T3a′ — A name belongs to an account, permanently · **the lease is deleted**
 

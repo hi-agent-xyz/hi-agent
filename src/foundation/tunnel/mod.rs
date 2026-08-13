@@ -1,0 +1,181 @@
+//! The tunnel — one outbound connection, held open, that makes a core behind NAT
+//! reachable by name.
+//!
+//! See [`docs/arch/topology.md`](../../../docs/arch/topology.md)`#core--community---the-tunnel`.
+//!
+//! **Dialing out is the whole trick.** Anywhere the core can already reach the
+//! community, it can be reached back — no port forwarding, no configuration, no
+//! public address of its own.
+//!
+//! ## What rides it, and what does not
+//!
+//! Only routed traffic. Control — claiming a handle, renaming — is ordinary
+//! HTTPS ([`crate::foundation::community`]), because a core that can dial out
+//! needs no second request/response protocol to say so.
+//!
+//! **The connection is the liveness signal, and the only one.** A handle with no
+//! live connection is asleep, not lost; there is no heartbeat and nothing to
+//! renew.
+//!
+//! ## The shape
+//!
+//! One WebSocket to the community, read as a byte stream ([`ws`]), carrying a
+//! **yamux** session in which the *community* opens streams and this core
+//! accepts them. Multiplexed with per-stream flow control, because a stalled
+//! audio stream must not freeze text.
+//!
+//! Each accepted stream carries plain HTTP/1.1 and is handed to the same axum
+//! router this core already serves — marked
+//! [`Acceptor::OffBox`](crate::foundation::surfaces::Acceptor), because it is.
+//! So a request arriving through the community is gated exactly as one arriving
+//! on a public bind, by the same code, and a WebSocket upgrade inside the tunnel
+//! passes through as an ordinary `Upgrade`.
+
+pub mod ws;
+
+use std::time::Duration;
+
+use axum::Router;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
+use tower::ServiceExt as _;
+
+use crate::foundation::community;
+use crate::foundation::surfaces::{Acceptor, accepted_on};
+
+/// How long to wait before redialing, and the ceiling it backs off to. A core
+/// that cannot reach the community is not broken — it is a laptop on a train —
+/// so this retries forever and quietly.
+const REDIAL_MIN: Duration = Duration::from_secs(2);
+const REDIAL_MAX: Duration = Duration::from_secs(60);
+
+/// Hold a tunnel open for `handle`, redialing forever.
+///
+/// Spawned at startup when this core has a name. Returns immediately; the work
+/// is a background task that ends only when the process does.
+pub fn spawn(data_dir: std::path::PathBuf, router: Router, handle: String) {
+    tokio::spawn(async move {
+        let router = accepted_on(router, Acceptor::OffBox);
+        let mut backoff = REDIAL_MIN;
+        loop {
+            match hold(&data_dir, &router, &handle).await {
+                Ok(()) => {
+                    tracing::info!(handle = %handle, "the community closed the tunnel; redialing");
+                    backoff = REDIAL_MIN;
+                }
+                Err(e) => {
+                    tracing::warn!(handle = %handle, error = %e, backoff = ?backoff, "tunnel down");
+                    backoff = (backoff * 2).min(REDIAL_MAX);
+                }
+            }
+            tokio::time::sleep(backoff).await;
+        }
+    });
+}
+
+/// Dial once and serve until the connection ends.
+async fn hold(data_dir: &std::path::Path, router: &Router, handle: &str) -> anyhow::Result<()> {
+    let token = community::account_token(data_dir)?;
+    let url = tunnel_url(&community::base_url(), handle);
+
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        url.as_str(),
+    )?;
+    request
+        .headers_mut()
+        .insert(axum::http::header::AUTHORIZATION, format!("Bearer {token}").parse()?);
+
+    let (socket, _) = tokio_tungstenite::connect_async(request).await?;
+    tracing::info!(handle = %handle, %url, "tunnel open");
+
+    // The community opens streams; we accept them. That parity is why this side
+    // is the yamux server even though it dialed.
+    let mut mux = yamux::Connection::new(
+        ws::WsByteStream::new(socket),
+        yamux::Config::default(),
+        yamux::Mode::Server,
+    );
+
+    while let Some(stream) = std::future::poll_fn(|cx| mux.poll_next_inbound(cx)).await {
+        let stream = stream?;
+        let router = router.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve_stream(stream, router).await {
+                tracing::debug!(error = %e, "a routed stream ended badly");
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Serve one routed request off the tunnel, through the router this core already
+/// serves — including upgrades, so a WebSocket inside the tunnel works.
+async fn serve_stream(stream: yamux::Stream, router: Router) -> anyhow::Result<()> {
+    let io = hyper_util::rt::TokioIo::new(stream.compat());
+    // The router is a tower service over axum's body; hyper hands us its own, so
+    // the one adaptation is at the body type.
+    let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+        let router = router.clone();
+        async move { router.oneshot(req.map(axum::body::Body::new)).await }
+    });
+    hyper::server::conn::http1::Builder::new()
+        .serve_connection(io, service)
+        .with_upgrades()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The community's tunnel endpoint for `handle`, as a `ws://`/`wss://` URL.
+fn tunnel_url(base: &str, handle: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let ws = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base.to_string()
+    };
+    format!("{ws}/api/relay/tunnel?handle={handle}")
+}
+
+/// Open a tunnel at startup if this core has a name.
+///
+/// Best-effort and quiet: a core with no handle, no account, or no reachable
+/// community is a working core that is simply reachable from its own machine.
+/// Nothing here is allowed to hold up boot.
+pub async fn start_if_named(data_dir: &std::path::Path, router: Router) {
+    let names = match community::current(data_dir).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::debug!(error = %e, "no handle to serve (this core is local-only)");
+            return;
+        }
+    };
+    // One live core per handle, and this core is one core: it serves the first
+    // name its account holds. Choosing among several is a thing an app asks for,
+    // and nothing asks yet.
+    let Some(first) = names.handles.first() else {
+        tracing::info!("no handle claimed; reachable from this machine only");
+        return;
+    };
+    tracing::info!(handle = %first.handle, base_url = %first.base_url, "serving a handle");
+    spawn(data_dir.to_path_buf(), router, first.handle.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tunnel_url_follows_the_communitys_scheme() {
+        assert_eq!(
+            tunnel_url("https://hi-agent.xyz", "ana"),
+            "wss://hi-agent.xyz/api/relay/tunnel?handle=ana"
+        );
+        // A local community for testing is plain HTTP, and the tunnel has to
+        // follow it rather than insisting on TLS that is not there.
+        assert_eq!(
+            tunnel_url("http://127.0.0.1:8099/", "ana"),
+            "ws://127.0.0.1:8099/api/relay/tunnel?handle=ana"
+        );
+    }
+}

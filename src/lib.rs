@@ -455,6 +455,15 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         None => None,
     };
 
+    // Hold a tunnel open if this core has a name, so it is reachable by that name
+    // from anywhere. Off the boot path: it dials the community, and a community
+    // that is slow or down must not delay a core that works locally.
+    {
+        let data_dir = config.data_dir.clone();
+        let router = router.clone();
+        tokio::spawn(async move { foundation::tunnel::start_if_named(&data_dir, router).await });
+    }
+
     // Record the bound port so the native Settings "Sign in" button and the
     // account-link handlers can build the loopback callback URL (not a secret).
     let _ = foundation::credentials::set_setting(

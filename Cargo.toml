@@ -46,6 +46,17 @@ base64 = "0.22"
 # renderer; default features off to skip the PNG/`image` renderer (we emit SVG).
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
+# The tunnel (docs/arch/topology.md): one outbound WebSocket to the community,
+# multiplexed so a stalled audio stream cannot freeze text. `yamux` is the
+# multiplexer — a spec both this and hashicorp/yamux on the community side
+# implement, which is why the two can be different languages. `hyper` +
+# `hyper-util` serve the same axum router over each accepted stream, and
+# `tokio-util`'s compat shims bridge yamux's futures-style IO to tokio's.
+yamux = "0.13"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+
 directories = "6"
 
 # Browser login gate (optional; only active with HI_AGENT_AUTH=on). hi-agent is

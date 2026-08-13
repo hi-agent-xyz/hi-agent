@@ -40,4 +40,5 @@ pub mod segment;
 pub mod server;
 pub mod shutdown;
 pub mod surfaces;
+pub mod tunnel;
 pub mod vendors;

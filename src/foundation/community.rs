@@ -86,7 +86,7 @@ pub fn base_url() -> String {
 /// rather than what failed: a name needs an account, and an anonymous one is not
 /// enough (the registry decides that half, and its refusal comes through
 /// verbatim).
-fn account_token(data_dir: &Path) -> anyhow::Result<String> {
+pub(crate) fn account_token(data_dir: &Path) -> anyhow::Result<String> {
     let token = credentials::Credentials::load(data_dir)
         .tokens
         .as_ref()
