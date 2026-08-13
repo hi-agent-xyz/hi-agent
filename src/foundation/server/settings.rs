@@ -28,6 +28,7 @@ use crate::foundation::config::{
 };
 use crate::foundation::credentials::{self, Credentials, Energy, Mode};
 use crate::foundation::energy_state;
+use crate::foundation::{community, tunnel};
 use crate::foundation::server::AppState;
 
 /// The BYOK features, keyed by the stored credential-field name. Cross-platform (the
@@ -44,7 +45,24 @@ const WEBSITE: &str = "https://hi.xiaoyuanzhu.com";
 struct SettingsSnapshot {
     appearance: AppearanceState,
     account: AccountState,
+    reach: ReachState,
     about: AboutState,
+}
+
+/// How this core is reached from anywhere else: the name it answers to, the
+/// address that name resolves to, and whether it is dialling out at all.
+///
+/// All three read from the community rather than from local config, because a
+/// handle is owned by an account and the registry is the only thing that knows
+/// which ones this core's account holds. `why` carries the reason there is no
+/// name — most often "sign in first" — because a blank field on the one screen
+/// whose job is to say what this core is called is worse than no screen.
+#[derive(Serialize)]
+struct ReachState {
+    relay: FlagSetting,
+    handle: Option<String>,
+    address: Option<String>,
+    why: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +151,11 @@ pub(crate) struct ModePatch {
     mode: Mode,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct RelayPatch {
+    relay: bool,
+}
+
 /// Partial per-feature write. `api_key`: a non-empty value replaces; an omitted or
 /// **blank** value keeps the existing key (so the UI never has to re-enter it, and a
 /// blank field can't wipe it). `base_url`/`model`: `None` keeps, `Some("")` clears.
@@ -154,7 +177,29 @@ pub async fn get_settings(
     if let Some(rejected) = loopback_guard(&peer) {
         return rejected;
     }
-    Json(snapshot(&state.data_dir)).into_response()
+    // The names come from the community, so they are fetched rather than read.
+    // Everything else in the snapshot is local and synchronous, and stays that way.
+    let mut snap = snapshot(&state.data_dir);
+    snap.reach = reach_state(&state.data_dir).await;
+    Json(snap).into_response()
+}
+
+/// `PUT /api/settings/relay` — be reachable by name, or stop being.
+///
+/// Applies live, both ways: the tunnel opens or closes on this call rather than
+/// at the next start.
+pub(crate) async fn put_relay(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(patch): Json<RelayPatch>,
+) -> Response {
+    if let Some(rejected) = loopback_guard(&peer) {
+        return rejected;
+    }
+    match tunnel::set_on(&state.data_dir, patch.relay).await {
+        Ok(()) => Json(reach_state(&state.data_dir).await).into_response(),
+        Err(e) => store_error(e),
+    }
 }
 
 /// `PUT /api/settings/appearance` — theme / language / gestures (partial).
@@ -254,9 +299,48 @@ fn store_error(e: anyhow::Error) -> Response {
         .into_response()
 }
 
+/// The half of [`ReachState`] this machine knows on its own: the switch, and no
+/// name. Asking the registry needs the network, and a snapshot must not.
+fn local_reach(data_dir: &Path) -> ReachState {
+    ReachState {
+        relay: FlagSetting {
+            value: tunnel::on(data_dir),
+            applies: "live",
+        },
+        handle: None,
+        address: None,
+        why: None,
+    }
+}
+
+async fn reach_state(data_dir: &Path) -> ReachState {
+    let relay = local_reach(data_dir).relay;
+    match community::current(data_dir).await {
+        Ok(names) => match names.handles.into_iter().next() {
+            Some(h) => ReachState {
+                relay,
+                handle: Some(h.handle),
+                address: Some(h.base_url),
+                why: None,
+            },
+            None => ReachState { relay, handle: None, address: None, why: None },
+        },
+        // No account, or no community to ask. Not a failure: a core with no name
+        // works, reachable from its own machine. The reason travels so the window
+        // can say which of the two it is.
+        Err(e) => ReachState {
+            relay,
+            handle: None,
+            address: None,
+            why: Some(e.to_string()),
+        },
+    }
+}
+
 fn snapshot(data_dir: &Path) -> SettingsSnapshot {
     let creds = Credentials::load(data_dir);
     SettingsSnapshot {
+        reach: local_reach(data_dir),
         appearance: appearance_state(data_dir),
         account: AccountState {
             mode: creds.mode,

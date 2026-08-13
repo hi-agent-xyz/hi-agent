@@ -654,6 +654,7 @@ pub fn build(
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings/appearance", put(settings::put_appearance))
         .route("/api/settings/mode", put(settings::put_mode))
+        .route("/api/settings/relay", put(settings::put_relay))
         .route("/api/settings/credentials/{feature}", put(settings::put_feature))
         .route("/api/account/energy/refresh", post(settings::post_energy_refresh))
         // Web→device account link: `start` opens the browser to the site with a

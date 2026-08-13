@@ -83,6 +83,10 @@ struct SettingsAPI {
         try await request("/api/settings/appearance", method: "PUT", body: patch)
     }
 
+    func putRelay(_ on: Bool) async throws -> ReachState {
+        try await request("/api/settings/relay", method: "PUT", body: RelayPatch(relay: on))
+    }
+
     func putMode(_ mode: String) async throws {
         let _: ModeEcho = try await request("/api/settings/mode", method: "PUT", body: ModePatch(mode: mode))
     }
@@ -129,7 +133,16 @@ struct Empty: Codable {}
 struct SettingsSnapshot: Decodable {
     var appearance: AppearanceState
     var account: AccountState
+    var reach: ReachState
     var about: AboutState
+}
+struct ReachState: Decodable {
+    var relay: FlagSetting
+    var handle: String?
+    var address: String?
+    /// Why there is no name — most often "sign in first". Shown as-is: the
+    /// registry's own words are the answer, not a status we re-word.
+    var why: String?
 }
 struct AppearanceState: Decodable {
     var theme: ChoiceSetting
@@ -160,6 +173,7 @@ struct AboutState: Decodable { var version: String; var website: String }
 
 struct AppearancePatch: Encodable { var theme: String?; var language: String?; var gestures: Bool? }
 struct ModePatch: Encodable { var mode: String }
+struct RelayPatch: Encodable { var relay: Bool }
 struct ModeEcho: Decodable { var mode: String }
 struct FeaturePatch: Encodable { var wire: String?; var apiKey: String?; var baseUrl: String?; var model: String? }
 struct EnergyEcho: Decodable { var energy: EnergySnapshot? }
@@ -207,6 +221,13 @@ final class SettingsModel: ObservableObject {
         } catch { self.error = "\(error)" }
     }
 
+    /// Reachability applies live, so the answer carries the state back and the
+    /// pane redraws from it rather than from what we asked for.
+    func setRelay(_ on: Bool) async {
+        do { snap?.reach = try await api.putRelay(on) }
+        catch { self.error = "\(error)" }
+    }
+
     func setMode(_ mode: String) async {
         do {
             try await api.putMode(mode)
@@ -248,6 +269,7 @@ final class SettingsModel: ObservableObject {
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general
     case account
+    case reach
     case about
 
     var id: String { rawValue }
@@ -256,6 +278,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .account: return "Account"
+        case .reach: return "Reach"
         case .about: return "About"
         }
     }
@@ -264,6 +287,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .account: return "person.crop.circle"
+        case .reach: return "antenna.radiowaves.left.and.right"
         case .about: return "info.circle"
         }
     }
@@ -286,6 +310,8 @@ struct SettingsRootView: View {
                             GeneralTab(model: model, appearance: snap.appearance)
                         case .account:
                             AccountTab(model: model, account: snap.account)
+                        case .reach:
+                            ReachTab(model: model, reach: snap.reach)
                         case .about:
                             AboutTab(about: snap.about)
                         }
@@ -393,6 +419,51 @@ struct GeneralTab: View {
                 set: { v in Task { await model.setGestures(v) } }))
             if model.restartHint {
                 Text("Some changes take effect the next time Hi Agent starts.")
+                    .font(.footnote).foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+/// Who this core is, from anywhere else: the switch, the name, the address.
+///
+/// Read-only but for the switch. Claiming and renaming live in the agent's own
+/// `_builtin/reach` view, which also lists devices and can revoke them — this
+/// pane exists because a person should not have to ask the agent to be told its
+/// own address.
+struct ReachTab: View {
+    @ObservedObject var model: SettingsModel
+    let reach: ReachState
+    @State private var copied = false
+
+    var body: some View {
+        Form {
+            Toggle("Reachable by name", isOn: Binding(
+                get: { reach.relay.value },
+                set: { v in Task { await model.setRelay(v) } }))
+            Text(reach.relay.value
+                 ? "This machine holds a connection to the community, so the address below reaches it from anywhere."
+                 : "Off. The name stays yours — it simply answers “asleep” until this is back on.")
+                .font(.footnote).foregroundColor(.secondary)
+
+            if let handle = reach.handle {
+                LabeledContent("Name", value: handle)
+                if let address = reach.address {
+                    LabeledContent("Address") {
+                        HStack(spacing: 8) {
+                            Text(address).textSelection(.enabled)
+                            Button(copied ? "Copied" : "Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(address, forType: .string)
+                                copied = true
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } else {
+                LabeledContent("Name", value: "none yet")
+                Text(reach.why ?? "Ask the agent to show “reach” to claim one.")
                     .font(.footnote).foregroundColor(.secondary)
             }
         }

@@ -181,6 +181,60 @@ pub fn stop() {
     }
 }
 
+/// `app_settings` key holding whether this core dials the community at all.
+pub const KEY_RELAY: &str = "relay";
+
+/// Whether this core should be reachable by name. **Absent reads as on**, so an
+/// install that has never seen the setting behaves as it always has: claim a
+/// name and it works.
+///
+/// Being reachable and having a name are separate, which is the point of this
+/// setting existing. A handle is permanent and owned by an account
+/// ([`community`]); serving it is a thing this machine is doing right now, and a
+/// person may want to stop doing it — on a train, on someone else's network,
+/// or just to be unreachable for an afternoon — without giving up the address
+/// they handed out. Turning it off is *deliberately asleep*: the community keeps
+/// routing the name and answers with the asleep page, which is a state
+/// `topology.md` already has, reached on purpose instead of by accident.
+pub fn on(data_dir: &std::path::Path) -> bool {
+    !matches!(
+        crate::foundation::credentials::get_setting(data_dir, KEY_RELAY)
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("off" | "false" | "0" | "no")
+    )
+}
+
+/// Turn reachability on or off now, and remember it.
+///
+/// Applies live rather than at next start: a switch that needs a restart to mean
+/// anything is not a switch. Turning it on has to look the handle up — a core
+/// does not hold its own name, the registry does — and a community that cannot
+/// be reached leaves the setting written and the dial to the supervisor's own
+/// retry, which is the same path a laptop opening its lid takes.
+pub async fn set_on(data_dir: &std::path::Path, on: bool) -> anyhow::Result<()> {
+    crate::foundation::credentials::set_setting(
+        data_dir,
+        KEY_RELAY,
+        if on { "on" } else { "off" },
+    )?;
+    if !on {
+        tracing::info!("reachability turned off; closing the tunnel");
+        stop();
+        return Ok(());
+    }
+    match community::current(data_dir).await {
+        Ok(names) => match names.handles.first() {
+            Some(first) => serve(&first.handle),
+            None => tracing::info!("reachability turned on; no handle claimed yet"),
+        },
+        Err(e) => tracing::info!(error = %e, "reachability turned on; no name to serve yet"),
+    }
+    Ok(())
+}
+
 /// Start the tunnel supervisor, and open one now if this core already has a name.
 ///
 /// Best-effort and quiet: a core with no handle, no account, or no reachable
@@ -215,11 +269,26 @@ pub async fn start(data_dir: &std::path::Path, router: Router) {
                 abort.abort();
             }
             let Some(handle) = wanted else { continue };
-            tracing::info!(handle = %handle, "serving a handle");
+            // The address, not just the name. It was logged once ever — at the
+            // moment of claiming — so on every later run the one thing a person
+            // wants printed was the one thing that was not.
+            tracing::info!(
+                handle = %handle,
+                address = %format!("{}/{}", community::base_url(), handle),
+                "serving a handle"
+            );
             let abort = spawn(dir.clone(), router.clone(), handle.clone());
             current = Some((handle, abort));
         }
     });
+
+    if !on(data_dir) {
+        tracing::info!(
+            "reachability is off; this core is reachable from this machine only. \
+             Settings → Reach turns it back on"
+        );
+        return;
+    }
 
     match community::current(data_dir).await {
         Ok(names) => match names.handles.first() {
@@ -233,6 +302,44 @@ pub async fn start(data_dir: &std::path::Path, router: Router) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An install that has never seen this setting must behave as it always has.
+    ///
+    /// The switch is new and every existing data dir predates it, so "absent"
+    /// cannot read as off — that would take working installs off the air on
+    /// upgrade, silently, with the name still claimed and the address still
+    /// handed out. Only an explicit off is off.
+    #[test]
+    fn reachability_is_on_until_it_is_turned_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(on(dir.path()), "a data dir that has never heard of the setting");
+
+        for off in ["off", "false", "0", "no", " OFF "] {
+            crate::foundation::credentials::set_setting(dir.path(), KEY_RELAY, off).unwrap();
+            assert!(!on(dir.path()), "{off:?} means off");
+        }
+        for back in ["on", "true", "1", "yes"] {
+            crate::foundation::credentials::set_setting(dir.path(), KEY_RELAY, back).unwrap();
+            assert!(on(dir.path()), "{back:?} means on");
+        }
+    }
+
+    /// Turning it off must not give the name up — that is the whole distinction.
+    ///
+    /// A handle is permanent and owned by an account; being reachable is
+    /// something this machine is doing right now. Conflating them would mean
+    /// going quiet for an afternoon costs you the address you handed out, which
+    /// is exactly what `topology.md` refuses to let a lease do.
+    #[tokio::test]
+    async fn turning_it_off_keeps_the_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No community is reachable from a test, which is the point: the switch
+        // is local state and must not need one to be flipped.
+        set_on(dir.path(), false).await.expect("off");
+        assert!(!on(dir.path()));
+        set_on(dir.path(), true).await.expect("on");
+        assert!(on(dir.path()));
+    }
 
     #[test]
     fn the_tunnel_url_follows_the_communitys_scheme() {

@@ -59,7 +59,16 @@ pub async fn post_handle(State(state): State<Arc<AppState>>, body: String) -> Re
             // Reachable now, not at the next restart. The registry knows the name
             // the moment it is claimed, so the community starts routing it — and
             // a core that has not dialled answers that routing with "asleep".
-            crate::foundation::tunnel::serve(&h.handle);
+            //
+            // Unless reachability is off, which is a thing this machine is doing
+            // and claiming a name is not a request to undo it. The name is still
+            // claimed and permanent; it simply answers "asleep" until the switch
+            // in Settings → Reach goes back on.
+            if crate::foundation::tunnel::on(&state.data_dir) {
+                crate::foundation::tunnel::serve(&h.handle);
+            } else {
+                tracing::info!(handle = %h.handle, "claimed, but reachability is off");
+            }
             axum::Json(h).into_response()
         }
         Err(e) => {
