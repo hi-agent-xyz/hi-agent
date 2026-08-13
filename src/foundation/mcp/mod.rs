@@ -123,7 +123,26 @@ fn create_worker_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
-                "task": { "type": "string", "description": "A self-contained description of the work." },
+                "title": {
+                    "type": "string",
+                    "description": "What this errand is, in **one short line** — how you would \
+                                    name it to a colleague in passing, not the first sentence of \
+                                    the brief. This is the only part of this call anyone ever \
+                                    reads: it is the line the session shows up as on the \
+                                    person's screen, in your own window, and in the offer made \
+                                    back to you if a restart kills it. So write the subject and \
+                                    the verb — \"recover the stalled xyz deploy\", \"chase the \
+                                    group listener that went quiet\" — and leave out paths, ids, \
+                                    digests and preamble. 40-60 characters is the target; past \
+                                    72 it is cut.",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "A self-contained description of the work, at whatever length \
+                                    it needs. It becomes the session's first prompt and is read \
+                                    by the worker alone, so nothing in it has to be short — \
+                                    `title` is the short version.",
+                },
                 "type": {
                     "type": "string",
                     "enum": WorkerType::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
@@ -158,7 +177,7 @@ fn create_worker_tool() -> Value {
                                     enough that its half-done state is a liability.",
                 },
             },
-            "required": ["task"],
+            "required": ["title", "task"],
         }),
     )
 }
@@ -1006,7 +1025,7 @@ async fn dispatch_tool(
             };
             return tool_ok(&format!(
                 "session {} — {state}; {} turn(s) so far; on: {}{doing}",
-                st.id, st.turns, st.task
+                st.id, st.turns, st.title
             ));
         }
         "cancel_worker" => {
@@ -1110,6 +1129,21 @@ async fn dispatch_tool(
             if task.trim().is_empty() {
                 return tool_error("create_worker requires a non-empty `task`");
             }
+            // **Refused rather than derived, because a derived one is the bug.** The switchboard
+            // used to register a worker under its brief, so every roster card, status line and
+            // resume offer showed the first clause of a paragraph — which is setup, never the
+            // subject. Cutting the brief here would rebuild exactly that. The caller is the one
+            // party that knows what the errand *is* in five words, so it writes them or the
+            // call does not go through; a retry costs a round-trip, an unreadable roster costs
+            // the person every time they look at it.
+            let title = arg_str("title");
+            if title.trim().is_empty() {
+                return tool_error(
+                    "create_worker requires a one-line `title` — what this errand is, in the \
+                     words you would use to a colleague. It is what the person sees on their \
+                     screen; the brief goes in `task`.",
+                );
+            }
             // Absent means `general`, which is the right answer for most work. A name we
             // do not know is an **error**, not a silent fall back to general: a mistyped
             // `view-buidler` that quietly becomes a general session is a worker that will
@@ -1182,6 +1216,7 @@ async fn dispatch_tool(
             return match sink
                 .send(LoopControl::CreateWorker {
                     id,
+                    title,
                     task,
                     kind,
                     owner: Some(owner),
@@ -2582,6 +2617,43 @@ mod surface_tests {
             let text = got["content"][0]["text"].as_str().unwrap();
             assert!(text.contains("may not dispatch work"), "{role:?} got: {text}");
         }
+    }
+
+    /// **A brief with no title is refused, not summarized.** The switchboard registers the
+    /// title and every reader of it renders one line, so a call that leaves the title out
+    /// leaves the host two options: cut the brief, or ask. Cutting is what this whole pair
+    /// of arguments exists to stop — a paragraph's first clause is setup, never the subject
+    /// — so the call does not go through, and the error says what to write.
+    #[tokio::test]
+    async fn create_worker_refuses_a_brief_with_no_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reaction::ToolRegistry::new();
+        let partial = Mutex::new(None);
+        let obs = Observatory::new(None);
+
+        for args in [
+            json!({ "task": "Deploy only hi-agent.xyz end to end. First read the ledger…" }),
+            json!({ "task": "do a thing", "title": "   " }),
+        ] {
+            let got = dispatch_tool(
+                &tools,
+                dir.path(),
+                &partial,
+                &obs,
+                Some(7),
+                Some("cognition"),
+                "create_worker",
+                &args,
+            )
+            .await;
+            assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{args}");
+            let text = got["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("one-line `title`"), "got: {text}");
+        }
+
+        // And the schema says so too, so the model is told before it is refused.
+        let schema = &create_worker_tool()["inputSchema"];
+        assert_eq!(schema["required"], json!(["title", "task"]));
     }
 
     /// The one verb crossing has to be *observable*, including when it fails. The send

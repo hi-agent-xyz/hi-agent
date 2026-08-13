@@ -217,13 +217,14 @@ impl WorkerRegistry {
         &mut self,
         reaction: &Reaction,
         id: SessionId,
+        title: String,
         task: String,
         kind: WorkerType,
         owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reaction, id, task, kind, owner, resume, subject).await
+        self.spawn_inner(reaction, id, title, task, kind, owner, resume, subject).await
     }
 
     /// The one construction path for a working session: open it, record it, drive it.
@@ -232,10 +233,15 @@ impl WorkerRegistry {
     /// `drive_worker` and every `WorkerReport`, whose whole job was to mark one session as
     /// the conversation's own thinking rather than an errand. That rung is gone, so every
     /// session reaching here is an errand and the flag had exactly one value.
+    /// `title` is the one line the errand shows up as everywhere a person or another rung
+    /// reads it; `task` is the brief, and the brief's only reader is the worker — it goes
+    /// out as the session's first prompt and nowhere else. See
+    /// [`registry::Status::title`](crate::foundation::registry::Status::title).
     async fn spawn_inner(
         &mut self,
         reaction: &Reaction,
         id: SessionId,
+        title: String,
         task: String,
         kind: WorkerType,
         owner: Option<SessionId>,
@@ -244,7 +250,7 @@ impl WorkerRegistry {
     ) -> anyhow::Result<SessionId> {
         let resumed = resume.is_some();
         let (session, mail) = self
-            .open_working_session(reaction, id, &task, kind, owner, resume, subject)
+            .open_working_session(reaction, id, &title, kind, owner, resume, subject)
             .await?;
 
         let observatory = reaction.inner.observatory.clone();
@@ -253,7 +259,9 @@ impl WorkerRegistry {
             // workers under `*cognition*`, and passing that through would put a room
             // nobody is in on the dashboard's conversation list. The event still records — it
             // just describes no conversation, which is the truth about it.
-            .record(EventKind::WorkerSpawned { id, task: task.clone() })
+            // The title, not the brief: this record is read on a dashboard, and a
+            // paragraph in that slot is a paragraph nobody scrolls.
+            .record(EventKind::WorkerSpawned { id, title: title.clone() })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));
@@ -291,7 +299,7 @@ impl WorkerRegistry {
         &self,
         reaction: &Reaction,
         id: SessionId,
-        task: &str,
+        title: &str,
         kind: WorkerType,
         owner: Option<SessionId>,
         resume: Option<String>,
@@ -310,7 +318,7 @@ impl WorkerRegistry {
 
         // The address exists before subprocess startup so mail can queue during both
         // eager warm-up and an ordinary create_worker spawn.
-        let mail = registry::global().register(id, role, owner, task.to_string(), subject);
+        let mail = registry::global().register(id, role, owner, title.to_string(), subject);
 
         let opened = reaction
             .inner
@@ -454,7 +462,7 @@ pub(super) fn render_status() -> String {
         return String::new();
     }
     let mut s = String::from("## Still looking into\n");
-    let _ = write!(s, "- \"{}\"", status.task);
+    let _ = write!(s, "- \"{}\"", status.title);
     if status.queued {
         s.push_str(" (with a follow-up queued behind it)");
     }

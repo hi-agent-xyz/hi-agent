@@ -253,7 +253,18 @@ async fn dispatch(
         // Never resumed. A duty handler is re-derived from the ledger, which is exactly what
         // makes it free to die: the facet is the brief, so a cold session knows everything the
         // dead one did. See this module's doc.
-        .spawn_with_id(reaction, id, brief, WorkerType::General, owner, None, Some(task.subject.clone()))
+        // The session's line is the duty's own title from the ledger — the name the person
+        // gave this standing job — while `brief` stays the full record the handler reads.
+        .spawn_with_id(
+            reaction,
+            id,
+            task.title.clone(),
+            brief,
+            WorkerType::General,
+            owner,
+            None,
+            Some(task.subject.clone()),
+        )
         .await
     {
         Ok(_) => {

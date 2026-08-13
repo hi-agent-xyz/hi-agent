@@ -100,7 +100,10 @@ struct WorkerDto {
     /// shut down while its worker runs is the condition behind the dropped report, so the
     /// `owner` id above is kept either way.
     owner_role: Option<&'static str>,
-    task: String,
+    /// The one line this session shows up as — see
+    /// [`registry::Status::title`](crate::foundation::registry::Status::title). It used to be
+    /// the whole brief a worker was sent, and a card could only ever show its first clause.
+    title: String,
     /// The ledger task this session serves, when it was created against one.
     #[serde(skip_serializing_if = "Option::is_none")]
     subject: Option<String>,
@@ -414,7 +417,7 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         worker_type: st.role.worker_type().map(|t| t.as_str()),
         owner: st.owner.map(|o| o.to_string()),
         owner_role: owner_role(st.owner),
-        task: st.task.clone(),
+        title: st.title.clone(),
         subject: st.subject.clone(),
         state: state_of(st),
         turns: st.turns,
@@ -476,7 +479,7 @@ mod tests {
             id,
             role: Role::Worker(WorkerType::General),
             owner: None,
-            task: "check oil prices".into(),
+            title: "check oil prices".into(),
             subject: None,
             busy,
             queued: false,
@@ -520,7 +523,7 @@ mod tests {
         assert_eq!(v["owner"], serde_json::Value::Null);
         assert_eq!(v["owner_role"], serde_json::Value::Null);
         assert_eq!(v["doing"], serde_json::Value::Null);
-        assert_eq!(v["task"], "check oil prices");
+        assert_eq!(v["title"], "check oil prices");
         assert_eq!(v["state"], "running");
         assert_eq!(v["turns"], 3);
         assert_eq!(v["started"], "2026-08-05T03:12:00Z");

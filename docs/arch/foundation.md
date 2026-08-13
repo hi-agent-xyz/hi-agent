@@ -97,7 +97,7 @@ That is what makes "the switchboard is the host" a mechanism rather than an aspi
 | Call | Who | Contract |
 |---|---|---|
 | `SendMessage(to, message)` | every agent | One direction, **no reply**. Returns whether it was *delivered*, never a response. Queues per target and merges while the target is mid-turn, so a burst arrives as one prompt |
-| `CreateWorker(type, subject?, resume?)` | Cognition, Reflection | → a session id. `subject` is the ledger task this errand serves, and is what makes "is anyone on this task" a lookup instead of a reading. `resume` picks an errand back up where a restart cut it off, and accepts **only** a thread from this boot's offer ([agents.md](agents.md#across-a-restart)) |
+| `CreateWorker(title, task, type, subject?, resume?)` | Cognition, Reflection | → a session id. `title` is the errand in one line and `task` is the brief — see below. `subject` is the ledger task this errand serves, and is what makes "is anyone on this task" a lookup instead of a reading. `resume` picks an errand back up where a restart cut it off, and accepts **only** a thread from this boot's offer ([agents.md](agents.md#across-a-restart)) |
 | `SessionStatus(id)` | owners | alive · busy/idle · what it was given · **what it was last seen doing** · turns. **Meta only** — free to call |
 | `SessionMessages(id)` | owners | its actual output. Costs context, so it is a separate call from status |
 
@@ -107,6 +107,15 @@ was mid-command or wedged — and the output tail could not fill the gap, becaus
 from what a session *says* and a session can work for minutes in silence. Keeping them apart
 also keeps tool noise out of `SessionMessages`, which is what an owner reads to learn what the
 work found.
+
+**The title and the brief are two arguments, and only the title enters the switchboard.** A
+brief for real work is a paragraph or five; the switchboard has no reader for a paragraph —
+every one of them (the roster on the person's screen, `SessionStatus`, the resume offer, a
+`reachable` line in another rung's window) renders one line. Registering a session under its
+brief therefore showed the brief's *opening clause*, which is setup and never the subject. So
+the caller writes both: the title is what the session **is called** everywhere it is read, and
+the brief goes out as the session's first prompt, whole, read by the worker alone. Neither is
+derived from the other — a cut paragraph is exactly the summary nobody would have written.
 
 **`from` is stamped by the registry, never passed by the caller.** The host knows who is
 calling; letting an agent name itself is letting it impersonate.

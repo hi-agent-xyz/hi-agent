@@ -14,11 +14,18 @@
 //    That nest sits in one of **three columns** — the outward ladder, Reflection, and what
 //    just ended, at 4 · 4 · 2 — rather than in one long page of full-width rows. A row
 //    spent the frame's whole width on a line that was mostly empty and then bought the
-//    task out of what was left, which is how a worker's instructions rendered as four
-//    words and an ellipsis. A column-width card gives each field its own line instead.
+//    title out of what was left. A column-width card gives each field its own line instead.
 //    The frame here is the window *minus* the conversation rail (`docs/arch/stage.md`,
 //    ~320-460px), which is what the columns fold on: three, then two, then one, off a
 //    container query, because the rail changes this frame without changing the window.
+//
+//    **And a card's title is one line, because what the server sends is now a headline.**
+//    A session used to be registered under the brief it was handed — for real work, a
+//    paragraph — so this page could only ever show its opening clause, which is setup and
+//    never the subject. `create_worker` takes a written `title` beside the `task` now
+//    (`Status::title`), so the line on the card is the line someone wrote to be read, and
+//    the brief lives where a brief belongs: the session's first prompt, whole, one click
+//    away under "What happened".
 // 2. **"Ended" is an answer, not an absence.** The switchboard is live-by-construction — an
 //    entry exists between register and unregister, and a finished worker is simply gone — so
 //    a watch that died thirty seconds ago looked identical to one that never existed. That is
@@ -98,7 +105,7 @@ const T = {
     endedN: (n) => `${n} ended`,
     emptyBig: "Nothing is running right now.",
     emptySub: "That's the whole answer — not a page still loading.",
-    noTask: "(no note on what it's doing)",
+    noTitle: "(nothing said about what it's for)",
     // One word for what a session is doing with itself — the server folds `busy`+`queued`
     // into it, so there is nothing here to recombine and nothing to get wrong.
     state: { running: "running", waiting: "mail waiting", idle: "idle" },
@@ -171,7 +178,7 @@ const T = {
     endedN: (n) => `${n} 个结束了`,
     emptyBig: "现在没有活在跑。",
     emptySub: "这就是全部 —— 不是还没加载出来。",
-    noTask: "（没写在做什么）",
+    noTitle: "（没写这是干什么的）",
     state: { running: "在跑", waiting: "有没读的", idle: "闲着" },
     turns: (n) => `${n} 轮`,
     up: (t) => `已运行 ${t}`,
@@ -551,10 +558,12 @@ function LiveRow({ row, open, setOpen, indent }) {
         </span>
       </span>
 
-      {/* Its own line, and it wraps. A worker's task is a paragraph of instruction — on
-          one shared line it was a clause and an ellipsis, which is the half that says
-          least. Two lines in a column this wide is most of a sentence. */}
-      <span className="hi-workers__task">{row.task || L.noTask}</span>
+      {/* Its own line, and exactly one. The server sends a headline now rather than the
+          brief a worker was sent (`Status::title`), so there is no paragraph left to fit and
+          nothing gained by giving it two lines — a column of cards whose titles are all one
+          line is the thing that actually scans. Anything over the cap arrives already cut
+          with an ellipsis; the CSS clamp is the backstop for a wide character set. */}
+      <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
       {/* The durable facts, and nothing that could contradict the line above. */}
       <span className="hi-workers__meta">
@@ -615,7 +624,7 @@ function EndedRow({ row, open, setOpen }) {
         </span>
       </span>
 
-      <span className="hi-workers__task">{row.task || L.noTask}</span>
+      <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
       <span className="hi-workers__meta">
         {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
@@ -1253,15 +1262,16 @@ const CSS = `
     border: 1px solid var(--line);
   }
 
-  /* The card's title, on its own line and wrapping to two. Two is the compromise the
-     column width forces: a rung's task is a phrase and fits in one, a worker's is the
-     instruction it was sent with and never fits at all — two lines is where the reader
-     has the subject and the verb, and where a wall of prose starts. The whole of it is
-     one click away in the panel. */
-  .hi-workers__task {
+  /* The card's title, on its own line and held to one. It used to wrap to two, because
+     what the server sent was the paragraph of instruction the worker was briefed with and
+     two lines was the least-bad amount of it to show. The server sends a written headline
+     now, so one line is the whole thing rather than a fragment of it, and a column of
+     one-line titles is what makes a stack of cards scannable. The brief still exists — it
+     is the session's first prompt, whole, one click away under "What happened". */
+  .hi-workers__title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
     margin-top: 9px;
     min-width: 0;
     font-size: 14.5px;

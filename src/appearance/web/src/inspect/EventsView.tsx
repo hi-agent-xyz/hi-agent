@@ -60,7 +60,9 @@ function summary(e: SessionEvent): ReactNode {
       return `${s("old_id")} → ${s("new_id")}, ${n("briefing_chars")} chars briefed`;
     case "worker_spawned":
     case "worker_resumed":
-      return `#${n("id")}: ${clip(s("task"), 120)}`;
+      // A spawn carries the errand's `title`; a resume carries the follow-up `task` it was
+      // handed. History written before those were separated has the spawn under `task` too.
+      return `#${n("id")}: ${clip(s("title") || s("task"), 120)}`;
     case "worker_finished":
       return `#${n("id")}: ${s("state")}, ${n("summary_chars")} chars`;
     default:

@@ -123,7 +123,7 @@ mod tests {
             id,
             role,
             owner,
-            task: String::new(),
+            title: String::new(),
             subject: None,
             busy,
             queued,

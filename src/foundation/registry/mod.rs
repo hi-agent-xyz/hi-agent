@@ -44,10 +44,31 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 
 /// How long a "what is it doing" line may be before it is cut.
 ///
-/// It renders as one line on a roster beside the task, and the frame it renders in may be
+/// It renders as one line on a roster beside the title, and the frame it renders in may be
 /// the window minus a ~400px conversation rail (`docs/arch/stage.md`), so a line that wraps
 /// three times pushes every other session off the page.
 const ACTIVITY_LINE_CHARS: usize = 120;
+
+/// How long a session's [`title`](Status::title) may be before it is cut.
+///
+/// A headline, so the cap is roughly one column-width line and not a paragraph. The brief
+/// itself is not bounded and does not travel here: it is the session's first prompt, which
+/// is on the wire log and in the fold, whole.
+const TITLE_CHARS: usize = 72;
+
+/// One line, at most `max` characters, ending in `…` when something was cut.
+///
+/// Every string that renders as a headline goes through here rather than being trusted:
+/// an agent hands over whatever it hands over, and a newline or a paragraph in that slot
+/// reflows a roster the person is reading. Whitespace collapses first — a "one-line" title
+/// with a newline in it is still a one-line title, it just wasn't written as one.
+fn headline(text: &str, max: usize) -> String {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match one_line.char_indices().nth(max) {
+        Some((cut, _)) => format!("{}…", one_line[..cut].trim_end()),
+        None => one_line,
+    }
+}
 
 pub mod index;
 
@@ -102,8 +123,22 @@ pub struct Status {
     pub role: Role,
     /// The session that created this one and to which its work answers.
     pub owner: Option<SessionId>,
-    /// What it is working on, in its own words.
-    pub task: String,
+    /// What it is working on, as **one line a person can read**: a headline, written by
+    /// whoever asked for the work.
+    ///
+    /// **This is not the brief, and that is the whole point.** It used to be — a worker was
+    /// registered under the instruction it was sent, which for real work is a paragraph or
+    /// five, so every reader of this field showed a clause and an ellipsis: the roster card,
+    /// `session_status`, the boot glance's resume offer. A first-clause-of-a-paragraph is the
+    /// one summary nobody would have written on purpose, because the sentence a brief opens
+    /// with is setup, never the subject.
+    ///
+    /// So the caller writes both: `create_worker` takes a `title` (this) and a `task` (the
+    /// brief). The brief goes where a brief belongs — the session's first prompt, whole, on
+    /// the wire log — and never through the switchboard, which has no reader for a paragraph.
+    /// Capped and flattened to one line by [`headline`] on the way in, because what an agent
+    /// hands over is not something a roster can be reflowed by.
+    pub title: String,
     /// The ledger subject this session was created to serve, for a worker created against a
     /// task. `None` for the rungs, and for an errand nobody wrote down.
     ///
@@ -115,10 +150,9 @@ pub struct Status {
     /// with no live worker reads as *nobody on it* because there genuinely is nobody, not
     /// because a field went stale.
     ///
-    /// It is the **subject**, not the title: the subject is the ledger's key and the directory
-    /// name under `memory/facets/tasks/`, so it survives a retitling that would break a match
-    /// on prose. Which is what [`task`](Self::task) is — a brief written for a reader, never a
-    /// key.
+    /// It is the ledger's **key** — the directory name under `memory/facets/tasks/` — so it
+    /// survives a retitling that would break a match on prose. Which is what
+    /// [`title`](Self::title) is: a line written for a reader, never a key.
     pub subject: Option<String>,
     /// Mid-turn right now, versus idle and waiting.
     pub busy: bool,
@@ -245,7 +279,8 @@ struct Inbox {
 struct Entry {
     role: Role,
     owner: Option<SessionId>,
-    task: String,
+    /// One line for a reader — see [`Status::title`]. Already flattened and capped.
+    title: String,
     /// The ledger subject this session serves — see [`Status::subject`].
     subject: Option<String>,
     busy: bool,
@@ -278,7 +313,7 @@ impl Entry {
             id,
             role: self.role,
             owner: self.owner,
-            task: self.task.clone(),
+            title: self.title.clone(),
             subject: self.subject.clone(),
             busy: self.busy,
             queued: !self.inbox.pending.is_empty(),
@@ -344,11 +379,14 @@ pub fn register_scoped(
     id: SessionId,
     role: Role,
     owner: Option<SessionId>,
-    task: String,
+    title: String,
 ) -> Registration {
     // Rungs only — the scope-bound form is for sessions whose lifetime is a scope, and a
     // worker's is a task. So there is no ledger subject to record here.
-    let mail = global().register(id, role, owner, task, None);
+    //
+    // A rung needs no title/brief split either: what it is doing is standing and already a
+    // phrase ("the shared brain"), which is why this form takes the one line and stops.
+    let mail = global().register(id, role, owner, title, None);
     Registration { id, mail }
 }
 
@@ -412,16 +450,21 @@ impl Registry {
 
     /// Announce a live session. `id` comes from [`mint`], claimed before the session was
     /// opened.
+    ///
+    /// `title` is the one line this session shows up as — see [`Status::title`]. It is
+    /// flattened and capped here rather than at the caller, because there are several
+    /// callers and only one roster.
     pub fn register(
         &self,
         id: SessionId,
         role: Role,
         owner: Option<SessionId>,
-        task: String,
+        title: String,
         subject: Option<String>,
     ) -> std::sync::Arc<Notify> {
         let notify = std::sync::Arc::new(Notify::new());
         let started = Utc::now();
+        let title = headline(&title, TITLE_CHARS);
         {
             let mut map = self.sessions.lock().unwrap();
             map.insert(
@@ -429,7 +472,7 @@ impl Registry {
                 Entry {
                     role,
                     owner,
-                    task: task.clone(),
+                    title: title.clone(),
                     subject: subject.clone(),
                     busy: false,
                     turns: 0,
@@ -454,7 +497,7 @@ impl Registry {
                 id,
                 role,
                 owner,
-                &task,
+                &title,
                 subject.as_deref(),
                 started,
             ));
@@ -590,7 +633,7 @@ impl Registry {
                 id,
                 e.role,
                 e.owner,
-                &e.task,
+                &e.title,
                 e.subject.as_deref(),
                 e.turns,
                 e.started,
@@ -695,7 +738,7 @@ impl Registry {
                 }
                 for (id, e) in map.iter() {
                     if e.owner == Some(asker) {
-                        out.push((format!("your worker: {}{}", e.task.trim(), link_note(e)), *id));
+                        out.push((format!("your worker: {}{}", e.title.trim(), link_note(e)), *id));
                     }
                 }
             }
@@ -866,14 +909,15 @@ impl Registry {
         }
     }
 
-    /// Replace the human-readable task attached to a live session.
+    /// Replace the one-line title attached to a live session.
     ///
     /// A session is registered before it receives its first real task, so the
     /// switchboard entry must be able to move from a startup placeholder to the work it
-    /// was actually handed.
-    pub fn set_task(&self, id: SessionId, task: String) {
+    /// was actually handed. Capped like the registration path — a caller replacing a title
+    /// is the same kind of caller that wrote the first one.
+    pub fn set_title(&self, id: SessionId, title: String) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
-            e.task = task;
+            e.title = headline(&title, TITLE_CHARS);
         }
     }
 
@@ -1028,7 +1072,7 @@ mod tests {
         let offered = r.lost_workers();
         assert_eq!(offered.len(), 1, "the previous run's unfinished errand");
         assert_eq!(offered[0].thread.as_deref(), Some("th-errand"));
-        assert_eq!(offered[0].task.as_deref(), Some("chase the deploy"));
+        assert_eq!(offered[0].title.as_deref(), Some("chase the deploy"));
 
         // Now let this run close a session of its own, which pushes onto `recent`.
         let id = mint();
@@ -1327,7 +1371,7 @@ mod tests {
 
         let found = r.session_of_role(Role::Cognition).expect("cognition is up");
         assert_eq!(found.id, cog);
-        assert_eq!(found.task, "thinking");
+        assert_eq!(found.title, "thinking");
         assert_eq!(r.session_of_role(Role::Reaction).map(|s| s.id), Some(rx));
     }
 
@@ -1456,7 +1500,7 @@ mod tests {
         let s = r.status(b).expect("registered");
         assert_eq!(s.role, Role::Worker(WorkerType::General));
         assert_eq!(s.owner, Some(a));
-        assert_eq!(s.task, "file the receipts");
+        assert_eq!(s.title, "file the receipts");
         assert!(!s.busy && !s.queued && s.turns == 0);
 
         r.send(a, b, "go".into());
@@ -1536,16 +1580,56 @@ mod tests {
         assert_eq!(r.status(id).unwrap().doing_at, second.doing_at);
     }
 
+    /// **A title is one line whatever the caller hands over.** Every reader of this field
+    /// renders it as a single line beside a state word, so a newline or a paragraph in it
+    /// reflows a roster someone is reading. The caller is told to write one line; this is
+    /// what makes it true.
     #[test]
-    fn a_prewarmed_session_can_replace_its_placeholder_task() {
+    fn a_title_is_flattened_and_capped_on_the_way_in() {
+        let r = reg();
+
+        let wrapped = mint();
+        let messy = "recover the\n  stalled\tdeploy\n".to_string();
+        r.register(wrapped, Role::Worker(WorkerType::General), None, messy, None);
+        assert_eq!(r.status(wrapped).unwrap().title, "recover the stalled deploy");
+
+        let long = mint();
+        let brief = "Deploy only hi-agent.xyz end to end. The user explicitly authorized \
+                     this deployment. First read the deployment ledger."
+            .to_string();
+        r.register(long, Role::Worker(WorkerType::General), None, brief, None);
+        let title = r.status(long).unwrap().title;
+        assert!(title.ends_with('…'), "a cut title says it was cut: {title:?}");
+        assert_eq!(title.chars().count(), TITLE_CHARS + 1, "the cap, plus the ellipsis");
+
+        // Whatever replaces it is held to the same line.
+        r.set_title(long, format!("{}\nand more", "x".repeat(TITLE_CHARS + 10)));
+        let replaced = r.status(long).unwrap().title;
+        assert!(replaced.ends_with('…') && !replaced.contains('\n'), "{replaced:?}");
+    }
+
+    /// A headline shorter than the cap is passed through untouched — no ellipsis on a line
+    /// that was already whole, which is what makes the ellipsis mean anything.
+    #[test]
+    fn a_short_title_is_left_exactly_as_written() {
+        assert_eq!(headline("chase the deploy", TITLE_CHARS), "chase the deploy");
+        assert_eq!(headline("", TITLE_CHARS), "");
+        assert_eq!(headline("  padded  ", TITLE_CHARS), "padded");
+        // The cut lands on a character boundary, not a byte one.
+        let cjk = "把这个部署恢复过来".repeat(20);
+        assert_eq!(headline(&cjk, 8).chars().count(), 9);
+    }
+
+    #[test]
+    fn a_prewarmed_session_can_replace_its_placeholder_title() {
         let r = reg();
         let id = mint();
         r.register(id, Role::Cognition, None, "waiting for the first question".into(), None);
 
-        r.set_task(id, "review the restart behavior".into());
+        r.set_title(id, "review the restart behavior".into());
 
         assert_eq!(
-            r.status(id).expect("registered").task,
+            r.status(id).expect("registered").title,
             "review the restart behavior"
         );
     }

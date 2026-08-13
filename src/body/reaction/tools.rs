@@ -56,8 +56,15 @@ pub enum LoopControl {
     /// this task" a lookup instead of a reading. It rides the creation call because that is
     /// the only moment anyone knows the answer: the rung asking for the work is the ledger's
     /// writer, and by the time the session is running, the association exists nowhere else.
+    ///
+    /// `title` and `task` are the same errand at two lengths, and both travel because they
+    /// land in different places: the title is what the switchboard registers and every
+    /// reader of a roster sees ([`crate::foundation::registry::Status::title`]); the task is
+    /// the brief that becomes the session's first prompt. Deriving either from the other is
+    /// the thing this pair exists to stop.
     CreateWorker {
         id: u64,
+        title: String,
         task: String,
         kind: crate::identity::WorkerType,
         owner: Option<u64>,
@@ -522,6 +529,7 @@ mod tests {
                 .unwrap()
                 .send(LoopControl::CreateWorker {
                     id,
+                    title: format!("errand-{id}"),
                     task: format!("task-{id}"),
                     kind: crate::identity::WorkerType::default(),
                     owner: None,

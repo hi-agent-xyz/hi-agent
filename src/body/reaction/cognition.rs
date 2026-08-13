@@ -243,9 +243,13 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume, subject }) => {
+                    Some(LoopControl::CreateWorker {
+                        id: worker, title, task, kind, owner, resume, subject,
+                    }) => {
                         if let Err(err) = workers
-                            .spawn_with_id(&reaction, worker, task, kind, owner, resume, subject)
+                            .spawn_with_id(
+                                &reaction, worker, title, task, kind, owner, resume, subject,
+                            )
                             .await
                         {
                             tracing::warn!(error = %err, "cognition failed to create a worker");
@@ -311,9 +315,13 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     ctl = control_rx.recv() => match ctl {
-                        Some(LoopControl::CreateWorker { id: worker, task, kind, owner, resume, subject }) => {
+                        Some(LoopControl::CreateWorker {
+                            id: worker, title, task, kind, owner, resume, subject,
+                        }) => {
                             if let Err(err) = workers
-                                .spawn_with_id(&reaction, worker, task, kind, owner, resume, subject)
+                                .spawn_with_id(
+                                    &reaction, worker, title, task, kind, owner, resume, subject,
+                                )
                                 .await
                             {
                                 tracing::warn!(error = %err, "cognition failed to create a worker");
@@ -459,12 +467,12 @@ fn offer_lost_errands(lost: &[registry::index::Ended]) -> String {
     );
     for end in lost {
         let Some(thread) = end.thread.as_deref() else { continue };
-        let task = end.task.as_deref().unwrap_or("(no task recorded)");
-        let _ = write!(s, "\n- \"{}\"", tail_of(task, 200));
-        // The ledger entry it belonged to, when it had one. Without this the brief is all
-        // there is, and matching a paragraph of prose back to a task is exactly the reading
-        // the subject exists to replace — that task is on the active list two sections up,
-        // already marked as having nobody on it, and this is what ties the two together.
+        let title = end.title.as_deref().unwrap_or("(nothing recorded)");
+        let _ = write!(s, "\n- \"{}\"", tail_of(title, 200));
+        // The ledger entry it belonged to, when it had one. Without this the line is all
+        // there is, and matching a phrase back to a task is exactly the reading the subject
+        // exists to replace — that task is on the active list two sections up, already
+        // marked as having nobody on it, and this is what ties the two together.
         if let Some(subject) = end.subject.as_deref() {
             let _ = write!(s, "\n  for task `{subject}`");
         }
@@ -554,13 +562,13 @@ mod tests {
         assert_eq!(note_for(0, false, Duration::from_secs(9_999)), None);
     }
 
-    fn lost(task: &str, thread: &str) -> registry::index::Ended {
+    fn lost(title: &str, thread: &str) -> registry::index::Ended {
         registry::index::Ended {
             run: "run-prev".into(),
             session: 5,
             role: "worker".into(),
             worker_type: Some("general".into()),
-            task: Some(task.into()),
+            title: Some(title.into()),
             subject: Some("chase-harbor".into()),
             owner: Some(3),
             started: Some(chrono::Utc::now()),

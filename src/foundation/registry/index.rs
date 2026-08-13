@@ -85,8 +85,11 @@ pub enum Record {
         /// `None` for a rung.
         #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
         worker_type: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        task: Option<String>,
+        /// The one line this session shows up as — see [`super::Status::title`]. Old rows
+        /// carry it under its former name, when it held the whole brief a worker was sent;
+        /// the alias is how those still read, and their line is simply the long one.
+        #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<u64>,
     },
@@ -122,8 +125,9 @@ pub enum Record {
         role: String,
         #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
         worker_type: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        task: Option<String>,
+        /// See [`Record::Opened::title`].
+        #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<u64>,
         turns: u64,
@@ -163,13 +167,14 @@ pub struct Ended {
     pub role: String,
     #[serde(rename = "type")]
     pub worker_type: Option<String>,
-    pub task: Option<String>,
+    /// The one line it ran under — see [`super::Status::title`].
+    pub title: Option<String>,
     /// The ledger subject this session served, if it was created against a task.
     ///
     /// The live join lives in the switchboard ([`super::Status::subject`]) and dies with the
     /// process, which is right — "who is on this task" is a question about now. This is the
     /// half that has to outlive the run: without it a restart-killed errand can be offered
-    /// back only as its brief, and the boot glance cannot say which ledger entry it belonged
+    /// back only as its title, and the boot glance cannot say which ledger entry it belonged
     /// to. Recorded on the way *in*, because the way out is what a crash skips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
@@ -415,7 +420,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                 started,
                 role,
                 worker_type,
-                task,
+                title,
                 owner,
                 turns,
             } => {
@@ -425,7 +430,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     session,
                     role,
                     worker_type,
-                    task,
+                    title,
                     subject,
                     owner,
                     started: Some(started),
@@ -438,7 +443,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
             Record::Thread { run, session, thread_id, .. } => {
                 threads.insert((run, session), thread_id);
             }
-            Record::Opened { run, session, subject, at, role, worker_type, task, owner } => {
+            Record::Opened { run, session, subject, at, role, worker_type, title, owner } => {
                 // A session in the current run with no close is *live*, not lost — the
                 // switchboard reports it, and claiming it here would double-count it.
                 if run == current_run {
@@ -449,7 +454,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     session,
                     role,
                     worker_type,
-                    task,
+                    title,
                     subject,
                     owner,
                     started: Some(at),
@@ -490,7 +495,7 @@ pub fn ended_now(
     session: u64,
     role: Role,
     owner: Option<u64>,
-    task: &str,
+    title: &str,
     subject: Option<&str>,
     turns: u64,
     started: DateTime<Utc>,
@@ -501,7 +506,7 @@ pub fn ended_now(
         session,
         role: role.as_str().to_string(),
         worker_type: role.worker_type().map(|t| t.as_str().to_string()),
-        task: Some(task.to_string()).filter(|t| !t.is_empty()),
+        title: Some(title.to_string()).filter(|t| !t.is_empty()),
         subject: subject.map(str::to_string),
         owner,
         started: Some(started),
@@ -522,7 +527,7 @@ pub fn closed_record(ended: &Ended) -> Record {
         started: ended.started.unwrap_or_else(Utc::now),
         role: ended.role.clone(),
         worker_type: ended.worker_type.clone(),
-        task: ended.task.clone(),
+        title: ended.title.clone(),
         owner: ended.owner,
         turns: ended.turns.unwrap_or(0),
     }
@@ -534,7 +539,7 @@ pub fn opened_record(
     session: u64,
     role: Role,
     owner: Option<u64>,
-    task: &str,
+    title: &str,
     subject: Option<&str>,
     at: DateTime<Utc>,
 ) -> Record {
@@ -545,7 +550,7 @@ pub fn opened_record(
         at,
         role: role.as_str().to_string(),
         worker_type: role.worker_type().map(|t| t.as_str().to_string()),
-        task: Some(task.to_string()).filter(|t| !t.is_empty()),
+        title: Some(title.to_string()).filter(|t| !t.is_empty()),
         owner,
     }
 }
@@ -841,7 +846,7 @@ mod tests {
         assert_eq!((e.run.as_str(), e.session), ("run-a", 7));
         assert_eq!(e.role, "worker");
         assert_eq!(e.worker_type.as_deref(), Some("view-builder"));
-        assert_eq!(e.task.as_deref(), Some("build the workers view"));
+        assert_eq!(e.title.as_deref(), Some("build the workers view"));
         assert_eq!(e.owner, Some(3));
         assert_eq!(e.turns, Some(4));
         assert_eq!(e.how, EndedHow::Closed);

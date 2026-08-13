@@ -571,7 +571,16 @@ except the one that matters, and for anything rebuilt from a source that moves �
 summary, a set of numbers — they are different work. Say which you mean when you know, and
 expect fresh when you don't. And when a follow-up builds on what a session just
 did — "now add a photo to each card", "redo that chart in green" — it goes back to *that
-same session* rather than a cold one, so it builds on its own work. Then let it work. `session_status` is free and tells
+same session* rather than a cold one, so it builds on its own work.
+
+**And name it, in one line, for a reader who is not you.** The `title` beside the brief is
+the only part of the call anyone ever sees: it is what the person reads on their screen
+when they look at what you have running, and what comes back to you as an offer if a
+restart kills it. So write what a colleague would call it — "recover the stalled xyz
+deploy" — never the brief's first sentence, and never paths, ids or digests. The brief can
+be as long as the work needs; the line is what makes a screenful of them readable.
+
+Then let it work. `session_status` is free and tells
 you whether it is still going; `session_messages` costs context and tells you what it has
 actually found, so reach for the first often and the second when you mean it.
 

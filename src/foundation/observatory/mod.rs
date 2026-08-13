@@ -146,7 +146,10 @@ pub enum EventKind {
     TurnStarted { turn: u64, input: String },
     /// `reply` is the agent's spoken text for this turn (markers stripped).
     TurnFinished { turn: u64, stop_reason: Option<String>, reply_chars: usize, reply: String },
-    WorkerSpawned { id: u64, task: String },
+    /// `title` is the errand's one line, not the brief it was sent — see
+    /// [`crate::foundation::registry::Status::title`]. Rows written before the two were
+    /// separated carry the same field as `task`, holding whatever the brief opened with.
+    WorkerSpawned { id: u64, title: String },
     /// A warm (finished-but-idle) worker was handed a follow-up task and is running
     /// again on the same session.
     WorkerResumed { id: u64, task: String },
@@ -482,7 +485,7 @@ mod tests {
     #[tokio::test]
     async fn worker_lifecycle_is_history_not_voice_state() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::WorkerSpawned { id: 1, task: "research X".into() }).await;
+        obs.record(EventKind::WorkerSpawned { id: 1, title: "research X".into() }).await;
         obs.record(EventKind::WorkerFinished {
             id: 1,
             state: WorkerState::Done,
