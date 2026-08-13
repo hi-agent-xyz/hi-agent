@@ -143,9 +143,15 @@ const T = {
     noFramesNote: "Nothing crossed the wire under this id, or its run's files are gone.",
     framesFailed: "That session's wire log could not be read.",
     // What each folded message was. Short: they sit in a fixed column beside the line.
+    //
+    // `agent` is **typed**, never "said". An `agentMessage` is the model's own
+    // working-out and reaches nobody; the only thing a person ever heard is a `hi_say`
+    // tool call, which folds as `tool`. Labelling it "said" told readers the agent had
+    // answered when the person got nothing — the one row in this table that can make a
+    // record contradict what happened.
     kind: {
       user: "prompt",
-      agent: "said",
+      agent: "typed",
       thinking: "thought",
       command: "ran",
       edit: "edited",
@@ -206,7 +212,7 @@ const T = {
     framesFailed: "读不到这个会话的原始帧。",
     kind: {
       user: "收到",
-      agent: "说",
+      agent: "写",
       thinking: "想",
       command: "跑",
       edit: "改文件",
@@ -867,17 +873,17 @@ function Said({ m, open, onToggle }) {
   const detail = body(m);
   const running = m.status && m.status !== "completed" && m.status !== "success";
   return (
-    <div className="hi-workers__said" data-kind={m.kind} data-running={running ? "true" : undefined}>
+    <div className="hi-workers__msg" data-kind={m.kind} data-running={running ? "true" : undefined}>
       <button
         type="button"
-        className="hi-workers__said-head"
+        className="hi-workers__msg-head"
         aria-expanded={open}
         onClick={detail ? onToggle : undefined}
         data-flat={detail ? undefined : "true"}
       >
-        <span className="hi-workers__said-kind">{L.kind[m.kind] || m.kind}</span>
-        <span className="hi-workers__said-head-line">{head(m)}</span>
-        <span className="hi-workers__said-meta">
+        <span className="hi-workers__msg-kind">{L.kind[m.kind] || m.kind}</span>
+        <span className="hi-workers__msg-head-line">{head(m)}</span>
+        <span className="hi-workers__msg-meta">
           {[
             m.kind === "command" && typeof m.exit === "number" ? L.exit(m.exit) : null,
             typeof m.ms === "number" ? L.tookMs(m.ms) : null,
@@ -889,12 +895,12 @@ function Said({ m, open, onToggle }) {
             .join(" · ")}
         </span>
       </button>
-      {open && detail && <pre className="hi-workers__said-body">{detail}</pre>}
+      {open && detail && <pre className="hi-workers__msg-body">{detail}</pre>}
       {/* The peek is only for a body that says something the head does not — a command's
           output, a tool's arguments. On a text message the body *is* the head, longer, and
           a preview of it under it is the same sentence twice. */}
       {!open && detail && !SAYS_ITSELF.has(m.kind) && (
-        <div className="hi-workers__said-peek">{oneLine(detail)}</div>
+        <div className="hi-workers__msg-peek">{oneLine(detail)}</div>
       )}
     </div>
   );
@@ -1525,25 +1531,25 @@ const CSS = `
     color: var(--danger);
   }
 
-  .hi-workers__said {
+  .hi-workers__msg {
     padding: 6px 0;
     border-bottom: 1px solid var(--line);
   }
 
-  .hi-workers__said-head {
+  .hi-workers__msg-head {
     display: flex;
     align-items: baseline;
     gap: 10px;
     width: 100%;
   }
 
-  .hi-workers__said-head[data-flat="true"] {
+  .hi-workers__msg-head[data-flat="true"] {
     cursor: default;
   }
 
   /* A fixed column, so the kinds line up down the left edge and the shape of a turn —
      prompt, thought, ran, ran, ran, said — is legible without reading a word of it. */
-  .hi-workers__said-kind {
+  .hi-workers__msg-kind {
     flex: none;
     width: 64px;
     font-size: 11px;
@@ -1552,7 +1558,7 @@ const CSS = `
     text-align: right;
   }
 
-  .hi-workers__said-head-line {
+  .hi-workers__msg-head-line {
     flex: 1;
     min-width: 0;
     font-size: 13px;
@@ -1562,53 +1568,53 @@ const CSS = `
     white-space: nowrap;
   }
 
-  .hi-workers__said-meta {
+  .hi-workers__msg-meta {
     flex: none;
     font-size: 11.5px;
     color: var(--fg-mute);
   }
 
   /* What the agent said is the point of the page; the rest is how it got there. */
-  .hi-workers__said[data-kind="agent"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="agent"] .hi-workers__msg-head-line {
     font-weight: 620;
   }
 
-  .hi-workers__said[data-kind="user"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="user"] .hi-workers__msg-head-line {
     color: var(--fg-dim);
   }
 
-  .hi-workers__said[data-kind="thinking"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="thinking"] .hi-workers__msg-head-line {
     color: var(--fg-mute);
     font-style: italic;
   }
 
-  .hi-workers__said[data-kind="command"] .hi-workers__said-head-line,
-  .hi-workers__said[data-kind="tool"] .hi-workers__said-head-line,
-  .hi-workers__said[data-kind="edit"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="command"] .hi-workers__msg-head-line,
+  .hi-workers__msg[data-kind="tool"] .hi-workers__msg-head-line,
+  .hi-workers__msg[data-kind="edit"] .hi-workers__msg-head-line {
     font-family: var(--w-mono);
     font-size: 11.5px;
   }
 
-  .hi-workers__said[data-kind="tool"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="tool"] .hi-workers__msg-head-line {
     color: var(--accent-2);
   }
 
-  .hi-workers__said[data-kind="warning"] .hi-workers__said-head-line,
-  .hi-workers__said[data-kind="stderr"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="warning"] .hi-workers__msg-head-line,
+  .hi-workers__msg[data-kind="stderr"] .hi-workers__msg-head-line {
     color: var(--danger);
   }
 
-  .hi-workers__said[data-kind="stderr"] .hi-workers__said-head-line {
+  .hi-workers__msg[data-kind="stderr"] .hi-workers__msg-head-line {
     font-family: var(--w-mono);
     font-size: 11.5px;
   }
 
   /* Still running when the log ended — the row that says where it stopped. */
-  .hi-workers__said[data-running="true"] .hi-workers__said-kind {
+  .hi-workers__msg[data-running="true"] .hi-workers__msg-kind {
     color: var(--accent);
   }
 
-  .hi-workers__said-peek {
+  .hi-workers__msg-peek {
     margin: 3px 0 0 74px;
     font-family: var(--w-mono);
     font-size: 11px;
@@ -1619,7 +1625,7 @@ const CSS = `
     white-space: nowrap;
   }
 
-  .hi-workers__said-body {
+  .hi-workers__msg-body {
     margin: 6px 0 4px 74px;
     padding: 10px 12px;
     max-height: 46vh;
