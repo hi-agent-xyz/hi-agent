@@ -18,8 +18,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-/// File under the data dir holding the credential store (SQLite).
-const FILE: &str = "config.db";
+/// File under the data dir holding the credential store (SQLite). Named in
+/// `hi-wire` because the roster shares it — an app that hosts a core writes to
+/// the same file, and an app with no core owns it alone.
+use hi_wire::STORE_FILE as FILE;
 
 /// `app_settings` key recording the port the local HTTP server bound this run, so
 /// the native Settings "Sign in" button and the account-link handlers can build the

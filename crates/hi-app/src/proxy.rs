@@ -55,10 +55,10 @@ pub fn router(app: Arc<App>) -> Router {
 // The app's own surface
 // -----------------------------------------------------------------------------
 
-/// `GET /app` — the roster, as a page. See [`crate::app::screen`] for why the
+/// `GET /app` — the roster, as a page. See [`crate::screen`] for why the
 /// app serves this itself and why it carries no assets.
 async fn get_screen() -> Response {
-    axum::response::Html(crate::app::screen::page()).into_response()
+    axum::response::Html(crate::screen::page()).into_response()
 }
 
 /// `GET /api/app/roster` — the cores this app may be with, and which one it is
@@ -215,7 +215,7 @@ async fn forward_http(app: Arc<App>, entry: roster::Entry, req: Request) -> Resp
         // app asserts that about its own traffic rather than requiring the face to
         // know about a rule that is not the face's to satisfy. Only sent alongside
         // the session, because that is the only presentation the rule is about.
-        out = out.header(crate::foundation::surfaces::CSRF_HEADER, "1");
+        out = out.header(hi_wire::CSRF_HEADER, "1");
     }
 
     let res = match out.body(reqwest::Body::wrap_stream(body.into_data_stream())).send().await {

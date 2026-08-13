@@ -13,20 +13,24 @@
 //! no face involvement; and **desktop and mobile run identical face code**, which
 //! is what "no architectural difference between them" has to mean concretely.
 //!
-//! ## It is a module, not yet a process
+//! ## Its own crate, because a phone can link it and cannot link a core
 //!
-//! Today this runs inside the same binary as the core it usually renders. That is
-//! sequencing, not design: `CLAUDE.md` says not to flip process ownership before
-//! the native shell is ready, and the seam this builds — a local proxy in front
-//! of a roster — is the same one the shell will hold when it does. Hosting stays
-//! a *capability of an app instance* rather than a property of the platform: the
-//! core on this machine is simply roster entry #1, and an app that cannot host
-//! one has an entry list that starts empty.
+//! Everything below builds for `aarch64-apple-ios`, and nothing a core needs —
+//! the runtime it spawns, ONNX, ffmpeg — is reachable from here. That is not a
+//! packaging detail: on iOS an app *is* this crate plus a webview, because a
+//! core cannot be hosted there and the design never asked it to be. Hosting is a
+//! capability of an app instance rather than a property of a platform, so the
+//! same code either seeds entry #1 with the core on this machine or starts with
+//! an empty list and waits to be paired.
+//!
+//! On a desktop the core's binary links this crate and serves it on a second
+//! loopback port; the process split waits for the native shell, per `CLAUDE.md`.
+//! Either way the seam is the same one, which is why it is drawn here.
 //!
 //! ## What it does not do
 //!
 //! It has no opinion about who may reach a core — that is the core's alone
-//! ([`crate::foundation::surfaces`]). It supervises only cores it started; a
+//! (the core's `foundation::surfaces`). It supervises only cores it started; a
 //! remote core can be observed, never supervised. And it never talks to the
 //! community: an address is a base URL, so an app talks only to its cores.
 
@@ -205,9 +209,6 @@ mod tests {
     #[tokio::test]
     async fn a_200_from_something_that_is_not_a_core_is_not_pairing() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // The roster shares `config.db` with the settings table, which a real
-        // install has open from startup.
-        crate::foundation::credentials::set_setting(dir.path(), "seed", "1").expect("seed");
         let app = App::new(dir.path().to_path_buf()).expect("app");
 
         // A server that answers everything 200 with a page, the way a site does.

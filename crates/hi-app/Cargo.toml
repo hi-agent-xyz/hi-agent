@@ -1,0 +1,30 @@
+[package]
+name = "hi-app"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A surface onto a core: the roster, and the proxy in front of it"
+
+# Every dependency here builds for aarch64-apple-ios. That is the point of the
+# crate: an app is the half of the system a phone can run, so nothing that only
+# a core needs — the runtime it spawns, ONNX, ffmpeg — may appear below.
+[dependencies]
+hi-wire = { path = "../hi-wire" }
+
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.40", features = ["rt", "net", "macros"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+tracing = "0.1"
+uuid = { version = "1.10", features = ["v4", "v7"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.40", features = ["rt-multi-thread"] }
+tower = "0.5"

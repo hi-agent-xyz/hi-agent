@@ -271,10 +271,13 @@ mechanism:
   claim / renew are ordinary HTTPS calls. Written into `docs/arch/topology.md`, with
   the reason reversed HTTP/2 loses (extended CONNECT, and `Upgrade` is exactly what
   remote mic and camera capture ride).
-- **The app ships first as a module in this binary** (`src/app/`, T2), not as a second
-  process. `CLAUDE.md`'s Phase 1/2 sequencing says do not flip process ownership yet,
-  and the seam is the same one the Swift shell will hold later. The local core is
-  simply roster entry #1 — host-and-client-are-capabilities is preserved.
+- **The app ships first as a crate this binary links** (`crates/hi-app`, T2), not as a
+  second process. `CLAUDE.md`'s Phase 1/2 sequencing says do not flip process ownership
+  yet, and the seam is the same one the Swift shell will hold later. The local core is
+  simply roster entry #1 — host-and-client-are-capabilities is preserved. Its own crate
+  because that invariant has a build consequence: every dependency in it compiles for
+  `aarch64-apple-ios`, so an iOS app is this crate plus a webview, and nothing a core
+  needs can leak in without the iOS build saying so.
 - **Registry and relay live in the existing Go binary**, in their own packages with
   their own tables and no shared key with the broker. Handles are subpaths of the
   origin that already ends in an SPA catch-all on `/`, so one mux is the only place
@@ -612,7 +615,7 @@ There was no app. One binary was core *and* face, the face was served same-origi
 the core it rendered, and there was no roster, no credential holder, and no way to be
 with a core that is not this one.
 
-Now: `src/app/` — a roster in `config.db` (`base_url, credential, label`, exactly the
+Now: `crates/hi-app` — a roster in `config.db` (`base_url, credential, label`, exactly the
 doc's triple), and a loopback proxy in front of it. **The face talks only to the app**
 (`--app-port`, 12357 on a desktop install; the tray's "Open" points there), and the
 app forwards to whichever core is attached, adding the credential. Three things follow

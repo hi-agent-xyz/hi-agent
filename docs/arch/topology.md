@@ -98,8 +98,14 @@ credential upstream. Three things follow, and the third is the point:
 - **desktop and mobile run identical face code**, which is what "no architectural
   difference between them" has to mean concretely.
 
-On iOS the same is done with a `WKURLSchemeHandler` rather than a local port. Credentials
-live in the OS keychain, never a plist or `localStorage`.
+**On iOS it is the same local port**, not a `WKURLSchemeHandler`. A custom scheme is not
+a secure context, so a page served through one gets no microphone and no camera — which
+is most of why a phone is an interesting surface at all — while `http://127.0.0.1` is
+potentially trustworthy and does. The second reason is that a loopback listener is the
+proxy an app already has: `crates/hi-app` builds for `aarch64-apple-ios` as it stands, so
+the roster, the session exchange and the credential rules have one implementation rather
+than a Swift retelling of them. Credentials live in the OS keychain, never a plist or
+`localStorage`.
 
 **Host and client are capabilities of an app instance, never properties of a platform.** An
 app asks "can I host a core here?" and a mobile app answers no. When that answer changes,

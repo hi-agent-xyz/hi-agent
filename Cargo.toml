@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/hi-app", "crates/hi-wire"]
+
 [package]
 name = "hi-agent"
 version = "0.1.0"
@@ -14,6 +17,11 @@ name = "hi-agent"
 path = "src/main.rs"
 
 [dependencies]
+# The app half, in its own crate because a phone links it and cannot link a core.
+hi-app = { path = "crates/hi-app" }
+# The names the two halves have to agree on.
+hi-wire = { path = "crates/hi-wire" }
+
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower = "0.5"

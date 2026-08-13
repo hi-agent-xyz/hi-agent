@@ -51,11 +51,11 @@ use sha2::{Digest, Sha256};
 
 /// Cookie carrying an exchanged session. `HttpOnly` so no script can read it,
 /// `SameSite=Lax` so the form-POST class of cross-site request cannot use it.
-pub const SESSION_COOKIE: &str = "hi_surface";
-
-/// Header a browser-shaped client sets to prove its request could not have been a
-/// cross-site *simple* request. See [`Surfaces::csrf_ok`].
-pub const CSRF_HEADER: &str = "x-hi-surface";
+///
+/// Named in `hi-wire` because an app sets what a core checks, and the two are
+/// separate crates that build for different platforms. See [`Surfaces::csrf_ok`]
+/// for what the header is for.
+pub use hi_wire::{CSRF_HEADER, SESSION_COOKIE};
 
 /// How long an exchanged session lasts. Long enough that a phone left alone for a
 /// weekend does not have to re-pair; short enough that a stolen cookie expires.

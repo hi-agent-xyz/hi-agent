@@ -16,7 +16,7 @@
 //! one, or the attached one being asleep, are the two moments it exists for — and
 //! the face is served *by the attached core*, so a roster living inside it is
 //! unreachable precisely then. Same reasoning as the pairing page
-//! ([`crate::foundation::surfaces`]), which is self-contained for the same kind
+//! (the core's `foundation::surfaces`), which is self-contained for the same kind
 //! of reason: it is shown to a browser that may fetch nothing else yet.
 //!
 //! So: one file, no assets, no imports. It costs a few kilobytes and it works

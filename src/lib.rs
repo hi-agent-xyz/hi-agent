@@ -8,7 +8,6 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, watch};
 
-pub mod app;
 pub mod appearance;
 pub mod body;
 pub mod bundle;
@@ -434,9 +433,9 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // machine — is reachable the moment it is written.
     let app_server = match config.app_port {
         Some(app_port) => {
-            app::roster::ensure_local(&config.data_dir, config.port)
+            hi_app::roster::ensure_local(&config.data_dir, config.port)
                 .context("seeding the roster with the core on this machine")?;
-            let app = Arc::new(app::App::new(config.data_dir.clone())?);
+            let app = Arc::new(hi_app::App::new(config.data_dir.clone())?);
             let listener = TcpListener::bind(("127.0.0.1", app_port))
                 .await
                 .with_context(|| format!("binding the app on 127.0.0.1:{app_port}"))?;
@@ -444,7 +443,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
                 "the app is at http://127.0.0.1:{app_port} — open this, not the core; \
                  its roster is at http://127.0.0.1:{app_port}/app"
             );
-            let router = app::proxy::router(app);
+            let router = hi_app::proxy::router(app);
             let shutdown = shutdown.clone();
             Some(tokio::spawn(async move {
                 let r = axum::serve(listener, router)

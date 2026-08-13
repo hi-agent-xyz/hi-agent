@@ -22,6 +22,12 @@ use serde::Serialize;
 /// *a* core, and which one is a property of the app, not of any core.
 const KEY_ATTACHED: &str = "roster_attached";
 
+/// `app_settings` is created here as well as by the core's credential store,
+/// with the same definition and `IF NOT EXISTS` on both sides so whichever opens
+/// the file first wins and neither cares. An app that hosts a core shares the
+/// file; an app with no core — a phone — is the only writer, and `attach` writes
+/// to this table, so a roster that could not create it could not record who you
+/// are with.
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS roster (
         id         TEXT PRIMARY KEY,
@@ -29,6 +35,10 @@ const SCHEMA: &str = "
         base_url   TEXT NOT NULL,
         credential TEXT NOT NULL DEFAULT '',
         added_at   TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );
 ";
 
@@ -52,7 +62,7 @@ pub struct Entry {
 fn open(data_dir: &Path) -> anyhow::Result<Connection> {
     std::fs::create_dir_all(data_dir)
         .with_context(|| format!("creating data dir {}", data_dir.display()))?;
-    let p = crate::foundation::credentials::path(data_dir);
+    let p = data_dir.join(hi_wire::STORE_FILE);
     let conn = Connection::open(&p).with_context(|| format!("opening {}", p.display()))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(SCHEMA).context("initializing the roster schema")?;
@@ -172,11 +182,31 @@ mod tests {
     fn dir() -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("hi-roster-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&p).unwrap();
-        // The roster shares `config.db` with the settings table it writes the
-        // attachment into, so that table has to exist first — as it does in a
-        // real install, where the credential store opens at startup.
-        crate::foundation::credentials::set_setting(&p, "seed", "1").unwrap();
         p
+    }
+
+    /// An app with no core has to work, and that is the whole iOS shape.
+    ///
+    /// `attach` records which core you are with in `app_settings`, a table the
+    /// core's credential store used to be the only thing that created — so the
+    /// roster silently depended on a core having opened the file first. On a
+    /// desktop one always had; on a phone none ever will. Nothing here may touch
+    /// the core: no `ensure_local`, no seeding, an empty directory and a remote
+    /// address, exactly as a freshly-paired phone starts.
+    #[test]
+    fn a_roster_with_no_core_behind_it_still_records_who_you_are_with() {
+        let d = dir();
+        let ana = add(&d, "ana", "https://hi-agent.xyz/ana", "cred").unwrap();
+        let other = add(&d, "a server", "https://agent.example.com", "cred").unwrap();
+
+        attach(&d, &other).unwrap();
+        assert_eq!(attached(&d).unwrap().id, other);
+        attach(&d, &ana).unwrap();
+        assert_eq!(attached(&d).unwrap().id, ana, "the attachment survives being moved");
+
+        // And it is on disk, not in memory: a phone is killed the moment it is
+        // backgrounded, so every read here is a cold one.
+        assert!(list(&d).unwrap().iter().find(|e| e.id == ana).unwrap().attached);
     }
 
     #[test]
