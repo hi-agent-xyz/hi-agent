@@ -297,6 +297,22 @@ the conversation's own memory, and the rest of the toolbox is [read on demand](d
 
 Both kinds are **prose in `reflection.md`**. Adding one is not a code change.
 
+**One organizer is the exception, and the exception is the point.** The `people` one is a
+real [worker type](#workers) — `person-reader`, with a bundled prompt — because prose in
+`reflection.md` is prose the settling pass re-authors into a task description every time it
+dispatches, and this is the one job whose entire value is in the exact wording. It walks
+every ask in the stretch; it reads the worker reports and timestamps rather than the agent's
+own account when something didn't land, because that account is what the agent *believed*
+and comes apart from what it did precisely when it matters; it searches for an existing rule
+before writing a new one, since a second copy of an instruction that already failed grows
+the store and changes nothing; and it keeps the [`## Working with them`](data.md#memory)
+section the voice is handed on every turn. A guideline that careful must be versioned and
+ours to tune, not improvised per pass.
+
+So `people` is also the one dimension the settling pass does **not** write. It still names
+and merges clusters — that is cluster work, not prose — and hands each named person present
+in the stretch to a reader.
+
 One red line: reflection may **archive verbatim and write pointers, never paraphrase stored
 bytes**.
 

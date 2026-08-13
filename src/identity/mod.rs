@@ -57,6 +57,7 @@ const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
 const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
 const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md");
 const WORKER_FILE_FILER_BASE: &str = include_str!("workers/file-filer.md");
+const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
 
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
 /// (`docs/arch/foundation.md#the-agent-session-registry`), and the payload of
@@ -87,6 +88,10 @@ pub enum WorkerType {
     DecisionMaker,
     /// Files something the person handed over into `drive/`.
     FileFiler,
+    /// Reads one person out of the record and folds what it learns into their facet —
+    /// including the `## Working with them` section the voice is projected
+    /// ([`crate::mind::memory::conduct`]).
+    PersonReader,
 }
 
 impl WorkerType {
@@ -98,6 +103,7 @@ impl WorkerType {
             Self::ViewReviewer => "view-reviewer",
             Self::DecisionMaker => "decision-maker",
             Self::FileFiler => "file-filer",
+            Self::PersonReader => "person-reader",
         }
     }
 
@@ -109,6 +115,7 @@ impl WorkerType {
         Self::ViewReviewer,
         Self::DecisionMaker,
         Self::FileFiler,
+        Self::PersonReader,
     ];
 
     /// Parse a wire name. `None` for anything unknown — the caller turns that into a
@@ -127,6 +134,7 @@ impl WorkerType {
             Self::ViewReviewer => WORKER_VIEW_REVIEWER_BASE,
             Self::DecisionMaker => WORKER_DECISION_MAKER_BASE,
             Self::FileFiler => WORKER_FILE_FILER_BASE,
+            Self::PersonReader => WORKER_PERSON_READER_BASE,
         }
     }
 }
@@ -182,6 +190,7 @@ impl Role {
         Self::Worker(WorkerType::ViewReviewer),
         Self::Worker(WorkerType::DecisionMaker),
         Self::Worker(WorkerType::FileFiler),
+        Self::Worker(WorkerType::PersonReader),
     ];
 
     /// The wire name — the `X-HI-Role` header, `tools_for_role`, and the `role` field on
@@ -218,6 +227,7 @@ impl Role {
             Self::Worker(WorkerType::ViewReviewer) => "workers/view-reviewer",
             Self::Worker(WorkerType::DecisionMaker) => "workers/decision-maker",
             Self::Worker(WorkerType::FileFiler) => "workers/file-filer",
+            Self::Worker(WorkerType::PersonReader) => "workers/person-reader",
         }
     }
 
@@ -283,9 +293,9 @@ fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
 /// shared base**: a worker's prompt is whole, the same way a rung's is. `common.md` used
 /// to sit above them as the layer every type composed with, which meant a decision-maker
 /// read how to drive a camera and a file-filer read how to review its own artwork. The
-/// price is duplication — a 35-line preamble identical in all five, plus ~36 further
-/// lines shared by two or three of them — and drift between the copies is the risk the
-/// prompt tests below hold.
+/// price is duplication — a preamble repeated in each, plus ~36 further lines shared by
+/// two or three of them — and drift between the copies is the risk the prompt tests
+/// below hold.
 pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
     // The nested one first: creating `prompts/workers/` creates `prompts/` with it.
@@ -381,6 +391,10 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
         .replace(
             "{sessions_dir}",
             &dir(crate::mind::memory::layout::raw_root(&base).join("sessions")),
+        )
+        .replace(
+            "{facets_dir}",
+            &dir(crate::mind::memory::layout::facets_dir(&base)),
         )
         .replace("{drive_dir}", &dir(base.join("drive")))
         .replace("{views_dir}", &dir(base.join("views")))
@@ -837,6 +851,36 @@ mod soul_tests {
         assert_eq!(WorkerType::default(), WorkerType::General);
     }
 
+    /// **The one string two files must agree on.** The person-reader writes a section
+    /// under a fixed heading; `conduct::section` slices on that exact heading and puts
+    /// what it finds in front of the voice on every turn. Nothing at runtime notices a
+    /// mismatch — the slice simply finds nothing, the window quietly goes without it,
+    /// and the symptom is a preference the person stated that never takes hold. Which is
+    /// the exact failure this pair was built to fix, so it is pinned here rather than
+    /// left to a live test to discover.
+    #[test]
+    fn the_reader_writes_the_heading_the_voice_is_projected() {
+        let heading = crate::mind::memory::conduct::HEADING;
+        assert!(
+            WORKER_PERSON_READER_BASE.contains(&format!("\n    {heading}\n")),
+            "person-reader.md must show the heading verbatim, as a literal block"
+        );
+        // And it must say the copying is exact — a heading shown as an example that the
+        // model then improves on is the same failure as not showing one.
+        assert!(WORKER_PERSON_READER_BASE.contains("character for character"));
+    }
+
+    /// The reader is pointed at the record, not at its own account of itself. This is
+    /// the instruction the whole specialism turns on: the agent's narration of a
+    /// mistake is what it believed, and it comes apart from what it did exactly when
+    /// it matters. Pin the destinations so a prompt edit cannot quietly drop them.
+    #[test]
+    fn the_reader_is_sent_to_the_wire() {
+        assert!(WORKER_PERSON_READER_BASE.contains("{raw_dir}/worker/"));
+        assert!(WORKER_PERSON_READER_BASE.contains("{sessions_dir}"));
+        assert!(WORKER_PERSON_READER_BASE.contains("{facets_dir}"));
+    }
+
     /// The worker prompt no longer names a tool the worker does not hold. `ask` was
     /// retired with the old channel; what a working session actually has is
     /// `send_message` to its owner, and the instruction that matters is that it never
@@ -845,7 +889,7 @@ mod soul_tests {
     fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
         for base in [WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
                      WORKER_VIEW_REVIEWER_BASE, WORKER_DECISION_MAKER_BASE,
-                     WORKER_FILE_FILER_BASE] {
+                     WORKER_FILE_FILER_BASE, WORKER_PERSON_READER_BASE] {
             assert!(!base.contains("`ask`"));
             assert!(!base.contains("`delegate`"));
             assert!(!base.contains("`alarm`"));

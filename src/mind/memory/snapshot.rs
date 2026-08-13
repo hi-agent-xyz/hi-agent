@@ -54,10 +54,16 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 /// Everything the reaction must know without reading, in one block, rebuilt
 /// **on every turn**.
 ///
-/// In order: what the conversation carries forward (the generated prompt, capped), what the
+/// In order: how to be with the people in front of it
+/// ([`conduct::projection`](crate::mind::memory::conduct::projection)), what the conversation
+/// carries forward (the generated prompt, capped), what the
 /// agent owes ([`tasks::projection`]), what it may reach,
 /// the learned read on speaking up unprompted, and the recent-signals tail — the tail
 /// last, so it sits against the turn's new signals and reads as one continuous thread.
+///
+/// **Conduct is first and the tail is last, and that is the same decision twice.** What
+/// stands is read as framing; what just happened is read against the turn. A manner that
+/// arrives after three thousand characters of situation is a manner that gets skimmed.
 ///
 /// Nothing here can fail the turn. Each source resolves to `""` on absence or error
 /// and drops out of the join, and the tail says so in words rather than pretending
@@ -69,6 +75,9 @@ pub async fn window(
     id: crate::foundation::registry::SessionId,
 ) -> String {
     let data_dir = memory.data_dir();
+    // First, because it is the standing one: everything after it is the situation, and
+    // this is the manner the situation is met in.
+    let conduct = crate::mind::memory::conduct::projection(data_dir).await;
     let carried = carried_forward(&layout::conversation_prompt_path(data_dir)).await;
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
@@ -85,6 +94,7 @@ pub async fn window(
     );
     let tail = recent_tail(memory).await;
     join(&[
+        conduct.as_str(),
         carried.as_str(),
         owed.as_str(),
         unprompted.as_str(),

@@ -120,6 +120,31 @@ computed at read time rather than stored as a level, so answers can honestly dis
 **Facets** — what is believed, by subject: people, projects, user preference. Growable,
 revisable, correctable by one sentence from the person.
 
+A person's facet carries one section under a fixed heading, **`## Working with them`**, and
+that section alone is projected into the voice's window every turn. Everything above it —
+who they are, what they are building, how their world is arranged — is recall. Everything
+under it is what changes what the agent does next: how they want work delivered, what is
+theirs to decide rather than the agent's, what reliably goes fine and should not be
+second-guessed.
+
+**A section, not a second store, and not a schema.** A separate file holding "how to work
+with them" would be a second copy of one understanding, and the two would disagree within a
+week; a schema would turn the one store that is deliberately prose into a form to fill in,
+and forms get filled. The heading is a key code slices on, nothing more — rename it and the
+window goes without, the same degradation every other source in the projection already has.
+
+**Why it is projected rather than pointed at** is the proactivity argument exactly: Reaction
+is tools-off, so a path to a facet is a path nobody can follow. A preference stated plainly,
+agreed to inside the minute, and gone by the next session is not a memory bug — the memory
+held it. It is a projection bug, and this is the half that fixes it.
+
+**The `people` dimension is written by a reader, not by the settling pass.** Reflection still
+names and merges clusters; the prose is a [`person-reader`](agents.md#reflection--background)
+worker's, one per person actually present in a stretch. Two pens on one file disagree — and
+the reading that earns a section worth projecting (walk every ask, check the wire when one
+didn't land, look for the rule before writing another) does not fit inside a pass that is
+also segmenting the whole frontier.
+
 **Generated system prompts** — what each agent that needs state carries into every window.
 Written by an agent, injected and bounded by code; [below](#memoryprompts).
 
