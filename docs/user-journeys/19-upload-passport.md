@@ -34,4 +34,4 @@
 - 自动判"属于老板本人" vs 每次问一句归属——默认哪个?(倾向:本人高置信自动记 + 一句可纠正;他人的问一句。)
 - 解析算 vision 能力调用,还是独立的"文档理解"能力?
 
-_机制:carrier 收文件(物件 + 来源)→ 理解一次(认出护照,也许 OCR)→ 存(原件逐字进 drive + 一条带出处的认识进记忆)→ `say` 回话。文件是物件、不是感官。可行性:可行,依赖 carrier(入)+ drive(存)+ 文档理解;找回/发回另见 [data-dir-layout](../data-dir-layout.md)。成熟度:**上传 carrier(view + 后端端点)定为**预置内置**(seed,见 [18](18-send-files-to-agent.md));drive / 文档理解待建;"存 + 回话"的行为靠 delegate + say 已有。**_
+_机制:carrier 收文件(物件 + 来源)→ 理解一次(认出护照,也许 OCR)→ 存(原件逐字进 drive + 一条带出处的认识进记忆)→ `hi_say` 回话。文件是物件、不是感官。可行性:可行,依赖 carrier(入)+ drive(存)+ 文档理解;找回/发回另见 [data-dir-layout](../data-dir-layout.md)。成熟度:**上传 carrier(view + 后端端点)定为**预置内置**(seed,见 [18](18-send-files-to-agent.md));drive / 文档理解待建;"存 + 回话"的行为靠 delegate + say 已有。**_

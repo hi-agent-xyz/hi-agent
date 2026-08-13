@@ -27,7 +27,7 @@
 这一轮**新发现的**:**#20**(turn 期间派不出 worker —— **已在本轮修掉并现场复测**)· #23(交付路径的调研没预算)· #24(Cognition 对在场瞎猜)· #25(Cognition 的失败路径不认三分法)· #22(🟢,#20 的后果)。
 这一轮**提出后又撤回的**:**#21**(以为 `Pause` 会卡死)与 **#13 的升级**——两条都建立在同一个错误前提上,真相是**这台测试机的 token 在 LLM 服务端被手动加过预算**,gateway 的账没算错。详见那两条。
 
-**净判断:对话与记忆这一层明显变好了。**本轮唯一新出的 🔴(#20)当轮修掉,根是一句话:**`create_worker` 的契约与实现自相矛盾**——要求调用者先停下,交接才完成。**#3 本轮转为"可接受的损失"**:不给 worker 加持久化(强杀之下任何优雅关闭都是空话),改成一条"像人一样边做边记"的引导,并把外部可见动作的**顺序**单独立规。引导已写进三个 worker prompt,**但一次都没复测**——下一轮第一件事就是它:派一个 worker、`kill -9`、看磁盘剩下什么。
+**净判断:对话与记忆这一层明显变好了。**本轮唯一新出的 🔴(#20)当轮修掉,根是一句话:**`hi_create_worker` 的契约与实现自相矛盾**——要求调用者先停下,交接才完成。**#3 本轮转为"可接受的损失"**:不给 worker 加持久化(强杀之下任何优雅关闭都是空话),改成一条"像人一样边做边记"的引导,并把外部可见动作的**顺序**单独立规。引导已写进三个 worker prompt,**但一次都没复测**——下一轮第一件事就是它:派一个 worker、`kill -9`、看磁盘剩下什么。
 
 ---
 
@@ -36,7 +36,7 @@
 **症状。** 接下一件"长期盯着"的活、写进台账、重启主机——**没有任何东西会把它捡回来**。pulse 照常跳、turn 照常空跑,而那条职责静静躺在台账里,永远不会被读到。
 
 **证据(2026-08-03)。** 老板 13:50 说"帮我盯着油价",13:52 答完细节;`memory/facets/tasks/oil-price-watch/facet.md` 确实建出来了。13:56 重启主机。之后:
-- 13:58:06 与 14:00:18 各跳了一次 pulse,两个 turn 都**静默收场**(`unspoken_chars` 134 / 42,没有 `say`)。
+- 13:58:06 与 14:00:18 各跳了一次 pulse,两个 turn 都**静默收场**(`unspoken_chars` 134 / 42,没有 `hi_say`)。
 - **没有任何 worker 被重新拉起**——盯的动作从未恢复。
 - 逐字帧可证 **Cognition 在重启后被唤醒 0 次**。
 - Reaction 在 pulse 那一轮拿到的窗口小节是:`What I carry forward` · `Who you can reach right now` · `Recent (last 30 minutes)` · `On screen now` · `Presence` · `New signals`。**没有任何一节是开放职责。**
@@ -441,9 +441,9 @@ cognition spawns:  17→0   18→0   19→0   20→0   21→0   22→0   23→0 
 
 **症状。** "定期去查"这件事,最后落在 **Claude Code 内置的 `CronCreate`** 上。hi-agent 没有定义任何 cron 工具(`grep -rin "croncreate\|cronlist\|crondelete\|scheduled_task" src/` 零命中),`docs/arch/` 里也从没有这个东西。时钟当时被 deferred、`due` 不触发任何事,Cognition 需要一个循环定时器,而手边唯一够得着的那个是**别人家的**。
 
-**工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`say` / `send_message` / `create_worker` / `read_facet` / `update_facet` / `record_episode` / `session_status` / `show` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
+**工具面是干净的两族,一查便知。** 帧日志里 hi-agent 自己的工具一律带 `mcp__hi-agent__` 前缀(`hi_say` / `hi_send_message` / `hi_create_worker` / `hi_read_facet` / `hi_update_facet` / `hi_record_episode` / `hi_session_status` / `hi_show` / …);不带前缀的是 Claude Code 内置:`Bash` `Read` `Edit` `Write` `WebSearch` `WebFetch`,以及 **`CronCreate` `CronList` `CronDelete`** 和 **`ScheduleWakeup`**(同一反射伸向的第二个 harness 定时器)。落盘的 `data/.claude/scheduled_tasks.json` 也在 Claude Code 自己的命名空间里——它出现在 hi-agent 的 data dir 内,只是因为 hi-agent 把 harness 的 config/cwd 指到了那儿。
 
-**这条依赖的是一个工具面的不对称:** `_meta` 把内置工具对 Reaction **关掉**(`say`,别无其他),而 Cognition 是**全开**的——它本来就需要 `Bash`/`Read` 才能干活。代价是:无场景的那几路可以悄悄把**承载状态的机制**换成厂商的东西,而没有任何一层会注意到。
+**这条依赖的是一个工具面的不对称:** `_meta` 把内置工具对 Reaction **关掉**(`hi_say`,别无其他),而 Cognition 是**全开**的——它本来就需要 `Bash`/`Read` 才能干活。代价是:无场景的那几路可以悄悄把**承载状态的机制**换成厂商的东西,而没有任何一层会注意到。
 
 **证据(2026-08-03,`b8ae22f` 复测)。** 盯油价这条职责最终武装成 `data/.claude/scheduled_tasks.json` 里的一条 cron:
 
@@ -486,7 +486,7 @@ run-b 通宵挂着没关,第二天直接读它的磁盘:
 
 - `data/.claude/` **整个目录不存在**,全盘 `find` 不到任何 `scheduled_tasks.json`。
 - 帧日志显示 Cognition 那个 session 用的是 **`ScheduleWakeup`**(#15 原文点名的"第二个 harness 定时器");另一个 cwd 在 `data/views` 的 session 试过 **`CronCreate`**,结果只在 `data/views/.claude/` 留下一个 **`scheduled_tasks.lock`——一个锁文件,旁边没有任务文件**。重启后连这个锁也没了。
-- `mcp__hi-agent__*` 的完整工具面(本轮实测:`say / send_message / create_worker / read_facet / update_facet / record_episode / session_status / session_messages / show / review_view`)里**依然没有任何一个和时间/调度有关**。#15 的核心论断在 `4063c78` 上原样成立。
+- `mcp__hi-agent__*` 的完整工具面(本轮实测:`hi_say / hi_send_message / hi_create_worker / hi_read_facet / hi_update_facet / hi_record_episode / hi_session_status / hi_session_messages / hi_show / hi_review_view`)里**依然没有任何一个和时间/调度有关**。#15 的核心论断在 `4063c78` 上原样成立。
 
 **同一个形状换了三种壳(CronCreate → ScheduleWakeup → 什么都没有),因为洞没变:hi-agent 自己没有钟,`due` 只读不触发,而 Cognition 需要一个会重复到来的时刻。** 只要这个洞在,agent 每次都会伸手去够手边最近的那个别人家的定时器,而且每次够到的都不一样。
 
@@ -502,7 +502,7 @@ run-b 通宵挂着没关,第二天直接读它的磁盘:
 
 > **不要把这个任务架在 create_worker 上。**……这个常驻任务用系统 cron,**不依赖任何 agent 机制**,机器重启后 cron 也会自己回来。
 
-**分工也终于对了:** *"cron 只取数和记账,不负责说话。我在 pulse 醒来时读 `ledger.jsonl` 和 `ALERT.json`,该叫人时由我 `send_message` 给 conversation 3。这样:我睡着了,取数不断;**cron 死了,我读账本发现最新一行是几小时前的,当场就知道它死了**,而不是以为还在跑。"* ——这正是 #2/#16 一直要的那个性质,由它自己推出来。
+**分工也终于对了:** *"cron 只取数和记账,不负责说话。我在 pulse 醒来时读 `ledger.jsonl` 和 `ALERT.json`,该叫人时由我 `hi_send_message` 给 conversation 3。这样:我睡着了,取数不断;**cron 死了,我读账本发现最新一行是几小时前的,当场就知道它死了**,而不是以为还在跑。"* ——这正是 #2/#16 一直要的那个性质,由它自己推出来。
 
 **判据到手,而且是正面的。** 前两轮都停在"没观测到 cron 触发过"或"响了也不干活"。本轮直接读磁盘:
 
@@ -581,7 +581,7 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 
 **为什么这条比 #15 更疼,值得单列。** #15 是"心跳借了别人家的钟";这一条是**自愈回路反向运转**:唤醒修好了(#1),而醒来后的第一个动作是**用一个想象出来的机制替换掉一个真实的机制**,并把风险披露一并删掉。重启前的状态(脆弱但真实、且如实标注)**严格优于**重启后的状态(不存在但自称 durable)。**醒得越勤,退化越快。**
 
-**倾向。** "登记"必须有一个会失败的写入路径——如果 hi-agent 没有调度器,`update_facet` 就不该接受"已登记/running"这类状态,或者 `state: running` 必须携带一个宿主能回读校验的句柄。**让"我挂上了"成为一句可以被系统判假的话。**
+**倾向。** "登记"必须有一个会失败的写入路径——如果 hi-agent 没有调度器,`hi_update_facet` 就不该接受"已登记/running"这类状态,或者 `state: running` 必须携带一个宿主能回读校验的句柄。**让"我挂上了"成为一句可以被系统判假的话。**
 
 **涉及。** [05](05-news-and-watch.md)(重启不丢盯)· [02](02-feishu-sprint-backlog.md)(重启恢复)· [25](25-resume-interrupted-work.md)
 
@@ -653,7 +653,7 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 那句"连已知正确的 welcome view 在预览器里也是平铺的"是可证伪的对照实验,是 agent 自己做的——**这条 host bug 是它发现并隔离的,不是我发现的**。
 
 **两个独立的问题:**
-- **`review_view` 的渲染产物不可用**(平铺重复),导致"交付必检"这条 SOUL 级要求在 view 上**没有可用的工具支撑**。agent 要么盲发,要么像这次一样自建一套——它选了后者,代价是十几分钟和一个装进 data-dir 的 `node_modules`。
+- **`hi_review_view` 的渲染产物不可用**(平铺重复),导致"交付必检"这条 SOUL 级要求在 view 上**没有可用的工具支撑**。agent 要么盲发,要么像这次一样自建一套——它选了后者,代价是十几分钟和一个装进 data-dir 的 `node_modules`。
 - **worker 往 data-dir 里装依赖树**。`views/_preview/node_modules` 是运行期产物,没人管它的生命周期、大小、清理。与 [#11](gaps.md) 同族:**产物落在 hi-agent 模型之外的地方**。
 
 **注意不要误读为"演出变慢了"。** 口播路径没有变慢(接话 10s、结果 89s,与上一轮持平);变慢的**只是 view 那一条腿**,而且原因具体、可修。
@@ -662,21 +662,21 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 
 **复测 2026-08-05 · `a05b734` — host bug 原样存在,而且在一个零记忆的新实例上被**独立地重新发现,结论一字不差**。**
 
-全新 `--data-dir`,没有任何上一轮的记忆。worker 连调 `review_view` 三次(14:14:52 / 14:15:05 / 14:15:16),然后在帧日志里留下这句:
+全新 `--data-dir`,没有任何上一轮的记忆。worker 连调 `hi_review_view` 三次(14:14:52 / 14:15:05 / 14:15:16),然后在帧日志里留下这句:
 
-> "`review_view` is broken here — **it tiles the same fragment even for the known-good builtin view.** I'll build my own harness."
+> "`hi_review_view` is broken here — **it tiles the same fragment even for the known-good builtin view.** I'll build my own harness."
 
 **同一个可证伪的对照实验(拿已知正确的 builtin view 当对照),同一个结论,来自一个不可能"记得"上一轮的实例。** 这基本排除了"上次那次是偶然/环境问题"。
 
-- 🔴 **`review_view` 渲染产物不可用**,未修。代价照旧:worker 自建 headless-Chromium(`_preview/shot.mjs`),**`node_modules` 又装进了 data-dir**(`/tmp/jt5-data/views/_preview/node_modules`)。与 [#11](gaps.md) 同族,原样复现。
+- 🔴 **`hi_review_view` 渲染产物不可用**,未修。代价照旧:worker 自建 headless-Chromium(`_preview/shot.mjs`),**`node_modules` 又装进了 data-dir**(`/tmp/jt5-data/views/_preview/node_modules`)。与 [#11](gaps.md) 同族,原样复现。
 - ⚠️ **到屏时延本轮更差:765 秒**(22:11:46 提问 → 22:24:31 `op=Show`),上一轮 968 秒、再上一轮 68 秒。**但原因换了,而且不是这条**——见 **#23**:本轮 worker 把十几分钟花在了开放式设计调研上,不是花在跟坏预览器搏斗上。
 - ✅ **值得记的一半:这次它没有盲发。** 自建工具截出的图我人工核过,深浅双主题、无占位符、数据齐全、页脚标了来源与口径。它在 facet 里对每张卡都写了"深浅双主题渲染并亲眼看过"。**交付必检成立,只是没有可用的官方工具支撑它。**
 
 ---
 
-## 20 · `create_worker` 派不出去,因为派工的人就是要去开工的那个人 · ✅ **已修,现场复测通过**
+## 20 · `hi_create_worker` 派不出去,因为派工的人就是要去开工的那个人 · ✅ **已修,现场复测通过**
 
-**症状。** Cognition 调 `create_worker`,拿到 `session N starting`,然后这个 worker **永远不存在**:`session_status` 一律回 `no live session N`,`send_message` 一律回 `nothing live at N`。`server.log` 里**一个 worker 子进程都没起**。于是 Cognition 只好自己干——而它一自己干,下一个 worker 就更派不出去。
+**症状。** Cognition 调 `hi_create_worker`,拿到 `session N starting`,然后这个 worker **永远不存在**:`hi_session_status` 一律回 `no live session N`,`hi_send_message` 一律回 `nothing live at N`。`server.log` 里**一个 worker 子进程都没起**。于是 Cognition 只好自己干——而它一自己干,下一个 worker 就更派不出去。
 
 **证据(2026-08-05,`a05b734`)。** 重启后老板问"今天有什么大新闻",Cognition 连派三次:
 
@@ -694,7 +694,7 @@ cron.log  空 —— 与它 facet 里写的"正常情况应该是空的"一致
 
 **机制,一句话:worker 的孵化由派它的那个 rung 的 loop 负责,而这个 loop 正阻塞在派它的那个 turn 上。**
 
-worker 本身是**真的子进程**,不是"turn 里的一段任务";落在 loop 里的是它的**孵化与看管**。`create_worker`([`mcp/mod.rs:755`](../../src/foundation/mcp/mod.rs))铸一个 id,把 `LoopControl::CreateWorker` 投进**调用者自己 conversation 的 sink**(注释:*"The caller's own header conversation is that loop"*),然后**只要投递成功就回报 `starting`**——不等子进程真的起来。而 `cognition.rs` 的循环形状是:
+worker 本身是**真的子进程**,不是"turn 里的一段任务";落在 loop 里的是它的**孵化与看管**。`hi_create_worker`([`mcp/mod.rs:755`](../../src/foundation/mcp/mod.rs))铸一个 id,把 `LoopControl::CreateWorker` 投进**调用者自己 conversation 的 sink**(注释:*"The caller's own header conversation is that loop"*),然后**只要投递成功就回报 `starting`**——不等子进程真的起来。而 `cognition.rs` 的循环形状是:
 
 ```rust
 tokio::select! {
@@ -710,9 +710,9 @@ tokio::select! {
 match turn(&reaction, id, &conversation, &pending, &mut session).await { ... }
 ```
 
-`turn()` 在 `select!` **外面** await。**turn 进行期间没有任何东西在 poll `control_rx`。** 而 Cognition 恰恰是**在自己的 turn 里**调 `create_worker` 的——于是:请求这个 worker 的那次 turn,正是唯一能孵化它的那段代码所等待的东西。**它要到自己结束之后才能满足自己发出的请求。**
+`turn()` 在 `select!` **外面** await。**turn 进行期间没有任何东西在 poll `control_rx`。** 而 Cognition 恰恰是**在自己的 turn 里**调 `hi_create_worker` 的——于是:请求这个 worker 的那次 turn,正是唯一能孵化它的那段代码所等待的东西。**它要到自己结束之后才能满足自己发出的请求。**
 
-**这不是 Cognition 没听话。** 没有任何 prompt 引导能让一个 worker 在"请求它的那个 turn"进行期间存在;这是结构性的。引导只影响了**二阶伤害**:`session_status` 如实回答"no live session"(此刻它确实还不存在),Cognition 把这句读成"worker 死了"、判定机制坏了、于是自己干——**而自己干又让 turn 更长,让下一个 `CreateWorker` 排得更久**。这个闭环才是它看起来像"永久坏掉"而不是"turn 期间不可用"的原因。
+**这不是 Cognition 没听话。** 没有任何 prompt 引导能让一个 worker 在"请求它的那个 turn"进行期间存在;这是结构性的。引导只影响了**二阶伤害**:`hi_session_status` 如实回答"no live session"(此刻它确实还不存在),Cognition 把这句读成"worker 死了"、判定机制坏了、于是自己干——**而自己干又让 turn 更长,让下一个 `CreateWorker` 排得更久**。这个闭环才是它看起来像"永久坏掉"而不是"turn 期间不可用"的原因。
 
 **时间线可证,而且证明它是 turn 级的、不是永久的:**
 
@@ -732,7 +732,7 @@ match turn(&reaction, id, &conversation, &pending, &mut session).await { ... }
 **为什么疼。**
 - **人被晾了 29 分钟。** 10:05:17 它说"两三分钟",10:34:42 才交付,并如实道歉(*"比我说的两三分钟晚了不少,抱歉——中间查得不顺"*)。
 - **它被迫把 172 次工具调用塞进 Cognition 自己的 turn**(94 次 WebSearch + 43 次 WebFetch + 14 次 Bash …),于是 **#22** 那条(长 turn 期间时钟停摆)必然跟着发生。
-- **契约本身是自相矛盾的**:`create_worker` 的语义是"把活交出去,我接着干别的",而实现要求调用者**先停下来**,交接才会完成。`starting` 这个回答在它被说出的那一刻,是一句无法兑现也无法证伪的话。
+- **契约本身是自相矛盾的**:`hi_create_worker` 的语义是"把活交出去,我接着干别的",而实现要求调用者**先停下来**,交接才会完成。`starting` 这个回答在它被说出的那一刻,是一句无法兑现也无法证伪的话。
 - **失败是静默的、且只能靠轮询发现**——而唯一的轮询判据 `turn(s)` 计数正是 **#12** 里那个没有写者的计数器。
 - **它自己已经写了一份 skill 来对付这个 bug。** `skills/dispatching-workers.md`,开头一句:*"2026-08-04 第一次派工就撞上了:**worker 可能根本不启动,而且不会报错。**"* 里面有两种死法、一条 2026-08-05 的自我更正(*"⚠️ `nothing live` 不等于死……我因为判错,差点把一份好东西当成没有"*)、第三种死法(402)、以及结论:*"重建也不动,就自己做。手上工具是全的。"* **这份文件是这轮测试里最有力的证据——agent 在用自己的运行日志给宿主写 bug 报告。**
 
@@ -752,7 +752,7 @@ loop {
 
 **只服务控制臂是有意的。** 把唤醒臂/邮件臂也放进来会**在一个 turn 之上再起一个 turn**。worker 的**回报**也留在外面:它需要 `&mut pending`,而当前 turn 正借着它——借用检查器在这里恰好把设计逼对了(*"what comes back arrives later, as a message of its own"*)。
 
-**只需要改 Cognition 一处。**`reaction_loop` 形状相同,但**没有同一个病**:conversation loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `create_worker` 时 conversation loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reaction_turn` 本身就借着 `&mut workers`。)
+**只需要改 Cognition 一处。**`reaction_loop` 形状相同,但**没有同一个病**:conversation loop 驱动的是短的对话 turn,而那里真正长跑的 Deliberation 是**另一个 session**(`workers.deliberate()` 只负责把它拉起来,不 await 它的 turn),所以它调 `hi_create_worker` 时 conversation loop 正闲在 `select!` 上。**Cognition 独有的地方在于它自己的长 turn 就是由那个必须替它孵化 worker 的 loop 亲自驱动的。**(顺带:那里也做不了这个改动——`run_reaction_turn` 本身就借着 `&mut workers`。)
 
 **现场复测 2026-08-05 12:29(打了补丁的 release,同一个 data-dir)。** 给它一件必须现查 + 出图的活("今年国内新能源车的销量,做个图放屏幕上"),读 Cognition 的逐字帧与 `server.log` 对时间:
 
@@ -892,7 +892,7 @@ loop {
 
 所以那几次"主动汇报"其实都搭在 presence return 上——**而人回到窗口,恰恰就是他准备开口问的那一刻**,等于没有。
 
-**修法。** 给声音一个、且只有一个定时器:`say(text, back_in)`。说出口的那句话自己带上刚刚承诺的尺寸(`10m`),host 到点唤醒它(`LoopInput::CheckIn`,与 `(pulse)`、`(they're back)` 并列的第三种唤醒)。**下面再垫一层地板**:自家 Deliberation 还在跑、而声音没留数时,host 按 `check_in`(默认 5m,逐次翻倍到 pulse)自己唤醒一次。两者都只是**允许说话,不是命令说话**——醒来无话可说就继续沉默。空房间到点则直接丢弃,交给 return 唤醒。设计侧改动记在 `docs/arch/core.md#the-check-in`。
+**修法。** 给声音一个、且只有一个定时器:`hi_say(text, back_in)`。说出口的那句话自己带上刚刚承诺的尺寸(`10m`),host 到点唤醒它(`LoopInput::CheckIn`,与 `(pulse)`、`(they're back)` 并列的第三种唤醒)。**下面再垫一层地板**:自家 Deliberation 还在跑、而声音没留数时,host 按 `check_in`(默认 5m,逐次翻倍到 pulse)自己唤醒一次。两者都只是**允许说话,不是命令说话**——醒来无话可说就继续沉默。空房间到点则直接丢弃,交给 return 唤醒。设计侧改动记在 `docs/arch/core.md#the-check-in`。
 
 **未复测。** 需要的是一次真实长活:派一件跑十几分钟的活,不问,看 `server.log` 是否出现 `check-in fired`,以及出声的内容是不是**真的进度**而不是 "still working on it"。
 

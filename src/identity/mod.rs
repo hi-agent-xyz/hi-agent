@@ -385,7 +385,7 @@ fn abs(data_dir: &Path) -> PathBuf {
 ///   round trip was not once — it was every time, forever.
 /// - **One `core.md` served three rungs with three tool surfaces**, so each was handed
 ///   large sections about jobs it could not do: Cognition read 56 lines on photos and
-///   file-filing, and all three read how to drive a screen none of them has `look` for.
+///   file-filing, and all three read how to drive a screen none of them has `hi_look` for.
 ///
 /// Each file is now self-contained and carries only what its rung can act on. The cost is
 /// real: ~71 lines of shared character live in three copies, and drift between them is
@@ -480,7 +480,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
 /// rather than for the activity, which is what `speaking.md` was.
 ///
-/// Its surface is `say` · `show` · `send_message`
+/// Its surface is `hi_say` · `hi_show` · `hi_send_message`
 /// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
 /// three: the file once said "you have exactly two", then told the voice to "hand it
 /// onward" without naming the verb that does it.
@@ -513,7 +513,7 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
 const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
-put the built-in welcome on screen while you speak it (`show` with ref \
+put the built-in welcome on screen while you speak it (`hi_show` with ref \
 `_builtin/welcome`), then hand over the floor. One warm beat that lands who you are — \
 not a tour, not a walkthrough, and nothing to teach them; you'll show them by doing, \
 from here on.";
@@ -783,8 +783,8 @@ mod soul_tests {
         // Matched on a fragment that does not straddle the file's line wrap.
         assert!(REACTION_BASE.contains("they are talking to you, and only you"));
         assert!(REACTION_BASE.contains("no other \"someone\" who does the work"));
-        assert!(REACTION_BASE.contains("`say` is your voice"));
-        assert!(REACTION_BASE.contains("`show`"));
+        assert!(REACTION_BASE.contains("`hi_say` is your voice"));
+        assert!(REACTION_BASE.contains("`hi_show`"));
 
         // And nothing is prepended: the installed file *is* the prompt, so the only
         // additions are the two pieces of state that follow it.
@@ -837,7 +837,7 @@ mod soul_tests {
         // retired and the builder was left ordered to Read something that no longer
         // existed. Pin prose the layer actually carries, so deleting the layer fails
         // the test and deleting a file it merely mentions does not.
-        const VIEW_LAYER: &str = "review_view";
+        const VIEW_LAYER: &str = "hi_review_view";
         let builder = role_prompt(dir.path(), Role::Worker(WorkerType::ViewBuilder)).await;
         assert!(builder.contains(VIEW_LAYER));
         assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
@@ -931,7 +931,7 @@ mod soul_tests {
 
     /// The worker prompt no longer names a tool the worker does not hold. `ask` was
     /// retired with the old channel; what a working session actually has is
-    /// `send_message` to its owner, and the instruction that matters is that it never
+    /// `hi_send_message` to its owner, and the instruction that matters is that it never
     /// waits for the answer.
     #[test]
     fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
@@ -942,19 +942,19 @@ mod soul_tests {
             assert!(!base.contains("`delegate`"));
             assert!(!base.contains("`alarm`"));
         }
-        assert!(WORKER_GENERAL_BASE.contains("`send_message`"));
+        assert!(WORKER_GENERAL_BASE.contains("`hi_send_message`"));
         assert!(WORKER_GENERAL_BASE.contains("Never wait for an answer"));
     }
 
     /// The two halves of the view loop both name the tool that makes them possible.
-    /// Before `review_view` existed, the builder's prompt pointed at `look` — which
+    /// Before `hi_review_view` existed, the builder's prompt pointed at `hi_look` — which
     /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
     /// at all because it had no way to render. A prompt naming a tool the session does
     /// not hold is the failure this whole pass is cleaning up, so it is pinned.
     #[test]
     fn both_halves_of_the_view_loop_name_the_render_tool() {
-        assert!(WORKER_VIEW_REVIEWER_BASE.contains("`review_view`"));
-        assert!(WORKER_VIEW_BUILDER_BASE.contains("`review_view`"));
+        assert!(WORKER_VIEW_REVIEWER_BASE.contains("`hi_review_view`"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("`hi_review_view`"));
         // The reviewer judges; it does not edit. A reviewer that rewrites the view has
         // destroyed the only independent read anyone was going to get.
         assert!(WORKER_VIEW_REVIEWER_BASE.contains("You judge; you do not fix"));
@@ -1058,7 +1058,7 @@ mod soul_tests {
     /// **The reply that used to be structural is now guidance, so it is pinned here.**
     /// Deliberation's answer came back as a `WorkerReport` whether or not it chose to
     /// send one — the host delivered it. Cognition has no such path: the only thing that
-    /// leaves the rung is `send_message`, and everywhere else in its prompt silence is a
+    /// leaves the rung is `hi_send_message`, and everywhere else in its prompt silence is a
     /// legitimate outcome it is explicitly trusted to choose. That trust is correct for a
     /// glance-up and catastrophic for a hand-down, where a person is sitting in front of
     /// the voice waiting. `cognition::turn` carries a host-side backstop for it; this
@@ -1123,7 +1123,7 @@ mod soul_tests {
     fn cognition_is_not_told_to_speak() {
         assert!(COGNITION_BASE.contains("You do not speak"));
         assert!(
-            !COGNITION_BASE.contains("`say`") && !COGNITION_BASE.contains("`show`"),
+            !COGNITION_BASE.contains("`hi_say`") && !COGNITION_BASE.contains("`hi_show`"),
             "no expression tools in a prompt for a rung that holds none"
         );
     }

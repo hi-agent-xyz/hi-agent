@@ -19,7 +19,7 @@ installAuthGate();
 // Read before the first render so nothing paints in the strip and then jumps.
 applyHostChrome();
 
-// Tell the backend how big this window is, so `review_view` renders a view at the
+// Tell the backend how big this window is, so `hi_review_view` renders a view at the
 // frame the person actually has. Gated on the titlebar flag `applyHostChrome` just
 // hoisted, so only the desktop window reports — hence the ordering. Installed here
 // rather than in a component effect: it's a fact about the window, not about

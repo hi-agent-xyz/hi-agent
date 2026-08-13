@@ -25,9 +25,9 @@ Exactly three things become messages, and nothing else does:
 |---|---|
 | Something the person typed or said | `POST /api/in/text` (typed, or settled recognition) |
 | A file the person handed over | `POST /api/in/file`, `POST /api/up/{token}` |
-| One thing the agent said | one `say` call |
+| One thing the agent said | one `hi_say` call |
 
-**One `say` call is one message, whole.** `say` already receives its complete text, so a
+**One `hi_say` call is one message, whole.** `hi_say` already receives its complete text, so a
 message is appended when the call is accepted — not assembled from chunks as a
 generation streams. Sentence splitting still happens downstream, but only to pace TTS;
 it never reaches the list.
@@ -36,14 +36,14 @@ Everything else that moves through the system is not conversation and stays out:
 (they have the view slot), worker reports, mail between rungs, glance-up and check-in wakes,
 face and voice recognition, tool calls, the activity meter, wire frames. Each already
 has a home in the journal or the inspector. A check-in appears here only if it produced
-a `say` — which is correct, because then it is a thing that was said.
+a `hi_say` — which is correct, because then it is a thing that was said.
 
 ## Why whole messages, and why short ones
 
 The list is a chat between two people, not a transcript of an agent's working. People
 send a message when they have finished writing it, and they send three short ones rather
 than one long one. That is the shape the agent writes in: `SAY_MAX_CHARS` is not a guard
-against an accidental dump, it is the size of a message, and a rejected `say` means
+against an accidental dump, it is the size of a message, and a rejected `hi_say` means
 *send this as a few* rather than *something went wrong*.
 
 Short messages lose nothing, because depth was never supposed to live here. A person
@@ -139,4 +139,4 @@ conversation you have to read the logs to follow is not a conversation.
   scrollback request.
 - Ordering is arrival order. A reply that crossed with a new human line appears after it.
 - Nothing tells the agent whether a message was read, and nothing ever will.
-- A very long `say` is rejected rather than truncated; the agent splits it.
+- A very long `hi_say` is rejected rather than truncated; the agent splits it.

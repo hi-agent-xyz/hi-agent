@@ -450,9 +450,9 @@ mod activity_tests {
 
         let tool = frame(serde_json::json!({
             "method": "item/completed",
-            "params": {"item": {"type": "mcpToolCall", "server": "hi", "tool": "review_view", "status": "completed"}}
+            "params": {"item": {"type": "mcpToolCall", "server": "hi", "tool": "hi_review_view", "status": "completed"}}
         }));
-        assert_eq!(tool.activity().as_deref(), Some("hi/review_view"));
+        assert_eq!(tool.activity().as_deref(), Some("hi/hi_review_view"));
     }
 
     /// What a session *said* is the output tail's job. Reporting it here too would put the
@@ -531,7 +531,7 @@ mod tests {
         let note = json!({
             "method": "item/completed",
             "params": { "item": {
-                "type": "mcpToolCall", "id": "i1", "server": "hi-agent", "tool": "look",
+                "type": "mcpToolCall", "id": "i1", "server": "hi-agent", "tool": "hi_look",
                 "status": "completed",
                 "result": { "content": [{ "type": "image", "mimeType": "image/png" }] }
             }}

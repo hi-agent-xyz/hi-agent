@@ -39,12 +39,12 @@ because its memory is **prepared** (see Stage 1). Fast because it *cannot* fetch
 | Tools | **None** — empty cwd; no read/fetch/work | Memory reads + reasoning — **never acts** | Everything; only layer with side effects |
 | Context | Prepared working set (reasonable size, not tiny) | Full memory, own history, worker reports | Just its task |
 | Time | One generation | Seconds+ | However long |
-| Emits | `say` (plain text), `show`, `delegate`→cognition | `surface`→reaction, `dispatch`→worker, memory read/write | `report`→cognition |
-| Never | Touch the world; command workers | `say`; act on the world | Speak; own memory/policy |
+| Emits | `hi_say` (plain text), `hi_show`, `delegate`→cognition | `surface`→reaction, `dispatch`→worker, memory read/write | `report`→cognition |
+| Never | Touch the world; command workers | `hi_say`; act on the world | Speak; own memory/policy |
 
 Cognition doesn't build the view or open the PR *either* — the moment there's an artifact
 or a side effect, that's a worker. Cognition is pure planning + memory; workers are the
-effectors. Single mouth: **cognition never calls `say`** — everything it wants said is a
+effectors. Single mouth: **cognition never calls `hi_say`** — everything it wants said is a
 `surface` *proposal* the reaction arbitrates.
 
 ### Bidirectional communication — hi-agent is the switchboard
@@ -57,7 +57,7 @@ live in the Rust host. Each agent has exactly two wires, both to the host:
   `session/update` notifications (`SessionUpdate::{Text,Thought,ToolCall,…}`), ending in a
   stop. This is how a session is fed and read.
 - **MCP over local HTTP (`/mcp`, scene-routed by `X-HI-Scene`)** — the agent's tool calls
-  (`show`, `surface`, `dispatch`, `report`). The agent's *push* channel.
+  (`hi_show`, `surface`, `dispatch`, `report`). The agent's *push* channel.
 
 The bridge between the two sessions is **two host-side tokio tasks + two `mpsc` channels**:
 
@@ -116,7 +116,7 @@ reaction's cheap memory prep is the only synchronous part; cognition's warm is b
   voice gets to say it *even with no human input*. That is the mechanism for
   cognition-initiated speech — "bring something up like a person," gated by the reaction's
   own read of the room. A cognition `surface` is must-relay; a task worker's is an
-  observation. Single mouth preserved: cognition still never `say`s — it proposes, the
+  observation. Single mouth preserved: cognition still never `hi_say`s — it proposes, the
   reaction voices.
 - **Stage 3b — full switchboard (DEFERRED).** The remaining, larger pieces: promoting
   cognition from a mute `Worker` into a **first-class session with its own driver task and
@@ -137,7 +137,7 @@ What the split actually is today, correcting the historical design notes further
   Anthropic Messages path (below) was tried and **reverted** — the hand-rolled request hung
   on the songguo gateway — so the reaction rides an ACP session, reusing the CLI's proven
   gateway path. It carries `speaking.md` as its system prompt, speaks via plain message
-  text (`agent_message_chunk`), and gets a **`show`-only** `/mcp` surface.
+  text (`agent_message_chunk`), and gets a **`hi_show`-only** `/mcp` surface.
 - **Naming: `SessionRole::ReactionVoice` was collapsed into `Reaction`** (the old agentic
   `Reaction` role is deleted). Cognition is a persistent `SessionRole::Worker`. This
   supersedes the deferred `Reaction → Cognition` rename listed under *Remaining*.
@@ -147,7 +147,7 @@ What the split actually is today, correcting the historical design notes further
   whose version ≠ the pin**, so a stray global 0.55.x (which hangs every ACP prompt for
   minutes) can't shadow the pinned adapter. A tools-off single generation on Opus/0.55.x was
   itself taking minutes — the original "the agentic loop is the latency" claim was wrong.
-- **Views work again.** `show` had become unreachable in split mode (tools-off reaction,
+- **Views work again.** `hi_show` had become unreachable in split mode (tools-off reaction,
   worker surface without it); the reaction now has it, so it can put a worker-built view on
   screen. Expression is enforced reaction-only at dispatch (`dispatch_tool` role guard).
 
@@ -163,7 +163,7 @@ heavyweight agentic ACP loop** — the persistent per-scene "reaction session".
 
 - **Slow.** Even a one-breath reply ("on it") ran the full agentic envelope: a
   `claude`-CLI subprocess doing a multi-step think→tool loop, over a `node`→CLI→HTTPS
-  double indirection, on a large frontier model, with a **mandatory `say` tool
+  double indirection, on a large frontier model, with a **mandatory `hi_say` tool
   round-trip** (streamed text is dropped, `reaction/mod.rs:1768`) and the CLI's own
   system prompt + full tool schema **re-sent every turn**. The session is already
   *task-free* (it delegates real work to workers) — so the slowness is the **agentic
@@ -236,7 +236,7 @@ tunable.)
 4. reaction **articulates** cognition's / workers' intents as they land, as the single
    voice — reconciling with what it already said (don't contradict the quick ack).
 
-Presence appears **only** as the emission gate ("hold the `say` if the room's empty");
+Presence appears **only** as the emission gate ("hold the `hi_say` if the room's empty");
 cognition never considers it. Turn-taking / floor logic (is it my turn?) stays — that's
 conversation, not presence.
 
@@ -258,7 +258,7 @@ conversation, not presence.
   (spawn once, follow-up each turn) seeded with the turn's human request; it thinks/works
   off the floor and reports back as an ordinary `LoopInput::Worker` the reaction voices. So
   the reaction is the single fast voice; cognition (agentic) does the work in parallel. No
-  MCP/role surgery — a worker is already channel-mute (it reports, never `say`s), and the
+  MCP/role surgery — a worker is already channel-mute (it reports, never `hi_say`s), and the
   human-only task render keeps cognition from re-ingesting its own report.
 
 ## Remaining (fix-forward + next)

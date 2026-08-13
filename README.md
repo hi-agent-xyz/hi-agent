@@ -112,7 +112,7 @@ NDJSON stream: the first line is the current window whole, and later lines appen
 ```
 
 Three things become messages and nothing else does: what the person typed or said, a
-file they handed over, and one `say` call — whole, never streamed in as it is generated.
+file they handed over, and one `hi_say` call — whole, never streamed in as it is generated.
 Views, worker reports, clock wakes and tool calls are not conversation and stay out.
 
 The backend owns the list. There are no client IDs, cursors, acknowledgements or read
@@ -163,7 +163,7 @@ See [`docs/impl.md`](docs/impl.md) for the full architecture document.
 | `POST /audio`, `GET /audio` | Y when configured | STT transcribes the body and routes the text; the router may reply via `speak(channel="audio")` which is synthesized back through TTS and broadcast on the long-poll. 501 on POST when `STT_PROVIDER` is unset. |
 | `POST /touch`, `POST /smell`, `POST /taste` | 501 | Per v0 scope |
 | One conversation | Y | All attached windows and channels share the same agent appearance and stream |
-| Workers (parallel agent sessions) | Y | `create_worker` MCP tool; one process-wide session per worker |
+| Workers (parallel agent sessions) | Y | `hi_create_worker` MCP tool; one process-wide session per worker |
 | Memory: `journal.jsonl` + `intents.jsonl` | Y | Append-only journal; intents file rewritten atomically on add/remove |
 | Heartbeat (1 Hz, absolute intents) | Y | Synthetic `signal_in` on `channel: intent`, injected via the reaction |
 | `Authorization: Bearer ...` | accepted/logged | Parsed and logged; not validated in v0 |

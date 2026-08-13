@@ -238,7 +238,7 @@ host fences anyone out.
 
 | Role | Default surface | Why that size |
 |---|---|---|
-| **Reaction** | `say` · `show` · `SendMessage`, and **no built-ins at all** | its expression channels plus the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
+| **Reaction** | `hi_say` · `hi_show` · `SendMessage`, and **no built-ins at all** | its expression channels plus the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
 | **Cognition** | `SendMessage` · `CreateWorker` · session reads · task writes | it delegates rather than does, and it is the **sole writer** of the ledger |
 | **Reflection** | as Cognition, minus task writes, plus memory curation | it curates `data/`; duties are not its to record |
 | **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |

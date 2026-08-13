@@ -46,7 +46,7 @@ _机制:现有种子——core.md "离手前先看 / succeeded≠right"、[03](0
 环境同 [22](22-research-before-stale-answer.md);先挂 `/api/out/view` 长轮询当"屏幕在场",再一句 **"show me those top 5 languages as a clean card"**(不点破质量、不引导自评)。Ground truth 取自 build worker(session 787c10da)的 `tool_use` 全序列 + 最终 show + 口播。
 
 - ✅ **worker 看自己做出来的东西,不止"编过了"**:写完 `top5.jsx` 后,它**真把视图渲染成图**(esbuild 编 + Playwright/Chromium 截图 `preview.png`)、`Read` 那张 png **看实际成品**,发现问题 → `Edit` 修 → 重渲 → 再 `Read` 看一遍,才报回 ref。"离手前看 the thing itself"在 build 路径上真实发生。
-- ✅ **端到端落地**:mind 收到 ref 后 `show{ref: lang-rankings/top5}` 上屏,收尾口播 *"There it is — each language in its own brand color, with the TIOBE and Stack Overflow numbers on the right."*——交付的是看过的成品。
+- ✅ **端到端落地**:mind 收到 ref 后 `hi_show{ref: lang-rankings/top5}` 上屏,收尾口播 *"There it is — each language in its own brand color, with the TIOBE and Stack Overflow numbers on the right."*——交付的是看过的成品。
 - ⚠️ **"好不好"未被单独隔离**:本次观察到的迭代是修**渲染环节的 bug**(react-dom/client、CORS),不是"这版太平、重做"的**审美**判断;而且 render+截图自检脚手架本就部分在 [appearance.md](../../src/reaction/appearance.md) 里。我加的"对着范例打分 / 过线即止"这层**没被干净地单独压出来**。旁证:worker 在技能笔记里顺手留了一段"design notes for ranked list cards"(深色背景、品牌色大号名次、glow 点、错落入场),说明它确有"好看"意识——但这是顺带,不是被逼出来的一次"翻车重做"。
 
 复核:**批判反射的"看实际成品 + 迭代"机制 = 实测到**(接 core.md 的 succeeded≠right 种子);**"appealing vs functional 的审美过线闸" = 未单独证成**,需一个首版明显 dull 的探针,看能否触发为审美原因的重做来复测。

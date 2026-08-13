@@ -1,7 +1,7 @@
 import { url } from "./base";
 // Client for the stage lane — tell the backend the frame this window is showing.
 //
-// The one consumer is `review_view`: it renders a view at whatever we last
+// The one consumer is `hi_review_view`: it renders a view at whatever we last
 // reported, so a view-builder session composes for the frame the person actually
 // has and a reviewer signs off on that same frame. Before this, both worked
 // against a hardcoded 1280×800 that matched no real window, which is how a

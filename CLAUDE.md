@@ -68,7 +68,7 @@ This is not a new mode: the headless engine is *exactly the shape the app alread
 
 ### The three parts, by what each *is*
 
-1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, the reflex recognizer, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `name_person`/`merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the codex runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
+1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, the reflex recognizer, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `hi_name_person`/`hi_merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the codex runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
 2. **Web face (webview in the shell).** The main content-heavy, fast-moving UI. Talks to the engine over the local API. Write-once cross-platform. (Precedent: the popover face is a `WKWebView`; native and web chat were both tried and rejected in its favor.)
 3. **Native shell (per platform).** Owns the process and everything needing the OS session, in two roles:
    - **App-shell primitives** — run loop, tray, global hotkey tap, native windows, popover. Move to the shell.

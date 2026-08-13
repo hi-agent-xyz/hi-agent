@@ -96,14 +96,14 @@ async fn tools_list_is_role_gated() {
     let names = tool_names(&reaction);
     // The reaction is the fast conversational voice: its two expression channels, both
     // calls, plus the one verb that reaches another agent. Nothing that reads or fetches.
-    // This asserted one tool while `say` sat in the unreachable fallback arm and the
+    // This asserted one tool while `hi_say` sat in the unreachable fallback arm and the
     // voice fell back to plain message text — the test agreed with the code and both
     // were wrong about the design.
     let mut names = names;
     names.sort();
     assert_eq!(
         names,
-        vec!["say".to_string(), "send_message".to_string(), "show".to_string()],
+        vec!["hi_say".to_string(), "hi_send_message".to_string(), "hi_show".to_string()],
         "got {names:?}"
     );
 
@@ -119,17 +119,17 @@ async fn tools_list_is_role_gated() {
     .expect("json");
     let names = tool_names(&worker);
     // One verb reaches another agent, and it is the only one.
-    assert!(names.contains(&"send_message".to_string()), "got {names:?}");
-    assert!(names.contains(&"look".to_string()), "got {names:?}");
-    assert!(names.contains(&"act".to_string()), "got {names:?}");
-    assert!(!names.contains(&"say".to_string()), "worker must not see say");
+    assert!(names.contains(&"hi_send_message".to_string()), "got {names:?}");
+    assert!(names.contains(&"hi_look".to_string()), "got {names:?}");
+    assert!(names.contains(&"hi_act".to_string()), "got {names:?}");
+    assert!(!names.contains(&"hi_say".to_string()), "worker must not see say");
     // The retired channel, in all three of its names. A worker that can still reach
     // the voice by a second route is a worker that will, and then two paths are live.
     for gone in ["ask", "surface", "delegate"] {
         assert!(!names.contains(&gone.to_string()), "`{gone}` is retired; got {names:?}");
     }
     // Only the standing owner roles make workers.
-    assert!(!names.contains(&"create_worker".to_string()), "got {names:?}");
+    assert!(!names.contains(&"hi_create_worker".to_string()), "got {names:?}");
 }
 
 /// The switchboard is process-wide, so reaching it must not require a tool sink.
@@ -143,8 +143,8 @@ async fn the_switchboard_needs_no_tool_sink() {
 
     for (id, call) in [
         // `id` is declared a string in both schemas, so send one.
-        (10, json!({ "name": "session_status", "arguments": { "id": "9999" } })),
-        (11, json!({ "name": "session_messages", "arguments": { "id": "9999" } })),
+        (10, json!({ "name": "hi_session_status", "arguments": { "id": "9999" } })),
+        (11, json!({ "name": "hi_session_messages", "arguments": { "id": "9999" } })),
     ] {
         let resp = post_mcp(
             &client,

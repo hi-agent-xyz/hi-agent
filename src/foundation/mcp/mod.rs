@@ -43,10 +43,10 @@ pub enum McpReply {
 }
 
 /// The tool surfaces, selected by the `X-HI-Role` header. The reaction gets only
-/// `show` (it speaks via plain message text, not a tool); a worker gets the
+/// `hi_show` (it speaks via plain message text, not a tool); a worker gets the
 /// work tools but no voice; reflection reads/writes derived memory. The `_` fallback
 /// is the legacy agentic reaction's full toolset, kept for untagged sessions.
-/// The `say` tool — Reaction's voice.
+/// The `hi_say` tool — Reaction's voice.
 ///
 /// Speech is a **call, not message text**, and that is the whole point: a call returns.
 /// The host can hold an utterance until the room is right, queue it behind another, or
@@ -59,7 +59,7 @@ pub enum McpReply {
 /// a separate verb — could arm a wake for a number nobody was ever told.
 fn say_tool() -> Value {
     tool(
-        "say",
+        "hi_say",
         "Speak to the person. Everything you want said aloud goes through this tool — \
          plain text you write is NOT spoken. Call it with one natural chunk at a time, \
          keeping each call under about 240 characters; an overlong call returns too_long \
@@ -94,12 +94,12 @@ fn say_tool() -> Value {
 /// the sender is stamped host-side from the calling session rather than passed in.
 fn send_message_tool() -> Value {
     tool(
-        "send_message",
+        "hi_send_message",
         "Send a message to another agent session. One direction — it does not wait for a \
          reply, and the return value only tells you whether it was delivered. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
          message so it knows where to reach you. `to` is always a **session id** — a number. \
-         A worker's comes back from `create_worker`; a message you received carries its \
+         A worker's comes back from `hi_create_worker`; a message you received carries its \
          sender's; and everyone else you may reach is listed in your window under \"Who you \
          can reach right now\", each with its id. Nobody is reachable by name.",
         json!({
@@ -115,14 +115,14 @@ fn send_message_tool() -> Value {
 
 fn create_worker_tool() -> Value {
     tool(
-        "create_worker",
+        "hi_create_worker",
         "Start a working session to carry out a job, and get back its session id. It runs \
          with the full toolset and no voice of its own; it reports to you and to nobody else. \
-         Send it the brief with `send_message`, ask how it is doing with `session_status`, and \
-         read what it has produced with `session_messages`. **It is yours until you end it**: \
+         Send it the brief with `hi_send_message`, ask how it is doing with `hi_session_status`, and \
+         read what it has produced with `hi_session_messages`. **It is yours until you end it**: \
          a session that has reported is not finished, it is waiting, and it keeps its whole \
          context for the next thing you send it however long that takes. Nothing reclaims it \
-         on a timer, so when its errand is genuinely done, `close_worker` it — every session \
+         on a timer, so when its errand is genuinely done, `hi_close_worker` it — every session \
          you leave open holds a subprocess.",
         json!({
             "type": "object",
@@ -186,7 +186,7 @@ fn create_worker_tool() -> Value {
     )
 }
 
-/// `cancel_worker` — the other half of `create_worker`.
+/// `hi_cancel_worker` — the other half of `hi_create_worker`.
 ///
 /// Without it, work handed out could not be taken back: everything else that reaches a
 /// working session is a message, and a message is read between turns, so a "stop" sent
@@ -195,16 +195,16 @@ fn create_worker_tool() -> Value {
 ///
 /// It is deliberately *not* destructive. The session survives the cancel with its whole
 /// context, so the common shape — "no, not that, do this instead" — is a cancel followed
-/// by `send_message` to the same id, and the session already knows everything it learned
+/// by `hi_send_message` to the same id, and the session already knows everything it learned
 /// before being stopped.
 fn cancel_worker_tool() -> Value {
     tool(
-        "cancel_worker",
+        "hi_cancel_worker",
         "Stop a working session you created, now, mid-work. Use it the moment the person \
          takes something back or changes direction — telling them you have stopped without \
          calling this is a sentence, not a stop, and the work carries on. The session stays \
          alive and keeps everything it has learned, so to redirect rather than drop the \
-         work, cancel and then `send_message` the new instruction to the same id.",
+         work, cancel and then `hi_send_message` the new instruction to the same id.",
         json!({
             "type": "object",
             "properties": { "id": { "type": "string", "description": "The session id." } },
@@ -213,18 +213,18 @@ fn cancel_worker_tool() -> Value {
     )
 }
 
-/// `close_worker` — the verb that used to be a timer.
+/// `hi_close_worker` — the verb that used to be a timer.
 ///
 /// A working session held a subprocess until fifteen idle minutes killed it, which meant
 /// "I am finished with this session" was said by a clock that could not tell a finished
 /// errand from a waiting one. It is a sentence the owner says now.
 fn close_worker_tool() -> Value {
     tool(
-        "close_worker",
+        "hi_close_worker",
         "Finish with a working session for good, freeing what it holds. Nothing else ends \
          one — a session you leave open stays open, holding its context and its share of \
          the machine, until you say this. So close a session once its errand is genuinely \
-         done and you will not be asking it anything more. Not the same as `cancel_worker`: \
+         done and you will not be asking it anything more. Not the same as `hi_cancel_worker`: \
          that stops the current turn and *keeps* the session, which is what you want for \
          \"no, do this instead\". This ends it, and everything it learned goes with it — if \
          you may still want a follow-up, leave it open. A turn already running is allowed to \
@@ -239,7 +239,7 @@ fn close_worker_tool() -> Value {
 
 fn session_status_tool() -> Value {
     tool(
-        "session_status",
+        "hi_session_status",
         "How a session you created is doing — whether it is working right now, what it is \
          on, how many turns it has taken. Costs you nothing but a line, so check it freely; \
          it deliberately carries none of the session's actual output.",
@@ -253,7 +253,7 @@ fn session_status_tool() -> Value {
 
 fn session_messages_tool() -> Value {
     tool(
-        "session_messages",
+        "hi_session_messages",
         "What a session you created has actually said, most recent last. This is real \
          reading and it costs context, so reach for it when you want the substance — when it \
          has finished, or when someone is asking after progress — rather than as a routine \
@@ -266,7 +266,7 @@ fn session_messages_tool() -> Value {
     )
 }
 
-/// `review_view` — render a saved view in a real browser and hand back both the
+/// `hi_review_view` — render a saved view in a real browser and hand back both the
 /// picture and the page's own account of what went wrong.
 ///
 /// `docs/arch/foundation.md` is blunt about the rule this exists for: *"the command
@@ -287,7 +287,7 @@ fn session_messages_tool() -> Value {
 /// composition that only holds at one frame is worth catching before it ships.
 fn review_view_tool() -> Value {
     tool(
-        "review_view",
+        "hi_review_view",
         "Render a saved view in a real browser and look at it. Returns a verdict, any \
          errors the page reported, and a screenshot of each theme — so you can see what \
          you actually made rather than trusting that it compiled. It renders at the size \
@@ -315,19 +315,19 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             review_view_tool(),
             tool(
-                "look",
+                "hi_look",
                 "See the user's screen right now — returns a screenshot of the main display, plus \
                  its pixel size and the frontmost app. Use it to find where things are before you \
-                 `act`, and again after acting to confirm what changed. The positions you pass to \
-                 `act` are fractions of THIS image.",
+                 `hi_act`, and again after acting to confirm what changed. The positions you pass to \
+                 `hi_act` are fractions of THIS image.",
                 json!({ "type": "object", "properties": {} }),
             ),
             tool(
-                "act",
+                "hi_act",
                 "Operate the user's screen like a human would: move, click, type, or press keys. \
-                 Positions are normalized fractions of the screen read off the latest `look` — `x` \
+                 Positions are normalized fractions of the screen read off the latest `hi_look` — `x` \
                  is 0.0 (left) to 1.0 (right), `y` is 0.0 (top) to 1.0 (bottom). After you act, call \
-                 `look` again to check it worked.",
+                 `hi_look` again to check it worked.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -361,7 +361,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             session_status_tool(),
             session_messages_tool(),
             tool(
-                "record_episode",
+                "hi_record_episode",
                 "File one coherent event as an episode. You are shown the still-unconsolidated \
                  signals as one numbered list, oldest first. `count` is how many signals from the TOP \
                  of the remaining list this episode covers. Work front to back — each call consumes \
@@ -385,7 +385,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "read_facet",
+                "hi_read_facet",
                 "Read your current understanding of one subject before you rewrite it, so you fold new \
                  episodes into what you already know instead of starting blank. Returns the facet's \
                  current text, or a note that none exists yet.",
@@ -399,11 +399,11 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "update_facet",
+                "hi_update_facet",
                 "Write your whole current understanding of one subject — regenerate the file, don't patch \
                  it: pass the complete text (old understanding folded together with the new), not just a \
                  delta. Every claim should cite the episode(s) it came from by their refs (the values \
-                 record_episode returned). Dimensions are open-ended; reuse an existing dimension/subject \
+                 hi_record_episode returned). Dimensions are open-ended; reuse an existing dimension/subject \
                  when one fits rather than coining a near-duplicate.",
                 json!({
                     "type": "object",
@@ -416,7 +416,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "name_person",
+                "hi_name_person",
                 "Attach a name to a person you've recognized. Faces and voices are clustered \
                  automatically — a face shows as `⟨faces: <id>⟩`, a speaker as `⟨voice: <id>⟩`, \
                  where an opaque id like `ff32ce3w` is someone not yet named. When a signal tells \
@@ -434,7 +434,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "merge_people",
+                "hi_merge_people",
                 "Collapse two clusters that are the same person into one — when you realize a face \
                  or voice id (or a name) actually refers to someone you already model, including \
                  across senses (a `⟨voice: …⟩` id and a `⟨faces: …⟩` id that are one source). Folds \
@@ -449,7 +449,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "keep_and_fade",
+                "hi_keep_and_fade",
                 "Let a cold day's media fade to the text, keeping only the moments worth keeping \
                  vivid. Use it on a day from the old-store list you're shown — one genuinely old and \
                  settled, heaviest first — when the raw bytes are vividness the words have outlived. \
@@ -482,7 +482,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 }),
             ),
             tool(
-                "update_proactivity",
+                "hi_update_proactivity",
                 "Rewrite the agent's standing read on speaking up unprompted — the whole \
                  `proactivity.md`, regenerated, not patched. Reach for it when an unprompted word of the \
                  agent's landed (or fell flat) in the signals you just read: the agent spoke first, no one \
@@ -515,7 +515,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // exactly this surface minus the dispatch verbs; folding it in added nothing to
         // declare.
         //
-        // No `say`, no `show`: it proposes, Reaction voices. Enforced three ways
+        // No `hi_say`, no `hi_show`: it proposes, Reaction voices. Enforced three ways
         // that agree — absent here, refused at dispatch above, and its sink carries no
         // sequencer to express through.
         Some("cognition") => vec![
@@ -529,20 +529,20 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // **Reaction** — the mouth. Its two expression channels plus the one verb that
         // reaches another agent, and nothing else: no reads, no fetches, no built-ins
         // (`docs/arch/agents.md#reaction`). A stale comment stood above the arm before
-        // this one saying the voice "speaks via plain message text (not a `say` tool)
-        // and gets exactly one expression tool — `show`", which had not been true since
-        // `say` was added here; it also sat directly above the *cognition* arm, so it
+        // this one saying the voice "speaks via plain message text (not a `hi_say` tool)
+        // and gets exactly one expression tool — `hi_show`", which had not been true since
+        // `hi_say` was added here; it also sat directly above the *cognition* arm, so it
         // described the wrong rung in the wrong place.
         Some("reaction") => vec![say_tool(), show_tool(), send_message_tool()],
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
         // the previous occupant of this arm survived: it held the legacy agentic
-        // reaction's kit — `say`, `show`, `record_reflex`, and the two understanding tools —
+        // reaction's kit — `hi_say`, `hi_show`, `hi_record_reflex`, and the two understanding tools —
         // long after no live role mapped to it, and read as a live surface in every
         // review.
         //
         // One tool lost its only declaration with this and was already unreachable:
-        // `record_reflex`, which still has **no live role** — the recognizer and the
+        // `hi_record_reflex`, which still has **no live role** — the recognizer and the
         // invoke route are real, so the reflex store can be read and fired but never
         // written. That is an open decision, not an oversight: it needs a rung or it
         // needs deleting, and it is now visibly nobody's rather than sitting in an arm
@@ -559,7 +559,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 // ---------------------------------------------------------------------------
 // Modality tools
 //
-// Named for their Hugging Face task rather than for a verb — `image-text-to-text`
+// Named for their Hugging Face task rather than for a verb — `hi_image_text_to_text`
 // where this was once `see`. The task name states the *signature* (what goes in,
 // what comes out) where a verb states only an intent, and it is the same string the
 // provider model cards use, so a tool, its capability module and its config key all
@@ -568,11 +568,11 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 //
 // Six tasks, one axis that matters:
 //
-//   understanding  `image-text-to-text`, `video-text-to-text`  → goes through
+//   understanding  `hi_image_text_to_text`, `hi_video_text_to_text`  → goes through
 //       [`bundle::Bundle`]: raw pixels when the model takes them natively, the
 //       vision capability's text when it doesn't.
-//   generation     `text-to-image`, `image-to-image`,
-//                  `text-to-video`, `image-to-video`           → never touches the
+//   generation     `hi_text_to_image`, `hi_image_to_image`,
+//                  `hi_text_to_video`, `hi_image_to_video`           → never touches the
 //       bundle. No model reached through the agent wire emits pixels, so these are
 //       always a provider call.
 //
@@ -580,7 +580,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 // generated artifact lands and what ref it gets — is settled: the bytes go to
 // [`drive/`](crate::mind::memory::media::store_artifact), the tree that does not
 // fade, and the ref is `drive/<path>`, a second arm on the one ref grammar rather
-// than a second grammar. So `image-to-image` takes a camera still, a handed file and
+// than a second grammar. So `hi_image_to_image` takes a camera still, a handed file and
 // its own last output through the same argument.
 //
 // They also differ from every other tool here in being **built per call**: the
@@ -588,10 +588,10 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 // model" is only true if the agent is shown what there is.
 // ---------------------------------------------------------------------------
 
-/// `image-text-to-text` — an image plus an instruction in, text out.
+/// `hi_image_text_to_text` — an image plus an instruction in, text out.
 fn image_text_to_text_tool() -> Value {
     tool(
-        "image-text-to-text",
+        "hi_image_text_to_text",
         "Look at a still image and answer about it — a photo the person sent, a screenshot they \
          handed over, or a frame held up to the camera. It reaches you as a signal carrying an \
          `⟨ref: …⟩`; pass that `ref`, and optionally what you want to know. Reach for it the moment \
@@ -608,12 +608,12 @@ fn image_text_to_text_tool() -> Value {
     )
 }
 
-/// `video-text-to-text` — a span of live camera plus an instruction in, text out.
+/// `hi_video_text_to_text` — a span of live camera plus an instruction in, text out.
 /// Always polyfilled: no model behind the adapter takes video, so the clip is
 /// understood by the vision capability and the text handed back.
 fn video_text_to_text_tool() -> Value {
     tool(
-        "video-text-to-text",
+        "hi_video_text_to_text",
         "Watch a few seconds of the live camera and tell what happened — for when motion or a \
          sequence matters, not a single frame (someone's action, a gesture, \"did you see that?\"). \
          It reads the camera streaming right now; say how far back with `span` (e.g. \"last 20s\"), or \
@@ -716,14 +716,14 @@ fn video_model_property() -> Value {
     model_property(menu, video_gen::default_model(), "generate")
 }
 
-/// `text-to-image` — a prompt in, a new image out, filed in the drive.
+/// `hi_text_to_image` — a prompt in, a new image out, filed in the drive.
 fn text_to_image_tool() -> Value {
     tool(
-        "text-to-image",
+        "hi_text_to_image",
         "Draw a new image from a description. Say what it should show; every other argument is \
          a knob you may set or leave alone, and leaving one alone means the model decides. The \
          picture is filed in the drive and you get back its `⟨ref: …⟩` — pass that to \
-         `image-to-image` to change it, to `image-text-to-text` to look at it, or report it to \
+         `hi_image_to_image` to change it, to `hi_image_text_to_text` to look at it, or report it to \
          whoever asked so it can go on screen. A knob a model cannot honour comes back as an \
          error naming one that can, so nothing is silently ignored.",
         json!({
@@ -744,10 +744,10 @@ fn text_to_image_tool() -> Value {
     )
 }
 
-/// `image-to-image` — an existing image plus an instruction in, a new image out.
+/// `hi_image_to_image` — an existing image plus an instruction in, a new image out.
 fn image_to_image_tool() -> Value {
     tool(
-        "image-to-image",
+        "hi_image_to_image",
         "Edit an existing image — say what to change and it returns a new image, leaving the \
          original untouched. Pass the `⟨ref: …⟩` of the image to work from: a camera still, a \
          file someone handed over, or one you drew a moment ago. The result is filed in the \
@@ -770,10 +770,10 @@ fn image_to_image_tool() -> Value {
     )
 }
 
-/// `text-to-video` — a prompt in, a clip out, mailed back when it lands.
+/// `hi_text_to_video` — a prompt in, a clip out, mailed back when it lands.
 fn text_to_video_tool() -> Value {
     tool(
-        "text-to-video",
+        "hi_text_to_video",
         "Generate a short video clip from a description. Generation runs for minutes, so this \
          returns straight away and the finished clip arrives as a message carrying its \
          `⟨ref: …⟩`. There is nothing to poll: get on with something else and you will be told.",
@@ -793,10 +793,10 @@ fn text_to_video_tool() -> Value {
     )
 }
 
-/// `image-to-video` — an image as first frame plus an optional prompt in, a clip out.
+/// `hi_image_to_video` — an image as first frame plus an optional prompt in, a clip out.
 fn image_to_video_tool() -> Value {
     tool(
-        "image-to-video",
+        "hi_image_to_video",
         "Animate an existing still — it becomes the first frame of a short clip. Pass the \
          `⟨ref: …⟩` of the image, and optionally say how it should move. Like any generation \
          this runs for minutes: it returns straight away and the clip arrives as a message \
@@ -829,12 +829,12 @@ fn generation_tools() -> Vec<Value> {
     vec![text_to_image_tool(), image_to_image_tool(), text_to_video_tool(), image_to_video_tool()]
 }
 
-/// The `show` tool — put a view on the screen. The reaction's one expression
+/// The `hi_show` tool — put a view on the screen. The reaction's one expression
 /// tool beyond speech: it shows a view a worker already built (by `ref`), or a
 /// trivial inline one. Shared by the reaction surface and the legacy fallback.
 fn show_tool() -> Value {
     tool(
-        "show",
+        "hi_show",
         "Put a view on the screen. Normally you show a view a builder made for you: \
          delegate the build, then pass the `ref` it reported back (like `project/view`) here. \
          Interleave show and say calls in the order you want them experienced (say, \
@@ -936,7 +936,7 @@ async fn dispatch_tool(
     // its `reaction.md` generation. A worker or reflection session must never speak
     // or take the screen even if its model emits the call (these aren't in its
     // advertised surface); enforce that structurally here, not just via the tool list.
-    if matches!(name, "say" | "show") && role != Some("reaction") {
+    if matches!(name, "hi_say" | "hi_show") && role != Some("reaction") {
         return tool_error(&format!(
             "`{name}` is reaction-only; role `{}` may not speak or show",
             role.unwrap_or("<none>")
@@ -946,33 +946,33 @@ async fn dispatch_tool(
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
     // a loop sink, so handle them before the sink lookup.
     match name {
-        "record_episode" => return reflection_record_episode(data_dir, args).await,
-        "read_facet" => return reflection_read_facet(data_dir, args).await,
-        "update_facet" => return reflection_update_facet(data_dir, args).await,
-        "update_proactivity" => return reflection_update_proactivity(data_dir, args).await,
-        "name_person" => return reflection_name_person(data_dir, args).await,
-        "merge_people" => return reflection_merge_people(data_dir, args).await,
-        "keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
-        // Reachable by name only — `record_reflex` is advertised to no role, because
+        "hi_record_episode" => return reflection_record_episode(data_dir, args).await,
+        "hi_read_facet" => return reflection_read_facet(data_dir, args).await,
+        "hi_update_facet" => return reflection_update_facet(data_dir, args).await,
+        "hi_update_proactivity" => return reflection_update_proactivity(data_dir, args).await,
+        "hi_name_person" => return reflection_name_person(data_dir, args).await,
+        "hi_merge_people" => return reflection_merge_people(data_dir, args).await,
+        "hi_keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
+        // Reachable by name only — `hi_record_reflex` is advertised to no role, because
         // the reflex rung is **deferred** (see `body::reflex`). Kept dispatchable rather
         // than deleted so the authoring half is one arm entry away when it gets a rung,
         // and so a session that somehow names it gets the real behaviour instead of
         // "unknown tool". Do not re-advertise it without taking that decision.
-        "record_reflex" => return reflex_record(data_dir, args).await,
-        "look" => return do_look().await,
-        "act" => return do_act(args).await,
-        "image-text-to-text" => return do_image_text_to_text(data_dir, args).await,
-        "video-text-to-text" => {
+        "hi_record_reflex" => return reflex_record(data_dir, args).await,
+        "hi_look" => return do_look().await,
+        "hi_act" => return do_act(args).await,
+        "hi_image_text_to_text" => return do_image_text_to_text(data_dir, args).await,
+        "hi_video_text_to_text" => {
             return do_video_text_to_text(data_dir, video_partial, args).await;
         }
         // The four generation tasks. Each files what it makes into `drive/` and
         // answers with the ref; the two video ones answer immediately and mail the
         // clip to this session when it lands.
-        "text-to-image" => return do_text_to_image(data_dir, args).await,
-        "image-to-image" => return do_image_to_image(data_dir, args).await,
-        "text-to-video" => return do_text_to_video(data_dir, session_id, args).await,
-        "image-to-video" => return do_image_to_video(data_dir, session_id, args).await,
-        "review_view" => return do_review_view(data_dir, args).await,
+        "hi_text_to_image" => return do_text_to_image(data_dir, args).await,
+        "hi_image_to_image" => return do_image_to_image(data_dir, args).await,
+        "hi_text_to_video" => return do_text_to_video(data_dir, session_id, args).await,
+        "hi_image_to_video" => return do_image_to_video(data_dir, session_id, args).await,
+        "hi_review_view" => return do_review_view(data_dir, args).await,
         _ => {}
     }
 
@@ -984,24 +984,24 @@ async fn dispatch_tool(
     //
     // They reach the process-wide session registry and touch no conversation at all, so
     // requiring a live reaction loop to make one was a category error — and a load-bearing
-    // one: `create_worker` belongs to the standing rungs, and Reflection runs under a
+    // one: `hi_create_worker` belongs to the standing rungs, and Reflection runs under a
     // sentinel conversation that has no loop, so the one rung holding the tool was the one rung
     // that could never call it. Same for the one verb: a standing agent could be sent
     // to, but could not send.
     match name {
-        "send_message" => {
+        "hi_send_message" => {
             let Some(from) = session_id else {
-                return tool_error("send_message needs a session identity; this session has none");
+                return tool_error("hi_send_message needs a session identity; this session has none");
             };
             let to = arg_str("to");
             let message = arg_str("message");
             if to.trim().is_empty() || message.trim().is_empty() {
-                return tool_error("send_message requires `to` and a non-empty `message`");
+                return tool_error("hi_send_message requires `to` and a non-empty `message`");
             }
             let Ok(target) = to.trim().parse::<u64>() else {
                 return tool_error(&format!(
                     "`{}` is not a session id. Addresses are numbers — a worker's comes \
-                     back from `create_worker`, and everyone else you can reach is listed \
+                     back from `hi_create_worker`, and everyone else you can reach is listed \
                      in your window with theirs.",
                     to.trim()
                 ));
@@ -1030,9 +1030,9 @@ async fn dispatch_tool(
                 ),
             };
         }
-        "session_status" => {
+        "hi_session_status" => {
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("session_status requires a numeric `id`");
+                return tool_error("hi_session_status requires a numeric `id`");
             };
             let Some(st) = registry::global().status(id) else {
                 return tool_error(&format!("no live session {id}"));
@@ -1058,22 +1058,22 @@ async fn dispatch_tool(
                 st.id, st.turns, st.title
             ));
         }
-        "close_worker" => {
-            // The same three guards `cancel_worker` carries, and for the same reasons:
+        "hi_close_worker" => {
+            // The same three guards `hi_cancel_worker` carries, and for the same reasons:
             // lifetime is dispatch, dispatch belongs to the standing rungs, and a session
             // answers to whoever asked for the work.
             if !matches!(role, Some("reflection") | Some("cognition")) {
                 return tool_error(&format!(
-                    "`close_worker` belongs to the standing rungs; role `{}` may not end \
+                    "`hi_close_worker` belongs to the standing rungs; role `{}` may not end \
                      a working session",
                     role.unwrap_or("<none>")
                 ));
             }
             let Some(caller) = session_id else {
-                return tool_error("close_worker needs a session identity; this session has none");
+                return tool_error("hi_close_worker needs a session identity; this session has none");
             };
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("close_worker requires a numeric `id`");
+                return tool_error("hi_close_worker requires a numeric `id`");
             };
             let Some(st) = registry::global().status(id) else {
                 return tool_ok(&format!(
@@ -1090,7 +1090,7 @@ async fn dispatch_tool(
             let Some(sink) = registry.get(owner_role).await else {
                 return tool_error("the owning loop is not up, so nothing can be closed");
             };
-            // Waits for the answer, like `cancel_worker`: whether a session is still
+            // Waits for the answer, like `hi_cancel_worker`: whether a session is still
             // running is exactly the thing the caller is deciding about, so a hopeful
             // "closed" would put a session on the roster that is not there — or take one
             // off that is.
@@ -1112,25 +1112,25 @@ async fn dispatch_tool(
                 )),
                 Err(_) => tool_error(&format!(
                     "no answer from the owning loop in time; it is not confirmed that \
-                     session {id} closed — check session_status before assuming it is gone"
+                     session {id} closed — check hi_session_status before assuming it is gone"
                 )),
             };
         }
-        "cancel_worker" => {
-            // Same rung guard as `create_worker`, for the same reason: stopping work is
+        "hi_cancel_worker" => {
+            // Same rung guard as `hi_create_worker`, for the same reason: stopping work is
             // dispatch, and dispatch is the standing rungs'.
             if !matches!(role, Some("reflection") | Some("cognition")) {
                 return tool_error(&format!(
-                    "`cancel_worker` belongs to the standing rungs; role `{}` may not \
+                    "`hi_cancel_worker` belongs to the standing rungs; role `{}` may not \
                      stop work",
                     role.unwrap_or("<none>")
                 ));
             }
             let Some(caller) = session_id else {
-                return tool_error("cancel_worker needs a session identity; this session has none");
+                return tool_error("hi_cancel_worker needs a session identity; this session has none");
             };
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("cancel_worker requires a numeric `id`");
+                return tool_error("hi_cancel_worker requires a numeric `id`");
             };
             let Some(st) = registry::global().status(id) else {
                 return tool_error(&format!(
@@ -1138,7 +1138,7 @@ async fn dispatch_tool(
                 ));
             };
             // You may stop your own work and nobody else's. The switchboard already
-            // holds the authoritative owner, so this reads the same fact `send_message`
+            // holds the authoritative owner, so this reads the same fact `hi_send_message`
             // routes on rather than inventing a second answer to it.
             if st.owner != Some(caller) {
                 return tool_error(
@@ -1149,7 +1149,7 @@ async fn dispatch_tool(
             let Some(sink) = registry.get(owner_role).await else {
                 return tool_error("the owning loop is not up, so nothing can be stopped");
             };
-            // **This one waits for its answer**, where `create_worker` does not, because
+            // **This one waits for its answer**, where `hi_create_worker` does not, because
             // the answer is the whole point: "I stopped it" and "it had already finished"
             // lead to different next moves and different things said to the person. The
             // loop serves its control channel *during* a turn, so the wait is short; the
@@ -1162,7 +1162,7 @@ async fn dispatch_tool(
             return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
                 Ok(Ok(true)) => tool_ok(&format!(
                     "stopped session {id} mid-work. It will report back with whatever it \
-                     had got to. It stays alive and keeps its context, so send_message it \
+                     had got to. It stays alive and keeps its context, so hi_send_message it \
                      a new instruction if you want it to do something else instead."
                 )),
                 // Nothing was running. Said plainly, because the tempting summary —
@@ -1172,7 +1172,7 @@ async fn dispatch_tool(
                 Ok(Ok(false)) => tool_ok(&format!(
                     "nothing to stop — session {id} was not working when this arrived, so \
                      it had already finished or was already idle. No report is coming, and \
-                     whatever it did is done. Check session_messages if you need to know \
+                     whatever it did is done. Check hi_session_messages if you need to know \
                      what that was."
                 )),
                 Ok(Err(_)) => tool_error(&format!(
@@ -1180,13 +1180,13 @@ async fn dispatch_tool(
                 )),
                 Err(_) => tool_error(&format!(
                     "no answer from the owning loop in time; it is not confirmed that \
-                     session {id} stopped — check session_status before telling anyone it did"
+                     session {id} stopped — check hi_session_status before telling anyone it did"
                 )),
             };
         }
-        "session_messages" => {
+        "hi_session_messages" => {
             let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("session_messages requires a numeric `id`");
+                return tool_error("hi_session_messages requires a numeric `id`");
             };
             return match registry::global().messages(id) {
                 Some(text) if !text.trim().is_empty() => tool_ok(&text),
@@ -1194,28 +1194,28 @@ async fn dispatch_tool(
                 None => tool_error(&format!("no live session {id}")),
             };
         }
-        "create_worker" => {
+        "hi_create_worker" => {
             // Workers belong to the standing rungs — Cognition and Reflection, per
             // `docs/arch/foundation.md`. Reaction speaks and does not dispatch; a
             // conversation-bound rung that could would be a second dispatcher
             // (`docs/arch/agents.md`: "one dispatcher is the point").
             //
             // Structural, not just absent from the advertised surface — the same reason
-            // `say`/`show` are checked above. Until now this was enforced only by
+            // `hi_say`/`hi_show` are checked above. Until now this was enforced only by
             // accident: Reaction had no `X-HI-Session-Id`, so the identity check below
             // rejected it. That fence is gone as of this commit, so the real one goes in.
             if !matches!(role, Some("reflection") | Some("cognition")) {
                 return tool_error(&format!(
-                    "`create_worker` belongs to the standing rungs; role `{}` may not dispatch work",
+                    "`hi_create_worker` belongs to the standing rungs; role `{}` may not dispatch work",
                     role.unwrap_or("<none>")
                 ));
             }
             let Some(owner) = session_id else {
-                return tool_error("create_worker needs a session identity; this session has none");
+                return tool_error("hi_create_worker needs a session identity; this session has none");
             };
             let task = arg_str("task");
             if task.trim().is_empty() {
-                return tool_error("create_worker requires a non-empty `task`");
+                return tool_error("hi_create_worker requires a non-empty `task`");
             }
             // **Refused rather than derived, because a derived one is the bug.** The switchboard
             // used to register a worker under its brief, so every roster card, status line and
@@ -1227,7 +1227,7 @@ async fn dispatch_tool(
             let title = arg_str("title");
             if title.trim().is_empty() {
                 return tool_error(
-                    "create_worker requires a one-line `title` — what this errand is, in the \
+                    "hi_create_worker requires a one-line `title` — what this errand is, in the \
                      words you would use to a colleague. It is what the person sees on their \
                      screen; the brief goes in `task`.",
                 );
@@ -1319,8 +1319,8 @@ async fn dispatch_tool(
                      job from scratch"
                 )),
                 Ok(()) => tool_ok(&format!(
-                    "session {id} starting; brief it with send_message, check it with \
-                     session_status"
+                    "session {id} starting; brief it with hi_send_message, check it with \
+                     hi_session_status"
                 )),
                 Err(err) => tool_error(&err.to_string()),
             };
@@ -1336,7 +1336,7 @@ async fn dispatch_tool(
     };
 
     let outcome = match name {
-        "say" => {
+        "hi_say" => {
             let text = arg_str("text");
             if text.trim().is_empty() {
                 return tool_error("say requires non-empty `text`");
@@ -1350,7 +1350,7 @@ async fn dispatch_tool(
                 .await
                 .map(crate::body::reaction::Said::ack)
         }
-        "show" => {
+        "hi_show" => {
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();
             // A view is normally shown by ref (one a worker built); resolve it to
             // source HERE, server-side, so the JSX never enters the mind's context.
@@ -1384,7 +1384,7 @@ async fn dispatch_tool(
     }
 }
 
-/// `look`: capture the screen so the calling session can see where to act. Returns
+/// `hi_look`: capture the screen so the calling session can see where to act. Returns
 /// a text hint (size + frontmost app) and the screenshot as an image content block,
 /// which codex forwards to the model as an `input_image`. Errors when capture
 /// is unavailable (non-macOS, or Screen Recording not granted).
@@ -1416,7 +1416,7 @@ async fn do_look() -> Value {
     })
 }
 
-/// `review_view`: compile the saved view, render it in a real browser, and answer with
+/// `hi_review_view`: compile the saved view, render it in a real browser, and answer with
 /// the verdict, the page's problems, and the screenshot.
 ///
 /// The three steps are the same ones the build path takes, in the same order, which is
@@ -1426,13 +1426,13 @@ async fn do_look() -> Value {
 /// detection.
 ///
 /// **The review frame IS the stage frame** — full-bleed, the only frame there is — so
-/// a review renders the thing exactly the way `show` will put it up. This used to be a
+/// a review renders the thing exactly the way `hi_show` will put it up. This used to be a
 /// negotiation between the caller's override and the sidecar's declared region, and
 /// getting it wrong failed a view for a defect the review itself introduced.
 async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     let view_ref = args.get("ref").and_then(Value::as_str).unwrap_or_default().trim().to_string();
     if view_ref.is_empty() {
-        return tool_error("review_view requires a `ref`");
+        return tool_error("hi_review_view requires a `ref`");
     }
     let (source, traits) = match crate::mind::views::resolve_ref(data_dir, &view_ref).await {
         Ok(v) => v,
@@ -1556,8 +1556,8 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     json!({ "content": content, "isError": false })
 }
 
-/// `act`: synthesize one input action on the host. Coordinates arrive as normalized
-/// 0..1 fractions of the screen (what the model reasons about, looking at `look`'s
+/// `hi_act`: synthesize one input action on the host. Coordinates arrive as normalized
+/// 0..1 fractions of the screen (what the model reasons about, looking at `hi_look`'s
 /// image) and are mapped to the main display's points here, so the pixel-vs-point
 /// Retina detail never reaches the model.
 async fn do_act(args: &Value) -> Value {
@@ -1629,7 +1629,7 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
-/// Map an `act` `key` string to a [`crate::body::capabilities::input::Key`]. Named keys
+/// Map an `hi_act` `key` string to a [`crate::body::capabilities::input::Key`]. Named keys
 /// are case-insensitive; anything else is taken as a single character (so `a`, `/`,
 /// `7` work). `None` for an empty or multi-character unknown name.
 fn parse_key(s: &str) -> Option<crate::body::capabilities::input::Key> {
@@ -1655,7 +1655,7 @@ fn parse_key(s: &str) -> Option<crate::body::capabilities::input::Key> {
     })
 }
 
-/// Map an `act` `mods` array to modifiers, accepting common aliases. Unknown
+/// Map an `hi_act` `mods` array to modifiers, accepting common aliases. Unknown
 /// entries are dropped.
 fn parse_mods(v: Option<&Value>) -> Vec<crate::body::capabilities::input::Modifier> {
     use crate::body::capabilities::input::Modifier;
@@ -1676,20 +1676,20 @@ fn parse_mods(v: Option<&Value>) -> Vec<crate::body::capabilities::input::Modifi
         .unwrap_or_default()
 }
 
-/// `record_episode`: file the first `count` unconsolidated signals as one episode
+/// `hi_record_episode`: file the first `count` unconsolidated signals as one episode
 /// (see [`crate::mind::memory::episodes::record_episode`]).
 /// Returns the episode ref for the session to cite when it updates a facet.
 async fn reflection_record_episode(data_dir: &std::path::Path, args: &Value) -> Value {
     let Some(count) = args.get("count").and_then(Value::as_u64) else {
-        return tool_error("record_episode requires an integer `count` >= 1");
+        return tool_error("hi_record_episode requires an integer `count` >= 1");
     };
     let gist = args.get("gist").and_then(Value::as_str).unwrap_or_default();
     if gist.trim().is_empty() {
-        return tool_error("record_episode requires a non-empty `gist`");
+        return tool_error("hi_record_episode requires a non-empty `gist`");
     }
     let title = args.get("title").and_then(Value::as_str).unwrap_or_default();
     if title.trim().is_empty() {
-        return tool_error("record_episode requires a non-empty `title`");
+        return tool_error("hi_record_episode requires a non-empty `title`");
     }
     let subjects: Vec<String> = args
         .get("subjects")
@@ -1704,13 +1704,13 @@ async fn reflection_record_episode(data_dir: &std::path::Path, args: &Value) -> 
     }
 }
 
-/// `read_facet`: return the current understanding of a subject, or a note that
+/// `hi_read_facet`: return the current understanding of a subject, or a note that
 /// none exists yet, so the session regenerates from the old rather than blank.
 async fn reflection_read_facet(data_dir: &std::path::Path, args: &Value) -> Value {
     let dim = args.get("dimension").and_then(Value::as_str).unwrap_or_default();
     let subject = args.get("subject").and_then(Value::as_str).unwrap_or_default();
     if dim.trim().is_empty() || subject.trim().is_empty() {
-        return tool_error("read_facet requires `dimension` and `subject`");
+        return tool_error("hi_read_facet requires `dimension` and `subject`");
     }
     match crate::mind::memory::facets::read_facet(data_dir, dim, subject).await {
         Ok(Some(content)) => tool_ok(&content),
@@ -1719,17 +1719,17 @@ async fn reflection_read_facet(data_dir: &std::path::Path, args: &Value) -> Valu
     }
 }
 
-/// `update_facet`: write the whole regenerated understanding of a subject (see
+/// `hi_update_facet`: write the whole regenerated understanding of a subject (see
 /// [`crate::mind::memory::facets::update_facet`]). Returns the `<dim>/<subject>` ref.
 async fn reflection_update_facet(data_dir: &std::path::Path, args: &Value) -> Value {
     let dim = args.get("dimension").and_then(Value::as_str).unwrap_or_default();
     let subject = args.get("subject").and_then(Value::as_str).unwrap_or_default();
     let content = args.get("content").and_then(Value::as_str).unwrap_or_default();
     if dim.trim().is_empty() || subject.trim().is_empty() {
-        return tool_error("update_facet requires `dimension` and `subject`");
+        return tool_error("hi_update_facet requires `dimension` and `subject`");
     }
     if content.trim().is_empty() {
-        return tool_error("update_facet requires non-empty `content`");
+        return tool_error("hi_update_facet requires non-empty `content`");
     }
     match crate::mind::memory::facets::update_facet(data_dir, dim, subject, content).await {
         Ok(refname) => tool_ok(&format!("updated facet {refname}")),
@@ -1737,13 +1737,13 @@ async fn reflection_update_facet(data_dir: &std::path::Path, args: &Value) -> Va
     }
 }
 
-/// `update_proactivity`: regenerate the whole `proactivity.md` — the learned
+/// `hi_update_proactivity`: regenerate the whole `proactivity.md` — the learned
 /// read on speaking up unprompted — from how the agent's own unprompted utterances
 /// landed (see [`crate::mind::memory::proactivity::write`]). Whole-file, never a patch.
 async fn reflection_update_proactivity(data_dir: &std::path::Path, args: &Value) -> Value {
     let content = args.get("content").and_then(Value::as_str).unwrap_or_default();
     if content.trim().is_empty() {
-        return tool_error("update_proactivity requires non-empty `content`");
+        return tool_error("hi_update_proactivity requires non-empty `content`");
     }
     match crate::mind::memory::proactivity::write(data_dir, content).await {
         Ok(()) => tool_ok("updated proactivity.md"),
@@ -1751,7 +1751,7 @@ async fn reflection_update_proactivity(data_dir: &std::path::Path, args: &Value)
     }
 }
 
-/// `record_reflex`: teach a quick-action reflex (see [`crate::body::reflex`]). Stores the
+/// `hi_record_reflex`: teach a quick-action reflex (see [`crate::body::reflex`]). Stores the
 /// fill value and how to find its field so a later invoke types it with no model in
 /// the loop. The value itself is never echoed back in the ack.
 async fn reflex_record(data_dir: &std::path::Path, args: &Value) -> Value {
@@ -1759,13 +1759,13 @@ async fn reflex_record(data_dir: &std::path::Path, args: &Value) -> Value {
     let value = args.get("value").and_then(Value::as_str).unwrap_or_default();
     let label_contains = args.get("label_contains").and_then(Value::as_str).unwrap_or_default();
     if name.trim().is_empty() {
-        return tool_error("record_reflex requires a non-empty `name`");
+        return tool_error("hi_record_reflex requires a non-empty `name`");
     }
     if value.trim().is_empty() {
-        return tool_error("record_reflex requires a non-empty `value`");
+        return tool_error("hi_record_reflex requires a non-empty `value`");
     }
     if label_contains.trim().is_empty() {
-        return tool_error("record_reflex requires a non-empty `label_contains`");
+        return tool_error("hi_record_reflex requires a non-empty `label_contains`");
     }
     let opt = |k: &str| {
         args.get(k)
@@ -1776,7 +1776,7 @@ async fn reflex_record(data_dir: &std::path::Path, args: &Value) -> Value {
     };
     let id = crate::body::reflex::id_for(name);
     if id.is_empty() {
-        return tool_error("record_reflex `name` must contain a usable character");
+        return tool_error("hi_record_reflex `name` must contain a usable character");
     }
     let reflex = crate::body::reflex::Reflex {
         id,
@@ -1795,14 +1795,14 @@ async fn reflex_record(data_dir: &std::path::Path, args: &Value) -> Value {
     }
 }
 
-/// `name_person`: rename a person's cluster (face or voice) from its `id` (or
+/// `hi_name_person`: rename a person's cluster (face or voice) from its `id` (or
 /// current key) to a learned `name` — the structural side of "we now know who
 /// this is". Merges if the name already exists. See [`people_vectors::rename`].
 async fn reflection_name_person(data_dir: &std::path::Path, args: &Value) -> Value {
     let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
     let name = args.get("name").and_then(Value::as_str).unwrap_or_default();
     if id.trim().is_empty() || name.trim().is_empty() {
-        return tool_error("name_person requires `id` and `name`");
+        return tool_error("hi_name_person requires `id` and `name`");
     }
     match people_vectors::rename(data_dir, id, name).await {
         Ok(()) => tool_ok(&format!("named {id} → people/{name}")),
@@ -1810,14 +1810,14 @@ async fn reflection_name_person(data_dir: &std::path::Path, args: &Value) -> Val
     }
 }
 
-/// `merge_people`: fold the `from` cluster into `into` (same person, two keys —
+/// `hi_merge_people`: fold the `from` cluster into `into` (same person, two keys —
 /// across senses too, e.g. a voice id into an already-named face). See
 /// [`people_vectors::rename`].
 async fn reflection_merge_people(data_dir: &std::path::Path, args: &Value) -> Value {
     let from = args.get("from").and_then(Value::as_str).unwrap_or_default();
     let into = args.get("into").and_then(Value::as_str).unwrap_or_default();
     if from.trim().is_empty() || into.trim().is_empty() {
-        return tool_error("merge_people requires `from` and `into`");
+        return tool_error("hi_merge_people requires `from` and `into`");
     }
     match people_vectors::rename(data_dir, from, into).await {
         Ok(()) => tool_ok(&format!("merged people/{from} → people/{into}")),
@@ -1825,20 +1825,20 @@ async fn reflection_merge_people(data_dir: &std::path::Path, args: &Value) -> Va
     }
 }
 
-/// `keep_and_fade`: let a cold consolidated day's media fade to text, keeping the
+/// `hi_keep_and_fade`: let a cold consolidated day's media fade to text, keeping the
 /// spans the mind chose (see [`crate::mind::memory::decay::keep_and_fade`]). The safety
 /// gate lives in the tool, so an attempt on an un-consolidated day comes back as a
 /// tool error the session can read, not a panic.
 async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> Value {
     let Some(channel) = args.get("channel").and_then(Value::as_str) else {
-        return tool_error("keep_and_fade requires `channel` (audio|vision)");
+        return tool_error("hi_keep_and_fade requires `channel` (audio|vision)");
     };
     let Ok(channel) = channel.parse::<crate::types::Channel>() else {
-        return tool_error(&format!("keep_and_fade: unknown channel {channel:?}"));
+        return tool_error(&format!("hi_keep_and_fade: unknown channel {channel:?}"));
     };
     let date = args.get("date").and_then(Value::as_str).unwrap_or_default();
     if date.trim().is_empty() {
-        return tool_error("keep_and_fade requires `date` (YYYY-MM-DD)");
+        return tool_error("hi_keep_and_fade requires `date` (YYYY-MM-DD)");
     }
     let mut spans = Vec::new();
     if let Some(arr) = args.get("keep").and_then(Value::as_array) {
@@ -1851,7 +1851,7 @@ async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> V
             };
             let (Some(start), Some(end)) = (parse("start"), parse("end")) else {
                 return tool_error(&format!(
-                    "keep_and_fade: keep[{i}] needs RFC3339 `start` and `end`"
+                    "hi_keep_and_fade: keep[{i}] needs RFC3339 `start` and `end`"
                 ));
             };
             spans.push(crate::mind::memory::decay::KeepSpan { start, end });
@@ -1868,7 +1868,7 @@ async fn reflection_keep_and_fade(data_dir: &std::path::Path, args: &Value) -> V
     }
 }
 
-/// `image-text-to-text`: understand a stored still. Resolves the `ref` (the `⟨ref: …⟩` from a
+/// `hi_image_text_to_text`: understand a stored still. Resolves the `ref` (the `⟨ref: …⟩` from a
 /// `📷 photo arrived` signal, or one surfaced to reflection) to its bytes, then hands
 /// it to [`perceive_still`] — which the bundle routes either to the model's own eyes
 /// (native vision) or through the vision capability (text-only model).
@@ -1876,7 +1876,7 @@ async fn do_image_text_to_text(data_dir: &Path, args: &Value) -> Value {
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
         return tool_error(
-            "image-text-to-text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. vision/2026-06-25/14/23-07.jpg (pass it whole, channel included)",
+            "hi_image_text_to_text needs `ref` — the ⟨ref: …⟩ from the image's signal, e.g. vision/2026-06-25/14/23-07.jpg (pass it whole, channel included)",
         );
     };
     // Resolve first, sniff second — the same path the generation tools take.
@@ -1886,14 +1886,14 @@ async fn do_image_text_to_text(data_dir: &Path, args: &Value) -> Value {
     // reported as a malformed ref, so "look at what you made" did not work on
     // anything it made. Reading the bytes answers both questions at once, and answers
     // the type question better — an extension is a claim, the magic number is a fact.
-    let (bytes, mime) = match read_ref(data_dir, "image-text-to-text", reff.trim()).await {
+    let (bytes, mime) = match read_ref(data_dir, "hi_image_text_to_text", reff.trim()).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     perceive_still(data_dir, bytes, &mime, prompt).await
 }
 
-/// `video-text-to-text`: understand a short span of the live camera. Reads the
+/// `hi_video_text_to_text`: understand a short span of the live camera. Reads the
 /// in-progress (not-yet-flushed) minute from [`PartialMinute`] — the freshest source —
 /// optionally trims it to the requested tail with ffmpeg, and hands the clip to
 /// [`perceive_clip`]. Errors plainly when no camera is streaming, so the model can
@@ -1908,7 +1908,7 @@ async fn do_video_text_to_text(
 
     let Some((bytes, mime)) = partial_clip(video_partial) else {
         return tool_error(
-            "no live camera to watch — `video-text-to-text` reads the camera streaming right now; \
+            "no live camera to watch — `hi_video_text_to_text` reads the camera streaming right now; \
              ask the person to turn it on, then try again.",
         );
     };
@@ -2007,7 +2007,7 @@ async fn trim_tail(bytes: &Bytes, mime: &str, secs: f64) -> anyhow::Result<Bytes
     res
 }
 
-/// Pull a tail length out of a `video-text-to-text` span like "last 20s" / "20 seconds" → 20.0.
+/// Pull a tail length out of a `hi_video_text_to_text` span like "last 20s" / "20 seconds" → 20.0.
 /// `None` (no number) means "the whole recent stretch".
 fn parse_last_secs(span: &str) -> Option<f64> {
     let digits: String = span
@@ -2024,8 +2024,8 @@ fn parse_last_secs(span: &str) -> Option<f64> {
 // tool here is that they produce bytes with nowhere to be, so each handler ends the
 // same way: file the artifact in `drive/` — the tree that does not fade — and hand
 // back the `⟨ref: …⟩` that addresses it. The ref is the whole point of persisting
-// rather than returning base64: it is what `image-to-image`, `image-to-video`,
-// `image-text-to-text` and `show` all take, so one generation composes with
+// rather than returning base64: it is what `hi_image_to_image`, `hi_image_to_video`,
+// `hi_image_text_to_text` and `hi_show` all take, so one generation composes with
 // everything already built.
 
 /// Read the semantic knobs off the tool arguments. Absent stays absent — an omitted
@@ -2107,8 +2107,8 @@ async fn land_images(
         lines.push(format!("⟨ref: {reff}⟩\n  file: {path}\n  url: /api/drive/file/{}", &reff[6..]));
     }
     tool_ok(&format!(
-        "{}\n\nFiled in the drive, which does not fade. Pass a ref to `image-to-image` to \
-         change it, to `image-text-to-text` to look at what you made, or report it to \
+        "{}\n\nFiled in the drive, which does not fade. Pass a ref to `hi_image_to_image` to \
+         change it, to `hi_image_text_to_text` to look at what you made, or report it to \
          whoever asked so they can put it on screen.",
         lines.join("\n")
     ))
@@ -2118,11 +2118,11 @@ async fn do_text_to_image(data_dir: &Path, args: &Value) -> Value {
     let Some(prompt) =
         args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
-        return tool_error("text-to-image needs `prompt` — say what the image should show");
+        return tool_error("hi_text_to_image needs `prompt` — say what the image should show");
     };
     match image_gen::text_to_image(prompt, &image_params(args)).await {
-        Ok(images) => land_images(data_dir, "text-to-image", prompt, images).await,
-        Err(e) => tool_error(&format!("text-to-image failed: {e}")),
+        Ok(images) => land_images(data_dir, "hi_text_to_image", prompt, images).await,
+        Err(e) => tool_error(&format!("hi_text_to_image failed: {e}")),
     }
 }
 
@@ -2130,23 +2130,23 @@ async fn do_image_to_image(data_dir: &Path, args: &Value) -> Value {
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
         return tool_error(
-            "image-to-image needs `ref` — the ⟨ref: …⟩ of the image to work from (a camera \
+            "hi_image_to_image needs `ref` — the ⟨ref: …⟩ of the image to work from (a camera \
              still, a handed file, or one you generated)",
         );
     };
     let Some(prompt) =
         args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
-        return tool_error("image-to-image needs `prompt` — say what to change");
+        return tool_error("hi_image_to_image needs `prompt` — say what to change");
     };
-    let (bytes, mime) = match read_ref(data_dir, "image-to-image", reff.trim()).await {
+    let (bytes, mime) = match read_ref(data_dir, "hi_image_to_image", reff.trim()).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     let source = image_gen::SourceImage::bytes(bytes, mime);
     match image_gen::image_to_image(&source, prompt, &image_params(args)).await {
-        Ok(images) => land_images(data_dir, "image-to-image", prompt, images).await,
-        Err(e) => tool_error(&format!("image-to-image failed: {e}")),
+        Ok(images) => land_images(data_dir, "hi_image_to_image", prompt, images).await,
+        Err(e) => tool_error(&format!("hi_image_to_image failed: {e}")),
     }
 }
 
@@ -2240,7 +2240,7 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value
     let Some(prompt) =
         args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
-        return tool_error("text-to-video needs `prompt` — say what the clip should show");
+        return tool_error("hi_text_to_video needs `prompt` — say what the clip should show");
     };
     match video_gen::text_to_video(prompt, &video_params(args)).await {
         Ok(handle) => {
@@ -2249,7 +2249,7 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value
                 data_dir.to_path_buf(),
                 session_id,
                 handle,
-                "text-to-video",
+                "hi_text_to_video",
                 prompt.to_string(),
             );
             tool_ok(&format!(
@@ -2258,17 +2258,17 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value
                  nothing to poll and nothing to wait for."
             ))
         }
-        Err(e) => tool_error(&format!("text-to-video failed: {e}")),
+        Err(e) => tool_error(&format!("hi_text_to_video failed: {e}")),
     }
 }
 
 async fn do_image_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value) -> Value {
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
-        return tool_error("image-to-video needs `ref` — the ⟨ref: …⟩ of the still to animate");
+        return tool_error("hi_image_to_video needs `ref` — the ⟨ref: …⟩ of the still to animate");
     };
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
-    let (bytes, mime) = match read_ref(data_dir, "image-to-video", reff.trim()).await {
+    let (bytes, mime) = match read_ref(data_dir, "hi_image_to_video", reff.trim()).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -2281,7 +2281,7 @@ async fn do_image_to_video(data_dir: &Path, session_id: Option<u64>, args: &Valu
                 data_dir.to_path_buf(),
                 session_id,
                 handle,
-                "image-to-video",
+                "hi_image_to_video",
                 slug,
             );
             tool_ok(&format!(
@@ -2289,7 +2289,7 @@ async fn do_image_to_video(data_dir: &Path, session_id: Option<u64>, args: &Valu
                  with its ⟨ref: …⟩ when it is done."
             ))
         }
-        Err(e) => tool_error(&format!("image-to-video failed: {e}")),
+        Err(e) => tool_error(&format!("hi_image_to_video failed: {e}")),
     }
 }
 
@@ -2449,7 +2449,31 @@ mod surface_tests {
             .collect()
     }
 
-    /// Reaction's whole surface, pinned. `say` lived in the unreachable fallback arm
+    /// **Every declared tool carries the `hi_` prefix, and the prefix is load-bearing.**
+    /// A rung's prompt names its tools bare — "`hi_send_message` reaches any other part of
+    /// yourself" — and the model resolves that bare name against a surface we do not own:
+    /// codex hands `gpt-5.6-sol` a `collaboration` namespace holding its own
+    /// `send_message`, `spawn_agent` and `wait_agent` for the sub-agent tree it keeps
+    /// inside one thread, plus a developer message telling the model it is `/root` in a
+    /// team of agents. While our verb was also called `send_message`, 28 inter-rung
+    /// messages across all four roles reached codex's router instead of ours; it answered
+    /// `live agent path `/root/2` not found` — a bare session id resolving as a relative
+    /// task name over there — and nothing was delivered. Two-thirds of them were never
+    /// re-sent in that turn.
+    ///
+    /// The prefix cannot be dropped for a tool that happens not to clash today: codex
+    /// ships `computer_use` and `browser_use` as stable features, so a built-in reaching
+    /// for `look` or `act` is the next collision, not a hypothetical one.
+    #[test]
+    fn every_declared_tool_is_prefixed_against_the_hosts_own_surface() {
+        for role in [Some("reaction"), Some("cognition"), Some("reflection"), Some("worker")] {
+            for name in names(role) {
+                assert!(name.starts_with("hi_"), "{role:?} declares `{name}` unprefixed");
+            }
+        }
+    }
+
+    /// Reaction's whole surface, pinned. `hi_say` lived in the unreachable fallback arm
     /// for the entire life of the reaction/cognition split — defined, dispatchable, and
     /// advertised to nobody — so the voice fell back to plain message text. Nothing
     /// failed; it just quietly stopped being a call that returns.
@@ -2459,7 +2483,7 @@ mod surface_tests {
         got.sort();
         assert_eq!(
             got,
-            vec!["say".to_string(), "send_message".to_string(), "show".to_string()],
+            vec!["hi_say".to_string(), "hi_send_message".to_string(), "hi_show".to_string()],
             "its two expression channels, plus the one verb that reaches another agent"
         );
     }
@@ -2470,19 +2494,19 @@ mod surface_tests {
     fn every_role_can_send_a_message() {
         for role in [Some("reaction"), Some("worker"), Some("cognition"), Some("reflection")] {
             assert!(
-                names(role).contains(&"send_message".to_string()),
-                "{role:?} must hold send_message"
+                names(role).contains(&"hi_send_message".to_string()),
+                "{role:?} must hold hi_send_message"
             );
         }
     }
 
     /// An unknown role gets **nothing**, and that is the point.
     ///
-    /// This arm used to hold the legacy agentic reaction's kit — `say`, `show`,
-    /// `record_reflex`, and the understanding tools — with a comment saying no live role
+    /// This arm used to hold the legacy agentic reaction's kit — `hi_say`, `hi_show`,
+    /// `hi_record_reflex`, and the understanding tools — with a comment saying no live role
     /// mapped here. A fallback that hands out someone else's surface turns a missing arm
     /// into a silently wrong one — which is exactly what happened when a rung was opened
-    /// under a role string with no arm and picked up `say` it could not use.
+    /// under a role string with no arm and picked up `hi_say` it could not use.
     #[test]
     fn an_unknown_role_gets_no_tools() {
         assert!(names(None).is_empty());
@@ -2502,15 +2526,15 @@ mod surface_tests {
     /// One dispatcher. A the voice that could create workers would be a second one,
     /// spawning against Cognition unseen.
     /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
-    /// legacy fallback, which handed it `say` and `show` — refused at dispatch — and
-    /// **not** `create_worker`, the one tool it exists to use. A rung with no arm is not
+    /// legacy fallback, which handed it `hi_say` and `hi_show` — refused at dispatch — and
+    /// **not** `hi_create_worker`, the one tool it exists to use. A rung with no arm is not
     /// a rung with defaults; it is a rung with someone else's.
     ///
-    /// `cancel_worker` sits beside `create_worker` because dispatch is two verbs: a rung
+    /// `hi_cancel_worker` sits beside `hi_create_worker` because dispatch is two verbs: a rung
     /// that can start work and not stop it can only ever be told to change its mind too
     /// late.
     ///
-    /// `close_worker` is the third, and its absence used to be filled by a clock. A rung
+    /// `hi_close_worker` is the third, and its absence used to be filled by a clock. A rung
     /// that can start work and stop a turn but never *finish* with a session does not own
     /// the lifetime — something else does, on a timer, with no idea whether the errand was
     /// done. All three or none.
@@ -2521,12 +2545,12 @@ mod surface_tests {
         assert_eq!(
             got,
             vec![
-                "cancel_worker".to_string(),
-                "close_worker".to_string(),
-                "create_worker".to_string(),
-                "send_message".to_string(),
-                "session_messages".to_string(),
-                "session_status".to_string(),
+                "hi_cancel_worker".to_string(),
+                "hi_close_worker".to_string(),
+                "hi_create_worker".to_string(),
+                "hi_send_message".to_string(),
+                "hi_session_messages".to_string(),
+                "hi_session_status".to_string(),
             ],
             "it delegates rather than does, and it has no mouth"
         );
@@ -2534,11 +2558,11 @@ mod surface_tests {
 
     #[test]
     fn only_the_standing_rungs_create_workers() {
-        assert!(names(Some("reflection")).contains(&"create_worker".to_string()));
-        assert!(names(Some("cognition")).contains(&"create_worker".to_string()));
+        assert!(names(Some("reflection")).contains(&"hi_create_worker".to_string()));
+        assert!(names(Some("cognition")).contains(&"hi_create_worker".to_string()));
         for role in [Some("reaction"), Some("worker")] {
             assert!(
-                !names(role).contains(&"create_worker".to_string()),
+                !names(role).contains(&"hi_create_worker".to_string()),
                 "{role:?} must not create workers"
             );
         }
@@ -2547,7 +2571,7 @@ mod surface_tests {
     #[test]
     fn no_other_role_can_speak() {
         for role in [Some("worker"), Some("reflection")] {
-            assert!(!names(role).contains(&"say".to_string()), "{role:?} must not hold say");
+            assert!(!names(role).contains(&"hi_say".to_string()), "{role:?} must not hold say");
         }
     }
 
@@ -2572,12 +2596,12 @@ mod surface_tests {
         assert_eq!(
             got,
             vec![
-                "image-text-to-text",
-                "image-to-image",
-                "image-to-video",
-                "text-to-image",
-                "text-to-video",
-                "video-text-to-text",
+                "hi_image_text_to_text",
+                "hi_image_to_image",
+                "hi_image_to_video",
+                "hi_text_to_image",
+                "hi_text_to_video",
+                "hi_video_text_to_text",
             ]
         );
     }
@@ -2588,14 +2612,14 @@ mod surface_tests {
     #[test]
     fn generation_belongs_to_workers_and_reaction_stays_a_voice() {
         let worker = names(Some("worker"));
-        for task in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
+        for task in ["hi_text_to_image", "hi_image_to_image", "hi_text_to_video", "hi_image_to_video"] {
             assert!(worker.contains(&task.to_string()), "worker must hold `{task}`");
             for role in [Some("reaction"), Some("cognition")] {
                 assert!(!names(role).contains(&task.to_string()), "{role:?} must not hold `{task}`");
             }
         }
-        assert!(worker.contains(&"video-text-to-text".to_string()));
-        assert!(names(Some("reflection")).contains(&"image-text-to-text".to_string()));
+        assert!(worker.contains(&"hi_video_text_to_text".to_string()));
+        assert!(names(Some("reflection")).contains(&"hi_image_text_to_text".to_string()));
     }
 
     /// Every advertised tool must dispatch. A tool in the surface with no arm falls
@@ -2610,7 +2634,7 @@ mod surface_tests {
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
-        for name in ["text-to-image", "image-to-image", "text-to-video", "image-to-video"] {
+        for name in ["hi_text_to_image", "hi_image_to_image", "hi_text_to_video", "hi_image_to_video"] {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),
@@ -2685,7 +2709,7 @@ mod surface_tests {
     ///
     /// This was enforced only by accident until Reaction was given a session id: the
     /// identity check rejected it for having no `X-HI-Session-Id`, which reads as a
-    /// guard and is not one. A rung with an identity and no advertised `create_worker`
+    /// guard and is not one. A rung with an identity and no advertised `hi_create_worker`
     /// could call it anyway.
     #[tokio::test]
     async fn create_worker_is_refused_to_non_owner_roles_at_dispatch() {
@@ -2703,7 +2727,7 @@ mod surface_tests {
                 // An identity, so this cannot pass for the old accidental rejection.
                 Some(7),
                 role,
-                "create_worker",
+                "hi_create_worker",
                 &json!({ "task": "do a thing" }),
             )
             .await;
@@ -2736,7 +2760,7 @@ mod surface_tests {
                 &obs,
                 Some(7),
                 Some("cognition"),
-                "create_worker",
+                "hi_create_worker",
                 &args,
             )
             .await;
@@ -2771,7 +2795,7 @@ mod surface_tests {
             &obs,
                 Some(7),
             Some("reaction"),
-            "send_message",
+            "hi_send_message",
             &json!({ "to": "99", "message": "are you there" }),
         )
         .await;

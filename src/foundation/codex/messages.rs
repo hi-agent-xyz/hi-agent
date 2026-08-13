@@ -279,7 +279,7 @@ pub fn fold(text: &str) -> Folded {
     // - **Reasoning**, always. Every reasoning item in the logs on this machine — 121 of 121
     //   — carries an empty `summary` and `content`, so it says only "it thought here".
     // - **Empty `final_answer` agent messages**, 95 of 342 in one session. Real, and not a
-    //   fault: a rung that answers by calling `say` produces a turn whose text answer is
+    //   fault: a rung that answers by calling `hi_say` produces a turn whose text answer is
     //   genuinely empty, `item/started` and `item/completed` both carrying `""`.
     //
     // Keeping them would have made two of every five rows blank. Dropping them loses
@@ -628,7 +628,7 @@ mod tests {
             7,
             "recv",
             json!({"method": "item/completed", "params": {"item": {
-                "type": "mcpToolCall", "id": "exec-9", "server": "hi-agent", "tool": "send_message",
+                "type": "mcpToolCall", "id": "exec-9", "server": "hi-agent", "tool": "hi_send_message",
                 "status": "completed", "arguments": {"to": "2", "message": "done"},
                 "result": {"ok": true}, "durationMs": 12
             }}}),
@@ -636,7 +636,7 @@ mod tests {
         let m = &fold(&text).messages[0];
         assert_eq!(m.kind, "tool");
         assert_eq!(m.body["server"], "hi-agent");
-        assert_eq!(m.body["tool"], "send_message");
+        assert_eq!(m.body["tool"], "hi_send_message");
         assert_eq!(m.body["arguments"]["message"], "done");
         assert_eq!(m.body["result"]["ok"], true);
     }
@@ -785,7 +785,7 @@ mod tests {
         assert!(out.messages.is_empty());
     }
 
-    /// A rung that answers by calling `say` completes its turn with an agent message whose
+    /// A rung that answers by calling `hi_say` completes its turn with an agent message whose
     /// text is genuinely `""`. Ninety-five of one session's three hundred messages were
     /// these, and a blank row per turn is worse than no row.
     #[test]
@@ -802,7 +802,7 @@ mod tests {
                 2,
                 "recv",
                 json!({"method": "item/completed", "params": {"item": {
-                    "type": "mcpToolCall", "id": "e1", "server": "hi-agent", "tool": "say"
+                    "type": "mcpToolCall", "id": "e1", "server": "hi-agent", "tool": "hi_say"
                 }}}),
             ),
         ]);

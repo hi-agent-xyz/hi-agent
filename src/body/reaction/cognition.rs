@@ -17,7 +17,7 @@
 //!    nothing reading its inbox is a mailbox that reports "delivered" and forgets.
 //! 3. **A window.** Invariant 4: active tasks are *projected, not retrieved*. The ledger's
 //!    own writer going to look for it is how a duty goes missing without anyone knowing.
-//! 4. **A host for its workers.** `create_worker` needs somewhere to run them; without
+//! 4. **A host for its workers.** `hi_create_worker` needs somewhere to run them; without
 //!    this, a standing rung borrows an arbitrary conversation and quietly files its work under
 //!    a stranger's conversation.
 //!
@@ -299,14 +299,14 @@ async fn run(reaction: Reaction, registration: Registration) {
         registry::global().start_turn(id);
         workers.reap();
 
-        // **Keep serving `control_rx` while the turn runs.** `create_worker` is the one
+        // **Keep serving `control_rx` while the turn runs.** `hi_create_worker` is the one
         // control message that is always sent from *inside* a turn — the model calls the
         // tool mid-prompt — and the loop that has to honour it is this one. Awaiting the
         // turn without polling the channel meant the request could not be granted until
         // the turn that made it had finished: the tool reported `starting`, the buffered
         // send succeeded, and the subprocess appeared only once the caller stopped
         // working. Delegation therefore failed exactly when it was worth most — a long
-        // turn — and `session_status` truthfully answered "no live session" the whole
+        // turn — and `hi_session_status` truthfully answered "no live session" the whole
         // time, which reads as a dead worker rather than an undelivered one.
         //
         // Only the control arm belongs here. Serving the wake or mail arms would start a
@@ -492,7 +492,7 @@ fn offer_lost_errands(lost: &[registry::index::Ended]) -> String {
         let _ = write!(s, "\n  thread `{thread}`");
     }
     s.push_str(
-        "\n\nFor each: decide. `create_worker` with `resume` set to the thread picks it up \
+        "\n\nFor each: decide. `hi_create_worker` with `resume` set to the thread picks it up \
          knowing what it knew — brief it on what has changed since, not on the job, and pass \
          the same `subject` so the task shows as worked again. Or judge it stale and let it \
          go, in which case say so in the ledger, because a task left `doing` with nobody on \
@@ -803,14 +803,14 @@ async fn turn(
         match update {
             SessionUpdate::Text(text) => {
                 full.push_str(&text);
-                // Mirror it into the switchboard's bounded tail, or `session_messages`
+                // Mirror it into the switchboard's bounded tail, or `hi_session_messages`
                 // answers "nothing yet" forever — and the voice's `## Still looking into`
                 // line has no other way to see what this rung is making of the question.
                 registry::global().record_output(id, &text);
             }
             // Counted from the raw frame rather than the tool dispatch, because what is
             // being checked is the model's behaviour, not the host's: this has to stay
-            // true of a `send_message` that the host went on to refuse.
+            // true of a `hi_send_message` that the host went on to refuse.
             SessionUpdate::Frame(frame) if is_send_message_call(&frame) => sent += 1,
             _ => {}
         }
@@ -818,9 +818,9 @@ async fn turn(
     run.wait().await?;
 
     // **A turn's reply text is not a channel.** It goes to the bounded tail above, which is
-    // only ever *pulled* (`session_messages`), so a timer-woken turn's conclusion has no
+    // only ever *pulled* (`hi_session_messages`), so a timer-woken turn's conclusion has no
     // reader at all — `cognition.md` says so ("Nothing you write reaches anyone directly")
-    // and the only way anything leaves this rung is `send_message`.
+    // and the only way anything leaves this rung is `hi_send_message`.
     //
     // Silence is legitimate: deciding a finding is not worth raising is Cognition's own
     // gate (`docs/arch/agents.md`), and the host must not overrule it. So `sent` is
@@ -861,7 +861,7 @@ async fn active_subjects(reaction: &Reaction) -> std::collections::HashSet<Strin
 }
 
 /// Whether a raw codex frame is Cognition reaching another part of itself — an
-/// `item/started` for the `send_message` MCP tool.
+/// `item/started` for the `hi_send_message` MCP tool.
 ///
 /// `item/started` and not `item/completed`: the question is whether it *tried*. A call the
 /// host rejected (a dead address, a malformed id) is a delivery that failed, which is a
@@ -875,7 +875,7 @@ fn is_send_message_call(frame: &serde_json::Value) -> bool {
         return false;
     };
     item.get("type").and_then(serde_json::Value::as_str) == Some("mcpToolCall")
-        && item.get("tool").and_then(serde_json::Value::as_str) == Some("send_message")
+        && item.get("tool").and_then(serde_json::Value::as_str) == Some("hi_send_message")
 }
 
 #[cfg(test)]
@@ -889,7 +889,7 @@ mod delivery_tests {
             "method": "item/started",
             "params": { "item": {
                 "type": "mcpToolCall", "id": "exec-1", "server": "hi-agent",
-                "tool": "send_message", "status": "inProgress",
+                "tool": "hi_send_message", "status": "inProgress",
                 "arguments": { "to": "2", "message": "the build failed on the auth tests" },
             }},
         })));
@@ -910,11 +910,11 @@ mod delivery_tests {
                 "type": "agentMessage", "phase": "final_answer", "text": "Restart sweep complete.",
             }}}),
             json!({ "method": "item/started", "params": { "item": {
-                "type": "mcpToolCall", "server": "hi-agent", "tool": "create_worker",
+                "type": "mcpToolCall", "server": "hi-agent", "tool": "hi_create_worker",
             }}}),
             // The completion of a send is not a second send.
             json!({ "method": "item/completed", "params": { "item": {
-                "type": "mcpToolCall", "server": "hi-agent", "tool": "send_message",
+                "type": "mcpToolCall", "server": "hi-agent", "tool": "hi_send_message",
             }}}),
         ] {
             assert!(!is_send_message_call(&frame), "{frame}");

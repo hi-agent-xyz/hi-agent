@@ -2,7 +2,7 @@
 
 **Persona:** 用户手里有要给 agent 的东西——一份合同、一张护照照片、一个文件——不知道怎么递过去。东西可能在当前这台机器上,也可能在手机里。这是最常用、最基础的一步:把东西交给它。
 **Goal:** agent 立刻给出"怎么传"的入口,而且**优先直接在屏上摆出两个 view**——一块拖拽区、一个二维码,用户挑顺手的用,而不是念一段"你可以……"的说明。
-**Preconditions:** agent 有自己的页面(屏在场)、能 `show`;有上传 carrier(web upload 端点 + 二维码→手机上传页,均 net-new)。文件是**递来的物件、按引用传**,不走 vision 感官(见 [19](19-upload-passport.md))。底层模型见 [data-dir-layout](../data-dir-layout.md)。
+**Preconditions:** agent 有自己的页面(屏在场)、能 `hi_show`;有上传 carrier(web upload 端点 + 二维码→手机上传页,均 net-new)。文件是**递来的物件、按引用传**,不走 vision 感官(见 [19](19-upload-passport.md))。底层模型见 [data-dir-layout](../data-dir-layout.md)。
 
 ## Steps & expected UX
 
@@ -38,4 +38,4 @@
 - carrier 先做 web upload 还是直接接飞书?顺序未定(见 [data-dir-layout](../data-dir-layout.md) / [[file-exchange-drive-carriers]])。
 - "预置内置" vs "按需生成"的边界划哪?上传归内置(基础常用 + 需后端端点);更花哨/小众的流程留按需。
 
-_机制:carrier(web upload 端点:拖拽 + 二维码→手机上传页,绑 conversation)+ `show`(把入口摆上屏)。文件 = 递来的物件、按引用传,不走 vision(见 [19](19-upload-passport.md))。可行性:可行。成熟度:**carrier = 上传 view + 后端端点,定为**预置打包成内置基础功能**(作为 seed,不是按需生成)——这是基础常用件,且新后端路由本就不能在运行时热加(只有 view/技能/知识能按需),所以端点必然内置,view 也随之预置一个统一默认,但仍是 `views/` 里的普通 view、agent 可再扩展。"摆入口"的 `show` 行为已有。**_
+_机制:carrier(web upload 端点:拖拽 + 二维码→手机上传页,绑 conversation)+ `hi_show`(把入口摆上屏)。文件 = 递来的物件、按引用传,不走 vision(见 [19](19-upload-passport.md))。可行性:可行。成熟度:**carrier = 上传 view + 后端端点,定为**预置打包成内置基础功能**(作为 seed,不是按需生成)——这是基础常用件,且新后端路由本就不能在运行时热加(只有 view/技能/知识能按需),所以端点必然内置,view 也随之预置一个统一默认,但仍是 `views/` 里的普通 view、agent 可再扩展。"摆入口"的 `hi_show` 行为已有。**_

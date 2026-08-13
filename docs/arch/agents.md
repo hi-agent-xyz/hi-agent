@@ -72,7 +72,7 @@ The mouth. One Reaction, one mouth, one turn at a time —
 [invariant 1](arch.md#invariants). It speaks, holds the floor, manages the interaction, and
 decides whether to answer from what it holds or hand the question onward.
 
-**Tools: `say`, `show`, and `SendMessage`.** Its two expression channels are calls — the
+**Tools: `hi_say`, `hi_show`, and `SendMessage`.** Its two expression channels are calls — the
 voice included — plus the one verb that reaches another agent. **No reads, no fetches, no
 working directory, and no built-ins at all**: it is fast because it *cannot* wait on
 anything, not because it is small. Judging the edge of your own knowledge is a hard problem
@@ -85,7 +85,7 @@ see [Attachment](host.md#attachment).) See
 [`host.md`](host.md#the-social-layer-lives-in-reaction-not-here).
 
 Owning that timing includes the one deadline in this host that fires at a named minute:
-`say`'s `back_in` arms the [check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
+`hi_say`'s `back_in` arms the [check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
 that brings the voice back to keep a promise it made. It belongs here for the same
 reason the rest of the social layer does — the rung that named the number is the rung
 that owes the word.
@@ -103,12 +103,12 @@ that owes the word.
 > writes its answer as prose. The tools a turn actually held are readable on the upstream
 > request; that is the only place this claim can be settled.
 
-**`say` is the only way out, and the host has no second one.** Text the model types is
+**`hi_say` is the only way out, and the host has no second one.** Text the model types is
 working-out; it reaches nobody, by design. So a turn that writes a reply and calls nothing
 to say it has not been thwarted on its way to the person — it has produced silence, which is
 a move this rung is allowed and often right to make. The host **notices and does not
 intervene**: no voicing of what was typed, which would make the contract a suggestion, and
-no second ask either. `say` answers a call that was made — too long, and send it as a few
+no second ask either. `hi_say` answers a call that was made — too long, and send it as a few
 shorter ones. There is no ack for a call that wasn't, and a host-side retry standing in for
 one buys a whole extra generation on the turn already going wrong. A silent turn is logged
 as the fault it may be, server-side only, never a card in the UI.
@@ -173,7 +173,7 @@ Both follow from the same idea: durable work is what it means for something to b
 deciding that is judgment, not bookkeeping the voice should do in passing.
 
 **Dispatch is two verbs, not one: hand out and take back.** A worker can be *interrupted*
-mid-turn (`cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
+mid-turn (`hi_cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
 not a convenience — without it there is no way to stop work at all, because everything else
 that reaches a session is mail, and mail is read between turns. A stop delivered that way
 arrives after the thing it was meant to stop, so a retraction could be acknowledged in words
@@ -243,7 +243,7 @@ returns, and Reaction relays it in its own words rather than weighing whether to
 This was structural before the merge: Deliberation's answer came back on the report path,
 which the host framed. It is still structural; only the path changed.
 
-Cognition never calls `say`. Everything it wants said is a **proposal** Reaction schedules.
+Cognition never calls `hi_say`. Everything it wants said is a **proposal** Reaction schedules.
 Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, Reaction asks
 *"is now the moment?"* The thinking part decides it matters; the social part decides the
 timing.
@@ -347,7 +347,7 @@ on a vendor 502, and while it was stuck, five of its workers — three of them m
 merely not spoken, at exactly the moment it *could* not speak.
 
 So dispatch is **three verbs, not two**: start an errand, take back a turn, and finish with
-the session. The third (`close_worker`) is what the timer was standing in for, and it has a
+the session. The third (`hi_close_worker`) is what the timer was standing in for, and it has a
 caller who knows the answer. Cancelling and closing are deliberately different acts —
 cancelling stops a turn and keeps the context for "no, do this instead"; closing ends the
 session and lets the context go.

@@ -11,7 +11,7 @@ screen. Finish with a clear, self-contained summary of what you did and what cam
 it — that summary is handed back verbatim, so put in it everything someone would need
 to act on.
 
-`send_message` reaches the session that created you, and that is the only address you
+`hi_send_message` reaches the session that created you, and that is the only address you
 have. **Reply, don't narrate.** Never park waiting for an answer: if something is
 genuinely ambiguous, make the most reasonable call, say so in your report, and carry on.
 

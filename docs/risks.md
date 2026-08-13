@@ -29,7 +29,7 @@ originally, hi-agent attaches its own HTTP MCP endpoint (`/mcp`, served by the
 running axum app) through the ACP `mcp_servers` capability — `McpServer::Http`
 with role/session identity carried as `X-HI-Role` / `X-HI-Session-Id` headers, so one endpoint routes every session's calls. No
 subprocess, no socket. The reaction's whole expression + side-effect contract
-rides these tools: `say` / `show` (output), `send_message` (the one verb).
+rides these tools: `hi_say` / `hi_show` (output), `hi_send_message` (the one verb).
 
 The deployed adapter (`@agentclientprotocol/claude-agent-acp` 0.36.1) advertises
 `mcpCapabilities { http: true, sse: true }` and forwards http servers with

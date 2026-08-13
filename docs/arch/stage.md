@@ -52,7 +52,7 @@ compiler, the module cache, or the ref resolver.
 | Role | Owner | How it is written | Placement |
 |---|---|---|---|
 | `conversation` | the host — always present | nothing writes it | the stage alone · the rail beside content · the pill when collapsed |
-| `content` | the agent | `show` / `replace` / `dismiss` → `ViewBus::apply` | the stage, minus the rail |
+| `content` | the agent | `hi_show` / `replace` / `dismiss` → `ViewBus::apply` | the stage, minus the rail |
 | `condition` | the process | level-driven `ViewBus::reconcile` | over everything, full-bleed |
 | `self` | the person's camera channel | the channel being on | the backdrop alone · a pip otherwise |
 
@@ -333,6 +333,6 @@ the plane discipline, not whether a 400px rail beside a five-column board reads 
 ## See also
 
 [`text-transcript.md`](text-transcript.md) for what the conversation *is* ·
-[`surfaces.md`](surfaces.md#carriers) for `show` and why it is a call ·
+[`surfaces.md`](surfaces.md#carriers) for `hi_show` and why it is a call ·
 [`view_bus.rs`](../../src/foundation/server/view_bus.rs) for the two slots and why the
 write path decides which.

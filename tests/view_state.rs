@@ -167,7 +167,7 @@ async fn every_client_sees_the_same_screen() {
 /// The whole point: the appearance survives a server restart. A fresh server
 /// over the same data dir serves the same state (version included).
 ///
-/// The second `show` here also pins the screen's one-at-a-time rule end to end:
+/// The second `hi_show` here also pins the screen's one-at-a-time rule end to end:
 /// `b` takes the screen from `a` rather than stacking on it, and it is that
 /// single view — not a pile — that comes back after the restart.
 #[tokio::test]

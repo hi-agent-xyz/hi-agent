@@ -2,7 +2,7 @@
 
 **Persona:** 同一个用户在不同时间(同一对话内、隔天、换个 conversation)反复要 agent 在屏上摆出"同一类东西";有时要的是上次那一份原物,有时要的是同一种样式换上新内容。
 **Goal:** 像人用自己的工具箱——手上还攥着的**直接复用**(近零成本、画面一致),其余的**走过去翻**:翻到相近的就在旧件上改,翻不到才从头做;复用与否由"重复多少 / 新增多少"软性判断。收益是**不重复劳动 / 风格一致 / 给对东西**,快是副产品。
-**Preconditions:** view 工具箱会跨任务沉淀(`views/<project>/<name>.jsx` 持久存在);`show` 可按 **ref** 直接上屏(server 读盘 + 编译缓存命中,JSX 不进 mind 上下文);builder 动手前会先翻工具箱(见 [view-builder.md](../../src/identity/workers/view-builder.md))。**与 [01](01-badminton-top10.md)(造前十演示)、[04](04-trending-feeds.md)(即时态现查)相连。**
+**Preconditions:** view 工具箱会跨任务沉淀(`views/<project>/<name>.jsx` 持久存在);`hi_show` 可按 **ref** 直接上屏(server 读盘 + 编译缓存命中,JSX 不进 mind 上下文);builder 动手前会先翻工具箱(见 [view-builder.md](../../src/identity/workers/view-builder.md))。**与 [01](01-badminton-top10.md)(造前十演示)、[04](04-trending-feeds.md)(即时态现查)相连。**
 
 ---
 
@@ -13,7 +13,7 @@
 ### Case A · 完全相同的 view 再次展示 → 必定复用
 
 1. **第一次**:用户"我想看羽毛球男单前十" → agent delegate,builder 造好一组卡片、存成 ref(`badminton-top10/leader` …)、show 出来(完整流程见 [01](01-badminton-top10.md))。
-2. **隔些时候再要同一份**:用户"再给我看下上次那个羽毛球前十" → agent **不再 delegate、不重查、不重造**,直接 `show(ref=...)` 把那组已存的 view 再摆出来。
+2. **隔些时候再要同一份**:用户"再给我看下上次那个羽毛球前十" → agent **不再 delegate、不重查、不重造**,直接 `hi_show(ref=...)` 把那组已存的 view 再摆出来。
 3. **观感**:**明显更快**(几乎瞬时:server 读盘 + esbuild 缓存命中),且画面与上次**逐像素一致**(同一编译产物);agent 不重复自检、不重复口播研究过程。
 4. **前提是 agent 手上还有那个 ref** —— 也就是这段对话里刚造过 / 刚 show 过。**这一层只在它本来就免费时成立**,我们不为它多建任何东西(见下「复用怎么找到旧 view」)。ref 不在手上就走第二层:delegate 一次,builder 翻工具箱——慢几十秒,但同样不重造。
 
@@ -31,7 +31,7 @@
 
 | 重复 vs 新增 | 怎么做 | 成本 |
 |---|---|---|
-| 完全相同(同一份) | 直接 `show(ref)`,不 delegate | 近零(Case A,必复用) |
+| 完全相同(同一份) | 直接 `hi_show(ref)`,不 delegate | 近零(Case A,必复用) |
 | 大部分旧 + 少量新数据 | 在旧件上改字面量 | 很低(Case B) |
 | 结构相近 + 内容大改 | 以旧件为起点改写 | 中(Case B) |
 | 几乎全新 | 从头 delegate 造 | 高(正常 build) |
@@ -40,12 +40,12 @@
 
 | 层 | 谁来找 | 成本 |
 |---|---|---|
-| **同一 session 里 ref 还在上下文** | Reaction 自己 —— 直接 `show(ref)`,不 delegate | 近零(~7s 实测) |
+| **同一 session 里 ref 还在上下文** | Reaction 自己 —— 直接 `hi_show(ref)`,不 delegate | 近零(~7s 实测) |
 | **其余一切情况** | builder 翻工具箱 —— `grep -rn "^// purpose:" .` 一次拿到全树的 path→用途 | 一次 delegate(几十秒) |
 
 **delegate 不是要消掉的开销,它就是"走过去翻工具箱"这个动作本身。** 人走回房间时,脑子里并没有一份自己做过的所有图表的目录;人是"我好像做过类似的",然后走过去翻。所以第一层只在**它本来就免费**的地方成立(ref 已经在上下文里),我们不再试图把它延伸到跨 session。
 
-**为什么不做常驻索引(此前的设想,现已放弃)**:要让 Reaction 隔天也能直接 `show(ref)`,得把一份 view 清单常驻进它每轮读的 brief。但那份 brief 有 6000 字符硬上限且**每轮**注入(`snapshot.rs`:"rides *every* turn on a latency budget"),为偶尔一次的复用在每一轮都背一张清单,交换比本身就是亏的;而且它与 brief 自己的判据直接冲突——**投进窗口的 = Reaction 不查就得知道的,其余都是回忆**(见 [`arch/data.md`](../arch/data.md#what-earns-a-place))。一张上周做的卡按这条判据正好该被排除。同理不再走 `facets/views/`:那是让 Reflection 事后从 episode 重建一份本该当场就知道的东西。
+**为什么不做常驻索引(此前的设想,现已放弃)**:要让 Reaction 隔天也能直接 `hi_show(ref)`,得把一份 view 清单常驻进它每轮读的 brief。但那份 brief 有 6000 字符硬上限且**每轮**注入(`snapshot.rs`:"rides *every* turn on a latency budget"),为偶尔一次的复用在每一轮都背一张清单,交换比本身就是亏的;而且它与 brief 自己的判据直接冲突——**投进窗口的 = Reaction 不查就得知道的,其余都是回忆**(见 [`arch/data.md`](../arch/data.md#what-earns-a-place))。一张上周做的卡按这条判据正好该被排除。同理不再走 `facets/views/`:那是让 Reflection 事后从 episode 重建一份本该当场就知道的东西。
 
 **用途记在哪**:记在 **view 文件自己的第一行**(`// purpose: …`),不另立索引文件。因为索引是**记账**,而记账靠软引导必然漏记,漏了又没有任何结构性的地方能兜底(view 是直接写文件存的,host 在保存时没有 hook)——那就成了第二个真相源,还会**静默**出错:builder 查表没查到 → 认定没做过 → 重画,而东西明明在盘上。用途写在文件里,"索引"就永远是从树上扫出来的:**没写 purpose 的退化成只有文件名,也就是今天的行为,而不会退化成一个理直气壮的错误答案。**
 
@@ -84,11 +84,11 @@
 
 - ~~**跨 session 复用依赖 conversation 的 generated prompt**~~ —— **2026-08-08 撤销,不再是目标**。理由见上"为什么不做常驻索引":每轮成本 vs 偶发收益的交换比是亏的,且与 brief 自己的判据冲突。跨 session 走 builder 翻工具箱这一条路,够用。
 - **`purpose:` 行的遵守率**:它是软引导,必然有漏写。设计上已让漏写退化成"只有文件名"(即今天的行为),但**漏写率如果很高,复用就退回原样**——这是要在实测里看的第一个数,而不是能在设计里定死的。
-- **要不要做参数化 view**:给 `show` 加一条 data 通道 → 同一编译产物喂不同数据,把 Case B 的"同形换数据"降到接近零成本。代价:引入数据面、偏离现在"内容烤进源码、JSX 不进 mind 上下文"的静态模型——是一次有意的架构取舍,不是免费午餐。
+- **要不要做参数化 view**:给 `hi_show` 加一条 data 通道 → 同一编译产物喂不同数据,把 Case B 的"同形换数据"降到接近零成本。代价:引入数据面、偏离现在"内容烤进源码、JSX 不进 mind 上下文"的静态模型——是一次有意的架构取舍,不是免费午餐。
 - **软引导给到多细**:"重复占比"到什么程度该改 vs 从头,全交给 builder 判断够不够?要不要一句粗略指引?
 - **三者权衡**:复用(一致 / 不重复劳动) vs 新鲜(对得上当前数据)——缺省已定为**偏新鲜**(见 UX principles),但"什么算不会过期的 view"仍靠 builder 判断。
 
-_机制:**ref 在手**那层零件早已在(`show` by ref + 内容寻址编译缓存),现补了 `reaction.md` 一句"还有 ref 就直接 show";**其余一切**走 builder 翻工具箱——`view-builder.md` 现要求存 view 时第一行写 `// purpose:`、动手前 `grep -rn "^// purpose:" .` 扫全树、改编时重写该行、并在**意图未随 brief 传到时默认重做**;意图的两跳中转由 `reaction.md`(听见原话)+ `cognition.md`(写 worker brief)各补一句。全部是 prompt 层,**未动 Rust**。仍受限于 view **静态、换数据必重编译**(参数化 view 见 Open questions)。成熟度:**已实现、未实测**——`purpose:` 的实际遵守率和 grep 命中率必须在 Mac mini 上跑一次才算数。_
+_机制:**ref 在手**那层零件早已在(`hi_show` by ref + 内容寻址编译缓存),现补了 `reaction.md` 一句"还有 ref 就直接 show";**其余一切**走 builder 翻工具箱——`view-builder.md` 现要求存 view 时第一行写 `// purpose:`、动手前 `grep -rn "^// purpose:" .` 扫全树、改编时重写该行、并在**意图未随 brief 传到时默认重做**;意图的两跳中转由 `reaction.md`(听见原话)+ `cognition.md`(写 worker brief)各补一句。全部是 prompt 层,**未动 Rust**。仍受限于 view **静态、换数据必重编译**(参数化 view 见 Open questions)。成熟度:**已实现、未实测**——`purpose:` 的实际遵守率和 grep 命中率必须在 Mac mini 上跑一次才算数。_
 
 ## 实测 2026-06-21 · origin/main efb228e(boss 文字通道 + 隔离实例驱动)
 
@@ -96,16 +96,16 @@ _机制:**ref 在手**那层零件早已在(`show` by ref + 内容寻址编译�
 
 环境:Mac mini,用 `--data-dir` 起**独立空目录的隔离实例**(避开旧 conversation 污染),挂 `/api/out/view` 长轮询当"屏幕在场"。三幕:① 做"本周三目标"卡片 → ② 做"下周目标"卡片 → 清屏 → ③ 让它把第一张再放出来。Ground truth 取自 reaction transcript 的 `tool_use`、`channel out (view)` 事件、ACP spawn 时间线、views 树、`facets/` 与 `hot.md`。
 
-- ✅ **同一 session 复用成立(Case A 核心,印证用户诉求)**:第三幕"把本周目标那张再放出来",reaction 只发了**一个** `show{ref:"weekly-goals/card"}`——**不 delegate、不起 worker、不重写**;屏上重现的是**同一个编译产物**(`b4602c0a…mjs`,内容寻址命中),清屏→重现**约 7 秒**(对比首建 6.5 分钟)。ref 全程在 reaction 的对话上下文里,正是"in-session 那层只需把已有 ref 再 show 一次"。
+- ✅ **同一 session 复用成立(Case A 核心,印证用户诉求)**:第三幕"把本周目标那张再放出来",reaction 只发了**一个** `hi_show{ref:"weekly-goals/card"}`——**不 delegate、不起 worker、不重写**;屏上重现的是**同一个编译产物**(`b4602c0a…mjs`,内容寻址命中),清屏→重现**约 7 秒**(对比首建 6.5 分钟)。ref 全程在 reaction 的对话上下文里,正是"in-session 那层只需把已有 ref 再 show 一次"。
 - ✅ **同形换数据→改而非从头(Case B 软引导)**:第二幕做"下周目标"卡时,reaction 的 delegate brief 自己写了"**in the same style as the weekly goals card you just made (weekly-goals/card)**";产物 `next-card.jsx` 与 `card.jsx` 一 diff 就是**在旧件上改**(结构照搬,只换标题/日期/条目、glow 微调),不是冷起。"看工具箱、能改别重画"在真实运行里发生了。
 - ✅ **build 成本主要在首建**:首建 6.5 分钟几乎全花在 builder 自检的**首跑 headless 浏览器置备**;第二张同类卡 ~83 秒(浏览器已缓存 + worker 复用,见下),复用 ~7 秒。"重复越用越快"在数量级上成立。
 - 📝 **worker 进程也被复用**:两次 delegate 只在首建时 spawn 了 **1 个 worker**;第二幕 delegate **无新 spawn**——首个 worker 保持温热被复用。属进程级复用,与 view 复用正交,但同样省时。
-- ⚠️ **跨 session 沉淀这层确认未建(符合预期)**:跑完 `memory/facets/` 只有 `projects/hi-agent`,**没有 `views/` 维度**;`hot.md` 被 reflection 重写了,但写的是**情景记忆**("老板让我做了张卡片…"),**不是 purpose→ref 的复用 handle**——未来 session 据此**无法**直接 `show(ref)`。reflection 子系统本身**活着**(本次自适应时钟触发 2 次),即三层里的"宿主"在跑,只是还不沉淀 view handle。这是对 journey 待建项(`facets/views/` + hot.md 策展)的实测确认。
-- ⚠️ **同一 session 内 view 默认叠加、不替换**:第二幕新卡用 `op:show` 加新 id(`weekly-goals-next`),旧卡仍留屏上(v2 两个 module 并存),要单独看回第一张得先清屏。非本 journey 缺口,但说明"换一张"默认是加视图、由 reaction 用 id/dismiss 自己管布局。
+- ⚠️ **跨 session 沉淀这层确认未建(符合预期)**:跑完 `memory/facets/` 只有 `projects/hi-agent`,**没有 `views/` 维度**;`hot.md` 被 reflection 重写了,但写的是**情景记忆**("老板让我做了张卡片…"),**不是 purpose→ref 的复用 handle**——未来 session 据此**无法**直接 `hi_show(ref)`。reflection 子系统本身**活着**(本次自适应时钟触发 2 次),即三层里的"宿主"在跑,只是还不沉淀 view handle。这是对 journey 待建项(`facets/views/` + hot.md 策展)的实测确认。
+- ⚠️ **同一 session 内 view 默认叠加、不替换**:第二幕新卡用 `op:hi_show` 加新 id(`weekly-goals-next`),旧卡仍留屏上(v2 两个 module 并存),要单独看回第一张得先清屏。非本 journey 缺口,但说明"换一张"默认是加视图、由 reaction 用 id/dismiss 自己管布局。
 
 复核:**in-session 复用 + Case B 改写 = 实测通过**;**跨 session 沉淀 / hot.md 复用 handle / 参数化 view = 未建(facets/hot.md 实测佐证)**。与正文成熟度标注一致,无需翻案。
 
 > **2026-08-08 补注(此记录保留原样,但两条结论已被后续决策取代):**
 > ① "跨 session 沉淀未建"当时记为**待建缺口**,现已改判为**不做**——理由见正文"为什么不做常驻索引"。这条不再是欠债。
-> ② "同一 session 内 view 默认叠加、不替换"**已被修掉**:`a7f625f` 退掉 placement,改为一次一张全屏 view,`show` 即替换(`reaction.md`:"The screen holds one view")。
+> ② "同一 session 内 view 默认叠加、不替换"**已被修掉**:`a7f625f` 退掉 placement,改为一次一张全屏 view,`hi_show` 即替换(`reaction.md`:"The screen holds one view")。
 > ③ 当时的 ✅ 结论(ref 在手→~7s 重现、builder 照旧件改)仍然成立,且正是现在两层模型的第一层。

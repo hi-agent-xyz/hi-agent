@@ -189,7 +189,7 @@ agent remembers to bring.
 | Size | code's, a **hard cap**. Over it, code truncates and says so — a ceiling that shows up as text is real; one that shows up as latency is not |
 | Floor | the **log tail**, which code already assembles from [`memory/raw/`](#memoryraw). An agent that never got round to writing its memory — busy, crashed, mid-restart — leaves a window that is uncurated, never empty |
 
-**Who writes the conversation's.** Reaction holds `say` and `show` and nothing else, so it has
+**Who writes the conversation's.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has
 no file access and cannot write its own. The conversation's memory is therefore *consumed* by
 Reaction and *written by* [Cognition](agents.md#cognition--minutes-and-beyond) — the rung that
 already reads around and works out what was asked. That falls out of the tool surfaces rather

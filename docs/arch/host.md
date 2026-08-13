@@ -96,8 +96,8 @@ it.
 *The fourth duty, a **presence gate**, has been retired outright rather than moved — see
 [Attachment](#attachment).*
 
-What the host keeps is what has no model in it: the queue behind `say`; the fact that
-`say` **returns**, so an over-long utterance is answerable; and the one call that is not
+What the host keeps is what has no model in it: the queue behind `hi_say`; the fact that
+`hi_say` **returns**, so an over-long utterance is answerable; and the one call that is not
 a judgment at all — **not synthesizing speech for a speaker that isn't attached**,
 because that is a fact about the wire, not a read of the room.
 
@@ -131,7 +131,7 @@ detect.
 Removed with it: the eager/around/away expectation and its projection into every turn's
 prompt; the three window states and the first-party attention lane that reported them;
 the return edge that woke Reaction when someone came back, and the held telling it
-existed to deliver; and `say`'s answer about where the words landed. A due check-in now
+existed to deliver; and `hi_say`'s answer about where the words landed. A due check-in now
 fires into an empty room like any other message, because that is what a message is for.
 
 **A face on camera and a voice in the room are still observed**, and they still reach the
@@ -148,7 +148,7 @@ appended. It never consumes a message, never tells the host what it has read, an
 no queue, cursor or bookmark of its own.
 
 Three things are messages: what the person typed or said, a file they handed over, and
-one `say` call. **One `say` is one message, whole** — the call already carries its
+one `hi_say` call. **One `hi_say` is one message, whole** — the call already carries its
 complete text, so nothing is assembled from streamed chunks. Sentence splitting still
 happens, but only to pace TTS, and it never reaches the list. Views, worker reports,
 mail between rungs, clock wakes, recognition signals and tool calls are not conversation
@@ -268,7 +268,7 @@ owed) and the **reflection backoff** for consolidation.
 conversation loop on the same knob and run a turn into an empty room. Reaction is
 tools-off, so the wake handed it nothing it could not already see in the window it gets on
 *every* turn — the least-informed rung was the one deciding whether to speak. The journeys
-measured what that produced: two post-restart pulses, both concluding without a `say`,
+measured what that produced: two post-restart pulses, both concluding without a `hi_say`,
 while a standing duty sat unread in the ledger ([gaps #1](../user-journeys/gaps.md)). It
 was also the most expensive wake in the system, because the projected window rides every
 turn and accumulates in the session. Unprompted speech comes instead from the rung that
@@ -281,7 +281,7 @@ a scheduler — one slot, one deadline, one wake, no target and no payload.
 
 #### The check-in — the only thing that fires at a named time
 
-Reaction sets it by naming a number in `say`'s `back_in` — the same number it just
+Reaction sets it by naming a number in `hi_say`'s `back_in` — the same number it just
 said out loud ("give me ten minutes") — and the host wakes it when that is up. The
 size of a silence is therefore a property of *the utterance that opened it*: a
 promise is only a promise once it has been said, so there is no way to arm a wake for
@@ -325,7 +325,7 @@ agent keeps every tool it has.
 | Shape | How it runs | What the host provides |
 |---|---|---|
 | **Cadence** — check this every N hours | Cognition's glance-up *is* the executor: it wakes, reads the ledger, and does what is due. Or an agent-installed timer does the work and leaves a durable trace. | The glance-up, and nothing else. |
-| **Precise moment** — be somewhere at 07:00 | A parked worker sleeps and `send_message`s its owner; the ledger re-arms it after a restart. | `create_worker` + the one verb. |
+| **Precise moment** — be somewhere at 07:00 | A parked worker sleeps and `hi_send_message`s its owner; the ledger re-arms it after a restart. | `hi_create_worker` + the one verb. |
 | **Arrival** — something reached the group | The agent's own listener holds the connection and posts what arrived to `/api/in/duty/<start_key>`; a working session handles it in seconds. | The duty inbox: coalesce, resolve the key against the ledger, open a handler from the facet if none is live. |
 
 The first covers the standing duties this system actually has. The second is rare
@@ -352,7 +352,7 @@ reaching one the ledger already says should exist.
 **Cognition is not in the path.** The handler takes its traffic straight from the inbox
 and its per-message report is dropped, so routine traffic wakes no rung. Its owner is
 Cognition so that what it *chooses* to raise — a decision that is not its to make,
-something needing the person — has somewhere to land, over `send_message` like any
+something needing the person — has somewhere to land, over `hi_send_message` like any
 worker. Reaching the person is still two hops and both are load-bearing: Cognition
 decides whether it is worth saying, Reaction decides when the room is right.
 
