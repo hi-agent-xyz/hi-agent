@@ -84,6 +84,18 @@ pub enum LoopControl {
     /// will arrive. A caller that cannot tell them apart can only guess, and the guess it
     /// would make ("stopped") is the one that reproduces the bug this tool was added for.
     CancelWorker { id: u64, reply: tokio::sync::oneshot::Sender<bool> },
+    /// End a working session for good (the `close_worker` tool).
+    ///
+    /// The third verb of dispatch, and the one that had no caller: `CreateWorker` hands
+    /// work out, `CancelWorker` takes a turn back, and until now nothing *finished* with a
+    /// session — a fifteen-minute idle timer did, on its own judgment, which turned out to
+    /// be no judgment at all (see [`super::workers`]). A worker's lifetime belongs to the
+    /// rung holding the errand, so it needs a way to say the errand is over.
+    ///
+    /// Carries a **reply** for the same reason `CancelWorker` does: "I closed it" and "it
+    /// was already gone" are different facts about what is still running, and a caller
+    /// that cannot tell them apart cannot keep an honest roster.
+    CloseWorker { id: u64, reply: tokio::sync::oneshot::Sender<bool> },
 }
 
 /// The handle the MCP handler dispatches to. Cheap to clone. Carries two

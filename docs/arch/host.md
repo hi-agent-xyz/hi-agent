@@ -358,7 +358,7 @@ decides whether it is worth saying, Reaction decides when the room is right.
 
 The handler is a **cache, not the carrier.** What persists is the ledger entry and the
 listener's rows; the session is re-derivable from both, and **the facet is the brief** on
-a cold open. So it may close on its idle TTL or die with the process, and the binding
+a cold open. So it may be closed once its errand is done or die with the process, and the binding
 from key to session is held in memory and never written down — a delivery to a session
 that has gone is not an error but the signal to open a fresh one. A burst therefore
 continues in one warm session with full context, and a message the next morning starts

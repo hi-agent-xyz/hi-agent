@@ -29,7 +29,7 @@
 //! The handler is a **cache, not the carrier**. What persists is the ledger entry and the
 //! listener's rows; the session is re-derivable from both. So the binding from key to
 //! session is held here, in memory, and is never written down — and a `post` that comes
-//! back [`Delivery::Unknown`] (closed past its idle TTL, or gone with the process) is not
+//! back [`Delivery::Unknown`] (closed by its owner, or gone with the process) is not
 //! an error but the signal to open a fresh one from the facet. That is also why a duty
 //! worker is an ordinary [`WorkerType::General`] session with no new flag on it: nothing
 //! about it needs to survive, so nothing about it needs to be special.
@@ -224,7 +224,7 @@ async fn dispatch(
                 tracing::info!(worker = id, arrivals = count, "duty traffic delivered");
                 return;
             }
-            // Closed past its idle TTL, or lost with a restart. Not an error — the
+            // Closed by its owner, or lost with a restart. Not an error — the
             // handler was always a cache, and the ledger is about to rebuild it.
             _ => {
                 bound.remove(key);

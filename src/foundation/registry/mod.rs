@@ -856,33 +856,47 @@ impl Registry {
         Some(batch)
     }
 
-    /// Take everything queued for `id` — or, finding nothing, **close the inbox** and
-    /// report that by returning `None` with the mailbox now shut.
+    /// Close `id`'s inbox because its owner said so, and wake whoever is waiting on it.
     ///
-    /// One call because it is one decision under one lock. A session that has idled out
-    /// wants to stop; a message racing that decision must either be taken or must find
-    /// the mailbox already closed and spawn its own fresh session. Split into a peek and
-    /// a close, the message that lands between them is lost — silently, and only under
-    /// load, which is the worst way to find out.
-    pub fn take_pending_or_close(&self, id: SessionId) -> Option<Vec<Message>> {
-        let batch = {
+    /// This replaced an atomic `take_pending_or_close`, which closed the mailbox only on
+    /// finding it empty. That existed to settle a *race* — a message landing at the instant
+    /// a session idled out — and the idle-out is gone, so the race is too. Ending a session
+    /// is now a decision with an author, and it closes unconditionally: the owner has
+    /// finished with the errand, and mail it queued a moment before changing its mind is
+    /// not a reason to keep a subprocess alive. Undelivered is the honest outcome, and
+    /// [`unregister`](Self::unregister) already says so for the same case.
+    ///
+    /// Notifying after closing is what makes the waiter's loop terminate: `Notify` holds a
+    /// permit if the wake races ahead of the wait, so a worker parked in
+    /// [`wait_for_mail`](crate::body::reaction::workers) sees `closed` on its next pass
+    /// rather than sleeping through it.
+    ///
+    /// Returns whether there was a live session to close.
+    pub fn close_inbox(&self, id: SessionId) -> bool {
+        let notify = {
             let mut map = self.sessions.lock().unwrap();
             let Some(entry) = map.get_mut(&id) else {
-                return None;
+                return false;
             };
-            if entry.inbox.pending.is_empty() {
-                entry.inbox.closed = true;
-                return None;
-            }
-            entry.note_state_change(!entry.busy);
-            if !entry.busy {
-                entry.busy = true;
-                entry.turns += 1;
-            }
-            std::mem::take(&mut entry.inbox.pending)
+            entry.inbox.closed = true;
+            entry.notify.clone()
         };
+        notify.notify_one();
         self.note_activity();
-        Some(batch)
+        true
+    }
+
+    /// Whether `id`'s inbox will take no more work — closed, or gone entirely.
+    ///
+    /// A session that has left the switchboard answers `true` for the same reason a closed
+    /// one does: there is nothing more coming, which is the only question the caller has.
+    pub fn inbox_closed(&self, id: SessionId) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|e| e.inbox.closed)
+            .unwrap_or(true)
     }
 
     /// The handle woken when mail lands for `id`, for a loop that wants to wait on its
@@ -1121,33 +1135,33 @@ mod tests {
         assert_eq!(r.status(b).unwrap().turns, 1, "a burst costs one turn, not several");
     }
 
-    /// The race the atomic take-or-close exists for: a session idling out and a message
-    /// landing are one decision, so exactly one of them wins and neither is lost.
+    /// What a close means to everyone *else*: the address stops accepting work, and says
+    /// so, so a sender opens something fresh instead of posting into a session that is on
+    /// its way out. Ending a worker without this would swallow the next brief silently.
     #[test]
-    fn taking_or_closing_never_loses_the_racing_message() {
+    fn a_closed_inbox_turns_later_senders_away() {
         let r = reg();
         let (a, b) = (mint(), mint());
         r.register(a, Role::Cognition, None, String::new(), None);
         r.register(b, Role::Worker(WorkerType::General), Some(a), String::new(), None);
 
-        // Mail present: it is taken, and the inbox stays open for more.
-        r.send(a, b, "one more thing".into());
-        let mail = r.take_pending_or_close(b).expect("mail wins over the close");
-        assert_eq!(mail[0].text, "one more thing");
-        assert_eq!(
-            r.send(a, b, "and another".into()),
-            Delivery::Delivered,
-            "taking mail must not close the mailbox"
-        );
-
-        // Drain, then find it empty: now it closes, and later sends are told so.
-        r.take_pending(b);
-        assert!(r.take_pending_or_close(b).is_none());
+        assert_eq!(r.send(a, b, "one more thing".into()), Delivery::Delivered);
+        assert!(r.close_inbox(b), "there was a live session to close");
         assert_eq!(
             r.send(a, b, "too late".into()),
             Delivery::Unknown,
             "a closed inbox reports Unknown so the sender starts something fresh"
         );
+        assert!(r.inbox_closed(b));
+    }
+
+    /// Closing what is not there is a normal thing for an owner to do — it tidies up after
+    /// a restart — so it answers rather than panicking, and answers honestly.
+    #[test]
+    fn closing_an_unknown_session_reports_that_nothing_was_there() {
+        let r = reg();
+        assert!(!r.close_inbox(mint()));
+        assert!(r.inbox_closed(mint()), "a session that never existed takes no more work");
     }
 
     /// The host is not an agent: it may hand work to any live session, and what it

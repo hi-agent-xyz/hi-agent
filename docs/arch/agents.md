@@ -327,15 +327,34 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 | **Reaction** | one, process-wide, long-lived | a turn fails |
 | **Cognition** | one, process-wide, long-lived | a turn fails |
 | **Reflection** | **one per pass** | never — the pass ends |
-| Workers | one per errand | the errand ends, or an idle TTL |
+| Workers | one per errand | **its owner closes it** |
 
 **Nothing in this column is about size.** Context growth is bounded by the underlying agent,
 which compacts in place; see [`host.md`](host.md#session-layer) for why that is not ours to
 do. A session is replaced here only because it **broke**.
 
-The idle TTL that used to appear in this table belonged to Deliberation, which shared the
-worker machinery and inherited its warm-idle drop. Nothing inherits it now: the rungs left
-here are resident by construction, and workers keep their own.
+**A worker's lifetime belongs to the rung that created it, and nothing reclaims one on a
+clock.** This row used to read "the errand ends, or an idle TTL", and the TTL is now gone
+outright rather than tuned. It could not answer the question it was being asked. A worker
+that has reported and is waiting for its next instruction is indistinguishable, from the
+outside, from a worker whose owner has forgotten it — the difference is *the owner's
+intent*, which is knowable only to the owner. Fifteen minutes of quiet was never evidence
+either way.
+
+What made that concrete: on 2026-08-13 Cognition wedged in a sixteen-minute turn that died
+on a vendor 502, and while it was stuck, five of its workers — three of them mid-deployment
+— hit the timer and were reclaimed. Nothing had gone wrong with the work. The owner had
+merely not spoken, at exactly the moment it *could* not speak.
+
+So dispatch is **three verbs, not two**: start an errand, take back a turn, and finish with
+the session. The third (`close_worker`) is what the timer was standing in for, and it has a
+caller who knows the answer. Cancelling and closing are deliberately different acts —
+cancelling stops a turn and keeps the context for "no, do this instead"; closing ends the
+session and lets the context go.
+
+**The cost is stated, not hidden:** a worker its owner never closes lives until the process
+does. That is a real leak and the honest place for it — an owner that loses track of its
+errands has a problem no timer was fixing, only concealing.
 
 **The two thinking rungs are long-lived from creation.** A rung that reopens each time cannot
 remember what it was in the middle of — and that is not something the ledger can hand back,

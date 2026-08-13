@@ -260,6 +260,10 @@ async fn run(reaction: Reaction, registration: Registration) {
                         let _ = reply.send(workers.interrupt(worker).await);
                         continue;
                     }
+                    Some(LoopControl::CloseWorker { id: worker, reply }) => {
+                        let _ = reply.send(workers.close(worker));
+                        continue;
+                    }
                     None => break,
                 }
             }
@@ -334,6 +338,12 @@ async fn run(reaction: Reaction, registration: Registration) {
                         // doing nothing would have.
                         Some(LoopControl::CancelWorker { id: worker, reply }) => {
                             let _ = reply.send(workers.interrupt(worker).await);
+                        }
+                        // Served in-turn for the plainer reason: it is called mid-prompt
+                        // like the rest, and a close that waits for the turn to end holds
+                        // a subprocess open for no purpose.
+                        Some(LoopControl::CloseWorker { id: worker, reply }) => {
+                            let _ = reply.send(workers.close(worker));
                         }
                         // The sender is gone; the turn still deserves to finish. A closed
                         // channel resolves immediately forever, so stop selecting on it.

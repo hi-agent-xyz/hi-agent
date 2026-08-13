@@ -1269,6 +1269,10 @@ async fn apply_control(
             let _ = reply.send(workers.interrupt(id).await);
             None
         }
+        LoopControl::CloseWorker { id, reply } => {
+            let _ = reply.send(workers.close(id));
+            None
+        }
     }
 }
 

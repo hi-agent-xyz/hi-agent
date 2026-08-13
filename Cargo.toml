@@ -190,3 +190,9 @@ cpal = "0.18"
 [dev-dependencies]
 # tempfile is used by integration tests for throwaway data dirs.
 tempfile = "3"
+
+# `test-util` adds tokio's pausable clock (`#[tokio::test(start_paused = true)]`), which is
+# how a test asserts that something does *not* happen on a timer: an hour of virtual
+# silence passes instantly. Dev-only on purpose — the ability to stop time belongs to
+# tests, and `full` deliberately does not include it.
+tokio = { version = "1.40", features = ["test-util"] }

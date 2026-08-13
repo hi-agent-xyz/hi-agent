@@ -119,7 +119,11 @@ fn create_worker_tool() -> Value {
         "Start a working session to carry out a job, and get back its session id. It runs \
          with the full toolset and no voice of its own; it reports to you and to nobody else. \
          Send it the brief with `send_message`, ask how it is doing with `session_status`, and \
-         read what it has produced with `session_messages`.",
+         read what it has produced with `session_messages`. **It is yours until you end it**: \
+         a session that has reported is not finished, it is waiting, and it keeps its whole \
+         context for the next thing you send it however long that takes. Nothing reclaims it \
+         on a timer, so when its errand is genuinely done, `close_worker` it — every session \
+         you leave open holds a subprocess.",
         json!({
             "type": "object",
             "properties": {
@@ -201,6 +205,30 @@ fn cancel_worker_tool() -> Value {
          calling this is a sentence, not a stop, and the work carries on. The session stays \
          alive and keeps everything it has learned, so to redirect rather than drop the \
          work, cancel and then `send_message` the new instruction to the same id.",
+        json!({
+            "type": "object",
+            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "required": ["id"],
+        }),
+    )
+}
+
+/// `close_worker` — the verb that used to be a timer.
+///
+/// A working session held a subprocess until fifteen idle minutes killed it, which meant
+/// "I am finished with this session" was said by a clock that could not tell a finished
+/// errand from a waiting one. It is a sentence the owner says now.
+fn close_worker_tool() -> Value {
+    tool(
+        "close_worker",
+        "Finish with a working session for good, freeing what it holds. Nothing else ends \
+         one — a session you leave open stays open, holding its context and its share of \
+         the machine, until you say this. So close a session once its errand is genuinely \
+         done and you will not be asking it anything more. Not the same as `cancel_worker`: \
+         that stops the current turn and *keeps* the session, which is what you want for \
+         \"no, do this instead\". This ends it, and everything it learned goes with it — if \
+         you may still want a follow-up, leave it open. A turn already running is allowed to \
+         finish and report before the session closes.",
         json!({
             "type": "object",
             "properties": { "id": { "type": "string", "description": "The session id." } },
@@ -329,6 +357,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             create_worker_tool(),
             cancel_worker_tool(),
+            close_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
             tool(
@@ -493,6 +522,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             create_worker_tool(),
             cancel_worker_tool(),
+            close_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
         ],
@@ -1027,6 +1057,64 @@ async fn dispatch_tool(
                 "session {} — {state}; {} turn(s) so far; on: {}{doing}",
                 st.id, st.turns, st.title
             ));
+        }
+        "close_worker" => {
+            // The same three guards `cancel_worker` carries, and for the same reasons:
+            // lifetime is dispatch, dispatch belongs to the standing rungs, and a session
+            // answers to whoever asked for the work.
+            if !matches!(role, Some("reflection") | Some("cognition")) {
+                return tool_error(&format!(
+                    "`close_worker` belongs to the standing rungs; role `{}` may not end \
+                     a working session",
+                    role.unwrap_or("<none>")
+                ));
+            }
+            let Some(caller) = session_id else {
+                return tool_error("close_worker needs a session identity; this session has none");
+            };
+            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
+                return tool_error("close_worker requires a numeric `id`");
+            };
+            let Some(st) = registry::global().status(id) else {
+                return tool_ok(&format!(
+                    "session {id} was already gone — nothing to close, and nothing is \
+                     still holding its context."
+                ));
+            };
+            if st.owner != Some(caller) {
+                return tool_error(
+                    "a working session can only be closed by the session that asked for the work",
+                );
+            }
+            let owner_role = ToolOwner::from_role(role).expect("role guard above");
+            let Some(sink) = registry.get(owner_role).await else {
+                return tool_error("the owning loop is not up, so nothing can be closed");
+            };
+            // Waits for the answer, like `cancel_worker`: whether a session is still
+            // running is exactly the thing the caller is deciding about, so a hopeful
+            // "closed" would put a session on the roster that is not there — or take one
+            // off that is.
+            let (reply, answer) = tokio::sync::oneshot::channel();
+            if let Err(err) = sink.send(LoopControl::CloseWorker { id, reply }).await {
+                return tool_error(&err.to_string());
+            }
+            return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
+                Ok(Ok(true)) => tool_ok(&format!(
+                    "session {id} is closed. If it was mid-turn it will finish and report \
+                     once more, then end. Its context is gone — a further errand needs a \
+                     new session."
+                )),
+                Ok(Ok(false)) => tool_ok(&format!(
+                    "session {id} was already gone — nothing to close."
+                )),
+                Ok(Err(_)) => tool_error(&format!(
+                    "the owning loop dropped the request; session {id} was not closed"
+                )),
+                Err(_) => tool_error(&format!(
+                    "no answer from the owning loop in time; it is not confirmed that \
+                     session {id} closed — check session_status before assuming it is gone"
+                )),
+            };
         }
         "cancel_worker" => {
             // Same rung guard as `create_worker`, for the same reason: stopping work is
@@ -2421,6 +2509,11 @@ mod surface_tests {
     /// `cancel_worker` sits beside `create_worker` because dispatch is two verbs: a rung
     /// that can start work and not stop it can only ever be told to change its mind too
     /// late.
+    ///
+    /// `close_worker` is the third, and its absence used to be filled by a clock. A rung
+    /// that can start work and stop a turn but never *finish* with a session does not own
+    /// the lifetime — something else does, on a timer, with no idea whether the errand was
+    /// done. All three or none.
     #[test]
     fn cognition_holds_the_switchboard_and_nothing_else() {
         let mut got = names(Some("cognition"));
@@ -2429,6 +2522,7 @@ mod surface_tests {
             got,
             vec![
                 "cancel_worker".to_string(),
+                "close_worker".to_string(),
                 "create_worker".to_string(),
                 "send_message".to_string(),
                 "session_messages".to_string(),

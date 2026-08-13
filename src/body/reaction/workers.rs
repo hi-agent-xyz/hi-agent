@@ -35,11 +35,9 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate, StopReason};
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
@@ -68,17 +66,29 @@ fn mint_session_id() -> SessionId {
     registry::mint()
 }
 
-/// How long a finished working session stays warm — its agent session held open and
-/// resumable via `delegate worker:<id>` — before it closes itself to free the
-/// subprocess context. A refinement arriving within this window continues the same
-/// session with full context; a later one falls back to a fresh worker.
-const WORKER_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
+// A working session used to close itself after fifteen idle minutes. That timer was
+// written for a narrower world than the one it ended up policing: it meant "this errand is
+// *finished*; hold the subprocess a while in case a refinement arrives, then reclaim it" —
+// cache eviction, not a lifetime.
+//
+// Dispatch outgrew it. An owner now drives a worker turn by turn: brief, report, next
+// instruction, report. Between instructions a worker is not finished, it is *waiting*, and
+// silence is the only thing the timer could see — so it could not tell a completed errand
+// nobody wanted more from a live deployment whose owner was mid-turn. Observed
+// 2026-08-13: five sessions, three of them carrying `deploy-hi-agent-xyz`, evicted like
+// stale cache entries while Cognition sat wedged in a 16-minute turn that died on a vendor
+// 502. Nothing had gone wrong with the work; the owner had simply not spoken in a while.
+//
+// **So a worker's lifetime is its owner's to decide, and nothing reclaims one on a clock.**
+// It lives until the session that created it calls `close_worker`, or the process ends. A
+// worker left open is a worker the owner still intends to use — that judgment sits with the
+// rung holding the errand, which is the only party that knows.
 
 // A worker used to keep a private follow-up mailbox here, beside the switchboard's.
 // Two mailboxes for one session is one mailbox too many: whichever the sender picked
 // decided whether the message was ever read, and only one of them had a reader. The
 // switchboard's inbox is now the only one — it already merges a burst, already carries
-// the sender, and already knows how to shut itself when a session idles out.
+// the sender, and already knows how to shut itself when a session is closed.
 
 /// A working session's system prompt now lives in `prompts/workers/` — one whole file
 /// per [`WorkerType`], read through [`crate::identity::role_prompt`] like every other
@@ -390,6 +400,36 @@ impl WorkerRegistry {
         }
     }
 
+    /// End working session `id` — the errand is over and the subprocess should go.
+    ///
+    /// The half of dispatch that a clock used to do badly. Handing work out was one call,
+    /// taking a turn back was another, and *finishing with a session* was nobody's — it
+    /// happened to a worker after fifteen silent minutes whether or not the errand was
+    /// done. Now it is a decision with a caller, and it is the only thing that ends a
+    /// worker short of the process itself.
+    ///
+    /// **Distinct from [`interrupt`](Self::interrupt), and the pair is the whole grammar.**
+    /// Cancelling stops *this turn* and keeps the session with all its context, for "no,
+    /// do that instead". Closing ends the session, and what it knew goes with it. A caller
+    /// that means "stop and redirect" wants the first; only the second frees anything.
+    ///
+    /// Closing does not cut a running turn. The worker finishes what it is on and reports —
+    /// losing a finished answer to save a few seconds is the trade this whole change exists
+    /// to stop making — and then finds its inbox closed and ends. Pair it with `interrupt`
+    /// first when the running turn is itself unwanted.
+    ///
+    /// Returns whether there was a live session to close, so a caller is never told it
+    /// ended something that had already gone.
+    pub(super) fn close(&self, id: SessionId) -> bool {
+        let closed = registry::global().close_inbox(id);
+        if closed {
+            tracing::info!(worker = id, "closing working session");
+        } else {
+            tracing::info!(worker = id, "nothing to close; worker is gone");
+        }
+        closed
+    }
+
     /// Forget workers whose drive task has finished, so the map doesn't grow.
     /// Their result already rode back as a report; this just drops the handle.
     /// This registry's conversation as a *mirror* key — `None` when it is a pseudo-conversation.
@@ -540,11 +580,37 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
     format!("worker {} {verb} — task \"{}\": {body}", report.id, report.task)
 }
 
-/// Drive one worker across one or more tasks, posting a terminal report after each
-/// and staying warm in between so a follow-up can resume the same session with full
-/// context. Runs as its own task so the reaction stays free; the session is closed
-/// (this returns) once the worker sits idle past [`WORKER_IDLE_TTL`].
+/// Drive one worker across one or more tasks, posting a terminal report after each and
+/// staying warm in between so a follow-up resumes the same session with full context.
+/// Runs as its own task so the reaction stays free; the session ends (this returns) when
+/// its owner closes it.
+///
+/// **It leaves the switchboard on its own way out.** It used to just return, and the
+/// address stayed live until the owner's loop next reached `WorkerRegistry::reap` — so the
+/// recorded end was when the owner *noticed*, not when the session ended. That reads fine
+/// while the owner is healthy and lies exactly when it is not: on 2026-08-13 five workers
+/// that ended across a nine-minute spread were all stamped `07:24:11.915`, the moment a
+/// wedged Cognition came back, and the roster showed five identical "ended 7m ago" cards.
+/// A worker is the thing that knows it has ended, so it is the thing that says so.
 async fn drive_worker(
+    id: SessionId,
+    initial_task: Option<String>,
+    session: Arc<AgentSession>,
+    transcript: Arc<Mutex<String>>,
+    inbound: mpsc::Sender<LoopInput>,
+    observatory: Observatory,
+    mail: Arc<Notify>,
+    busy: Arc<AtomicBool>,
+    owner: Option<SessionId>,
+) {
+    // Wrapped so *every* way out of the drive loop unregisters, including ones added
+    // later. The one exit this cannot cover is an abort, and [`Drop`] holds that case.
+    drive(id, initial_task, session, transcript, inbound, observatory, mail, busy, owner).await;
+    registry::global().unregister(id);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drive(
     id: SessionId,
     initial_task: Option<String>,
     session: Arc<AgentSession>,
@@ -568,7 +634,7 @@ async fn drive_worker(
             None => match wait_for_mail(id, &mail).await {
                 Some(task) => task,
                 None => {
-                    tracing::info!(worker = id, "working session idle past ttl; closing");
+                    tracing::info!(worker = id, "working session closed by its owner");
                     return;
                 }
             },
@@ -639,9 +705,9 @@ async fn drive_worker(
         }
 
 
-        // Stay warm for a follow-up; pick up everything that accumulated in the
-        // inbox as one prompt. Close (return, dropping the session) once idle past
-        // the TTL.
+        // Stay warm for a follow-up; pick up everything that accumulated in the inbox as
+        // one prompt. Waiting here costs a held subprocess and ends only when the owner
+        // says so — reporting is not resigning.
         next_task = None;
     }
 }
@@ -677,10 +743,12 @@ async fn wait_for_energy_resume(
     true
 }
 
-/// Block until this session has mail to act on, returning it as one prompt — or
-/// `None` if it sat idle past [`WORKER_IDLE_TTL`], in which case the inbox is now
-/// closed, so a racing sender is told `Unknown` and starts a fresh session rather
-/// than posting into a dead one.
+/// Block until this session has mail to act on, returning it as one prompt — or `None`
+/// once its owner has closed the inbox, which is the **only** way this returns empty.
+///
+/// There is no clock here. Waiting is not a symptom: a worker between instructions looks
+/// exactly like a worker whose owner has forgotten it, and the difference is knowable only
+/// to the owner. So the wait is unbounded and ending the session is an act, not an expiry.
 ///
 /// Everything waiting is taken together and rendered with its sender, because a
 /// worker may only answer *whoever asked*, and it cannot answer an address it was
@@ -690,19 +758,13 @@ async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
         if let Some(batch) = registry::global().take_pending(id) {
             return Some(registry::render(&batch));
         }
-        // Nothing pending — wait for a nudge or the idle TTL. `Notify` holds a permit
-        // if `notify_one` raced ahead of this `notified()`, so no wakeup is lost
-        // between the take above and the wait here.
-        match timeout(WORKER_IDLE_TTL, mail.notified()).await {
-            Ok(()) => continue, // nudged — loop back and take it
-            Err(_) => {
-                // Idle past the TTL. Taking and closing are one act under one lock, so
-                // a follow-up that landed in the meantime still wins.
-                return registry::global()
-                    .take_pending_or_close(id)
-                    .map(|batch| registry::render(&batch));
-            }
+        // Checked after draining and before sleeping, so a close that lands mid-pass is
+        // seen rather than slept through — and `Notify` holds a permit if the wake raced
+        // ahead of the wait, so the close that happens *during* the await wins too.
+        if registry::global().inbox_closed(id) {
+            return None;
         }
+        mail.notified().await;
     }
 }
 
@@ -839,5 +901,110 @@ mod ownership_tests {
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);
+    }
+}
+
+/// A worker ends because it was *told to*, and for no other reason.
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A worker and the owner that may address it. The owner is minted rather than
+    /// assumed: the switchboard is process-wide, so a hardcoded sender id is whatever
+    /// some other test in this binary happened to register there — and `send` refuses a
+    /// worker addressing anyone but its own owner, so borrowing an id silently turns into
+    /// `NotPermitted`.
+    fn worker() -> (SessionId, SessionId, Arc<Notify>) {
+        let owner = registry::mint();
+        registry::global().register(owner, Role::Cognition, None, "the shared brain".into(), None);
+        let id = registry::mint();
+        registry::global().register(
+            id,
+            Role::Worker(WorkerType::General),
+            Some(owner),
+            "an errand".into(),
+            None,
+        );
+        let mail = registry::global().notifier(id).expect("just registered");
+        (owner, id, mail)
+    }
+
+    fn done(owner: SessionId, id: SessionId) {
+        registry::global().unregister(id);
+        registry::global().unregister(owner);
+    }
+
+    /// The regression this whole change exists for. A worker that has reported and is
+    /// waiting looks exactly like a worker nobody wants any more, and the old code
+    /// resolved that ambiguity with a fifteen-minute timer — which on 2026-08-13 reclaimed
+    /// three live deployment errands whose owner was merely wedged.
+    ///
+    /// An hour here is four times what the old TTL allowed: whatever else ends a working
+    /// session, the passage of time must not.
+    #[tokio::test(start_paused = true)]
+    async fn silence_alone_never_ends_a_working_session() {
+        let (owner, id, mail) = worker();
+        let outcome =
+            tokio::time::timeout(Duration::from_secs(60 * 60), wait_for_mail(id, &mail)).await;
+        assert!(outcome.is_err(), "an idle worker must still be waiting, not reclaimed");
+        done(owner, id);
+    }
+
+    /// The other half: closing is the thing that ends it, and it ends it promptly.
+    #[tokio::test]
+    async fn a_closed_inbox_ends_the_wait() {
+        let (owner, id, mail) = worker();
+        assert!(registry::global().close_inbox(id), "there was a live session to close");
+        assert!(
+            wait_for_mail(id, &mail).await.is_none(),
+            "a closed inbox is the one thing that returns no task"
+        );
+        done(owner, id);
+    }
+
+    /// The close usually lands while the worker is already parked, so it has to travel as
+    /// a wake and not merely as a flag someone will notice later. Without the notify in
+    /// `close_inbox` this hangs forever instead of failing — which is why it is asserted
+    /// from a parked waiter rather than by calling `wait_for_mail` after the fact.
+    #[tokio::test(start_paused = true)]
+    async fn a_close_reaches_a_worker_that_is_already_parked() {
+        let (owner, id, mail) = worker();
+        let waiting = tokio::spawn(async move { wait_for_mail(id, &mail).await });
+        tokio::time::sleep(Duration::from_secs(30)).await; // let it park on the notify
+        registry::global().close_inbox(id);
+        let outcome = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("a parked worker must wake on a close")
+            .expect("the waiter task should not panic");
+        assert!(outcome.is_none());
+        done(owner, id);
+    }
+
+    /// Work that arrived before the close is still work. Draining precedes the closed
+    /// check in `wait_for_mail` so a brief and a close in the same breath run in the order
+    /// they were sent, rather than the close silently eating the brief.
+    #[tokio::test]
+    async fn mail_already_waiting_is_taken_before_the_close_is_noticed() {
+        let (owner, id, mail) = worker();
+        assert_eq!(
+            registry::global().send(owner, id, "read the facet".into()),
+            registry::Delivery::Delivered
+        );
+        registry::global().close_inbox(id);
+        let task = wait_for_mail(id, &mail).await.expect("the queued brief still runs");
+        assert!(task.contains("read the facet"), "{task}");
+        // And the very next pass ends it, because the inbox is still closed.
+        assert!(wait_for_mail(id, &mail).await.is_none());
+        done(owner, id);
+    }
+
+    /// Closing something that has already gone is ordinary, not an error — an owner
+    /// tidying up after a restart says this about sessions that died with the process.
+    #[test]
+    fn closing_a_session_that_is_already_gone_says_so() {
+        let (tx, _rx) = mpsc::channel(8);
+        let reg = WorkerRegistry::new(tx);
+        assert!(!reg.close(999_999), "nothing was there to close");
     }
 }
