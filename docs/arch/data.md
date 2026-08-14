@@ -240,7 +240,7 @@ So each block declares a cadence:
 A context is **cold** on a thread's first turn and on the turn after a compaction. Compaction
 is the load-bearing case: it rewrites the history and makes no promise about what it kept, so
 everything the host believed the model could still see stops being true at once. Replayed
-against the real thread this sends **1,255 chars a turn instead of 10,125 — 88% less** — and
+against the real thread this sends **1,514 chars a turn instead of 10,125 — 85% less** — and
 the same signal that triggers the re-send is the one that says the model may no longer know
 how it speaks.
 
