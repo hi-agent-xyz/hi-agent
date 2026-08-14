@@ -313,6 +313,17 @@ async fn duty_for(reaction: &Reaction, key: &str) -> Option<Task> {
 ///
 /// Note what is *not* interpolated: the routing key. It arrived over HTTP, and the title
 /// and body here are the host's own read of the ledger.
+/// The standing tail of a duty handler's opening brief — the part that is instruction
+/// rather than the ledger's own record of the duty.
+///
+/// A constant so the tool layer's prefix sweep can read it; see
+/// [`super::heartbeat::PROACTIVITY_HEADING`] for why that sweep exists. This sentence said
+/// `send_message` bare, which is the agent runtime's own tool.
+pub(crate) const DUTY_BRIEF_TAIL: &str =
+    "\n\nHandle it as the duty describes. You have no voice of your own: reach your \
+     owner with `hi_send_message` when something needs a decision that is not yours, or \
+     when it needs the person. More may arrive while you work — it will reach you here.\n";
+
 fn brief_for(task: &Task, arrived: &str) -> String {
     let mut brief = String::new();
     brief.push_str("You are keeping up a standing duty. This is the ledger's own record of it.\n\n");
@@ -325,11 +336,7 @@ fn brief_for(task: &Task, arrived: &str) -> String {
     }
     brief.push_str("\n## Just arrived\n");
     brief.push_str(arrived);
-    brief.push_str(
-        "\n\nHandle it as the duty describes. You have no voice of your own: reach your \
-         owner with `send_message` when something needs a decision that is not yours, or \
-         when it needs the person. More may arrive while you work — it will reach you here.\n",
-    );
+    brief.push_str(DUTY_BRIEF_TAIL);
     brief
 }
 

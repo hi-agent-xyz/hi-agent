@@ -2496,6 +2496,77 @@ mod surface_tests {
         }
     }
 
+    /// **Every verb an agent is told to call is named in full, in prose too.**
+    ///
+    /// The prefix on the *declaration* (above) stops the collision; it does nothing about
+    /// the sentence that tells a rung to use the tool. Those sentences live in three
+    /// places — the bundled prompts, the tool descriptions, and text the host assembles at
+    /// runtime — and a bare verb in any of them is read by the model against a surface we
+    /// do not own, where the agent runtime keeps its own `send_message` for the sub-agent
+    /// tree it holds inside one thread.
+    ///
+    /// That is not hypothetical twice over. The reachable roster said "send with
+    /// `send_message`" for a day after the rename, in the one block rebuilt into every
+    /// rung's window every turn. Then the consolidation prompt was found saying
+    /// `update_proactivity`, `keep_and_fade` and `image-text-to-text`, and a duty
+    /// handler's opening brief saying `send_message` — four more, in text no prompt file
+    /// contains, which is exactly why sweeping the `.md` files was not enough.
+    ///
+    /// So the check is over *rendered text*, not over source: each declared name minus its
+    /// prefix must not appear backticked anywhere an agent reads.
+    #[test]
+    fn no_agent_facing_text_names_a_verb_without_its_prefix() {
+        use crate::identity::Role;
+
+        let bare: Vec<String> = [
+            Some("reaction"), Some("cognition"), Some("reflection"), Some("worker"),
+        ]
+        .iter()
+        .flat_map(|r| names(*r))
+        .filter_map(|n| n.strip_prefix("hi_").map(|b| format!("`{b}`")))
+        .collect();
+
+        let mut texts: Vec<(String, String)> = Vec::new();
+        for role in Role::ALL {
+            texts.push((format!("prompt {}", role.prompt_name()), role.base().to_string()));
+        }
+        for role in [Some("reaction"), Some("cognition"), Some("reflection"), Some("worker")] {
+            for t in tools_for_role(role) {
+                let name = t["name"].as_str().unwrap_or("?").to_string();
+                texts.push((format!("description of {name}"), t.to_string()));
+            }
+        }
+        // The runtime-assembled blocks: the ones that escaped the prompt sweep.
+        texts.push((
+            "the reachable roster".into(),
+            crate::foundation::registry::render_reachable(&[(
+                "cognition — the shared brain".into(),
+                "cognition".parse().unwrap(),
+            )]),
+        ));
+        texts.push((
+            "the consolidation prompt".into(),
+            format!(
+                "{}{}",
+                crate::body::reaction::PROACTIVITY_HEADING,
+                crate::body::reaction::CONSOLIDATION_TOOLS,
+            ),
+        ));
+        texts.push((
+            "a duty handler's brief".into(),
+            crate::body::reaction::DUTY_BRIEF_TAIL.to_string(),
+        ));
+
+        for (where_, text) in texts {
+            for b in &bare {
+                assert!(
+                    !text.contains(b.as_str()),
+                    "{where_} names {b} without its `hi_` prefix"
+                );
+            }
+        }
+    }
+
     /// Reaction's whole surface, pinned. `hi_say` lived in the unreachable fallback arm
     /// for the entire life of the reaction/cognition split — defined, dispatchable, and
     /// advertised to nobody — so the voice fell back to plain message text. Nothing

@@ -54,6 +54,12 @@ use anyhow::Context;
 mod cognition;
 mod duties;
 mod heartbeat;
+
+// The standing instruction sentences these two assemble, re-exported so the tool layer's
+// prefix sweep can read them without the modules themselves going public. See
+// [`heartbeat::PROACTIVITY_HEADING`].
+pub(crate) use duties::DUTY_BRIEF_TAIL;
+pub(crate) use heartbeat::{CONSOLIDATION_TOOLS, PROACTIVITY_HEADING};
 mod reflection;
 mod interleave;
 mod interrupts;

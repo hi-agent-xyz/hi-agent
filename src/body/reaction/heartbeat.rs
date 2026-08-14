@@ -79,6 +79,24 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
         .count()
 }
 
+/// The two standing sentences of the consolidation prompt — the only text in it that
+/// names tools rather than carrying data.
+///
+/// **Constants, and reachable from the tool layer's tests, because prose is where the
+/// prefix keeps getting lost.** Both of these named their verbs bare
+/// (`update_proactivity`, `keep_and_fade`, `image-text-to-text`) for as long as the
+/// prefixed tools have existed, and no sweep of `src/identity/*.md` could see them: this
+/// text is assembled here, not written in a prompt file. Naming them lets
+/// `no_agent_facing_text_names_a_verb_without_its_prefix` read them without building a
+/// `Frontier`.
+pub(crate) const PROACTIVITY_HEADING: &str = "## Current proactivity.md (your read on speaking up unprompted — regenerate via `hi_update_proactivity` if any unprompted word of yours landed this stretch)\n";
+
+/// See [`PROACTIVITY_HEADING`].
+pub(crate) const CONSOLIDATION_TOOLS: &str =
+    "Consolidate these now. Use `count` against the single numbered frontier; \
+     `hi_keep_and_fade` acts on the channel and day shown above; \
+     `hi_image_text_to_text` takes the image ref shown beside a signal.";
+
 /// The gathered frontier and context for the consolidated pass.
 struct Frontier {
     tail: Vec<JournalEntry>,
@@ -227,9 +245,7 @@ fn build_consolidation_prompt(
     // The current proactivity read goes in so the pass regenerates it from
     // old-plus-new (it can't read the file itself — no cwd). What to do with it
     // lives in reflection.md; this just carries the data.
-    s.push_str(
-        "## Current proactivity.md (your read on speaking up unprompted — regenerate via `update_proactivity` if any unprompted word of yours landed this stretch)\n",
-    );
+    s.push_str(PROACTIVITY_HEADING);
     match current_proactivity {
         Some(c) if !c.trim().is_empty() => {
             s.push_str(c.trim());
@@ -237,11 +253,7 @@ fn build_consolidation_prompt(
         }
         _ => s.push_str("(none yet)\n\n"),
     }
-    s.push_str(
-        "Consolidate these now. Use `count` against the single numbered frontier; \
-         `keep_and_fade` acts on the channel and day shown above; \
-         `image-text-to-text` takes the image ref shown beside a signal.",
-    );
+    s.push_str(CONSOLIDATION_TOOLS);
     s
 }
 

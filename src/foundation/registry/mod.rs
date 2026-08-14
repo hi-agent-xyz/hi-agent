@@ -1845,9 +1845,12 @@ mod tests {
         r.record_activity(&id, "$ cargo test");
         let first = r.status(&id).unwrap().doing_at.expect("stamped");
 
-        r.record_activity(&id, "hi-agent/send_message");
+        // The real shape, `{server}/{tool}` from `SessionUpdate::activity` — so `hi-agent`
+        // and the tool's declared name, prefix included. The fixture said `send_message`
+        // until now, which is a label the wire has not produced since the rename.
+        r.record_activity(&id, "hi-agent/hi_send_message");
         let second = r.status(&id).unwrap();
-        assert_eq!(second.doing.as_deref(), Some("hi-agent/send_message"));
+        assert_eq!(second.doing.as_deref(), Some("hi-agent/hi_send_message"));
         assert!(second.doing_at.unwrap() >= first, "replaced, so re-stamped");
 
         // A blank line is not activity and must not refresh the clock — a session that has
