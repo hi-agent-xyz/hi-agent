@@ -20,22 +20,20 @@ The question is not *where* something lives — it all lives here — but **who 
 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
-| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks, and `memory/prompts/` |
+| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks; and `prompts/seed/` |
 | `prompts/` — the bundled system prompts, all of them | `drive/` — what was decided worth keeping |
-| `skills/`, `views/` — the factory seeds | `skills/`, `views/` — everything learnt |
+| `skills/`, `views/` — the `factory/` layer | `skills/`, `views/` — everything the agent built |
 
 **One pen per subtree — and the subtree, not the top-level directory, is the unit.**
 `memory/raw/` is foundation's; the rest of `memory/` is the agents'. They share a roof and
 never a file, which is all the rule ever required. Reading it as a top-level boundary is what
 would push the log out to the root, where it means less.
 
-**Factory-versus-learnt is a different rule, and it still holds.** Where a subtree carries
-both layers — `skills/` and `views/` — they stay physically separate. An upgrade replaces the
-factory layer and never touches the learnt one, so there is never a merge conflict, only a
-precedence decision. Collapse them and an upgrade either clobbers what the agent learnt or can
-no longer refresh its own seeds. `prompts/` no longer carries both: it is bundled through and
-through, and what the agent writes for itself lives in
-[`memory/prompts/`](#memoryprompts) instead.
+**Factory-versus-generated is a different rule, and it still holds.** Where a subtree carries
+both layers — `prompts/`, `skills/`, `views/` — they stay physically separate, in a `factory/`
+directory beside what the agent made. An upgrade replaces `factory/` and never touches its
+sibling, so there is never a merge conflict, only a precedence decision. Collapse them and an
+upgrade either clobbers what the agent built or can no longer refresh what we ship.
 
 ## Decisions
 
@@ -44,7 +42,8 @@ through, and what the agent writes for itself lives in
 | Tasks are **global** | They outlive the exchange that created them, and a restart recovers them with no conversation in progress at all |
 | Open tasks are **projected, not retrieved** | Retrieval can miss; a missed duty is a silently broken promise |
 | **Projected** = what Reaction must know without reading | It is tools-off, so its window is the whole of what it knows; every other rung can go and look |
-| `prompts/` is **bundled**; carried-forward state is **generated** | Both are text handed to an agent at init — what differs is who wrote it and whether losing it matters |
+| `prompts/factory/` is **ours**; `prompts/seed/` is the **agent's** | Both are text handed to a session at init — what differs is who wrote it, and whether losing it costs knowledge or one reflection pass |
+| A session is given **four layers** and each is a property of the material | System prompt, seed, what the person said, events. Nine sections once accreted into one per-turn block because this was never written down |
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
@@ -84,28 +83,72 @@ surfaces — lossy and disposable by design. That difference is argued once, the
 
 ## `prompts/`
 
-The text for each role — Reaction, Cognition, Worker. Character and voice
-merge in here rather than living apart; a role's manner is part of its prompt.
+Everything a session is given before the person says anything. Two layers, one directory
+each, because **the pen is the distinction and it may never be ambiguous**:
 
-**One slot: what the app installs from the binary.** Factory-authored, reinstalled every boot,
-replaced on upgrade, disposable — the binary is the original, so nothing here is worth backing
-up.
+```
+prompts/
+  factory/   reaction.md  cognition.md  reflection.md  workers/*.md
+  seed/      reaction.md  cognition.md  proactivity.md
+```
 
-**A file per role.** Reaction, Cognition, Reflection, the workers — each gets its
-own bundled prompt, which is where [character](arch.md#character) is set. So `prompts/cognition.md`
-(bundled, ours) sits alongside `memory/prompts/cognition.md` (generated, its own): same leaf
-name, different parent, which is the whole pattern.
+| | `factory/` | `seed/` |
+|---|---|---|
+| written by | us, shipped in the binary | the agent, about itself |
+| when | reinstalled every boot, replaced on upgrade | whenever the agent judges it worth rewriting |
+| where it lands | the **system prompt** — `baseInstructions` at thread start | the thread's **first message** |
+| losing it | costs nothing; the binary is the original | costs one reflection pass, not knowledge |
 
-There is no user slot and no self slot. **An instruction from the person now lands the way
-everything else they say lands**: they say it, and it becomes a preference facet or a task
-depending on what it is. Nothing bypasses the agent's judgment on the way in — which is also
-the cost, stated plainly: **there is no longer a lever that overrides the agent without going
-through it.** A correction that does not stick is now a memory bug to fix, not a file to
+**`factory/` — a file per role.** Reaction, Cognition, Reflection, the workers — each gets
+its own whole prompt, which is where [character](arch.md#character) is set. Disposable by
+construction: the binary is the original, so nothing here is worth backing up.
+
+**`seed/` — what a rung brings to a thread it has just opened.** Generated, and it is the
+`memory/prompts/` of earlier drafts, moved. It sits here rather than under `memory/` because
+of what it *is*: a digest **over** the record, for one consumer, in the shape that consumer is
+fed in. `memory/` holds the record — the log, episodes, facets, tasks. A digest of the record
+is not the record.
+
+**It is not precious, and that is a correction.** This was documented as "rebuildable by
+nothing else", which was never consistent with the **floor** stated below:
+the window's floor is the log tail, *explicitly* for an agent that never got round to writing
+its memory. Its absence has always been a supported state. Everything in a seed is a digest of
+things that are themselves durable — a preference is a facet, a duty is a task — so deleting one
+costs the curation and no knowledge. It is a **cache of judgment**: rebuildable by the agent,
+not by a mechanical pass, which is why the agent writes it and reflection rebuilds it when it
+is missing.
+
+**Which rungs get one** — two tests, both must hold:
+
+1. **It outlives the work**, so there is continuity to lose.
+2. **It cannot re-derive that continuity** — either it cannot read at all, or coming back cold
+   it would not know what to read for.
+
+| rung | outlives the work | can re-derive | seed |
+|---|---|---|---|
+| Reaction | permanent | **no** — tools-off, it cannot go and look at anything | **yes** |
+| Cognition | permanent | can read, but out of a compaction would not know it was mid-thought | **yes** |
+| Reflection | no — each pass is complete in itself | the stores *are* its memory | no |
+| a worker | no — one task, then gone | its brief is its seed | no |
+| a worker *type* | the type does, across instances | nothing writes craft knowledge yet | not yet |
+
+The last row is the one slot deliberately named while empty: what `view-builder` learns about
+house style is generated, per type, and belongs at `prompts/seed/workers/view-builder.md`
+beside the bundled `prompts/factory/workers/view-builder.md`. Naming it now stops it landing
+somewhere worse later.
+
+**There is no user layer, and the reason is not that nobody asked.** An instruction from the
+person lands the way everything else they say lands: they say it, and it becomes a preference
+facet or a task depending on what it is. Nothing bypasses the agent's judgment on the way in
+— which is also the cost, stated plainly: **there is no lever that overrides the agent without
+going through it.** A correction that does not stick is a memory bug to fix, not a file to
 hand-edit.
 
-State the agent carries forward is not here at all. It is *generated*, and lives one level
-down in [`memory/prompts/`](#memoryprompts) — the same leaf name under a different parent,
-and the parent is the point.
+> **One override does exist at the operator level**, and the earlier "no user slot" wording
+> read as though it did not: `install_prompts` composes each factory prompt with an optional
+> `*.local.md` sibling it never touches. That is an operator editing the manual, not the person
+> instructing the agent, and it stays where the factory text is. It is not a third layer and
+> gets no directory of its own.
 
 ## `memory/`
 
@@ -146,7 +189,7 @@ didn't land, look for the rule before writing another) does not fit inside a pas
 also segmenting the whole frontier.
 
 **Generated system prompts** — what each agent that needs state carries into every window.
-Written by an agent, injected and bounded by code; [below](#memoryprompts).
+Written by an agent, injected and bounded by code; [below](#what-a-session-is-given-in-four-layers).
 
 **Proactivity** — the standing licence to speak unprompted, *per subject*: which topics the
 person welcomes an unasked word on, which they tolerate, which are unproven, which are muted.
@@ -159,43 +202,68 @@ wrong thing costs far more than a missed heads-up. And it is **short enough to r
 time**, since it is consulted before every proactive word; a licence too long to check is a
 licence nobody checks.
 
-### `memory/prompts/`
+### What a session is given, in four layers
 
-One file per agent that needs state carried forward.
+Everything that reaches a rung arrives in exactly one of these, and which one is a property of
+the material, not a matter of taste. Nine sections once accreted into a single per-turn block
+because nobody had written this down.
 
-| File | Whose state |
-|---|---|
-| `conversation.md` | what the conversation carries forward |
-| `cognition.md` | the brain's |
+| | layer | delivered | changes how |
+|---|---|---|---|
+| **1** | **system prompt** — [`prompts/factory/<rung>.md`](#prompts) | `baseInstructions` at thread start. Never mid-thread | only by shipping a binary |
+| **2** | **seed** — [`prompts/seed/<rung>.md`](#prompts) plus projections computed from the record | the thread's **first message**, before any input | re-sent whole when the thread goes cold |
+| **3** | **what the person said** | the turn's input | it *is* the turn |
+| **4** | **events** — a worker reported, cognition sent mail, a view went up, the clock came round, a barge-in | the turn's input, once, in order | it *is* the turn |
 
-That is not a full set, on purpose — an agent gets one when it turns out to need one.
-Reflection plausibly never will: its state is a frontier cursor plus the stores themselves,
-and neither belongs in a window.
+**Layer 2 is the answer to a rung that cannot go and look.** Reaction is tools-off, so its seed
+is the whole of what it knows before the conversation starts: the generated file, plus the
+things computed from the record at seed time — `## Working with them`, the open ledger, the
+roster, and the recent-signals tail that tells a mind what happened before it existed.
 
-**Bundled versus generated is the whole distinction, and the parent directory is what carries
-it.** Both leaves are named `prompts/` on purpose — they hold the same kind of thing, text
-handed to an agent at init. Everything that differs is one level up:
-[`data/prompts/`](#prompts) is **bundled** — shipped in the binary, reinstalled every boot,
-disposable. `data/memory/prompts/` is **generated** — written by the agent, precious, and
-rebuildable by nothing else. It sits under `memory/` because that is what it is: what this
-agent remembers to bring.
+**Computed, not materialised.** Only judgment that cannot be recomputed earns a file in
+`prompts/seed/`. `## Working with them` is a read over people facets and stays a read: the
+record is authoritative and a second copy would go stale against it.
 
-**The agent writes the content. Code owns injection and the bound.**
+#### State changes are events, derived by diff
+
+A seed is true when it is sent and stale a minute later — a task opens, a view goes up, a
+preference is corrected. Those reach the rung as **layer 4**, and how they are *noticed*
+matters more than it looks.
+
+**Announced events are not enough.** Cognition writes `memory/facets/tasks/<subject>/facet.md`
+and its own seed *as files*, with file access — there is no tool call for it, so the host never
+sees it happen. An announcement the writer forgets is a change the voice never learns, and for
+the ledger that is the failure this whole design exists to prevent: *retrieval can miss, and a
+missed duty is a silently broken promise*.
+
+**So the host diffs.** It goes on re-reading all of it every turn — cheap, and what the
+invariant actually requires — and forwards only what moved. A diff cannot forget. It diffs at
+the **item** level: one task line, one person's paragraph, one standing. Sending a changed task
+line *is* the event.
+
+**Cold is the one moment the seed is re-sent whole.** A thread is cold on its first turn and on
+the turn after a compaction. The second case is the load-bearing one: compaction rewrites the
+history and promises nothing about what it kept — on the 2026-08-13 voice thread it kept ten
+copies of the standing preamble and dropped every tool call in sixty turns, taking every example
+of `hi_say` with it, and the voice then went two and a half hours without speaking while still
+calling its other tools. Everything the host believed the model could see stopped being true at
+once. So the same signal that re-seeds the window is the signal that the model may no longer
+know how it speaks.
+
+**Who writes a seed.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has no file
+access and cannot write its own: the voice's seed is *consumed* by Reaction and *written by*
+[Cognition](agents.md#cognition--minutes-and-beyond) — the rung that already reads around and
+works out what was asked. That falls out of the tool surfaces rather than being imposed on them.
+Reflection owns rebuilding a **missing** seed, on the pass that already regenerates
+`proactivity.md` wholesale; without an owner, "rebuildable" is a wish.
+
+**Code owns the bound, the agent owns the content.**
 
 | | |
 |---|---|
-| Content | the agent's — this is judgment about what matters, not a mechanical digest. Nobody's working memory is a truncation of their own transcript |
-| Injection | code's, **every turn** — not only on a fresh session. A window that is only correct at session open is stale for the rest of the conversation |
+| Content | the agent's — judgment about what matters, not a mechanical digest. Nobody's working memory is a truncation of their own transcript |
 | Size | code's, a **hard cap**. Over it, code truncates and says so — a ceiling that shows up as text is real; one that shows up as latency is not |
-| Floor | the **log tail**, which code already assembles from [`memory/raw/`](#memoryraw). An agent that never got round to writing its memory — busy, crashed, mid-restart — leaves a window that is uncurated, never empty |
-
-**Who writes the conversation's.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has
-no file access and cannot write its own. The conversation's memory is therefore *consumed* by
-Reaction and *written by* [Cognition](agents.md#cognition--minutes-and-beyond) — the rung that
-already reads around and works out what was asked. That falls out of the tool surfaces rather
-than being imposed on them, and it hands Cognition its second job: deciding what the
-conversation carries forward. No new tool is needed — it has file access, and writes that
-memory the way reflection writes a facet.
+| Floor | the **log tail**, assembled from [`memory/raw/`](#memoryraw). An agent that never got round to writing its memory — busy, crashed, mid-restart — leaves a window that is uncurated, never empty |
 
 **A fresh install starts from what is global, not from nothing.** Who this install is, what is
 open, what is generally true of the person — the generator includes them, so a first reply is
@@ -212,40 +280,32 @@ other rung can read on demand. This is a test, not a list — it is what
 
 #### What earns it *again*
 
-> **Projected every turn, sent when it changed.** A block the thread can still see upthread
-> is already known; re-sending it buys nothing and costs a permanent copy of itself in a
-> finite window.
+> **Rebuilt every turn, sent when it changed.** A block the thread can still see upthread is
+> already known; re-sending it buys nothing and costs a permanent copy of itself in a finite
+> window.
 
-The projection is rebuilt every turn — it has to be, or a task opened mid-conversation is
-invisible until the session rotates. What was wrong for a long time is that it was also
-*re-sent* every turn, whole, and the two were never separate decisions.
+Rebuilding has to happen every turn, or a task opened mid-conversation is invisible until the
+session rotates. Re-*sending* it every turn was never a separate decision, and for a long time
+the code did both.
 
-Measured on one live thread, 108 turns at 10,125 chars each: `## Working with them` changed
-10 times, the proactivity read 4, the reachable roster **0**, and all three rode every turn
-at 5,848 chars. The thread came out **80% its own re-sent preamble against 20% everything
-the agent had ever done or said** — and when the window filled, codex's compaction kept ten
-near-identical copies of that preamble and dropped every tool call, taking with it every
-example of the voice calling `hi_say`. It then stopped speaking for two and a half hours
-while continuing to call its other tools. Repetition did not merely cost tokens; it decided
-what survived.
+Measured on one live thread, 108 turns at 10,125 chars each: `## Working with them` changed 10
+times, the proactivity read 4, the reachable roster **0**, and all three rode every turn at
+5,848 chars. The thread came out **80% its own re-sent preamble against 20% everything the
+agent had ever done or said**. Caching is why nobody noticed — 98% of the last turn's input was
+cached, so the repetition was nearly free to *send* and occupied the window exactly the same.
 
-So each block declares a cadence:
-
-| cadence | what it means | which blocks |
+| | chars/turn | over those 108 turns |
 |---|---|---|
-| **on change** | send when it differs from what this thread was last told | conduct, carried-forward, tasks, proactivity, roster, workers, screen |
-| **cold only** | send only when the thread cannot see its own history | the recent-signals tail — it is a retelling of signals already in the thread |
-| **always** | it *is* the turn | new signals, and a barge-in note (consumed when read) |
+| re-sent whole, as it was | 10,125 | 1,093,500 |
+| section-level, sent on change — **built** | 1,514 | 163,551 |
+| seed at init + item-level diff events — **the target** | ~676 | ~73,000 |
 
-A context is **cold** on a thread's first turn and on the turn after a compaction. Compaction
-is the load-bearing case: it rewrites the history and makes no promise about what it kept, so
-everything the host believed the model could still see stops being true at once. Replayed
-against the real thread this sends **1,514 chars a turn instead of 10,125 — 85% less** — and
-the same signal that triggers the re-send is the one that says the model may no longer know
-how it speaks.
+The floor is the events themselves, 387 chars a turn: the actual content of the conversation.
+Everything else compresses toward zero.
 
-**This is not a compression pass.** A conversation does not restate its own history every
-time it takes a breath; the previous behaviour was a bug wearing a performance costume.
+**This is not a compression pass.** A conversation does not restate its own history every time
+it takes a breath, and repetition did not merely cost tokens — it decided what a compaction
+kept. The previous behaviour was a bug wearing a performance costume.
 
 ### Tasks
 
@@ -362,7 +422,7 @@ them, and each opening with a one-line `// purpose:` saying what it is for. The 
 that line are what make reuse possible.
 
 **Nothing graduates out of the toolbox, and nothing indexes it.** A view used recently
-leaves a trace in the [memory](#memoryprompts) because it mattered there — the same way
+leaves a trace in the [seed](#prompts) because it mattered there — the same way
 anything else that mattered does, written by the same judgment. Everything else is read on
 demand: one scan of the toolbox's purpose lines, against the guidelines for building views.
 Slow, and it always works.

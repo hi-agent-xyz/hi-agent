@@ -1,6 +1,6 @@
 //! People-review endpoints — the "认识的人" surface's backend.
 //!
-//! A single web view ([`_builtin/people-review`](crate::mind::views)) lets the user
+//! A single web view ([`factory/people-review`](crate::mind::views)) lets the user
 //! review who the agent has stored (faces + voices), name the unknown ones, pull a
 //! clip that doesn't belong out of a cluster, and — when a cluster is too mixed to
 //! fix clip-by-clip — auto-regroup it. Every action maps to a `people_vectors`

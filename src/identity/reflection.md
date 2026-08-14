@@ -71,7 +71,7 @@ like. Look there before something you may have done before, and leave a note beh
 you crack something hard that will come up again.
 
 A note is a starting point, not gospel: the fast-moving parts are marked, and you
-re-check those; the durable steps you reuse as they are. Notes under `_builtin/` came
+re-check those; the durable steps you reuse as they are. Notes under `factory/` came
 with you rather than from experience — same rules apply.
 
 # Your meaning

@@ -6,7 +6,7 @@
 //! tree at boot, so the agent shows them with
 //! `show` like any other view — and can still adapt them, since they land as
 //! ordinary `.jsx` in the (disposable, re-seeded) tree. They live under
-//! `_builtin/` so they never collide with the agent's own `<project>/` work.
+//! `factory/` so they never collide with the agent's own `<project>/` work.
 //!
 //! # Three rules every view in here follows
 //!
@@ -54,23 +54,23 @@ use std::io;
 use std::path::Path;
 
 /// The file-handoff view shown when the user wants to hand the agent a file.
-/// Ref: `_builtin/upload` (the agent puts it on screen via `show`).
-const UPLOAD: &str = include_str!("builtin/upload.jsx");
+/// Ref: `factory/upload` (the agent puts it on screen via `show`).
+const UPLOAD: &str = include_str!("factory/upload.jsx");
 
 /// The "认识的人" review surface — review stored faces/voices, name the unknown
 /// ones, eject a mis-clustered clip, or auto-regroup a mixed cluster. Reads and
-/// writes the `/api/people/*` endpoints. Ref: `_builtin/people-review`.
-const PEOPLE_REVIEW: &str = include_str!("builtin/people-review.jsx");
+/// writes the `/api/people/*` endpoints. Ref: `factory/people-review`.
+const PEOPLE_REVIEW: &str = include_str!("factory/people-review.jsx");
 /// The first-hello a brand-new person meets — a first *impression*, not a tutorial.
-/// The agent puts it on screen (ref `_builtin/welcome`) the once, on a genuine first
+/// The agent puts it on screen (ref `factory/welcome`) the once, on a genuine first
 /// meeting (see [`crate::identity::reaction_system_prompt`] + `reaction.md`), while it speaks the
 /// same idea in its own voice. Ships with a `.geom.json` sidecar and owns the canvas
 /// like every other bundled system surface.
-const WELCOME: &str = include_str!("builtin/welcome.jsx");
+const WELCOME: &str = include_str!("factory/welcome.jsx");
 /// The real, sealed "hi" mark (red h + blue i, white die-cut, soft shadow) the welcome
 /// poster shows — the exact app icon, served from the views tree at
-/// `/views/_builtin/hi-mark.svg`, never re-typed in a system font.
-const WELCOME_MARK: &str = include_str!("builtin/hi-mark.svg");
+/// `/views/factory/hi-mark.svg`, never re-typed in a system font.
+const WELCOME_MARK: &str = include_str!("factory/hi-mark.svg");
 
 /// Shown by the **host** after a managed 402, and dismissed as soon as the broker
 /// reports positive energy. The persisted ref/id keep their historical
@@ -79,7 +79,7 @@ const WELCOME_MARK: &str = include_str!("builtin/hi-mark.svg");
 /// It is a bundled view rather than a sentence because of *when* it is needed: there is
 /// no generation available to phrase anything at that moment, so the copy has to already
 /// exist. English and Chinese are selected from the host's current language.
-const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
+const OUT_OF_ENERGY: &str = include_str!("factory/vendor-outage.jsx");
 
 /// The review surfaces: one per kind of thing the agent accumulates. Each owns the full
 /// canvas and provides its own scrolling; the *safe* insets are the host's
@@ -104,19 +104,19 @@ const OUT_OF_ENERGY: &str = include_str!("builtin/vendor-outage.jsx");
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
 const REVIEW_VIEWS: &[(&str, &str)] = &[
-    ("tasks", include_str!("builtin/tasks.jsx")),
-    ("skills", include_str!("builtin/skills.jsx")),
-    ("memories", include_str!("builtin/memories.jsx")),
-    ("workers", include_str!("builtin/workers.jsx")),
-    ("tools", include_str!("builtin/tools.jsx")),
-    ("drive", include_str!("builtin/drive.jsx")),
-    ("reach", include_str!("builtin/reach.jsx")),
+    ("tasks", include_str!("factory/tasks.jsx")),
+    ("skills", include_str!("factory/skills.jsx")),
+    ("memories", include_str!("factory/memories.jsx")),
+    ("workers", include_str!("factory/workers.jsx")),
+    ("tools", include_str!("factory/tools.jsx")),
+    ("drive", include_str!("factory/drive.jsx")),
+    ("reach", include_str!("factory/reach.jsx")),
 ];
 
 /// The ref and the sequencer id the host shows it under. One id, reused, so the
 /// `dismiss` on recovery takes down exactly the thing the outage put up — and a second
 /// outage replaces rather than stacks.
-pub const OUT_OF_ENERGY_REF: &str = "_builtin/vendor-outage";
+pub const OUT_OF_ENERGY_REF: &str = "factory/vendor-outage";
 pub const OUT_OF_ENERGY_VIEW_ID: &str = "vendor-outage";
 
 /// The bundled source for [`OUT_OF_ENERGY_REF`], read straight from the binary. The
@@ -134,12 +134,13 @@ pub fn out_of_energy_view() -> &'static str {
     OUT_OF_ENERGY
 }
 
-/// Write the bundled built-in views into `<data_dir>/views/_builtin/`, overwriting
+/// Write the bundled built-in views into `<data_dir>/views/factory/`, overwriting
 /// each on every boot so a binary update reseeds the latest (mirrors
 /// [`crate::identity::install_prompts`]). The views tree is disposable, so
 /// re-seeding is the point, not a hazard.
-pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
-    let dir = data_dir.join("views").join("_builtin");
+pub fn install_factory_views(data_dir: &Path) -> io::Result<()> {
+    let dir = data_dir.join("views").join("factory");
+    rename_legacy_dir(&data_dir.join("views").join("_builtin"), &dir);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("upload.jsx"), UPLOAD)?;
     std::fs::write(dir.join("people-review.jsx"), PEOPLE_REVIEW)?;
@@ -152,6 +153,24 @@ pub fn install_builtin_views(data_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Move a pre-rename `_builtin/` tree to `factory/`, once, if it is still there.
+///
+/// Best-effort and silent about absence, which is the normal case on every install after
+/// the first boot that ran it. It matters for what the agent *built*: a view it wrote
+/// under the old tree would otherwise sit at a ref nothing resolves, and the install
+/// would happily write a fresh `factory/` beside it and look correct.
+pub(crate) fn rename_legacy_dir(from: &Path, to: &Path) {
+    if !from.is_dir() || to.exists() {
+        return;
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => tracing::info!(from = %from.display(), to = %to.display(), "renamed the pre-factory tree"),
+        Err(e) => {
+            tracing::warn!(from = %from.display(), error = %e, "could not rename the pre-factory tree")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,8 +180,8 @@ mod tests {
     #[test]
     fn the_out_of_energy_view_is_bundled_and_seeded() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         assert!(builtin.join("vendor-outage.jsx").is_file());
 
         let source = out_of_energy_view();
@@ -203,24 +222,24 @@ mod tests {
     #[test]
     fn seeds_the_welcome_hero_and_its_mark() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         // The first-hello view and its mark land, so `show` with ref
-        // `_builtin/welcome` resolves. No sidecar: it gets the full canvas like
+        // `factory/welcome` resolves. No sidecar: it gets the full canvas like
         // everything else, and it does not render the words itself.
         assert!(builtin.join("welcome.jsx").is_file());
         assert!(!builtin.join("welcome.geom.json").exists());
         assert!(builtin.join("hi-mark.svg").is_file());
         // Reseeding is idempotent (overwrite, not append) — a second boot is clean.
-        install_builtin_views(dir.path()).unwrap();
+        install_factory_views(dir.path()).unwrap();
         assert_eq!(std::fs::read_to_string(builtin.join("welcome.jsx")).unwrap(), WELCOME);
     }
 
     #[test]
     fn seeds_every_review_surface() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         for (name, source) in REVIEW_VIEWS {
             let jsx = builtin.join(format!("{name}.jsx"));
             assert!(jsx.is_file(), "{name}.jsx was not seeded");
@@ -241,8 +260,8 @@ mod tests {
     #[test]
     fn no_bundled_view_has_a_backtick_inside_its_css() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         for entry in std::fs::read_dir(&builtin).unwrap().flatten() {
             let path = entry.path();
             if path.extension().is_none_or(|x| x != "jsx") {
@@ -289,7 +308,7 @@ mod tests {
     }
 
     /// The toolbox is read by scanning the tree for `// purpose:` lines
-    /// (`docs/arch/data.md#views`), and `_builtin/` is the only part of it a fresh
+    /// (`docs/arch/data.md#views`), and `factory/` is the only part of it a fresh
     /// install has. A bundled view without the line degrades to a bare filename in
     /// the one scan the builder runs before it authors anything — so every one of
     /// them opens with a purpose line, and it has to be the *first* line, since that
@@ -297,8 +316,8 @@ mod tests {
     #[test]
     fn every_bundled_view_opens_with_a_purpose_line() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
@@ -327,8 +346,8 @@ mod tests {
     #[test]
     fn no_bundled_view_puts_a_bare_absolute_path_in_an_attribute() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
@@ -342,7 +361,7 @@ mod tests {
         }
 
         // And the one this was written for: the welcome poster's mark.
-        assert!(WELCOME.contains(r#"url("/views/_builtin/hi-mark.svg")"#));
+        assert!(WELCOME.contains(r#"url("/views/factory/hi-mark.svg")"#));
     }
 
     /// Full-bleed is the frame every view gets, so owning the canvas is no longer
@@ -352,8 +371,8 @@ mod tests {
     #[test]
     fn no_bundled_view_declares_a_placement() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         let mut names: Vec<&str> = vec!["upload", "people-review", "welcome"];
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
@@ -373,8 +392,8 @@ mod tests {
     #[test]
     fn no_bundled_view_declares_traits_and_the_outage_cannot_hide_the_conversation() {
         let dir = tempfile::tempdir().unwrap();
-        install_builtin_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("_builtin");
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
         let sidecars: Vec<String> = std::fs::read_dir(&builtin)
             .unwrap()
             .flatten()

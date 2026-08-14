@@ -130,7 +130,7 @@ that is what to take away. One quiet turn says nothing at all; only the pattern 
 twice does not move a session that has already decided what kind of agent it is.
 
 Not blind, because its memory is **prepared**: the bundled prompt for its role, plus the
-[generated one](data.md#memoryprompts) — what the conversation carries forward,
+[generated seed](data.md#prompts) — what the conversation carries forward,
 open tasks, the recent log tail — all in context before the first word. **Code injects that
 every turn and caps it**, so it cannot grow with usage. Two hundred open tasks project as a
 summary, not a list.

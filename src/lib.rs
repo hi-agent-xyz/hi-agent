@@ -154,12 +154,12 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // Seed the bundled built-in views (the file-upload entry) into the tree so the
     // agent can show them by ref like any view. Overwritten each boot — the tree is
     // disposable, so a binary update reseeds the latest.
-    mind::views::install_builtin_views(&config.data_dir).context("installing built-in views")?;
+    mind::views::install_factory_views(&config.data_dir).context("installing built-in views")?;
 
-    // The agent's skill workshop. Seeds the factory layer under `skills/_builtin/`
+    // The agent's skill workshop. Seeds the factory layer under `skills/factory/`
     // (rewritten each boot) and creates the tree, so the workshop exists before the
     // first note is written. Agent-written skills land alongside and are never touched.
-    mind::skills::install_builtin_skills(&config.data_dir).context("installing built-in skills")?;
+    mind::skills::install_factory_skills(&config.data_dir).context("installing built-in skills")?;
 
     // The agent's precious drive — where it files artifacts worth keeping (a user's
     // handed-over documents, its own kept work). Created here so it always exists;
@@ -327,7 +327,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         format!("http://127.0.0.1:{}", config.port),
     );
     // The screen came back from the last snapshot when the router was built, but a
-    // snapshot pins the *compiled module* a view was shown as, and `install_builtin_views`
+    // snapshot pins the *compiled module* a view was shown as, and `install_factory_views`
     // above may have just reseeded that view's source from a newer binary. Recompile it
     // from source now — the first moment both the reseeded tree and a compiler exist —
     // so what's on screen is the view as it is today, not as it was when it was shown.

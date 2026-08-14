@@ -23,7 +23,7 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 | **Ad-hoc views start in `views/`; their source *graduates* into `drive/` when worth keeping** | Filing is a deliberate act, the same fluid→solid move as `raw → facet`; most views die in `views/`, unmissed |
 | **Capabilities are reached as on-demand skills, not always-loaded tools** | MCP tools cost context every turn; a long tail of capabilities belongs in the loaded-on-demand tier |
 | **Secrets are resolved at call-time by the effector, never held in the mind's context** | You don't recite your password to use it; the value sits in the drive/env, the mind holds only a pointer |
-| **`data/prompts/` is bundled and disposable; `data/memory/prompts/` is generated and precious** | Same kind of thing — text fed to an agent at init — so they share a leaf name; the parent directory is what says who wrote it and whether losing it matters |
+| **`prompts/factory/` is ours and disposable; `prompts/seed/` is the agent's** | Same kind of thing — text fed to a session at init — so they share a parent; the subdirectory says who wrote it. Losing `factory/` costs nothing (the binary is the original); losing a seed costs one reflection pass, not knowledge |
 
 ---
 
@@ -36,9 +36,6 @@ data/
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
     tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
-    prompts/         #   GENERATED system prompts, one per agent that needs state — agent-written, precious
-      conversation.md #    what the conversation carries forward (written by Cognition)
-      cognition.md   #     the brain's
 
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
     projects/<p>/    #   sedimented work: kept view source + assets (the source of record)
@@ -49,9 +46,13 @@ data/
     <project>/       #   ad-hoc views: source + build, until the source graduates to drive/projects/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)
 
-  prompts/           # the BUNDLED system prompts — installed from the binary each boot, disposable   (seed)
-    core.md reaction.md aesthetic.md appearance.md meaning.md reflection.md
-    world.md         #   (proposed) seeded world-priors: an "article from a trusted source" the agent digests into memory
+  prompts/           # everything a session is given before the person says anything
+    factory/         #   OURS — installed from the binary each boot, disposable; the system prompt
+      reaction.md cognition.md reflection.md  workers/<type>.md
+    seed/            #   the AGENT'S — what a rung brings to a thread it just opened; the first message
+      reaction.md    #     what the conversation carries forward (written by Cognition)
+      cognition.md   #     the brain's
+      proactivity.md #     the learned read on speaking up unprompted (written by Reflection)
 
   claude-config/     # the cognition RUNTIME — the ACP/claude subprocess's home (managed); transcripts are durable records
   sessions.jsonl     # the session ledger/index (a durable record)
@@ -59,10 +60,10 @@ data/
 
 Five **kinds**, each a place on a person's computer:
 
-1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and what each agent carries into every window (`memory/prompts/`, generated — the bundled `prompts/` at the root is the other one, and the parent directory is what says which). Mostly reconstructive: reflection summarizes and regenerates the understanding.
+1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and and nothing that exists to prime a session — a seed is a digest *over* this record and lives in `prompts/seed/`. Mostly reconstructive: reflection summarizes and regenerates the understanding.
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
-4. **prompts/** (the seed) — the manual handed over at the factory: how to be, plus priors about the world. Read-only to the agent and reinstalled from the binary every boot; the *only* thing here is what we ship. Its counterpart is `memory/prompts/`, which the agent writes.
+4. **prompts/** — what a session is handed. `factory/` is the manual handed over at the factory: how to be, read-only to the agent and reinstalled from the binary every boot. `seed/` beside it is what the agent wrote for itself, fed as the thread's first message.
 5. **claude-config/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
 
 ## The two axes that place everything
@@ -90,13 +91,12 @@ written before anything reacts to it. `episodes/` and `facets/` are the regenera
 understanding reflection distills from it. Precious and synced. Reflection **owns** the
 reconstructive part of this tree — it rewrites facets whole, but never the log.
 
-Two things under `memory/` are **not** reconstructive and not reflection's: `tasks/` is the
-one ledger of what is owed (nothing else records a duty), and `memory/prompts/` holds the
-**generated** system prompts — one per agent that needs state, written by that agent, injected
-and capped by code, and rebuildable by nothing else. The conversation's is written by Cognition,
-because Reaction has no file access to write its own. It shares a leaf name with the bundled
-`prompts/` at the root because it is the same kind of thing; the parent directory is the whole
-of the difference. Contract in [`arch/data.md`](arch/data.md#memoryprompts).
+One thing under `memory/` is **not** reconstructive and not reflection's: `tasks/`, the one
+ledger of what is owed, because nothing else records a duty. What each rung carries forward is
+no longer here at all — it is a digest *over* this record, so it lives in `prompts/seed/`. The
+conversation's is written by Cognition, because Reaction has no file access to write its own.
+The parent directory is the whole
+of the difference. Contract in [`arch/data.md`](arch/data.md#prompts).
 
 **Outbound is the gap today.** The concept covers both directions; the capture does not yet —
 inbound is recorded, outbound barely, so a restart cannot reconstruct what was said or shown.
@@ -135,14 +135,14 @@ gitignored, so there is **no `.cache` dotdir** — the whole tree is the cache.
   set up **once** and reused, not duplicated per project. Identical view source still
   compiles at most once.
 
-### prompts/ — what the factory gives (the seed)
+### prompts/factory/ — what the factory gives
 
 Read-only to the agent and re-materialized at every boot from the binary (`include_str!`), so
-an edit here does not survive and is not meant to. **One layer only** — there is no user
-override file and no agent-writable slot. An instruction from the person lands as a preference
-facet or a task like anything else they say, and what the agent carries forward is generated
-into `memory/prompts/`; the reasoning, and its cost, is in
-[`arch/data.md`](arch/data.md#prompts). Two flavors of seed:
+an edit here does not survive and is not meant to. **No user layer**: an instruction from the
+person lands as a preference facet or a task like anything else they say, and there is no lever
+that overrides the agent without going through it. What the agent carries forward is generated
+into its sibling `prompts/seed/`; the reasoning, and its cost, is in
+[`arch/data.md`](arch/data.md#prompts). Two flavors of factory text:
 
 - **Behavior** — `core.md`, `reaction.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
   `reflection.md`: how to be. Read as guidance.
@@ -209,9 +209,10 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
   does not.
 - **Not yet built:** outbound capture in `raw/`. The log is decided as both-directions; only
   inbound is recorded today.
-- **Not yet built:** `memory/prompts/`. Today a single mechanically-projected recency
-  digest stands in for all of them — no agent writes it, it is seeded only when a session
-  opens rather than injected every turn (a real bug, not just a gap), and nothing caps it.
+- **Partly built:** `prompts/seed/`. The voice's is written by Cognition and capped by code.
+  Cognition's own has a read path and **nothing writes it**. And no seed is *seeded* yet: they
+  are read per turn into the window instead of being handed over once as the thread's first
+  message — see the four layers in [`arch/data.md`](arch/data.md#prompts).
 
 ## Open questions
 

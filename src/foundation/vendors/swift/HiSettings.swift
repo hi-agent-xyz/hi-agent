@@ -428,7 +428,7 @@ struct GeneralTab: View {
 /// Who this core is, from anywhere else: the switch, the name, the address.
 ///
 /// Read-only but for the switch. Claiming and renaming live in the agent's own
-/// `_builtin/reach` view, which also lists devices and can revoke them — this
+/// `factory/reach` view, which also lists devices and can revoke them — this
 /// pane exists because a person should not have to ask the agent to be told its
 /// own address.
 struct ReachTab: View {

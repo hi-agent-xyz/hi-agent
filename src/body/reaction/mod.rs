@@ -863,9 +863,9 @@ pub async fn start(
     shutdown: Shutdown,
     server_ready: watch::Receiver<bool>,
 ) -> anyhow::Result<Reaction> {
-    let source = crate::mind::views::builtin::out_of_energy_view();
+    let source = crate::mind::views::factory::out_of_energy_view();
     let energy_view = ViewEnvelope {
-        id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
+        id: crate::mind::views::factory::OUT_OF_ENERGY_VIEW_ID.to_string(),
         op: ViewOp::Show,
         module_url: Some(
             view_compiler
@@ -1050,7 +1050,7 @@ impl Reaction {
             self.inner.energy_view.clone()
         } else {
             ViewEnvelope {
-                id: crate::mind::views::builtin::OUT_OF_ENERGY_VIEW_ID.to_string(),
+                id: crate::mind::views::factory::OUT_OF_ENERGY_VIEW_ID.to_string(),
                 op: ViewOp::Dismiss,
                 module_url: None,
                 traits: None,

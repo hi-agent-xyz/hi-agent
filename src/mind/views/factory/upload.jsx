@@ -2,7 +2,7 @@
 // Shown when the user wants to hand over a file (a contract, a passport scan).
 // A handed file is an artifact, not something
 // the agent looks at — both doors post to the `file` channel, which wakes the
-// agent. Seeded at `_builtin/upload`; the agent may adapt it like any view.
+// agent. Seeded at `factory/upload`; the agent may adapt it like any view.
 import { useState, useEffect, useRef } from "react";
 import { url } from "@hi/core";
 

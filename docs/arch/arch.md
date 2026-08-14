@@ -43,7 +43,7 @@ So the question is never *where does this live* but **who holds the pen**:
   the bundled system prompts and the seed skills and views. All mechanical, none of it needing
   an agent to be correct.
 - **Agents write** episodes, facets, tasks, their own
-  [generated system prompts](data.md#memoryprompts), drive, and everything learnt.
+  [generated seeds](data.md#prompts), drive, and everything learnt.
 
 The unit is the **subtree, not the top-level directory**. Foundation's log lives *inside*
 `memory/`, alongside what the agents write, because what the agent heard belongs with what it

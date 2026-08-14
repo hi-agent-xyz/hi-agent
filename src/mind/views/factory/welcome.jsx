@@ -3,7 +3,7 @@
 // reaction.md. It carries the *feeling* — the real "hi" mark, one line of copy, a warm
 // matte ground — while the agent's own voice carries the four ideas (you just talk & work
 // with it, it remembers you, it uses your tools, and — the point — it can be taught). No
-// wall of text, no tour. Seeded at `_builtin/welcome`; the agent may adapt it like any view.
+// wall of text, no tour. Seeded at `factory/welcome`; the agent may adapt it like any view.
 import { motion } from "motion/react";
 import { url } from "@hi/core";
 
@@ -15,7 +15,7 @@ const EASE = [0.22, 0.7, 0.2, 1];
 // file and served from the views tree — never re-typed in a system font, never hotlinked.
 // Through `url()` because the path is root-absolute: served under the community's subpath
 // this poster is at `/ana`, and a bare `/views/…` would ask the community for it instead.
-const MARK = url("/views/_builtin/hi-mark.svg");
+const MARK = url("/views/factory/hi-mark.svg");
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. The tagline is three separate segments on

@@ -19,7 +19,7 @@
 //!    [`crate::mind::skills::skills_dir`] — that is what the tree is addressed by
 //!    elsewhere (`see skills/feishu-watch.md`), and the tree nests, so every route here
 //!    takes a wildcard path and must guard it against traversal.
-//! 2. **`_builtin/` is not user data.** [`crate::mind::skills::install_builtin_skills`]
+//! 2. **`factory/` is not user data.** [`crate::mind::skills::install_factory_skills`]
 //!    rewrites that subtree on every boot, so deleting a file in it removes nothing
 //!    durable — the next start puts it back. `DELETE` refuses it outright and says why,
 //!    rather than reporting a success the next boot undoes.
@@ -43,7 +43,7 @@ use crate::mind::skills::skills_dir;
 const EXCERPT_CHARS: usize = 160;
 
 /// The factory-seed subtree. Rewritten on every boot, hence never deletable here.
-const BUILTIN: &str = "_builtin";
+const FACTORY: &str = "factory";
 
 // ── path safety ───────────────────────────────────────────────────────────────
 
@@ -60,10 +60,10 @@ fn safe_rel_path(path: &str) -> bool {
             .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
-/// Whether a skill path belongs to the factory layer (`_builtin` itself or anything
+/// Whether a skill path belongs to the factory layer (`factory` itself or anything
 /// under it).
-fn is_builtin(rel: &str) -> bool {
-    rel == BUILTIN || rel.starts_with(&format!("{BUILTIN}/"))
+fn is_factory(rel: &str) -> bool {
+    rel == FACTORY || rel.starts_with(&format!("{FACTORY}/"))
 }
 
 /// Normalise the `{*path}` segment to a skill identity: the relative path *without*
@@ -234,7 +234,7 @@ async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
             found.push((
                 modified,
                 SkillDto {
-                    builtin: is_builtin(&id),
+                    builtin: is_factory(&id),
                     path: id,
                     name: first_heading(body).unwrap_or_else(|| label_from_stem(stem)),
                     bytes: meta.len(),
@@ -283,7 +283,7 @@ pub async fn get_skill(State(state): State<Arc<AppState>>, Path(path): Path<Stri
     Json(serde_json::json!({
         "path": rel,
         "content": text,
-        "builtin": is_builtin(&rel),
+        "builtin": is_factory(&rel),
         "bytes": text.len() as u64,
         "modified": rfc3339(modified),
     }))
@@ -296,7 +296,7 @@ pub async fn get_skill(State(state): State<Arc<AppState>>, Path(path): Path<Stri
 /// a stale note is followed as written by every later run of that job, so removing it
 /// is the fix.
 ///
-/// Refuses anything under `_builtin/`: that layer is rewritten on the next boot, so
+/// Refuses anything under `factory/`: that layer is rewritten on the next boot, so
 /// deleting it would report a success the process itself undoes.
 pub async fn delete_skill(
     State(state): State<Arc<AppState>>,
@@ -306,9 +306,9 @@ pub async fn delete_skill(
         return err("bad skill path");
     }
     let rel = skill_id(&path).to_string();
-    if is_builtin(&rel) {
+    if is_factory(&rel) {
         return err(
-            "this is a built-in skill: the _builtin/ layer is factory seed and is rewritten on \
+            "this is a built-in skill: the factory/ layer is factory seed and is rewritten on \
              every boot, so deleting it changes nothing — the next start puts it back. Only \
              skills the agent learnt can be removed.",
         );
@@ -350,10 +350,10 @@ mod tests {
 
     #[test]
     fn builtin_is_recognised_by_prefix_only() {
-        assert!(is_builtin("_builtin"));
-        assert!(is_builtin("_builtin/adding-a-device"));
-        assert!(!is_builtin("_builtin-notes/mine"), "a sibling name is not the layer");
-        assert!(!is_builtin("video/_builtin"));
+        assert!(is_factory("factory"));
+        assert!(is_factory("factory/adding-a-device"));
+        assert!(!is_factory("factory-notes/mine"), "a sibling name is not the layer");
+        assert!(!is_factory("video/factory"));
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
     async fn walk_lists_md_only_learnt_first() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        write(root, "_builtin/adding-a-device.md", "# adding a device\n\nseeded prose.\n");
+        write(root, "factory/adding-a-device.md", "# adding a device\n\nseeded prose.\n");
         write(root, "posting-a-clip.md", "what worked last time\n");
         write(root, "video/trimming.md", "# Trimming\n\nffmpeg -ss ...\n");
         write(root, "notes.txt", "not a skill");
@@ -393,7 +393,7 @@ mod tests {
         let skills = walk_skills(root).await.unwrap();
         let paths: Vec<&str> = skills.iter().map(|s| s.path.as_str()).collect();
         assert_eq!(paths.len(), 3, "only .md, dotfiles skipped: {paths:?}");
-        assert_eq!(*paths.last().unwrap(), "_builtin/adding-a-device", "builtin sorts last");
+        assert_eq!(*paths.last().unwrap(), "factory/adding-a-device", "builtin sorts last");
         assert!(paths.contains(&"video/trimming"), "nested skills are found: {paths:?}");
 
         let trimming = skills.iter().find(|s| s.path == "video/trimming").unwrap();
@@ -406,7 +406,7 @@ mod tests {
         let clip = skills.iter().find(|s| s.path == "posting-a-clip").unwrap();
         assert_eq!(clip.name, "posting a clip", "no heading → filename label");
 
-        assert!(skills.iter().find(|s| s.path.starts_with("_builtin/")).unwrap().builtin);
+        assert!(skills.iter().find(|s| s.path.starts_with("factory/")).unwrap().builtin);
     }
 
     #[tokio::test]

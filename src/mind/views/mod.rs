@@ -23,8 +23,8 @@ use anyhow::{Context, bail};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-pub mod builtin;
-pub use builtin::install_builtin_views;
+pub mod factory;
+pub use factory::install_factory_views;
 
 /// What the **review** half of the view loop needs, set once at startup.
 ///
@@ -96,6 +96,16 @@ pub async fn resolve_ref(
     if !valid_ref(view_ref) {
         return Err(format!("invalid ref `{view_ref}` (names and `/` only, no dots)"));
     }
+    // `_builtin/` was renamed to `factory/`. Refs outlive the rename in three places we do
+    // not control on the way past: a view already on screen when the binary changed, a
+    // prompt an older build materialised, and anything the model learnt to type before it.
+    // One alias here covers all of them, because this is the only place a ref becomes a
+    // file. Delete it a release after the rename.
+    let aliased = view_ref.strip_prefix("_builtin/").map(|rest| {
+        tracing::info!(view_ref, "resolved a pre-factory ref");
+        format!("factory/{rest}")
+    });
+    let view_ref = aliased.as_deref().unwrap_or(view_ref);
     let views = data_dir.join("views");
     let source = tokio::fs::read_to_string(views.join(format!("{view_ref}.jsx")))
         .await
@@ -307,7 +317,7 @@ mod tests {
     /// standalone view-tool install or the copy that ships with a managed runtime.
     /// Returns `None` to skip the spawning tests where esbuild isn't provisioned.
     ///
-    /// `pub(crate)` so [`super::builtin`]'s tests can compile the bundled views through the
+    /// `pub(crate)` so [`super::factory`]'s tests can compile the bundled views through the
     /// real compiler rather than keeping a second copy of this walk.
     pub(crate) fn esbuild_probe() -> Option<PathBuf> {
         let (os, arch) = crate::runtime::npm_target().ok()?;
@@ -372,5 +382,30 @@ mod tests {
         assert_eq!(url, url2);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    /// A ref written before the rename still resolves — a view on screen across an upgrade,
+    /// or a prompt an older build materialised.
+    #[tokio::test]
+    async fn a_pre_factory_ref_still_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let factory = dir.path().join("views").join("factory");
+        tokio::fs::create_dir_all(&factory).await.unwrap();
+        tokio::fs::write(factory.join("welcome.jsx"), "export default () => null;")
+            .await
+            .unwrap();
+
+        let (source, _) = resolve_ref(dir.path(), "_builtin/welcome").await.unwrap();
+        assert!(source.contains("export default"));
+
+        // And the new spelling, which is the one everything should be using.
+        assert!(resolve_ref(dir.path(), "factory/welcome").await.is_ok());
+        // The alias is a prefix, not a substring: a project may legitimately be named this.
+        assert!(resolve_ref(dir.path(), "notes/_builtin/welcome").await.is_err());
     }
 }

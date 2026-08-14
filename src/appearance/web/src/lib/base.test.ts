@@ -51,7 +51,7 @@ describe("url()", () => {
   it("starts a root-absolute path at the prefix", () => {
     servedUnder("/ana");
     expect(url("/api/in/text")).toBe("/ana/api/in/text");
-    expect(url("/views/_builtin/hi-mark.svg")).toBe("/ana/views/_builtin/hi-mark.svg");
+    expect(url("/views/factory/hi-mark.svg")).toBe("/ana/views/factory/hi-mark.svg");
   });
 
   it("is idempotent, so a path the backend already prefixed is untouched", () => {

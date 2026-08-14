@@ -1384,7 +1384,7 @@ async fn dispatch_tool(
             // The ref travels on with the view: it is the view's durable name, and
             // the compiled module URL it resolves to is a disposable content hash
             // that goes stale the moment the source is edited or the binary reseeds
-            // `_builtin/`. Restoring the screen after a restart needs the name.
+            // `factory/`. Restoring the screen after a restart needs the name.
             let (view_ref, source, traits) = match arg_opt("ref") {
                 Some(r) if !r.trim().is_empty() => {
                     match crate::mind::views::resolve_ref(data_dir, &r).await {

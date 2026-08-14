@@ -530,7 +530,7 @@ const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this i
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
 put the built-in welcome on screen while you speak it (`hi_show` with ref \
-`_builtin/welcome`), then hand over the floor. One warm beat that lands who you are — \
+`factory/welcome`), then hand over the floor. One warm beat that lands who you are — \
 not a tour, not a walkthrough, and nothing to teach them; you'll show them by doing, \
 from here on.";
 
@@ -592,7 +592,7 @@ mod soul_tests {
         assert!(is_first_meeting(dir.path()));
         let prompt = reaction_system_prompt(dir.path()).await;
         assert!(prompt.contains("first meeting"));
-        assert!(prompt.contains("_builtin/welcome"));
+        assert!(prompt.contains("factory/welcome"));
     }
 
     #[tokio::test]
@@ -982,16 +982,16 @@ mod soul_tests {
     /// missing `purpose:` line costs you a filename, never a wrong "never built".
     /// That only holds while the prompt still asks for the line, so the ask is pinned.
     ///
-    /// `_builtin/` is pinned with it, and it is the sharper one. Those views sit inside
+    /// `factory/` is pinned with it, and it is the sharper one. Those views sit inside
     /// the workshop the builder is now told to scan, and the binary rewrites them on
-    /// every boot ([`crate::mind::views::install_builtin_views`]) — so a builder that
+    /// every boot ([`crate::mind::views::install_factory_views`]) — so a builder that
     /// adapts one in place loses the work at the next start, silently. Telling it to
     /// read the tree without telling it about that folder is the hazard this pass
     /// introduced; do not drop the warning without removing the instruction to scan.
     #[test]
     fn the_builder_is_told_how_the_toolbox_is_read_and_which_of_it_is_not_its_own() {
         assert!(WORKER_VIEW_BUILDER_BASE.contains("// purpose:"));
-        assert!(WORKER_VIEW_BUILDER_BASE.contains("_builtin/"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("factory/"));
     }
 
     /// The frame log had a writer since `70479a9` and no *pointer* — no prompt anywhere

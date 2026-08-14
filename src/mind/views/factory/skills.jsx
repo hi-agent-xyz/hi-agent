@@ -1,6 +1,6 @@
 // purpose: 学会的本事 — review the workshop notes under `skills/` for staleness, and delete one that has gone off.
 // A workshop note is what a working session leaves behind so the next one starts ahead. They are plain .md under `skills/`, with the factory seeds in
-// `skills/_builtin/` rewritten every boot.
+// `skills/factory/` rewritten every boot.
 //
 // The review this surface exists for is staleness, not tidiness. journey 24 is built on a
 // skill having a perishable half — which tool is best, this year's prices, an API that

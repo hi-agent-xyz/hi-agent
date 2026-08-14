@@ -191,16 +191,16 @@ impl ViewBus {
     /// [`ViewBus::load`] restores `module_url` verbatim, and that URL is a content
     /// hash over the source **as it was at show time**; the compiled tree is a
     /// disposable cache, not the view's identity. Without this pass, editing a view's
-    /// source — or shipping a binary that reseeds `_builtin/` — leaves the old
+    /// source — or shipping a binary that reseeds `factory/` — leaves the old
     /// artifact pinned on screen forever. Nothing errors, because the old module is
     /// still on disk and still imports cleanly; the screen just quietly keeps serving
     /// a version of the view the rest of the process has moved past. That is not
-    /// hypothetical: a `_builtin/tasks` compiled before the task lifecycle replaced
+    /// hypothetical: a `factory/tasks` compiled before the task lifecycle replaced
     /// `state` with `status` went on filtering `x.state === "open"` against an API
     /// that had stopped emitting `state`, and so reported every task closed and the
     /// list empty.
     ///
-    /// Runs once at startup — after `install_builtin_views` has reseeded the tree and
+    /// Runs once at startup — after `install_factory_views` has reseeded the tree and
     /// after the compiler exists. Only the content slot is refreshed; the condition
     /// slot is re-derived from embedded source by its own reconcile.
     ///
@@ -419,8 +419,8 @@ fn resolve_slot(
 /// nobody having touched a file.
 ///
 /// For those, the id is a sound bridge: `reaction.md` names the built-ins to the
-/// agent as `_builtin/<name>` and it shows each one under that bare name, so an id
-/// that matches a file the host itself just seeded into `_builtin/` names that view.
+/// agent as `factory/<name>` and it shows each one under that bare name, so an id
+/// that matches a file the host itself just seeded into `factory/` names that view.
 /// The file is checked rather than assumed, so an id that means nothing there is
 /// simply left alone, and the refreshed snapshot records a real ref — the guess
 /// happens once per install and never again.
@@ -431,7 +431,7 @@ async fn restored_ref(view: &RetainedView, data_dir: &Path) -> Option<String> {
     if let Some(view_ref) = &view.view_ref {
         return Some(view_ref.clone());
     }
-    let candidate = format!("_builtin/{}", view.id.trim());
+    let candidate = format!("factory/{}", view.id.trim());
     if !crate::mind::views::valid_ref(&candidate) {
         return None;
     }
@@ -899,7 +899,7 @@ mod tests {
     // cache-hit URL without spawning anything when the module is already on disk,
     // and never gets called at all when the ref fails to resolve. `seed_view`
     // therefore writes the source AND its compiled artifact, which is exactly the
-    // state a real boot is in after `install_builtin_views` reseeds a view whose
+    // state a real boot is in after `install_factory_views` reseeds a view whose
     // module was compiled on an earlier run.
 
     fn offline_compiler(data_dir: &Path) -> crate::mind::views::ViewCompiler {
@@ -944,7 +944,7 @@ mod tests {
         }
 
         // The source is edited between runs — a view rebuild, or a new binary
-        // reseeding `_builtin/`.
+        // reseeding `factory/`.
         let fresh = seed_view(tmp.path(), "deck/leader", "export default () => 'v2'").await;
         assert_ne!(stale, fresh, "the edit must change the content hash");
 
@@ -964,19 +964,19 @@ mod tests {
     /// Snapshots written before the ref existed pin a module and nothing else. The
     /// built-ins are the ones that go stale on their own (a binary reseeds them), and
     /// the agent shows each under its bare name — so an id matching a seeded
-    /// `_builtin/` source identifies the view, and the refreshed snapshot records a
+    /// `factory/` source identifies the view, and the refreshed snapshot records a
     /// real ref so the bridge is never needed again.
     #[tokio::test]
     async fn refresh_adopts_the_builtin_ref_for_a_snapshot_written_without_one() {
         let tmp = tempfile::tempdir().unwrap();
-        seed_view(tmp.path(), "_builtin/tasks", "export default () => 'old'").await;
+        seed_view(tmp.path(), "factory/tasks", "export default () => 'old'").await;
         {
             let bus = ViewBus::load(tmp.path());
             // No ref — exactly what a pre-`view_ref` snapshot restores as.
             bus.apply(show("tasks", "/views/_compiled/deadbeef.mjs")).await;
         }
 
-        let current = seed_view(tmp.path(), "_builtin/tasks", "export default () => 'new'").await;
+        let current = seed_view(tmp.path(), "factory/tasks", "export default () => 'new'").await;
         let bus = ViewBus::load(tmp.path());
         bus.refresh_sources(&offline_compiler(tmp.path())).await;
         assert_eq!(bus.wait_state(None).await.views[0].module_url, current);
@@ -984,10 +984,10 @@ mod tests {
         // …and the ref is now on disk, so the next boot resolves it outright.
         let reloaded = ViewBus::load(tmp.path());
         let restored = reloaded.inner.lock().await.content.clone().unwrap();
-        assert_eq!(restored.view_ref.as_deref(), Some("_builtin/tasks"));
+        assert_eq!(restored.view_ref.as_deref(), Some("factory/tasks"));
     }
 
-    /// An inline-source view has no durable name and no `_builtin/` file behind its
+    /// An inline-source view has no durable name and no `factory/` file behind its
     /// id. It must be left exactly as it was rather than blanked.
     #[tokio::test]
     async fn refresh_leaves_a_view_it_cannot_name_alone() {

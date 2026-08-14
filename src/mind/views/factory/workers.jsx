@@ -275,7 +275,7 @@ const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
  *  saying the same thing twice, in the worse of the two words.
  *
  *  Not translated, in either direction. A rung's name is this system's own vocabulary
- *  (`views/builtin.rs`, rule 3) — it names a part of this architecture, not an ordinary
+ *  (`views/factory.rs`, rule 3) — it names a part of this architecture, not an ordinary
  *  object — so there is one table here rather than one per language. */
 const ROLE = {
   reaction: "Reaction",

@@ -290,7 +290,7 @@ async fn the_render_page_is_served_with_the_host_import_map() {
 async fn the_reach_surface_renders_on_a_core_that_has_nothing_yet() {
     let Some(h) = ready().await else { return };
 
-    let source = include_str!("../src/mind/views/builtin/reach.jsx");
+    let source = include_str!("../src/mind/views/factory/reach.jsx");
     let module_url = h.compiler.compile(source).await.expect("reach compiles");
     let out = view_render::render(&RenderRequest::new(h.base_url.as_str(), module_url.as_str()))
         .await

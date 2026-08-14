@@ -21,7 +21,7 @@ Foundation holds the pen for the mechanical subtrees: the log at `memory/raw/`, 
 the bundled `prompts/`, and the factory seeds under `skills/` and `views/`. Those are described
 where they live, in [`data.md`](data.md#who-holds-the-pen).
 
-It does **not** write the [generated system prompts](data.md#memoryprompts) — deciding
+It does **not** write the [generated seeds](data.md#prompts) — deciding
 what an agent carries forward is judgment. It does install the bundled ones, inject the
 generated ones every turn, and enforce their cap.
 
@@ -41,7 +41,7 @@ so an upgrade replaces one and never the other.
 | Gateway + vendors | model access, credentials, energy accounting |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
-| Prompt assembly | installs the bundled `prompts/` from the binary at boot; injects each agent's [generated one](data.md#memoryprompts) every turn and truncates it, audibly, at the cap |
+| Prompt assembly | installs `prompts/factory/` from the binary at boot; hands each rung its [seed](data.md#prompts) and truncates it, audibly, at the cap |
 | Build pipeline | esbuild and headless-browser rendering for views |
 | Logger / observatory | operational visibility — [not the log](#observatory), and the difference matters |
 
