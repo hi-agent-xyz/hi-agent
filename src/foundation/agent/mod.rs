@@ -130,7 +130,7 @@ impl AgentLayer {
     pub async fn session(
         &self,
         role: Role,
-        session_id: Option<u64>,
+        session_id: Option<crate::foundation::registry::SessionId>,
         opts: SessionOpts,
     ) -> anyhow::Result<AgentSession> {
         let SessionOpts { system_prompt, cwd, resume, .. } = opts;
@@ -161,7 +161,7 @@ impl AgentLayer {
             role.as_str().to_string(),
             // hi-agent's own session id, not the protocol's: it exists before the
             // subprocess does, which is exactly what a durable per-session record needs.
-            session_id,
+            session_id.clone(),
             &self.inner.registry,
         )
         .await?;
@@ -171,7 +171,7 @@ impl AgentLayer {
             cwd,
             sandbox: role.sandbox(),
             permission_profile: permission_profile(role),
-            config: self.thread_config(&cfg, role, session_id),
+            config: self.thread_config(&cfg, role, session_id.clone()),
             // Consumed above; it is this function's parameter, not the wire's.
             resume: None,
         };
@@ -198,7 +198,7 @@ impl AgentLayer {
             Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
             None => process.open_thread(opts).await?,
         };
-        if let Some(session_id) = session_id {
+        if let Some(session_id) = session_id.as_ref() {
             crate::foundation::registry::global().note_thread(session_id, &id);
         }
 
@@ -264,7 +264,7 @@ impl AgentLayer {
         &self,
         cfg: &AgentConfig,
         role: Role,
-        session_id: Option<u64>,
+        session_id: Option<crate::foundation::registry::SessionId>,
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut headers = serde_json::Map::new();
         headers.insert(HEADER_ROLE.to_string(), json!(role.as_str()));
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn a_worker_thread_attaches_mcp_with_its_routing_headers() {
-        let config = layer().thread_config(&config(), Role::Worker(WorkerType::General), Some(42));
+        let config = layer().thread_config(&config(), Role::Worker(WorkerType::General), Some(42.into()));
         let server = &config["mcp_servers"]["hi-agent"];
         assert_eq!(server["url"], "http://127.0.0.1:12358/mcp");
         assert_eq!(server["http_headers"][HEADER_ROLE], "worker");
@@ -417,7 +417,7 @@ mod tests {
     fn the_model_wire_rides_the_same_thread_config() {
         // One object carries both halves, so a thread cannot come up attached to our
         // tools but pointed at the wrong endpoint.
-        let config = layer().thread_config(&config(), Role::Cognition, Some(1));
+        let config = layer().thread_config(&config(), Role::Cognition, Some(1.into()));
         assert_eq!(config["model"], "gpt-5.1-codex");
         assert!(config.contains_key("model_providers"));
         assert!(config.contains_key("mcp_servers"));
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn only_the_voice_opens_with_the_agents_own_tools_off() {
         let (name, _) = reaction_permissions();
-        let voice = layer().thread_config(&config(), Role::Reaction, Some(1));
+        let voice = layer().thread_config(&config(), Role::Reaction, Some(1.into()));
         assert_eq!(voice["features"]["shell_tool"], false);
         assert_eq!(voice["tools"]["web_search"], false);
         assert_eq!(voice["permissions"][name]["default_tools_enabled"], false);
@@ -456,7 +456,7 @@ mod tests {
         assert!(voice.contains_key("mcp_servers"));
 
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
-            let config = layer().thread_config(&config(), *role, Some(1));
+            let config = layer().thread_config(&config(), *role, Some(1.into()));
             assert!(!config.contains_key("permissions"), "{role:?} works, and working needs tools");
             // `features` is no longer Reaction's alone — `steer` is asked for on every
             // thread — so the sweep is over the switches that *remove* a built-in rather
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn every_rung_opens_steerable() {
         for role in Role::ALL {
-            let config = layer().thread_config(&config(), *role, Some(1));
+            let config = layer().thread_config(&config(), *role, Some(1.into()));
             assert_eq!(config["features"]["steer"], true, "{role:?} must be reachable mid-turn");
         }
     }
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn every_worker_type_attaches_the_one_worker_surface() {
         for t in WorkerType::ALL {
-            let config = layer().thread_config(&config(), Role::Worker(*t), Some(7));
+            let config = layer().thread_config(&config(), Role::Worker(*t), Some(7.into()));
             assert_eq!(
                 config["mcp_servers"]["hi-agent"]["http_headers"][HEADER_ROLE],
                 "worker",

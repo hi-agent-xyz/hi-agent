@@ -119,7 +119,7 @@ async fn run(reaction: Reaction, mut rx: mpsc::Receiver<DutyDelivery>) {
         while let Some(input) = report_rx.recv().await {
             if let LoopInput::Worker(report) = input {
                 tracing::info!(
-                    worker = report.id,
+                    worker = %report.id,
                     "duty handler finished a turn; not escalated"
                 );
             }
@@ -218,10 +218,10 @@ async fn dispatch(
 
     // A live handler takes it straight. No rung wakes, nothing is projected, and the
     // 700ms that just elapsed is the whole latency between the group and the turn.
-    if let Some(id) = bound.get(key).copied() {
-        match registry::global().post(id, arrived.clone()) {
+    if let Some(id) = bound.get(key).cloned() {
+        match registry::global().post(&id, arrived.clone()) {
             Delivery::Delivered => {
-                tracing::info!(worker = id, arrivals = count, "duty traffic delivered");
+                tracing::info!(worker = %id, arrivals = count, "duty traffic delivered");
                 return;
             }
             // Closed by its owner, or lost with a restart. Not an error — the
@@ -246,7 +246,7 @@ async fn dispatch(
     let owner = registry::global()
         .session_of_role(Role::Cognition)
         .map(|status| status.id);
-    let id = registry::mint();
+    let id = registry::mint(Role::Worker(WorkerType::General), Some(&task.subject));
     let brief = brief_for(&task, &arrived);
 
     match workers
@@ -257,7 +257,7 @@ async fn dispatch(
         // gave this standing job — while `brief` stays the full record the handler reads.
         .spawn_with_id(
             reaction,
-            id,
+            id.clone(),
             task.title.clone(),
             brief,
             WorkerType::General,
@@ -268,9 +268,9 @@ async fn dispatch(
         .await
     {
         Ok(_) => {
-            bound.insert(key.to_owned(), id);
+            bound.insert(key.to_owned(), id.clone());
             tracing::info!(
-                worker = id,
+                worker = %id,
                 arrivals = count,
                 duty = %task.subject,
                 "opened a duty handler from the ledger"

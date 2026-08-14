@@ -48,6 +48,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use super::SessionId;
 use crate::identity::Role;
 use crate::mind::memory::layout;
 
@@ -73,7 +74,7 @@ pub enum Record {
     /// A session joined the switchboard. Written from `register`.
     Opened {
         run: String,
-        session: u64,
+        session: SessionId,
         /// The ledger subject this session serves — see [`Ended::subject`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -91,7 +92,7 @@ pub enum Record {
         #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        owner: Option<u64>,
+        owner: Option<SessionId>,
     },
     /// The codex thread behind a session, once it exists. Written from
     /// [`Registry::note_thread`](super::Registry::note_thread).
@@ -108,7 +109,7 @@ pub enum Record {
     /// lands is its choice and `(run, session)` cannot address it. Recorded, never derived.
     Thread {
         run: String,
-        session: u64,
+        session: SessionId,
         at: DateTime<Utc>,
         thread_id: String,
     },
@@ -116,7 +117,7 @@ pub enum Record {
     /// purpose — see the module doc.
     Closed {
         run: String,
-        session: u64,
+        session: SessionId,
         /// The ledger subject this session served — see [`Ended::subject`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -129,7 +130,7 @@ pub enum Record {
         #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        owner: Option<u64>,
+        owner: Option<SessionId>,
         turns: u64,
     },
 }
@@ -137,11 +138,11 @@ pub enum Record {
 impl Record {
     /// Only for the writer's error log — a record that would not serialize still has to be
     /// reportable as *which* one.
-    fn session(&self) -> u64 {
+    fn session(&self) -> SessionId {
         match self {
             Record::Opened { session, .. }
             | Record::Closed { session, .. }
-            | Record::Thread { session, .. } => *session,
+            | Record::Thread { session, .. } => session.clone(),
         }
     }
 }
@@ -161,9 +162,9 @@ pub enum EndedHow {
 #[derive(Debug, Clone, Serialize)]
 pub struct Ended {
     /// Which run it belonged to. Required to address its frame log, because session ids
-    /// restart at 1 every boot.
+    /// repeat every boot — the rungs always, a worker whenever the same errand comes round.
     pub run: String,
-    pub session: u64,
+    pub session: SessionId,
     pub role: String,
     #[serde(rename = "type")]
     pub worker_type: Option<String>,
@@ -178,7 +179,7 @@ pub struct Ended {
     /// to. Recorded on the way *in*, because the way out is what a crash skips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    pub owner: Option<u64>,
+    pub owner: Option<SessionId>,
     pub started: Option<DateTime<Utc>>,
     /// When it closed. `None` for a [`EndedHow::Restart`] row — nothing recorded an end,
     /// which is the whole point of that variant; the reader orders those by `started`.
@@ -297,7 +298,7 @@ async fn append_loop(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<Msg>) {
                 }
                 Err(err) => tracing::error!(
                     error = %err,
-                    session = record.session(),
+                    session = %record.session(),
                     "a session index record would not serialize"
                 ),
             }
@@ -397,12 +398,12 @@ async fn read_tail(path: &Path, limit: u64) -> std::io::Result<String> {
 fn fold(text: &str, current_run: &str) -> Vec<Ended> {
     let mut ends: Vec<Ended> = Vec::new();
     let mut opened: Vec<Ended> = Vec::new();
-    let mut closed: HashSet<(String, u64)> = HashSet::new();
+    let mut closed: HashSet<(String, SessionId)> = HashSet::new();
     // Threads are folded in a second pass rather than as they arrive: a `thread` line
     // always follows its `opened` (the thread cannot exist before the session that opens
     // it) but may precede or follow the `closed`, and a tail-read can begin between any
     // two of the three. Collecting first and attaching after makes the order irrelevant.
-    let mut threads: std::collections::HashMap<(String, u64), String> =
+    let mut threads: std::collections::HashMap<(String, SessionId), String> =
         std::collections::HashMap::new();
 
     for line in text.lines() {
@@ -424,7 +425,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                 owner,
                 turns,
             } => {
-                closed.insert((run.clone(), session));
+                closed.insert((run.clone(), session.clone()));
                 ends.push(Ended {
                     run,
                     session,
@@ -469,15 +470,19 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
 
     // An `opened` is only evidence of a restart-killed session once the whole window has
     // been read and no `closed` for it turned up.
-    ends.extend(opened.into_iter().filter(|e| !closed.contains(&(e.run.clone(), e.session))));
+    ends.extend(
+        opened.into_iter().filter(|e| !closed.contains(&(e.run.clone(), e.session.clone()))),
+    );
 
     // Attach each session's thread now that every line has been seen.
     for end in &mut ends {
-        end.thread = threads.get(&(end.run.clone(), end.session)).cloned();
+        end.thread = threads.get(&(end.run.clone(), end.session.clone())).cloned();
     }
 
     // Most recent first, and stable on the id so two ends in the same second keep a
-    // deterministic order rather than shuffling between polls.
+    // deterministic order rather than shuffling between polls. The tie-break is a name
+    // compare now that ids are slugs, not "the later session first" it read as while they
+    // were ordinals — deterministic either way, which is all this line is for.
     ends.sort_by(|a, b| b.recency().cmp(&a.recency()).then(b.session.cmp(&a.session)));
     ends.truncate(RECENT_CAP);
     ends
@@ -492,9 +497,9 @@ pub fn push_recent(recent: &mut Vec<Ended>, ended: Ended) {
 /// Build the [`Ended`] row for a session leaving the switchboard.
 pub fn ended_now(
     run: &str,
-    session: u64,
+    session: &SessionId,
     role: Role,
-    owner: Option<u64>,
+    owner: Option<SessionId>,
     title: &str,
     subject: Option<&str>,
     turns: u64,
@@ -503,7 +508,7 @@ pub fn ended_now(
 ) -> Ended {
     Ended {
         run: run.to_string(),
-        session,
+        session: session.clone(),
         role: role.as_str().to_string(),
         worker_type: role.worker_type().map(|t| t.as_str().to_string()),
         title: Some(title.to_string()).filter(|t| !t.is_empty()),
@@ -521,14 +526,14 @@ pub fn ended_now(
 pub fn closed_record(ended: &Ended) -> Record {
     Record::Closed {
         run: ended.run.clone(),
-        session: ended.session,
+        session: ended.session.clone(),
         subject: ended.subject.clone(),
         at: ended.ended.unwrap_or_else(Utc::now),
         started: ended.started.unwrap_or_else(Utc::now),
         role: ended.role.clone(),
         worker_type: ended.worker_type.clone(),
         title: ended.title.clone(),
-        owner: ended.owner,
+        owner: ended.owner.clone(),
         turns: ended.turns.unwrap_or(0),
     }
 }
@@ -536,16 +541,16 @@ pub fn closed_record(ended: &Ended) -> Record {
 /// The `opened` record for a session joining the switchboard.
 pub fn opened_record(
     run: &str,
-    session: u64,
+    session: &SessionId,
     role: Role,
-    owner: Option<u64>,
+    owner: Option<SessionId>,
     title: &str,
     subject: Option<&str>,
     at: DateTime<Utc>,
 ) -> Record {
     Record::Opened {
         run: run.to_string(),
-        session,
+        session: session.clone(),
         subject: subject.map(str::to_string),
         at,
         role: role.as_str().to_string(),
@@ -556,10 +561,15 @@ pub fn opened_record(
 }
 
 /// The `thread` record binding a session to the codex thread it opened.
-pub fn thread_record(run: &str, session: u64, thread_id: &str, at: DateTime<Utc>) -> Record {
+pub fn thread_record(
+    run: &str,
+    session: &SessionId,
+    thread_id: &str,
+    at: DateTime<Utc>,
+) -> Record {
     Record::Thread {
         run: run.to_string(),
-        session,
+        session: session.clone(),
         at,
         thread_id: thread_id.to_string(),
     }
@@ -658,8 +668,8 @@ mod tests {
     /// some boots and not others.
     #[test]
     fn a_thread_binds_to_its_row_in_either_order() {
-        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", None, 3, ts(1), None));
-        let thread = thread_record("run-a", 7, "th-cognition", ts(2));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 3, ts(1), None));
+        let thread = thread_record("run-a", &7.into(), "th-cognition", ts(2));
 
         for text in [
             format!("{}{}", line(&closed), line(&thread)),
@@ -675,8 +685,8 @@ mod tests {
     /// boot resumes from, and the case the whole record exists for.
     #[test]
     fn a_restart_row_keeps_its_thread() {
-        let opened = opened_record("run-a", 2, Role::Reaction, None, "the voice", None, ts(5));
-        let thread = thread_record("run-a", 2, "th-voice", ts(5));
+        let opened = opened_record("run-a", &2.into(), Role::Reaction, None, "the voice", None, ts(5));
+        let thread = thread_record("run-a", &2.into(), "th-voice", ts(5));
         let ends = fold(&format!("{}{}", line(&opened), line(&thread)), "run-b");
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].how, EndedHow::Restart);
@@ -696,6 +706,7 @@ mod tests {
             (3, Role::Reflection),
             (4, Role::Worker(WorkerType::General)),
         ] {
+            let session = &SessionId::from(session);
             text.push_str(&line(&opened_record("run-a", session, role, None, "", None, ts(1))));
             text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), ts(1))));
         }
@@ -713,6 +724,7 @@ mod tests {
     fn a_rung_resumes_its_latest_thread() {
         let mut text = String::new();
         for (session, at) in [(1u64, ts(1)), (2, ts(20)), (3, ts(10))] {
+            let session = &SessionId::from(session);
             text.push_str(&line(&closed_record(&{
                 let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None);
                 e.ended = Some(at);
@@ -735,13 +747,14 @@ mod tests {
             (2, Role::Cognition),
             (3, Role::Worker(WorkerType::General)),
         ] {
+            let session = &SessionId::from(session);
             text.push_str(&line(&opened_record("run-a", session, role, None, "errand", Some("chase-harbor"), ts(1))));
             text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), ts(1))));
         }
         // A fourth worker that finished properly in the same run.
         text.push_str(&line(&closed_record(&ended_now(
             "run-a",
-            4,
+            &4.into(),
             Role::Worker(WorkerType::General),
             None,
             "delivered",
@@ -750,7 +763,7 @@ mod tests {
             ts(1),
             None,
         ))));
-        text.push_str(&line(&thread_record("run-a", 4, "th-4", ts(2))));
+        text.push_str(&line(&thread_record("run-a", &4.into(), "th-4", ts(2))));
 
         let offered = lost_workers(&fold(&text, "run-b"));
         let threads: Vec<_> = offered.iter().filter_map(|e| e.thread.as_deref()).collect();
@@ -767,25 +780,25 @@ mod tests {
         // An older run's lost errand…
         text.push_str(&line(&opened_record(
             "run-old",
-            9,
+            &9.into(),
             Role::Worker(WorkerType::General),
             None,
             "ancient",
             None,
             ts(1),
         )));
-        text.push_str(&line(&thread_record("run-old", 9, "th-ancient", ts(1))));
+        text.push_str(&line(&thread_record("run-old", &9.into(), "th-ancient", ts(1))));
         // …and the run that just died, which is the one this boot came out from under.
         text.push_str(&line(&opened_record(
             "run-prev",
-            2,
+            &2.into(),
             Role::Worker(WorkerType::General),
             None,
             "current",
             None,
             ts(30),
         )));
-        text.push_str(&line(&thread_record("run-prev", 2, "th-current", ts(30))));
+        text.push_str(&line(&thread_record("run-prev", &2.into(), "th-current", ts(30))));
 
         let offered = lost_workers(&fold(&text, "run-now"));
         let threads: Vec<_> = offered.iter().filter_map(|e| e.thread.as_deref()).collect();
@@ -797,7 +810,7 @@ mod tests {
     #[test]
     fn an_errand_without_a_thread_is_not_offered() {
         let opened =
-            opened_record("run-a", 1, Role::Worker(WorkerType::General), None, "errand", None, ts(1));
+            opened_record("run-a", &1.into(), Role::Worker(WorkerType::General), None, "errand", None, ts(1));
         assert!(lost_workers(&fold(&line(&opened), "run-b")).is_empty());
     }
 
@@ -805,7 +818,7 @@ mod tests {
     /// than resumed as an empty one — an upgrade's first boot is exactly this case.
     #[test]
     fn a_row_without_a_thread_is_not_resumable() {
-        let closed = closed_record(&ended_now("run-a", 1, Role::Reaction, None, "", None, 4, ts(1), None));
+        let closed = closed_record(&ended_now("run-a", &1.into(), Role::Reaction, None, "", None, 4, ts(1), None));
         let plan = resumable(&fold(&line(&closed), "run-b"));
         assert!(plan.is_empty());
     }
@@ -820,7 +833,7 @@ mod tests {
         started: DateTime<Utc>,
         ended: DateTime<Utc>,
     ) -> Record {
-        let mut row = ended_now(run, session, role, None, "", None, 1, started, None);
+        let mut row = ended_now(run, &SessionId::from(session), role, None, "", None, 1, started, None);
         row.ended = Some(ended);
         closed_record(&row)
     }
@@ -831,9 +844,9 @@ mod tests {
     fn a_closed_line_needs_no_opened_line() {
         let closed = closed_record(&ended_now(
             "run-a",
-            7,
+            &7.into(),
             Role::Worker(WorkerType::ViewBuilder),
-            Some(3),
+            Some(3.into()),
             "build the workers view",
             Some("workers-view"),
             4,
@@ -843,11 +856,11 @@ mod tests {
         let ends = fold(&line(&closed), "run-b");
         assert_eq!(ends.len(), 1);
         let e = &ends[0];
-        assert_eq!((e.run.as_str(), e.session), ("run-a", 7));
+        assert_eq!((e.run.as_str(), e.session.to_string().as_str()), ("run-a", "7"));
         assert_eq!(e.role, "worker");
         assert_eq!(e.worker_type.as_deref(), Some("view-builder"));
         assert_eq!(e.title.as_deref(), Some("build the workers view"));
-        assert_eq!(e.owner, Some(3));
+        assert_eq!(e.owner, Some(Into::into(3)));
         assert_eq!(e.turns, Some(4));
         assert_eq!(e.how, EndedHow::Closed);
     }
@@ -859,9 +872,9 @@ mod tests {
     fn an_opened_with_no_closed_from_a_dead_run_reads_as_a_restart() {
         let opened = opened_record(
             "run-a",
-            9,
+            &9.into(),
             Role::Worker(WorkerType::General),
-            Some(3),
+            Some(3.into()),
             "watch the price",
             None,
             ts(5),
@@ -869,7 +882,7 @@ mod tests {
         let ends = fold(&line(&opened), "run-b");
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].how, EndedHow::Restart);
-        assert_eq!(ends[0].session, 9);
+        assert_eq!(ends[0].session, 9.into());
         assert_eq!(ends[0].ended, None, "nothing recorded an end, so none is claimed");
         assert_eq!(ends[0].started, Some(ts(5)), "and the reader orders it by its start");
     }
@@ -878,8 +891,8 @@ mod tests {
     /// as a restart. The `closed` may arrive after the `opened` in the same window.
     #[test]
     fn an_opened_that_later_closed_is_one_closed_row() {
-        let opened = opened_record("run-a", 7, Role::Cognition, None, "", None, ts(1));
-        let closed = closed_record(&ended_now("run-a", 7, Role::Cognition, None, "", None, 12, ts(1), None));
+        let opened = opened_record("run-a", &7.into(), Role::Cognition, None, "", None, ts(1));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 12, ts(1), None));
         let ends = fold(&format!("{}{}", line(&opened), line(&closed)), "run-b");
         assert_eq!(ends.len(), 1, "one session, one row");
         assert_eq!(ends[0].how, EndedHow::Closed);
@@ -890,7 +903,7 @@ mod tests {
     /// Counting it here would show every running worker twice on the page.
     #[test]
     fn a_live_session_in_the_current_run_is_not_an_end() {
-        let opened = opened_record("run-a", 4, Role::Reflection, None, "", None, ts(2));
+        let opened = opened_record("run-a", &4.into(), Role::Reflection, None, "", None, ts(2));
         assert!(fold(&line(&opened), "run-a").is_empty());
     }
 
@@ -911,13 +924,13 @@ mod tests {
     #[test]
     fn recency_orders_closes_and_restarts_together() {
         let early = closed_at("run-a", 1, Role::Cognition, ts(0), ts(1));
-        let lost = opened_record("run-a", 2, Role::Worker(WorkerType::General), Some(1), "", None, ts(30));
+        let lost = opened_record("run-a", &2.into(), Role::Worker(WorkerType::General), Some(1.into()), "", None, ts(30));
         let late = closed_at("run-a", 3, Role::Cognition, ts(0), ts(20));
         let text = format!("{}{}{}", line(&early), line(&lost), line(&late));
         let ends = fold(&text, "run-b");
         assert_eq!(
-            ends.iter().map(|e| e.session).collect::<Vec<_>>(),
-            vec![2, 3, 1],
+            ends.iter().map(|e| e.session.to_string()).collect::<Vec<_>>(),
+            vec!["2", "3", "1"],
             "lost at :30, closed at :20, closed at :01"
         );
     }
@@ -926,11 +939,11 @@ mod tests {
     /// the window still renders. One corrupt line must not blank the page.
     #[test]
     fn a_partial_or_corrupt_line_is_skipped_not_fatal() {
-        let good = closed_record(&ended_now("run-a", 5, Role::Cognition, None, "", None, 1, ts(1), None));
+        let good = closed_record(&ended_now("run-a", &5.into(), Role::Cognition, None, "", None, 1, ts(1), None));
         let text = format!("run\":\"run-a\",\"session\":4}}\n{}not json\n\n", line(&good));
         let ends = fold(&text, "run-b");
         assert_eq!(ends.len(), 1);
-        assert_eq!(ends[0].session, 5);
+        assert_eq!(ends[0].session, 5.into());
     }
 
     /// The tail read starts at a line boundary and keeps the whole file when it is small
@@ -963,12 +976,12 @@ mod tests {
     async fn what_the_writer_writes_is_readable_the_moment_a_flush_returns() {
         let dir = tempfile::tempdir().unwrap();
         let writer = Writer::start(dir.path().to_path_buf());
-        writer.write(opened_record("run-a", 2, Role::Worker(WorkerType::FileFiler), Some(1), "file it", None, ts(3)));
+        writer.write(opened_record("run-a", &2.into(), Role::Worker(WorkerType::FileFiler), Some(1.into()), "file it", None, ts(3)));
         writer.write(closed_record(&ended_now(
             "run-a",
-            2,
+            &2.into(),
             Role::Worker(WorkerType::FileFiler),
-            Some(1),
+            Some(1.into()),
             "file it",
             None,
             2,
@@ -992,7 +1005,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = Writer::start(dir.path().to_path_buf());
         writer.flush().await;
-        writer.write(opened_record("run-a", 1, Role::Cognition, None, "", None, ts(1)));
+        writer.write(opened_record("run-a", &1.into(), Role::Cognition, None, "", None, ts(1)));
         writer.flush().await;
         writer.flush().await;
         assert!(index_path(dir.path()).exists());
@@ -1005,12 +1018,12 @@ mod tests {
         let mut text = String::new();
         for i in 1..=(RECENT_CAP as u64 + 20) {
             let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
-            let mut e = ended_now("run-a", i, Role::Cognition, None, "", None, 1, at, None);
+            let mut e = ended_now("run-a", &SessionId::from(i), Role::Cognition, None, "", None, 1, at, None);
             e.ended = Some(at);
             text.push_str(&line(&closed_record(&e)));
         }
         let ends = fold(&text, "run-b");
         assert_eq!(ends.len(), RECENT_CAP);
-        assert_eq!(ends[0].session, RECENT_CAP as u64 + 20, "newest survives");
+        assert_eq!(ends[0].session.to_string(), (RECENT_CAP + 20).to_string(), "newest survives");
     }
 }

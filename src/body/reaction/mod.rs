@@ -980,7 +980,7 @@ pub async fn start(
     // register *inside* each pass, so between passes it resolved to nothing and during
     // one its id was nobody's to know.
     let reflection_reg = registry::register_scoped(
-        registry::mint(),
+        registry::mint(Role::Reflection, None),
         Role::Reflection,
         None,
         "tending the agent's own house".to_string(),
@@ -999,7 +999,7 @@ pub async fn start(
     // The registration is the address and lives as long as the process; Cognition opens
     // and primes its long-lived agent session as soon as the HTTP/MCP server is ready.
     let cognition_reg = registry::register_scoped(
-        registry::mint(),
+        registry::mint(Role::Cognition, None),
         Role::Cognition,
         None,
         "the shared brain".to_string(),
@@ -1103,13 +1103,13 @@ impl Reaction {
         // The signal is now accepted by the voice. Marking the Reaction
         // session here closes the small gap between the final transcript and the
         // loop's next receive; the loop owns the matching finish edge.
-        registry::global().start_turn(voice_id);
+        registry::global().start_turn(&voice_id);
 
         // A new signal never cancels the in-flight prompt: the serial loop folds it
         // into the next turn (fix-forward), and the lightweight reaction decides per
         // turn whether to act or wait for the rest.
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
-            registry::global().finish_turn(voice_id);
+            registry::global().finish_turn(&voice_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
         }
     }
@@ -1124,7 +1124,7 @@ impl Reaction {
     async fn get_or_create_voice(&self) -> (registry::SessionId, mpsc::Sender<LoopInput>) {
         let mut slot = self.inner.voice.lock().await;
         if let Some(handle) = slot.as_ref() {
-            return (handle.id, handle.inbound.clone());
+            return (handle.id.clone(), handle.inbound.clone());
         }
 
         // Register the stable voice address before any asynchronous startup work.
@@ -1132,7 +1132,7 @@ impl Reaction {
         // is still opening/warming; the mailbox can safely queue that message until
         // the loop reaches its wait.
         let voice = registry::register_scoped(
-            registry::mint(),
+            registry::mint(Role::Reaction, None),
             Role::Reaction,
             None,
             "the voice".to_string(),
@@ -1141,7 +1141,7 @@ impl Reaction {
         let voice_id = voice.id();
         let (tx, rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
         *slot = Some(VoiceHandle {
-            id: voice_id,
+            id: voice_id.clone(),
             inbound: tx.clone(),
         });
         drop(slot);
@@ -1312,7 +1312,7 @@ async fn reaction_loop(
     let mut workers = workers::WorkerRegistry::new(worker_inbound);
     let voice_id = voice.id();
     let voice_mail = voice.mail.clone();
-    tracing::info!(voice = voice_id, "reaction per-reaction loop up");
+    tracing::info!(voice = %voice_id, "reaction per-reaction loop up");
 
     // Pull the voice's cold start ahead of the person's first message: it opens a
     // subprocess, initializes the wire + MCP, and pre-sends its system prompt. Input and
@@ -1320,7 +1320,7 @@ async fn reaction_loop(
     let mut startup_warm_pending = false;
     if reaction.wait_for_server_ready().await {
         startup_warm_pending =
-            warm_sessions(&reaction, voice_id, &mut reaction_session).await;
+            warm_sessions(&reaction, &voice_id, &mut reaction_session).await;
     }
 
     // The check-in floor's current gap, doubling while the voice keeps leaving an
@@ -1350,7 +1350,7 @@ async fn reaction_loop(
             let gate = reaction.inner.vendor.turn_gate();
             if startup_warm_pending && matches!(gate, TurnGate::Go) {
                 startup_warm_pending =
-                    warm_sessions(&reaction, voice_id, &mut reaction_session).await;
+                    warm_sessions(&reaction, &voice_id, &mut reaction_session).await;
                 continue 'wait;
             }
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1416,7 +1416,7 @@ async fn reaction_loop(
                 // something next. A spurious wake (the notify raced a take) finds
                 // an empty inbox and simply goes back to waiting.
                 Woke::Mail => {
-                    if let Some(mail) = registry::global().drain_pending(voice_id) {
+                    if let Some(mail) = registry::global().drain_pending(&voice_id) {
                         // A reply is owed only if one was outstanding *and* this mail is
                         // from the rung it was handed to. Mail from Reflection, or an
                         // unsolicited finding Cognition raised on its own, stays a
@@ -1425,7 +1425,7 @@ async fn reaction_loop(
                         let from_brain = registry::global()
                             .session_of_role(Role::Cognition)
                             .is_some_and(|brain| {
-                                mail.iter().any(|m| m.from == Some(brain.id))
+                                mail.iter().any(|m| m.from.as_ref() == Some(&brain.id))
                             });
                         let owed = reply_owed && from_brain;
                         if owed {
@@ -1504,7 +1504,7 @@ async fn reaction_loop(
         // A turn-driving reason has been accepted. Include the settle window in the
         // turn: from the person's point of view the voice is already preparing its
         // response, even though it is briefly collecting adjacent input.
-        registry::global().start_turn(voice_id);
+        registry::global().start_turn(&voice_id);
 
         let was_down = reaction.inner.vendor.is_down();
 
@@ -1524,7 +1524,7 @@ async fn reaction_loop(
                 }
             };
             if closed {
-                registry::global().finish_turn(voice_id);
+                registry::global().finish_turn(&voice_id);
                 tracing::info!("reaction inbound closed; exiting loop");
                 return;
             }
@@ -1551,12 +1551,12 @@ async fn reaction_loop(
             &batch,
             &mut reaction_session,
             &mut window_memo,
-            voice_id,
+            &voice_id,
             &speaking,
             &mut reply_owed,
         )
         .await;
-        registry::global().finish_turn(voice_id);
+        registry::global().finish_turn(&voice_id);
 
         match turn_result {
             Ok(added) => {
@@ -1692,7 +1692,7 @@ async fn run_reaction_turn(
     batch: &[LoopInput],
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
     speaking: &Speaking,
     handed_down: &mut bool,
 ) -> anyhow::Result<usize> {
@@ -1887,7 +1887,7 @@ async fn run_reaction_turn(
 /// they are small; what stops happening is the repetition.
 async fn turn_context(
     memory: &Memory,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
     memo: &mut WindowMemo,
     worker_status: &str,
     on_screen: &str,
@@ -2016,7 +2016,7 @@ mod turn_context_tests {
 
         // Turn one, on a session opened just now: nothing written yet.
         let first =
-            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
@@ -2031,7 +2031,7 @@ mod turn_context_tests {
 
         // Turn two, same session — no re-open, no rotation.
         let second =
-            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>那卡片呢").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
@@ -2045,7 +2045,7 @@ mod turn_context_tests {
         let memory = Memory::open(dir.path()).await.unwrap();
         let text = turn_context(
             &memory,
-            0,
+            &0.into(),
             &mut WindowMemo::default(),
             "## Workers\nbuilding a view",
             "## On screen now\ntasks",
@@ -2074,11 +2074,11 @@ mod turn_context_tests {
         let mut memo = WindowMemo::default();
 
         let first =
-            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(first.contains("mid-migration"), "{first}");
 
         let second =
-            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>还在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>还在吗").await;
         assert!(!second.contains("mid-migration"), "said once is said: {second}");
         assert!(second.contains("还在吗"), "the turn itself always rides: {second}");
         assert!(second.len() < first.len() / 2, "{} vs {}", second.len(), first.len());
@@ -2093,10 +2093,10 @@ mod turn_context_tests {
         heard(&memory, "把周报发我").await;
         let mut memo = WindowMemo::default();
 
-        let cold = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let cold = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(cold.contains("## Recent (last 30 minutes)"), "{cold}");
 
-        let warm = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let warm = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(!warm.contains("## Recent (last 30 minutes)"), "{warm}");
     }
 
@@ -2114,12 +2114,12 @@ mod turn_context_tests {
         tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
         let mut memo = WindowMemo::default();
 
-        let first = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
-        let quiet = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let first = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let quiet = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(!quiet.contains("mid-migration"), "{quiet}");
 
         memo.forget();
-        let after = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let after = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(after.contains("mid-migration"), "{after}");
         assert!(after.contains("## Recent (last 30 minutes)"), "{after}");
         assert_eq!(after.len(), first.len(), "a cold turn carries what the first one did");
@@ -2168,13 +2168,13 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
         tracing::warn!("no cognition session to hand down to; the voice answers alone this turn");
         return false;
     };
-    let delivery = registry::global().post(brain.id, task.clone());
+    let delivery = registry::global().post(&brain.id, task.clone());
     reaction
         .inner
         .observatory
         .record(EventKind::MessageSent {
             from: None,
-            to: brain.id,
+            to: brain.id.clone(),
             delivery,
             message: task,
         })
@@ -2182,7 +2182,7 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
     match delivery {
         registry::Delivery::Delivered => true,
         other => {
-            tracing::warn!(cognition = brain.id, delivery = ?other, "hand-down did not land");
+            tracing::warn!(cognition = %brain.id, delivery = ?other, "hand-down did not land");
             false
         }
     }
@@ -2194,7 +2194,7 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
 /// pause without replacing a session that is already live.
 async fn warm_sessions(
     reaction: &Reaction,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
     reaction_session: &mut Option<Arc<AgentSession>>,
 ) -> bool {
     let blocked_before = crate::foundation::energy_state::is_out();
@@ -2221,7 +2221,7 @@ async fn warm_sessions(
 /// first real turn cold-opens normally.
 async fn warm_reaction_session(
     reaction: &Reaction,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
     held: &mut Option<Arc<AgentSession>>,
 ) {
     if held.is_some() {
@@ -2278,7 +2278,7 @@ async fn record_reaction_session_closed(
 /// `send_message` answered "this session has none" to the one rung that talks most.
 async fn open_reaction_session(
     reaction: &Reaction,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
 ) -> anyhow::Result<Arc<AgentSession>> {
     let session = Arc::new(
         reaction
@@ -2286,7 +2286,7 @@ async fn open_reaction_session(
             .agent
             .session(
                 Role::Reaction,
-                Some(voice_id),
+                Some(voice_id.clone()),
                 SessionOpts {
                     system_prompt: Some(
                         crate::identity::reaction_system_prompt(
@@ -2333,7 +2333,7 @@ struct Drove {
 /// (a gateway 402/429, a transport reset) to the caller's classifier.
 async fn drive_voice(
     session: &AgentSession,
-    voice_id: registry::SessionId,
+    voice_id: &registry::SessionId,
     context: String,
 ) -> anyhow::Result<Drove> {
     let mut run = session.prompt(context).await?;
@@ -2671,10 +2671,10 @@ async fn enqueue(
         record_in(reaction, channel, origin, body).await;
     }
     if let LoopInput::Worker(report) = &input
-        && let Some(owner) = report.owner
+        && let Some(owner) = report.owner.clone()
     {
         let text = workers::render_report(report);
-        let delivery = workers.deliver_to(owner, text.clone());
+        let delivery = workers.deliver_to(owner.clone(), text.clone());
         // Work travelling *up* is the edge most worth seeing, and it is host-posted
         // (`from: None`) — so nothing observed it while only `send_message` was
         // instrumented. Recorded whether or not it landed: a report that missed its
@@ -2683,7 +2683,7 @@ async fn enqueue(
             .inner
             .observatory
             .record(
-                EventKind::MessageSent { from: None, to: owner, delivery, message: text },
+                EventKind::MessageSent { from: None, to: owner.clone(), delivery, message: text },
             )
             .await;
         if matches!(delivery, registry::Delivery::Delivered) {
@@ -2691,7 +2691,7 @@ async fn enqueue(
         }
         // The owner is gone. Surfacing one rung too high beats losing finished work.
         tracing::info!(
-            session = report.id, owner,
+            session = %report.id, owner = %owner,
             "report owner is gone; falling back to the conversation"
         );
     }
@@ -2838,7 +2838,7 @@ mod hand_down_tests {
     #[test]
     fn an_answer_the_person_is_waiting_for_is_framed_as_owed() {
         let rendered =
-            render_batch(&[LoopInput::Mail { mail: vec![mail("the label says 500mg", Some(7))], owed: true }]);
+            render_batch(&[LoopInput::Mail { mail: vec![mail("the label says 500mg", Some(7.into()))], owed: true }]);
         assert!(rendered.contains("the label says 500mg"), "{rendered}");
         assert!(rendered.contains("the answer you owe the person"), "{rendered}");
         assert!(rendered.contains("don't leave them waiting"), "{rendered}");
@@ -2851,7 +2851,7 @@ mod hand_down_tests {
     #[test]
     fn an_unsolicited_finding_stays_a_proposal() {
         let rendered =
-            render_batch(&[LoopInput::Mail { mail: vec![mail("the backup job died", Some(7))], owed: false }]);
+            render_batch(&[LoopInput::Mail { mail: vec![mail("the backup job died", Some(7.into()))], owed: false }]);
         assert!(rendered.contains("the backup job died"), "{rendered}");
         assert!(!rendered.contains("owe the person"), "{rendered}");
     }
@@ -2860,8 +2860,8 @@ mod hand_down_tests {
     /// which is now an owed mail rather than a report, and the check-in pacing keys on it.
     #[test]
     fn owed_mail_is_what_counts_as_the_thinking_coming_back() {
-        let back = LoopInput::Mail { mail: vec![mail("done", Some(7))], owed: true };
-        let unsolicited = LoopInput::Mail { mail: vec![mail("fyi", Some(7))], owed: false };
+        let back = LoopInput::Mail { mail: vec![mail("done", Some(7.into()))], owed: true };
+        let unsolicited = LoopInput::Mail { mail: vec![mail("fyi", Some(7.into()))], owed: false };
         assert!(matches!(back, LoopInput::Mail { owed: true, .. }));
         assert!(!matches!(unsolicited, LoopInput::Mail { owed: true, .. }));
     }

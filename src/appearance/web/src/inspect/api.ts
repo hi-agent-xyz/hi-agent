@@ -109,8 +109,10 @@ export interface RawFrame {
   // drop it, so the inspector could only call a session by its connection number.
   role: string;
   // hi-agent's own session id, minted before the subprocess starts — so it names
-  // the handshake frames too, which `thread_id` cannot.
-  agent_session: number | null;
+  // the handshake frames too, which `thread_id` cannot. A slug: `cognition`, or
+  // `view-builder-kyoto-trip`. Frame logs from runs before ids were slugs carry a
+  // decimal string here instead.
+  agent_session: string | null;
   dir: WireDir;
   thread_id: string | null;
   method: string | null;

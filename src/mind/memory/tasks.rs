@@ -283,7 +283,7 @@ pub async fn active_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
 /// by construction after a restart: it would still name a session that no longer exists.
 #[derive(Debug, Clone)]
 pub struct WorkingOnIt {
-    pub session: u64,
+    pub session: crate::foundation::registry::SessionId,
     pub busy: bool,
     /// The last thing it was seen doing, already clipped by the registry.
     pub doing: Option<String>,
@@ -737,7 +737,7 @@ mod tests {
     }
 
     fn on_it(session: u64, busy: bool, doing: Option<&str>, since: DateTime<Utc>) -> WorkingOnIt {
-        WorkingOnIt { session, busy, doing: doing.map(str::to_string), since }
+        WorkingOnIt { session: session.into(), busy, doing: doing.map(str::to_string), since }
     }
     use chrono::Duration;
 

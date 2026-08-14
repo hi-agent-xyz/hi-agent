@@ -119,7 +119,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         // its workers still report, which is the half that has nothing to do with
         // consolidation cadence. Previously this returned outright, taking the address
         // down with the clock.
-        tracing::info!(reflection = id, "consolidation cadence disabled; rung stays addressable");
+        tracing::info!(reflection = %id, "consolidation cadence disabled; rung stays addressable");
     }
     let loop_started = Instant::now();
     let mut last_reflection: Option<Instant> = None;
@@ -127,7 +127,7 @@ async fn run(reaction: Reaction, registration: Registration) {
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
-    tracing::info!(reflection = id, "reflection up");
+    tracing::info!(reflection = %id, "reflection up");
 
     loop {
         // Reflection does not preflight the account. A managed 402 from any agent
@@ -139,7 +139,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                     match event {
                         Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
                             energy_paused = false;
-                            tracing::info!(reflection = id, "reflection resumed after energy refill");
+                            tracing::info!(reflection = %id, "reflection resumed after energy refill");
                         }
                         Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -149,7 +149,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                     }
                 }
                 _ = reaction.inner.shutdown.cancelled() => {
-                    tracing::info!(reflection = id, "reflection shutting down");
+                    tracing::info!(reflection = %id, "reflection shutting down");
                     break;
                 }
             }
@@ -241,13 +241,13 @@ async fn run(reaction: Reaction, registration: Registration) {
                 }
             }
             _ = reaction.inner.shutdown.cancelled() => {
-                tracing::info!(reflection = id, "reflection shutting down");
+                tracing::info!(reflection = %id, "reflection shutting down");
                 break;
             }
         };
 
         if reaction.inner.shutdown.is_triggered() {
-            tracing::info!(reflection = id, "shutdown requested; ending reflection loop");
+            tracing::info!(reflection = %id, "shutdown requested; ending reflection loop");
             break;
         }
 
@@ -268,16 +268,16 @@ async fn run(reaction: Reaction, registration: Registration) {
                 last_reflection = Some(now);
 
                 workers.reap();
-                registry::global().start_turn(id);
-                heartbeat::consolidate(&reaction, id).await;
-                registry::global().finish_turn(id);
+                registry::global().start_turn(&id);
+                heartbeat::consolidate(&reaction, &id).await;
+                registry::global().finish_turn(&id);
             }
             Wake::Turn => {}
         }
 
         // Drain whatever accumulated, whichever way we woke — a consolidation pass is
         // long, and mail that arrived during it is owed a turn immediately after.
-        if let Some(batch) = registry::global().take_pending(id) {
+        if let Some(batch) = registry::global().take_pending(&id) {
             pending.push(registry::render(&batch));
         }
         if pending.is_empty() {
@@ -286,9 +286,9 @@ async fn run(reaction: Reaction, registration: Registration) {
 
         // Worker reports bypass the switchboard inbox; mailbox turns are already
         // busy here, and `start_turn` is deliberately idempotent.
-        registry::global().start_turn(id);
+        registry::global().start_turn(&id);
         workers.reap();
-        match turn(&reaction, id, &pending).await {
+        match turn(&reaction, id.clone(), &pending).await {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
@@ -297,10 +297,10 @@ async fn run(reaction: Reaction, registration: Registration) {
                 {
                     energy_paused = true;
                 }
-                tracing::warn!(reflection = id, error = %err, "reflection turn failed; mail held");
+                tracing::warn!(reflection = %id, error = %err, "reflection turn failed; mail held");
             }
         }
-        registry::global().finish_turn(id);
+        registry::global().finish_turn(&id);
     }
 }
 
@@ -332,7 +332,7 @@ async fn turn(
             .agent
             .session(
                 Role::Reflection,
-                Some(id),
+                Some(id.clone()),
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     // The data dir: its whole job is the tree under it.
@@ -354,7 +354,7 @@ async fn turn(
         )
         .await;
 
-    let window = snapshot::agent_window(&reaction.inner.memory, REFLECTION_AGENT, id).await;
+    let window = snapshot::agent_window(&reaction.inner.memory, REFLECTION_AGENT, &id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")
@@ -366,15 +366,15 @@ async fn turn(
     let mut full = String::new();
     while let Some(update) = run.next_update().await {
         if let Some(what) = update.activity() {
-            registry::global().record_activity(id, &what);
+            registry::global().record_activity(&id, &what);
         }
         if let SessionUpdate::Text(text) = update {
             full.push_str(&text);
-            registry::global().record_output(id, &text);
+            registry::global().record_output(&id, &text);
         }
     }
     run.wait().await?;
 
-    tracing::info!(reflection = id, typed_chars = full.chars().count(), "reflection turn done");
+    tracing::info!(reflection = %id, typed_chars = full.chars().count(), "reflection turn done");
     Ok(())
 }

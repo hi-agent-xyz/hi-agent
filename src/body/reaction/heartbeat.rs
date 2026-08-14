@@ -93,7 +93,7 @@ struct Frontier {
 /// [`episodes::consolidation_cursor`], opens one reflection session, and drives
 /// it to completion. Run from the global reflection clock (see
 /// [`super::reflection`]). A crash leaves the frontier for the next tick.
-pub(super) async fn consolidate(reaction: &Reaction, id: registry::SessionId) {
+pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionId) {
     if let Err(err) = run_consolidation(reaction, id).await {
         // A pass already in flight when shutdown began fails because its child took
         // the process group's signal — expected, not a fault. Keep it out of the
@@ -106,7 +106,10 @@ pub(super) async fn consolidate(reaction: &Reaction, id: registry::SessionId) {
     }
 }
 
-async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyhow::Result<()> {
+async fn run_consolidation(
+    reaction: &Reaction,
+    id: &registry::SessionId,
+) -> anyhow::Result<()> {
     let data_dir = reaction.inner.memory.data_dir();
 
     // Gather the frontier; a pass is only worth opening when there is enough on it.
@@ -184,7 +187,7 @@ async fn run_consolidation(reaction: &Reaction, id: registry::SessionId) -> anyh
         .agent
         .session(
             Role::Reflection,
-            Some(id),
+            Some(id.clone()),
             SessionOpts { system_prompt: Some(system_prompt), ..Default::default() },
         )
         .await?;

@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
+use crate::foundation::registry::SessionId;
 use crate::types::Channel;
 
 /// Where a signal's media bytes sit within its channel-day folder. Input is the
@@ -119,14 +120,21 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
 /// every agent alive that day and makes reading one of them back a filtering exercise;
 /// one subprocess hosts exactly one session, so the natural unit is already there.
 ///
-/// **Under a run id, because session ids restart at 1 every boot**
-/// ([`crate::foundation::run`]). Without it, today's session 3 and tomorrow's session 3
-/// are one file, and a record that silently merges two different agents is worse than no
-/// record.
+/// **Under a run id, because session ids repeat every boot**
+/// ([`crate::foundation::run`]). The three rungs are `cognition` and its two siblings in
+/// every run by construction, and a worker slug comes round again whenever the same errand
+/// does. Without the run, today's `cognition` and tomorrow's are one file, and a record
+/// that silently merges two different agents is worse than no record.
+///
+/// **`session` is a [`SessionId`](crate::foundation::registry::SessionId), and that type is
+/// what keeps this a filename rather than a path.** It admits letters, digits and `-` and
+/// nothing else, so no value of it can climb out of the run directory. This function must
+/// not be handed a bare `&str` — the reason `GET /api/workers/{id}/frames` is safe is that
+/// the id is parsed into that type before it arrives here.
 ///
 /// Under `raw/` because foundation holds that pen and the rule there is *written before
 /// anything reacts to it*.
-pub fn session_frames_path(data_dir: &Path, run: &str, session: u64) -> PathBuf {
+pub fn session_frames_path(data_dir: &Path, run: &str, session: &SessionId) -> PathBuf {
     raw_root(data_dir).join(SESSIONS_DIR).join(run).join(format!("{session}.jsonl"))
 }
 

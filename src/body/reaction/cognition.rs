@@ -151,9 +151,9 @@ async fn run(reaction: Reaction, registration: Registration) {
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
-    tracing::info!(cognition = id, "cognition up");
+    tracing::info!(cognition = %id, "cognition up");
     if reaction.wait_for_server_ready().await {
-        warm_session(&reaction, id, &mut session).await;
+        warm_session(&reaction, &id, &mut session).await;
     }
 
     loop {
@@ -166,8 +166,8 @@ async fn run(reaction: Reaction, registration: Registration) {
                     match event {
                         Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
                             energy_paused = false;
-                            tracing::info!(cognition = id, "cognition resumed after energy refill");
-                            warm_session(&reaction, id, &mut session).await;
+                            tracing::info!(cognition = %id, "cognition resumed after energy refill");
+                            warm_session(&reaction, &id, &mut session).await;
                             // A failed turn may already be waiting in `pending`. Retain a
                             // notify permit so the next loop iteration drives it now rather
                             // than waiting for the recurring pulse or fresh mail.
@@ -183,7 +183,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                     }
                 }
                 _ = reaction.inner.shutdown.cancelled() => {
-                    tracing::info!(cognition = id, "cognition shutting down");
+                    tracing::info!(cognition = %id, "cognition shutting down");
                     break;
                 }
             }
@@ -284,14 +284,14 @@ async fn run(reaction: Reaction, registration: Registration) {
                 }
             }
             _ = reaction.inner.shutdown.cancelled() => {
-                tracing::info!(cognition = id, "cognition shutting down");
+                tracing::info!(cognition = %id, "cognition shutting down");
                 break;
             }
         }
 
         // Drain whatever accumulated. A burst is merged by the switchboard into one
         // prompt, so no settle window is needed here.
-        if let Some(batch) = registry::global().take_pending(id) {
+        if let Some(batch) = registry::global().take_pending(&id) {
             pending.push(registry::render(&batch));
         }
         if pending.is_empty() {
@@ -300,7 +300,7 @@ async fn run(reaction: Reaction, registration: Registration) {
 
         // Timer wakes and worker reports bypass the switchboard inbox, so they
         // have no `take_pending` edge to mark this standing session busy.
-        registry::global().start_turn(id);
+        registry::global().start_turn(&id);
         workers.reap();
 
         // **Keep serving `control_rx` while the turn runs.** `hi_create_worker` is the one
@@ -333,14 +333,14 @@ async fn run(reaction: Reaction, registration: Registration) {
         // to happen to all of it. Nothing here can lose a message.
         let mut arrived: Vec<String> = Vec::new();
         let result: anyhow::Result<()> = async {
-            let live = ensure_session(&reaction, id, &mut session).await?;
+            let live = ensure_session(&reaction, id.clone(), &mut session).await?;
             let steerable = live.clone();
-            let mut turn_fut = std::pin::pin!(turn(&reaction, id, &pending, live));
+            let mut turn_fut = std::pin::pin!(turn(&reaction, &id, &pending, live));
             loop {
                 tokio::select! {
                     done = &mut turn_fut => break done,
                     _ = mail.notified() => {
-                        let Some(batch) = registry::global().take_pending(id) else { continue };
+                        let Some(batch) = registry::global().take_pending(&id) else { continue };
                         let (voice, rest): (Vec<_>, Vec<_>) =
                             batch.into_iter().partition(from_the_voice);
                         if !rest.is_empty() {
@@ -373,7 +373,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                         .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in {STEER_TIMEOUT:?}")));
                         match steered {
                             Ok(true) => tracing::info!(
-                                cognition = id,
+                                cognition = %id,
                                 chars = rendered.chars().count(),
                                 "steered the running turn",
                             ),
@@ -384,7 +384,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                             Ok(false) => arrived.push(rendered),
                             Err(err) => {
                                 tracing::warn!(
-                                    cognition = id,
+                                    cognition = %id,
                                     error = %err,
                                     "could not steer; message waits for the next turn",
                                 );
@@ -451,7 +451,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                     session = None;
                 }
                 tracing::warn!(
-                    cognition = id,
+                    cognition = %id,
                     error = %err,
                     held = energy_paused,
                     "cognition turn failed; mail held"
@@ -472,7 +472,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         last_turn = Instant::now();
-        registry::global().finish_turn(id);
+        registry::global().finish_turn(&id);
     }
 }
 
@@ -660,12 +660,12 @@ mod tests {
     fn lost(title: &str, thread: &str) -> registry::index::Ended {
         registry::index::Ended {
             run: "run-prev".into(),
-            session: 5,
+            session: 5.into(),
             role: "worker".into(),
             worker_type: Some("general".into()),
             title: Some(title.into()),
             subject: Some("chase-harbor".into()),
-            owner: Some(3),
+            owner: Some(3.into()),
             started: Some(chrono::Utc::now()),
             ended: None,
             how: registry::index::EndedHow::Restart,
@@ -762,22 +762,22 @@ mod tests {
 /// turn path cold-opens later.
 async fn warm_session(
     reaction: &Reaction,
-    id: registry::SessionId,
+    id: &registry::SessionId,
     held: &mut Option<Arc<AgentSession>>,
 ) {
     if held.is_some() {
         return;
     }
     if crate::foundation::energy_state::is_out() {
-        tracing::info!(cognition = id, "cognition warm-up held while out of energy");
+        tracing::info!(cognition = %id, "cognition warm-up held while out of energy");
         return;
     }
 
-    let session = match open_session(reaction, id).await {
+    let session = match open_session(reaction, id.clone()).await {
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
-                cognition = id,
+                cognition = %id,
                 error = %err,
                 "cognition warm-up could not open a session; first turn will cold-start"
             );
@@ -789,7 +789,7 @@ async fn warm_session(
     // `thread/start`, so by the time we hold this session the soul is already in place.
     // The ACP path had to spend a whole turn pre-sending it, because there was nowhere
     // else to put a system prompt.
-    tracing::info!(cognition = id, "cognition session warmed");
+    tracing::info!(cognition = %id, "cognition session warmed");
     *held = Some(session);
 }
 
@@ -851,6 +851,7 @@ async fn open_session(
 /// boundary it would have waited for anyway.
 fn from_the_voice(m: &registry::Message) -> bool {
     m.from
+        .as_ref()
         .and_then(|from| registry::global().status(from))
         .is_some_and(|st| st.role == Role::Reaction)
 }
@@ -876,7 +877,7 @@ async fn ensure_session(
 
 async fn turn(
     reaction: &Reaction,
-    id: registry::SessionId,
+    id: &registry::SessionId,
     pending: &[String],
     session: Arc<AgentSession>,
 ) -> anyhow::Result<()> {
@@ -891,7 +892,7 @@ async fn turn(
     // Paired with "cognition turn done". Cognition has no conversation of its own, so it never reaches
     // the observatory mirror and the log is the only place it is visible at all; with
     // only a done line, "thinking" and "parked with nothing to do" read the same.
-    tracing::info!(cognition = id, prompt_chars = prompt.chars().count(), "cognition turn start");
+    tracing::info!(cognition = %id, prompt_chars = prompt.chars().count(), "cognition turn start");
 
     // What is owed *before* the turn, so a duty this turn retires can be recognized
     // afterwards. Subjects only — the check is "did this leave the active set", and
@@ -939,7 +940,7 @@ async fn turn(
     let closed = owed_before.difference(&active_subjects(reaction).await).count();
     if closed > 0 && sent == 0 {
         tracing::warn!(
-            cognition = id,
+            cognition = %id,
             closed,
             typed_chars = full.chars().count(),
             "cognition closed a task and sent nothing; the report reached no one",
@@ -947,7 +948,7 @@ async fn turn(
     }
 
     tracing::info!(
-        cognition = id,
+        cognition = %id,
         typed_chars = full.chars().count(),
         sent,
         "cognition turn done"

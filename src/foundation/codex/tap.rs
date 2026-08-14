@@ -61,7 +61,7 @@ pub struct RawFrame {
     /// parsed off the line and absent during the handshake. This one is minted by the
     /// host before the subprocess starts, so it names every frame including the first —
     /// which is what makes a durable per-session file possible at all.
-    pub agent_session: Option<u64>,
+    pub agent_session: Option<crate::foundation::registry::SessionId>,
     /// The rung this subprocess hosts (`reaction`, `cognition`, `worker`, …).
     pub role: String,
     pub dir: Dir,
@@ -139,7 +139,14 @@ impl WireTap {
     /// hook (no await, no IO under the lock). A poisoned lock is ignored — the
     /// tap is a convenience, never load-bearing. `conn` identifies the emitting
     /// subprocess so the inspector can group one session's frames together.
-    pub fn record(&self, conn: u64, agent_session: Option<u64>, role: &str, dir: Dir, line: &str) {
+    pub fn record(
+        &self,
+        conn: u64,
+        agent_session: Option<&crate::foundation::registry::SessionId>,
+        role: &str,
+        dir: Dir,
+        line: &str,
+    ) {
         let (thread_id, method, id) = parse_meta(line);
         let mut state = match self.inner.state.lock() {
             Ok(g) => g,
@@ -150,7 +157,7 @@ impl WireTap {
             seq: state.seq,
             ts: Utc::now(),
             conn,
-            agent_session,
+            agent_session: agent_session.cloned(),
             role: role.to_string(),
             dir,
             thread_id,
@@ -218,6 +225,65 @@ fn parse_meta(line: &str) -> (Option<String>, Option<String>, Option<Value>) {
     (thread_id, method, id)
 }
 
+/// Append every frame to its **session's** file, verbatim, one JSON object per line.
+///
+/// Batches whatever is already queued and groups it by session, so a busy turn costs one
+/// open-and-write per session rather than one per line. Frames arrive in order and a
+/// session's frames are contiguous in practice, but grouping does not assume that — a
+/// batch spanning two sessions writes each to its own file.
+///
+/// Failures are logged and the loop continues. Losing the log must never take the agent
+/// down with it, and a disk that has stopped accepting writes is not something a retry
+/// here can fix.
+async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFrame>) {
+    use std::collections::BTreeMap;
+    use tokio::io::AsyncWriteExt as _;
+
+    let run = crate::foundation::run::id();
+    let mut batch: Vec<RawFrame> = Vec::new();
+    while let Some(first) = rx.recv().await {
+        batch.push(first);
+        while let Ok(more) = rx.try_recv() {
+            batch.push(more);
+        }
+
+        let mut by_session: BTreeMap<crate::foundation::registry::SessionId, String> = BTreeMap::new();
+        for frame in batch.drain(..) {
+            let Some(session) = frame.agent_session.clone() else { continue };
+            match serde_json::to_string(&frame) {
+                Ok(line) => {
+                    let buf = by_session.entry(session).or_default();
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, seq = frame.seq, "frame would not serialize");
+                }
+            }
+        }
+
+        for (session, buf) in by_session {
+            let path = crate::mind::memory::layout::session_frames_path(&data_dir, run, &session);
+            if let Some(parent) = path.parent()
+                && let Err(err) = tokio::fs::create_dir_all(parent).await
+            {
+                tracing::error!(error = %err, path = %parent.display(), "cannot make the session frame dir");
+                continue;
+            }
+            match tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await {
+                Ok(mut f) => {
+                    if let Err(err) = f.write_all(buf.as_bytes()).await {
+                        tracing::error!(error = %err, path = %path.display(), "session frame write failed");
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, path = %path.display(), "cannot open the session frame log");
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,14 +299,14 @@ mod tests {
         let tap = WireTap::with_durable_log(dir.path().to_path_buf());
 
         let tool_call = r#"{"method":"item/completed","params":{"threadId":"s1","item":{"type":"mcpToolCall","id":"tc-1","server":"hi-agent","tool":"read","status":"completed","arguments":{"path":"/etc/hosts"},"result":{"content":"127.0.0.1"}}}}"#;
-        tap.record(1, Some(42), "reaction", Dir::Recv, tool_call);
-        tap.record(1, Some(42), "reaction", Dir::Stderr, "a warning from the subprocess");
+        tap.record(1, Some(&42.into()), "reaction", Dir::Recv, tool_call);
+        tap.record(1, Some(&42.into()), "reaction", Dir::Stderr, "a warning from the subprocess");
         // A different session must not land in the same file.
-        tap.record(2, Some(43), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0","method":"initialize"}"#);
+        tap.record(2, Some(&43.into()), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0","method":"initialize"}"#);
 
         // Let the writer task drain.
         let run = crate::foundation::run::id();
-        let path = crate::mind::memory::layout::session_frames_path(dir.path(), run, 42);
+        let path = crate::mind::memory::layout::session_frames_path(dir.path(), run, &42.into());
         let mut body = String::new();
         for _ in 0..100 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -270,7 +336,7 @@ mod tests {
         assert_eq!(second["dir"], "stderr");
 
         // Session 43's frame went to session 43's file, not into 42's.
-        let other = crate::mind::memory::layout::session_frames_path(dir.path(), run, 43);
+        let other = crate::mind::memory::layout::session_frames_path(dir.path(), run, &43.into());
         let other_body = std::fs::read_to_string(&other).expect("session 43 has its own file");
         assert_eq!(other_body.lines().count(), 1);
         assert!(other_body.contains("initialize"), "the handshake is kept too: {other_body}");
@@ -295,7 +361,7 @@ mod tests {
     #[test]
     fn an_inspector_only_tap_keeps_nothing() {
         let tap = WireTap::new();
-        tap.record(1, Some(1), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
+        tap.record(1, Some(&1.into()), "reaction", Dir::Recv, r#"{"jsonrpc":"2.0"}"#);
         let (backlog, _live) = tap.subscribe();
         assert_eq!(backlog.len(), 1, "still an inspector window");
     }
@@ -336,75 +402,16 @@ mod tests {
     #[tokio::test]
     async fn subscribe_replays_then_streams_live() {
         let tap = WireTap::new();
-        tap.record(0, Some(7), "cognition", Dir::Send, r#"{"method":"initialize","id":0}"#);
+        tap.record(0, Some(&7.into()), "cognition", Dir::Send, r#"{"method":"initialize","id":0}"#);
         let (replay, mut rx) = tap.subscribe();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].seq, 1);
         assert_eq!(replay[0].conn, 0);
         assert_eq!(replay[0].dir, Dir::Send);
 
-        tap.record(0, Some(7), "cognition", Dir::Recv, r#"{"id":0,"result":{}}"#);
+        tap.record(0, Some(&7.into()), "cognition", Dir::Recv, r#"{"id":0,"result":{}}"#);
         let live = rx.recv().await.unwrap();
         assert_eq!(live.seq, 2, "live frame follows replay with no gap or dup");
         assert_eq!(live.dir, Dir::Recv);
-    }
-}
-
-/// Append every frame to its **session's** file, verbatim, one JSON object per line.
-///
-/// Batches whatever is already queued and groups it by session, so a busy turn costs one
-/// open-and-write per session rather than one per line. Frames arrive in order and a
-/// session's frames are contiguous in practice, but grouping does not assume that — a
-/// batch spanning two sessions writes each to its own file.
-///
-/// Failures are logged and the loop continues. Losing the log must never take the agent
-/// down with it, and a disk that has stopped accepting writes is not something a retry
-/// here can fix.
-async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFrame>) {
-    use std::collections::BTreeMap;
-    use tokio::io::AsyncWriteExt as _;
-
-    let run = crate::foundation::run::id();
-    let mut batch: Vec<RawFrame> = Vec::new();
-    while let Some(first) = rx.recv().await {
-        batch.push(first);
-        while let Ok(more) = rx.try_recv() {
-            batch.push(more);
-        }
-
-        let mut by_session: BTreeMap<u64, String> = BTreeMap::new();
-        for frame in batch.drain(..) {
-            let Some(session) = frame.agent_session else { continue };
-            match serde_json::to_string(&frame) {
-                Ok(line) => {
-                    let buf = by_session.entry(session).or_default();
-                    buf.push_str(&line);
-                    buf.push('\n');
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, seq = frame.seq, "frame would not serialize");
-                }
-            }
-        }
-
-        for (session, buf) in by_session {
-            let path = crate::mind::memory::layout::session_frames_path(&data_dir, run, session);
-            if let Some(parent) = path.parent()
-                && let Err(err) = tokio::fs::create_dir_all(parent).await
-            {
-                tracing::error!(error = %err, path = %parent.display(), "cannot make the session frame dir");
-                continue;
-            }
-            match tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await {
-                Ok(mut f) => {
-                    if let Err(err) = f.write_all(buf.as_bytes()).await {
-                        tracing::error!(error = %err, path = %path.display(), "session frame write failed");
-                    }
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, path = %path.display(), "cannot open the session frame log");
-                }
-            }
-        }
     }
 }

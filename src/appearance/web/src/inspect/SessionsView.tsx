@@ -118,7 +118,7 @@ interface Group {
   key: string; // URL key + dedup key
   conn: number;
   role: string; // which rung this subprocess hosts — stamped on every frame
-  agentSession: number | null; // hi-agent's own id, present from the first frame
+  agentSession: string | null; // hi-agent's own id (a slug), present from the first frame
   sessionId: string | null; // adopted from the thread/start response; null until then
   frames: RawFrame[];
 }
@@ -198,7 +198,7 @@ export function SessionsView() {
               >
                 <span className={`skind ${roleClass(g.role)}`}>{g.role || "?"}</span>
                 <span className="nm">
-                  {g.agentSession != null ? `#${g.agentSession}` : "opening…"}
+                  {sessionLabel(g)}
                   {g.sessionId ? <span className="muted"> · {g.sessionId.slice(0, 12)}</span> : null}
                 </span>
                 <span className="badges">
@@ -221,13 +221,20 @@ export function SessionsView() {
   );
 }
 
+// A rung's id *is* its role name, so the chip beside it would otherwise read
+// "cognition cognition". Only a worker's slug says something the chip doesn't.
+function sessionLabel(g: Group): string {
+  if (g.agentSession == null) return "opening…";
+  return g.agentSession === g.role ? "" : g.agentSession;
+}
+
 function FrameLog({ group: g }: { group: Group }) {
   return (
     <div className="detail-head">
       <div className="dh-title">
         <b>{g.role || "session"}</b>
         <span className="muted">
-          {g.agentSession != null ? <> · session <code>#{g.agentSession}</code></> : <> · opening…</>}
+          {g.agentSession != null ? <> · session <code>{g.agentSession}</code></> : <> · opening…</>}
           {g.sessionId ? <> · thread <code>{g.sessionId}</code></> : null} · {g.frames.length} frames
         </span>
       </div>

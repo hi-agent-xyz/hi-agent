@@ -53,12 +53,12 @@ pub async fn get_activity() -> Sse<impl Stream<Item = Result<Event, Infallible>>
 }
 
 fn project(statuses: &[Status]) -> AgentActivity {
-    let by_id: HashMap<SessionId, &Status> =
-        statuses.iter().map(|status| (status.id, status)).collect();
-    let delegated_roots: HashSet<SessionId> = statuses
+    let by_id: HashMap<&SessionId, &Status> =
+        statuses.iter().map(|status| (&status.id, status)).collect();
+    let delegated_roots: HashSet<&SessionId> = statuses
         .iter()
         .filter(|status| status.role == Role::Cognition)
-        .map(|status| status.id)
+        .map(|status| &status.id)
         .collect();
 
     let active = |status: &&Status| status.busy || status.queued;
@@ -76,7 +76,7 @@ fn project(statuses: &[Status]) -> AgentActivity {
         .filter(active)
         .filter(|status| match status.role {
             Role::Cognition => true,
-            Role::Worker(_) => owner_chain_reaches(status.owner, &delegated_roots, &by_id),
+            Role::Worker(_) => owner_chain_reaches(status.owner.as_ref(), &delegated_roots, &by_id),
             Role::Reaction | Role::Reflection => false,
         })
         .count();
@@ -88,20 +88,20 @@ fn project(statuses: &[Status]) -> AgentActivity {
     }
 }
 
-fn owner_chain_reaches(
-    mut owner: Option<SessionId>,
-    roots: &HashSet<SessionId>,
-    statuses: &HashMap<SessionId, &Status>,
+fn owner_chain_reaches<'a>(
+    mut owner: Option<&'a SessionId>,
+    roots: &HashSet<&SessionId>,
+    statuses: &HashMap<&SessionId, &'a Status>,
 ) -> bool {
     let mut seen = HashSet::new();
     while let Some(id) = owner {
-        if roots.contains(&id) {
+        if roots.contains(id) {
             return true;
         }
         if !seen.insert(id) {
             return false;
         }
-        owner = statuses.get(&id).and_then(|status| status.owner);
+        owner = statuses.get(id).and_then(|status| status.owner.as_ref());
     }
     false
 }
@@ -138,11 +138,11 @@ mod tests {
     #[test]
     fn separates_reaction_from_relevant_delegated_work() {
         let statuses = vec![
-            status(1, Role::Reaction, None, true, false),
-            status(2, Role::Cognition, None, true, false),
-            status(3, Role::Worker(WorkerType::General), Some(2), true, false),
-            status(4, Role::Reflection, None, true, false),
-            status(5, Role::Worker(WorkerType::General), Some(4), true, false),
+            status(1.into(), Role::Reaction, None, true, false),
+            status(2.into(), Role::Cognition, None, true, false),
+            status(3.into(), Role::Worker(WorkerType::General), Some(2.into()), true, false),
+            status(4.into(), Role::Reflection, None, true, false),
+            status(5.into(), Role::Worker(WorkerType::General), Some(4.into()), true, false),
         ];
 
         assert_eq!(
@@ -158,8 +158,8 @@ mod tests {
     #[test]
     fn queued_conversation_work_counts_before_its_turn_starts() {
         let statuses = vec![
-            status(1, Role::Reaction, None, false, false),
-            status(2, Role::Cognition, None, false, true),
+            status(1.into(), Role::Reaction, None, false, false),
+            status(2.into(), Role::Cognition, None, false, true),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);
@@ -168,10 +168,10 @@ mod tests {
     #[test]
     fn nested_brain_work_remains_conversation_work() {
         let statuses = vec![
-            status(1, Role::Reaction, None, false, false),
-            status(2, Role::Cognition, None, false, false),
-            status(3, Role::Worker(WorkerType::General), Some(2), false, false),
-            status(4, Role::Worker(WorkerType::General), Some(3), true, false),
+            status(1.into(), Role::Reaction, None, false, false),
+            status(2.into(), Role::Cognition, None, false, false),
+            status(3.into(), Role::Worker(WorkerType::General), Some(2.into()), false, false),
+            status(4.into(), Role::Worker(WorkerType::General), Some(3.into()), true, false),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);
@@ -180,9 +180,9 @@ mod tests {
     #[test]
     fn cognition_workers_remain_working_after_cognition_finishes_its_turn() {
         let statuses = vec![
-            status(1, Role::Reaction, None, false, false),
-            status(2, Role::Cognition, None, false, false),
-            status(3, Role::Worker(WorkerType::General), Some(2), true, false),
+            status(1.into(), Role::Reaction, None, false, false),
+            status(2.into(), Role::Cognition, None, false, false),
+            status(3.into(), Role::Worker(WorkerType::General), Some(2.into()), true, false),
         ];
 
         assert_eq!(project(&statuses).delegated_busy_count, 1);

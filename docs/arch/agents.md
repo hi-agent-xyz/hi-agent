@@ -46,9 +46,12 @@ Two things follow, and both are load-bearing:
 - **An agent that owns live children is not idle.** Idle-reaping an owner out from under
   running work is what creates orphans; the fix is to not call it idle. Shutdown is
   graceful: finish or hand off, then close.
-- **A session id addresses a live agent; a task subject addresses work.** Session ids die
-  with the process, so nothing durable may reference one. Recovery reconstructs from
-  [Tasks](data.md#tasks), never from a session.
+- **A session id addresses a live agent; a task subject addresses work.** A worker's session
+  dies with the process, so nothing durable may reference one — and its slug repeating after a
+  restart makes that sharper, not safer, because the same string then resolves to a different
+  session serving the same task. Recovery reconstructs from [Tasks](data.md#tasks), never from
+  a session. The three rungs are the exception the singleton earns: `cognition` names cognition
+  in any boot, because the host reopens exactly one of it.
 
 ## The ladder
 

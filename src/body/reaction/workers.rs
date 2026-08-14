@@ -47,26 +47,8 @@ use crate::identity::{Role, WorkerType};
 
 use super::{LoopInput, Reaction};
 
-/// Handle for one **agent session**, unique process-wide.
-///
-/// It identifies a *session*, not a role: the same role has many sessions over a run,
-/// and a Cognition replaced after a failure is a second session of one role. So this is
-/// never a "worker id" — ownership, addressing and reporting all key on the session,
-/// which is the thing that is actually singular.
-///
-/// Process-wide because standing owners (Cognition, Reflection) and the voice
-/// all create sessions in the same address space.
-///
-/// Minted before the agent session is opened, because the MCP surface identifies its
-/// caller by this id in a request header — so it cannot be the id the adapter assigns.
-pub(super) type SessionId = u64;
-
 use crate::foundation::registry;
-
-#[cfg(test)]
-fn mint_session_id() -> SessionId {
-    registry::mint()
-}
+use crate::foundation::registry::SessionId;
 
 // A working session used to close itself after fifteen idle minutes. That timer was
 // written for a narrower world than the one it ended up policing: it meant "this errand is
@@ -291,7 +273,7 @@ impl WorkerRegistry {
             None => task.clone(),
         };
         let (session, mail) = self
-            .open_working_session(reaction, id, &title, kind, owner, resume, subject)
+            .open_working_session(reaction, id.clone(), &title, kind, owner.clone(), resume, subject)
             .await?;
 
         let observatory = reaction.inner.observatory.clone();
@@ -302,7 +284,7 @@ impl WorkerRegistry {
             // just describes no conversation, which is the truth about it.
             // The title, not the brief: this record is read on a dashboard, and a
             // paragraph in that slot is a paragraph nobody scrolls.
-            .record(EventKind::WorkerSpawned { id, title: title.clone() })
+            .record(EventKind::WorkerSpawned { id: id.clone(), title: title.clone() })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));
@@ -311,7 +293,7 @@ impl WorkerRegistry {
         // through, and the drive task needs the session to run turns on. Same `Arc`.
         let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
-            id,
+            id.clone(),
             Some(opening),
             session,
             transcript.clone(),
@@ -319,17 +301,17 @@ impl WorkerRegistry {
             observatory,
             mail.clone(),
             busy.clone(),
-            owner,
+            owner.clone(),
         ));
 
 
         self.workers.insert(
-            id,
+            id.clone(),
             Worker { session: handle, drive },
         );
         tracing::info!(
-            session = id,
-            owner = owner.map(|o| o.to_string()).unwrap_or_else(|| "conversation-loop".into()),
+            session = %id,
+            owner = owner.as_ref().map(|o| o.to_string()).unwrap_or_else(|| "conversation-loop".into()),
             resumed,
             "spawned working session"
         );
@@ -359,14 +341,14 @@ impl WorkerRegistry {
 
         // The address exists before subprocess startup so mail can queue during both
         // eager warm-up and an ordinary create_worker spawn.
-        let mail = registry::global().register(id, role, owner, title.to_string(), subject);
+        let mail = registry::global().register(id.clone(), role, owner, title.to_string(), subject);
 
         let opened = reaction
             .inner
             .agent
             .session(
                 role,
-                Some(id),
+                Some(id.clone()),
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     cwd: Some(reaction.inner.views_dir.clone()),
@@ -381,7 +363,7 @@ impl WorkerRegistry {
         match opened {
             Ok(session) => Ok((Arc::new(session), mail)),
             Err(err) => {
-                registry::global().unregister(id);
+                registry::global().unregister(&id);
                 Err(err)
             }
         }
@@ -412,20 +394,20 @@ impl WorkerRegistry {
     /// coming.
     pub(super) async fn interrupt(&self, id: SessionId) -> bool {
         let Some(w) = self.workers.get(&id) else {
-            tracing::info!(worker = id, "nothing to interrupt; worker is gone");
+            tracing::info!(worker = %id, "nothing to interrupt; worker is gone");
             return false;
         };
         match w.session.cancel().await {
             Ok(true) => {
-                tracing::info!(worker = id, "working session interrupted");
+                tracing::info!(worker = %id, "working session interrupted");
                 true
             }
             Ok(false) => {
-                tracing::info!(worker = id, "nothing to interrupt; worker was idle");
+                tracing::info!(worker = %id, "nothing to interrupt; worker was idle");
                 false
             }
             Err(err) => {
-                tracing::warn!(worker = id, error = %err, "interrupt failed");
+                tracing::warn!(worker = %id, error = %err, "interrupt failed");
                 false
             }
         }
@@ -452,11 +434,11 @@ impl WorkerRegistry {
     /// Returns whether there was a live session to close, so a caller is never told it
     /// ended something that had already gone.
     pub(super) fn close(&self, id: SessionId) -> bool {
-        let closed = registry::global().close_inbox(id);
+        let closed = registry::global().close_inbox(&id);
         if closed {
-            tracing::info!(worker = id, "closing working session");
+            tracing::info!(worker = %id, "closing working session");
         } else {
-            tracing::info!(worker = id, "nothing to close; worker is gone");
+            tracing::info!(worker = %id, "nothing to close; worker is gone");
         }
         closed
     }
@@ -473,7 +455,7 @@ impl WorkerRegistry {
         self.workers.retain(|id, w| {
             let alive = !w.drive.is_finished();
             if !alive {
-                registry::global().unregister(*id);
+                registry::global().unregister(id);
             }
             alive
         });
@@ -494,7 +476,7 @@ impl WorkerRegistry {
     /// Returns the outcome rather than a bool so the caller can *record* the edge; a
     /// `Delivery` collapsed to `false` loses which way it failed.
     pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> registry::Delivery {
-        registry::global().post(id, text)
+        registry::global().post(&id, text)
     }
 
 }
@@ -553,7 +535,7 @@ impl Drop for WorkerRegistry {
         // must instead stop them and remove their switchboard addresses.
         for (id, worker) in self.workers.drain() {
             worker.drive.abort();
-            registry::global().unregister(id);
+            registry::global().unregister(&id);
         }
     }
 }
@@ -636,13 +618,13 @@ async fn drive_worker(
 ) {
     // Wrapped so *every* way out of the drive loop unregisters, including ones added
     // later. The one exit this cannot cover is an abort, and [`Drop`] holds that case.
-    drive(id, initial_task, session, transcript, inbound, observatory, mail, busy, owner).await;
-    registry::global().unregister(id);
+    drive(&id, initial_task, session, transcript, inbound, observatory, mail, busy, owner).await;
+    registry::global().unregister(&id);
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn drive(
-    id: SessionId,
+    id: &SessionId,
     initial_task: Option<String>,
     session: Arc<AgentSession>,
     transcript: Arc<Mutex<String>>,
@@ -665,7 +647,7 @@ async fn drive(
             None => match wait_for_mail(id, &mail).await {
                 Some(task) => task,
                 None => {
-                    tracing::info!(worker = id, "working session closed by its owner");
+                    tracing::info!(worker = %id, "working session closed by its owner");
                     return;
                 }
             },
@@ -684,11 +666,11 @@ async fn drive(
         // and went quiet — the two look identical, which is exactly the ambiguity the
         // completion event exists to remove.
         tracing::info!(
-            worker = id,
+            worker = %id,
             task_chars = task.chars().count(),
             "working session turn start"
         );
-        let kind = match run_worker(id, &task, &session, &transcript).await {
+        let kind = match run_worker(id.clone(), &task, &session, &transcript).await {
             Ok((partial, StopReason::Interrupted)) => WorkerReportKind::Interrupted(partial),
             Ok((answer, _)) => WorkerReportKind::Done(answer),
             Err(err)
@@ -696,7 +678,7 @@ async fn drive(
                     && crate::foundation::energy_state::is_out() =>
             {
                 tracing::warn!(
-                    worker = id,
+                    worker = %id,
                     "working session paused on 402; task and session held"
                 );
                 busy.store(false, Ordering::Relaxed);
@@ -720,18 +702,19 @@ async fn drive(
         };
         observatory
             .record(
-                                EventKind::WorkerFinished { id, state, summary_chars },
+                                EventKind::WorkerFinished { id: id.clone(), state, summary_chars },
             )
             .await;
         tracing::info!(
-            worker = id,
+            worker = %id,
             state = ?state,
             summary_chars,
             "working session turn done"
         );
-        let report = WorkerReport { id, task: task.clone(), kind, owner };
+        let report =
+            WorkerReport { id: id.clone(), task: task.clone(), kind, owner: owner.clone() };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
-            tracing::warn!(worker = id, "worker report dropped; reaction loop gone");
+            tracing::warn!(worker = %id, "worker report dropped; reaction loop gone");
             return;
         }
 
@@ -784,7 +767,7 @@ async fn wait_for_energy_resume(
 /// Everything waiting is taken together and rendered with its sender, because a
 /// worker may only answer *whoever asked*, and it cannot answer an address it was
 /// never given.
-async fn wait_for_mail(id: SessionId, mail: &Notify) -> Option<String> {
+async fn wait_for_mail(id: &SessionId, mail: &Notify) -> Option<String> {
     loop {
         if let Some(batch) = registry::global().take_pending(id) {
             return Some(registry::render(&batch));
@@ -826,7 +809,7 @@ async fn run_worker(
                 // The voice-specific worker tail is gone, because a worker's
                 // progress belongs to its owner. Whoever asked for the work can read it
                 // here, keyed by the session id they were handed.
-                registry::global().record_output(id, &text);
+                registry::global().record_output(&id, &text);
             }
             // Thoughts, tool calls, and unmodelled events don't enter the
             // transcript — only the worker's text output does. They do feed the
@@ -835,7 +818,7 @@ async fn run_worker(
             // used to be indistinguishable from being dead.
             Some(update) => {
                 if let Some(what) = update.activity() {
-                    registry::global().record_activity(id, &what);
+                    registry::global().record_activity(&id, &what);
                 }
             }
             None => break,
@@ -879,7 +862,7 @@ mod ownership_tests {
     fn delivering_to_a_vanished_owner_reports_failure_rather_than_swallowing_it() {
         let mut reg = registry();
         assert_eq!(
-            reg.deliver_to(4242, "the errand is done".into()),
+            reg.deliver_to(4242.into(), "the errand is done".into()),
             registry::Delivery::Unknown
         );
     }
@@ -887,10 +870,10 @@ mod ownership_tests {
 
     fn report(kind: WorkerReportKind) -> WorkerReport {
         WorkerReport {
-            id: 7,
+            id: 7.into(),
             task: "build the 1-pager skill".into(),
             kind,
-            owner: Some(2),
+            owner: Some(2.into()),
         }
     }
 
@@ -924,11 +907,13 @@ mod ownership_tests {
         assert!(text.contains("before it produced anything"), "{text}");
     }
 
-    /// Session ids are process-wide, not per registry, so ownership is
-    /// unambiguous across every role.
+    /// Session ids are process-wide, not per registry, so ownership is unambiguous
+    /// across every role — and a slug does not weaken that. Three workers of one kind on
+    /// one task all want the same base name; minting is what makes them three addresses.
     #[test]
     fn session_ids_are_unique_across_registries() {
-        let (a, b, c) = (mint_session_id(), mint_session_id(), mint_session_id());
+        let same = || registry::mint(Role::Worker(WorkerType::General), Some("one task"));
+        let (a, b, c) = (same(), same(), same());
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);
@@ -947,23 +932,29 @@ mod lifetime_tests {
     /// worker addressing anyone but its own owner, so borrowing an id silently turns into
     /// `NotPermitted`.
     fn worker() -> (SessionId, SessionId, Arc<Notify>) {
-        let owner = registry::mint();
-        registry::global().register(owner, Role::Cognition, None, "the shared brain".into(), None);
-        let id = registry::mint();
+        let owner = registry::mint(Role::Cognition, None);
         registry::global().register(
-            id,
+            owner.clone(),
+            Role::Cognition,
+            None,
+            "the shared brain".into(),
+            None,
+        );
+        let id = registry::mint(Role::Worker(WorkerType::General), Some("an errand"));
+        registry::global().register(
+            id.clone(),
             Role::Worker(WorkerType::General),
-            Some(owner),
+            Some(owner.clone()),
             "an errand".into(),
             None,
         );
-        let mail = registry::global().notifier(id).expect("just registered");
+        let mail = registry::global().notifier(&id).expect("just registered");
         (owner, id, mail)
     }
 
     fn done(owner: SessionId, id: SessionId) {
-        registry::global().unregister(id);
-        registry::global().unregister(owner);
+        registry::global().unregister(&id);
+        registry::global().unregister(&owner);
     }
 
     /// The regression this whole change exists for. A worker that has reported and is
@@ -977,7 +968,7 @@ mod lifetime_tests {
     async fn silence_alone_never_ends_a_working_session() {
         let (owner, id, mail) = worker();
         let outcome =
-            tokio::time::timeout(Duration::from_secs(60 * 60), wait_for_mail(id, &mail)).await;
+            tokio::time::timeout(Duration::from_secs(60 * 60), wait_for_mail(&id, &mail)).await;
         assert!(outcome.is_err(), "an idle worker must still be waiting, not reclaimed");
         done(owner, id);
     }
@@ -986,9 +977,9 @@ mod lifetime_tests {
     #[tokio::test]
     async fn a_closed_inbox_ends_the_wait() {
         let (owner, id, mail) = worker();
-        assert!(registry::global().close_inbox(id), "there was a live session to close");
+        assert!(registry::global().close_inbox(&id), "there was a live session to close");
         assert!(
-            wait_for_mail(id, &mail).await.is_none(),
+            wait_for_mail(&id, &mail).await.is_none(),
             "a closed inbox is the one thing that returns no task"
         );
         done(owner, id);
@@ -1001,9 +992,10 @@ mod lifetime_tests {
     #[tokio::test(start_paused = true)]
     async fn a_close_reaches_a_worker_that_is_already_parked() {
         let (owner, id, mail) = worker();
-        let waiting = tokio::spawn(async move { wait_for_mail(id, &mail).await });
+        let parked = id.clone();
+        let waiting = tokio::spawn(async move { wait_for_mail(&parked, &mail).await });
         tokio::time::sleep(Duration::from_secs(30)).await; // let it park on the notify
-        registry::global().close_inbox(id);
+        registry::global().close_inbox(&id);
         let outcome = tokio::time::timeout(Duration::from_secs(5), waiting)
             .await
             .expect("a parked worker must wake on a close")
@@ -1019,14 +1011,14 @@ mod lifetime_tests {
     async fn mail_already_waiting_is_taken_before_the_close_is_noticed() {
         let (owner, id, mail) = worker();
         assert_eq!(
-            registry::global().send(owner, id, "read the facet".into()),
+            registry::global().send(&owner, &id, "read the facet".into()),
             registry::Delivery::Delivered
         );
-        registry::global().close_inbox(id);
-        let task = wait_for_mail(id, &mail).await.expect("the queued brief still runs");
+        registry::global().close_inbox(&id);
+        let task = wait_for_mail(&id, &mail).await.expect("the queued brief still runs");
         assert!(task.contains("read the facet"), "{task}");
         // And the very next pass ends it, because the inbox is still closed.
-        assert!(wait_for_mail(id, &mail).await.is_none());
+        assert!(wait_for_mail(&id, &mail).await.is_none());
         done(owner, id);
     }
 
@@ -1036,6 +1028,6 @@ mod lifetime_tests {
     fn closing_a_session_that_is_already_gone_says_so() {
         let (tx, _rx) = mpsc::channel(8);
         let reg = WorkerRegistry::new(tx);
-        assert!(!reg.close(999_999), "nothing was there to close");
+        assert!(!reg.close("nobody-here".parse().unwrap()), "nothing was there to close");
     }
 }

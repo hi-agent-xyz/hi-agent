@@ -14,9 +14,8 @@
 //! Nothing in this module talks to the agent wire or to a model. It owns addresses, mailboxes and
 //! metadata; who drains a mailbox and what they do with it belongs to the caller.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
 
@@ -24,16 +23,209 @@ use crate::identity::Role;
 use tokio::sync::{watch, Notify};
 
 
-/// Handle for one agent session, unique process-wide.
+/// Handle for one agent session, unique within a run.
 ///
-/// It names a *session*, not a role: a role has many sessions over a run, and a
-/// Cognition replaced after a failure is a second session of one role. One namespace
-/// for every rung and every worker, because ownership crosses rungs — an owner holds
-/// sessions no per-rung counter could
-/// name without collision.
-pub type SessionId = u64;
+/// **A slug, not an ordinal**
+/// ([`docs/arch/foundation.md`](../../../docs/arch/foundation.md#the-agent-session-registry)).
+/// The three rungs are singletons and carry the name they already have everywhere else in
+/// this design — `reaction`, `cognition`, `reflection`; a worker is `<type>-<task>`, e.g.
+/// `view-builder-kyoto-trip` or `person-reader-alice`. One namespace for every rung and
+/// every worker, because ownership crosses rungs — an owner holds sessions no per-rung
+/// counter could name without collision.
+///
+/// It names a *session*, not a role. That the rung slugs read like role names is a
+/// property of the rungs rather than a merge of the two ideas: a rung's registration is
+/// its address and lives as long as the process, while the agent session *underneath* it
+/// is replaced freely (a failed turn drops one, and the next turn opens another) without
+/// the address ever changing. Nothing here may assume the reverse — that a given slug
+/// implies a given role — because a worker's slug is built from a title an agent wrote.
+///
+/// **Why not the decimal ordinal it was for most of this codebase's life.** Two reasons,
+/// and the second is what forced it. An ordinal says nothing: `2` meant Reaction only
+/// because a roster line beside it said so, and only until the next boot. And a bare
+/// integer is a valid address in the agent runtime's *own* collaboration namespace, which
+/// addresses a sub-agent tree by path from `/root` — so a message aimed at the wrong
+/// `send_message` resolved as `/root/2`, was refused by a router we do not own, and raised
+/// nothing on our side. Between 2026-08-10 and 08-14 that dropped 33 inter-rung messages.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct SessionId(String);
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+impl SessionId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// An address that is not one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotASessionId;
+
+impl std::fmt::Display for NotASessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not a session id")
+    }
+}
+
+impl std::error::Error for NotASessionId {}
+
+/// Read an address an agent, or a URL, wrote.
+///
+/// Forgiving about *shape* — trimmed and lower-cased, so `Cognition` reaches cognition —
+/// and strict about *character*: letters, digits and `-`, nothing else, never empty. An id
+/// that is well-formed but names nothing is a lookup miss, answered with "nothing live at
+/// `x`", which is the honest reading and the one an agent can act on. An id carrying a `/`
+/// or a `.` is a different thing entirely and is refused here.
+///
+/// **That strictness is load-bearing, and it is the reason this is not `Infallible`.** A
+/// session id is a path component: `raw/sessions/<run>/<id>.jsonl` is built from one, and
+/// `GET /api/workers/{id}/frames` hands the value straight from the URL to that builder.
+/// While ids were integers, `parse::<u64>()` *was* the traversal guard, silently and by
+/// luck. Widening the type to a string without keeping a guard would have re-opened it —
+/// `..%2F..%2Fetc%2Fpasswd` parses fine as a slug-shaped string otherwise.
+impl std::str::FromStr for SessionId {
+    type Err = NotASessionId;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim().to_lowercase();
+        let ok = !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '-');
+        ok.then_some(Self(s)).ok_or(NotASessionId)
+    }
+}
+
+/// An ordinal as a session id — **tests only**, and deliberately not available outside them.
+///
+/// Most of what the switchboard is tested for is plumbing: that mail reaches the right
+/// mailbox, that a worker may address only its owner, that a roster comes back in creation
+/// order. None of that turns on what a session is *called*, and naming every fixture
+/// `view-builder-something` would bury the property each test is actually pinning. So a
+/// test says `2.into()` and means "some session, distinct from session 1".
+///
+/// It is `#[cfg(test)]` because production has exactly one way to make an id — [`mint`] —
+/// and that is what keeps ids unique within a run and free of route-shadowing literals. A
+/// second constructor on the shipping surface would be a second answer to both.
+#[cfg(test)]
+impl From<u64> for SessionId {
+    fn from(n: u64) -> Self {
+        Self(n.to_string())
+    }
+}
+
+impl serde::Serialize for SessionId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+/// **Old rows carry a number here**, from every run before ids became slugs, and
+/// `raw/sessions/index.jsonl` is append-only and never rewritten. A number deserializes to
+/// its own decimal spelling — it addresses nothing live, which is correct, and it still
+/// names the session in the record it came from, which is all a closed row is for.
+impl<'de> serde::Deserialize<'de> for SessionId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = SessionId;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a session id: a slug, or a number from a pre-slug run")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SessionId, E> {
+                Ok(SessionId(v.to_string()))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<SessionId, E> {
+                Ok(SessionId(v.to_string()))
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<SessionId, E> {
+                Ok(SessionId(v.to_string()))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// Every id handed out this run. Only ever grows.
+///
+/// **Uniqueness is per run, not per live session**, and the frame logs are why: a session's
+/// stream is `raw/sessions/<run>/<id>.jsonl`, so reusing a slug after its session ended
+/// would append a second session's frames onto the first one's file, and the two would be
+/// unseparable afterwards. Two workers of one type on one task are otherwise perfectly
+/// legal — the second simply gets `-2`.
+static USED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Mint the id for a session about to open.
+///
+/// Called before the underlying session is opened, because the tool surface identifies its
+/// caller by this id in a request header — so it cannot be an id the protocol assigns later.
+///
+/// `hint` is what the worker slug is built from: the ledger subject when the errand serves a
+/// task, else its title. Ignored for a rung, which is a singleton and has only one name it
+/// could have.
+pub fn mint(role: Role, hint: Option<&str>) -> SessionId {
+    let base = slug_for(role, hint);
+
+    let mut guard = USED.lock().unwrap();
+    let used = guard.get_or_insert_with(HashSet::new);
+    if used.insert(base.clone()) {
+        return SessionId(base);
+    }
+    for n in 2u32.. {
+        let candidate = format!("{base}-{n}");
+        if used.insert(candidate.clone()) {
+            return SessionId(candidate);
+        }
+    }
+    unreachable!("u32 worth of one slug")
+}
+
+/// What a session of this role and errand is *called*, before uniqueness is applied.
+///
+/// Split out from [`mint`] because the two answer different questions and only one of them
+/// is pure: this is naming, and it is the same answer every time; `mint` adds "and not one
+/// already handed out this run", which depends on run-global state. Keeping them apart is
+/// what lets the naming be tested as naming — a test binary shares one `USED`, so a test
+/// calling `mint` twice for one rung sees a counted id and could not pin the plain spelling.
+fn slug_for(role: Role, hint: Option<&str>) -> String {
+    match role.worker_type() {
+        None => role.as_str().to_string(),
+        Some(kind) => match hint.map(slugify).filter(|s| !s.is_empty()) {
+            Some(task) => format!("{}-{task}", kind.as_str()),
+            // A worker with neither subject nor usable title. Rare, and the `-2`-style
+            // disambiguation in `mint` is what keeps it addressable rather than ambiguous.
+            None => kind.as_str().to_string(),
+        },
+    }
+}
+
+/// A title or a ledger subject, as the middle of a session slug.
+///
+/// Kept readable rather than made safe-by-stripping: alphanumerics survive in any script
+/// (a Chinese title is most of them here), everything else collapses to a single `-`. The
+/// cap is on the slug and not on the words, so a long title is cut rather than refused.
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.trim().to_lowercase().chars() {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.chars().count() >= SLUG_HINT_CHARS {
+            break;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// How much of a title or subject a worker's slug carries.
+///
+/// It is an address an agent types back, and a filename — long enough to say which errand,
+/// short enough to read at a glance in a roster line that already carries the title in full.
+const SLUG_HINT_CHARS: usize = 32;
 
 /// How much of a session's recent output the registry keeps for `SessionMessages`.
 ///
@@ -76,13 +268,6 @@ pub mod index;
 pub fn global() -> &'static Registry {
     static G: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
     G.get_or_init(Registry::new)
-}
-
-/// Mint the next session id. Called before the underlying session is opened, because the
-/// tool surface identifies its caller by this id in a request header — so it cannot be an
-/// id the protocol assigns later.
-pub fn mint() -> SessionId {
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 // Which role a session is running comes from [`crate::identity::Role`] — the one
@@ -220,7 +405,7 @@ pub struct Message {
 pub fn render(batch: &[Message]) -> String {
     batch
         .iter()
-        .map(|m| match m.from {
+        .map(|m| match &m.from {
             Some(from) => format!("(from session {from}) {}", m.text.trim()),
             None => m.text.trim().to_string(),
         })
@@ -260,8 +445,14 @@ pub fn render_reachable(who: &[(String, SessionId)]) -> String {
     if who.is_empty() {
         return String::new();
     }
+    // **The tool is named in full, and that is load-bearing.** The agent runtime hands
+    // every session its own `send_message` for a sub-agent tree it keeps inside one
+    // thread; a rung told to "send with `send_message`" reached *that* one, which answered
+    // `live agent path not found` on its own stderr and delivered nothing. This block is
+    // rebuilt into every rung's window on every turn, so an unqualified verb here outvotes
+    // whatever the prompt says.
     let mut s = String::from(
-        "## Who you can reach right now\nSend with `hi_send_message`, using the number.\n",
+        "## Who you can reach right now\nSend with `hi_send_message`, using the id.\n",
     );
     for (label, id) in who {
         s.push_str(&format!("- `{id}` — {label}\n"));
@@ -317,7 +508,7 @@ impl Entry {
         Status {
             id,
             role: self.role,
-            owner: self.owner,
+            owner: self.owner.clone(),
             title: self.title.clone(),
             subject: self.subject.clone(),
             busy: self.busy,
@@ -367,13 +558,13 @@ pub struct Registration {
 
 impl Registration {
     pub fn id(&self) -> SessionId {
-        self.id
+        self.id.clone()
     }
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        global().unregister(self.id);
+        global().unregister(&self.id);
     }
 }
 
@@ -391,7 +582,7 @@ pub fn register_scoped(
     //
     // A rung needs no title/brief split either: what it is doing is standing and already a
     // phrase ("the shared brain"), which is why this form takes the one line and stops.
-    let mail = global().register(id, role, owner, title, None);
+    let mail = global().register(id.clone(), role, owner, title, None);
     Registration { id, mail }
 }
 
@@ -470,10 +661,11 @@ impl Registry {
         let notify = std::sync::Arc::new(Notify::new());
         let started = Utc::now();
         let title = headline(&title, TITLE_CHARS);
+        let owner_for_record = owner.clone();
         {
             let mut map = self.sessions.lock().unwrap();
             map.insert(
-                id,
+                id.clone(),
                 Entry {
                     role,
                     owner,
@@ -499,9 +691,9 @@ impl Registry {
         if let Some(writer) = self.index.get() {
             writer.write(index::opened_record(
                 crate::foundation::run::id(),
-                id,
+                &id,
                 role,
-                owner,
+                owner_for_record,
                 &title,
                 subject.as_deref(),
                 started,
@@ -555,8 +747,8 @@ impl Registry {
     /// Called once per session, right after `thread/start` answers. A session that never
     /// gets one (the spawn failed, the process died first) simply has no thread on its row,
     /// which reads as "there is no mind to go back to" rather than as missing data.
-    pub fn note_thread(&self, id: SessionId, thread_id: &str) {
-        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+    pub fn note_thread(&self, id: &SessionId, thread_id: &str) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.thread = Some(thread_id.to_string());
         }
         if let Some(writer) = self.index.get() {
@@ -597,16 +789,19 @@ impl Registry {
     pub fn close_all(&self) {
         let ids: Vec<SessionId> = {
             let map = self.sessions.lock().unwrap();
-            let mut ids: Vec<SessionId> = map.keys().copied().collect();
-            ids.sort_unstable();
-            ids
+            let mut rows: Vec<(DateTime<Utc>, SessionId)> =
+                map.iter().map(|(id, e)| (e.started, id.clone())).collect();
+            // Oldest first, which is what sorting on the ordinal used to mean. A slug
+            // sorts alphabetically and would close a worker before the rung that owns it.
+            rows.sort_unstable();
+            rows.into_iter().map(|(_, id)| id).collect()
         };
         if ids.is_empty() {
             return;
         }
         tracing::info!(sessions = ids.len(), "closing the switchboard");
         for id in ids {
-            self.unregister(id);
+            self.unregister(&id);
         }
     }
 
@@ -630,8 +825,8 @@ impl Registry {
     /// Drop a session. Anything still in its inbox goes with it — undelivered is the
     /// honest outcome, and the sender was told `Delivered` about a mailbox, never about
     /// an outcome.
-    pub fn unregister(&self, id: SessionId) {
-        let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(&id) {
+    pub fn unregister(&self, id: &SessionId) {
+        let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(id) {
             e.inbox.closed = true;
             Some(index::ended_now(
                 crate::foundation::run::id(),
@@ -674,26 +869,26 @@ impl Registry {
     /// retrieval, and a retrieval that misses is indistinguishable from nobody being
     /// there. Being told who is live, every turn, is strictly more information than being
     /// allowed to guess, and it turns this from a scan into a map lookup.
-    pub fn send(&self, from: SessionId, to: SessionId, message: String) -> Delivery {
+    pub fn send(&self, from: &SessionId, to: &SessionId, message: String) -> Delivery {
         let delivery = {
             let mut map = self.sessions.lock().unwrap();
 
             // A worker answers to whoever asked, and to nobody else.
-            if let Some(sender) = map.get(&from)
+            if let Some(sender) = map.get(from)
                 && sender.role.is_worker()
-                && sender.owner != Some(to)
+                && sender.owner.as_ref() != Some(to)
             {
                 return Delivery::NotPermitted;
             }
 
-            let Some(entry) = map.get_mut(&to) else {
+            let Some(entry) = map.get_mut(to) else {
                 return Delivery::Unknown;
             };
             if entry.inbox.closed {
                 return Delivery::Unknown;
             }
             entry.note_state_change(entry.is_quiet());
-            entry.inbox.pending.push(Message { from: Some(from), text: message });
+            entry.inbox.pending.push(Message { from: Some(from.clone()), text: message });
             entry.notify.notify_one();
             Delivery::Delivered
         };
@@ -713,22 +908,22 @@ impl Registry {
     /// Rebuilt every turn by the caller. There is no cache and should not be: the answer
     /// is only true for as long as those sessions are up, and a stale id is worse than no
     /// id — it sends somewhere real.
-    pub fn reachable(&self, asker: SessionId) -> Vec<(String, SessionId)> {
+    pub fn reachable(&self, asker: &SessionId) -> Vec<(String, SessionId)> {
         let map = self.sessions.lock().unwrap();
-        let Some(me) = map.get(&asker) else { return Vec::new() };
+        let Some(me) = map.get(asker) else { return Vec::new() };
 
         let mut out: Vec<(String, SessionId)> = Vec::new();
         match me.role {
             // Its owner, which the routing rule already limits it to.
             Role::Worker(_) => {
-                if let Some(owner) = me.owner {
-                    out.push(("the session that asked for this work".to_string(), owner));
+                if let Some(owner) = &me.owner {
+                    out.push(("the session that asked for this work".to_string(), owner.clone()));
                 }
             }
             // The voice hands work up, and that is all it addresses.
             Role::Reaction => {
                 if let Some((id, _)) = map.iter().find(|(_, e)| e.role == Role::Cognition) {
-                    out.push(("cognition — the shared brain".to_string(), *id));
+                    out.push(("cognition — the shared brain".to_string(), id.clone()));
                 }
             }
             // The voice, so anything worth saying has somewhere to land, plus whatever
@@ -738,17 +933,22 @@ impl Registry {
             Role::Cognition | Role::Reflection => {
                 for (id, e) in map.iter() {
                     if e.role == Role::Reaction {
-                        out.push(("the voice — what reaches the person".to_string(), *id));
+                        out.push(("the voice — what reaches the person".to_string(), id.clone()));
                     }
                 }
                 for (id, e) in map.iter() {
-                    if e.owner == Some(asker) {
-                        out.push((format!("your worker: {}{}", e.title.trim(), link_note(e)), *id));
+                    if e.owner.as_ref() == Some(asker) {
+                        out.push((
+                            format!("your worker: {}{}", e.title.trim(), link_note(e)),
+                            id.clone(),
+                        ));
                     }
                 }
             }
         }
-        out.sort_by_key(|(_, id)| *id);
+        // Oldest first. The ordinal used to carry this for free — the rung a worker
+        // reports to was minted before the worker — and a slug does not sort that way.
+        out.sort_by_key(|(_, id)| map.get(id).map(|e| e.started));
         out
     }
 
@@ -764,9 +964,9 @@ impl Registry {
     /// Asked only of the kinds that serve the ledger — same rule as [`link_note`], because a
     /// disagreement between the two would mean a rung told there is an unlabelled worker and
     /// shown a roster where none is marked.
-    pub fn has_unlinked_worker(&self, asker: SessionId) -> bool {
+    pub fn has_unlinked_worker(&self, asker: &SessionId) -> bool {
         self.sessions.lock().unwrap().values().any(|e| {
-            e.owner == Some(asker)
+            e.owner.as_ref() == Some(asker)
                 && e.subject.is_none()
                 && e.role.worker_type().is_some_and(|k| k.expects_a_subject())
         })
@@ -780,10 +980,10 @@ impl Registry {
     /// reaches a warm session, and it answers the one question the caller actually has:
     /// is that session still able to take work, or has it closed and does this need a
     /// fresh one?
-    pub fn post(&self, id: SessionId, text: String) -> Delivery {
+    pub fn post(&self, id: &SessionId, text: String) -> Delivery {
         let delivery = {
             let mut map = self.sessions.lock().unwrap();
-            let Some(entry) = map.get_mut(&id) else {
+            let Some(entry) = map.get_mut(id) else {
                 return Delivery::Unknown;
             };
             if entry.inbox.closed {
@@ -803,10 +1003,10 @@ impl Registry {
     /// `take_pending` already performs this transition for mailbox-driven turns.
     /// Directly-driven turns (Reaction's queue and a worker's initial task) use this
     /// method so every status reader observes the same lifecycle.
-    pub fn start_turn(&self, id: SessionId) {
+    pub fn start_turn(&self, id: &SessionId) {
         let changed = {
             let mut map = self.sessions.lock().unwrap();
-            let Some(entry) = map.get_mut(&id) else {
+            let Some(entry) = map.get_mut(id) else {
                 return;
             };
             if entry.busy {
@@ -825,10 +1025,10 @@ impl Registry {
 
     /// Take everything queued for `id`, if anything is. Marks the session busy — it is
     /// about to take a turn, and an agent with a turn in flight is not idle.
-    pub fn take_pending(&self, id: SessionId) -> Option<Vec<Message>> {
+    pub fn take_pending(&self, id: &SessionId) -> Option<Vec<Message>> {
         let batch = {
             let mut map = self.sessions.lock().unwrap();
-            let entry = map.get_mut(&id)?;
+            let entry = map.get_mut(id)?;
             if entry.inbox.pending.is_empty() {
                 return None;
             }
@@ -850,10 +1050,10 @@ impl Registry {
     /// Reaction folds this mailbox into its separate input queue, then starts one
     /// combined turn after the settle window. Marking a turn here would create a
     /// false busy/idle edge before that real turn begins.
-    pub fn drain_pending(&self, id: SessionId) -> Option<Vec<Message>> {
+    pub fn drain_pending(&self, id: &SessionId) -> Option<Vec<Message>> {
         let batch = {
             let mut map = self.sessions.lock().unwrap();
-            let entry = map.get_mut(&id)?;
+            let entry = map.get_mut(id)?;
             if entry.inbox.pending.is_empty() {
                 return None;
             }
@@ -881,10 +1081,10 @@ impl Registry {
     /// rather than sleeping through it.
     ///
     /// Returns whether there was a live session to close.
-    pub fn close_inbox(&self, id: SessionId) -> bool {
+    pub fn close_inbox(&self, id: &SessionId) -> bool {
         let notify = {
             let mut map = self.sessions.lock().unwrap();
-            let Some(entry) = map.get_mut(&id) else {
+            let Some(entry) = map.get_mut(id) else {
                 return false;
             };
             entry.inbox.closed = true;
@@ -899,26 +1099,26 @@ impl Registry {
     ///
     /// A session that has left the switchboard answers `true` for the same reason a closed
     /// one does: there is nothing more coming, which is the only question the caller has.
-    pub fn inbox_closed(&self, id: SessionId) -> bool {
+    pub fn inbox_closed(&self, id: &SessionId) -> bool {
         self.sessions
             .lock()
             .unwrap()
-            .get(&id)
+            .get(id)
             .map(|e| e.inbox.closed)
             .unwrap_or(true)
     }
 
     /// The handle woken when mail lands for `id`, for a loop that wants to wait on its
     /// own inbox without polling. Same `Notify` [`register`](Self::register) returned.
-    pub fn notifier(&self, id: SessionId) -> Option<std::sync::Arc<Notify>> {
-        self.sessions.lock().unwrap().get(&id).map(|e| e.notify.clone())
+    pub fn notifier(&self, id: &SessionId) -> Option<std::sync::Arc<Notify>> {
+        self.sessions.lock().unwrap().get(id).map(|e| e.notify.clone())
     }
 
     /// Mark a turn finished.
-    pub fn finish_turn(&self, id: SessionId) {
+    pub fn finish_turn(&self, id: &SessionId) {
         let changed = {
             let mut map = self.sessions.lock().unwrap();
-            if let Some(e) = map.get_mut(&id) {
+            if let Some(e) = map.get_mut(id) {
                 let changed = e.busy;
                 e.busy = false;
                 e.note_state_change(changed);
@@ -938,15 +1138,15 @@ impl Registry {
     /// switchboard entry must be able to move from a startup placeholder to the work it
     /// was actually handed. Capped like the registration path — a caller replacing a title
     /// is the same kind of caller that wrote the first one.
-    pub fn set_title(&self, id: SessionId, title: String) {
-        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+    pub fn set_title(&self, id: &SessionId, title: String) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.title = headline(&title, TITLE_CHARS);
         }
     }
 
     /// Append to a session's visible output, keeping only the recent tail.
-    pub fn record_output(&self, id: SessionId, chunk: &str) {
-        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+    pub fn record_output(&self, id: &SessionId, chunk: &str) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.output.push_str(chunk);
             let n = e.output.chars().count();
             if n > OUTPUT_TAIL_CHARS {
@@ -960,7 +1160,7 @@ impl Registry {
     /// One line, replaced rather than appended: this answers "is it alive and on what",
     /// which only the newest answer serves. Long lines are cut, because the caller is
     /// summarizing a tool call and a shell command can be a screenful.
-    pub fn record_activity(&self, id: SessionId, what: &str) {
+    pub fn record_activity(&self, id: &SessionId, what: &str) {
         let what = what.trim();
         if what.is_empty() {
             return;
@@ -969,7 +1169,7 @@ impl Registry {
             Some((cut, _)) => format!("{}…", &what[..cut]),
             None => what.to_string(),
         };
-        if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.doing = Some(line);
             e.doing_at = Some(Utc::now());
         }
@@ -977,15 +1177,15 @@ impl Registry {
 
     /// What a session has recently said. Costs context — which is exactly why it is a
     /// different call from [`status`](Self::status).
-    pub fn messages(&self, id: SessionId) -> Option<String> {
+    pub fn messages(&self, id: &SessionId) -> Option<String> {
         let map = self.sessions.lock().unwrap();
-        map.get(&id).map(|e| e.output.clone())
+        map.get(id).map(|e| e.output.clone())
     }
 
     /// Metadata for one session. Cheap by construction — no content crosses.
-    pub fn status(&self, id: SessionId) -> Option<Status> {
+    pub fn status(&self, id: &SessionId) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
-        Some(map.get(&id)?.status(id))
+        Some(map.get(id)?.status(id.clone()))
     }
 
     /// The live session holding `role`, if there is one — for the **singleton** rungs,
@@ -1002,15 +1202,15 @@ impl Registry {
     /// creator holds.
     pub fn session_of_role(&self, role: Role) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
-        let id = map.iter().filter(|(_, e)| e.role == role).map(|(&id, _)| id).min()?;
-        Some(map.get(&id)?.status(id))
+        let (id, e) = map.iter().filter(|(_, e)| e.role == role).min_by_key(|(_, e)| e.started)?;
+        Some(e.status(id.clone()))
     }
 
-    /// Metadata for every live session, ordered by id.
+    /// Metadata for every live session, oldest first.
     pub fn statuses(&self) -> Vec<Status> {
         let map = self.sessions.lock().unwrap();
-        let mut rows: Vec<Status> = map.iter().map(|(&id, e)| e.status(id)).collect();
-        rows.sort_by_key(|status| status.id);
+        let mut rows: Vec<Status> = map.iter().map(|(id, e)| e.status(id.clone())).collect();
+        rows.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.id.cmp(&b.id)));
         rows
     }
 
@@ -1019,16 +1219,16 @@ impl Registry {
         self.activity.subscribe()
     }
 
-    /// Every session `owner` created, oldest id first.
-    pub fn children(&self, owner: SessionId) -> Vec<SessionId> {
+    /// Every session `owner` created, oldest first.
+    pub fn children(&self, owner: &SessionId) -> Vec<SessionId> {
         let map = self.sessions.lock().unwrap();
-        let mut ids: Vec<SessionId> = map
+        let mut rows: Vec<(DateTime<Utc>, SessionId)> = map
             .iter()
-            .filter(|(_, e)| e.owner == Some(owner))
-            .map(|(id, _)| *id)
+            .filter(|(_, e)| e.owner.as_ref() == Some(owner))
+            .map(|(id, e)| (e.started, id.clone()))
             .collect();
-        ids.sort_unstable();
-        ids
+        rows.sort_unstable();
+        rows.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Whether `id` owns anything still live.
@@ -1036,9 +1236,9 @@ impl Registry {
     /// **An agent with live children is not idle.** Reaping an owner out from under
     /// running work is what creates orphans; the fix is to not call it idle in the first
     /// place, so whatever decides to close a session asks this first.
-    pub fn has_live_children(&self, id: SessionId) -> bool {
+    pub fn has_live_children(&self, id: &SessionId) -> bool {
         let map = self.sessions.lock().unwrap();
-        map.values().any(|e| e.owner == Some(id))
+        map.values().any(|e| e.owner.as_ref() == Some(id))
     }
 
     fn note_activity(&self) {
@@ -1050,6 +1250,22 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::identity::WorkerType;
+
+    /// A distinct session id, shadowing [`super::mint`] for the tests below.
+    ///
+    /// These tests are about the switchboard's *plumbing* — mail reaching one mailbox and
+    /// not another, a worker refused when it addresses anyone but its owner, a roster
+    /// coming back in creation order. Not one of them turns on what a session is called,
+    /// and spelling every fixture `person-reader-alice` would hide the property each is
+    /// pinning behind scenery. What they need is "another session, distinct from the last".
+    ///
+    /// Naming it `mint` on purpose: the call sites read the same as before the ids became
+    /// slugs, so nothing about *those* tests appears to have changed — because nothing did.
+    /// Slug-shaped ids get their own tests in [`slug_tests`], where the shape is the point.
+    fn mint() -> SessionId {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        SessionId::from(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
 
     fn reg() -> Registry {
         Registry::new()
@@ -1076,14 +1292,14 @@ mod tests {
         for record in [
             index::opened_record(
                 "run-prev",
-                4,
+                &4.into(),
                 Role::Worker(WorkerType::General),
-                Some(3),
+                Some(3.into()),
                 "chase the deploy",
                 None,
                 at,
             ),
-            index::thread_record("run-prev", 4, "th-errand", at),
+            index::thread_record("run-prev", &4.into(), "th-errand", at),
         ] {
             text.push_str(&format!("{}\n", serde_json::to_string(&record).unwrap()));
         }
@@ -1099,8 +1315,8 @@ mod tests {
 
         // Now let this run close a session of its own, which pushes onto `recent`.
         let id = mint();
-        r.register(id, Role::Cognition, None, "the shared brain".into(), None);
-        r.unregister(id);
+        r.register(id.clone(), Role::Cognition, None, "the shared brain".into(), None);
+        r.unregister(&id);
 
         assert_eq!(
             r.lost_workers().len(),
@@ -1113,15 +1329,15 @@ mod tests {
     fn a_message_reaches_the_target_inbox() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, "thinking".into(), None);
-        r.register(b, Role::Worker(WorkerType::General), Some(a), "the errand".into(), None);
+        r.register(a.clone(), Role::Cognition, None, "thinking".into(), None);
+        r.register(b.clone(), Role::Worker(WorkerType::General), Some(a.clone()), "the errand".into(), None);
 
-        assert_eq!(r.send(a, b, "go".into()), Delivery::Delivered);
-        let mail = r.take_pending(b).expect("delivered");
+        assert_eq!(r.send(&a, &b, "go".into()), Delivery::Delivered);
+        let mail = r.take_pending(&b).expect("delivered");
         assert_eq!(mail.len(), 1);
         assert_eq!(mail[0].text, "go");
         assert_eq!(mail[0].from, Some(a), "the return address rides with the message");
-        assert!(r.take_pending(b).is_none(), "taking drains the inbox");
+        assert!(r.take_pending(&b).is_none(), "taking drains the inbox");
     }
 
     /// Several messages arriving while a session is mid-turn must cost one turn, not
@@ -1130,18 +1346,18 @@ mod tests {
     fn messages_landing_together_merge_into_one_prompt() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new(), None);
-        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new(), None);
+        r.register(a.clone(), Role::Cognition, None, String::new(), None);
+        r.register(b.clone(), Role::Worker(WorkerType::General), Some(a.clone()), String::new(), None);
 
-        r.send(a, b, "first".into());
-        r.send(a, b, "second".into());
-        let mail = r.take_pending(b).expect("both delivered");
+        r.send(&a, &b, "first".into());
+        r.send(&a, &b, "second".into());
+        let mail = r.take_pending(&b).expect("both delivered");
         assert_eq!(
             mail.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             ["first", "second"],
             "a burst is taken together, in arrival order"
         );
-        assert_eq!(r.status(b).unwrap().turns, 1, "a burst costs one turn, not several");
+        assert_eq!(r.status(&b).unwrap().turns, 1, "a burst costs one turn, not several");
     }
 
     /// What a close means to everyone *else*: the address stops accepting work, and says
@@ -1151,17 +1367,17 @@ mod tests {
     fn a_closed_inbox_turns_later_senders_away() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new(), None);
-        r.register(b, Role::Worker(WorkerType::General), Some(a), String::new(), None);
+        r.register(a.clone(), Role::Cognition, None, String::new(), None);
+        r.register(b.clone(), Role::Worker(WorkerType::General), Some(a.clone()), String::new(), None);
 
-        assert_eq!(r.send(a, b, "one more thing".into()), Delivery::Delivered);
-        assert!(r.close_inbox(b), "there was a live session to close");
+        assert_eq!(r.send(&a, &b, "one more thing".into()), Delivery::Delivered);
+        assert!(r.close_inbox(&b), "there was a live session to close");
         assert_eq!(
-            r.send(a, b, "too late".into()),
+            r.send(&a, &b, "too late".into()),
             Delivery::Unknown,
             "a closed inbox reports Unknown so the sender starts something fresh"
         );
-        assert!(r.inbox_closed(b));
+        assert!(r.inbox_closed(&b));
     }
 
     /// Closing what is not there is a normal thing for an owner to do — it tidies up after
@@ -1169,8 +1385,8 @@ mod tests {
     #[test]
     fn closing_an_unknown_session_reports_that_nothing_was_there() {
         let r = reg();
-        assert!(!r.close_inbox(mint()));
-        assert!(r.inbox_closed(mint()), "a session that never existed takes no more work");
+        assert!(!r.close_inbox(&mint()));
+        assert!(r.inbox_closed(&mint()), "a session that never existed takes no more work");
     }
 
     /// The host is not an agent: it may hand work to any live session, and what it
@@ -1179,19 +1395,19 @@ mod tests {
     fn the_host_can_post_without_being_a_sender() {
         let r = reg();
         let (owner, w) = (mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new(), None);
-        r.register(w, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
+        r.register(owner.clone(), Role::Cognition, None, String::new(), None);
+        r.register(w.clone(), Role::Worker(WorkerType::General), Some(owner), String::new(), None);
 
         // A worker may not address itself as an agent — that is not its owner.
-        assert_eq!(r.send(w, w, "self".into()), Delivery::NotPermitted);
+        assert_eq!(r.send(&w, &w, "self".into()), Delivery::NotPermitted);
         // The host posting the same follow-up is fine, and arrives anonymous.
-        assert_eq!(r.post(w, "keep going".into()), Delivery::Delivered);
-        let mail = r.take_pending(w).expect("posted");
+        assert_eq!(r.post(&w, "keep going".into()), Delivery::Delivered);
+        let mail = r.take_pending(&w).expect("posted");
         assert_eq!(mail[0].from, None);
         assert_eq!(mail[0].text, "keep going");
 
-        r.unregister(w);
-        assert_eq!(r.post(w, "too late".into()), Delivery::Unknown);
+        r.unregister(&w);
+        assert_eq!(r.post(&w, "too late".into()), Delivery::Unknown);
     }
 
     /// The bug this exists to make impossible: the reaction loop leaves by several paths, and
@@ -1200,35 +1416,35 @@ mod tests {
     #[test]
     fn a_scoped_registration_ends_with_its_scope() {
         let sender = mint();
-        global().register(sender, Role::Cognition, None, String::new(), None);
+        global().register(sender.clone(), Role::Cognition, None, String::new(), None);
 
         let id = {
             let voice =
                 register_scoped(mint(), Role::Reaction, None, String::new());
             let id = voice.id();
             assert_eq!(
-                global().send(sender, id, "hi".into()),
+                global().send(&sender, &id, "hi".into()),
                 Delivery::Delivered
             );
             id
         };
 
-        assert!(global().status(id).is_none(), "leaving the scope closed the registration");
+        assert!(global().status(&id).is_none(), "leaving the scope closed the registration");
         assert_eq!(
-            global().send(sender, id, "hi again".into()),
+            global().send(&sender, &id, "hi again".into()),
             Delivery::Unknown,
             "no stale voice is left registered"
         );
-        global().unregister(sender);
+        global().unregister(&sender);
     }
 
     #[test]
     fn a_notifier_is_reachable_after_registration() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Reaction, None, String::new(), None);
-        assert!(r.notifier(a).is_some());
-        assert!(r.notifier(9_999).is_none());
+        r.register(a.clone(), Role::Reaction, None, String::new(), None);
+        assert!(r.notifier(&a).is_some());
+        assert!(r.notifier(&9_999.into()).is_none());
     }
 
     /// The sender must be able to tell the difference between "it arrived" and "there was
@@ -1238,13 +1454,13 @@ mod tests {
     fn an_absent_target_is_reported_not_swallowed() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Cognition, None, String::new(), None);
-        assert_eq!(r.send(a, 9_999, "hello".into()), Delivery::Unknown);
+        r.register(a.clone(), Role::Cognition, None, String::new(), None);
+        assert_eq!(r.send(&a, &9_999.into(), "hello".into()), Delivery::Unknown);
 
         let gone = mint();
-        r.register(gone, Role::Worker(WorkerType::General), Some(a), String::new(), None);
-        r.unregister(gone);
-        assert_eq!(r.send(a, gone, "hello".into()), Delivery::Unknown);
+        r.register(gone.clone(), Role::Worker(WorkerType::General), Some(a.clone()), String::new(), None);
+        r.unregister(&gone);
+        assert_eq!(r.send(&a, &gone, "hello".into()), Delivery::Unknown);
     }
 
     /// Routing, not policy: a worker answers whoever asked and cannot reach past them —
@@ -1253,13 +1469,13 @@ mod tests {
     fn a_worker_may_address_only_its_owner() {
         let r = reg();
         let (owner, other, worker) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new(), None);
-        r.register(other, Role::Reaction, None, String::new(), None);
-        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
+        r.register(owner.clone(), Role::Cognition, None, String::new(), None);
+        r.register(other.clone(), Role::Reaction, None, String::new(), None);
+        r.register(worker.clone(), Role::Worker(WorkerType::General), Some(owner.clone()), String::new(), None);
 
-        assert_eq!(r.send(worker, owner, "done".into()), Delivery::Delivered);
+        assert_eq!(r.send(&worker, &owner, "done".into()), Delivery::Delivered);
         assert_eq!(
-            r.send(worker, other, "psst".into()),
+            r.send(&worker, &other, "psst".into()),
             Delivery::NotPermitted
         );
     }
@@ -1270,17 +1486,17 @@ mod tests {
     fn the_voice_is_offered_the_shared_brain() {
         let r = reg();
         let (rx, cog) = (mint(), mint());
-        r.register(rx, Role::Reaction, None, String::new(), None);
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(rx.clone(), Role::Reaction, None, String::new(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
 
-        let who = r.reachable(rx);
+        let who = r.reachable(&rx);
         assert_eq!(who.len(), 1, "{who:?}");
         assert_eq!(who[0].1, cog);
         assert!(who[0].0.contains("shared brain"), "{who:?}");
 
         // And the id it was handed is one it can actually send to.
-        assert_eq!(r.send(rx, who[0].1, "a real errand".into()), Delivery::Delivered);
-        assert_eq!(r.take_pending(cog).expect("delivered")[0].text, "a real errand");
+        assert_eq!(r.send(&rx, &who[0].1, "a real errand".into()), Delivery::Delivered);
+        assert_eq!(r.take_pending(&cog).expect("delivered")[0].text, "a real errand");
     }
 
     /// A cold rung is simply absent from the list, which is the point: the asker learns
@@ -1290,8 +1506,8 @@ mod tests {
     fn a_rung_that_is_not_up_is_not_offered() {
         let r = reg();
         let rx = mint();
-        r.register(rx, Role::Reaction, None, String::new(), None);
-        assert!(r.reachable(rx).is_empty());
+        r.register(rx.clone(), Role::Reaction, None, String::new(), None);
+        assert!(r.reachable(&rx).is_empty());
     }
 
     /// Cognition is offered the live voice, because that is the one way anything it
@@ -1300,13 +1516,13 @@ mod tests {
     fn cognition_is_offered_the_voice_and_its_own_workers() {
         let r = reg();
         let (cog, rx, other, w) = (mint(), mint(), mint(), mint());
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
-        r.register(rx, Role::Reaction, None, String::new(), None);
-        r.register(other, Role::Worker(WorkerType::General), Some(rx), String::new(), None);
-        r.register(w, Role::Worker(WorkerType::General), Some(cog), "file the receipts".into(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
+        r.register(rx.clone(), Role::Reaction, None, String::new(), None);
+        r.register(other.clone(), Role::Worker(WorkerType::General), Some(rx.clone()), String::new(), None);
+        r.register(w.clone(), Role::Worker(WorkerType::General), Some(cog.clone()), "file the receipts".into(), None);
 
-        let who = r.reachable(cog);
-        let ids: Vec<SessionId> = who.iter().map(|(_, id)| *id).collect();
+        let who = r.reachable(&cog);
+        let ids: Vec<SessionId> = who.iter().map(|(_, id)| id.clone()).collect();
         assert!(ids.contains(&rx), "the voice: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
         assert!(!ids.contains(&other), "someone else's worker is not offered: {who:?}");
@@ -1323,29 +1539,29 @@ mod tests {
     fn a_worker_on_no_task_says_so_and_one_on_a_task_names_it() {
         let r = reg();
         let (cog, linked, unlinked) = (mint(), mint(), mint());
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
         r.register(
-            linked,
+            linked.clone(),
             Role::Worker(WorkerType::General),
-            Some(cog),
+            Some(cog.clone()),
             "chase the deploy".into(),
             Some("ktv-doubao-ref-only".into()),
         );
         r.register(
-            unlinked,
+            unlinked.clone(),
             Role::Worker(WorkerType::General),
-            Some(cog),
+            Some(cog.clone()),
             "chase the deploy".into(),
             None,
         );
 
-        let who = r.reachable(cog);
+        let who = r.reachable(&cog);
         let line = |id: SessionId| {
             who.iter().find(|(_, i)| *i == id).map(|(l, _)| l.clone()).expect("offered")
         };
-        assert!(line(linked).contains("ktv-doubao-ref-only"), "{:?}", line(linked));
-        assert!(!line(linked).contains("not linked"), "{:?}", line(linked));
-        assert!(line(unlinked).contains("not linked to any task"), "{:?}", line(unlinked));
+        assert!(line(linked.clone()).contains("ktv-doubao-ref-only"), "{:?}", line(linked));
+        assert!(!line(linked.clone()).contains("not linked"), "{:?}", line(linked));
+        assert!(line(unlinked.clone()).contains("not linked to any task"), "{:?}", line(unlinked));
     }
 
     /// The rungs are standing and belong to no task. Marking them unlinked would put the
@@ -1355,15 +1571,15 @@ mod tests {
     fn a_rung_is_never_marked_as_linked_to_nothing() {
         let r = reg();
         let (cog, rx) = (mint(), mint());
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
         r.register(rx, Role::Reaction, None, "the voice".into(), None);
 
-        let who = r.reachable(cog);
+        let who = r.reachable(&cog);
         assert!(
             who.iter().all(|(label, _)| !label.contains("not linked")),
             "the voice is not an unlabelled worker: {who:?}"
         );
-        assert!(!r.has_unlinked_worker(cog), "a rung is not an unlinked worker");
+        assert!(!r.has_unlinked_worker(&cog), "a rung is not an unlinked worker");
     }
 
     /// **An organizer has no task to be missing, so it is not marked as missing one.**
@@ -1377,23 +1593,23 @@ mod tests {
     fn an_organizer_is_not_marked_as_linked_to_nothing() {
         let r = reg();
         let (refl, reader) = (mint(), mint());
-        r.register(refl, Role::Reflection, None, "housekeeping".into(), None);
+        r.register(refl.clone(), Role::Reflection, None, "housekeeping".into(), None);
         r.register(
-            reader,
+            reader.clone(),
             Role::Worker(WorkerType::PersonReader),
-            Some(refl),
+            Some(refl.clone()),
             "read 赵力".into(),
             None,
         );
 
-        let who = r.reachable(refl);
+        let who = r.reachable(&refl);
         let line = who
             .iter()
             .find(|(_, i)| *i == reader)
             .map(|(l, _)| l.clone())
             .expect("offered");
         assert!(!line.contains("not linked"), "{line:?}");
-        assert!(!r.has_unlinked_worker(refl), "an organizer is not an unlinked worker");
+        assert!(!r.has_unlinked_worker(&refl), "an organizer is not an unlinked worker");
     }
 
     /// The cheap half of the same question, for the check that runs before staffing a task.
@@ -1401,12 +1617,12 @@ mod tests {
     fn an_unlinked_worker_is_visible_to_its_owner_alone() {
         let r = reg();
         let (cog, refl, w) = (mint(), mint(), mint());
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
-        r.register(refl, Role::Reflection, None, "housekeeping".into(), None);
-        r.register(w, Role::Worker(WorkerType::General), Some(cog), "an errand".into(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
+        r.register(refl.clone(), Role::Reflection, None, "housekeeping".into(), None);
+        r.register(w, Role::Worker(WorkerType::General), Some(cog.clone()), "an errand".into(), None);
 
-        assert!(r.has_unlinked_worker(cog));
-        assert!(!r.has_unlinked_worker(refl), "not someone else's to answer for");
+        assert!(r.has_unlinked_worker(&cog));
+        assert!(!r.has_unlinked_worker(&refl), "not someone else's to answer for");
     }
 
     /// The lookup the hand-down rides on. Reaction has no id for Cognition — nothing
@@ -1419,8 +1635,8 @@ mod tests {
         assert!(r.session_of_role(Role::Cognition).is_none(), "nothing is up yet");
 
         let (rx, cog) = (mint(), mint());
-        r.register(rx, Role::Reaction, None, String::new(), None);
-        r.register(cog, Role::Cognition, None, "thinking".into(), None);
+        r.register(rx.clone(), Role::Reaction, None, String::new(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
 
         let found = r.session_of_role(Role::Cognition).expect("cognition is up");
         assert_eq!(found.id, cog);
@@ -1435,23 +1651,30 @@ mod tests {
     fn a_rung_that_unregistered_is_no_longer_found_by_role() {
         let r = reg();
         let cog = mint();
-        r.register(cog, Role::Cognition, None, String::new(), None);
-        r.unregister(cog);
+        r.register(cog.clone(), Role::Cognition, None, String::new(), None);
+        r.unregister(&cog);
         assert!(r.session_of_role(Role::Cognition).is_none());
     }
 
     /// Two of one rung should not happen; if it does, the answer must not depend on hash
     /// order. A caller that asks twice in one turn and gets two different sessions would
     /// post the request to one and then read the other's status.
+    ///
+    /// **The winner is the one that has been registered longest, not the one whose id
+    /// sorts first.** While ids were ordinals those were the same sentence, and they are
+    /// not any more — a slug sorts alphabetically, which is nothing to do with which
+    /// session the rest of the process has been talking to. Registration order is: the
+    /// incumbent keeps the role, and a stray second registration cannot take it over by
+    /// being named earlier in the alphabet.
     #[test]
     fn two_of_one_rung_resolve_to_the_same_session_every_time() {
         let r = reg();
-        let (first, second) = (mint(), mint());
-        r.register(second, Role::Cognition, None, "second".into(), None);
-        r.register(first, Role::Cognition, None, "first".into(), None);
+        let (late, incumbent) = (mint(), mint());
+        r.register(incumbent.clone(), Role::Cognition, None, "incumbent".into(), None);
+        r.register(late.clone(), Role::Cognition, None, "late".into(), None);
 
         let id = r.session_of_role(Role::Cognition).map(|s| s.id);
-        assert_eq!(id, Some(first.min(second)));
+        assert_eq!(id.as_ref(), Some(&incumbent), "the one that was already there");
         for _ in 0..8 {
             assert_eq!(r.session_of_role(Role::Cognition).map(|s| s.id), id);
         }
@@ -1463,11 +1686,11 @@ mod tests {
     fn a_worker_is_offered_only_its_owner() {
         let r = reg();
         let (owner, worker, other) = (mint(), mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new(), None);
+        r.register(owner.clone(), Role::Cognition, None, String::new(), None);
         r.register(other, Role::Reaction, None, String::new(), None);
-        r.register(worker, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
+        r.register(worker.clone(), Role::Worker(WorkerType::General), Some(owner.clone()), String::new(), None);
 
-        let who = r.reachable(worker);
+        let who = r.reachable(&worker);
         assert_eq!(who.len(), 1, "{who:?}");
         assert_eq!(who[0].1, owner);
     }
@@ -1502,8 +1725,8 @@ mod tests {
     fn noting_a_thread_puts_it_on_the_live_session() {
         let r = Registry::new();
         let id = mint();
-        r.register(id, Role::Reaction, None, "the voice".into(), None);
-        r.note_thread(id, "th-voice");
+        r.register(id.clone(), Role::Reaction, None, "the voice".into(), None);
+        r.note_thread(&id, "th-voice");
 
         assert_eq!(
             r.sessions.lock().unwrap().get(&id).and_then(|e| e.thread.clone()).as_deref(),
@@ -1521,7 +1744,7 @@ mod tests {
     #[test]
     fn mail_renders_with_a_return_address_and_host_posts_without_one() {
         let batch = vec![
-            Message { from: Some(7), text: "  did you see this?  ".into() },
+            Message { from: Some(7.into()), text: "  did you see this?  ".into() },
             Message { from: None, text: "  a follow-up  ".into() },
         ];
         assert_eq!(render(&batch), "(from session 7) did you see this?\n\na follow-up");
@@ -1532,39 +1755,39 @@ mod tests {
     fn an_owner_with_live_children_is_not_idle() {
         let r = reg();
         let (owner, child) = (mint(), mint());
-        r.register(owner, Role::Cognition, None, String::new(), None);
-        assert!(!r.has_live_children(owner));
+        r.register(owner.clone(), Role::Cognition, None, String::new(), None);
+        assert!(!r.has_live_children(&owner));
 
-        r.register(child, Role::Worker(WorkerType::General), Some(owner), String::new(), None);
-        assert!(r.has_live_children(owner));
-        assert_eq!(r.children(owner), vec![child]);
+        r.register(child.clone(), Role::Worker(WorkerType::General), Some(owner.clone()), String::new(), None);
+        assert!(r.has_live_children(&owner));
+        assert_eq!(r.children(&owner), vec![child.clone()]);
 
-        r.unregister(child);
-        assert!(!r.has_live_children(owner), "a closed child stops holding its owner open");
+        r.unregister(&child);
+        assert!(!r.has_live_children(&owner), "a closed child stops holding its owner open");
     }
 
     #[test]
     fn status_carries_meta_and_never_content() {
         let r = reg();
         let (a, b) = (mint(), mint());
-        r.register(a, Role::Cognition, None, String::new(), None);
-        r.register(b, Role::Worker(WorkerType::General), Some(a), "file the receipts".into(), None);
+        r.register(a.clone(), Role::Cognition, None, String::new(), None);
+        r.register(b.clone(), Role::Worker(WorkerType::General), Some(a.clone()), "file the receipts".into(), None);
 
-        let s = r.status(b).expect("registered");
+        let s = r.status(&b).expect("registered");
         assert_eq!(s.role, Role::Worker(WorkerType::General));
-        assert_eq!(s.owner, Some(a));
+        assert_eq!(s.owner, Some(a.clone()));
         assert_eq!(s.title, "file the receipts");
         assert!(!s.busy && !s.queued && s.turns == 0);
 
-        r.send(a, b, "go".into());
-        assert!(r.status(b).unwrap().queued);
+        r.send(&a, &b, "go".into());
+        assert!(r.status(&b).unwrap().queued);
 
-        r.take_pending(b);
-        let s = r.status(b).unwrap();
+        r.take_pending(&b);
+        let s = r.status(&b).unwrap();
         assert!(s.busy && !s.queued && s.turns == 1);
 
-        r.finish_turn(b);
-        assert!(!r.status(b).unwrap().busy);
+        r.finish_turn(&b);
+        assert!(!r.status(&b).unwrap().busy);
     }
 
     /// Every transition moves `state_since`, and the ones that are *not* transitions leave
@@ -1575,39 +1798,39 @@ mod tests {
     fn every_state_change_moves_its_clock_and_nothing_else_does() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Worker(WorkerType::General), None, String::new(), None);
-        let registered = r.status(id).unwrap();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        let registered = r.status(&id).unwrap();
         assert_eq!(registered.state_since, registered.started, "idle since it existed");
 
         // idle → waiting
-        r.post(id, "go".into());
-        let waiting = r.status(id).unwrap();
+        r.post(&id, "go".into());
+        let waiting = r.status(&id).unwrap();
         assert!(waiting.queued && !waiting.busy);
         assert!(waiting.state_since > registered.state_since);
 
         // A second letter onto an already-queued inbox is not a state change.
-        r.post(id, "and also".into());
-        assert_eq!(r.status(id).unwrap().state_since, waiting.state_since, "still waiting");
+        r.post(&id, "and also".into());
+        assert_eq!(r.status(&id).unwrap().state_since, waiting.state_since, "still waiting");
 
         // waiting → running
-        r.take_pending(id);
-        let running = r.status(id).unwrap();
+        r.take_pending(&id);
+        let running = r.status(&id).unwrap();
         assert!(running.busy);
         assert!(running.state_since > waiting.state_since);
 
         // Mail landing mid-turn leaves it running, so the clock holds.
-        r.post(id, "one more".into());
-        assert_eq!(r.status(id).unwrap().state_since, running.state_since, "still running");
+        r.post(&id, "one more".into());
+        assert_eq!(r.status(&id).unwrap().state_since, running.state_since, "still running");
 
         // running → idle
-        r.finish_turn(id);
-        let done = r.status(id).unwrap();
+        r.finish_turn(&id);
+        let done = r.status(&id).unwrap();
         assert!(!done.busy);
         assert!(done.state_since > running.state_since);
 
         // A second finish is not a transition.
-        r.finish_turn(id);
-        assert_eq!(r.status(id).unwrap().state_since, done.state_since);
+        r.finish_turn(&id);
+        assert_eq!(r.status(&id).unwrap().state_since, done.state_since);
     }
 
     /// `doing` without an age says a session is alive and nothing more — the line reads the
@@ -1616,21 +1839,21 @@ mod tests {
     fn doing_carries_when_it_was_last_seen() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Worker(WorkerType::General), None, String::new(), None);
-        assert!(r.status(id).unwrap().doing_at.is_none(), "nothing done, no clock");
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        assert!(r.status(&id).unwrap().doing_at.is_none(), "nothing done, no clock");
 
-        r.record_activity(id, "$ cargo test");
-        let first = r.status(id).unwrap().doing_at.expect("stamped");
+        r.record_activity(&id, "$ cargo test");
+        let first = r.status(&id).unwrap().doing_at.expect("stamped");
 
-        r.record_activity(id, "hi-agent/send_message");
-        let second = r.status(id).unwrap();
+        r.record_activity(&id, "hi-agent/send_message");
+        let second = r.status(&id).unwrap();
         assert_eq!(second.doing.as_deref(), Some("hi-agent/send_message"));
         assert!(second.doing_at.unwrap() >= first, "replaced, so re-stamped");
 
         // A blank line is not activity and must not refresh the clock — a session that has
         // gone quiet would otherwise look busy forever.
-        r.record_activity(id, "   ");
-        assert_eq!(r.status(id).unwrap().doing_at, second.doing_at);
+        r.record_activity(&id, "   ");
+        assert_eq!(r.status(&id).unwrap().doing_at, second.doing_at);
     }
 
     /// **A title is one line whatever the caller hands over.** Every reader of this field
@@ -1643,21 +1866,21 @@ mod tests {
 
         let wrapped = mint();
         let messy = "recover the\n  stalled\tdeploy\n".to_string();
-        r.register(wrapped, Role::Worker(WorkerType::General), None, messy, None);
-        assert_eq!(r.status(wrapped).unwrap().title, "recover the stalled deploy");
+        r.register(wrapped.clone(), Role::Worker(WorkerType::General), None, messy, None);
+        assert_eq!(r.status(&wrapped).unwrap().title, "recover the stalled deploy");
 
         let long = mint();
         let brief = "Deploy only hi-agent.xyz end to end. The user explicitly authorized \
                      this deployment. First read the deployment ledger."
             .to_string();
-        r.register(long, Role::Worker(WorkerType::General), None, brief, None);
-        let title = r.status(long).unwrap().title;
+        r.register(long.clone(), Role::Worker(WorkerType::General), None, brief, None);
+        let title = r.status(&long).unwrap().title;
         assert!(title.ends_with('…'), "a cut title says it was cut: {title:?}");
         assert_eq!(title.chars().count(), TITLE_CHARS + 1, "the cap, plus the ellipsis");
 
         // Whatever replaces it is held to the same line.
-        r.set_title(long, format!("{}\nand more", "x".repeat(TITLE_CHARS + 10)));
-        let replaced = r.status(long).unwrap().title;
+        r.set_title(&long, format!("{}\nand more", "x".repeat(TITLE_CHARS + 10)));
+        let replaced = r.status(&long).unwrap().title;
         assert!(replaced.ends_with('…') && !replaced.contains('\n'), "{replaced:?}");
     }
 
@@ -1677,12 +1900,12 @@ mod tests {
     fn a_prewarmed_session_can_replace_its_placeholder_title() {
         let r = reg();
         let id = mint();
-        r.register(id, Role::Cognition, None, "waiting for the first question".into(), None);
+        r.register(id.clone(), Role::Cognition, None, "waiting for the first question".into(), None);
 
-        r.set_title(id, "review the restart behavior".into());
+        r.set_title(&id, "review the restart behavior".into());
 
         assert_eq!(
-            r.status(id).expect("registered").title,
+            r.status(&id).expect("registered").title,
             "review the restart behavior"
         );
     }
@@ -1691,13 +1914,13 @@ mod tests {
     fn output_is_a_bounded_tail_not_an_archive() {
         let r = reg();
         let a = mint();
-        r.register(a, Role::Worker(WorkerType::General), None, String::new(), None);
-        r.record_output(a, "hello ");
-        r.record_output(a, "world");
-        assert_eq!(r.messages(a).as_deref(), Some("hello world"));
+        r.register(a.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        r.record_output(&a, "hello ");
+        r.record_output(&a, "world");
+        assert_eq!(r.messages(&a).as_deref(), Some("hello world"));
 
-        r.record_output(a, &"x".repeat(OUTPUT_TAIL_CHARS + 500));
-        let kept = r.messages(a).unwrap();
+        r.record_output(&a, &"x".repeat(OUTPUT_TAIL_CHARS + 500));
+        let kept = r.messages(&a).unwrap();
         assert_eq!(kept.chars().count(), OUTPUT_TAIL_CHARS, "the tail is capped");
         assert!(kept.ends_with('x'), "it is the *recent* tail that survives");
     }
@@ -1709,5 +1932,162 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), ids.len());
+    }
+}
+
+/// What a session id is *called*, which is the whole of what changed here.
+///
+/// These use the real [`super::mint`] rather than the tests' ordinal shorthand, because the
+/// shape it produces is the property under test.
+#[cfg(test)]
+mod slug_tests {
+    use super::*;
+    use crate::identity::WorkerType;
+
+    /// The pure naming half — see [`super::slug_for`]. Naming tests use this so they read
+    /// the same answer every run; the uniqueness counter gets its own test below.
+    fn named(hint: &str) -> String {
+        slug_for(Role::Worker(WorkerType::ViewBuilder), Some(hint))
+    }
+
+    /// **A rung's id is the name the rest of the design already uses for it.** Not a
+    /// synonym, not a role word invented for addressing: `docs/arch/agents.md` calls these
+    /// three reaction, cognition and reflection, so an agent told to reach cognition types
+    /// `cognition`. Pinned because a rename here silently breaks every prompt at once —
+    /// the address an agent is given comes from `Role::as_str`, not from prose.
+    #[test]
+    fn a_rungs_id_is_its_role_name() {
+        for role in [Role::Reaction, Role::Cognition, Role::Reflection] {
+            assert_eq!(slug_for(role, None), role.as_str());
+        }
+    }
+
+    /// A hint is ignored for a rung. There is one Cognition, so there is one thing it can
+    /// be called; letting a caller's stray argument reach the slug would make the one
+    /// address in the design that must be predictable depend on the call site.
+    ///
+    #[test]
+    fn a_rung_ignores_a_hint_because_it_is_a_singleton() {
+        assert_eq!(slug_for(Role::Cognition, Some("some-stray-errand")), "cognition");
+    }
+
+    /// **A worker's id says which errand it is.** Type first so the specialism reads at a
+    /// glance in a roster, then the task — this is the half an ordinal could never carry.
+    #[test]
+    fn a_workers_id_is_its_type_and_its_task() {
+        assert_eq!(named("kyoto-trip"), "view-builder-kyoto-trip");
+    }
+
+    /// The hint is prose an agent wrote, not an identifier: it arrives with spaces,
+    /// punctuation, capitals and trailing junk. Collapsed to single dashes and trimmed,
+    /// because this string is both an address someone retypes and a filename.
+    #[test]
+    fn a_title_becomes_a_readable_slug() {
+        assert_eq!(named("Chase the deploy!"), "view-builder-chase-the-deploy");
+        assert_eq!(named("  spaced  out  "), "view-builder-spaced-out");
+        assert_eq!(named("...leading and trailing..."), "view-builder-leading-and-trailing");
+    }
+
+    /// **Non-ASCII survives.** Most titles in this deployment are Chinese, and stripping to
+    /// ASCII would turn every one of them into the same empty hint — every worker sharing
+    /// one base name, told apart only by a counter. That is the ordinal again, wearing a
+    /// prefix.
+    #[test]
+    fn a_chinese_title_keeps_its_characters() {
+        assert_eq!(named("追一下部署"), "view-builder-追一下部署");
+    }
+
+    /// A slug is capped, because it is a filename and an address, not a description. The
+    /// full title is on the roster line beside it and is never truncated.
+    #[test]
+    fn a_long_title_is_cut_rather_than_refused() {
+        let id = named(&"a-very-long-errand-title ".repeat(20));
+        assert!(id.len() < 60, "{id}");
+        assert!(id.starts_with("view-builder-a-very-long-errand-title"), "{id}");
+    }
+
+    /// **Uniqueness is per run, not per live session.** Two workers of one type on one task
+    /// is ordinary; sharing an id is not, because a session's frame log is named for it and
+    /// two sessions writing one file cannot be told apart afterwards. The disambiguator is
+    /// a suffix, so the errand is still legible.
+    #[test]
+    fn a_repeated_errand_gets_a_distinct_id() {
+        let hint = "twice-over-the-same-thing";
+        let mint_one = || mint(Role::Worker(WorkerType::ViewBuilder), Some(hint));
+        let (a, b, c) = (mint_one(), mint_one(), mint_one());
+        assert_eq!(a.as_str(), "view-builder-twice-over-the-same-thing", "the first takes the plain name");
+        assert_eq!(b.as_str(), "view-builder-twice-over-the-same-thing-2");
+        assert_eq!(c.as_str(), "view-builder-twice-over-the-same-thing-3");
+    }
+
+    /// A worker whose hint yields nothing usable still gets an address — the type alone,
+    /// then counted. It reads worse, and that is honest: `create_worker` requires a title,
+    /// so an unnameable errand is a caller that sent punctuation.
+    #[test]
+    fn an_unusable_hint_falls_back_to_the_type() {
+        assert_eq!(slug_for(Role::Worker(WorkerType::FileFiler), Some("!!!")), "file-filer");
+        assert_eq!(slug_for(Role::Worker(WorkerType::FileFiler), None), "file-filer");
+    }
+
+    /// **No minted id can collide with a literal route segment.** `/api/workers/ended` is
+    /// registered beside `/api/workers/{id}`, and a session slugged `ended` would be
+    /// unreadable through the API. Nothing guards this at mint time and nothing needs to:
+    /// a worker always carries a `<type>-` prefix and a rung is always a role name, so the
+    /// property falls out of the shape. This test is what makes it stay true if a new
+    /// literal segment is ever added under `/api/workers/`.
+    #[test]
+    fn no_id_can_shadow_a_literal_route_segment() {
+        const LITERAL_SEGMENTS: &[&str] = &["ended"];
+        let mut names: Vec<String> =
+            [Role::Reaction, Role::Cognition, Role::Reflection].map(|r| slug_for(r, None)).into();
+        for kind in WorkerType::ALL {
+            // Including the adversarial case: an errand actually titled "ended".
+            names.push(slug_for(Role::Worker(*kind), Some("ended")));
+            names.push(slug_for(Role::Worker(*kind), None));
+        }
+        for name in names {
+            assert!(!LITERAL_SEGMENTS.contains(&name.as_str()), "`{name}` shadows a route");
+        }
+    }
+
+    /// **The parse is the path guard, and that is why it can fail.** A session id is a path
+    /// component — `raw/sessions/<run>/<id>.jsonl` — and `GET /api/workers/{id}/frames`
+    /// hands the value straight from the URL to that builder. While ids were integers
+    /// `parse::<u64>()` was the traversal guard by luck; widening to a string without
+    /// keeping one would have reopened it.
+    #[test]
+    fn an_address_that_is_a_path_is_refused() {
+        for bad in ["../../etc/passwd", "..", "a/b", "a.b", "", "   ", "has space", "semi;colon"] {
+            assert!(bad.parse::<SessionId>().is_err(), "`{bad}` must not parse");
+        }
+    }
+
+    /// Forgiving about case and whitespace, because this is typed by a model reading a
+    /// roster: `Cognition ` is unambiguous and refusing it teaches nothing.
+    #[test]
+    fn an_address_is_read_case_and_space_insensitively() {
+        assert_eq!("  Cognition\n".parse::<SessionId>().unwrap().as_str(), "cognition");
+    }
+
+    /// A well-formed id that names nothing is **not** a parse error — it is a lookup miss,
+    /// which is a different fact and gets a different answer ("nothing live at `x`"). Losing
+    /// that distinction would turn a cold rung into a spelling complaint.
+    #[test]
+    fn a_wellformed_id_parses_even_when_nothing_answers_to_it() {
+        assert!("nobody-is-called-this".parse::<SessionId>().is_ok());
+    }
+
+    /// **Old rows carry a number**, from every run before ids became slugs, and
+    /// `raw/sessions/index.jsonl` is append-only. A number reads back as its own decimal
+    /// spelling: it addresses nothing live, which is correct for a session that ended, and
+    /// it still names that session in the record it came from — which is all a closed row
+    /// is for.
+    #[test]
+    fn a_pre_slug_numeric_row_still_reads() {
+        let from_number: SessionId = serde_json::from_str("7").unwrap();
+        assert_eq!(from_number.as_str(), "7");
+        let from_slug: SessionId = serde_json::from_str("\"cognition\"").unwrap();
+        assert_eq!(from_slug.as_str(), "cognition");
+        assert_eq!(serde_json::to_string(&from_slug).unwrap(), "\"cognition\"");
     }
 }

@@ -363,7 +363,7 @@ impl CodexProcess {
         // hi-agent's minted session id, when the caller has one. The tap files this
         // connection's frames under it; `None` means they reach the inspector but are
         // not kept, because there is nothing durable to file them as.
-        session_id: Option<u64>,
+        session_id: Option<crate::foundation::registry::SessionId>,
         registry: &ProcessRegistry,
     ) -> anyhow::Result<(Self, mpsc::UnboundedReceiver<Value>)> {
         let mut command = Command::new(&program);
@@ -403,6 +403,7 @@ impl CodexProcess {
             let tap = tap.clone();
             let role = role.clone();
             let mut stdin = stdin;
+            let session_id = session_id.clone();
             tokio::spawn(async move {
                 while let Some(msg) = out_rx.recv().await {
                     let line = match serde_json::to_string(&msg) {
@@ -412,7 +413,7 @@ impl CodexProcess {
                             continue;
                         }
                     };
-                    tap.record(conn, session_id, &role, Dir::Send, &line);
+                    tap.record(conn, session_id.as_ref(), &role, Dir::Send, &line);
                     tracing::trace!(target: "codex::send", "{line}");
                     if stdin.write_all(line.as_bytes()).await.is_err()
                         || stdin.write_all(b"\n").await.is_err()
@@ -432,6 +433,7 @@ impl CodexProcess {
             let role = role.clone();
             let pending = Arc::clone(&pending);
             let out_tx = out_tx.clone();
+            let session_id = session_id.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 loop {
@@ -449,7 +451,7 @@ impl CodexProcess {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    tap.record(conn, session_id, &role, Dir::Recv, &line);
+                    tap.record(conn, session_id.as_ref(), &role, Dir::Recv, &line);
                     tracing::trace!(target: "codex::recv", "{line}");
 
                     let Ok(msg) = serde_json::from_str::<Value>(&line) else {
@@ -473,6 +475,7 @@ impl CodexProcess {
         let stderr_task = {
             let tap = tap.clone();
             let role = role.clone();
+            let session_id = session_id.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 let mut joiner = StderrJoiner::default();
@@ -484,7 +487,7 @@ impl CodexProcess {
                             }
                             // The tap keeps the line exactly as it crossed the pipe; only
                             // the log gets the reassembled, de-styled record.
-                            tap.record(conn, session_id, &role, Dir::Stderr, &line);
+                            tap.record(conn, session_id.as_ref(), &role, Dir::Stderr, &line);
                             if let Some((level, text)) = joiner.push(&line) {
                                 log_stderr_record(level, &text);
                             }

@@ -114,7 +114,7 @@ impl Block {
 /// nothing happened.
 pub async fn window(
     memory: &Memory,
-    id: crate::foundation::registry::SessionId,
+    id: &crate::foundation::registry::SessionId,
 ) -> Vec<Block> {
     let data_dir = memory.data_dir();
     // First, because it is the standing one: everything after it is the situation, and
@@ -166,7 +166,7 @@ pub async fn window(
 pub async fn agent_window(
     memory: &Memory,
     agent: &str,
-    id: crate::foundation::registry::SessionId,
+    id: &crate::foundation::registry::SessionId,
 ) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::agent_prompt_path(data_dir, agent)).await;
@@ -538,7 +538,7 @@ mod window_tests {
     /// caller emits each block on its own cadence ([`Cadence`]); a test asking "is it in
     /// the window at all" wants them all.
     async fn whole(memory: &Memory) -> String {
-        let blocks = window(memory, 0).await;
+        let blocks = window(memory, &0.into()).await;
         join(&blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>())
     }
 
@@ -699,7 +699,7 @@ mod window_tests {
             .await
             .unwrap();
 
-        let text = agent_window(&memory, "cognition", 0).await;
+        let text = agent_window(&memory, "cognition", &0.into()).await;
         assert!(text.contains("Ship the flash cards"), "{text}");
         assert!(text.contains("needs sudo"), "{text}");
     }
@@ -714,7 +714,7 @@ mod window_tests {
         heard(&memory, "把周报发我").await;
         write_conversation_prompt(dir.path(), "He is mid-migration this week.").await;
 
-        let text = agent_window(&memory, "cognition", 0).await;
+        let text = agent_window(&memory, "cognition", &0.into()).await;
         assert!(!text.contains("把周报发我"), "no log tail: {text}");
         assert!(!text.contains("mid-migration"), "no conversation brief: {text}");
     }
@@ -726,7 +726,7 @@ mod window_tests {
     async fn an_empty_standing_window_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        assert!(agent_window(&memory, "cognition", 0).await.trim().is_empty());
+        assert!(agent_window(&memory, "cognition", &0.into()).await.trim().is_empty());
     }
 
     async fn write_facet(dir: &Path, dimension: &str, subject: &str, body: &str) {

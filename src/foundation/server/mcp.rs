@@ -34,7 +34,8 @@ pub async fn post_mcp(
             .map(str::to_owned)
     };
     let role = header(HEADER_ROLE);
-    let session_id = header(HEADER_SESSION_ID).and_then(|v| v.parse::<u64>().ok());
+    let session_id = header(HEADER_SESSION_ID)
+        .and_then(|v| v.parse::<crate::foundation::registry::SessionId>().ok());
 
     let msg: Value = match serde_json::from_slice(body.as_ref()) {
         Ok(v) => v,

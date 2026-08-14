@@ -29,6 +29,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
+use crate::foundation::registry::SessionId;
 use crate::identity::Role;
 
 /// How many recent events the in-memory ring retains for SSE replay-on-connect.
@@ -149,11 +150,11 @@ pub enum EventKind {
     /// `title` is the errand's one line, not the brief it was sent — see
     /// [`crate::foundation::registry::Status::title`]. Rows written before the two were
     /// separated carry the same field as `task`, holding whatever the brief opened with.
-    WorkerSpawned { id: u64, title: String },
+    WorkerSpawned { id: SessionId, title: String },
     /// A warm (finished-but-idle) worker was handed a follow-up task and is running
     /// again on the same session.
-    WorkerResumed { id: u64, task: String },
-    WorkerFinished { id: u64, state: WorkerState, summary_chars: usize },
+    WorkerResumed { id: SessionId, task: String },
+    WorkerFinished { id: SessionId, state: WorkerState, summary_chars: usize },
     /// One agent-to-agent edge: the one verb crossing, and what became of it.
     ///
     /// Recorded for **both** directions of host mediation. `from: Some(id)` is one agent
@@ -170,8 +171,8 @@ pub enum EventKind {
     /// `TurnFinished { reply }`. An edge you can see the existence but not the content
     /// of does not answer the question you opened the inspector to ask.
     MessageSent {
-        from: Option<u64>,
-        to: u64,
+        from: Option<SessionId>,
+        to: SessionId,
         delivery: crate::foundation::registry::Delivery,
         message: String,
     },
@@ -485,9 +486,9 @@ mod tests {
     #[tokio::test]
     async fn worker_lifecycle_is_history_not_voice_state() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::WorkerSpawned { id: 1, title: "research X".into() }).await;
+        obs.record(EventKind::WorkerSpawned { id: 1.into(), title: "research X".into() }).await;
         obs.record(EventKind::WorkerFinished {
-            id: 1,
+            id: 1.into(),
             state: WorkerState::Done,
             summary_chars: 120,
         })

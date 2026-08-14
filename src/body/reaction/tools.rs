@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, mpsc};
 // there. `tokio::time::Instant` is also what a paused test clock advances.
 use tokio::time::Instant;
 
+use crate::foundation::registry::SessionId;
 use crate::types::ViewTraits;
 
 use super::sequencer::Beat;
@@ -63,11 +64,11 @@ pub enum LoopControl {
     /// the brief that becomes the session's first prompt. Deriving either from the other is
     /// the thing this pair exists to stop.
     CreateWorker {
-        id: u64,
+        id: SessionId,
         title: String,
         task: String,
         kind: crate::identity::WorkerType,
-        owner: Option<u64>,
+        owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
     },
@@ -83,7 +84,7 @@ pub enum LoopControl {
     /// means there was nothing to cut — already finished, or already gone — and no report
     /// will arrive. A caller that cannot tell them apart can only guess, and the guess it
     /// would make ("stopped") is the one that reproduces the bug this tool was added for.
-    CancelWorker { id: u64, reply: tokio::sync::oneshot::Sender<bool> },
+    CancelWorker { id: SessionId, reply: tokio::sync::oneshot::Sender<bool> },
     /// End a working session for good (the `close_worker` tool).
     ///
     /// The third verb of dispatch, and the one that had no caller: `CreateWorker` hands
@@ -95,7 +96,7 @@ pub enum LoopControl {
     /// Carries a **reply** for the same reason `CancelWorker` does: "I closed it" and "it
     /// was already gone" are different facts about what is still running, and a caller
     /// that cannot tell them apart cannot keep an honest roster.
-    CloseWorker { id: u64, reply: tokio::sync::oneshot::Sender<bool> },
+    CloseWorker { id: SessionId, reply: tokio::sync::oneshot::Sender<bool> },
 }
 
 /// The handle the MCP handler dispatches to. Cheap to clone. Carries two
@@ -530,16 +531,16 @@ mod tests {
         registry.register(ToolOwner::Reflection, reflection).await;
 
         for (owner, id) in [
-            (ToolOwner::Reaction, 1),
-            (ToolOwner::Cognition, 2),
-            (ToolOwner::Reflection, 3),
+            (ToolOwner::Reaction, "general-one"),
+            (ToolOwner::Cognition, "general-two"),
+            (ToolOwner::Reflection, "general-three"),
         ] {
             registry
                 .get(owner)
                 .await
                 .unwrap()
                 .send(LoopControl::CreateWorker {
-                    id,
+                    id: id.parse().unwrap(),
                     title: format!("errand-{id}"),
                     task: format!("task-{id}"),
                     kind: crate::identity::WorkerType::default(),
@@ -551,18 +552,13 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(matches!(
-            reaction_rx.recv().await,
-            Some(LoopControl::CreateWorker { id: 1, .. })
-        ));
-        assert!(matches!(
-            cognition_rx.recv().await,
-            Some(LoopControl::CreateWorker { id: 2, .. })
-        ));
-        assert!(matches!(
-            reflection_rx.recv().await,
-            Some(LoopControl::CreateWorker { id: 3, .. })
-        ));
+        let landed = |control| match control {
+            Some(LoopControl::CreateWorker { id, .. }) => id.to_string(),
+            other => panic!("expected a CreateWorker, got {other:?}"),
+        };
+        assert_eq!(landed(reaction_rx.recv().await), "general-one");
+        assert_eq!(landed(cognition_rx.recv().await), "general-two");
+        assert_eq!(landed(reflection_rx.recv().await), "general-three");
     }
 
     #[tokio::test]

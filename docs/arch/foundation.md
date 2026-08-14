@@ -124,22 +124,52 @@ calling; letting an agent name itself is letting it impersonate.
 back from `CreateWorker`, and the ids of the standing rungs are **projected** into the
 window of whoever may reach them, the same way open tasks are.
 
-That last part is the point. The alternative — letting an agent name a destination by some
-other string and having the registry resolve it — is retrieval: the agent produces a name and
+That last part is the point. The alternative — letting an agent name a destination out of
+an open set and having the registry resolve it — is retrieval: the agent produces a name and
 hopes something is behind it. Retrieval can miss, and here a miss is indistinguishable from
 "nobody is there". Projecting live ids inverts it: an agent is told who is reachable this
 turn, so a rung that is cold is visible as cold *before* a message is sent at it, and the
 registry goes back to being a map lookup rather than a search.
 
-Session ids die with the process, so **nothing durable may hold one as an address.** Durable
-work is recovered from [Tasks](data.md#tasks) and re-addressed to whatever session is live
-now; the projection is rebuilt every turn because that is the only rate at which it is true.
+**A session id is a slug, not an ordinal.** The three standing rungs are singletons, and
+their ids are the names they already have everywhere else in this design: `reaction`,
+`cognition`, `reflection`. A worker's is `<type>-<task>` — `view-builder-kyoto-trip`,
+`person-reader-alice` — falling back to its title when the errand serves no ledger task.
+This is a spelling, not a second address form; there is still exactly one form and it is
+still projected.
 
-The qualifier is load-bearing, and it is what [the session directory](#the-session-directory)
-turns on: a *record* of a session that ran may name it forever, because a row about something
-that has ended is never a destination anyone can send to. What the rule forbids is keeping an
-id in order to reach it later. Naming it in order to say what it did is the opposite —
-and a durable name needs the run alongside it, since the counter restarts at 1 every boot.
+Two things follow, and the second is why it changed:
+
+- **The address says what it addresses.** A decimal ordinal said nothing on its own. `2`
+  meant Reaction only because a roster line beside it said so, and only until the next boot
+  handed the number to something else. The frame logs inherit this: a session's stream is
+  `raw/sessions/<run>/cognition.jsonl` rather than `3.jsonl`.
+- **It cannot be mistaken for an address in a space we do not own.** The agent runtime hands
+  every session its own `send_message` for a sub-agent tree it keeps inside one thread,
+  addressed by path from `/root`. A bare integer is a valid address in *both* spaces, so a
+  call aimed at the wrong tool resolved as `/root/2`, was refused by a router we do not own,
+  and raised nothing on our side — the message simply never arrived. A slug does not resolve
+  over there by accident.
+
+Naming the rungs does not reopen retrieval, because the set is closed and fixed at compile
+time: three names, the same three every boot, each a singleton. A wrong one can only be a
+typo of a word the agent was already given, and the answer says which rung is cold rather
+than leaving the agent to read a miss as an absence. Worker slugs are the open half, and
+they are addressed exactly as ids were — returned by `CreateWorker`, listed in the roster.
+
+**A rung outlives the process; a worker's session does not.** `cognition` is a durable way to
+say cognition, because the rung is a singleton that the host reopens. A worker's slug is not:
+after a restart the same string would resolve to a *different* session that happens to serve
+the same task, which is the failure the numeric rule was written against, wearing a better
+name. So the rule survives where it was load-bearing — **durable work is recovered from
+[Tasks](data.md#tasks) and re-addressed to whatever worker is live now**, never by writing a
+worker's slug down and sending to it later. The projection is rebuilt every turn because that
+is the only rate at which it is true.
+
+That qualifier is what [the session directory](#the-session-directory) turns on: a *record*
+of a session that ran may name it forever, because a row about something that has ended is
+never a destination anyone can send to. A durable name still needs the run alongside it —
+two runs reuse the same slugs, which is exactly why the frames path is keyed by run first.
 
 One structural restriction, because it is routing rather than policy: **a worker may only
 address its owner.** Whether something is worth saying mid-task is a judgment and lives in
@@ -196,7 +226,7 @@ readings name the same moments and a reader can cross from either to the other.
 
 The frames above are written per session under `raw/sessions/<run>/<session>.jsonl`. For a
 long time **nothing could read them back**, and the reason is structural rather than an
-oversight: the path is keyed by `(run, session)`, ids restart at 1 each boot, and the
+oversight: the path is keyed by `(run, session)`, ids repeat every boot, and the
 switchboard is live-by-construction — an entry exists between `register` and `unregister` and
 a session that has ended is simply *absent*. So the id needed to name a session's own frame
 log died at the moment the log became history. The frames outlived the session; the index did

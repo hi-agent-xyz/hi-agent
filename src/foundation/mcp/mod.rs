@@ -27,7 +27,7 @@ use crate::body::capabilities::{image_gen, video_gen, view_render};
 use crate::body::reaction::{LoopControl, ToolOwner, ToolRegistry};
 use crate::foundation::observatory::{EventKind, Observatory};
 use crate::foundation::registry;
-use crate::identity::WorkerType;
+use crate::identity::{Role, WorkerType};
 use crate::mind::memory::people_vectors;
 use crate::foundation::server::PartialMinute;
 
@@ -92,20 +92,31 @@ fn say_tool() -> Value {
 ///
 /// One direction, no reply. A reply is this same call going the other way, which is why
 /// the sender is stamped host-side from the calling session rather than passed in.
+///
+/// **The description names the three rungs outright.** It used to say an address is "a
+/// number" and that nobody is reachable by name, which was true of ordinals and made the
+/// roster the only way to learn an address — so a rung whose prompt described the act
+/// without naming this tool had nothing to go on but the tool list, and the agent runtime's
+/// own `send_message` sits in that list too.
 fn send_message_tool() -> Value {
     tool(
         "hi_send_message",
         "Send a message to another agent session. One direction — it does not wait for a \
          reply, and the return value only tells you whether it was delivered. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
-         message so it knows where to reach you. `to` is always a **session id** — a number. \
-         A worker's comes back from `hi_create_worker`; a message you received carries its \
-         sender's; and everyone else you may reach is listed in your window under \"Who you \
-         can reach right now\", each with its id. Nobody is reachable by name.",
+         message so it knows where to reach you. `to` is always a **session id**. The three \
+         standing rungs are `reaction` (the voice), `cognition` (the brain) and `reflection` \
+         — one of each, always those names. A worker's id comes back from \
+         `hi_create_worker` and looks like `view-builder-kyoto-trip`; a message you received \
+         carries its sender's. Everyone you may reach right now is listed in your window \
+         under \"Who you can reach right now\", each with its id.",
         json!({
             "type": "object",
             "properties": {
-                "to": { "type": "string", "description": "A session id (a number)." },
+                "to": {
+                    "type": "string",
+                    "description": "A session id: `reaction`, `cognition`, `reflection`, or a worker's.",
+                },
                 "message": { "type": "string", "description": "What you want them to know, in plain words." },
             },
             "required": ["to", "message"],
@@ -876,7 +887,7 @@ pub async fn handle(
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
     role: Option<&str>,
-    session_id: Option<u64>,
+    session_id: Option<crate::foundation::registry::SessionId>,
     msg: &Value,
 ) -> McpReply {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -928,7 +939,7 @@ async fn dispatch_tool(
     data_dir: &std::path::Path,
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
-    session_id: Option<u64>,
+    session_id: Option<crate::foundation::registry::SessionId>,
     role: Option<&str>,
     name: &str,
     args: &Value,
@@ -1000,15 +1011,16 @@ async fn dispatch_tool(
             if to.trim().is_empty() || message.trim().is_empty() {
                 return tool_error("hi_send_message requires `to` and a non-empty `message`");
             }
-            let Ok(target) = to.trim().parse::<u64>() else {
+            let Ok(target) = to.trim().parse::<registry::SessionId>() else {
                 return tool_error(&format!(
-                    "`{}` is not a session id. Addresses are numbers — a worker's comes \
-                     back from `hi_create_worker`, and everyone else you can reach is listed \
-                     in your window with theirs.",
+                    "`{}` is not a session id. An address is a name — `cognition`, \
+                     `reaction`, `reflection`, or a worker's, which comes back from \
+                     `hi_create_worker`. Everyone you can reach is listed in your window \
+                     with theirs.",
                     to.trim()
                 ));
             };
-            let delivery = registry::global().send(from, target, message.clone());
+            let delivery = registry::global().send(&from, &target, message.clone());
 
             // The edge, observed. Attributed to the **sender's** conversation, because that is
             // the one fact we hold at this point — the switchboard resolves the target
@@ -1033,10 +1045,10 @@ async fn dispatch_tool(
             };
         }
         "hi_session_status" => {
-            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("hi_session_status requires a numeric `id`");
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+                return tool_error("hi_session_status requires a session `id`");
             };
-            let Some(st) = registry::global().status(id) else {
+            let Some(st) = registry::global().status(&id) else {
                 return tool_error(&format!("no live session {id}"));
             };
             let state = if st.busy {
@@ -1074,10 +1086,10 @@ async fn dispatch_tool(
             let Some(caller) = session_id else {
                 return tool_error("hi_close_worker needs a session identity; this session has none");
             };
-            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("hi_close_worker requires a numeric `id`");
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+                return tool_error("hi_close_worker requires a session `id`");
             };
-            let Some(st) = registry::global().status(id) else {
+            let Some(st) = registry::global().status(&id) else {
                 return tool_ok(&format!(
                     "session {id} was already gone — nothing to close, and nothing is \
                      still holding its context."
@@ -1097,7 +1109,7 @@ async fn dispatch_tool(
             // "closed" would put a session on the roster that is not there — or take one
             // off that is.
             let (reply, answer) = tokio::sync::oneshot::channel();
-            if let Err(err) = sink.send(LoopControl::CloseWorker { id, reply }).await {
+            if let Err(err) = sink.send(LoopControl::CloseWorker { id: id.clone(), reply }).await {
                 return tool_error(&err.to_string());
             }
             return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
@@ -1131,10 +1143,10 @@ async fn dispatch_tool(
             let Some(caller) = session_id else {
                 return tool_error("hi_cancel_worker needs a session identity; this session has none");
             };
-            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("hi_cancel_worker requires a numeric `id`");
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+                return tool_error("hi_cancel_worker requires a session `id`");
             };
-            let Some(st) = registry::global().status(id) else {
+            let Some(st) = registry::global().status(&id) else {
                 return tool_error(&format!(
                     "no live session {id} — it may have already finished. Nothing was stopped."
                 ));
@@ -1158,7 +1170,7 @@ async fn dispatch_tool(
             // timeout exists only so a wedged loop degrades to an honest "couldn't tell"
             // rather than hanging the caller mid-thought.
             let (reply, answer) = tokio::sync::oneshot::channel();
-            if let Err(err) = sink.send(LoopControl::CancelWorker { id, reply }).await {
+            if let Err(err) = sink.send(LoopControl::CancelWorker { id: id.clone(), reply }).await {
                 return tool_error(&err.to_string());
             }
             return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
@@ -1187,10 +1199,10 @@ async fn dispatch_tool(
             };
         }
         "hi_session_messages" => {
-            let Some(id) = arg_str("id").trim().parse::<u64>().ok() else {
-                return tool_error("hi_session_messages requires a numeric `id`");
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+                return tool_error("hi_session_messages requires a session `id`");
             };
-            return match registry::global().messages(id) {
+            return match registry::global().messages(&id) {
                 Some(text) if !text.trim().is_empty() => tool_ok(&text),
                 Some(_) => tool_ok("that session has not said anything yet"),
                 None => tool_error(&format!("no live session {id}")),
@@ -1277,13 +1289,6 @@ async fn dispatch_tool(
                     Some(thread.to_string())
                 }
             };
-            // The id is minted **here**, before the session exists, and handed back in
-            // this reply — the contract is `CreateWorker → a session id`, and a caller
-            // that cannot name what it made cannot brief it, ask after it, or read it.
-            // Minting early is the same trick the whole session layer already uses: the
-            // tool surface identifies its caller by a header, so an id has to exist
-            // before the protocol assigns one.
-            let id = registry::mint();
             // A worker must run in the standing loop that created it. Role-specific
             // slots keep Cognition and Reflection from replacing each other's route.
             let owner_role = ToolOwner::from_role(role).expect("role guard above");
@@ -1302,10 +1307,26 @@ async fn dispatch_tool(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
+            // The id is minted **here**, before the session exists, and handed back in
+            // this reply — the contract is `CreateWorker → a session id`, and a caller
+            // that cannot name what it made cannot brief it, ask after it, or read it.
+            // Minting early is the same trick the whole session layer already uses: the
+            // tool surface identifies its caller by a header, so an id has to exist
+            // before the protocol assigns one.
+            //
+            // It is minted *after* `subject`, not before, because the slug is built from
+            // it: `view-builder-kyoto-trip` says which errand this is, where an ordinal
+            // said only how many had come before. The ledger subject is preferred over the
+            // title because it is the name the task already has; the title is the fallback
+            // for an errand the ledger does not carry.
+            let id = registry::mint(
+                Role::Worker(kind),
+                Some(subject.as_deref().unwrap_or(title.as_str())),
+            );
             let resumed = resume.is_some();
             return match sink
                 .send(LoopControl::CreateWorker {
-                    id,
+                    id: id.clone(),
                     title,
                     task,
                     kind,
@@ -2170,7 +2191,7 @@ const VIDEO_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 /// message would.
 fn spawn_video_poller(
     data_dir: PathBuf,
-    session_id: Option<u64>,
+    session_id: Option<crate::foundation::registry::SessionId>,
     handle: video_gen::VideoHandle,
     task: &'static str,
     slug: String,
@@ -2217,8 +2238,8 @@ fn spawn_video_poller(
             tracing::info!(outcome = %message, "video generation finished with nobody to tell");
             return;
         };
-        if registry::global().post(to, message.clone()) != registry::Delivery::Delivered {
-            tracing::info!(session = to, outcome = %message, "video generation outlived its session");
+        if registry::global().post(&to, message.clone()) != registry::Delivery::Delivered {
+            tracing::info!(session = %to, outcome = %message, "video generation outlived its session");
         }
     });
 }
@@ -2238,7 +2259,7 @@ async fn land_clip(data_dir: &Path, url: &str, slug: &str) -> anyhow::Result<Str
     Ok(reff)
 }
 
-async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value) -> Value {
+async fn do_text_to_video(data_dir: &Path, session_id: Option<crate::foundation::registry::SessionId>, args: &Value) -> Value {
     let Some(prompt) =
         args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
@@ -2264,7 +2285,7 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value
     }
 }
 
-async fn do_image_to_video(data_dir: &Path, session_id: Option<u64>, args: &Value) -> Value {
+async fn do_image_to_video(data_dir: &Path, session_id: Option<crate::foundation::registry::SessionId>, args: &Value) -> Value {
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
         return tool_error("hi_image_to_video needs `ref` — the ⟨ref: …⟩ of the still to animate");
@@ -2642,7 +2663,7 @@ mod surface_tests {
                 dir.path(),
                 &partial,
                 &obs,
-                Some(7),
+                Some(7.into()),
                 Some("worker"),
                 name,
                 &json!({ "prompt": "a cat", "ref": "2026-06-25/14/23-07.jpg" }),
@@ -2727,7 +2748,7 @@ mod surface_tests {
                 &partial,
                 &obs,
                 // An identity, so this cannot pass for the old accidental rejection.
-                Some(7),
+                Some(7.into()),
                 role,
                 "hi_create_worker",
                 &json!({ "task": "do a thing" }),
@@ -2760,7 +2781,7 @@ mod surface_tests {
                 dir.path(),
                 &partial,
                 &obs,
-                Some(7),
+                Some(7.into()),
                 Some("cognition"),
                 "hi_create_worker",
                 &args,
@@ -2795,7 +2816,7 @@ mod surface_tests {
             dir.path(),
             &partial,
             &obs,
-                Some(7),
+                Some(7.into()),
             Some("reaction"),
             "hi_send_message",
             &json!({ "to": "99", "message": "are you there" }),
@@ -2807,8 +2828,8 @@ mod surface_tests {
         assert_eq!(replay.len(), 1, "the failed edge is history too");
         let v = serde_json::to_value(&replay[0]).unwrap();
         assert_eq!(v["event"], "message_sent");
-        assert_eq!(v["from"], 7);
-        assert_eq!(v["to"], 99);
+        assert_eq!(v["from"], "7");
+        assert_eq!(v["to"], "99");
         assert_eq!(v["delivery"], "unknown");
         assert_eq!(v["message"], "are you there");
     }

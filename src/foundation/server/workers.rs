@@ -149,7 +149,7 @@ struct WorkerDto {
 pub async fn get_workers() -> Response {
     let mut live = live_sessions();
     sort_live(&mut live);
-    let workers: Vec<WorkerDto> = live.iter().map(|st| dto(st, tail(st.id))).collect();
+    let workers: Vec<WorkerDto> = live.iter().map(|st| dto(st, tail(&st.id))).collect();
     Json(serde_json::json!({ "workers": workers })).into_response()
 }
 
@@ -160,16 +160,16 @@ pub async fn get_workers() -> Response {
 /// tail and not an archive: the durable copy is the log.
 pub async fn get_worker(Path(id): Path<String>) -> Response {
     let Ok(id) = id.trim().parse::<SessionId>() else {
-        return err("a session id is a number");
+        return err("a session id is letters, digits and dashes");
     };
-    let Some(st) = registry::global().status(id) else {
+    let Some(st) = registry::global().status(&id) else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": format!("no live session {id}") })),
         )
             .into_response();
     };
-    let messages = message_lines(id);
+    let messages = message_lines(&id);
     let worker = dto(&st, messages.last().cloned());
     Json(serde_json::json!({ "worker": worker, "messages": messages })).into_response()
 }
@@ -319,7 +319,7 @@ async fn read_log(
     run: Option<String>,
 ) -> Result<(String, Option<String>), Response> {
     let Ok(session) = id.trim().parse::<SessionId>() else {
-        return Err(err("a session id is a number"));
+        return Err(err("a session id is letters, digits and dashes"));
     };
     let run = run.unwrap_or_else(|| crate::foundation::run::id().to_string());
     // `run` lands in a path segment, so it is checked rather than trusted: a run id is
@@ -329,7 +329,7 @@ async fn read_log(
         return Err(err("a run id is twelve hex characters"));
     }
 
-    let path = crate::mind::memory::layout::session_frames_path(&state.data_dir, &run, session);
+    let path = crate::mind::memory::layout::session_frames_path(&state.data_dir, &run, &session);
     match tokio::fs::read_to_string(&path).await {
         Ok(text) => Ok((run, Some(text))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((run, None)),
@@ -391,7 +391,7 @@ fn sort_live(rows: &mut [Status]) {
 }
 
 /// The session's retained output as non-blank lines, oldest first.
-fn message_lines(id: SessionId) -> Vec<String> {
+fn message_lines(id: &SessionId) -> Vec<String> {
     registry::global()
         .messages(id)
         .map(|text| {
@@ -406,7 +406,7 @@ fn message_lines(id: SessionId) -> Vec<String> {
 
 /// The last non-blank line of a session's output — cheap, because the registry already
 /// keeps only a bounded tail.
-fn tail(id: SessionId) -> Option<String> {
+fn tail(id: &SessionId) -> Option<String> {
     message_lines(id).pop()
 }
 
@@ -415,8 +415,8 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         id: st.id.to_string(),
         role: st.role.as_str(),
         worker_type: st.role.worker_type().map(|t| t.as_str()),
-        owner: st.owner.map(|o| o.to_string()),
-        owner_role: owner_role(st.owner),
+        owner: st.owner.as_ref().map(|o| o.to_string()),
+        owner_role: owner_role(st.owner.as_ref()),
         title: st.title.clone(),
         subject: st.subject.clone(),
         state: state_of(st),
@@ -458,9 +458,8 @@ fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
 ///
 /// A local `role_name` match used to stand where `Role::as_str` is called — a fourth
 /// spelling of the same five strings, kept in step with the header by comment alone.
-fn owner_role(owner: Option<SessionId>) -> Option<&'static str> {
-    let owner = owner?;
-    registry::global().status(owner).map(|st| st.role.as_str())
+fn owner_role(owner: Option<&SessionId>) -> Option<&'static str> {
+    registry::global().status(owner?).map(|st| st.role.as_str())
 }
 
 /// A uniform JSON error body with a 400 (same shape as `people.rs`).
@@ -473,6 +472,26 @@ mod tests {
     use super::*;
     use crate::identity::{Role, WorkerType};
     use chrono::{TimeZone, Utc};
+
+    /// **Both halves of the frames path are checked, and the session half only recently
+    /// needed checking.** `raw/sessions/<run>/<session>.jsonl` is built from two values that
+    /// arrive in a URL. `run` has always been validated as twelve hex characters. `session`
+    /// was validated by accident — it was an integer, so `parse::<u64>()` refused a `..`
+    /// without anyone deciding it should — and widening ids to strings would have quietly
+    /// removed that if the parse had been allowed to accept anything.
+    ///
+    /// Asserted at the parse rather than over HTTP because the parse *is* the guard: no
+    /// caller can build a `SessionId` another way, so a value that reaches
+    /// `session_frames_path` has already passed here.
+    #[test]
+    fn neither_half_of_a_frames_path_accepts_a_traversal() {
+        for bad in ["../../../etc/passwd", "..", "a/b", "%2e%2e", ".", "a.jsonl"] {
+            assert!(bad.parse::<SessionId>().is_err(), "session `{bad}` must be refused");
+            assert!(!is_run_id(bad), "run `{bad}` must be refused");
+        }
+        assert!("view-builder-kyoto-trip".parse::<SessionId>().is_ok());
+        assert!(is_run_id("0123456789ab"));
+    }
 
     fn status(id: SessionId, busy: bool, minute: u32) -> Status {
         Status {
@@ -498,15 +517,15 @@ mod tests {
     #[test]
     fn busy_first_then_most_recently_started() {
         let mut rows = vec![
-            status(1, false, 10),
-            status(2, true, 5),
-            status(3, false, 40),
-            status(4, true, 30),
+            status(1.into(), false, 10),
+            status(2.into(), true, 5),
+            status(3.into(), false, 40),
+            status(4.into(), true, 30),
         ];
         sort_live(&mut rows);
         assert_eq!(
-            rows.iter().map(|s| s.id).collect::<Vec<_>>(),
-            vec![4u64, 2, 3, 1],
+            rows.iter().map(|s| s.id.to_string()).collect::<Vec<_>>(),
+            vec!["4", "2", "3", "1"],
             "busy (newest first), then idle (newest first)"
         );
     }
@@ -515,7 +534,7 @@ mod tests {
     /// chrono's default carries sub-second digits, which is not what is advertised.
     #[test]
     fn a_row_carries_the_advertised_fields() {
-        let dto = dto(&status(9, true, 12), Some("last line".into()));
+        let dto = dto(&status(9.into(), true, 12), Some("last line".into()));
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["id"], "9");
         assert_eq!(v["role"], "worker");
@@ -548,7 +567,7 @@ mod tests {
             (true, true, "running"),
         ];
         for (busy, queued, want) in cases {
-            let mut st = status(1, busy, 0);
+            let mut st = status(1.into(), busy, 0);
             st.queued = queued;
             assert_eq!(state_of(&st), want, "busy={busy} queued={queued}");
             assert_eq!(serde_json::to_value(dto(&st, None)).unwrap()["state"], want);
@@ -561,7 +580,7 @@ mod tests {
     #[test]
     fn a_row_names_its_role_and_a_worker_row_its_type() {
         for role in Role::ALL {
-            let mut st = status(1, false, 0);
+            let mut st = status(1.into(), false, 0);
             st.role = *role;
             let v = serde_json::to_value(dto(&st, None)).unwrap();
             assert_eq!(v["role"], role.as_str());
@@ -578,13 +597,19 @@ mod tests {
     /// reviewer from a file filer.
     #[test]
     fn a_specialist_is_reportable_as_one() {
-        let id = registry::mint();
-        registry::global().register(id, Role::Worker(WorkerType::ViewReviewer), None, "judge it".into(), None);
-        let st = registry::global().status(id).unwrap();
+        let id = registry::mint(Role::Worker(WorkerType::ViewReviewer), Some("judge it"));
+        registry::global().register(
+            id.clone(),
+            Role::Worker(WorkerType::ViewReviewer),
+            None,
+            "judge it".into(),
+            None,
+        );
+        let st = registry::global().status(&id).unwrap();
         let v = serde_json::to_value(dto(&st, None)).unwrap();
         assert_eq!(v["role"], "worker");
         assert_eq!(v["type"], "view-reviewer");
-        registry::global().unregister(id);
+        registry::global().unregister(&id);
     }
 
     /// The id is always the id, and the role word is the part that can go missing. A
@@ -592,17 +617,17 @@ mod tests {
     /// old label-only field lost in exactly the case that matters.
     #[test]
     fn an_owner_keeps_its_id_and_only_loses_its_role_word() {
-        let owner = registry::mint();
-        registry::global().register(owner, Role::Cognition, None, String::new(), None);
-        assert_eq!(owner_role(Some(owner)), Some("cognition"));
+        let owner = registry::mint(Role::Cognition, None);
+        registry::global().register(owner.clone(), Role::Cognition, None, String::new(), None);
+        assert_eq!(owner_role(Some(&owner)), Some("cognition"));
 
-        let worker = status_owned_by(owner);
+        let worker = status_owned_by(owner.clone());
         let v = serde_json::to_value(dto(&worker, None)).unwrap();
         assert_eq!(v["owner"], owner.to_string(), "the tree is keyed on this");
         assert_eq!(v["owner_role"], "cognition");
 
-        registry::global().unregister(owner);
-        assert_eq!(owner_role(Some(owner)), None, "no live owner, no word");
+        registry::global().unregister(&owner);
+        assert_eq!(owner_role(Some(&owner)), None, "no live owner, no word");
         let v = serde_json::to_value(dto(&worker, None)).unwrap();
         assert_eq!(v["owner"], owner.to_string(), "but still an address");
         assert_eq!(v["owner_role"], serde_json::Value::Null);
@@ -610,7 +635,7 @@ mod tests {
     }
 
     fn status_owned_by(owner: SessionId) -> Status {
-        let mut st = status(99, true, 0);
+        let mut st = status(99.into(), true, 0);
         st.owner = Some(owner);
         st
     }
@@ -619,7 +644,7 @@ mod tests {
     /// with an empty `tail` and a live `doing` is the shape this field was added for.
     #[test]
     fn a_row_carries_what_it_is_doing_even_with_nothing_said() {
-        let mut st = status(3, true, 0);
+        let mut st = status(3.into(), true, 0);
         st.doing = Some("$ cargo test".into());
         st.doing_at = Some(Utc.with_ymd_and_hms(2026, 8, 5, 3, 4, 0).unwrap());
         let v = serde_json::to_value(dto(&st, None)).unwrap();
@@ -703,15 +728,21 @@ mod tests {
     /// The tail is the last thing said, not the first, and blank lines are not "said".
     #[test]
     fn the_tail_is_the_last_nonblank_line() {
-        let id = registry::mint();
-        registry::global().register(id, Role::Worker(WorkerType::General), None, "an errand".into(), None);
-        assert_eq!(tail(id), None, "nothing said yet");
+        let id = registry::mint(Role::Worker(WorkerType::General), Some("an errand"));
+        registry::global().register(
+            id.clone(),
+            Role::Worker(WorkerType::General),
+            None,
+            "an errand".into(),
+            None,
+        );
+        assert_eq!(tail(&id), None, "nothing said yet");
 
-        registry::global().record_output(id, "first\n\nsecond\n\n");
-        assert_eq!(message_lines(id), vec!["first", "second"]);
-        assert_eq!(tail(id).as_deref(), Some("second"));
+        registry::global().record_output(&id, "first\n\nsecond\n\n");
+        assert_eq!(message_lines(&id), vec!["first", "second"]);
+        assert_eq!(tail(&id).as_deref(), Some("second"));
 
-        registry::global().unregister(id);
-        assert!(message_lines(id).is_empty(), "a closed session retains nothing");
+        registry::global().unregister(&id);
+        assert!(message_lines(&id).is_empty(), "a closed session retains nothing");
     }
 }

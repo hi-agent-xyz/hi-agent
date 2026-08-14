@@ -346,7 +346,7 @@ mod after_cursor_tests {
         let dir = tempfile::tempdir().unwrap();
         let j = Journal::open(dir.path().to_path_buf()).await.unwrap();
         let ids = seed(&j, 1).await;
-        let frames = layout::session_frames_path(dir.path(), "run-1", 7);
+        let frames = layout::session_frames_path(dir.path(), "run-1", &7.into());
         tokio::fs::create_dir_all(frames.parent().unwrap()).await.unwrap();
         tokio::fs::write(&frames, "{\"jsonrpc\":\"2.0\"}\n").await.unwrap();
         let got = after_cursor(dir.path(), None, 10).await.unwrap();
