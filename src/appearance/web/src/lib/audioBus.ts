@@ -41,8 +41,21 @@ export class AudioBus {
     this.timeBytes = new Uint8Array(this.analyser.fftSize);
   }
 
+  /**
+   * Bring the context back to `running`. WebKit (so the macOS WKWebView, and
+   * Safari) parks a backgrounded context in a non-standard `"interrupted"` state
+   * that `AudioContextState` doesn't name and that needs the same resume as
+   * `"suspended"` — miss it and the graph renders nothing while every visible
+   * sign says the mic is on. Rejects if the browser still wants a gesture.
+   */
   async resume(): Promise<void> {
-    if (this.ctx.state === "suspended") await this.ctx.resume();
+    const state: string = this.ctx.state;
+    if (state === "suspended" || state === "interrupted") await this.ctx.resume();
+  }
+
+  /** Whether the graph is actually rendering (anything else produces no audio). */
+  get running(): boolean {
+    return this.ctx.state === "running";
   }
 
   /** Connect a mic source node into the analyser (never the speakers). */

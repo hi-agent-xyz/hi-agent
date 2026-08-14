@@ -24,6 +24,12 @@ import {
 // page of log: the next request starts from whatever came back.
 const SCROLLBACK_PAGE = 50;
 
+// Mic liveness (see the watchdog below). Frames come every 100 ms while the
+// graph renders, so three seconds without one is thirty missed in a row — a
+// stopped audio thread, not a hiccup. Checked twice within that window.
+const MIC_STALL_MS = 3000;
+const MIC_CHECK_MS = 1500;
+
 /**
  * What our own window is doing. Local to this page now — it used to be reported
  * to the backend, which derived a belief about the person from it.
@@ -204,6 +210,11 @@ export function useAgentSession(): AgentSession {
   const busRef = useRef<AudioBus | null>(null);
   const micRef = useRef<AudioStreamer | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  // The capture's source node, held only so releasing the mic can unwire it. A
+  // node stays in the render graph as long as something is connected to it, and
+  // the analyser it feeds is pulled whether or not anything downstream listens —
+  // so a source left connected is a silent node rendered forever.
+  const micNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   // Reentrancy guard for enableAudio: set synchronously before its first await,
   // so two near-simultaneous calls (e.g. StrictMode's double-invoked effect)
   // can't both open a /api/in/audio/stream socket — a second socket would
@@ -404,6 +415,13 @@ export function useAgentSession(): AgentSession {
     // True once a teardown (disableAudio/unmount) has superseded this start.
     const superseded = () => micGenRef.current !== gen;
     try {
+      // The graph has to be running before it can capture anything. The context
+      // may have been parked since the last time we looked (autoplay policy at
+      // startup, or WebKit interrupting it while the window was in the
+      // background), and a mic wired into a parked context renders nothing while
+      // reporting itself on. A rejected resume is not a mic failure — the
+      // watchdog below keeps trying.
+      await audioBus.resume().catch(() => {});
       const stream = await navigator.mediaDevices.getUserMedia({
         // echoCancellation MUST stay on: with the mic and speaker both open, the
         // agent's own TTS loops back into the mic and gets re-transcribed. (We
@@ -426,12 +444,16 @@ export function useAgentSession(): AgentSession {
       // so this window renders the same transcript as every other one.
       const streamer = await AudioStreamer.create(audioBus.ctx, micNode);
       if (superseded()) {
-        // Disabled while we were acquiring — don't leave the socket open.
+        // Disabled while we were acquiring — don't leave the socket open, and
+        // don't leave the source node wired into a graph nobody will unwire it
+        // from (the teardown that superseded us has already run).
         streamer.stop();
+        micNode.disconnect();
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
       micStreamRef.current = stream;
+      micNodeRef.current = micNode;
       micRef.current = streamer;
       setAudioError(null);
       setAudioInput(true);
@@ -449,17 +471,28 @@ export function useAgentSession(): AgentSession {
     }
   }, []);
 
-  const disableAudio = useCallback(() => {
+  // Let go of everything the capture owns: the upload socket and its worklet, the
+  // source node's edges into the bus, and the device itself (which is what turns
+  // the OS mic indicator off). All of it is built fresh by the next `enableAudio`.
+  // The one thing deliberately *not* released is the AudioContext — playback and
+  // the Presence analyser hang off it too, so it outlives every mic toggle.
+  const releaseMic = useCallback(() => {
     // Cancel any enableAudio still acquiring devices, and clear the in-flight
     // flag so a later enable can start.
     micGenRef.current++;
     micStartingRef.current = false;
     micRef.current?.stop();
     micRef.current = null;
+    micNodeRef.current?.disconnect();
+    micNodeRef.current = null;
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current = null;
-    setAudioInput(false);
   }, []);
+
+  const disableAudio = useCallback(() => {
+    releaseMic();
+    setAudioInput(false);
+  }, [releaseMic]);
 
   const toggleAudio = useCallback(() => {
     const next = !audioInput;
@@ -468,6 +501,52 @@ export function useAgentSession(): AgentSession {
     if (next) void enableAudio();
     else disableAudio();
   }, [audioInput, disableAudio, enableAudio, persistPrefs]);
+
+  // Drop the capture and take it again, without touching the channel's on/off
+  // state: the mic is still meant to be on, its capture just died under us.
+  const recycleAudio = useCallback(async () => {
+    releaseMic();
+    await enableAudio();
+  }, [enableAudio, releaseMic]);
+
+  // ---- mic liveness watchdog ----------------------------------------------
+  // The mic can go deaf while every visible sign says it is on. The context gets
+  // parked (WebKit does this to a backgrounded window and calls it "interrupted")
+  // or the captured track ends under us on a device change; either way the
+  // worklet renders nothing, the upload socket stays open with no frames on it,
+  // and the upstream STT ends its session after 8 s without a packet. Nothing on
+  // either side of that wire notices — the socket is up, the toggle says on, and
+  // the only cure was restarting the app.
+  //
+  // So watch the one fact that means deafness whatever the cause: no PCM frame
+  // handed up by the audio thread, which runs at a 100 ms cadence when the graph
+  // is live. A parked context is the common cause and the cheap fix, so try that
+  // first and let the next tick judge it; if the context is running and frames
+  // still aren't coming, the capture itself is dead and only a fresh device will
+  // do. (getUserMedia doesn't re-prompt — the permission is already granted.)
+  useEffect(() => {
+    if (!audioInput) return;
+    let busy = false;
+    const check = async () => {
+      const streamer = micRef.current;
+      const bus = busRef.current;
+      if (busy || !streamer || !bus) return;
+      if (streamer.msSinceLastFrame() < MIC_STALL_MS) return;
+      busy = true;
+      try {
+        if (!bus.running) {
+          await bus.resume().catch(() => {});
+          return;
+        }
+        console.debug("[mic] audio thread went quiet — re-acquiring the device");
+        await recycleAudio();
+      } finally {
+        busy = false;
+      }
+    };
+    const timer = setInterval(() => void check(), MIC_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [audioInput, recycleAudio]);
 
   // ---- vision-input channel: acquire/release the camera ------------------
   // A continuous channel like the mic, but fully independent — usable with or

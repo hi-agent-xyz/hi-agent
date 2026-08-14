@@ -15,6 +15,12 @@
 // producing frames, which backlog briefly and resume on the fresh socket. Only
 // `stop()` (mic toggled off / unmount) closes it for good.
 //
+// What an open socket does NOT tell you is that audio is still being captured:
+// if the graph stops rendering (a suspended context, a capture device that went
+// away) the frames simply stop while the socket stays up, and the upstream STT
+// quietly ends its session 8 s later. `msSinceLastFrame` exposes that fact so
+// the session can act on it — see the liveness watchdog in `useAgentSession`.
+//
 // This replaces the old MicCapture, whose homegrown RMS VAD segmented utterances
 // client-side. Moving segmentation to the upstream's ML VAD is both simpler and
 // more reliable; the only thing we do here is resample + frame the audio.
@@ -36,6 +42,24 @@ const RECONNECT_MAX_MS = 5000;
 // Cap the pre-open backlog so a prolonged outage can't grow it without bound —
 // losing audio across an outage is fine; the point is to recover, not buffer.
 const MAX_BACKLOG_FRAMES = 64;
+// The worklet posts a frame every 100 ms while the graph renders, so a gap this
+// long is not a hiccup: the audio thread has stopped producing. Reported by
+// `msSinceLastFrame` for the session's liveness watchdog, and used here to hold
+// the reconnect back — see `scheduleReconnect`.
+const STALE_FRAME_MS = 3000;
+
+/**
+ * How long to wait before reopening the upload socket. Consecutive failures
+ * double the wait up to the ceiling — but a quiet audio thread pins it to the
+ * ceiling straight away: a socket we have nothing to feed is worth nothing, and
+ * reopening one only hands the upstream STT another session to time out. The
+ * eager first retry is for the case it exists for, a server restart or a blip
+ * while audio is still flowing.
+ */
+export function reconnectDelayMs(retry: number, msSinceLastFrame: number): number {
+  if (msSinceLastFrame > STALE_FRAME_MS) return RECONNECT_MAX_MS;
+  return Math.min(RECONNECT_BASE_MS * 2 ** retry, RECONNECT_MAX_MS);
+}
 
 // Tracks which contexts already have the worklet module so we never call
 // addModule twice for the same one (a redundant network round-trip).
@@ -60,6 +84,10 @@ export class AudioStreamer {
   // Consecutive failed (re)connects; drives the backoff, reset on open.
   private retry = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // When the audio thread last handed up a frame. The socket being open says
+  // nothing about whether audio is still being captured, and this is the one
+  // fact that does.
+  private lastFrameAt = performance.now();
 
   /**
    * Start streaming `source`'s audio to the backend. Async because the worklet
@@ -86,6 +114,7 @@ export class AudioStreamer {
     });
     // The worklet posts back ready-to-send SEND_SAMPLES PCM frames (transferred).
     this.node.port.onmessage = (ev) => {
+      this.lastFrameAt = performance.now();
       if (!this.stopped) this.send(ev.data as ArrayBuffer);
     };
     source.connect(this.node);
@@ -118,9 +147,14 @@ export class AudioStreamer {
     this.ws = ws;
   }
 
+  /** Milliseconds since the audio thread last handed up a PCM frame. */
+  msSinceLastFrame(): number {
+    return performance.now() - this.lastFrameAt;
+  }
+
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer !== null) return;
-    const delay = Math.min(RECONNECT_BASE_MS * 2 ** this.retry, RECONNECT_MAX_MS);
+    const delay = reconnectDelayMs(this.retry, this.msSinceLastFrame());
     this.retry++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

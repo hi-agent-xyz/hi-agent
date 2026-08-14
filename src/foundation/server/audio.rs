@@ -410,7 +410,7 @@ pub async fn ingest_pcm_stream(
     let (audio_tx, audio_rx) = mpsc::channel::<Bytes>(64);
     let (tr_tx, mut tr_rx) = mpsc::channel::<Transcript>(64);
 
-    let stt_task = tokio::spawn(async move { stt::transcribe_streaming(audio_rx, tr_tx).await });
+    let mut stt_task = tokio::spawn(async move { stt::transcribe_streaming(audio_rx, tr_tx).await });
 
     // Live-mic voiceprint: who is speaking, from the vendor's diarized segments.
     // The PCM pump (below) appends raw samples to `timeline` (an absolute-clock
@@ -543,9 +543,27 @@ pub async fn ingest_pcm_stream(
     let mut cap_ts = Utc::now();
     let mut cap_buf: Vec<u8> = Vec::new();
 
-    // Pump inbound PCM until the source closes or the STT session ends (a send
-    // error means `audio_rx` was dropped because `transcribe_streaming` returned).
-    while let Some(b) = frames.recv().await {
+    // Pump inbound PCM until the source closes or the STT session ends. The STT
+    // side is awaited *alongside* the frames rather than discovered through a
+    // failed send, because a session can die while no frame is coming: the
+    // upstream ends one that goes 8 s without a packet, which is exactly what a
+    // capture that quietly stopped producing looks like. Learning that on the
+    // next frame means a stalled capture holds the socket open against a dead
+    // session indefinitely — no transcription, nothing logged, and the client
+    // (which reopens on close) never told to start over. Ending here closes the
+    // socket, and the reconnect brings up a fresh session.
+    let mut stt_ended: Option<Result<anyhow::Result<String>, tokio::task::JoinError>> = None;
+    loop {
+        let b = tokio::select! {
+            frame = frames.recv() => match frame {
+                Some(b) => b,
+                None => break,
+            },
+            joined = &mut stt_task => {
+                stt_ended = Some(joined);
+                break;
+            }
+        };
         // Republish the raw PCM for `GET /api/in/audio` listeners. The `Start`
         // (carrying the format) precedes the first frame.
         if !started {
@@ -601,17 +619,24 @@ pub async fn ingest_pcm_stream(
         flush_mic_minute(&state, cap_ts, &cap_buf).await;
     }
 
-    // Closing the audio side lets the STT session flush its last utterance.
+    // Closing the audio side lets the STT session flush its last utterance —
+    // unless it already ended above, in which case its outcome is in hand and the
+    // handle must not be polled again.
     drop(audio_tx);
-    match tokio::time::timeout(Duration::from_secs(5), stt_task).await {
-        Ok(Ok(Err(err))) => {
+    let joined = match stt_ended {
+        Some(joined) => Some(joined),
+        None => tokio::time::timeout(Duration::from_secs(5), stt_task).await.ok(),
+    };
+    match joined {
+        Some(Err(err)) => tracing::warn!(error = %err, "audio ingest STT task panicked"),
+        Some(Ok(Err(err))) => {
             // A 402 here means the managed account is out of energy (STT draws the
             // same budget) — raise the out-of-energy hint now, without waiting for the
             // next balance poll. No-op in BYOK / for non-402 STT failures.
             crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
             tracing::warn!(error = %err, "audio ingest STT ended");
         }
-        Err(_) => tracing::warn!("audio ingest STT did not finalize in time"),
+        None => tracing::warn!("audio ingest STT did not finalize in time"),
         _ => {}
     }
     out_task.abort();
