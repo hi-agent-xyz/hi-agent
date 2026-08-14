@@ -152,6 +152,7 @@ const T = {
     kind: {
       user: "prompt",
       agent: "typed",
+      say: "said",
       thinking: "thought",
       command: "ran",
       edit: "edited",
@@ -213,6 +214,7 @@ const T = {
     kind: {
       user: "收到",
       agent: "写",
+      say: "说",
       thinking: "想",
       command: "跑",
       edit: "改文件",
@@ -850,7 +852,7 @@ function Transcript({ messages, turns, openRow, setOpenRow }) {
               </div>
             )}
             {g.rows.map((m) => (
-              <Said
+              <Msg
                 key={`${m.seq}:${m.kind}`}
                 m={m}
                 open={openRow === m.seq}
@@ -869,11 +871,12 @@ function Transcript({ messages, turns, openRow, setOpenRow }) {
  *  Everything here collapses to a couple of lines and opens to its full text — a command's
  *  output and a tool call's arguments are routinely thousands of characters, and a
  *  transcript that pastes them inline is the wall this view exists to stop being. */
-function Said({ m, open, onToggle }) {
+function Msg({ m, open, onToggle }) {
   const detail = body(m);
   const running = m.status && m.status !== "completed" && m.status !== "success";
+  const kind = kindOf(m);
   return (
-    <div className="hi-workers__msg" data-kind={m.kind} data-running={running ? "true" : undefined}>
+    <div className="hi-workers__msg" data-kind={kind} data-running={running ? "true" : undefined}>
       <button
         type="button"
         className="hi-workers__msg-head"
@@ -881,7 +884,7 @@ function Said({ m, open, onToggle }) {
         onClick={detail ? onToggle : undefined}
         data-flat={detail ? undefined : "true"}
       >
-        <span className="hi-workers__msg-kind">{L.kind[m.kind] || m.kind}</span>
+        <span className="hi-workers__msg-kind">{L.kind[kind] || m.kind}</span>
         <span className="hi-workers__msg-head-line">{head(m)}</span>
         <span className="hi-workers__msg-meta">
           {[
@@ -899,18 +902,32 @@ function Said({ m, open, onToggle }) {
       {/* The peek is only for a body that says something the head does not — a command's
           output, a tool's arguments. On a text message the body *is* the head, longer, and
           a preview of it under it is the same sentence twice. */}
-      {!open && detail && !SAYS_ITSELF.has(m.kind) && (
+      {!open && detail && !SAYS_ITSELF.has(kind) && (
         <div className="hi-workers__msg-peek">{oneLine(detail)}</div>
       )}
     </div>
   );
 }
 
-/** Kinds whose whole body is the text already on the head line, at length. */
-const SAYS_ITSELF = new Set(["user", "agent", "thinking", "warning", "stderr"]);
+/** Kinds whose whole body is the text already on the head line, at length. `say` is one:
+ *  its head carries the utterance, and its body only adds what the call answered. */
+const SAYS_ITSELF = new Set(["user", "agent", "say", "thinking", "warning", "stderr"]);
+
+/** The row's own word for itself.
+ *
+ * `hi_say` is the one call in this panel that **is** speech: it is the whole way out to a
+ * person, so its row says `said` and carries the words on its head line. Every other row,
+ * the typed `agent` message included, is how the turn got there. Keeping the two apart is
+ * the difference between a record and a claim — a log that labels typed prose `said` will
+ * tell you the agent answered on a night the person heard nothing.
+ */
+function kindOf(m) {
+  return m.kind === "tool" && m.tool === "hi_say" ? "say" : m.kind;
+}
 
 /** The one line that says what this message was. */
 function head(m) {
+  if (kindOf(m) === "say") return oneLine((m.arguments && m.arguments.text) || "");
   switch (m.kind) {
     case "command":
       return m.command || "";
@@ -1574,8 +1591,10 @@ const CSS = `
     color: var(--fg-mute);
   }
 
-  /* What the agent said is the point of the page; the rest is how it got there. */
-  .hi-workers__msg[data-kind="agent"] .hi-workers__msg-head-line {
+  /* What the agent *said* is the point of the page; the rest — typed working-out
+     included — is how it got there. The weight sat on the agent-message row back when
+     that row was labelled "said", which put the emphasis on the line nobody heard. */
+  .hi-workers__msg[data-kind="say"] .hi-workers__msg-head-line {
     font-weight: 620;
   }
 
