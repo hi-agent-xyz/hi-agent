@@ -310,8 +310,13 @@ fn render_projection(
 ) -> String {
     use std::fmt::Write as _;
 
+    // **An empty ledger says so out loud**, and that is not decoration. The window is sent
+    // on change now, and a block that renders to nothing is skipped rather than sent — so a
+    // silent empty meant the last duty could close and the voice would go on believing it
+    // was owed. Nothing else tells it: a task is closed by a file edit, not by a message.
+    // Sixty characters, once, against a silently broken promise.
     if active.is_empty() {
-        return String::new();
+        return "# Active tasks\n\n_Nothing open right now._\n".to_owned();
     }
 
     let mut decorated: Vec<(OrderKey<'_>, &Task)> =
@@ -470,6 +475,55 @@ fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
         m if m < 60 * 24 => format!("{}h ago", m / 60),
         m => format!("{}d ago", m / (60 * 24)),
     }
+}
+
+/// The ledger with every elapsed quantity blanked — **for comparing two turns, never for
+/// reading.**
+///
+/// A ledger line carries how long something has been the way it is, and that number moves
+/// on its own. Sixty-five of the ninety-two times the projection "changed" across one live
+/// thread, the only difference was a clock: `last confirmed alive 1h ago` became `2h ago`,
+/// and the whole 431-character ledger was sent again to say so. The window is finite and
+/// a re-send costs a permanent copy of itself in it (`docs/arch/data.md`).
+///
+/// **What it blanks is the quantity, not the category**, which is the whole care here.
+/// `never checked` still differs from `last confirmed alive 2h ago`; a task crossing the
+/// idle boundary still reads as a change, because its note stops being an age and becomes
+/// something to answer. Only *how long* is dropped, and how long is the one part nobody
+/// needs told again.
+///
+/// It lives beside [`ago`] because it is the inverse of it, and the test below fails if
+/// the two ever stop agreeing about what an elapsed quantity looks like.
+pub fn without_elapsed(projection: &str) -> String {
+    let mut out = String::with_capacity(projection.len());
+    for (i, line) in projection.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let mut rest = line;
+        while let Some(cut) = rest.find(|c: char| c.is_ascii_digit()) {
+            let (head, tail) = rest.split_at(cut);
+            let digits = tail.len() - tail.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let (number, after) = tail.split_at(digits);
+            // `3d ago`, `12h ago`, `5m ago`, `open 2d` — a count and a unit, and nothing
+            // else in a ledger line is a bare number followed by one of these letters.
+            let elapsed = matches!(after.as_bytes().first(), Some(b'm' | b'h' | b'd'))
+                && after
+                    .as_bytes()
+                    .get(1)
+                    .is_none_or(|c| !c.is_ascii_alphanumeric());
+            out.push_str(head);
+            if elapsed {
+                out.push('#');
+                rest = &after[1..];
+            } else {
+                out.push_str(number);
+                rest = after;
+            }
+        }
+        out.push_str(rest);
+    }
+    out
 }
 
 /// Overdue first, then duties nobody has confirmed alive, then work past the idle
@@ -1315,5 +1369,58 @@ mod tests {
         undated.created_at = None;
         let text = render_projection(std::slice::from_ref(&undated), now(), &nobody());
         assert!(!text.contains("open "), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod without_elapsed_tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn at(day: u32, hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 7, day, hour, 0, 0).unwrap()
+    }
+
+    /// Pinned against [`ago`] itself: every shape it can produce must come out blanked, so
+    /// the two cannot drift apart silently.
+    #[test]
+    fn every_shape_ago_produces_is_blanked() {
+        let then = at(20, 8);
+        for mins in [0, 5, 59, 60, 60 * 23, 60 * 24, 60 * 24 * 9] {
+            let now = then + Duration::minutes(mins);
+            let line = format!("- [serving] Watch it · last confirmed alive {}", ago(now, then));
+            let blanked = without_elapsed(&line);
+            assert!(
+                !blanked.chars().any(|c| c.is_ascii_digit()),
+                "{mins}m: `{line}` left digits in `{blanked}`"
+            );
+        }
+    }
+
+    /// The quantity goes; the category stays. This is the line between "nothing happened"
+    /// and "something did", and getting it wrong in either direction is a real cost: one way
+    /// the ledger is re-sent for nothing, the other way a duty changes and nobody is told.
+    #[test]
+    fn the_category_survives_and_only_the_number_goes() {
+        let quiet = "- [serving] Watch it · last confirmed alive 1h ago";
+        let louder = "- [serving] Watch it · last confirmed alive 9h ago";
+        assert_eq!(without_elapsed(quiet), without_elapsed(louder));
+
+        // Never checked is not "checked a while ago", and crossing the idle boundary
+        // replaces an age with something to answer.
+        let never = "- [serving] Watch it · never checked";
+        assert_ne!(without_elapsed(quiet), without_elapsed(never));
+        let moved = "- [doing] Ship it · last moved 3d ago — close it with what you did verify";
+        let open = "- [doing] Ship it · open 3d";
+        assert_ne!(without_elapsed(moved), without_elapsed(open));
+    }
+
+    /// A date is not an elapsed quantity, and neither is a number in a title. Both stay, so
+    /// a task going overdue still reads as a change.
+    #[test]
+    fn dates_and_titles_are_left_alone() {
+        let overdue = "- [doing, overdue since 2026-07-20 08:00Z] Renew the domain";
+        assert_eq!(without_elapsed(overdue), overdue);
+        assert_eq!(without_elapsed("- [todo] KT8-059 timestamp control"), "- [todo] KT8-059 timestamp control");
     }
 }

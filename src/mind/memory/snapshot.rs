@@ -83,11 +83,23 @@ pub struct Block {
     pub key: &'static str,
     pub cadence: Cadence,
     pub text: String,
+    /// What "changed" is judged on, when that is not the text itself.
+    ///
+    /// A block can carry something that moves on its own — an elapsed time — and re-sending
+    /// a whole section because a clock ticked is the repetition this design exists to stop.
+    /// The block is still *sent* verbatim; only the comparison uses this.
+    pub compare_as: Option<String>,
 }
 
 impl Block {
     fn new(key: &'static str, cadence: Cadence, text: String) -> Self {
-        Self { key, cadence, text }
+        Self { key, cadence, text, compare_as: None }
+    }
+
+    /// Judge change on `form` rather than on the text.
+    fn compared_as(mut self, form: String) -> Self {
+        self.compare_as = Some(form);
+        self
     }
 }
 
@@ -140,7 +152,11 @@ pub async fn window(
     vec![
         Block::new("conduct", Cadence::OnChange, conduct),
         Block::new("carried", Cadence::OnChange, carried),
-        Block::new("tasks", Cadence::OnChange, owed),
+        // The one block with a clock in it: `last confirmed alive 1h ago` becomes `2h ago`
+        // without anything having happened, and the ledger is worth re-reading only when
+        // something did.
+        Block::new("tasks", Cadence::OnChange, owed.clone())
+            .compared_as(tasks::without_elapsed(&owed)),
         Block::new("unprompted", Cadence::OnChange, unprompted),
         Block::new("reach", Cadence::OnChange, reach),
         Block::new("recent", Cadence::ColdOnly, tail),
@@ -719,14 +735,22 @@ mod window_tests {
         assert!(!text.contains("mid-migration"), "no conversation brief: {text}");
     }
 
-    /// An agent that has written nothing down yet, and owes nothing yet, gets an empty
-    /// window rather than a header with nothing under it — the join drops empties, and a
-    /// section that is only a title reads as data that failed to load.
+    /// An agent that has written nothing down yet carries no brief and no tail — the join
+    /// drops empties, and a section that is only a title reads as data that failed to load.
+    ///
+    /// The ledger is the one exception, and it earns it: **empty is a fact about what is
+    /// owed**, not an absent section. Since the window is sent on change, a ledger that
+    /// renders to nothing would be skipped rather than sent, and the last duty could close
+    /// with the voice still believing it was owed — nothing else would tell it, because a
+    /// task is closed by a file edit and not by a message.
     #[tokio::test]
-    async fn an_empty_standing_window_is_empty() {
+    async fn an_empty_standing_window_carries_only_that_nothing_is_owed() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        assert!(agent_window(&memory, "cognition", &0.into()).await.trim().is_empty());
+        let text = agent_window(&memory, "cognition", &0.into()).await;
+        assert!(text.contains("# Active tasks"), "{text}");
+        assert!(text.contains("Nothing open right now"), "{text}");
+        assert!(!text.contains("## What I carry forward"), "nothing written yet: {text}");
     }
 
     async fn write_facet(dir: &Path, dimension: &str, subject: &str, body: &str) {

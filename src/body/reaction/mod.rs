@@ -1912,11 +1912,13 @@ async fn turn_context(
         key: "workers",
         cadence: snapshot::Cadence::OnChange,
         text: worker_status.to_string(),
+        compare_as: None,
     });
     blocks.push(snapshot::Block {
         key: "screen",
         cadence: snapshot::Cadence::OnChange,
         text: on_screen.to_string(),
+        compare_as: None,
     });
     let carried = memo.take(blocks);
     // Neither of these is state. A barge-in note is consumed when it is read, and the
@@ -1970,7 +1972,7 @@ impl WindowMemo {
             let digest = {
                 use std::hash::{Hash, Hasher};
                 let mut h = std::collections::hash_map::DefaultHasher::new();
-                block.text.hash(&mut h);
+                block.compare_as.as_deref().unwrap_or(&block.text).hash(&mut h);
                 h.finish()
             };
             let send = match block.cadence {
@@ -2159,6 +2161,39 @@ mod turn_context_tests {
         assert!(!first_turn.contains("mid-migration"), "the seed already said it: {first_turn}");
         assert!(!first_turn.contains("## Recent (last 30 minutes)"), "{first_turn}");
         assert!(first_turn.contains("在吗"), "{first_turn}");
+    }
+
+    /// A ledger whose only movement is its own clock is not news. This is the turn-level
+    /// half of [`crate::mind::memory::tasks::without_elapsed`]: 65 of 92 re-sends on one
+    /// live thread were exactly this, at 431 chars each.
+    #[tokio::test]
+    async fn a_ticking_clock_in_the_ledger_is_not_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let mut owed = Task::new("Watch the ops group", TaskStatus::Doing);
+        owed.title = "Watch the ops group".into();
+        owed.created_at = Some(chrono::Utc::now() - chrono::Duration::days(3));
+        write_task(dir.path(), &owed).await.unwrap();
+        let mut memo = WindowMemo::default();
+
+        let first =
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(first.contains("Watch the ops group"), "{first}");
+
+        // Age it a day. The line changes — `open 3d` becomes `open 4d` — and nothing about
+        // the duty has.
+        owed.created_at = Some(chrono::Utc::now() - chrono::Duration::days(4));
+        write_task(dir.path(), &owed).await.unwrap();
+        let aged =
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>还在吗").await;
+        assert!(!aged.contains("Watch the ops group"), "only the clock moved: {aged}");
+
+        // Close it, and it must be told at once.
+        owed.status = TaskStatus::Done;
+        write_task(dir.path(), &owed).await.unwrap();
+        let closed =
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>好了吗").await;
+        assert!(closed.contains("# Active tasks"), "a duty leaving the ledger is news: {closed}");
     }
 
     /// Codex announces it on the item, and both `item/started` and `item/completed` carry

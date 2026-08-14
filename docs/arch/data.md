@@ -299,7 +299,21 @@ cached, so the repetition was nearly free to *send* and occupied the window exac
 |---|---|---|
 | re-sent whole, as it was | 10,125 | 1,093,500 |
 | section-level, sent on change — **built** | 1,514 | 163,551 |
-| seed at init + item-level diff events — **the target** | ~676 | ~73,000 |
+| seed at init + a ledger that ignores its own clock — **built** | ~1,250 | ~135,000 |
+| item-level diff events — **the target** | ~676 | ~73,000 |
+
+**A block is compared on what it means, not on its characters.** A ledger line carries how
+long something has been the way it is, and that number moves on its own: 65 of the 92 times
+the projection "changed" on that thread, the only difference was `last confirmed alive 1h
+ago` becoming `2h ago`, and 431 characters were sent to say it. The comparison blanks the
+elapsed quantity and keeps the category, so `never checked` still differs from a check an
+hour old, and a task crossing the idle boundary still reads as news. What is *sent* is
+always the block verbatim.
+
+**And an empty ledger says so out loud**, which sending-on-change made load-bearing: a block
+that renders to nothing is skipped rather than sent, so a silent empty meant the last duty
+could close with the voice still believing it was owed. Nothing else would have told it — a
+task is closed by a file edit, not by a message.
 
 The floor is the events themselves, 387 chars a turn: the actual content of the conversation.
 Everything else compresses toward zero.
