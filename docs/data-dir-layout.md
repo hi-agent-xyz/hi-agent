@@ -216,10 +216,10 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
   does not.
 - **Not yet built:** outbound capture in `raw/`. The log is decided as both-directions; only
   inbound is recorded today.
-- **Partly built:** `prompts/seed/`. The voice's is written by Cognition and capped by code.
-  Cognition's own has a read path and **nothing writes it**. And no seed is *seeded* yet: they
-  are read per turn into the window instead of being handed over once as the thread's first
-  message — see the four layers in [`arch/data.md`](arch/data.md#prompts).
+- **Partly built:** `prompts/seed/`. The voice's is written by Cognition, capped by code, and
+  now handed to the thread as its first message at warm-up. Cognition's own has a read path
+  and **nothing writes it**, so its seed is always empty — see the four layers in
+  [`arch/data.md`](arch/data.md#prompts).
 
 ## Open questions
 

@@ -59,7 +59,7 @@ use crate::foundation::registry::{self, Registration};
 use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
 
-/// The agent name for [`crate::mind::memory::layout::agent_prompt_path`] — what
+/// The agent name for [`crate::mind::memory::layout::rung_seed_path`] — what
 /// Reflection carries forward between wakes, at `memory/prompts/reflection.md`.
 ///
 /// It has one for the same reason Cognition does: a per-wake session remembers nothing,

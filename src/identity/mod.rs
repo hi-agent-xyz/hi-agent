@@ -458,7 +458,7 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
 /// is the half that is rebuilt every turn.
 pub async fn cognition_prompt(data_dir: &Path) -> String {
     let text = role_prompt(data_dir, Role::Cognition).await;
-    let target = crate::mind::memory::layout::conversation_prompt_path(&abs(data_dir));
+    let target = crate::mind::memory::layout::reaction_seed_path(&abs(data_dir));
     text.replace("{conversation_memory}", &target.display().to_string())
 }
 
@@ -1104,7 +1104,7 @@ mod soul_tests {
         let dir = tempfile::tempdir().unwrap();
         let prompt = cognition_prompt(dir.path()).await;
 
-        let expected = crate::mind::memory::layout::conversation_prompt_path(dir.path());
+        let expected = crate::mind::memory::layout::reaction_seed_path(dir.path());
         assert!(expected.is_absolute(), "the target path must be absolute");
         assert!(
             prompt.contains(&expected.display().to_string()),

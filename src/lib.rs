@@ -124,6 +124,9 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // it rides to the child as HI_AGENT_PROMPTS_DIR, and the child may run with a
     // different cwd than us.
     identity::install_prompts(&config.data_dir).context("installing bundled prompts")?;
+    // Before anything reads a seed: bring forward the ones written under `memory/` by a
+    // build that filed them as memory rather than as what a session is handed.
+    mind::memory::layout::migrate_seeds(&config.data_dir);
     let prompts_dir = {
         let d = config.data_dir.join("prompts");
         if d.is_absolute() {

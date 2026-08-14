@@ -1326,7 +1326,7 @@ async fn reaction_loop(
     let mut startup_warm_pending = false;
     if reaction.wait_for_server_ready().await {
         startup_warm_pending =
-            warm_sessions(&reaction, &voice_id, &mut reaction_session).await;
+            warm_sessions(&reaction, &voice_id, &mut reaction_session, &mut window_memo).await;
     }
 
     // The check-in floor's current gap, doubling while the voice keeps leaving an
@@ -1356,7 +1356,7 @@ async fn reaction_loop(
             let gate = reaction.inner.vendor.turn_gate();
             if startup_warm_pending && matches!(gate, TurnGate::Go) {
                 startup_warm_pending =
-                    warm_sessions(&reaction, &voice_id, &mut reaction_session).await;
+                    warm_sessions(&reaction, &voice_id, &mut reaction_session, &mut window_memo).await;
                 continue 'wait;
             }
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1729,9 +1729,14 @@ async fn run_reaction_turn(
     // real id instead of guessing from the transcript.
     let on_screen = render_on_screen(&reaction.inner.views.on_screen().await);
 
-    // Open (or reuse) the persistent reaction session. `reaction.md` is prepended to its
-    // first prompt; the session then remembers prior turns — which is what the window
+    // Open (or reuse) the persistent reaction session. `reaction.md` rides its
+    // `baseInstructions`; the session then remembers prior turns — which is what the window
     // memo is a claim about, so a thread we just opened has been told nothing.
+    //
+    // **This path does not seed, and that is deliberate.** A cold open here means the warm-up
+    // never ran or its session died, so there is already a batch waiting: spending a whole
+    // generation on a seed first would make someone wait twice. Forgetting instead puts the
+    // same window on the turn they are waiting for.
     let session = match reaction_session {
         Some(s) => s.clone(),
         None => {
@@ -2026,7 +2031,7 @@ mod turn_context_tests {
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
-        let path = layout::conversation_prompt_path(dir.path());
+        let path = layout::reaction_seed_path(dir.path());
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, "He is mid-migration this week; keep answers terse.")
             .await
@@ -2074,7 +2079,7 @@ mod turn_context_tests {
     async fn an_unchanged_block_is_not_sent_twice() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let path = layout::conversation_prompt_path(dir.path());
+        let path = layout::reaction_seed_path(dir.path());
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
         let mut memo = WindowMemo::default();
@@ -2115,7 +2120,7 @@ mod turn_context_tests {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
         heard(&memory, "把周报发我").await;
-        let path = layout::conversation_prompt_path(dir.path());
+        let path = layout::reaction_seed_path(dir.path());
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
         let mut memo = WindowMemo::default();
@@ -2129,6 +2134,31 @@ mod turn_context_tests {
         assert!(after.contains("mid-migration"), "{after}");
         assert!(after.contains("## Recent (last 30 minutes)"), "{after}");
         assert_eq!(after.len(), first.len(), "a cold turn carries what the first one did");
+    }
+
+    /// What [`seed_session`] rests on: one cold pass returns the window whole and leaves the
+    /// memo warm, so the first real turn after a seed carries the signals and not the window
+    /// again. The seed is that pass with no signals attached.
+    #[tokio::test]
+    async fn seeding_hands_over_the_window_and_leaves_the_memo_warm() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        heard(&memory, "把周报发我").await;
+        let path = layout::reaction_seed_path(dir.path());
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
+        let mut memo = WindowMemo::default();
+
+        let seed = turn_context(&memory, &0.into(), &mut memo, "", "", "", "").await;
+        assert!(seed.contains("mid-migration"), "{seed}");
+        assert!(seed.contains("## Recent (last 30 minutes)"), "{seed}");
+        assert!(!seed.contains("## New signals"), "a seed is not a turn: {seed}");
+
+        let first_turn =
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(!first_turn.contains("mid-migration"), "the seed already said it: {first_turn}");
+        assert!(!first_turn.contains("## Recent (last 30 minutes)"), "{first_turn}");
+        assert!(first_turn.contains("在吗"), "{first_turn}");
     }
 
     /// Codex announces it on the item, and both `item/started` and `item/completed` carry
@@ -2202,12 +2232,13 @@ async fn warm_sessions(
     reaction: &Reaction,
     voice_id: &registry::SessionId,
     reaction_session: &mut Option<Arc<AgentSession>>,
+    memo: &mut WindowMemo,
 ) -> bool {
     let blocked_before = crate::foundation::energy_state::is_out();
     // One warm-up, not two. The second was Deliberation's, and Cognition — which now
     // holds that job — warms itself inside its own loop rather than being stood up from
     // the conversation's.
-    warm_reaction_session(reaction, voice_id, reaction_session).await;
+    warm_reaction_session(reaction, voice_id, reaction_session, memo).await;
     let blocked_after = crate::foundation::energy_state::is_out();
     if blocked_after {
         // `SessionRun::wait` records the durable 402 edge. Apply its scheduler level
@@ -2229,6 +2260,7 @@ async fn warm_reaction_session(
     reaction: &Reaction,
     voice_id: &registry::SessionId,
     held: &mut Option<Arc<AgentSession>>,
+    memo: &mut WindowMemo,
 ) {
     if held.is_some() {
         return;
@@ -2249,12 +2281,70 @@ async fn warm_reaction_session(
         }
     };
 
-    // Opening the thread *is* the warm-up: `speaking.md` rides `baseInstructions` on
-    // `thread/start`, so the voice is ready as soon as the session exists. Under ACP
-    // this cost a turn, because a system prompt had nowhere to go but the first message.
+    // Opening the thread carries layer 1: `reaction.md` rides `baseInstructions` on
+    // `thread/start`, so the character is in place the moment the session exists. Layer 2
+    // is this next line — what it *knows* coming in, handed over before anyone has said
+    // anything to it.
+    seed_session(reaction, &session, voice_id, memo).await;
     tracing::info!("reaction session warmed");
     *held = Some(session);
 }
+
+/// Hand a freshly opened thread its **seed**: the first message it ever reads.
+///
+/// `docs/arch/data.md` calls this layer 2, and this is the whole of it — the generated
+/// `prompts/seed/reaction.md`, plus what is computed from the record at seed time: how to
+/// be with the people in front of it, the open ledger, who it can reach, and the tail of
+/// what happened before it existed.
+///
+/// **Built by the same code a turn uses**, with a cold memo and no signals, so there is one
+/// definition of "the window" rather than two that drift. The memo comes back warm, which
+/// is what stops the first real turn from saying all of it again.
+///
+/// The sequencer is unarmed until `TurnStart`, so a `say` from this prompt would be
+/// dropped without a trace — which is why the text says not to speak rather than relying on
+/// it. Best-effort throughout: a seed that fails to send leaves the memo cold, and the
+/// first turn carries the window itself, exactly as it did before this existed.
+async fn seed_session(
+    reaction: &Reaction,
+    session: &AgentSession,
+    voice_id: &registry::SessionId,
+    memo: &mut WindowMemo,
+) {
+    memo.forget();
+    let window =
+        turn_context(&reaction.inner.memory, voice_id, memo, "", "", "", "").await;
+    if window.trim().is_empty() {
+        tracing::info!("reaction seed: nothing to carry in yet");
+        return;
+    }
+    let seed = format!("{SEED_PREAMBLE}\n\n{window}");
+    tracing::info!(seed_chars = seed.chars().count(), "reaction: seeding the thread");
+    let mut run = match session.prompt(seed).await {
+        Ok(run) => run,
+        Err(err) => {
+            tracing::warn!(error = %err, "reaction seed failed; the first turn will carry it");
+            memo.forget();
+            return;
+        }
+    };
+    while let Some(update) = run.next_update().await {
+        if let Some(what) = update.activity() {
+            registry::global().record_activity(voice_id, &what);
+        }
+    }
+    if let Err(err) = run.wait().await {
+        tracing::warn!(error = %err, "reaction seed did not complete; the first turn will carry it");
+        memo.forget();
+    }
+}
+
+/// What the seed says about itself, so the rung does not answer it.
+///
+/// A seed arrives in the same slot a person's words arrive in, and without this it reads
+/// as someone opening with a status dump — which is a thing you reply to.
+const SEED_PREAMBLE: &str = "This is what you know coming in, not something anyone said to \
+you. Nobody has spoken yet. Read it, say nothing, and wait for the first signal.";
 
 async fn record_reaction_session_closed(
     reaction: &Reaction,

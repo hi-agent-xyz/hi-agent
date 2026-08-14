@@ -120,7 +120,7 @@ pub async fn window(
     // First, because it is the standing one: everything after it is the situation, and
     // this is the manner the situation is met in.
     let conduct = crate::mind::memory::conduct::projection(data_dir).await;
-    let carried = carried_forward(&layout::conversation_prompt_path(data_dir)).await;
+    let carried = carried_forward(&layout::reaction_seed_path(data_dir)).await;
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
@@ -162,14 +162,14 @@ pub async fn window(
 /// is projected-to because it is tools-off; Cognition is projected-to because it is the
 /// one that must not be wrong about this.
 ///
-/// `agent` is a code-supplied name ([`layout::agent_prompt_path`]), never a user string.
+/// `agent` is a code-supplied name ([`layout::rung_seed_path`]), never a user string.
 pub async fn agent_window(
     memory: &Memory,
     agent: &str,
     id: &crate::foundation::registry::SessionId,
 ) -> String {
     let data_dir = memory.data_dir();
-    let carried = carried_forward(&layout::agent_prompt_path(data_dir, agent)).await;
+    let carried = carried_forward(&layout::rung_seed_path(data_dir, agent)).await;
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
@@ -529,7 +529,7 @@ mod window_tests {
     }
 
     async fn write_conversation_prompt(data_dir: &Path, body: &str) {
-        let path = layout::conversation_prompt_path(data_dir);
+        let path = layout::reaction_seed_path(data_dir);
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, body).await.unwrap();
     }
@@ -551,7 +551,7 @@ mod window_tests {
         heard(&memory, "把周报发我").await;
 
         // Not merely absent as a file — absent as a whole tree.
-        assert!(!layout::generated_prompts_dir(dir.path()).exists());
+        assert!(!layout::seed_dir(dir.path()).exists());
 
         let text = whole(&memory).await;
         assert!(!text.trim().is_empty());
@@ -693,7 +693,7 @@ mod window_tests {
         owed.subject = "flash-cards".into();
         write_task(dir.path(), &owed).await.unwrap();
 
-        let carried = layout::agent_prompt_path(dir.path(), "cognition");
+        let carried = layout::rung_seed_path(dir.path(), "cognition");
         tokio::fs::create_dir_all(carried.parent().unwrap()).await.unwrap();
         tokio::fs::write(&carried, "The ops group restart needs sudo; ask first.")
             .await

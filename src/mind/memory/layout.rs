@@ -48,45 +48,78 @@ pub fn raw_root(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("raw")
 }
 
-/// `<memory>/prompts` — the **generated** system prompts: one file per agent that
-/// carries state forward into every window.
+/// `<data_dir>/prompts/seed` — what each rung brings to a thread it has just opened.
 ///
-/// The leaf name is `prompts/` on both sides of the tree on purpose — both hold the
-/// same kind of thing, text handed to an agent at init — and the parent directory is
-/// the whole of the difference. `<data_dir>/prompts/` is **bundled**: shipped in the
-/// binary, reinstalled every boot, disposable. This one is **generated**: written by
-/// the agent, precious, and rebuildable by nothing else. See
-/// `docs/arch/data.md#memoryprompts`.
+/// **Beside the factory prompts, not under `memory/`, and the sibling is the point.**
+/// `prompts/factory/` is ours — shipped in the binary, reinstalled every boot. This is the
+/// agent's, written about itself. Both are text a session is given at init, which is why
+/// they share a parent; the pen is what differs, which is why they do not share a
+/// directory. `memory/` holds the *record* — the log, episodes, facets, tasks — and a seed
+/// is a digest **over** that record, so it never belonged there. See
+/// `docs/arch/data.md#prompts`.
 ///
-/// **An absent file is ordinary**, not an error: Cognition writes the brief when it has
-/// something worth carrying and leaves it alone otherwise, and it has written nothing at
-/// all before the first exchange. Every reader degrades to the log tail.
-pub fn generated_prompts_dir(data_dir: &Path) -> PathBuf {
-    memory_dir(data_dir).join("prompts")
+/// **An absent file is ordinary**, not an error, and losing one costs a reflection pass
+/// rather than knowledge: everything in a seed is a digest of things that are themselves
+/// durable. Cognition writes the voice's when it has something worth carrying and leaves it
+/// alone otherwise, and has written nothing at all before the first exchange. Every reader
+/// degrades to the log tail.
+pub fn seed_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("prompts").join("seed")
 }
 
-/// `<memory>/prompts/conversation.md` — what the conversation carries forward,
-/// written by Cognition and injected into every one of Reaction's turns.
-pub fn conversation_prompt_path(data_dir: &Path) -> PathBuf {
-    generated_prompts_dir(data_dir)
-        .join("conversation.md")
+/// `prompts/seed/reaction.md` — what the conversation carries forward, written by
+/// Cognition (the voice has no file access to write its own) and handed to the thread it
+/// opens.
+pub fn reaction_seed_path(data_dir: &Path) -> PathBuf {
+    seed_dir(data_dir).join("reaction.md")
 }
 
-/// `<memory>/prompts/<agent>.md` — what a standing agent carries forward
-/// (`cognition.md`). Not a full set on purpose: an agent gets a file when it turns
-/// out to need one. `agent` is a code-supplied name, never a user string.
-pub fn agent_prompt_path(data_dir: &Path, agent: &str) -> PathBuf {
-    generated_prompts_dir(data_dir).join(format!("{agent}.md"))
+/// `prompts/seed/<rung>.md` — what a standing rung carries forward (`cognition.md`). Not a
+/// full set on purpose: a rung gets a file when it outlives the work *and* cannot re-derive
+/// what it lost. `rung` is a code-supplied name, never a user string.
+pub fn rung_seed_path(data_dir: &Path, rung: &str) -> PathBuf {
+    seed_dir(data_dir).join(format!("{rung}.md"))
 }
 
-/// `<memory>/proactivity.md` — the learned read on speaking up unprompted: which
-/// subjects the person welcomes a proactive word on, and which they don't. A
-/// derived projection — the reflection pass regenerates it from
-/// how the agent's own unprompted utterances landed; the agent only reads it, to
-/// judge whether breaking silence clears the bar. Absent ⇒ nothing proven ⇒ stay
-/// cautious. Regenerated wholesale, never patched.
+/// `prompts/seed/proactivity.md` — the learned read on speaking up unprompted: which
+/// subjects the person welcomes a proactive word on, and which they don't. A derived
+/// projection — the reflection pass regenerates it from how the agent's own unprompted
+/// utterances landed; the agent only reads it, to judge whether breaking silence clears the
+/// bar. Absent ⇒ nothing proven ⇒ stay cautious. Regenerated wholesale, never patched, and
+/// a seed by every test that word has to pass.
 pub fn proactivity_path(data_dir: &Path) -> PathBuf {
-    memory_dir(data_dir).join("proactivity.md")
+    seed_dir(data_dir).join("proactivity.md")
+}
+
+/// Move the pre-`prompts/seed/` files into it, once, if they are still where they were.
+///
+/// Called at boot before anything reads them. Best-effort and silent about absence, which
+/// is every boot after the first: a seed that fails to move is rebuilt, not lost, which is
+/// exactly what makes this migration cheap.
+pub fn migrate_seeds(data_dir: &Path) {
+    let moves = [
+        (memory_dir(data_dir).join("prompts").join("conversation.md"), reaction_seed_path(data_dir)),
+        (memory_dir(data_dir).join("prompts").join("cognition.md"), rung_seed_path(data_dir, "cognition")),
+        (memory_dir(data_dir).join("proactivity.md"), proactivity_path(data_dir)),
+    ];
+    if !moves.iter().any(|(from, to)| from.is_file() && !to.exists()) {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(seed_dir(data_dir)) {
+        tracing::warn!(error = %e, "could not create the seed directory");
+        return;
+    }
+    for (from, to) in moves {
+        if !from.is_file() || to.exists() {
+            continue;
+        }
+        match std::fs::rename(&from, &to) {
+            Ok(()) => tracing::info!(from = %from.display(), to = %to.display(), "moved a seed"),
+            Err(e) => tracing::warn!(from = %from.display(), error = %e, "could not move a seed"),
+        }
+    }
+    // The directory it left behind held nothing else.
+    let _ = std::fs::remove_dir(memory_dir(data_dir).join("prompts"));
 }
 
 /// `<memory>/episodes` — derived event bundles.
@@ -195,20 +228,79 @@ pub fn day_key(ts: DateTime<Utc>) -> String {
 mod tests {
     use super::*;
 
-    /// The generated tree sits under `memory/`, never beside the bundled
-    /// `<data_dir>/prompts/` — the parent directory is what says who wrote the file.
+    /// Seeds sit beside the factory prompts, never under `memory/`. `memory/` holds the
+    /// record; a seed is a digest **over** the record, and the sibling directory is what
+    /// says which pen wrote it.
     #[test]
-    fn generated_prompts_live_under_memory_not_beside_the_bundled_ones() {
+    fn seeds_live_beside_the_factory_prompts_not_under_memory() {
         let root = Path::new("/tmp/jack.hi");
-        assert_eq!(generated_prompts_dir(root), root.join("memory").join("prompts"));
-        assert_ne!(generated_prompts_dir(root), root.join("prompts"));
+        assert_eq!(seed_dir(root), root.join("prompts").join("seed"));
+        assert!(!seed_dir(root).starts_with(memory_dir(root)));
         assert_eq!(
-            agent_prompt_path(root, "cognition"),
-            root.join("memory").join("prompts").join("cognition.md")
+            rung_seed_path(root, "cognition"),
+            root.join("prompts").join("seed").join("cognition.md")
         );
         assert_eq!(
-            conversation_prompt_path(root),
-            root.join("memory").join("prompts").join("conversation.md")
+            reaction_seed_path(root),
+            root.join("prompts").join("seed").join("reaction.md")
         );
+        assert_eq!(
+            proactivity_path(root),
+            root.join("prompts").join("seed").join("proactivity.md")
+        );
+    }
+}
+
+#[cfg(test)]
+mod seed_migration_tests {
+    use super::*;
+
+    /// The three files a pre-`prompts/seed/` install left under `memory/`, brought forward
+    /// where their readers now look. A seed that stayed behind would not error — it would
+    /// read as an agent that had never written one, which is the quiet kind of wrong.
+    #[test]
+    fn the_old_seed_files_move_and_the_empty_directory_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let old = memory_dir(root).join("prompts");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("conversation.md"), "he prefers Chinese").unwrap();
+        std::fs::write(old.join("cognition.md"), "the brain's").unwrap();
+        std::fs::write(memory_dir(root).join("proactivity.md"), "- delivering — `muted`").unwrap();
+
+        migrate_seeds(root);
+
+        assert_eq!(std::fs::read_to_string(reaction_seed_path(root)).unwrap(), "he prefers Chinese");
+        assert_eq!(std::fs::read_to_string(rung_seed_path(root, "cognition")).unwrap(), "the brain's");
+        assert!(std::fs::read_to_string(proactivity_path(root)).unwrap().contains("muted"));
+        assert!(!old.exists(), "the directory it left held nothing else");
+    }
+
+    /// Idempotent, because it runs on every boot: a second pass finds nothing to move, and
+    /// a seed already written under the new name is never overwritten by a stale one.
+    #[test]
+    fn migrating_twice_changes_nothing_and_never_clobbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let old = memory_dir(root).join("prompts");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("conversation.md"), "stale").unwrap();
+        std::fs::create_dir_all(seed_dir(root)).unwrap();
+        std::fs::write(reaction_seed_path(root), "current").unwrap();
+
+        migrate_seeds(root);
+        migrate_seeds(root);
+
+        assert_eq!(std::fs::read_to_string(reaction_seed_path(root)).unwrap(), "current");
+    }
+
+    /// A fresh install has nothing to move and must not be given an empty `memory/prompts/`
+    /// on the way past.
+    #[test]
+    fn a_fresh_install_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        migrate_seeds(dir.path());
+        assert!(!memory_dir(dir.path()).join("prompts").exists());
+        assert!(!seed_dir(dir.path()).exists());
     }
 }
