@@ -144,14 +144,15 @@ const T = {
     framesFailed: "That session's wire log could not be read.",
     // What each folded message was. Short: they sit in a fixed column beside the line.
     //
-    // `agent` is **typed**, never "said". An `agentMessage` is the model's own
-    // working-out and reaches nobody; the only thing a person ever heard is a `hi_say`
-    // tool call, which folds as `tool`. Labelling it "said" told readers the agent had
-    // answered when the person got nothing — the one row in this table that can make a
-    // record contradict what happened.
+    // `agent` keeps the wire's own flat word, because every verb tried here was read as
+    // a claim about delivery. An `agentMessage` is the model's own working-out and
+    // reaches nobody; the only thing a person ever heard is a `hi_say` call, which is the
+    // row below. "said" claimed the person had been answered when they got nothing;
+    // "typed" answered that but made the reader stop and work out what it meant. `agent`
+    // says whose line it is and promises nothing about where it went.
     kind: {
       user: "prompt",
-      agent: "typed",
+      agent: "agent",
       say: "said",
       thinking: "thought",
       command: "ran",
@@ -213,7 +214,7 @@ const T = {
     framesFailed: "读不到这个会话的原始帧。",
     kind: {
       user: "收到",
-      agent: "写",
+      agent: "agent",
       say: "说",
       thinking: "想",
       command: "跑",
