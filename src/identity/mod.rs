@@ -665,6 +665,25 @@ mod soul_tests {
         assert!(p.join("workers/view-builder.md").exists());
     }
 
+    /// The prompt names the tools; the runtime spells them `mcp__<server>__<tool>`, and the
+    /// model only learns that by looking. A compaction deletes what it looked up, and the
+    /// one tool whose absence throws nothing is the voice — which is exactly how a live
+    /// thread went two and a half hours without speaking on 2026-08-13. So the spelling is
+    /// in the prompt, and this fails if either half of it moves.
+    #[test]
+    fn the_reaction_prompt_spells_its_tools_the_way_the_runtime_does() {
+        let base = Role::Reaction.base();
+        for tool in crate::foundation::mcp::tools_for_role(Some("reaction")) {
+            let tool = tool["name"].as_str().expect("every tool is named");
+            let spelled = format!("mcp__hi_agent__{tool}");
+            assert!(
+                base.contains(&spelled),
+                "reaction.md must spell `{tool}` as `{spelled}` — the model cannot call a \
+                 name it has only been told the short form of"
+            );
+        }
+    }
+
     /// Every role is self-contained: it opens with its own character rather than a
     /// pointer to a file it must go and fetch. This is the property the seed did not
     /// have — the seed's instruction to Read was *conditional*, and nothing checked it.

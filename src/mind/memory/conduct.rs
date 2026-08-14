@@ -124,6 +124,36 @@ pub fn section(markdown: &str) -> Option<&str> {
 ///
 /// Bounded by [`CONDUCT_CHARS`] across all subjects together, and the cut is
 /// announced in the injected text, addressed to the one who can act on it.
+/// Drop the `[[memory-link]]` citations a facet carries.
+///
+/// **The voice cannot follow one.** It is tools-off by design — no file access, nothing to
+/// open a link with — so a citation reaching it is provenance addressed to a reader that
+/// isn't there. Cognition and Reflection read the facet itself and keep every one of them.
+///
+/// It is not free to leave in. Measured on one live window: 19 citations, 1,014 characters,
+/// **31% of a section already over the cap** — so the host was truncating real guidance
+/// about a real person to make room for slugs nobody in that seat can use.
+fn without_citations(section: &str) -> String {
+    let mut out = String::with_capacity(section.len());
+    let mut rest = section;
+    while let Some(open) = rest.find("[[") {
+        let Some(close) = rest[open..].find("]]") else { break };
+        out.push_str(&rest[..open]);
+        // The space that introduced the citation goes with it, or a sentence ends on a gap.
+        while out.ends_with(' ') {
+            out.pop();
+        }
+        rest = &rest[open + close + 2..];
+    }
+    out.push_str(rest);
+    // A line that held nothing but citations is now an empty line in the middle of a
+    // paragraph, which reads as a break the author did not write.
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out
+}
+
 pub async fn projection(data_dir: &Path) -> String {
     use std::fmt::Write as _;
 
@@ -134,7 +164,7 @@ pub async fn projection(data_dir: &Path) -> String {
 
     let mut body = String::new();
     for (subject, section) in &people {
-        let _ = writeln!(body, "**{subject}** — {section}\n");
+        let _ = writeln!(body, "**{subject}** — {}\n", without_citations(section));
     }
     let body = body.trim();
 
@@ -258,11 +288,10 @@ Wants a kid-playable, do-anything assistant. Not relevant mid-turn.
 ## Working with them
 **zhaoli** — Done means committed, pushed, deployed and checked — a doc update finished is not the
 work finished. He has said this three separate ways since 08-10, twice while annoyed.
-[[2026-08-10-doubao-ref-marked-done-early]] [[2026-08-12-only-pushed-is-done]]
 
 On his own machines and repos, just do it — no PR, no running commentary. Four calm
 instructions over ten weeks and dozens of clean runs behind it; one bad afternoon is
-not a reason to start asking. [[2026-07-07-commit-straight-to-main]]
+not a reason to start asking.
 "
         );
         assert!(!out.contains("芳姐"), "biography is recall, not projection");
@@ -288,5 +317,34 @@ not a reason to start asking. [[2026-07-07-commit-straight-to-main]]
         let out = projection(dir.path()).await;
         assert!(out.contains("Cut here by the host"));
         assert!(out.chars().count() < CONDUCT_CHARS + 500);
+    }
+}
+
+#[cfg(test)]
+mod citation_tests {
+    use super::*;
+
+    /// The voice cannot open a `[[link]]`, and on one live window 19 of them took 1,014
+    /// characters — 31% of a section the host was already truncating. The guidance stays;
+    /// the addresses go.
+    #[test]
+    fn citations_go_and_the_sentence_survives() {
+        let with = "Done means deployed. [[2026-08-10-marked-done-early]] [[2026-08-12-only-pushed]]";
+        assert_eq!(without_citations(with), "Done means deployed.");
+    }
+
+    /// A line that was nothing but citations must not leave a paragraph break behind it.
+    #[test]
+    fn a_line_of_only_citations_leaves_no_hole() {
+        let with = "First thing.\n[[a-note]] [[b-note]]\n\nSecond thing.";
+        assert_eq!(without_citations(with), "First thing.\n\nSecond thing.");
+    }
+
+    /// An unclosed `[[` is text, not the start of a citation — the section is prose written
+    /// by an agent, and it must never lose the rest of itself to a stray bracket.
+    #[test]
+    fn an_unclosed_bracket_keeps_everything_after_it() {
+        let odd = "He writes [[ like this sometimes, and the rest matters.";
+        assert_eq!(without_citations(odd), odd);
     }
 }
