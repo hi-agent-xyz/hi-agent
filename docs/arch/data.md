@@ -144,11 +144,12 @@ facet or a task depending on what it is. Nothing bypasses the agent's judgment o
 going through it.** A correction that does not stick is a memory bug to fix, not a file to
 hand-edit.
 
-> **One override does exist at the operator level**, and the earlier "no user slot" wording
-> read as though it did not: `install_prompts` composes each factory prompt with an optional
-> `*.local.md` sibling it never touches. That is an operator editing the manual, not the person
-> instructing the agent, and it stays where the factory text is. It is not a third layer and
-> gets no directory of its own.
+> **And there is no operator override either, as of this change.** `install_prompts` used to
+> append a `*.local.md` sibling under an "Operator overrides" header. Nothing ever wrote one on
+> any install, and it quietly contradicted the rule above — a slot with no occupant is not a
+> courtesy, it is a second source of character that goes stale unseen. An operator who wants
+> different text edits the factory file and gets it until the next boot rewrites it, or changes
+> the binary.
 
 ## `memory/`
 

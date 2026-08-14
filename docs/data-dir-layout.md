@@ -54,7 +54,7 @@ data/
       cognition.md   #     the brain's
       proactivity.md #     the learned read on speaking up unprompted (written by Reflection)
 
-  claude-config/     # the cognition RUNTIME — the ACP/claude subprocess's home (managed); transcripts are durable records
+  codex-home/        # the agent RUNTIME — the codex subprocess's CODEX_HOME (managed); its rollouts are durable records
   sessions.jsonl     # the session ledger/index (a durable record)
 ```
 
@@ -64,7 +64,7 @@ Five **kinds**, each a place on a person's computer:
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
 4. **prompts/** — what a session is handed. `factory/` is the manual handed over at the factory: how to be, read-only to the agent and reinstalled from the binary every boot. `seed/` beside it is what the agent wrote for itself, fed as the thread's first message.
-5. **claude-config/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
+5. **codex-home/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
 
 ## The two axes that place everything
 
@@ -138,27 +138,34 @@ gitignored, so there is **no `.cache` dotdir** — the whole tree is the cache.
 ### prompts/factory/ — what the factory gives
 
 Read-only to the agent and re-materialized at every boot from the binary (`include_str!`), so
-an edit here does not survive and is not meant to. **No user layer**: an instruction from the
-person lands as a preference facet or a task like anything else they say, and there is no lever
-that overrides the agent without going through it. What the agent carries forward is generated
-into its sibling `prompts/seed/`; the reasoning, and its cost, is in
-[`arch/data.md`](arch/data.md#prompts). Two flavors of factory text:
+an edit here does not survive and is not meant to. **One file per role and no layer under it**
+— no user slot and no operator override: an instruction from the person lands as a preference
+facet or a task like anything else they say, and there is no lever that overrides the agent
+without going through it. What the agent carries forward is generated into its sibling
+`prompts/seed/`; the reasoning, and its cost, is in [`arch/data.md`](arch/data.md#prompts).
 
-- **Behavior** — `core.md`, `reaction.md`, `aesthetic.md`, `appearance.md`, `meaning.md`,
-  `reflection.md`: how to be. Read as guidance.
-- **World priors** — `world.md` *(proposed)*: "YOLO is good for X", "lark-cli does Y". The
-  agent reads it like **an article from a kind-of-trusted source**, *digests it into memory*,
-  and forms its own updatable understanding. We can push a new version (a correction from the
-  source); lived experience supersedes it on conflict. This is the `core.md` pattern pointed
-  at the world instead of the self.
+Nine files, one per [role](arch/agents.md): the three rungs — `reaction.md`, `cognition.md`,
+`reflection.md` — and six worker types under `workers/`: `general`, `view-builder`,
+`view-reviewer`, `decision-maker`, `file-filer`, `person-reader`. Each is **whole**: a worker's
+prompt is the same kind of object as a rung's, with no shared base above it, because a
+`common.md` meant a file-filer read how to review its own artwork.
 
-### claude-config/ — cognition runtime & records
+Names that are *retired* get swept on boot rather than left to read as current — `core.md`,
+`meaning.md`, `appearance.md`, `aesthetic.md`, `workers/common.md`, and the two rung renames
+`speaking.md` and `deliberation.md`.
 
-The ACP/claude subprocess's home (settings, plugins, telemetry, per-session transcripts under
-`projects/*/<session>.jsonl`). Mostly **managed** by the cognition layer, not part of the
-knowledge design — but the **transcripts are durable records** (ground truth for what a
-session actually did; see CLAUDE.md "Testing user journeys live"). `sessions.jsonl` is the
-session ledger.
+- **World priors** — `world.md` *(proposed, not built)*: "YOLO is good for X", "lark-cli does
+  Y". The agent would read it like **an article from a kind-of-trusted source**, *digest it into
+  memory*, and form its own updatable understanding. We can push a new version (a correction
+  from the source); lived experience supersedes it on conflict.
+
+### codex-home/ — agent runtime & records
+
+The codex subprocess's `CODEX_HOME` (config, sqlite state, shell snapshots, and per-thread
+**rollouts** under `sessions/<y>/<m>/<d>/rollout-*.jsonl`). Mostly **managed**, not part of the
+knowledge design — but the rollouts are **durable records**, and the only place the model's own
+context is readable verbatim: what a compaction replaced the history with is in there and
+nowhere else. `sessions.jsonl` is the session ledger.
 
 ---
 

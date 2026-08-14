@@ -120,7 +120,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 
     // Materialise the bundled prompts under <data_dir>/prompts/ — one whole prompt per
     // rung, plus workers/<type>.md — so each is on
-    // disk, composed with any `*.local.md` operator overrides. Absolutize the dir:
+    // disk. Absolutize the dir:
     // it rides to the child as HI_AGENT_PROMPTS_DIR, and the child may run with a
     // different cwd than us.
     identity::install_prompts(&config.data_dir).context("installing bundled prompts")?;

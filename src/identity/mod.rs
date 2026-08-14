@@ -7,9 +7,8 @@
 //! than pointed at by a path.
 //!
 //! This module owns the **prompt cascade**: the bundled bases are materialised under
-//! `<data_dir>/prompts/` at boot, each composed with an optional operator `*.local.md`
-//! override ([`install_prompts`]), then read back whole at session open
-//! ([`role_prompt`], [`reaction_system_prompt`]). That cascade is the
+//! `<data_dir>/prompts/factory/` at boot ([`install_prompts`]), then read back whole at
+//! session open ([`role_prompt`], [`reaction_system_prompt`]). That cascade is the
 //! base‹override mechanism `docs/arch/foundation.md` generalises to base‹user‹self.
 //!
 //! **There is no seed.** A rung used to be handed ~18 lines pointing at `core.md`,
@@ -50,8 +49,7 @@ const COGNITION_BASE: &str = include_str!("cognition.md");
 ///
 /// There is no `common.md`. One used to sit above these as the layer every type composed
 /// with, and retiring it is what made a worker's prompt the same kind of object as a
-/// rung's: entire, and reachable through the same [`Role::base`]. Each keeps its own
-/// `.local.md`, so an operator retunes one kind without touching the others.
+/// rung's: entire, and reachable through the same [`Role::base`].
 const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
 const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
 const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
@@ -273,28 +271,16 @@ impl Role {
     }
 }
 
-/// Separator that introduces the operator's override layer. Placed after the
-/// bundled base so its instructions take precedence — the model honors the
-/// later, more specific guidance where the two conflict.
-const OVERRIDE_HEADER: &str = "\n\n# Operator overrides\n\nThe operator added the guidance below. It layers on top of everything above; where the two conflict, follow this.\n\n";
-
-/// Compose a bundled base prompt with an optional operator override layer. The
-/// base is the embedded current text; `<prompts_dir>/<local_name>` (e.g.
-/// `core.local.md`) holds only the operator's deltas, appended under
-/// [`OVERRIDE_HEADER`] so later, more-specific guidance wins. Missing or empty
-/// override ⇒ the base verbatim, so it can neither go stale nor shadow updates.
-fn compose_prompt(base: &str, prompts_dir: &Path, local_name: &str) -> String {
-    let path = prompts_dir.join(local_name);
-    match std::fs::read_to_string(&path) {
-        Ok(text) if !text.trim().is_empty() => format!("{base}{OVERRIDE_HEADER}{}", text.trim()),
-        _ => base.to_string(),
-    }
-}
-
-/// Install the bundled prompts under `<data_dir>/prompts/` at startup, composing each
-/// with its optional `*.local.md` operator override. The managed base files — one per
-/// [`Role`], so `reaction.md` beside `workers/view-builder.md` — are rewritten every boot
-/// so they stay current; operator edits live in the never-touched `*.local.md` siblings.
+/// Install the bundled prompts under `<data_dir>/prompts/` at startup. One file per
+/// [`Role`], so `reaction.md` beside `workers/view-builder.md`, rewritten every boot so
+/// they stay current.
+///
+/// **There is no override layer, and that is the whole design.** A `*.local.md` sibling
+/// used to be appended under an "Operator overrides" header. Nothing ever wrote one — not
+/// on any install — and it contradicted the rule these prompts exist to serve
+/// (`docs/arch/data.md`): an instruction from the person becomes a facet or a task, and
+/// nothing overrides the agent without going through it. A slot with no occupant is not a
+/// courtesy; it is a second source of character that would have gone stale unseen.
 /// Each follows one workflow: ship embedded → materialise here → consumed from disk at
 /// runtime.
 ///
@@ -320,7 +306,7 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
         let name = role.prompt_name();
         std::fs::write(
             dir.join(format!("{name}.md")),
-            compose_prompt(role.base(), &dir, &format!("{name}.local.md")),
+            role.base(),
         )?;
     }
     for gone in RETIRED_PROMPTS {
@@ -356,13 +342,19 @@ const RETIRED_PROMPTS: &[&str] = &[
     "appearance.md",
     "aesthetic.md",
     "workers/common.md",
+    // The rung renames. Both were still sitting in `data/prompts/` on this machine, months
+    // after the binary stopped installing them: `speaking.md` is what `reaction.md` was
+    // called, and `deliberation.md` is the rung Cognition replaced. A stale prompt reads
+    // exactly like a current one.
+    "speaking.md",
+    "deliberation.md",
 ];
 
 /// A role's **whole** system prompt: its installed `.md`, entire and interpolated.
 ///
-/// Read off disk so an operator's `*.local.md` reaches every role the same way, falling
-/// back to the embedded base when the file is missing or empty. Read fresh per open, so
-/// an edit takes effect without a restart.
+/// Read off disk rather than from the embedded text, falling back to the base when the
+/// file is missing or empty. Read fresh per open, so an edit to the installed file takes
+/// effect without a restart — until the next boot rewrites it from the binary.
 ///
 /// **This is the one prompt entry point**, and it is one because a worker type and a rung
 /// are one concept. What it replaced — `worker_prompt(data_dir, kind)` beside three
@@ -471,8 +463,8 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
-/// `<data_dir>/prompts/reflection.md` (operator-overridable via `reflection.local.md`),
-/// or the embedded [`REFLECTION_BASE`] when that file is missing or empty. It is
+/// `<data_dir>/prompts/reflection.md`, or the embedded [`REFLECTION_BASE`] when that file
+/// is missing or empty. It is
 /// **inlined** as the reflection session's system prompt rather than Read by the agent
 /// — it *is* the task's instructions, so it must be present before the session can act.
 /// Read fresh each round, so an operator edit takes effect without a restart.
@@ -501,8 +493,8 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// three: the file once said "you have exactly two", then told the voice to "hand it
 /// onward" without naming the verb that does it.
 ///
-/// Read from `<data_dir>/prompts/reaction.md`, so an operator's `reaction.local.md`
-/// reaches the voice too, falling back to the embedded [`REACTION_BASE`]. Two things
+/// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded
+/// [`REACTION_BASE`]. Two things
 /// stay in code because they are *state*, not character, and the voice cannot fetch
 /// either: the **first-meeting** cue and the **language** preference.
 pub async fn reaction_system_prompt(data_dir: &Path) -> String {
@@ -626,18 +618,6 @@ mod soul_tests {
         );
     }
 
-    #[tokio::test]
-    async fn the_voice_takes_the_operator_override() {
-        // Reaction reads the *installed* reaction.md, so `reaction.local.md` reaches
-        // the voice the same way it reaches every other prompt.
-        let dir = tempfile::tempdir().unwrap();
-        let prompts = dir.path().join("prompts");
-        std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("reaction.local.md"), "Always end with 好的。").unwrap();
-        install_prompts(dir.path()).unwrap();
-        assert!(reaction_system_prompt(dir.path()).await.contains("Always end with 好的。"));
-    }
-
 
     /// The managed bases all land, and `core.md`/`meaning.md` are **gone** — a rung's
     /// prompt is one file now, so a leftover shared file would be a second source of
@@ -683,34 +663,6 @@ mod soul_tests {
         // The live ones are untouched by the sweep.
         assert!(p.join("reaction.md").exists());
         assert!(p.join("workers/view-builder.md").exists());
-    }
-
-    /// An operator override reaches a worker exactly as it reaches a rung. Worth pinning
-    /// because the two halves used to resolve their `*.local.md` through different base
-    /// directories (`prompts/` vs `prompts/workers/`) to land on the same path; there is
-    /// one base directory now, and the `workers/` segment rides in the stem.
-    #[test]
-    fn install_layers_the_operator_override_into_a_worker_file_too() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("prompts");
-        std::fs::create_dir_all(p.join("workers")).unwrap();
-        std::fs::write(p.join("workers/file-filer.local.md"), "File nothing on a Sunday.").unwrap();
-        install_prompts(dir.path()).unwrap();
-        let out = std::fs::read_to_string(p.join("workers/file-filer.md")).unwrap();
-        assert!(out.starts_with(WORKER_FILE_FILER_BASE));
-        assert!(out.contains("File nothing on a Sunday."));
-    }
-
-    #[test]
-    fn install_layers_the_operator_override_into_the_managed_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("prompts");
-        std::fs::create_dir_all(&p).unwrap();
-        std::fs::write(p.join("cognition.local.md"), "Prefer small workers.").unwrap();
-        install_prompts(dir.path()).unwrap();
-        let out = std::fs::read_to_string(p.join("cognition.md")).unwrap();
-        assert!(out.starts_with(COGNITION_BASE));
-        assert!(out.contains("Prefer small workers."));
     }
 
     /// Every role is self-contained: it opens with its own character rather than a
@@ -1164,30 +1116,22 @@ mod soul_tests {
         );
     }
 
-    #[tokio::test]
-    async fn cognition_prompt_takes_the_operator_override() {
-        let dir = tempfile::tempdir().unwrap();
-        let prompts = dir.path().join("prompts");
-        std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("cognition.local.md"), "Keep the brief in French.").unwrap();
-        install_prompts(dir.path()).unwrap();
-        let prompt = cognition_prompt(dir.path()).await;
-        assert!(prompt.contains("Keep the brief in French."));
-    }
 
-
+    /// The installed file **is** the base, byte for byte — there is no layer between them.
+    /// A `*.local.md` left over from the build that had one is inert, not an override, and
+    /// this is what says so.
     #[test]
-    fn empty_override_leaves_the_base_verbatim() {
+    fn install_writes_the_base_verbatim_and_ignores_a_leftover_local_file() {
         let dir = tempfile::tempdir().unwrap();
         let prompts = dir.path().join("prompts");
         std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("reaction.local.md"), "   \n\t").unwrap();
+        std::fs::write(prompts.join("reaction.local.md"), "Always end with 好的。").unwrap();
         install_prompts(dir.path()).unwrap();
         assert_eq!(std::fs::read_to_string(prompts.join("reaction.md")).unwrap(), REACTION_BASE);
     }
 
     #[tokio::test]
-    async fn reflection_prompt_falls_back_then_reads_installed_override() {
+    async fn reflection_prompt_falls_back_to_the_embedded_base() {
         // Fallback no longer means "the embedded base, byte for byte" — every rung prompt
         // is interpolated on the way out, so the invariant worth pinning is that the
         // *content* is there and the placeholders are resolved, installed or not.
@@ -1196,10 +1140,8 @@ mod soul_tests {
         assert!(bare.contains("tends your own house"), "the embedded base must still serve");
         assert!(!bare.contains("{skills_dir}"), "even the fallback interpolates");
 
-        let prompts = dir.path().join("prompts");
-        std::fs::create_dir_all(&prompts).unwrap();
-        std::fs::write(prompts.join("reflection.local.md"), "Prune harder.").unwrap();
+        // And the installed file serves the same content once boot has written it.
         install_prompts(dir.path()).unwrap();
-        assert!(reflection_prompt(dir.path()).await.contains("Prune harder."));
+        assert!(reflection_prompt(dir.path()).await.contains("tends your own house"));
     }
 }
