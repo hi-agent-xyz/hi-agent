@@ -177,6 +177,12 @@ before you hand anything over:
   shielding themselves while the one conclusion that matters sits on bare texture.
 - **`--fg-dim` and `--fg-mute` are for incidental text.** They are quieter than `--fg`
   on purpose, so substance set in them *and* set small is paying the cost twice.
+- **Whatever was meant to reach an edge reaches it.** Read the screenshot's four edges
+  before you read anything inside them: a band of bare paper around your composition
+  means it stopped where the host's inset starts. The single-image view is where this
+  lands hardest — one photo `contain`ed in the middle, paper above and below — and the
+  cause is almost always an `<img>` in flow, which cannot bleed however you size it. The
+  mechanics below say how.
 
 **A brief cannot lower this bar.** "Technical, not a pretty picture." "An engineering
 surface, not a marketing page." "Just the facts." All of that is about tone and content,
@@ -306,6 +312,35 @@ next to your view), and reference it by its served path: anything you save in th
 views tree is served at `/views/<the same relative path>`, so a file you write to
 `badminton-top10/leader.jpg` is `<img src={url("/views/badminton-top10/leader.jpg")}>`.
 That path always loads and keeps your source small.
+
+**A picture that fills the frame is a ground, not an `<img>`.** The host's inset rides on
+your root as a transparent border, so everything *inside* that root starts after it: an
+`<img>` in flow can come close to the edges and can never reach them, and what lands on
+the screen is a rectangle of photo floating in a band of the theme's paper. A picture
+meant to bleed is set as the root's `background`, which paints *under* that border and
+runs corner to corner. The host pins `background-origin: border-box`, so `cover` covers
+the window rather than the inset box inside it:
+
+```
+import { url } from "@hi/core";
+export default function AutumnTea() {
+  return (
+    <main style={{
+      background: `url(${url("/views/autumn-milk-tea/cup.jpg")}) center / cover no-repeat`,
+    }}>
+      … your words, which stay clear of the chrome because they are content …
+    </main>
+  );
+}
+```
+
+The layer already stretches your root to the whole frame, so that root needs no width or
+height of its own — and this is the shape you want, because the photo bleeds while the
+type you flow over it stays inset clear of the titlebar and the controls. When you need
+the element rather than the ground — alt text, or motion on the picture itself — an
+`<img>` with `position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover`
+bleeds the same way, because an absolutely positioned child resolves against the host's
+layer instead of against your bordered root.
 
 **A path in an attribute goes through `url()`.** `import { url } from "@hi/core"` and
 wrap any path you put in a `src` or an `href` — an image, a download link, a QR. This
@@ -443,6 +478,15 @@ Make the content carry itself — and aim high while you do:
   with it: let a photo lead, layer the words into it, frame it — a designer's slide,
   not a caption stuck under a picture. And frame the subject whole — a crop that lops
   off a face reads as a mistake, not a style.
+- **When the picture *is* the view, the picture is the frame.** One image and nothing
+  much to say alongside it is the case that goes wrong most reliably: `contain` it in the
+  middle and a landscape frame hands you a square of photo stranded in paper with dead
+  bands above and below — the exact failure "fill the frame" is written to prevent, and it
+  reads as a broken layout rather than as a decision. Bleed it. A source whose shape
+  doesn't match the frame's is the real fork, and letterboxing is not one of the answers:
+  crop with intent (`cover`, positioned so the subject survives the crop), or bleed a
+  treated copy — blurred, darkened — as the ground and stand the whole uncropped picture
+  on top of it. That second one is how you keep a face intact and still own every pixel.
 - **Show the story, not a table.** Pick the form that lets the data's own shape
   surface, not a grid of cells.
 - **Fit the treatment to why they're looking.** Something they're curious about wants
