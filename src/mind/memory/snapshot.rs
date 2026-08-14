@@ -9,10 +9,14 @@
 //!
 //! Three properties of it are code's, and each is a decision (`docs/arch/data.md`):
 //!
-//! - **Injection is every turn**, not once at session open. A window that is only
+//! - **It is rebuilt every turn**, not once at session open. A window that is only
 //!   correct when the session rotates is stale for the rest of the conversation — a
 //!   task opened mid-thread, or a memory written a minute ago, would simply not
 //!   be there. This is the one that everything else here exists to serve.
+//! - **Rebuilt is not re-sent.** Each block carries a [`Cadence`], and the caller sends
+//!   the ones the thread does not already have. Re-sending a block identical to the one
+//!   three turns up buys nothing and costs a permanent copy in a finite window — which is
+//!   how one thread came to be 80% its own preamble (`docs/arch/data.md`).
 //! - **The bound is code's**, never the agent's: [`CARRIED_FORWARD_CHARS`], and over it
 //!   the text says so. A ceiling that shows up as text is real; one that shows up as
 //!   latency is not.
@@ -51,29 +55,67 @@ pub const RECENT_ENTRY_LIMIT: usize = 200;
 /// want, and the same one [`tasks`] makes on its own lines.
 pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 
-/// Everything the reaction must know without reading, in one block, rebuilt
-/// **on every turn**.
+/// How often a block of the window is worth sending **again**.
+///
+/// Measured, not guessed. Over 108 turns of one live thread: `## Working with them`
+/// changed 10 times, the proactivity read 4, the reachable roster 0 — and all three were
+/// sent 108 times, 5,848 characters apiece per turn, to deliver 14 changes. The thread
+/// ended up 80% re-sent state against 20% everything the agent had ever done or said, and
+/// when the window filled, codex's compaction kept ten copies of the standing preamble and
+/// dropped every tool call in the history — including every example of the voice speaking.
+/// Nothing here was unnecessary *once*. All of it was unnecessary *again*.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cadence {
+    /// Send when it differs from what this thread was last told. The thread can still see
+    /// the last copy, so re-sending an identical block buys nothing and costs a permanent
+    /// place in the history.
+    OnChange,
+    /// Send only when the thread **cannot** see its own history: its first turn, or the
+    /// turn after a compaction replaced what it had. For a block that is a retelling of
+    /// events already in the thread, that is the only moment it carries anything.
+    ColdOnly,
+}
+
+/// One titled block of the voice's window.
+pub struct Block {
+    /// Stable identity across turns — what "has this changed?" is asked about. Never
+    /// shown to the model.
+    pub key: &'static str,
+    pub cadence: Cadence,
+    pub text: String,
+}
+
+impl Block {
+    fn new(key: &'static str, cadence: Cadence, text: String) -> Self {
+        Self { key, cadence, text }
+    }
+}
+
+/// Everything the reaction must know without reading, as titled blocks the caller emits
+/// on each block's own cadence.
 ///
 /// In order: how to be with the people in front of it
 /// ([`conduct::projection`](crate::mind::memory::conduct::projection)), what the conversation
 /// carries forward (the generated prompt, capped), what the
-/// agent owes ([`tasks::projection`]), what it may reach,
-/// the learned read on speaking up unprompted, and the recent-signals tail — the tail
-/// last, so it sits against the turn's new signals and reads as one continuous thread.
+/// agent owes ([`tasks::projection`]), the learned read on speaking up unprompted, what it
+/// may reach, and the recent-signals tail — the tail last, so it sits against the turn's
+/// new signals and reads as one continuous thread.
 ///
 /// **Conduct is first and the tail is last, and that is the same decision twice.** What
 /// stands is read as framing; what just happened is read against the turn. A manner that
 /// arrives after three thousand characters of situation is a manner that gets skimmed.
 ///
+/// **This is built every turn and mostly not sent.** Building it is cheap — small reads
+/// and one directory scan — and it has to happen anyway to know whether anything moved.
+/// What used to happen anyway was *sending* it.
+///
 /// Nothing here can fail the turn. Each source resolves to `""` on absence or error
 /// and drops out of the join, and the tail says so in words rather than pretending
-/// nothing happened. The cost is one small read per section plus one directory scan
-/// of the task dimension — small, but genuinely per-turn now, which is why every read
-/// in here has to stay small.
+/// nothing happened.
 pub async fn window(
     memory: &Memory,
     id: crate::foundation::registry::SessionId,
-) -> String {
+) -> Vec<Block> {
     let data_dir = memory.data_dir();
     // First, because it is the standing one: everything after it is the situation, and
     // this is the manner the situation is met in.
@@ -92,15 +134,17 @@ pub async fn window(
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
     );
+    // A retelling of signals that are already in the thread above it, which is why it is
+    // the one block that only earns its place on a context that cannot look up.
     let tail = recent_tail(memory).await;
-    join(&[
-        conduct.as_str(),
-        carried.as_str(),
-        owed.as_str(),
-        unprompted.as_str(),
-        reach.as_str(),
-        tail.as_str(),
-    ])
+    vec![
+        Block::new("conduct", Cadence::OnChange, conduct),
+        Block::new("carried", Cadence::OnChange, carried),
+        Block::new("tasks", Cadence::OnChange, owed),
+        Block::new("unprompted", Cadence::OnChange, unprompted),
+        Block::new("reach", Cadence::OnChange, reach),
+        Block::new("recent", Cadence::ColdOnly, tail),
+    ]
 }
 
 /// The window for an agent that is not the voice — what it must know without going to
@@ -490,6 +534,14 @@ mod window_tests {
         tokio::fs::write(&path, body).await.unwrap();
     }
 
+    /// Every block the window would build, joined — what a cold turn carries. The live
+    /// caller emits each block on its own cadence ([`Cadence`]); a test asking "is it in
+    /// the window at all" wants them all.
+    async fn whole(memory: &Memory) -> String {
+        let blocks = window(memory, 0).await;
+        join(&blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>())
+    }
+
     /// The absence that is normal today — nothing writes the generated prompts yet —
     /// must still leave a usable window. Uncurated, never empty.
     #[tokio::test]
@@ -501,7 +553,7 @@ mod window_tests {
         // Not merely absent as a file — absent as a whole tree.
         assert!(!layout::generated_prompts_dir(dir.path()).exists());
 
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(!text.trim().is_empty());
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
@@ -509,7 +561,7 @@ mod window_tests {
 
         // A blank file is the same as no file, not an empty section header.
         write_conversation_prompt(dir.path(), "   \n\t\n").await;
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(!text.contains("## What I carry forward"), "{text}");
         assert!(text.contains("把周报发我"), "{text}");
     }
@@ -520,7 +572,7 @@ mod window_tests {
     async fn an_empty_store_still_yields_a_window() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(text.contains("## Recent (last 30 minutes)"), "{text}");
         assert!(text.contains("(none)"), "{text}");
     }
@@ -534,7 +586,7 @@ mod window_tests {
 
         // Just under the cap: whole, and no notice.
         write_conversation_prompt(dir.path(), &"a".repeat(CARRIED_FORWARD_CHARS)).await;
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(text.contains("## What I carry forward"), "{text}");
         assert!(!text.contains("Cut here by the host"), "{text}");
 
@@ -543,7 +595,7 @@ mod window_tests {
         // exactly what survived the cut.
         let long = format!("{}TAIL-THAT-MUST-NOT-SURVIVE", "q".repeat(CARRIED_FORWARD_CHARS));
         write_conversation_prompt(dir.path(), &long).await;
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(!text.contains("TAIL-THAT-MUST-NOT-SURVIVE"), "the tail rode past the cap");
         assert!(text.contains("Cut here by the host"), "{text}");
         assert!(text.contains(&CARRIED_FORWARD_CHARS.to_string()), "{text}");
@@ -551,7 +603,7 @@ mod window_tests {
 
         // Characters, not bytes — a CJK prompt clips at the same visible length.
         write_conversation_prompt(dir.path(), &"记".repeat(CARRIED_FORWARD_CHARS * 2)).await;
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert_eq!(text.matches('记').count(), CARRIED_FORWARD_CHARS);
         assert!(text.contains("Cut here by the host"), "{text}");
     }
@@ -571,7 +623,7 @@ mod window_tests {
         done.title = "Renew the domain".into();
         write_task(dir.path(), &done).await.unwrap();
 
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(text.contains("# Active tasks"), "{text}");
         assert!(text.contains("- [doing] Ship the flash cards"), "{text}");
         // Closed ones are history, not window furniture.
@@ -590,7 +642,7 @@ mod window_tests {
         write_task(dir.path(), &owed).await.unwrap();
         heard(&memory, "还有多久").await;
 
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
         assert!(at("## What I carry forward") < at("# Active tasks"));
         assert!(at("# Active tasks") < at("## Recent (last 30 minutes)"));
@@ -620,7 +672,7 @@ mod window_tests {
         // saying nothing.
         heard(&memory, "这周的卡片做完了吗").await;
 
-        let text = window(&memory, 0).await;
+        let text = whole(&memory).await;
         assert!(text.contains("这周的卡片做完了吗"), "the window is empty, so this proves nothing: {text}");
         for leaked in ["watch the ops group", "老板", "shipped the drive view", "standing commitments"] {
             assert!(!text.contains(leaked), "leaked {leaked}: {text}");

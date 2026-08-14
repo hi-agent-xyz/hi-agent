@@ -121,7 +121,7 @@ computed at read time rather than stored as a level, so answers can honestly dis
 revisable, correctable by one sentence from the person.
 
 A person's facet carries one section under a fixed heading, **`## Working with them`**, and
-that section alone is projected into the voice's window every turn. Everything above it —
+that section alone is projected into the voice's window, on the cadence below. Everything above it —
 who they are, what they are building, how their world is arranged — is recall. Everything
 under it is what changes what the agent does next: how they want work delivered, what is
 theirs to decide rather than the agent's, what reliably goes fine and should not be
@@ -209,6 +209,43 @@ separate always-projected block.
 Reaction is tools-off by design, so the projected set is the entirety of what it knows; every
 other rung can read on demand. This is a test, not a list — it is what
 [open tasks](#tasks) pass, and what everything left to recall fails.
+
+#### What earns it *again*
+
+> **Projected every turn, sent when it changed.** A block the thread can still see upthread
+> is already known; re-sending it buys nothing and costs a permanent copy of itself in a
+> finite window.
+
+The projection is rebuilt every turn — it has to be, or a task opened mid-conversation is
+invisible until the session rotates. What was wrong for a long time is that it was also
+*re-sent* every turn, whole, and the two were never separate decisions.
+
+Measured on one live thread, 108 turns at 10,125 chars each: `## Working with them` changed
+10 times, the proactivity read 4, the reachable roster **0**, and all three rode every turn
+at 5,848 chars. The thread came out **80% its own re-sent preamble against 20% everything
+the agent had ever done or said** — and when the window filled, codex's compaction kept ten
+near-identical copies of that preamble and dropped every tool call, taking with it every
+example of the voice calling `hi_say`. It then stopped speaking for two and a half hours
+while continuing to call its other tools. Repetition did not merely cost tokens; it decided
+what survived.
+
+So each block declares a cadence:
+
+| cadence | what it means | which blocks |
+|---|---|---|
+| **on change** | send when it differs from what this thread was last told | conduct, carried-forward, tasks, proactivity, roster, workers, screen |
+| **cold only** | send only when the thread cannot see its own history | the recent-signals tail — it is a retelling of signals already in the thread |
+| **always** | it *is* the turn | new signals, and a barge-in note (consumed when read) |
+
+A context is **cold** on a thread's first turn and on the turn after a compaction. Compaction
+is the load-bearing case: it rewrites the history and makes no promise about what it kept, so
+everything the host believed the model could still see stops being true at once. Replayed
+against the real thread this sends **1,255 chars a turn instead of 10,125 — 88% less** — and
+the same signal that triggers the re-send is the one that says the model may no longer know
+how it speaks.
+
+**This is not a compression pass.** A conversation does not restate its own history every
+time it takes a breath; the previous behaviour was a bug wearing a performance costume.
 
 ### Tasks
 

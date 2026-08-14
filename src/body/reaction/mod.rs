@@ -1299,6 +1299,10 @@ async fn reaction_loop(
     // turn cold-opens. Size is not a reason to replace it — the underlying agent
     // compacts its own context (see [`heartbeat`]).
     let mut reaction_session: Option<Arc<AgentSession>> = None;
+    // What that session has already been told, so a turn carries only what it hasn't. It
+    // lives beside the session because it is a claim about that session's history, and it
+    // is voided the moment the history is — see [`WindowMemo`].
+    let mut window_memo = WindowMemo::default();
     // What the live session has accumulated, for the observatory readout only. Reset
     // when the session is replaced, so the number always describes the session on air.
     let mut session_chars: usize = 0;
@@ -1546,6 +1550,7 @@ async fn reaction_loop(
             &reaction,
             &batch,
             &mut reaction_session,
+            &mut window_memo,
             voice_id,
             &speaking,
             &mut reply_owed,
@@ -1686,6 +1691,7 @@ async fn run_reaction_turn(
     reaction: &Reaction,
     batch: &[LoopInput],
     reaction_session: &mut Option<Arc<AgentSession>>,
+    memo: &mut WindowMemo,
     voice_id: registry::SessionId,
     speaking: &Speaking,
     handed_down: &mut bool,
@@ -1718,13 +1724,14 @@ async fn run_reaction_turn(
     let on_screen = render_on_screen(&reaction.inner.views.on_screen().await);
 
     // Open (or reuse) the persistent reaction session. `reaction.md` is prepended to its
-    // first prompt; the session then remembers prior turns. Whether it is fresh no
-    // longer changes what the turn carries — see [`turn_context`].
+    // first prompt; the session then remembers prior turns — which is what the window
+    // memo is a claim about, so a thread we just opened has been told nothing.
     let session = match reaction_session {
         Some(s) => s.clone(),
         None => {
             let opened = open_reaction_session(reaction, voice_id).await?;
             *reaction_session = Some(opened.clone());
+            memo.forget();
             opened
         }
     };
@@ -1732,6 +1739,7 @@ async fn run_reaction_turn(
     let context = turn_context(
         &reaction.inner.memory,
         voice_id,
+        memo,
         &worker_status,
         &on_screen,
         &interrupted,
@@ -1749,7 +1757,7 @@ async fn run_reaction_turn(
 
     let mut turn_error = None;
     let completed = match drive_voice(&session, voice_id, context).await {
-        Ok(text) => {
+        Ok(Drove { text, compacted }) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
             // sequencer while the turn was running. Anything the model *typed* is
             // working-out, not utterance — voicing it too would say every reply twice,
@@ -1757,6 +1765,13 @@ async fn run_reaction_turn(
             // count is a size, not a shortfall: a turn that typed and called no `say`
             // chose silence, which is an ordinary move and not the host's to correct.
             tracing::info!(typed_chars = text.chars().count(), "reaction: turn done");
+            if compacted {
+                // Codex replaced this thread's history with a summary of it. Whatever
+                // the model could see a moment ago, it cannot be assumed to see now —
+                // so the memo's claim is void and the next turn re-sends the window.
+                tracing::info!("reaction: thread compacted; window re-sent next turn");
+                memo.forget();
+            }
             true
         }
         Err(err) => {
@@ -1846,7 +1861,8 @@ async fn run_reaction_turn(
     Ok(context_chars + reply.chars().count())
 }
 
-/// One turn's whole prompt: the projected state, then this turn's delta.
+/// One turn's whole prompt: whatever the thread does not already know, then this turn's
+/// delta.
 ///
 /// **There is no fresh-session branch here, and that absence is the change.** The
 /// projection used to be inlined only when a session was opened, on the reasoning that
@@ -1856,25 +1872,109 @@ async fn run_reaction_turn(
 /// cannot have remembered, because it did not exist yet. So the window was correct at
 /// session open and drifted for every turn after — and since the conversation's session is
 /// long-lived by design, that is most of the conversation. Code re-reads the current
-/// state and injects it on every turn instead.
+/// state on every turn instead.
 ///
-/// The costs are real and accepted. The block rides in every user message, so the
-/// session's history accumulates one copy per turn — which is why the bound in
-/// [`crate::mind::memory::snapshot::CARRIED_FORWARD_CHARS`] belongs to code. Keeping
-/// that block small is now the only lever we hold on context growth, since bounding the
-/// session itself is the underlying agent's job (see [`heartbeat`]). And the reads (the generated prompt, the task dimension, the log
-/// tail) now happen per turn rather than per session; each is small, none can fail the
-/// turn, and the alternative is an agent that answers from a stale window.
+/// **Re-reading it every turn was right; re-sending it every turn was not**, and for a
+/// long time this function did both. A block identical to the one three turns up is
+/// already in front of the model — sending it again buys nothing and costs a permanent
+/// copy in a finite window. Measured on one live thread: 108 turns, 10,125 chars each,
+/// of which the standing sections were 5,848 and moved 14 times between them. The thread
+/// became 80% its own preamble, and the compaction that followed kept ten copies of that
+/// preamble and dropped every tool call — the voice's own examples of speaking with it.
+///
+/// So each block declares a [`Cadence`] and `memo` holds what this thread was last told.
+/// The reads still happen per turn (they have to, to know whether anything moved) and
+/// they are small; what stops happening is the repetition.
 async fn turn_context(
     memory: &Memory,
     voice_id: registry::SessionId,
+    memo: &mut WindowMemo,
     worker_status: &str,
     on_screen: &str,
     interrupted: &str,
     new_signals: &str,
 ) -> String {
-    let projected = snapshot::window(memory, voice_id).await;
-    join_sections(&[projected.as_str(), worker_status, on_screen, interrupted, new_signals])
+    let mut blocks = snapshot::window(memory, voice_id).await;
+    // The turn's own view of live work and screen: state like the rest, and just as
+    // repetitive — `On screen now` moved 12 times in 108 turns, `Still looking into` 32.
+    blocks.push(snapshot::Block {
+        key: "workers",
+        cadence: snapshot::Cadence::OnChange,
+        text: worker_status.to_string(),
+    });
+    blocks.push(snapshot::Block {
+        key: "screen",
+        cadence: snapshot::Cadence::OnChange,
+        text: on_screen.to_string(),
+    });
+    let carried = memo.take(blocks);
+    // Neither of these is state. A barge-in note is consumed when it is read, and the
+    // signals *are* the turn — they go every time, unconditionally.
+    join_sections(&[carried.as_str(), interrupted, new_signals])
+}
+
+/// What this thread has already been told, so a turn carries only what it hasn't.
+///
+/// Hashes rather than copies: the question is only "is this the same text as last time",
+/// and keeping the answer costs eight bytes per block instead of ten kilobytes.
+///
+/// **Forgetting is the load-bearing half.** The memo is a claim about what the model can
+/// still see, so it is only true while the thread's history is intact. A fresh thread has
+/// never been told anything, and a compacted one has had its history rewritten by a
+/// summarizer that keeps no promises about what it preserved — so both
+/// [`forget`](Self::forget) it, and the next turn re-sends the window whole.
+struct WindowMemo {
+    sent: std::collections::HashMap<&'static str, u64>,
+    /// Set when the thread can no longer see its own history. Cleared by the turn that
+    /// pays for it.
+    ///
+    /// A memo that has told nothing is looking at a thread that knows nothing, so a
+    /// [`Default`] memo is cold and the first turn through carries the window whole.
+    cold: bool,
+}
+
+impl Default for WindowMemo {
+    fn default() -> Self {
+        Self { sent: std::collections::HashMap::new(), cold: true }
+    }
+}
+
+impl WindowMemo {
+    /// A fresh thread, or one whose history a compaction just replaced.
+    fn forget(&mut self) {
+        self.sent.clear();
+        self.cold = true;
+    }
+
+    /// The blocks this turn must carry, joined — and remember them as sent.
+    fn take(&mut self, blocks: Vec<snapshot::Block>) -> String {
+        let cold = std::mem::take(&mut self.cold);
+        let mut out: Vec<String> = Vec::new();
+        for block in blocks {
+            if block.text.trim().is_empty() {
+                // An absent block is not a changed one: a task ledger that reads empty
+                // this turn must not spend the next turn's diff announcing itself.
+                continue;
+            }
+            let digest = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                block.text.hash(&mut h);
+                h.finish()
+            };
+            let send = match block.cadence {
+                snapshot::Cadence::ColdOnly => cold,
+                snapshot::Cadence::OnChange => {
+                    cold || self.sent.get(block.key) != Some(&digest)
+                }
+            };
+            if send {
+                self.sent.insert(block.key, digest);
+                out.push(block.text);
+            }
+        }
+        join_sections(&out.iter().map(String::as_str).collect::<Vec<_>>())
+    }
 }
 
 #[cfg(test)]
@@ -1882,6 +1982,25 @@ mod turn_context_tests {
     use super::*;
     use crate::mind::memory::layout;
     use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
+    use crate::types::{Channel, JournalEntry};
+
+    /// Put one line in the log, so the recent tail has something to carry.
+    async fn heard(memory: &Memory, body: &str) {
+        memory
+            .journal
+            .append(JournalEntry::SignalIn {
+                id: uuid::Uuid::now_v7().to_string(),
+                ts: chrono::Utc::now(),
+                channel: Channel::Text,
+                body: body.to_string(),
+                stream: None,
+                media: None,
+                origin: None,
+                sender: None,
+            })
+            .await
+            .unwrap();
+    }
 
     /// The bug this change exists to fix. The conversation's memory written — or a task opened
     /// — *after* the session was already up used to be invisible until the session
@@ -1891,8 +2010,13 @@ mod turn_context_tests {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
 
+        // One memo across both turns, because it is one session: the point of the test is
+        // that turn two carries what changed under a thread that never rotated.
+        let mut memo = WindowMemo::default();
+
         // Turn one, on a session opened just now: nothing written yet.
-        let first = turn_context(&memory, 0, "", "", "", "## New signals\n>在吗").await;
+        let first =
+            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
@@ -1906,7 +2030,8 @@ mod turn_context_tests {
         write_task(dir.path(), &owed).await.unwrap();
 
         // Turn two, same session — no re-open, no rotation.
-        let second = turn_context(&memory, 0, "", "", "", "## New signals\n>那卡片呢").await;
+        let second =
+            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
@@ -1921,6 +2046,7 @@ mod turn_context_tests {
         let text = turn_context(
             &memory,
             0,
+            &mut WindowMemo::default(),
             "## Workers\nbuilding a view",
             "## On screen now\ntasks",
             "",
@@ -1933,6 +2059,92 @@ mod turn_context_tests {
         assert!(at("## On screen now") < at("## New signals"));
         assert!(text.trim_end().ends_with("好了没"), "{text}");
         assert!(!text.contains("## Presence"), "the presence projection is gone: {text}");
+    }
+
+    /// The repetition this exists to stop. Two turns with nothing moved between them: the
+    /// second carries the signals and **not** a second copy of the state, because the
+    /// thread can still see the first.
+    #[tokio::test]
+    async fn an_unchanged_block_is_not_sent_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        let path = layout::conversation_prompt_path(dir.path());
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
+        let mut memo = WindowMemo::default();
+
+        let first =
+            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(first.contains("mid-migration"), "{first}");
+
+        let second =
+            turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>还在吗").await;
+        assert!(!second.contains("mid-migration"), "said once is said: {second}");
+        assert!(second.contains("还在吗"), "the turn itself always rides: {second}");
+        assert!(second.len() < first.len() / 2, "{} vs {}", second.len(), first.len());
+    }
+
+    /// The tail is a retelling of signals already in the thread, so it rides a cold
+    /// context and nothing else.
+    #[tokio::test]
+    async fn the_recent_tail_rides_a_cold_turn_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        heard(&memory, "把周报发我").await;
+        let mut memo = WindowMemo::default();
+
+        let cold = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(cold.contains("## Recent (last 30 minutes)"), "{cold}");
+
+        let warm = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(!warm.contains("## Recent (last 30 minutes)"), "{warm}");
+    }
+
+    /// What the 2026-08-13 thread needed and did not have. A compaction replaces the
+    /// history with a summary that keeps no promises about what it preserved — on that
+    /// thread it dropped every tool call in sixty turns — so the memo's claim is void and
+    /// the next turn re-sends the window whole, tail included.
+    #[tokio::test]
+    async fn a_compaction_makes_the_next_turn_carry_everything_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        heard(&memory, "把周报发我").await;
+        let path = layout::conversation_prompt_path(dir.path());
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
+        let mut memo = WindowMemo::default();
+
+        let first = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let quiet = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(!quiet.contains("mid-migration"), "{quiet}");
+
+        memo.forget();
+        let after = turn_context(&memory, 0, &mut memo, "", "", "", "## New signals\n>在吗").await;
+        assert!(after.contains("mid-migration"), "{after}");
+        assert!(after.contains("## Recent (last 30 minutes)"), "{after}");
+        assert_eq!(after.len(), first.len(), "a cold turn carries what the first one did");
+    }
+
+    /// Codex announces it on the item, and both `item/started` and `item/completed` carry
+    /// the same one — either is the news, and nothing else in the stream is.
+    #[test]
+    fn a_compaction_frame_is_recognised_either_side() {
+        let started = serde_json::json!({
+            "method": "item/started",
+            "params": {"item": {"type": "contextCompaction", "id": "c1"}}
+        });
+        let completed = serde_json::json!({
+            "method": "item/completed",
+            "params": {"item": {"type": "contextCompaction", "id": "c1"}}
+        });
+        let a_tool_call = serde_json::json!({
+            "method": "item/completed",
+            "params": {"item": {"type": "mcpToolCall", "tool": "hi_say"}}
+        });
+        assert!(is_compaction(&started));
+        assert!(is_compaction(&completed));
+        assert!(!is_compaction(&a_tool_call));
+        assert!(!is_compaction(&serde_json::json!({"method": "turn/completed"})));
     }
 }
 
@@ -2104,6 +2316,14 @@ async fn open_reaction_session(
     Ok(session)
 }
 
+/// What one drive of the voice produced.
+struct Drove {
+    /// Everything it **typed** — working-out, not speech.
+    text: String,
+    /// Codex replaced this thread's history with a summary mid-turn.
+    compacted: bool,
+}
+
 /// Prompt the reaction session and return the text it **typed** (every
 /// `agent_message_chunk` concatenated) — which is its working-out, not its speech.
 /// Speech is only ever what went through the `say` tool. Tool calls — `say`, `show`,
@@ -2115,9 +2335,10 @@ async fn drive_voice(
     session: &AgentSession,
     voice_id: registry::SessionId,
     context: String,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Drove> {
     let mut run = session.prompt(context).await?;
     let mut text = String::new();
+    let mut compacted = false;
     while let Some(update) = run.next_update().await {
         // The voice was the one rung reporting nothing at all to the switchboard: its
         // words go to the transcript rather than the output tail, so its roster row read
@@ -2133,10 +2354,19 @@ async fn drive_voice(
             }
             // `show` dispatches server-side via `/mcp`; the reaction keeps speaking.
             // Its surface is `show`-only and the dispatch guard blocks any other
-            // expression tool, so there is nothing to intercept here. The frame is
-            // recorded at the wire by the tap, not read here — this rung interprets
-            // nothing it is not about to say.
-            SessionUpdate::Frame(_) => {}
+            // expression tool, so there is nothing to intercept here.
+            //
+            // **One frame is read, and only for what it invalidates.** A compaction is
+            // not the agent doing something; it is codex rewriting the thread's history
+            // out from under both of us. The host cannot see what survived — on the
+            // 2026-08-13 thread, what did not was every tool call in 60 turns — so all it
+            // takes from this is that anything it believed the model could still see is
+            // no longer a safe assumption.
+            SessionUpdate::Frame(frame) => {
+                if is_compaction(&frame) {
+                    compacted = true;
+                }
+            }
         }
     }
     let result = run.wait().await?;
@@ -2145,7 +2375,20 @@ async fn drive_voice(
         typed_chars = text.chars().count(),
         "reaction: turn complete"
     );
-    Ok(text)
+    Ok(Drove { text, compacted })
+}
+
+/// Is this frame codex telling us it just replaced the thread's history?
+///
+/// Matched on the item type rather than a method name, because the same `contextCompaction`
+/// item arrives on both `item/started` and `item/completed` and either one is the news.
+fn is_compaction(frame: &serde_json::Value) -> bool {
+    frame
+        .get("params")
+        .and_then(|p| p.get("item"))
+        .and_then(|i| i.get("type"))
+        .and_then(serde_json::Value::as_str)
+        == Some("contextCompaction")
 }
 
 /// Append one signal the agent *emitted* — worded text, a voiced span, a view it

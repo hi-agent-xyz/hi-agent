@@ -261,7 +261,7 @@ pub fn render_reachable(who: &[(String, SessionId)]) -> String {
         return String::new();
     }
     let mut s = String::from(
-        "## Who you can reach right now\nSend with `send_message`, using the number.\n",
+        "## Who you can reach right now\nSend with `hi_send_message`, using the number.\n",
     );
     for (label, id) in who {
         s.push_str(&format!("- `{id}` — {label}\n"));
