@@ -192,7 +192,19 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
                 )}
                 <Message align={group.role === "user" ? "end" : "start"}>
                   <MessageContent>
-                    <MessageGroup>
+                    {/* `max-w-full` is load-bearing, and only on the person's side.
+                        `MessageContent` puts `self-end` on its children there, which
+                        takes the group off `stretch` and sizes it shrink-to-fit —
+                        and shrink-to-fit stops respecting the column the moment
+                        MIN-content exceeds it. One `file:///…` path or one attached
+                        screenshot is enough: the group grew to that one item's
+                        min-content and hung off the left edge of the rail, and since
+                        every bubble's `max-w-[80%]` is a percentage OF THE GROUP,
+                        every other message in the run — plain sentences that had
+                        wrapped fine for hours — widened with it and ran off the
+                        frame too. Capping the group is what keeps the percentage
+                        honest; the long path then wraps inside its own bubble. */}
+                    <MessageGroup className="max-w-full">
                       {group.messages.map((message) => (
                         <Bubble
                           key={message.id}
