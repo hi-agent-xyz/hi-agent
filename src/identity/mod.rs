@@ -933,6 +933,36 @@ mod soul_tests {
         assert!(WORKER_GENERAL_BASE.contains("Never wait for an answer"));
     }
 
+    /// **Reading is never something to ask for**, and all three rungs that can stall on it
+    /// say so. On 2026-08-15 a deploy script failed its own health poll, printed the
+    /// `docker compose logs` line to run next, and the run stopped there: the worker
+    /// reported "exit 1" without the logs, Cognition asked the person for permission to
+    /// look, and the service stayed down through the wait. Nothing gated it — codex runs
+    /// these roles unsandboxed with `approvalPolicy: never`. What gated it was a limit the
+    /// person had put on an earlier run — *run only the script, no backups, don't touch the
+    /// repo* — read as if it covered looking, and then written into the `systems` record as
+    /// a standing rule by the reflection pass, where it would have been handed to every
+    /// worker that touched that deployment from then on.
+    ///
+    /// So each half is pinned where it failed: the two rungs that hold the shell are told
+    /// that reading changes nothing and needs no yes, and the rung that writes the standing
+    /// records is told it may never turn one into a permission gate.
+    #[test]
+    fn looking_at_a_broken_thing_is_never_gated() {
+        assert!(
+            COGNITION_BASE.contains("state of something is never gated"),
+            "Cognition must be told that reading needs nobody's permission"
+        );
+        assert!(
+            WORKER_GENERAL_BASE.contains("finding out why is part of running it"),
+            "a worker must diagnose the failure of what it ran, not report it back bare"
+        );
+        assert!(
+            REFLECTION_BASE.contains("never write a permission gate into a system record"),
+            "the pass that writes standing records must not make one out of a one-run limit"
+        );
+    }
+
     /// The two halves of the view loop both name the tool that makes them possible.
     /// Before `hi_review_view` existed, the builder's prompt pointed at `hi_look` — which
     /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
