@@ -183,6 +183,12 @@ before you hand anything over:
   lands hardest — one photo `contain`ed in the middle, paper above and below — and the
   cause is almost always an `<img>` in flow, which cannot bleed however you size it. The
   mechanics below say how.
+- **The screenshot is the first screen, and only the first screen.** It is taken at the
+  frame's size, so whatever your content does below the fold is not in it. If your view
+  is taller than the frame, the picture you are judging is the top of it — read it as
+  "this is all they will see unless they scroll", and check that the thing the view is
+  *for* is inside it. A card cut in half at the bottom edge is the tell: something ran
+  over, and you are looking at the half that fit.
 
 **A brief cannot lower this bar.** "Technical, not a pretty picture." "An engineering
 surface, not a marketing page." "Just the facts." All of that is about tone and content,
@@ -199,12 +205,24 @@ rather than collide. If yours is dense enough that you doubt it, pass `width`/`h
 `hi_review_view` and look at it a few hundred pixels narrower: the failure to catch is
 elements that overlapped or fell off, not margins that changed.
 
-**When something does clip, fix it by showing less — never by shrinking.** Tightening
-the type and packing the same nine things into a denser grid makes the clipping go away
-and the view worse: you have traded a failure you could see for one you can't. Cut to
-fewer elements, split it across views the agent can walk, or change the layout so it
-has somewhere to go. Every floor above still holds at the narrower size; a fix that
-breaks one of them is not a fix.
+**When something runs past the frame, fix it by showing less — never by shrinking.**
+Tightening the type and packing the same nine things into a denser grid makes the
+overflow go away and the view worse: you have traded a failure you could see for one you
+can't. Cut to fewer elements, split it across views the agent can walk, or change the
+layout so it has somewhere to go. Every floor above still holds at the narrower size; a
+fix that breaks one of them is not a fix.
+
+**What runs past the bottom is reachable, and that is not permission to let it.** The
+frame scrolls vertically when your content overruns it — the host puts that under every
+view, so nothing you build can end up with a bottom nobody can get to, whatever the
+person does to their window. You still compose for the *first screen*: the agent is
+talking this through while they look at it, and most people never scroll a thing they are
+being shown. So the answer, the number, the one image — above the fold, every time.
+Below it belongs the kind of thing a person goes looking for once they're interested: the
+rest of a table, the supporting rows, the detail behind a claim. A view whose point is
+only visible after a scroll has hidden its point. And sideways there is no scroll at all:
+anything wider than the frame is clipped outright, so lay out in fractions of the width
+and never in fixed pixel columns that add up past it.
 
 **Compare the light and dark frames.** The person picks their theme in Settings, so both
 are real. Anything that fades out, disappears, or turns unreadable in one of them is a
@@ -334,8 +352,13 @@ export default function AutumnTea() {
 }
 ```
 
-The layer already stretches your root to the whole frame, so that root needs no width or
-height of its own — and this is the shape you want, because the photo bleeds while the
+The host already floors your root at the frame's full height, so that root needs no width
+or height of its own — and don't give it one. `min-height: 100%` is what the host puts
+there and is simply redundant; `height: 100%` is worse than redundant, because it pins the
+root to exactly one frame, and then any content past that spills out of it and off the end
+of your ground. Leave the height alone and the root fills the frame when you have less than
+a frame's worth and grows with you when you have more. This is the shape you want for a
+picture too, because the photo bleeds while the
 type you flow over it stays inset clear of the titlebar and the controls. When you need
 the element rather than the ground — alt text, or motion on the picture itself — an
 `<img>` with `position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover`

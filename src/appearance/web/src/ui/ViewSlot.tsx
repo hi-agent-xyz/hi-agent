@@ -69,6 +69,13 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * ground it paints — pinned at `inset: 0` or simply set on the root it flows —
  * paints under that border and reaches every edge.
  *
+ * **The frame is fixed, and the layer scrolls.** A view taller than the frame used
+ * to be cut at the window edge with nothing to reach the rest — `.hi-root` is
+ * `overflow: hidden` and this layer declared none. It now carries `overflow-y: auto`,
+ * so the whole of a view is reachable whatever the window is doing. That is a floor,
+ * not a licence: the person is being talked through the view and may never scroll it,
+ * so what matters still belongs on the first screen.
+ *
  * The slot is the `view` plane's whole occupant and carries no `z-index` of its
  * own: paint order inside a plane is DOM order, which here is already the wire's
  * z-order. A view writing `z-index: 9999` therefore climbs to the top of this

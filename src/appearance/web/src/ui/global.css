@@ -759,10 +759,20 @@ button {
    view-builder guide says to place with `var(--hi-safe-top)` instead.
 
    Two details finish the job, because a ground that reaches three edges is still a
-   seam at the fourth. **Grid** stretches the root to the frame's full height, so a
+   seam at the fourth. **`min-height: 100%`** floors the root at the frame, so a
    poster whose content ends early paints its ground all the way down instead of
-   stopping where its text does — and it does that by stretching the used height
-   rather than by forcing a `min-height`, so a view's own `min-height` still wins.
+   stopping where its text does, while a root with more in it than the frame holds
+   simply grows past it into the layer's scroll. This was grid + `grid-template-rows:
+   1fr` for exactly the first half of that, on the reasoning that stretching the *used*
+   height leaves a view's own `min-height` intact — and the second half is what it cost.
+   `1fr` is `minmax(auto, 1fr)`, and a grid item's `auto` minimum is content-based only
+   while its `min-height` is `auto`; a view writing the near-universal `min-height: 100%`
+   on its own root replaced that with a definite 913-and-no-more, so the track stopped at
+   the frame and the item was *stretched to* it. Its ground then ended at the first
+   screen and its bottom border — the band that holds the last line clear of the
+   controls — stayed up there with it, while the content spilled out and ran to the
+   window's edge. Block layout has no stretch to do that with: the root's height is its
+   content's, floored here and capped by nothing.
    **`background-origin: border-box`** makes an image or gradient ground *size*
    itself to the same box it paints, so `cover` covers the frame; the default
    (`padding-box`) would size it to the inside of the border and then either tile
@@ -780,7 +790,28 @@ button {
    One root is what every view we ship has, and what JSX makes natural.
 
    The layer keeps `--paper` behind it all — the ground the presence stands on — so
-   a themed view needs no background of its own at all. */
+   a themed view needs no background of its own at all.
+
+   **The frame is fixed in both axes; the layer scrolls in one.** The frame is the
+   window, and the window does not grow, so a view whose content runs taller than it
+   has to go somewhere. Until now it went nowhere: `.hi-root` is `overflow: hidden`
+   and this layer declared no overflow at all, so a tall view was cut at the window
+   edge with no scrollbar and no gesture that could reach the rest — the bottom of it
+   simply did not exist. That is not something a view could reliably avoid, either:
+   the frame changes size under it when the rail opens, when the person resizes the
+   window, and between the review viewport and their actual one.
+
+   So the layer carries a scroll of last resort. It is `auto`, so a view that fits —
+   the poster, which is the normal and intended shape — is untouched and shows no
+   scrollbar; only one that overruns becomes reachable. Vertical only: a view wider
+   than the frame is a layout that failed, and a horizontal scrollbar would present
+   that as a feature. `overscroll-behavior: contain` keeps a flick past the end from
+   chaining out to the page behind.
+
+   This is a floor, not a licence. It does not make a tall view good — everything
+   that matters still belongs on the first screen, because the person is being talked
+   through this and may never scroll. It makes the rest *reachable*, which is the part
+   that was never the view author's to fix. */
 .hi-view-fill {
   position: absolute;
   inset: 0;
@@ -791,16 +822,21 @@ button {
     calc(var(--hi-safe-bottom) + 76px)
     calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
   background: var(--paper);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .hi-view-fill:has(> :only-child) {
   padding: 0;
-  display: grid;
-  grid-template-rows: 1fr; /* = minmax(auto, 1fr): stretches, never clips */
 }
 
 .hi-view-fill > :only-child {
   box-sizing: border-box;
+  /* The floor, not a ceiling: fills the frame when the view has less than a frame's
+     worth, and gets out of the way when it has more. See the note above for why this
+     is a `min-height` on the root and not a stretched grid track. */
+  min-height: 100%;
   border-style: solid;
   border-color: transparent;
   border-width: var(--hi-safe-top)

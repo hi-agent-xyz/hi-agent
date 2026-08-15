@@ -165,6 +165,54 @@ cost a round trip and land the person somewhere they did not ask to be.
 the rail as one more inset. No existing view changes: each was already told it owns the
 whole frame, and the frame is whatever the compositor gives it.
 
+## The frame is fixed, and overflow scrolls
+
+The compositor gives a view a frame, and the frame never grows: it is the window minus the
+insets, in both axes. So the document has to say what happens to a view whose content is
+taller than that, and it did not — the planes below settle *who covers whom* down to the
+digit and said nothing at all about *where the rest of it goes*. What the code did in the
+silence was lose it: `.hi-root` is `overflow: hidden`, `.hi-view-fill` declared no overflow,
+and everything past the frame's bottom edge was cut with no scrollbar and no gesture that
+could reach it. The bottom of a view did not exist.
+
+**The host guarantees the whole of a view is reachable; the view is still composed for the
+first screen.** Two halves, and both are load-bearing:
+
+- **`.hi-view-fill` scrolls vertically, `auto`.** A view that fits — the poster, the shape
+  everything else here is written for — is untouched and shows no scrollbar. Only one that
+  overruns becomes scrollable. Horizontal stays clipped: a view wider than its frame is a
+  layout that failed, and a horizontal scrollbar dresses that up as a feature.
+- **Nothing about this relaxes the composition.** The person is being *talked through* a
+  view and may never scroll it, so what matters still belongs above the fold. The scroll is
+  a floor under the failure, not a canvas that grew.
+
+The reason this cannot be pushed onto the view author is that the frame moves under them.
+It changes when the rail opens, when the window is resized, and between the viewport
+`hi_review_view` renders at and the one the person actually has. "Make it fit" is advice
+about a frame you know the size of. Every bundled review surface had already worked this out
+alone and hand-rolled the same `height: 100%; min-height: 0; overflow-y: auto` root, six
+times; agent-authored views mostly had not, and clipped.
+
+The scroll alone was not enough, and the second half is the more interesting one. The layer
+stretched a view's root to the frame with a grid track — `grid-template-rows: 1fr`, chosen
+so that stretching the *used* height would leave a view's own `min-height` intact. `1fr` is
+`minmax(auto, 1fr)`, and a grid item's `auto` minimum is content-based only while its
+`min-height` is `auto`. A view writing `min-height: 100%` on its own root — which is what
+they write, because the guide tells them to fill the frame — replaced that with a definite
+one-frame-and-no-more, so the track stopped at the frame and the item was *stretched to* it.
+The root's box then ended at the first screen while its content ran on past: its ground
+stopped there, and its transparent bottom border — the band that holds the last line clear
+of the controls — stayed up there with it, so the final row of a scrolled view sat flush
+under the mic and camera buttons. The frame is now a plain block and the root is floored
+with `min-height: 100%` instead, which is a floor and not a ceiling: it fills the frame with
+less than a frame's worth and grows past it with more.
+
+**Consequence, accepted:** a ground pinned with `position: absolute; inset: 0` scrolls away
+with the content, because an absolutely positioned box in a scroll container scrolls with
+it. A ground set as the root's own `background` does not — it paints on the root's border
+box, which now grows with the content. The second is already what the view guide tells
+authors to write, and it is the one that stays right at any content height.
+
 ## Layers
 
 Placement has two authorities today and they disagree. `floorLayout` decides docked / pip
