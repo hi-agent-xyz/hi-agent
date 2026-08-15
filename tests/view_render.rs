@@ -74,7 +74,7 @@ async fn harness(esbuild: PathBuf) -> Harness {
         observatory,
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
-        hi_agent::body::reaction::InterruptRegistry::new(),
+        hi_agent::body::reaction::Floor::new(),
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
@@ -248,7 +248,7 @@ async fn the_render_page_is_served_with_the_host_import_map() {
         observatory,
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
-        hi_agent::body::reaction::InterruptRegistry::new(),
+        hi_agent::body::reaction::Floor::new(),
         hi_agent::body::attachments::Attachments::new(),
         None,
     );

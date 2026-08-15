@@ -174,6 +174,13 @@ input fragment is what turns a continuous stream into the discrete turn a model 
 Everything else — sentence splitting for TTS, VAD before STT — is incidental, justified
 only by provider granularity, and removable in principle.
 
+**That timer is batching and nothing more.** It decides how many utterances one generation
+is spent on; it does *not* decide whether the person has finished talking, and it never
+could — its only input is finalized utterances, which someone mid-thought produces
+constantly. That question is answered at the mouth, where the answer is still current:
+[host.md#the-floor](host.md#the-floor). Read as batching, the window wants to be *small* —
+every millisecond in it is latency on a reply into a silence that is already real.
+
 ## Degradation
 
 Every channel must degrade rather than fail. No screen attached → voice only, and anything

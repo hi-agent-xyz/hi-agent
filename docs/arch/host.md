@@ -89,17 +89,53 @@ it.
 
 - **Mouth singleton** — now structural rather than enforced: there is one Reaction, taking
   one turn at a time.
-- **Turn-taking** — the quiet-settle commit that decides a turn is over. Still host-side:
-  it is [batching](surfaces.md#batching), and it happens before Reaction is woken.
+- **Turn-taking** — still host-side, and it happens at the **mouth**, not before Reaction is
+  woken. See [The floor](#the-floor); the quiet-settle timer that used to be named here is
+  [batching](surfaces.md#batching) and nothing else.
 - **Social timing** — when to voice a worker's answer, when to let it wait.
 
 *The fourth duty, a **presence gate**, has been retired outright rather than moved — see
 [Attachment](#attachment).*
 
 What the host keeps is what has no model in it: the queue behind `hi_say`; the fact that
-`hi_say` **returns**, so an over-long utterance is answerable; and the one call that is not
-a judgment at all — **not synthesizing speech for a speaker that isn't attached**,
-because that is a fact about the wire, not a read of the room.
+`hi_say` **returns**, so an over-long utterance — or one the floor refused — is answerable;
+and the calls that are not judgments at all — **not synthesizing speech for a speaker that
+isn't attached**, and **not speaking into a room the person is still using** — because both
+are facts about the wire, not reads of the room.
+
+### The floor
+
+**Whether the voice may speak is decided when the words are ready, not when the turn that
+wrote them began.** A generation takes seconds and the room moves inside them. So `hi_say`
+is gated at the mouth, on two facts the host can check and the model cannot:
+
+| Refusal | The fact | What it catches |
+|---|---|---|
+| **their voice is sounding** | a recognized partial within the last ~1s | starting on top of a sentence that has not finalized yet |
+| **a line went unheard** | lines accepted since this turn's batch was frozen | a reply released into a real two-second gap, but written without the sentence carrying their actual point |
+
+Both mean *not said*, and `say` answers with which. **A refusal is not a hold.** Nothing is
+queued, released later or superseded: the words are simply not said, and the reply is written
+afresh by the next turn — which costs nothing, because whatever they said is already in the
+queue and drives a turn by itself. That is also why the host needs no "they have stopped"
+signal and the client is never asked for one: **to stop talking they must have said a last
+thing, and that utterance is the wake.**
+
+What to do about a refusal is `reaction.md`'s. The host says which of the two it was and
+stops there.
+
+**Why the words are refused rather than held.** A held draft would go out about a second
+after the room clears instead of a generation later, which sounds like the better trade until
+you ask what releases it: they fall silent *having just said something*, and that something
+is what makes the draft stale. The payoff case needs them to stop without having spoken since
+the draft was written — the rare one. So holding buys latency in the case that barely happens
+and costs a supersede rule, an expiry rule and a release timer in every case that does.
+
+**One bound, because a refusal has no ceiling of its own.** Someone who speaks during every
+generation refuses every reply, and total silence is a worse failure than a slightly late
+line — so after a few refusals in a row, one goes through. That is the mechanical form of
+what a person does as the wait grows: stop holding out for a clean opening and take a small
+one.
 
 ### Attachment
 

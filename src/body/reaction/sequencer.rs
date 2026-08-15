@@ -113,7 +113,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 // with the interruption note in hand. The cut turn keeps streaming
                 // beats (fix-forward never cancels the prompt), so every trailing
                 // one is dropped here until the next TurnStart clears the flag.
-                if reaction.inner.interrupts.should_skip(turn).await {
+                if reaction.inner.floor.should_skip(turn).await {
                     if synth_tx.take().is_some() {
                         synth_handle = None;
                     }
@@ -144,7 +144,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 if !armed {
                     continue;
                 }
-                if reaction.inner.interrupts.should_skip(turn).await {
+                if reaction.inner.floor.should_skip(turn).await {
                     continue;
                 }
                 for emit in
@@ -219,7 +219,7 @@ async fn open_tts(
             // ("speech arrived while this turn was probably still sounding").
             reaction
                 .inner
-                .interrupts
+                .floor
                 .audio_began(turn, tokio::time::Instant::now())
                 .await;
             let handle = tokio::spawn(super::forward_frames(

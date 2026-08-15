@@ -209,10 +209,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // reaction that registers its sink. The mind drives output and
     // side-effects by calling tools on `/mcp`; they route here.
     let tool_registry = body::reaction::ToolRegistry::new();
-    // The barge-in state, shared the same way: the server's STT relay reports
-    // recognized speech, the reaction stamps voice spans and folds the inferred
-    // "what went unheard" note into the next prompt. No cancel, no endpoint.
-    let interrupts = body::reaction::InterruptRegistry::new();
+    // The floor, shared the same way: the server's STT relay reports recognized
+    // speech, which both marks the floor theirs — `say` is refused while it is —
+    // and is what a barge-in is inferred against. No cancel, no endpoint, and no
+    // "they have stopped" endpoint either: a client cannot know that.
+    let floor = body::reaction::Floor::new();
     // Live-subscriber counts, shared the same way: the server's out-channel
     // handlers hold a guard per connection. One question is asked of them — is a
     // speaker attached, so a TTS span is worth synthesizing.
@@ -231,7 +232,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         observatory.clone(),
         wire_tap.clone(),
         tool_registry.clone(),
-        interrupts.clone(),
+        floor.clone(),
         attachments.clone(),
         auth_state,
     );
@@ -361,7 +362,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         observatory,
         view_compiler,
         tool_registry,
-        interrupts,
+        floor,
         attachments,
         seams.state.views.clone(),
         views_dir,

@@ -9,19 +9,26 @@
 //!
 //! The client is a dumb face: it streams the mic and renders what arrives. It
 //! does not decide *when* the agent speaks — the mind does, and these are the
-//! two rules:
+//! three rules:
 //!
-//! 1. **Commit-after-quiet.** A finalized utterance does not immediately make
-//!    the agent reply. The human often speaks in bursts; each burst arrives as
-//!    its own inbound signal (one segmented utterance over `/api/in/audio`), and the mind
-//!    waits until no new signal has landed for a short settle before it
-//!    responds, absorbing every burst in the meantime into one consolidated
-//!    prompt. The cost is a little latency; the win is that the agent doesn't
-//!    answer a half-finished thought, and nothing the human says is lost.
-//!    Because the reply only starts once things have gone quiet, its output can
-//!    stream straight to the client — no holding, no turn-tagging on the wire;
-//!    superseded drafts are *never generated* rather than generated-then-discarded.
-//! 2. **Fix-forward, no reflexive cancel.** A new signal never cancels the
+//! 1. **The settle batches; it does not decide when to speak.** A finalized
+//!    utterance does not immediately drive a turn: the human speaks in bursts,
+//!    each burst arrives as its own inbound signal (one segmented utterance over
+//!    `/api/in/audio`), and the loop waits [a short quiet](RESPONSE_SETTLE) so a
+//!    turn is not spent per word. **That is all it does.** It was once the
+//!    turn-taking rule as well — wait for quiet, then answer — and it could never
+//!    have been one: it counts *finalized utterances*, which a person mid-thought
+//!    produces constantly. Measured live, every gap between one speaker's bursts
+//!    was longer than the settle, so it coalesced nothing and the voice answered
+//!    a half-finished sentence four times in twenty-five seconds.
+//! 2. **The floor decides, and it decides at the mouth.** Whether the room is the
+//!    voice's to speak into is asked when the words are ready, not when the turn
+//!    that wrote them began — seconds earlier, which is long enough for the person
+//!    to have started a new sentence or said the thing that mattered. `say` is
+//!    refused if their voice is sounding, or if a line landed that this turn never
+//!    saw; a refusal is a refusal, not a queue, and the reply is written afresh by
+//!    the next turn. See [`floor`].
+//! 3. **Fix-forward, no reflexive cancel.** A new signal never cancels the
 //!    in-flight prompt. The per-reaction loop is serial — it runs one turn to
 //!    completion before draining the next batch — so a signal that lands during
 //!    generation simply queues and is folded into the next turn. The warm
@@ -32,7 +39,15 @@
 //!    A voice barge-in — the human talking over the agent's playback — is no
 //!    exception: the client ducks on its own, the words buffer like any other
 //!    signal, and the mind merely learns afterwards what went unheard. See
-//!    [`interrupts`].
+//!    [`floor`].
+//!
+//! Rule 2 makes generation speculative, which reverses a claim this header used
+//! to make — *superseded drafts are never generated rather than
+//! generated-then-discarded*. They are now generated and discarded, because the
+//! alternative is deciding whether someone has finished talking **before**
+//! spending the turn, and nothing on the input side can know that. The discarded
+//! turn is not wasted: its thinking stays in the warm session, so the reply that
+//! replaces it is better for having been written twice.
 //!
 //! ## Heavy work goes to a working session, not onto the floor
 //!
@@ -64,14 +79,14 @@ pub(crate) use duties::DUTY_BRIEF_TAIL;
 pub(crate) use heartbeat::{CONSOLIDATION_TOOLS, PROACTIVITY_HEADING};
 mod reflection;
 mod interleave;
-mod interrupts;
+mod floor;
 pub mod outbound;
 mod sequencer;
 mod tools;
 mod workers;
 
 pub use duties::DutyDelivery;
-pub use interrupts::InterruptRegistry;
+pub use floor::{Busy, Floor};
 pub use outbound::OutboundSignal;
 pub use tools::{LoopControl, Said, Spoken, ToolOwner, ToolRegistry, ToolSink};
 
@@ -91,13 +106,20 @@ use crate::types::{Channel, JournalEntry, Origin, Signal, ViewEnvelope, ViewOp, 
 use bytes::Bytes;
 use uuid::Uuid;
 
-/// How long the floor must stay quiet after the last finalized utterance before
-/// the mind commits to replying. The human-interface tradeoff knob: higher =
-/// more patient (never talks over a multi-burst thought) but more latency;
-/// lower = snappier but more likely to answer a half-finished thought. Paired
-/// with the client VAD's `endSilenceMs`, which governs how fast an utterance is
-/// *finalized* (and POSTed); this governs how long we wait to see if another one
-/// follows.
+/// How long the queue is left to settle before a turn is spent on it — a
+/// **batching** window, and nothing more.
+///
+/// It reads as a patience dial and is not one. Whether the person has finished
+/// their thought is decided at the mouth ([`floor`]), where the answer is still
+/// current; this only stops one thought arriving as six utterances from costing
+/// six generations. So it wants to be *small*: every millisecond here is latency
+/// on a reply into a silence that is already real.
+///
+/// **It was once the turn-taking rule**, and the reason it could not be is that a
+/// person mid-thought produces finalized utterances constantly — this timer's only
+/// input. Live, one speaker's gaps between bursts ran 1.4–4.9s, every one of them
+/// past this window, so it coalesced nothing at all while claiming to be what kept
+/// the voice from answering half a thought.
 const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 
 /// Default idle interval between glance-ups — the agent's recurring moment of
@@ -783,10 +805,11 @@ struct ReactionInner {
     /// reaction loop registers its sink here as it stands up; shared (cloneable)
     /// with the HTTP front. See [`tools`].
     tools: ToolRegistry,
-    /// Process-wide barge-in state. The STT relay reports recognized speech here; the
+    /// Process-wide floor state. The STT relay reports recognized speech here; the
     /// sequencer stamps each turn's voice span; `run_turn` drains the inferred
-    /// "what went unheard" note into the next prompt. See [`interrupts`].
-    interrupts: InterruptRegistry,
+    /// "what went unheard" note into the next prompt, and gates `say` on whether the
+    /// floor is theirs at all. See [`floor`].
+    floor: Floor,
     /// Shared, process-wide LLM-vendor reachability + recovery policy. Read by every
     /// reaction loop (via [`Vendor::turn_gate`]) to decide whether and when to drive a
     /// turn; managed energy is written by the global vendor gate, while turn failures
@@ -858,7 +881,7 @@ pub async fn start(
     observatory: Observatory,
     view_compiler: crate::mind::views::ViewCompiler,
     tools: ToolRegistry,
-    interrupts: InterruptRegistry,
+    floor: Floor,
     attachments: crate::body::attachments::Attachments,
     views: crate::foundation::server::ViewBus,
     views_dir: PathBuf,
@@ -896,7 +919,7 @@ pub async fn start(
             observatory,
             view_compiler,
             tools,
-            interrupts,
+            floor,
             attachments,
             views,
             energy_view,
@@ -1116,6 +1139,13 @@ impl Reaction {
         // A new signal never cancels the in-flight prompt: the serial loop folds it
         // into the next turn (fix-forward), and the lightweight reaction decides per
         // turn whether to act or wait for the rest.
+        //
+        // **Counted here, before the send, because this is the moment it becomes
+        // something a running generation cannot have seen.** The loop dequeues
+        // nothing while a turn runs, so anything keyed off the batch would not move
+        // until the turn that needs the fact is already over. A reply produced after
+        // this point is out of date, and [`floor::Floor::may_speak`] refuses it.
+        self.inner.floor.note_heard();
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
             registry::global().finish_turn(&voice_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
@@ -1192,6 +1222,7 @@ impl Reaction {
                         beats: beats_tx.clone(),
                         said: said.clone(),
                         next_word: next_word.clone(),
+                        floor: self.inner.floor.clone(),
                     }),
                 },
             )
@@ -1516,9 +1547,12 @@ async fn reaction_loop(
 
         let was_down = reaction.inner.vendor.is_down();
 
-        // Commit-after-quiet: wait for things to settle before replying. Skipped
-        // while down — a backoff retry should attempt catch-up ASAP rather than wait
-        // for more mail to settle (the retry cadence already coalesces arrivals).
+        // Let adjacent arrivals join this batch, so six utterances of one thought
+        // cost one generation rather than six. **Not a decision about whether they
+        // have finished** — that is asked at the mouth, when the answer is still
+        // current ([`floor`]). Skipped while down: a backoff retry should attempt
+        // catch-up ASAP rather than wait for more mail to settle (the retry cadence
+        // already coalesces arrivals).
         if !was_down {
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
@@ -1528,7 +1562,7 @@ async fn reaction_loop(
                     // another utterance — keep collecting
                     Ok(Some(extra)) => enqueue(&reaction, &mut workers, &mut batch, extra).await,
                     Ok(None) => break true, // inbound closed mid-settle
-                    Err(_) => break false,  // quiet elapsed → commit to a reply
+                    Err(_) => break false,  // quiet elapsed → the batch is closed
                 }
             };
             if closed {
@@ -1705,7 +1739,7 @@ async fn run_reaction_turn(
     handed_down: &mut bool,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
-    reaction.inner.interrupts.note_turn_started(turn_id);
+    reaction.inner.floor.note_turn_started(turn_id);
 
     // This turn's delta: whether the conversation's own thinking is still running (so the
     // voice can say "still on it" rather than guess), any barge-in note, and the new
@@ -1719,10 +1753,10 @@ async fn run_reaction_turn(
     let worker_status = workers::render_status();
     let interrupted = reaction
         .inner
-        .interrupts
+        .floor
         .take_pending()
         .await
-        .map(|i| interrupts::render_interruption(&i))
+        .map(|i| floor::render_interruption(&i))
         .unwrap_or_default();
     let new_signals = format!("## New signals\n{}", render_batch(batch));
     // What the agent has on screen right now — its own presentation surface. Read
@@ -1843,7 +1877,7 @@ async fn run_reaction_turn(
         .send(sequencer::Beat::TurnEnd { done: done_tx })
         .await;
     let reply = done_rx.await.unwrap_or_default();
-    reaction.inner.interrupts.end_turn(turn_id, &reply).await;
+    reaction.inner.floor.end_turn(turn_id, &reply).await;
 
     // `completed` is about the generation, not about speech: a turn that finished
     // without erroring counts, whether or not it chose to call `hi_say`.

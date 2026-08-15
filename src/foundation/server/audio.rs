@@ -455,7 +455,7 @@ pub async fn ingest_pcm_stream(
                         // probably still sounding (→ "what went unheard" note).
                         if !t.is_final && !t.text.trim().is_empty() {
                             relay_state.note_interim(Channel::Text, &t.text);
-                            relay_state.interrupts.note_speech(tokio::time::Instant::now()).await;
+                            relay_state.floor.note_speech(tokio::time::Instant::now()).await;
                         }
                         // A diarized utterance just finalized. Each segment names a
                         // speaker and its `[start_ms, end_ms]`; slice that speaker's

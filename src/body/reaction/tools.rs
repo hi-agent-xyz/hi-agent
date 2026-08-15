@@ -139,6 +139,14 @@ pub(super) struct Mouth {
     /// promise: it is a property of *this utterance*, and a turn can outlive the
     /// window that started it.
     pub(super) next_word: NextWord,
+    /// Whether the room is the voice's to speak into, asked at the instant the words
+    /// are ready rather than when the turn that wrote them began.
+    ///
+    /// **The one thing between a produced utterance and the wire**, and it lives on
+    /// the mouth because that is the last moment at which the question has a current
+    /// answer — a turn takes seconds, and the room moves inside them. See
+    /// [`super::floor`] for why the input-side settle could never answer it.
+    pub(super) floor: super::Floor,
 }
 
 /// When the voice next owes the person a word.
@@ -259,20 +267,24 @@ impl ToolOwner {
 
 /// What became of an utterance — the answer `say` hands back to Reaction.
 ///
-/// **Two cases, and only one of them is about the room's contents: neither.** This
-/// used to distinguish *voiced* / *on screen only* / *waiting for them to come back*,
-/// so Reaction could read the answer and go quiet on an empty room. That whole axis
-/// is gone: an accepted message is appended to the conversation, where it keeps and
-/// is read whenever they look. Whether a speaker happened to be attached decides
-/// only whether frames were synthesized, which is the host's business and not a
-/// thing to reason about.
+/// **None of these is about the room's contents.** This used to distinguish
+/// *voiced* / *on screen only* / *waiting for them to come back*, so Reaction could
+/// read the answer and go quiet on an empty room. That whole axis is gone: an
+/// accepted message is appended to the conversation, where it keeps and is read
+/// whenever they look. Whether a speaker happened to be attached decides only
+/// whether frames were synthesized, which is the host's business and not a thing to
+/// reason about.
 ///
-/// What remains is the one fact the caller can act on, because only the caller can
-/// fix it: the message was too long to be a message.
+/// What remains are the facts the caller can act on, because only the caller can act
+/// on them: the message was too long to be a message, or the floor was not the
+/// voice's to take ([`super::floor`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Spoken {
     /// Rejected: longer than a message. Nothing was sent.
     TooLong,
+    /// The floor was theirs. Nothing was sent, and nothing is queued to be sent
+    /// later — see [`super::floor`] for why this is a refusal rather than a hold.
+    NotSaid(super::Busy),
     /// Appended to the conversation.
     Sent,
 }
@@ -280,10 +292,21 @@ pub enum Spoken {
 impl Spoken {
     /// The literal `say` returns. Written as a plain statement of what happened,
     /// because it is read by a model deciding what to do next — not a status code.
+    ///
+    /// The two refusals say *what happened* and stop there. What to do about it —
+    /// let the line go, keep listening, fold it into the next one — is `reaction.md`'s
+    /// to say, and putting an instruction here would be the host writing character.
     pub fn ack(self) -> &'static str {
         match self {
             Spoken::TooLong => {
                 "too long for one message — send it as a few shorter say calls instead"
+            }
+            Spoken::NotSaid(super::Busy::Speaking) => {
+                "not said — they were still talking, so the floor was theirs"
+            }
+            Spoken::NotSaid(super::Busy::Unheard) => {
+                "not said — they said something after this turn started that you haven't \
+                 seen yet, so this reply is out of date"
             }
             Spoken::Sent => "sent",
         }
@@ -357,7 +380,9 @@ impl ToolSink {
     /// `10m`. It arms [`NextWord`], and that is the whole of the timing the host owns:
     /// a promise is only a promise once it has been *said*, so the only way to set one
     /// is as part of saying it. An utterance rejected for length arms nothing, because
-    /// nothing was said.
+    /// nothing was said — and neither does one the floor refuses, for exactly the same
+    /// reason: a promise nobody heard is not a promise, and arming it would wake the
+    /// voice later to keep one the person was never made.
     pub async fn say(&self, text: String, back_in: Option<&str>) -> anyhow::Result<Said> {
         let mouth = self
             .mouth
@@ -366,6 +391,16 @@ impl ToolSink {
         if text.chars().count() > SAY_MAX_CHARS {
             return Ok(Said {
                 spoken: Spoken::TooLong,
+                armed: None,
+                unreadable_back_in: false,
+            });
+        }
+        // **Asked here, not at turn start.** Length is a property of the text and can
+        // be judged the moment it arrives; whether the room is free is a property of
+        // *now*, and the turn that wrote these words began seconds ago.
+        if let Err(busy) = mouth.floor.may_speak(Instant::now()).await {
+            return Ok(Said {
+                spoken: Spoken::NotSaid(busy),
                 armed: None,
                 unreadable_back_in: false,
             });
@@ -477,6 +512,7 @@ mod tests {
                 beats,
                 said: Arc::new(AtomicU64::new(0)),
                 next_word: NextWord::default(),
+                floor: crate::body::reaction::Floor::new(),
             }),
         };
         (sink, rx)
@@ -497,6 +533,25 @@ mod tests {
 
         sink.say("hi".into(), None).await.unwrap();
         assert_eq!(said.load(Ordering::Relaxed), 1);
+    }
+
+    /// A refusal by the floor is not a delayed send: no beat reaches the
+    /// sequencer, nothing counts as speech, and — the one that would be a real bug
+    /// — no promise is armed. A `back_in` on words nobody heard would wake the
+    /// voice later to keep a promise the person was never made.
+    #[tokio::test]
+    async fn a_refused_utterance_says_nothing_and_promises_nothing() {
+        let (sink, mut rx) = mouth();
+        let mouth = sink.mouth.as_ref().unwrap();
+        mouth.floor.note_speech(Instant::now()).await;
+
+        let said = sink.say("their turn".into(), Some("10m")).await.unwrap();
+        assert_eq!(said.spoken, Spoken::NotSaid(crate::body::reaction::Busy::Speaking));
+        assert_eq!(said.armed, None, "a promise nobody heard is not a promise");
+        assert!(mouth.next_word.peek().is_none(), "nothing armed");
+        assert_eq!(mouth.said.load(Ordering::Relaxed), 0, "nothing was said");
+        assert!(rx.try_recv().is_err(), "no beat reached the sequencer");
+        assert!(said.ack().starts_with("not said"), "{}", said.ack());
     }
 
     /// An accepted message has one fate, and it does not depend on who is

@@ -122,7 +122,7 @@ fn serve(dir: &std::path::Path, memory: Memory) -> (Router, ServerSeams) {
         hi_agent::foundation::observatory::Observatory::new(None),
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
-        hi_agent::body::reaction::InterruptRegistry::new(),
+        hi_agent::body::reaction::Floor::new(),
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
@@ -268,7 +268,7 @@ async fn a_reply_that_crossed_with_a_new_line_lands_after_it() {
     let mut feed = Feed::open(&base).await;
     assert!(feed.next().await.reset().is_empty());
 
-    seams.state.interrupts.note_turn_started(7);
+    seams.state.floor.note_turn_started(7);
     post_text(&base, "actually never mind").await;
     assert_eq!(feed.next().await.appended().text, "actually never mind");
 

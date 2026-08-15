@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 use crate::mind::memory::Memory;
 use crate::foundation::codex::WireTap;
 use crate::foundation::observatory::Observatory;
-use crate::body::reaction::{InterruptRegistry, OutboundSignal, ToolRegistry};
+use crate::body::reaction::{Floor, OutboundSignal, ToolRegistry};
 use crate::types::{Channel, Signal, ViewEnvelope};
 
 pub mod account;
@@ -333,11 +333,12 @@ pub struct AppState {
     /// [`crate::body::reaction::ToolRegistry`].
     pub tool_registry: ToolRegistry,
 
-    /// Barge-in state, shared with the reaction. The STT relay reports
-    /// recognized speech here ([`crate::body::reaction::InterruptRegistry::note_speech`]);
-    /// nothing else on the HTTP side touches it — there is no interrupt
-    /// endpoint, the mind infers interruptions from its own clock.
-    pub interrupts: InterruptRegistry,
+    /// Floor state, shared with the reaction. The STT relay reports recognized
+    /// speech here ([`crate::body::reaction::Floor::note_speech`]), which is both
+    /// what marks the floor theirs and what a barge-in is inferred from; nothing
+    /// else on the HTTP side touches it — there is no interrupt endpoint and no
+    /// "they stopped" endpoint, because neither would be a thing a client knows.
+    pub floor: Floor,
 
     /// Live-subscriber counts, shared with the reaction. Out-channel handlers hold
     /// a [`crate::body::attachments::Guard`] per connection. One question is asked
@@ -433,7 +434,7 @@ pub fn build(
     observatory: Observatory,
     wire_tap: WireTap,
     tool_registry: ToolRegistry,
-    interrupts: InterruptRegistry,
+    floor: Floor,
     attachments: crate::body::attachments::Attachments,
     auth: Option<Arc<crate::foundation::auth::AuthState>>,
 ) -> (Router, ServerSeams) {
@@ -523,7 +524,7 @@ pub fn build(
         data_dir,
         auth: auth.clone(),
         tool_registry,
-        interrupts,
+        floor,
         attachments,
         handoffs: Mutex::new(HashMap::new()),
         face_presence: Mutex::new(FacePresence::default()),

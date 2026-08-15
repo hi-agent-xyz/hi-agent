@@ -23,7 +23,7 @@ async fn spawn() -> (String, String, tempfile::TempDir, ServerSeams) {
         hi_agent::foundation::observatory::Observatory::new(None),
         hi_agent::foundation::codex::WireTap::new(),
         hi_agent::body::reaction::ToolRegistry::new(),
-        hi_agent::body::reaction::InterruptRegistry::new(),
+        hi_agent::body::reaction::Floor::new(),
         hi_agent::body::attachments::Attachments::new(),
         None,
     );
