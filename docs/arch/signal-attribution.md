@@ -130,13 +130,41 @@ near-duplicate is clutter. For a person it is the failure mode: coining a duplic
 is cheap and visible, while filing someone onto an existing person is silent and
 unrecoverable.
 
+## Recovering a marker is not a backfill
+
+A carrier that recognized someone *before this field existed* wrote its conclusion into the
+signal's body, in the `⟨…⟩` marker grammar — `⟨voice: 赵力⟩`, `⟨voice: 老王 ~0.82⟩`. Reading
+that marker back out and setting the sender from it is **allowed**, with basis `cluster`.
+
+This is not the inference the rest of this document forbids, and the distinction is where
+the name came from:
+
+- **Forbidden** is deriving a sender from *content* — a name that appears in a body is a
+  topic, and only the boundary can say who spoke.
+- **Allowed** is reading the marker the boundary itself wrote. `⟨…⟩` is written only by
+  carriers and cannot be typed by a person; the voiceprint match already happened, at the
+  boundary, under the same threshold a live match uses. The only thing being recovered is
+  *where it was stored*.
+
+Three limits make it safe, and they are not optional:
+
+- **A grounded sender always wins.** A signal that carries the field properly is never
+  re-decided by its own tag.
+- **`⟨voice: unfamiliar⟩` names nobody.** That marker is the carrier saying it heard someone
+  and could not place them, and it must never become a person called "unfamiliar".
+- **It is partial, and stays partial.** The live mic writes the tag only when the speaker
+  *changes*, so within one person's run only the first line carries it. The rest remain
+  unattributed. Carrying a name forward across untagged lines would mean assuming the
+  speaker did not change — which is the assumption this field exists to refuse.
+
 ## Accepted consequences
 
 - **The owner default will sometimes be wrong** — someone else types on the machine, a
   window is left open. It is labelled `owner`, so it is correctable, and a wrong labelled
   default is strictly better than the unlabelled inference it replaces.
-- **Signals already in the log have no sender** and read as unattributed. There is no
-  backfill: who sent them is not recoverable, and inventing it is the thing this document
+- **Signals already in the log have no sender** and read as unattributed, **except where a
+  carrier's own marker is still there to be read** (above). There is no backfill beyond
+  that: who sent the rest is not recoverable, and inventing it is the thing this document
   exists to stop.
 - **Stretches will consolidate with no person attached**, and some people will be modelled
   more thinly than the agent could have modelled them by guessing. That is the trade taken

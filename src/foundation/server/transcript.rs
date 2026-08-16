@@ -44,7 +44,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::mind::memory::media as media_mod;
-use crate::types::{Channel, JournalEntry, Origin, Sender};
+use crate::types::{Channel, JournalEntry, Origin, Sender, SenderBasis};
 
 /// A rolling speech-recognition partial that never settles is presentation noise.
 /// Expire it here, in the authoritative state, rather than independently in every
@@ -275,6 +275,7 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
                 if !matches!(origin, None | Some(Origin::Human)) {
                     return None;
                 }
+                let sender = recover_voice_sender(sender, &body);
                 match channel {
                     Channel::Text | Channel::Audio => Some(Message {
                         id,
@@ -315,6 +316,68 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
         })
         .filter(|m| !m.text.trim().is_empty() || m.attachment.is_some())
         .collect()
+}
+
+/// Take the sender back out of the carrier's own `⟨voice: …⟩` marker, for the lines
+/// that were journaled before the sender was a field.
+///
+/// **This is a recovery, not a backfill, and the difference is where the name came
+/// from.** `signal-attribution.md` forbids deriving a sender from *content* and
+/// accepts that old signals are unattributed — because who sent them is not
+/// recoverable and inventing it is the failure the whole document exists to stop.
+/// Here it *is* recoverable, verbatim: the voiceprint matched at the boundary and
+/// the audio carrier wrote its conclusion down. It wrote it into the body, because
+/// at the time the body was the only place there was. Reading it back is finding the
+/// boundary's own record where the boundary happened to put it.
+///
+/// The marker grammar is what makes this safe rather than a parse of prose: `⟨…⟩` is
+/// written only by carriers, and a person cannot type it. Nothing is read out of
+/// what anybody *said*.
+///
+/// It defers to a sender that is already grounded, so a live line — which carries the
+/// field properly — is never second-guessed by its own tag.
+///
+/// Deliberately partial, and the limit is worth knowing: the live mic writes the tag
+/// only when the **speaker changes**, so within one person's run only the first line
+/// carries it. The rest stay unattributed. Carrying a name forward across untagged
+/// lines would mean assuming the speaker did not change, and an assumption is exactly
+/// what may not be written into this field.
+fn recover_voice_sender(sender: Option<Sender>, body: &str) -> Option<Sender> {
+    if sender.as_ref().is_some_and(Sender::is_grounded) {
+        return sender;
+    }
+    match voice_marker_subject(body) {
+        // `cluster`, because a voiceprint match is what actually happened — the tag
+        // is only where it was stored.
+        Some(subject) => Some(Sender { subject: Some(subject), basis: SenderBasis::Cluster }),
+        // No marker: the line stays exactly as the boundary left it. Unattributed is
+        // an answer, and it must survive this pass rather than be flattened into
+        // "no sender field at all", which is what a machine channel means.
+        None => sender,
+    }
+}
+
+/// The subject named by a `⟨voice: …⟩` marker: `⟨voice: 赵力⟩` from the live mic and
+/// `⟨voice: 老王 ~0.82⟩` from a posted clip, whose similarity is evidence for the mind
+/// and not part of the name.
+///
+/// `⟨voice: unfamiliar⟩` names nobody — it is the carrier saying it heard a voice and
+/// could not place it — so it must never become a person called "unfamiliar".
+fn voice_marker_subject(body: &str) -> Option<String> {
+    const OPEN: &str = "⟨voice:";
+    let start = body.find(OPEN)? + OPEN.len();
+    let rest = &body[start..];
+    let end = rest.find('⟩')?;
+    let inner = rest[..end].trim();
+    // Drop the trailing ` ~0.82` confidence, keeping names that contain spaces.
+    let name = match inner.rsplit_once(" ~") {
+        Some((name, _)) => name.trim(),
+        None => inner,
+    };
+    if name.is_empty() || name == "unfamiliar" {
+        return None;
+    }
+    Some(name.to_owned())
 }
 
 /// A signal's body as the person should read it: everything the carriers wrote into
@@ -361,7 +424,6 @@ pub fn display_text(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SenderBasis;
 
     fn msg(id: &str, role: Role, text: &str) -> Message {
         Message {
@@ -648,6 +710,63 @@ mod tests {
             "an unrecognized voice says so rather than borrowing the last name seen"
         );
         assert_eq!(msgs[2].sender, None, "the agent is not a person in the people store");
+    }
+
+    /// Lines journaled before the sender was a field kept the voiceprint's answer in
+    /// their body, because that was the only place there was. Stripping the marker
+    /// without reading it first is how a name that had been visible for months became
+    /// a silhouette.
+    #[test]
+    fn a_line_older_than_the_field_gets_its_speaker_back_from_the_marker() {
+        let msgs = from_journal(vec![
+            // Exactly the shape on disk: the voiceprint matched, and the sender the
+            // old code wrote was the hardcoded unknown.
+            sig_in_from(
+                "1",
+                Channel::Audio,
+                "其实在我预想中 ⟨voice: 赵力⟩",
+                Some(Origin::Human),
+                Some(Sender::unknown()),
+            ),
+            // A posted clip carries the similarity too; it is evidence, not a name.
+            sig_in_from("2", Channel::Audio, "在的 ⟨voice: 老王 ~0.82⟩", Some(Origin::Human), None),
+        ]);
+
+        assert_eq!(
+            msgs[0].sender,
+            Some(Sender { subject: Some("赵力".into()), basis: SenderBasis::Cluster })
+        );
+        assert_eq!(msgs[0].text, "其实在我预想中");
+        assert_eq!(
+            msgs[1].sender,
+            Some(Sender { subject: Some("老王".into()), basis: SenderBasis::Cluster })
+        );
+    }
+
+    /// The two ways this could invent somebody, both closed.
+    #[test]
+    fn recovery_never_names_a_voice_the_carrier_could_not_place() {
+        // "unfamiliar" is the carrier saying it heard someone and could not say who.
+        assert_eq!(recover_voice_sender(None, "喂 ⟨voice: unfamiliar⟩"), None);
+        // Nothing is read out of what anybody said — only out of the marker grammar,
+        // which a person cannot type.
+        assert_eq!(recover_voice_sender(None, "赵力说他晚点到"), None);
+        assert_eq!(
+            recover_voice_sender(Some(Sender::unknown()), "voice: 赵力"),
+            Some(Sender::unknown()),
+            "and an unattributed line stays unattributed rather than losing its field"
+        );
+    }
+
+    /// A live line carries the field properly, so its own tag never gets a vote.
+    #[test]
+    fn a_grounded_sender_is_never_second_guessed_by_a_marker() {
+        let owner = Sender::owner_or_unknown(Some("赵力"));
+        assert_eq!(
+            recover_voice_sender(Some(owner.clone()), "读一下 ⟨voice: 老王⟩"),
+            Some(owner),
+            "a sender the boundary grounded wins over anything in the body"
+        );
     }
 
     /// A file with no text left after stripping is still a message — the file *is*

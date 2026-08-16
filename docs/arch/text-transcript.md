@@ -186,9 +186,12 @@ conversation you have to read the logs to follow is not a conversation.
 - **Most spoken lines have no sender**, because most voices are not placed. They draw a
   silhouette, and consecutive ones group together even though they may not be one person —
   the record cannot tell, and the drawing claims no more than the record does.
-- **Messages logged before attribution have no sender and never will.** They read as
-  unattributed; there is no backfill, for the reason
-  [`signal-attribution.md`](signal-attribution.md) gives.
+- **Messages logged before attribution read as unattributed**, except the spoken ones whose
+  `⟨voice: …⟩` marker is still in the journal — the seed reads the speaker back out of it,
+  which is a recovery rather than a backfill
+  ([`signal-attribution.md`](signal-attribution.md#recovering-a-marker-is-not-a-backfill)).
+  The live mic only tagged turn *changes*, so within one person's run only the first line
+  comes back and the rest keep their silhouette.
 - **The owner's face appears beside lines they may not have typed** — someone else at the
   machine, a window left open. That is the `owner` default being visible rather than
   silent, and it reads as assumed.
