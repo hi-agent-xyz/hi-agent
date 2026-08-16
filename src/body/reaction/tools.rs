@@ -308,7 +308,12 @@ impl Spoken {
                 "not said — they said something after this turn started that you haven't \
                  seen yet, so this reply is out of date"
             }
-            Spoken::Sent => "sent",
+            // The one outcome that was a status code rather than a statement, and the
+            // only one whose consequence the caller can still get wrong: a refusal is
+            // plainly a refusal, where "sent" left *how final* to be inferred. Read
+            // beside the two "not said" arms, which are sentences, it read as the
+            // weaker answer of the three.
+            Spoken::Sent => "sent — the message is in the conversation now, and stays there",
         }
     }
 }
@@ -560,7 +565,7 @@ mod tests {
     async fn an_accepted_message_is_simply_sent() {
         let (sink, _rx) = mouth();
         assert_eq!(sink.say("hi".into(), None).await.unwrap().spoken, Spoken::Sent);
-        assert_eq!(Spoken::Sent.ack(), "sent");
+        assert!(Spoken::Sent.ack().starts_with("sent"), "{}", Spoken::Sent.ack());
     }
 
     #[tokio::test]
