@@ -8,6 +8,12 @@
 //!
 //! - `GET  /api/people` — list every cluster with its per-modality clip stems.
 //! - `GET  /api/people/{subject}/{modality}/{stem}` — serve one crop/clip.
+//! - `GET  /api/people/{subject}/avatar` — the one crop that stands for a person.
+//!
+//! The avatar route is the one thing here that is not the review surface's: the
+//! conversation reads it to put a face beside a message ([`super::transcript`]), so
+//! who the agent has met is not only a page you visit but the thing you see when
+//! they speak.
 //! - `POST /api/people/name` — name / rename a cluster. Renaming onto an existing
 //!   name *is* the merge (mirrors `reflection_name_person`/`merge_people`).
 //! - `POST /api/people/eject` — pull one clip out into its own fresh cluster.
@@ -112,6 +118,41 @@ pub async fn get_clip(
             Err(_) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
         },
         Ok(None) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
+        Err(e) => err(&e.to_string()),
+    }
+}
+
+/// `GET /api/people/{subject}/avatar` — the one crop that stands for this person,
+/// for the conversation to put beside their messages. **404 is an ordinary answer**,
+/// not an error: a voice-only cluster and a declared owner the camera has never met
+/// both have a name and no face, and the caller draws its own fallback. Distinct
+/// from [`get_clip`] because a face beside a message is not a gallery entry — the
+/// chat knows who spoke and nothing else, so choosing the representative crop is the
+/// store's job, not the caller's ([`people_vectors::avatar_media`]).
+pub async fn get_avatar(
+    State(state): State<Arc<AppState>>,
+    Path(subject): Path<String>,
+) -> Response {
+    let subj = facets::slug(&subject);
+    if subj.is_empty() {
+        return (StatusCode::NOT_FOUND, "bad subject\n").into_response();
+    }
+    match people_vectors::avatar_media(&state.data_dir, &subj).await {
+        Ok(Some(path)) => match tokio::fs::read(&path).await {
+            Ok(bytes) => {
+                let ct = media_content_type(&path);
+                let mut resp = Response::new(Body::from(bytes));
+                resp.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(ct));
+                // Which crop stands for a person changes only when the store does —
+                // a rename, a merge, an eject — so a short cache spares one request
+                // per message group without pinning a stale face for long.
+                resp.headers_mut()
+                    .insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
+                resp
+            }
+            Err(_) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
+        },
+        Ok(None) => (StatusCode::NOT_FOUND, "no face for this person\n").into_response(),
         Err(e) => err(&e.to_string()),
     }
 }

@@ -38,6 +38,40 @@ face and voice recognition, tool calls, the activity meter, wire frames. Each al
 has a home in the journal or the inspector. A check-in appears here only if it produced
 a `hi_say` — which is correct, because then it is a thing that was said.
 
+## Who sent it
+
+**A message carries its sender**: the [`Sender`](signal-attribution.md) the boundary
+decided — `{subject, basis}` — handed to the list rather than worked out again here. The
+agent's own messages carry none, because attribution answers which *person* something came
+from and the agent is not one of the people it keeps.
+
+The list is a chat between people, plural. One install has one owner, but one room has
+whoever is in it: a voiceprint places one spoken line with 赵力 and cannot place the next,
+and both are `role: "user"`. Without the sender the conversation could only say *someone
+who is not the agent* — so a window drew two people's lines as one run, under one face.
+
+**The face beside a message is that field, drawn.** It is the people store's own state,
+made visible where the talking happens: a crop for someone the camera has met
+(`GET /api/people/{subject}/avatar`), a coloured disc with an initial for a name it has
+only heard, the same disc with a silhouette for a cluster it can tell apart but cannot
+name, a plain one for a voice nobody placed. Naming that cluster in 认识的人 changes what
+is beside their messages, which is the point: identity work has an effect you can see.
+
+**The basis rides along and is shown as one.** An `owner` default reads as assumed rather
+than as a recognition — the person looking at it is exactly who can correct it.
+
+### The words are the words
+
+The `⟨…⟩` markers a carrier attaches at the boundary — the `⟨ref: …⟩` locator on a handed
+file, `⟨voice: 赵力⟩` from a voiceprint, the standing note a held-attention session rides
+in on — are written **for the mind** and are stripped from the message's text. They stay in
+the journal, and the mind still reads them there.
+
+This is the same rule the file locator already followed, applied to the rest: a recognition
+belongs in a field, where a window can draw it and a later pass can defeat it. Spelled into
+the middle of the sentence somebody said, it was neither — just a name in a chat bubble
+that the person never typed.
+
 ## Why whole messages, and why short ones
 
 The list is a chat between two people, not a transcript of an agent's working. People
@@ -77,8 +111,17 @@ nothing was missed: the messages are still there.
 | Frame | Meaning |
 |---|---|
 | `{"reset": {"messages": [...], "interim": null}}` | The current window, whole. Always the first frame; sent again only if the list is rebuilt. |
-| `{"append": {"id", "ts", "role", "text", "media"?}}` | One new message at the end. |
+| `{"append": {"id", "ts", "role", "text", "media"?, "sender"?}}` | One new message at the end. |
 | `{"interim": "..."}` or `{"interim": null}` | The rolling recognition partial, or its expiry. |
+
+`sender` is `{"subject"?: "赵力", "basis": "owner"｜"cluster"｜"stated"｜"unknown"}`. It is
+absent on the agent's own messages, and present-with-no-subject when somebody spoke and
+nobody could say who. A window that does not recognize a basis drops the sender rather
+than showing the name: a name whose grounding cannot be read is the ungrounded name
+[`signal-attribution.md`](signal-attribution.md) exists to keep out of the record.
+
+The `interim` carries no sender. Recognition has not settled, so there is nobody to name
+yet, and it is a preview rather than a message.
 
 `GET /api/messages?before=<id>&limit=<n>` returns older messages for scrollback, read
 from the journal.
@@ -140,3 +183,12 @@ conversation you have to read the logs to follow is not a conversation.
 - Ordering is arrival order. A reply that crossed with a new human line appears after it.
 - Nothing tells the agent whether a message was read, and nothing ever will.
 - A very long `hi_say` is rejected rather than truncated; the agent splits it.
+- **Most spoken lines have no sender**, because most voices are not placed. They draw a
+  silhouette, and consecutive ones group together even though they may not be one person —
+  the record cannot tell, and the drawing claims no more than the record does.
+- **Messages logged before attribution have no sender and never will.** They read as
+  unattributed; there is no backfill, for the reason
+  [`signal-attribution.md`](signal-attribution.md) gives.
+- **The owner's face appears beside lines they may not have typed** — someone else at the
+  machine, a window left open. That is the `owner` default being visible rather than
+  silent, and it reads as assumed.

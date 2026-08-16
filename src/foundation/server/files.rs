@@ -114,6 +114,11 @@ async fn ingest_file(
 
     let id = Uuid::now_v7().to_string();
     let reff = media::signal_ref(Channel::File, ts, &rel);
+    // Addressed, like text: a file is *handed over*, and the hander is the owner
+    // unless something says otherwise. `Channel::File`'s own definition already
+    // promised "the signal says who handed over what"; this is that field — decided
+    // once and handed to both the journal and the conversation.
+    let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
     let entry = JournalEntry::SignalIn {
         id: id.clone(),
         ts,
@@ -122,12 +127,7 @@ async fn ingest_file(
         stream: None,
         media: Some(Media { file: rel, mime: mime.to_string(), duration_ms: None, width: None, height: None }),
         origin: Some(Origin::Human),
-        // Addressed, like text: a file is *handed over*, and the hander is the owner
-        // unless something says otherwise. `Channel::File`'s own definition already
-        // promised "the signal says who handed over what"; this is that field.
-        sender: Some(Sender::owner_or_unknown(
-            crate::foundation::config::tunables::owner().as_deref(),
-        )),
+        sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting file anyway");
@@ -142,6 +142,7 @@ async fn ingest_file(
         ts,
         &body,
         Some(crate::foundation::server::Attachment { reff, mime: mime.to_string() }),
+        Some(sender),
     );
     state
         .inbound

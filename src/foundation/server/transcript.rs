@@ -18,6 +18,15 @@
 //! chunks. Sentence splitting still happens downstream to pace TTS and never reaches
 //! this list.
 //!
+//! **Each message carries who sent it**, as the boundary decided it and not as
+//! anything here worked out — the owner default on a typed line, a voiceprint
+//! cluster on a spoken one, nobody at all on the agent's own. That is what lets a
+//! window put a face beside a message; it is also why the `⟨…⟩` evidence markers the
+//! carriers write for the mind are stripped out of the text ([`display_text`]). A
+//! recognition belongs in the field, where it can be drawn and can be corrected —
+//! not spelled into the middle of the sentence somebody said. See
+//! `docs/arch/signal-attribution.md`.
+//!
 //! Ids are the journal's uuidv7, minted at the append site and passed here, so the
 //! live window and the scrollback (`GET /api/messages?before=`) share identifiers
 //! without a merge step. An id on a message is **not a delivery cursor**: no client
@@ -35,7 +44,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::mind::memory::media as media_mod;
-use crate::types::{Channel, JournalEntry, Origin};
+use crate::types::{Channel, JournalEntry, Origin, Sender};
 
 /// A rolling speech-recognition partial that never settles is presentation noise.
 /// Expire it here, in the authoritative state, rather than independently in every
@@ -84,6 +93,16 @@ pub struct Message {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachment: Option<Attachment>,
+    /// Which person sent this, exactly as the boundary decided it — see
+    /// [`crate::types::Sender`] and `docs/arch/signal-attribution.md`. Carried here
+    /// rather than re-derived, so the face beside a message and the name in the
+    /// journal are one decision made once.
+    ///
+    /// **Absent is a real answer**: the agent's own messages have no sender at all,
+    /// and a voice in the room nobody recognized has one that names nobody. Neither
+    /// gets a face, and neither is a gap to fill in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender: Option<Sender>,
 }
 
 /// One line on `GET /api/out/text`.
@@ -250,7 +269,7 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
     entries
         .into_iter()
         .filter_map(|entry| match entry {
-            JournalEntry::SignalIn { id, ts, channel, body, media, origin, .. } => {
+            JournalEntry::SignalIn { id, ts, channel, body, media, origin, sender, .. } => {
                 // An absent origin is a journal line older than the field; every one
                 // of those on an input channel was a person.
                 if !matches!(origin, None | Some(Origin::Human)) {
@@ -261,8 +280,9 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
                         id,
                         ts,
                         role: Role::User,
-                        text: body,
+                        text: display_text(&body),
                         attachment: None,
+                        sender,
                     }),
                     Channel::File => {
                         let attachment = media.map(|m| Attachment {
@@ -273,8 +293,9 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
                             id,
                             ts,
                             role: Role::User,
-                            text: strip_ref(&body),
+                            text: display_text(&body),
                             attachment,
+                            sender,
                         })
                     }
                     _ => None,
@@ -287,6 +308,7 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
                     role: Role::Agent,
                     text: body,
                     attachment: None,
+                    sender: None,
                 }),
                 _ => None,
             },
@@ -295,25 +317,51 @@ pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
         .collect()
 }
 
-/// Drop the `⟨ref: …⟩` locator from a file signal's body. The locator exists so the
-/// *agent* can open the bytes; the person already knows what they sent, and a path
-/// in their chat is noise.
-pub fn strip_ref(body: &str) -> String {
-    let Some(open) = body.find("⟨ref:") else {
-        return body.trim().to_owned();
-    };
-    let rest = &body[open..];
-    let end = rest.find('⟩').map(|i| open + i + '⟩'.len_utf8());
-    let mut out = body[..open].to_owned();
-    if let Some(end) = end {
-        out.push_str(&body[end..]);
+/// A signal's body as the person should read it: everything the carriers wrote into
+/// it *for the agent* removed.
+///
+/// `⟨…⟩` is this system's one convention for evidence a carrier attached at the
+/// boundary — the `⟨ref: …⟩` locator on a handed file, the `⟨voice: 赵力⟩` a
+/// voiceprint recognized, the whole standing instruction a held-attention session
+/// rides in on. Every one of them is addressed to the mind, and every one of them
+/// used to render inside the person's own chat bubble, which is how a name that is
+/// now a face beside the message was also a tag in the middle of the sentence.
+///
+/// The person loses nothing: they know what they sent, they know who was talking,
+/// and what the recognition concluded is [`Message::sender`] now — a field, where a
+/// window can draw it as a face and a later pass can still defeat it.
+pub fn display_text(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(open) = rest.find('⟨') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open + '⟨'.len_utf8()..];
+        match rest.find('⟩') {
+            Some(close) => rest = &rest[close + '⟩'.len_utf8()..],
+            // An unterminated marker swallows the tail: it is a carrier's half-written
+            // note either way, and half of one is not something to show anybody.
+            None => rest = "",
+        }
     }
-    out.trim().to_owned()
+    out.push_str(rest);
+    // A marker lifted out of the middle leaves two spaces where it stood.
+    let mut collapsed = String::with_capacity(out.len());
+    let mut last_was_space = false;
+    for ch in out.chars() {
+        let is_space = ch == ' ' || ch == '\t';
+        if is_space && last_was_space {
+            continue;
+        }
+        last_was_space = is_space;
+        collapsed.push(ch);
+    }
+    collapsed.trim().to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::SenderBasis;
 
     fn msg(id: &str, role: Role, text: &str) -> Message {
         Message {
@@ -322,6 +370,7 @@ mod tests {
             role,
             text: text.to_owned(),
             attachment: None,
+            sender: None,
         }
     }
 
@@ -454,6 +503,16 @@ mod tests {
     // ---- Reading the journal back as a conversation ----
 
     fn sig_in(id: &str, channel: Channel, body: &str, origin: Option<Origin>) -> JournalEntry {
+        sig_in_from(id, channel, body, origin, None)
+    }
+
+    fn sig_in_from(
+        id: &str,
+        channel: Channel,
+        body: &str,
+        origin: Option<Origin>,
+        sender: Option<Sender>,
+    ) -> JournalEntry {
         JournalEntry::SignalIn {
             id: id.to_owned(),
             ts: Utc::now(),
@@ -462,7 +521,7 @@ mod tests {
             stream: None,
             media: None,
             origin,
-            sender: None,
+            sender,
         }
     }
 
@@ -548,10 +607,47 @@ mod tests {
 
     #[test]
     fn stripping_a_locator_leaves_the_sentence_readable() {
-        assert_eq!(strip_ref("handed you a file: a.png ⟨ref: file/x/y/z.png⟩"), "handed you a file: a.png");
-        assert_eq!(strip_ref("⟨ref: file/x/y/z.png⟩"), "");
-        assert_eq!(strip_ref("no locator here"), "no locator here");
-        assert_eq!(strip_ref("before ⟨ref: broken"), "before", "an unterminated locator still goes");
+        assert_eq!(display_text("handed you a file: a.png ⟨ref: file/x/y/z.png⟩"), "handed you a file: a.png");
+        assert_eq!(display_text("⟨ref: file/x/y/z.png⟩"), "");
+        assert_eq!(display_text("no locator here"), "no locator here");
+        assert_eq!(display_text("before ⟨ref: broken"), "before", "an unterminated locator still goes");
+    }
+
+    /// Everything a carrier wrote for the mind goes, not just the file locator —
+    /// the voiceprint's conclusion and the held-attention standing note both used to
+    /// render inside the person's own bubble.
+    #[test]
+    fn the_evidence_a_carrier_wrote_for_the_mind_is_not_in_the_persons_chat() {
+        assert_eq!(display_text("其实在我预想中 ⟨voice: 赵力⟩"), "其实在我预想中");
+        assert_eq!(
+            display_text("好了吗 ⟨voice: 赵力⟩ ⟨live attention: the user is holding the right ⌘⟩"),
+            "好了吗"
+        );
+        assert_eq!(
+            display_text("说 ⟨voice: 赵力⟩ 完了"),
+            "说 完了",
+            "a marker lifted from the middle leaves one space, not two"
+        );
+    }
+
+    /// The face beside a message is the boundary's decision, read back — not this
+    /// module's guess, and not a name lifted out of the text.
+    #[test]
+    fn a_message_carries_the_sender_the_boundary_decided() {
+        let recognized = Sender { subject: Some("赵力".into()), basis: SenderBasis::Cluster };
+        let msgs = from_journal(vec![
+            sig_in_from("1", Channel::Audio, "其实在我预想中 ⟨voice: 赵力⟩", Some(Origin::Human), Some(recognized.clone())),
+            sig_in_from("2", Channel::Audio, "someone else in the room", Some(Origin::Human), Some(Sender::unknown())),
+            sig_out("3", Channel::Text, "answered"),
+        ]);
+        assert_eq!(msgs[0].sender.as_ref(), Some(&recognized));
+        assert_eq!(msgs[0].text, "其实在我预想中", "and the tag it replaces is gone");
+        assert_eq!(
+            msgs[1].sender.as_ref().map(|s| s.is_grounded()),
+            Some(false),
+            "an unrecognized voice says so rather than borrowing the last name seen"
+        );
+        assert_eq!(msgs[2].sender, None, "the agent is not a person in the people store");
     }
 
     /// A file with no text left after stripping is still a message — the file *is*

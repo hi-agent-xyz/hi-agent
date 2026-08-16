@@ -13,16 +13,24 @@ import { Message, MessageContent, MessageGroup } from "./shadcn/message";
 import { Bubble, BubbleContent } from "./shadcn/bubble";
 import type { Message as ChatMessage } from "../channels/out/text";
 import { splitSpeechLinks } from "../lib/links";
+import { SenderAvatar } from "./Avatar";
 
 /**
- * The conversation, as a chat between two people.
+ * The conversation, as a chat between people.
  *
- * Deliberately not an agent transcript. There is no avatar, no "Assistant"
- * label, no copy / regenerate / rating row, no reasoning trace, and no
- * token-by-token fill — a message appears when it is finished, because that is
- * when a person sends one. What is here instead is what a messenger has:
- * consecutive messages from the same sender grouped tight under one time, day
- * separators, and files shown as the thing that was sent.
+ * Deliberately not an agent transcript. There is no "Assistant" label, no copy /
+ * regenerate / rating row, no reasoning trace, and no token-by-token fill — a
+ * message appears when it is finished, because that is when a person sends one.
+ * What is here instead is what a messenger has: consecutive messages from the same
+ * sender grouped tight under one time, day separators, files shown as the thing that
+ * was sent, and **a face beside each group**.
+ *
+ * The face is not decoration. This agent hears a room, so the person's side of the
+ * conversation is not one person: a voiceprint places one line with 赵力 and leaves
+ * the next unattributed. Until now the only sign of that was a `⟨voice: 赵力⟩` tag
+ * rendered mid-sentence inside the bubble — evidence written for the mind, leaking
+ * into the chat. The recognition is a field on the message now, drawn as an avatar
+ * (`ui/Avatar.tsx`) and stripped out of the words.
  *
  * **There is no read receipt, and there will not be.** The scroller's own notion
  * of "you have not scrolled to this yet" stays in this component and is never
@@ -34,6 +42,8 @@ import { splitSpeechLinks } from "../lib/links";
 interface Group {
   key: string;
   role: ChatMessage["role"];
+  /** Whoever the boundary said sent them; absent on the agent's own. */
+  sender: ChatMessage["sender"];
   messages: ChatMessage[];
   /** Rendered above the group when the day changes. */
   daySeparator?: string;
@@ -69,6 +79,18 @@ function daySeparator(ts: string): string {
  */
 const GROUP_GAP_MS = 4 * 60 * 1000;
 
+/**
+ * Whether two messages came from the same person. **Role is not enough**: everyone
+ * in the room is `user`, so grouping on it alone stacks 赵力's line and a colleague's
+ * reply under one avatar and says the wrong person said both.
+ *
+ * Two unattributed lines do group together. We cannot tell whether they were the
+ * same voice, and one silhouette over both claims no more than that.
+ */
+function sameSender(a: ChatMessage, b: ChatMessage): boolean {
+  return a.sender?.subject === b.sender?.subject;
+}
+
 export function groupMessages(messages: ChatMessage[]): Group[] {
   const groups: Group[] = [];
   let previousDay: string | null = null;
@@ -85,6 +107,7 @@ export function groupMessages(messages: ChatMessage[]): Group[] {
       last !== undefined &&
       separator === undefined &&
       open.role === message.role &&
+      sameSender(last, message) &&
       new Date(message.ts).getTime() - new Date(last.ts).getTime() < GROUP_GAP_MS;
 
     if (continues && open) {
@@ -94,6 +117,7 @@ export function groupMessages(messages: ChatMessage[]): Group[] {
     groups.push({
       key: message.id,
       role: message.role,
+      sender: message.sender,
       messages: [message],
       ...(separator ? { daySeparator: separator } : {}),
     });
@@ -191,6 +215,9 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
                   </div>
                 )}
                 <Message align={group.role === "user" ? "end" : "start"}>
+                  {/* First child, so `Message`'s own row-reverse on the person's
+                      side puts it on the outer edge without a second rule. */}
+                  <SenderAvatar sender={group.sender} role={group.role} />
                   <MessageContent>
                     {/* `max-w-full` is load-bearing, and only on the person's side.
                         `MessageContent` puts `self-end` on its children there, which
@@ -236,6 +263,11 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
             {interim && (
               <MessageScrollerItem>
                 <Message align="end">
+                  {/* The avatar's space, held empty. Recognition has not settled, so
+                      there is nobody to draw yet — and a silhouette that becomes a
+                      face a second later would be the flicker, not the answer. The
+                      spacer keeps the bubble on the same line it will land on. */}
+                  <div className="size-7 shrink-0" aria-hidden />
                   <MessageContent>
                     <Bubble align="end" variant="outline" className="opacity-70">
                       <BubbleContent>{interim}</BubbleContent>

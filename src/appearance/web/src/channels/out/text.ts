@@ -20,6 +20,25 @@ export interface Attachment {
   mime: string;
 }
 
+/**
+ * How the backend decided who sent a message — `docs/arch/signal-attribution.md`.
+ * On the wire because the basis is the load-bearing half: `owner` is a default that
+ * later evidence may defeat, `cluster` is a voiceprint or a face that actually
+ * matched. Nothing may be inferred from what the message *says*.
+ */
+export type SenderBasis = "owner" | "cluster" | "stated" | "unknown";
+
+/**
+ * Who sent a message. Absent on the agent's own — attribution answers which *person*
+ * something came from, and the agent is not one of the people it keeps. Present with
+ * no `subject` means somebody spoke and nobody could say who, which is an answer.
+ */
+export interface Sender {
+  /** The `people/` subject: a name (`赵力`) or an unnamed cluster id (`7j2wa4r8`). */
+  subject?: string;
+  basis: SenderBasis;
+}
+
 export interface Message {
   /** The journal's uuidv7 — time-sortable, and the same key the backend logged. */
   id: string;
@@ -27,6 +46,7 @@ export interface Message {
   role: Role;
   text: string;
   attachment?: Attachment;
+  sender?: Sender;
 }
 
 /** What the conversation looks like right now. */
@@ -52,6 +72,24 @@ function parseAttachment(value: unknown): Attachment | undefined {
   return { ref: raw.ref, mime: raw.mime };
 }
 
+const BASES: SenderBasis[] = ["owner", "cluster", "stated", "unknown"];
+
+/**
+ * A sender the face may act on. An unrecognized basis is dropped rather than shown:
+ * a name whose grounding this build does not understand is exactly the ungrounded
+ * name the attribution rules exist to keep out of the record.
+ */
+function parseSender(value: unknown): Sender | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const basis = BASES.find((b) => b === raw.basis);
+  if (!basis) return undefined;
+  return {
+    ...(typeof raw.subject === "string" && raw.subject ? { subject: raw.subject } : {}),
+    basis,
+  };
+}
+
 export function parseMessage(value: unknown): Message | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -59,12 +97,14 @@ export function parseMessage(value: unknown): Message | null {
   if (raw.role !== "user" && raw.role !== "agent") return null;
   if (typeof raw.text !== "string") return null;
   const attachment = parseAttachment(raw.attachment);
+  const sender = parseSender(raw.sender);
   return {
     id: raw.id,
     ts: raw.ts,
     role: raw.role,
     text: raw.text,
     ...(attachment ? { attachment } : {}),
+    ...(sender ? { sender } : {}),
   };
 }
 

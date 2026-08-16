@@ -818,6 +818,37 @@ pub async fn list_clusters(data_dir: &Path) -> anyhow::Result<Vec<ClusterListing
     Ok(out)
 }
 
+/// The one crop that stands for a person — their avatar. The **oldest** face in the
+/// gallery, which is the one that stays put: newest-first would change the face
+/// beside someone's messages every time the camera saw them again, and an avatar
+/// that moves is not an avatar. `None` when the person has no face at all (a
+/// voice-only cluster, or a declared owner the camera has never met).
+///
+/// Reads the directory directly rather than through [`read_samples`] — the caller
+/// wants one path, not every embedding in the gallery loaded off disk to get it.
+pub async fn avatar_media(data_dir: &Path, subject: &str) -> anyhow::Result<Option<PathBuf>> {
+    let dir = modality_dir(data_dir, subject, Modality::Face);
+    let mut rd = match tokio::fs::read_dir(&dir).await {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut first: Option<String> = None;
+    while let Some(ent) = rd.next_entry().await? {
+        let Ok(name) = ent.file_name().into_string() else {
+            continue;
+        };
+        // Skip the `.f32` embedding siblings and dotfiles: the media is what is left.
+        if name.starts_with('.') || name.ends_with(".f32") {
+            continue;
+        }
+        if first.as_deref().is_none_or(|f| name.as_str() < f) {
+            first = Some(name);
+        }
+    }
+    Ok(first.map(|name| dir.join(name)))
+}
+
 /// The sample stems of one subject's `modality` gallery, oldest first. A thin public
 /// window onto [`read_samples`] for the review view; empty if the dir is absent.
 async fn stems(data_dir: &Path, subject: &str, modality: Modality) -> anyhow::Result<Vec<String>> {
@@ -1676,6 +1707,35 @@ mod tests {
     async fn list_clusters_is_empty_before_anyone_is_enrolled() {
         let dir = td();
         assert!(list_clusters(dir.path()).await.unwrap().is_empty());
+    }
+
+    /// The avatar is the oldest face and stays the oldest face. Meeting someone
+    /// again must not change the picture beside everything they have ever said.
+    #[tokio::test]
+    async fn the_avatar_is_the_first_face_and_does_not_move_when_a_newer_one_arrives() {
+        let dir = td();
+        enroll_v(dir.path(), "赵力", Modality::Face, &near(0, 0.0)).await;
+        let picked = avatar_media(dir.path(), "赵力").await.unwrap().expect("a face to show");
+        assert_eq!(
+            stems(dir.path(), "赵力", Modality::Face).await.unwrap(),
+            vec![picked.file_stem().unwrap().to_str().unwrap().to_owned()],
+            "the one face in the gallery is the one served"
+        );
+
+        // Sample stems are uuid-v7, so a later face sorts after the first one.
+        enroll_v(dir.path(), "赵力", Modality::Face, &near(0, 0.01)).await;
+        let again = avatar_media(dir.path(), "赵力").await.unwrap().expect("still a face");
+        assert_eq!(again, picked, "the same crop, not whichever was seen last");
+    }
+
+    /// No face is an ordinary answer, not a failure: a voice in the room is a person
+    /// the camera has never met, and so is a name that was only ever typed.
+    #[tokio::test]
+    async fn a_voice_only_cluster_and_a_stranger_both_have_no_avatar() {
+        let dir = td();
+        enroll_v(dir.path(), "2xk04cyd", Modality::Voice, &near(1, 0.0)).await;
+        assert!(avatar_media(dir.path(), "2xk04cyd").await.unwrap().is_none());
+        assert!(avatar_media(dir.path(), "nobody-here").await.unwrap().is_none());
     }
 
     #[tokio::test]

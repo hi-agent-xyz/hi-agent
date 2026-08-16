@@ -60,6 +60,12 @@ pub async fn post_text(
     // conversation are the same thing under the same key, which is what lets the
     // list be rebuilt from the log without a merge.
     let id = Uuid::now_v7().to_string();
+    // Addressed: somebody typed this *to* the agent, so absent evidence otherwise it
+    // is the owner. Labelled `owner` rather than written bare, so a later pass can
+    // tell the default from a recognition — see `docs/arch/signal-attribution.md`.
+    // Decided once and handed to both the journal and the conversation, so the face
+    // beside the message and the name in the log are one answer, not two.
+    let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
     let entry = JournalEntry::SignalIn {
         id: id.clone(),
         ts: signal.ts,
@@ -68,12 +74,7 @@ pub async fn post_text(
         stream: signal.stream.clone(),
         media: None,
         origin: Some(Origin::Human),
-        // Addressed: somebody typed this *to* the agent, so absent evidence otherwise
-        // it is the owner. Labelled `owner` rather than written bare, so a later pass
-        // can tell the default from a recognition — see `docs/arch/signal-attribution.md`.
-        sender: Some(Sender::owner_or_unknown(
-            crate::foundation::config::tunables::owner().as_deref(),
-        )),
+        sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");
@@ -81,7 +82,7 @@ pub async fn post_text(
 
     // Append to the conversation and echo to live observers before dispatching
     // inward.
-    state.note_message(Channel::Text, id, signal.ts, &signal.body, None);
+    state.note_message(Channel::Text, id, signal.ts, &signal.body, None, Some(sender));
 
     if let Err(err) = state.inbound.send(signal).await {
         tracing::error!(error = %err, "inbound channel closed");

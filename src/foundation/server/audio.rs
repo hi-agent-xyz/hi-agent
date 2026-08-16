@@ -70,7 +70,7 @@ use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
 use crate::foundation::segment::{Segmenter, Speech};
-use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
+use crate::types::{Channel, JournalEntry, Media, Origin, Sender, SenderBasis, Signal};
 use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";
@@ -160,14 +160,24 @@ impl VpTimeline {
     }
 }
 
-/// Recognize the speaker of a single-voice clip and render one compact evidence
-/// note to append to the transcript, e.g. ` ⟨voice: 老王 ~0.82⟩`. The audio twin
-/// of the vision channel's `face_note`. Returns `None` when voiceprint is
-/// unconfigured, the clip can't be decoded/embedded, or the clip is diarized into
-/// multiple speakers (a single blended embedding would be misleading — the
-/// labeled transcript already attributes the turns). Best-effort: the signal
+/// Recognize the speaker of a single-voice clip: the compact evidence note to append
+/// to the agent-facing transcript, e.g. ` ⟨voice: 老王 ~0.82⟩`, **and the subject it
+/// named** when the match actually cleared [`VOICE_RECOGNISE_MIN`] — so the signal
+/// carries a grounded [`Sender`] instead of leaving its own text the only place that
+/// says who was talking. `None` for the subject means the voice was heard and not
+/// placed, which is a complete answer.
+///
+/// The audio twin of the vision channel's `face_note`. Returns `None` outright when
+/// voiceprint is unconfigured, the clip can't be decoded/embedded, or the clip is
+/// diarized into multiple speakers (a single blended embedding would be misleading —
+/// the labeled transcript already attributes the turns). Best-effort: the signal
 /// stands regardless.
-async fn voice_note(bytes: &Bytes, mime: &str, transcript: &str, data_dir: &std::path::Path) -> Option<String> {
+async fn voice_note(
+    bytes: &Bytes,
+    mime: &str,
+    transcript: &str,
+    data_dir: &std::path::Path,
+) -> Option<(String, Option<String>)> {
     if !voiceprint::available() {
         return None;
     }
@@ -189,11 +199,13 @@ async fn voice_note(bytes: &Bytes, mime: &str, transcript: &str, data_dir: &std:
         .unwrap_or_default()
         .into_iter()
         .next();
-    let who = match top {
-        Some(c) if c.similarity >= VOICE_RECOGNISE_MIN => format!("{} ~{:.2}", c.subject, c.similarity),
-        _ => "unfamiliar".to_string(),
+    let (who, subject) = match top {
+        Some(c) if c.similarity >= VOICE_RECOGNISE_MIN => {
+            (format!("{} ~{:.2}", c.subject, c.similarity), Some(c.subject))
+        }
+        _ => ("unfamiliar".to_string(), None),
     };
-    Some(format!(" ⟨voice: {who}⟩"))
+    Some((format!(" ⟨voice: {who}⟩"), subject))
 }
 
 /// Format of the live mic stream: raw 16 kHz mono signed 16-bit little-endian PCM.
@@ -312,10 +324,12 @@ pub async fn post_audio(
     // speaking), the way the vision path folds in recognized faces. The ack keeps
     // the raw transcript so the SPA caption isn't cluttered with the evidence tag.
     let mut delivered = transcript.clone();
-    if let Some(note) = voice_note(&vp_bytes, &mime, &transcript, &state.data_dir).await {
+    let mut speaker = None;
+    if let Some((note, matched)) = voice_note(&vp_bytes, &mime, &transcript, &state.data_dir).await {
         delivered.push_str(&note);
+        speaker = matched;
     }
-    if !deliver_transcript(&state, stream, &delivered, Some((ts, id, media))).await {
+    if !deliver_transcript(&state, stream, &delivered, Some((ts, id, media)), speaker).await {
         return (StatusCode::SERVICE_UNAVAILABLE, "inbound channel closed\n").into_response();
     }
 
@@ -498,16 +512,22 @@ pub async fn ingest_pcm_stream(
                 _ = ticker.tick() => seg.tick(Instant::now()),
             };
             for sentence in cuts {
-                // Tag the sentence with the current speaker's identity when it's
-                // known and the turn changed — soft evidence, low noise (a 1:1
-                // chat shows it once; a multi-party one marks each handoff).
+                // Who the voiceprint placed this sentence with, if anyone. It rides
+                // the signal as its sender on EVERY line — that is a field, and a
+                // field costs nothing to repeat.
                 let mut line = sentence;
-                if let Some(spk) = &current_speaker
-                    && let Some(subject) = relay_names.lock().unwrap().get(spk).cloned()
+                let speaker = current_speaker
+                    .as_ref()
+                    .and_then(|spk| relay_names.lock().unwrap().get(spk).cloned());
+                // The tag in the *text* still marks turn changes only: it is prose
+                // the mind reads, and a name restated on every sentence is noise
+                // there (a 1:1 chat shows it once; a multi-party one marks each
+                // handoff).
+                if let Some(subject) = &speaker
                     && last_tagged.as_deref() != Some(subject.as_str())
                 {
                     line.push_str(&format!(" ⟨voice: {subject}⟩"));
-                    last_tagged = Some(subject);
+                    last_tagged = Some(subject.clone());
                 }
                 if let Some(tag) = &relay_tag
                     && !source_noted
@@ -515,18 +535,21 @@ pub async fn ingest_pcm_stream(
                     line.push_str(&format!(" ⟨{tag}⟩"));
                     source_noted = true;
                 }
-                deliver_transcript(&relay_state, relay_stream.clone(), &line, None).await;
+                deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
             }
         }
         // Flush any trailing words as a final sentence when the session ends.
         if let Some(sentence) = seg.flush() {
             let mut line = sentence;
+            let speaker = current_speaker
+                .as_ref()
+                .and_then(|spk| relay_names.lock().unwrap().get(spk).cloned());
             if let Some(tag) = &relay_tag
                 && !source_noted
             {
                 line.push_str(&format!(" ⟨{tag}⟩"));
             }
-            deliver_transcript(&relay_state, relay_stream.clone(), &line, None).await;
+            deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
         }
     });
 
@@ -650,11 +673,15 @@ pub async fn ingest_pcm_stream(
 /// the journal entry references it; the live mic passes `None` for now (its bytes
 /// are persisted by wall-clock minute rather than per utterance), so the journal
 /// records no direct `media` ref.
+///
+/// `speaker` is the subject a voiceprint **matched**, when one did — never a guess
+/// and never a name read out of the words. Everything else is unattributed.
 async fn deliver_transcript(
     state: &AppState,
     stream: Option<String>,
     text: &str,
     clip: Option<(DateTime<Utc>, String, Media)>,
+    speaker: Option<String>,
 ) -> bool {
     let (ts, id, media) = match clip {
         Some((ts, id, media)) => (ts, id, Some(media)),
@@ -667,6 +694,16 @@ async fn deliver_transcript(
         ts,
     };
     crate::foundation::channel_log::inbound(Channel::Audio, text);
+    // **Ambient — never the owner default.** A microphone picks up whoever is in
+    // range: the person, someone else in the room, a television. Only voiceprint
+    // clustering may answer who spoke, and when it has (`speaker`), the answer is
+    // recorded as `cluster` — the basis `docs/arch/signal-attribution.md` reserves
+    // for a face or voiceprint match. Until it does, unknown is the true one, and it
+    // stays unknown rather than borrowing the last name the room produced.
+    let sender = match &speaker {
+        Some(subject) => Sender { subject: Some(subject.clone()), basis: SenderBasis::Cluster },
+        None => Sender::unknown(),
+    };
     let entry = JournalEntry::SignalIn {
         id: id.clone(),
         ts,
@@ -675,11 +712,7 @@ async fn deliver_transcript(
         stream,
         media,
         origin: Some(Origin::Human),
-        // **Ambient — never the owner default.** A microphone picks up whoever is in
-        // range: the person, someone else in the room, a television. Who spoke is
-        // voiceprint clustering's answer to give (during consolidation, once there is
-        // enough of a turn to match), and until it does, unknown is the true one.
-        sender: Some(Sender::unknown()),
+        sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");
@@ -687,7 +720,7 @@ async fn deliver_transcript(
     // Append before dispatching inward. A spoken line is a message like a typed
     // one, so it rides the text channel into the conversation (a display concern);
     // the journal above keeps it on `Audio`, where it was actually heard.
-    state.note_message(Channel::Text, id, ts, text, None);
+    state.note_message(Channel::Text, id, ts, text, None, Some(sender));
     if let Err(err) = state.inbound.send(signal).await {
         tracing::error!(error = %err, "inbound channel closed");
         return false;

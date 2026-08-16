@@ -51,6 +51,9 @@ pub(crate) async fn bind_outbound(
                     role: Role::Agent,
                     text: said,
                     attachment: None,
+                    // No sender: attribution answers which *person* a signal came
+                    // from, and the agent is not one of the people it keeps.
+                    sender: None,
                 });
             }
             // Observability only — the conversation has no use for it.

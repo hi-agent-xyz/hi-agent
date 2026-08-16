@@ -371,7 +371,11 @@ impl AppState {
     ///
     /// `id` and `ts` are the ones the caller already journaled under, so the
     /// message in the conversation and the entry in the log are the same thing
-    /// with the same key, and a reload rebuilds the list unchanged.
+    /// with the same key, and a reload rebuilds the list unchanged. `sender` is the
+    /// same one for the same reason: it is the [`crate::types::Sender`] the caller
+    /// just wrote to the journal, handed over rather than decided again here, so the
+    /// live conversation and the one a restart rebuilds cannot disagree about who
+    /// was talking.
     pub fn note_message(
         &self,
         channel: Channel,
@@ -379,13 +383,15 @@ impl AppState {
         ts: DateTime<Utc>,
         text: &str,
         attachment: Option<Attachment>,
+        sender: Option<crate::types::Sender>,
     ) {
         self.transcript.append(Message {
             id,
             ts,
             role: Role::User,
-            text: transcript::strip_ref(text),
+            text: transcript::display_text(text),
             attachment,
+            sender,
         });
         let _ = self.input_echo.send(InputEcho {
             channel,
@@ -620,6 +626,9 @@ pub fn build(
         .route("/api/people/split/preview", post(people::post_split_preview))
         .route("/api/people/split/apply", post(people::post_split_apply))
         .route("/api/people/{subject}/{modality}/{stem}", get(people::get_clip))
+        // …and the one crop that stands for a person, which the conversation reads
+        // to put a face beside their messages.
+        .route("/api/people/{subject}/avatar", get(people::get_avatar))
         // The rest of the review surfaces, same shape as "认识的人": show what the agent
         // has accumulated, and give the person the verb that ends or corrects it. Each is
         // read plus exactly the writes it can honestly honour — no stop verb for workers,
