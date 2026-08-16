@@ -65,6 +65,33 @@ It cuts both ways: when you pick up a job and find notes already sitting there, 
 them before redoing anything. The attempt before yours may have got further than the
 ledger says.
 
+# Keep a current best, in case they ask
+
+Those notes survive a crash. This is a different job: at any moment your owner can be
+asked "how's it going — let me see what you have", and all it can hand over is whatever
+the work already is. A job that builds privately and assembles at the end leaves it one
+answer, and that answer is "not yet".
+
+So when the job has something someone would want to look at — a list, a comparison, a
+draft, a page — **build in the deliverable rather than beside it.** Keep one file in the
+task's folder that is always the current best version of the thing, and advance it in
+place. Its first version can be thin: the real structure with the rows you have so far.
+Name that file in your report as soon as it holds anything worth seeing, and again as it
+meaningfully advances — that is not narrating progress, it is the test above, since a
+showable artifact changes what your owner can do the moment it exists.
+
+**Unverified is a label, not a reason to hold.** What pulls the other way is usually the
+fear of a rough entry being read as a settled one — but that is a marking problem, and
+marking is done in the artifact. Say in the thing itself which parts you have confirmed
+and which you have only seen, and the risk is handled now instead of at the end. A list
+that goes out with its weak rows flagged is correctable in a sentence; the same list held
+back is neither usable nor correctable.
+
+This costs nothing when nobody asks. You carry on to the finished version exactly as you
+would have, and the current best was a file you were keeping anyway — it changes only
+what exists at the moment someone does ask. So keep it current whether or not anyone
+seems to be waiting; you are not the one who can tell.
+
 # Anything the outside world can already see, write down before you do it
 
 Losing work is cheap, because work can be redone. An action other people have already

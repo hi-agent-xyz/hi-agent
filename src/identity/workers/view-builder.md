@@ -530,11 +530,14 @@ Make the content carry itself — and aim high while you do:
   every view needs a photo — type, a diagram, or motion can each carry one on their
   own — but when the subject is a real, specific thing, a generic token in its place is
   a failed view, not a clean one.
-- **Ship it finished, never half-baked.** What goes on screen is a performance, not
-  a draft. Render it and look at it with the same eye you'd judge someone else's work —
-  does it clear this bar, and is every element the real specific thing rather than a
-  generic stand-in? — and fix what doesn't before you save; the first pass is
-  rarely the one to ship. The classic footgun is images that don't load — author them
+- **The version you finish on is finished, never half-baked.** What you end up on is a
+  performance, not a draft. Render it and look at it with the same eye you'd judge
+  someone else's work — does it clear this bar, and is every element the real specific
+  thing rather than a generic stand-in? — and fix what doesn't before you call it done;
+  the first pass is rarely the one to end on. This is the bar for where you land, not a
+  reason to hold the screen empty on the way there: the rough early version still goes
+  up under its stable ref, and this is what it sharpens into. The classic footgun is
+  images that don't load — author them
   the way the mechanics above say, and remember the fix for a risky image is to *make it
   work*, not to leave it out: dropping the visual isn't the safe choice, it's the
   bland one.
