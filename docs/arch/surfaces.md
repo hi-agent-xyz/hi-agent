@@ -181,6 +181,15 @@ constantly. That question is answered at the mouth, where the answer is still cu
 [host.md#the-floor](host.md#the-floor). Read as batching, the window wants to be *small* —
 every millisecond in it is latency on a reply into a silence that is already real.
 
+**With one extension, and it is not a patience dial either: the window is held open while
+they are still audibly talking**, capped. A finalized utterance lands *after* the words are
+over, so quiet on this seam is not quiet in the room; if a voice is still going, the rest of
+the sentence is on its way and belongs in the same batch. This exists because the mouth's
+gate structurally cannot cover it — a `say` can be refused after the fact, but by then the
+turn has thought and has handed work down, and neither can be taken back. Measured: a batch
+that closed 0.8s early turned one question into two generations and **two overlapping
+errands**. In a quiet room the extension never runs and the window is the plain settle.
+
 ## Degradation
 
 Every channel must degrade rather than fail. No screen attached → voice only, and anything

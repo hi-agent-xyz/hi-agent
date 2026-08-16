@@ -120,7 +120,31 @@ use uuid::Uuid;
 /// input. Live, one speaker's gaps between bursts ran 1.4–4.9s, every one of them
 /// past this window, so it coalesced nothing at all while claiming to be what kept
 /// the voice from answering half a thought.
+///
+/// It stays this small because [`BATCH_WHILE_SPEAKING`] covers those gaps instead,
+/// and only when there is actually a voice to wait for.
 const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
+
+/// How far past the first close the batching window is held open while they are
+/// still audibly talking.
+///
+/// **Why the window needs this when the mouth already gates speech.** A `say` can
+/// be refused after the fact ([`floor`]) — but by then the turn has thought, and
+/// has handed work down, and neither can be taken back. Measured: one question
+/// arrived as three utterances, the batch closed **0.8s** before the second landed,
+/// and it cost two 30-second generations, two spoken replies, a promise armed off a
+/// third of the request, and **two overlapping errands** into Cognition, which then
+/// needed a correction of its own. The gate would have silenced the second reply
+/// and none of the rest of that.
+///
+/// Costs nothing in a quiet room: with no voice active the window is exactly
+/// [`RESPONSE_SETTLE`] and this never runs.
+///
+/// **The cap is load-bearing**, and it is what keeps this from growing back into
+/// the rule that was just removed. A long monologue must not hold the batch open
+/// indefinitely: thinking early is how the errand gets started early, and whether
+/// speaking is welcome is answered at the mouth, not here.
+const BATCH_WHILE_SPEAKING: Duration = Duration::from_secs(5);
 
 /// Default idle interval between glance-ups — the agent's recurring moment of
 /// self-attention, and **Cognition's alone**. It is not a schedule of work: it injects
@@ -1554,6 +1578,9 @@ async fn reaction_loop(
         // catch-up ASAP rather than wait for more mail to settle (the retry cadence
         // already coalesces arrivals).
         if !was_down {
+            // Where the window may not be held open past, however long they keep
+            // talking. See [`BATCH_WHILE_SPEAKING`].
+            let hold_until = Instant::now() + BATCH_WHILE_SPEAKING;
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
                     enqueue(&reaction, &mut workers, &mut batch, extra).await;
@@ -1562,7 +1589,18 @@ async fn reaction_loop(
                     // another utterance — keep collecting
                     Ok(Some(extra)) => enqueue(&reaction, &mut workers, &mut batch, extra).await,
                     Ok(None) => break true, // inbound closed mid-settle
-                    Err(_) => break false,  // quiet elapsed → the batch is closed
+                    Err(_) => {
+                        // The queue went quiet — but a finalized utterance lands
+                        // *after* the words are over, so silence on this channel is
+                        // not silence in the room. If they are still audibly going,
+                        // the rest of the sentence is on its way and belongs in this
+                        // batch; wait another window for it, up to the cap.
+                        let now = Instant::now();
+                        if now < hold_until && reaction.inner.floor.voice_active(now).await {
+                            continue;
+                        }
+                        break false; // the batch is closed
+                    }
                 }
             };
             if closed {

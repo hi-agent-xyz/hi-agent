@@ -211,6 +211,23 @@ impl Floor {
         self.heard.fetch_add(1, Ordering::Release);
     }
 
+    /// Are they mid-breath right now?
+    ///
+    /// Read by two callers with different stakes. The mouth
+    /// ([`may_speak`](Self::may_speak)) asks so it does not start on top of them.
+    /// The loop's batching window asks so it does not spend a generation — and
+    /// dispatch an errand — on a third of a sentence: a turn's `say` can be
+    /// refused after the fact, but the thinking and the hand-down it already did
+    /// cannot be taken back. Measured, that cost was two overlapping errands from
+    /// one question whose batch closed 0.8s early.
+    pub async fn voice_active(&self, now: Instant) -> bool {
+        self.inner
+            .lock()
+            .await
+            .last_voice
+            .is_some_and(|at| now.saturating_duration_since(at) < VOICE_ACTIVE_FOR)
+    }
+
     /// May the voice say what it just produced? `Ok(())`, or which of the two
     /// refusals applies.
     ///
@@ -219,12 +236,7 @@ impl Floor {
     /// is audible, where speaking a slightly stale line is only unhelpful. A caller
     /// that is refused should say nothing and let the next turn carry it.
     pub async fn may_speak(&self, now: Instant) -> Result<(), Busy> {
-        let speaking = {
-            let inner = self.inner.lock().await;
-            inner
-                .last_voice
-                .is_some_and(|at| now.saturating_duration_since(at) < VOICE_ACTIVE_FOR)
-        };
+        let speaking = self.voice_active(now).await;
         let unheard = self.heard.load(Ordering::Acquire) > self.seen.load(Ordering::Acquire);
         let busy = match (speaking, unheard) {
             (true, _) => Busy::Speaking,
@@ -406,6 +418,19 @@ mod floor_tests {
         assert_eq!(floor.may_speak(t0 + ms(300)).await, Err(Busy::Speaking));
         // And it lapses on its own once they actually stop.
         assert_eq!(floor.may_speak(t0 + VOICE_ACTIVE_FOR + ms(1)).await, Ok(()));
+    }
+
+    /// The same predicate the loop's batching window asks, and it has to answer
+    /// *no* on a silent start — otherwise a first utterance would hold the window
+    /// open against nothing.
+    #[tokio::test]
+    async fn a_silent_room_is_never_audibly_talking() {
+        let floor = Floor::new();
+        assert!(!floor.voice_active(Instant::now()).await);
+        let t0 = Instant::now();
+        floor.note_speech(t0).await;
+        assert!(floor.voice_active(t0 + ms(300)).await, "mid-breath");
+        assert!(!floor.voice_active(t0 + VOICE_ACTIVE_FOR + ms(1)).await, "they stopped");
     }
 
     /// The 11:18 failure, which the acoustic half cannot see: the room had been

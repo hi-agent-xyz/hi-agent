@@ -124,6 +124,13 @@ thing, and that utterance is the wake.**
 What to do about a refusal is `reaction.md`'s. The host says which of the two it was and
 stops there.
 
+**The same "are they talking" fact has a second reader, upstream.** The batching window is
+held open while a voice is going, capped — see [surfaces.md](surfaces.md#batching). The gate
+here cannot stand in for it: refusing a `say` unsays nothing the turn already *did*, and a
+turn spent on a third of a question still thinks for thirty seconds and still hands an errand
+down. One fact, two stakes: upstream it saves a generation and a dispatch, at the mouth it
+saves the person from being talked over.
+
 **Why the words are refused rather than held.** A held draft would go out about a second
 after the room clears instead of a generation later, which sounds like the better trade until
 you ask what releases it: they fall silent *having just said something*, and that something
