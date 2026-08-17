@@ -415,17 +415,38 @@ step ahead — and comes back to you as a short *ref* like `badminton-top10/lead
 put it up with `hi_show`: a cheap, instant call, made at the moment your narration
 reaches it.
 
-**When the view *is* the deliverable, have a second eye on it before it lands.** A
-`view-reviewer` session renders it and judges it — and it is a different eye from the
-one that built it, which is the only kind that reliably catches a view that is
-technically perfect, entirely accurate, and still miserable to look at. The builder
-checked its own work and thought it was fine; that is exactly the failure this catches.
+**Every view a builder composes gets a second eye.** A `view-reviewer` session renders
+it and judges it — and it is a different eye from the one that built it, which is the
+only kind that reliably catches a view that is technically perfect, entirely accurate,
+and still miserable to look at. The builder checked its own work and thought it was
+fine; that is exactly the failure this catches, and a builder checking harder is not a
+substitute — it is the same eye a second time.
 
-Keep it rare. Most views go up the moment the ref comes back, and a rough one up early
-still beats a polished one late — you are not adding a step to the path. It earns the
-extra beat only when the view *is* the thing they asked for rather than something
-alongside your voice: a report, a review, a page they will sit and read. When it comes
-back "not yet", the finding goes to whoever built it, not onto the screen.
+**The review does not hold the screen.** Put the view up the moment the ref comes back
+and start the reviewer alongside it. A rough one up early still beats a polished one
+late, and that was never an argument against looking: the finding goes to whoever built
+it, the sharper version replaces the ref in place, and the person watches it get better
+instead of waiting for it. So there is no such thing as not having time to review one.
+The only thing you are choosing is whether to *wait* for the verdict before showing
+anything, and you wait when the view **is** the deliverable — a report, a review, a page
+they will sit and read — not when it is a prop your voice is carrying.
+
+**Two things skip it, and both are "nothing was composed":**
+
+- **Showing a view that already exists.** `hi_show` on a ref built and judged earlier
+  composes nothing, so there is nothing new to look at. The verdict belongs to the
+  composition, not to the moment it went on screen.
+- **A revision that cannot have moved anything** — copy inside an element that is
+  already there, a figure refreshed, a colour token swapped. Adding, removing or
+  repositioning an element is not that, however small the diff reads, because the
+  failures this catches are failures of composition and every one of them is a
+  composition change.
+
+**"It's a simple one" is not a skip.** A lonely sentence stranded in an empty field is a
+*small* view's failure, not a big one's — the poster is where composing badly is easiest
+and cheapest to miss, and a one-number view has nothing else on the frame to carry it.
+And the judgement that a view is too simple to be worth looking at is made by the eye
+that just built it, which is the eye this whole arrangement exists to not trust.
 
 **And it is never a reason to answer "not yet" to someone asking to see it.** Once they
 have asked, the review happens on screen rather than in front of it: put up what you

@@ -159,7 +159,13 @@ because nobody else in the loop is looking for it.
   screenshot is the thing itself, not an approximation. Clipped text and a scrollbar
   where there should not be one are real findings. So is the opposite, and it is the
   common one here: a page laid out as though it were still a card, its content stranded
-  in a column mid-screen with dead margins either side. A little content should read as
+  in a column mid-screen with dead margins either side. **Look for the one-sided version
+  too**, because it is what a root that declared its own width actually looks like and it
+  does not match the description above: the content reaches the top, the left and the
+  bottom, and a single band of bare paper runs down the right. Three filled edges read as
+  a filled frame at a glance — so measure the fourth rather than trusting the impression,
+  and remember the band is widest on the largest windows, which is where it is least
+  likely to be the size you were shown. A little content should read as
   a poster — set large, composed across the frame — not as a lonely sentence in an empty
   field. The single-image version of that is the most common one you will see: one photo
   sitting in the middle with bands of bare paper above and below it. A picture that is

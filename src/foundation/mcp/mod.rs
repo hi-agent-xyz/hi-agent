@@ -180,7 +180,9 @@ fn create_worker_tool() -> Value {
                     "description": "What kind of session to start. `general` for almost everything \
                                     — reach for a specialist only when the job plainly is one: \
                                     `view-builder` to make something to put on screen, \
-                                    `view-reviewer` to render one and judge it before it ships, \
+                                    `view-reviewer` to render one and judge it — every view a \
+                                    builder composes gets one, alongside showing it rather than \
+                                    ahead of it, \
                                     `decision-maker` to get a call made so work can continue \
                                     without the person, `file-filer` to put a handed-over file \
                                     into the drive, `person-reader` to read one person out of \
