@@ -219,19 +219,21 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
                       side puts it on the outer edge without a second rule. */}
                   <SenderAvatar sender={group.sender} role={group.role} />
                   <MessageContent>
-                    {/* `max-w-full` is load-bearing, and only on the person's side.
-                        `MessageContent` puts `self-end` on its children there, which
-                        takes the group off `stretch` and sizes it shrink-to-fit —
-                        and shrink-to-fit stops respecting the column the moment
-                        MIN-content exceeds it. One `file:///…` path or one attached
-                        screenshot is enough: the group grew to that one item's
-                        min-content and hung off the left edge of the rail, and since
-                        every bubble's `max-w-[80%]` is a percentage OF THE GROUP,
-                        every other message in the run — plain sentences that had
-                        wrapped fine for hours — widened with it and ran off the
-                        frame too. Capping the group is what keeps the percentage
-                        honest; the long path then wraps inside its own bubble. */}
-                    <MessageGroup className="max-w-full">
+                    {/* `w-full` is load-bearing, and it is what makes the bubbles'
+                        `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
+                        `self-end` on its children on the person's side, which takes
+                        the group off `stretch` and sizes it shrink-to-fit — i.e. to
+                        the max-content of its widest bubble. Then that bubble's 80%
+                        cap resolves against its own width and clips it: a line that
+                        had room to spare wrapped one character early, every time,
+                        because it was the longest in its run. (Capping the group at
+                        `max-w-full` fixed the opposite overflow — one pasted
+                        `file:///…` path dragging the whole run past the frame — but
+                        left the percentage measuring the wrong box.) Full width
+                        fixes both: the cap is honest, the bubbles right-align on
+                        their own `self-end`, and long paths wrap inside their
+                        bubble. */}
+                    <MessageGroup className="w-full">
                       {group.messages.map((message) => (
                         <Bubble
                           key={message.id}
