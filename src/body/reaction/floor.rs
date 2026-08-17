@@ -14,7 +14,7 @@
 //!
 //! So `say` is gated here instead, against the room as it stands at the instant
 //! the words are ready — up to nine seconds after the turn that composed them
-//! began. Two conditions refuse, and they catch different failures:
+//! began. Three conditions refuse, and they catch different failures:
 //!
 //! - [`Busy::Speaking`] — their voice is sounding right now. One mouth, one
 //!   floor: it is theirs. Cheap, acoustic, and the only guard against starting
@@ -24,13 +24,44 @@
 //!   start, no threshold and no guessing. This is the one that catches a reply
 //!   released into a genuine two-second gap that was nonetheless written without
 //!   the sentence carrying the person's actual point.
+//! - [`Busy::Typing`] — they are composing a line that has not been sent. The
+//!   typed half of the same failure `Speaking` catches: a thought that is not
+//!   finished yet and that no counter can see, because an unsent draft has
+//!   crossed no boundary. See *Typing is not speaking* below for the two places
+//!   it deliberately behaves differently.
 //!
 //! **A refusal is not a queue.** Nothing is held, released later, or superseded:
-//! the words are simply not said, and `say` answers with which of the two it was
+//! the words are simply not said, and `say` answers with which of the three it was
 //! ([`Spoken::NotSaid`](super::Spoken)). The retry is the next turn, which costs
 //! nothing because it was already coming — whatever they said is in the queue and
 //! drives one by itself. That is also why no "they stopped" signal is needed: to
 //! stop talking they must have said a last thing, and that utterance is the wake.
+//!
+//! # Typing is not speaking
+//!
+//! Typing joins this gate because the question it answers — *have they finished
+//! the thought?* — is the same one in both modalities, and neither a settle nor a
+//! counter can answer it. Two things about it are **not** copied from speech, and
+//! both were failures waiting to happen:
+//!
+//! **A draft is not a barge-in.** [`note_speech`](Floor::note_speech) does double
+//! duty: it stamps the floor *and* infers, from our own TTS clock, that the reply
+//! was probably still sounding when they cut in. Keystrokes must not do the second
+//! half. Typing while the agent talks collides with nothing — no sound is
+//! trampled, no words go unheard — so routing keystrokes through `note_speech`
+//! would manufacture an "## Interrupted, your voice cut out there" note for
+//! someone who quietly started writing while listening, and mark the turn for
+//! flush. [`note_typing`](Floor::note_typing) therefore stamps and stops.
+//!
+//! **An abandoned draft is not a wake.** The refusal-is-not-a-queue argument above
+//! rests on every refusal implying an arriving signal: to stop talking they must
+//! utter a last thing, and to be `Unheard` they must already have sent one. Typing
+//! breaks that — someone can type three characters, delete them, and walk away,
+//! having sent nothing at all. A plain refusal would drop the reply with no turn
+//! left to carry it. So `say` first waits for the draft to settle
+//! ([`settle_typing`](Floor::settle_typing)) — long enough that a draft which has
+//! *stopped* is always waited out, never merely trimmed — and refuses only on
+//! typing still going after that, which is the case where a send really is coming.
 //!
 //! The starvation backstop is [`MAX_CONSECUTIVE_REFUSALS`]: a person who talks
 //! through every generation must not be able to mute the agent for good.
@@ -103,6 +134,42 @@ const STILL_SOUNDING_SLACK: Duration = Duration::from_secs(2);
 /// reply into a real silence.
 const VOICE_ACTIVE_FOR: Duration = Duration::from_millis(900);
 
+/// How long after the last keystroke they still count as composing — the width
+/// of [`Busy::Typing`].
+///
+/// Deliberately much wider than [`VOICE_ACTIVE_FOR`], because the two bridge
+/// different rhythms. Speech partials arrive every few hundred milliseconds for
+/// as long as the breath lasts, so 900ms only has to cover the beat between two
+/// partials of one sentence. Keystrokes stop for as long as the person is
+/// thinking, re-reading, or fixing a typo — pauses of a second or two happen
+/// inside a sentence somebody is very much still writing. A window this wide is
+/// affordable here and was not there, because typing costs nothing to wait out:
+/// nobody is mid-sound, so the reply is late rather than trampled.
+const TYPING_ACTIVE_FOR: Duration = Duration::from_secs(3);
+
+/// The longest [`Floor::settle_typing`] will wait for a draft to stop moving
+/// before letting `say` ask the gate.
+///
+/// **It must exceed [`TYPING_ACTIVE_FOR`], and that is the whole reason for its
+/// value.** This is the "an abandoned draft is not a wake" answer, and it only
+/// works if a draft that *stops* is always waited out: someone who types two words
+/// and closes the laptop stops producing keystrokes but leaves the stamp standing
+/// for its full width, so a cap inside that width would refuse the reply on a draft
+/// nobody is writing any more — the exact silent drop this exists to prevent. Above
+/// it, a refusal can only mean a keystroke landed *during* the wait, which is
+/// someone genuinely mid-sentence, which is a turn on its way.
+///
+/// It is not a stall in the ordinary case: the wait ends as soon as the stamp
+/// lapses, so it costs the remainder of [`TYPING_ACTIVE_FOR`] and nothing more,
+/// and it is skipped outright when nobody is typing.
+const TYPING_SETTLE_WAIT: Duration = Duration::from_secs(4);
+
+/// How often [`Floor::settle_typing`] re-asks while waiting. A poll rather than a
+/// notify: the stamp is written by an HTTP handler that has no idea a turn is
+/// waiting on it, and at this cadence the cost is a handful of uncontended lock
+/// acquisitions per reply.
+const TYPING_SETTLE_POLL: Duration = Duration::from_millis(250);
+
 /// How many `say` calls may be refused in a row before one is let through.
 ///
 /// The floor gate has no upper bound of its own: someone who says something
@@ -125,6 +192,9 @@ pub enum Busy {
     /// They said something this turn never saw, so this reply was composed
     /// without it.
     Unheard,
+    /// They are still writing a line that has not been sent. Nothing is audible
+    /// and no counter has moved; the thought is simply not finished.
+    Typing,
 }
 
 /// One inferred barge-in, held until the next turn folds it into its prompt.
@@ -148,6 +218,11 @@ struct SpeechState {
     /// point: a final lands after the words are over, and the settle's mistake
     /// was measuring the wrong one.
     last_voice: Option<Instant>,
+    /// When a keystroke last landed in an unsent draft. The typed counterpart of
+    /// [`last_voice`](Self::last_voice), kept as its own field rather than folded
+    /// into it because the two decay at different widths and only one of them can
+    /// imply a barge-in.
+    last_typing: Option<Instant>,
     /// The latest voice span: which turn, and when its audio started
     /// flowing. Stamped by the sequencer when it opens a turn's TTS.
     audio: Option<(u64, Instant)>,
@@ -163,10 +238,10 @@ struct SpeechState {
 }
 
 /// Shared floor state. Created once in `lib.rs`, cloned into the HTTP front
-/// (whose STT relay reports recognized speech and whose accepted lines bump
-/// [`heard`](Self::note_heard)) and the reaction (whose sequencer stamps voice
-/// spans, whose turns drain pending notes, and whose `say` asks this whether it
-/// may speak at all).
+/// (whose STT relay reports recognized speech, whose composers report keystrokes,
+/// and whose accepted lines bump [`heard`](Self::note_heard)) and the reaction
+/// (whose sequencer stamps voice spans, whose turns drain pending notes, and whose
+/// `say` asks this whether it may speak at all).
 #[derive(Clone)]
 pub struct Floor {
     inner: Arc<Mutex<SpeechState>>,
@@ -232,16 +307,22 @@ impl Floor {
     /// refusals applies.
     ///
     /// **Order matters and is not arbitrary.** `Speaking` is checked first
-    /// because it is the ruder of the two to get wrong: talking over a live voice
-    /// is audible, where speaking a slightly stale line is only unhelpful. A caller
+    /// because it is the rudest of the three to get wrong: talking over a live voice
+    /// is audible, where speaking a slightly stale line is only unhelpful. `Unheard`
+    /// comes next because it is exact — a counter, already true or already false.
+    /// `Typing` is asked last, being the only one whose answer a caller can have
+    /// changed by waiting ([`settle_typing`](Self::settle_typing)) and therefore the
+    /// only one that should still be true by the time it is asked. A caller
     /// that is refused should say nothing and let the next turn carry it.
     pub async fn may_speak(&self, now: Instant) -> Result<(), Busy> {
         let speaking = self.voice_active(now).await;
         let unheard = self.heard.load(Ordering::Acquire) > self.seen.load(Ordering::Acquire);
-        let busy = match (speaking, unheard) {
-            (true, _) => Busy::Speaking,
-            (false, true) => Busy::Unheard,
-            (false, false) => {
+        let typing = self.typing_active(now).await;
+        let busy = match (speaking, unheard, typing) {
+            (true, _, _) => Busy::Speaking,
+            (false, true, _) => Busy::Unheard,
+            (false, false, true) => Busy::Typing,
+            (false, false, false) => {
                 self.refused.store(0, Ordering::Relaxed);
                 return Ok(());
             }
@@ -345,6 +426,67 @@ impl Floor {
         tracing::info!(turn, heard_ms = heard.as_millis() as u64, "barge-in inferred (speech while voice sounding)");
     }
 
+    /// A keystroke landed in a draft that has not been sent. Stamps the floor as
+    /// theirs for [`TYPING_ACTIVE_FOR`] and does nothing else.
+    ///
+    /// **The "and does nothing else" is the point**, and is why this is not a call
+    /// into [`note_speech`](Self::note_speech) with a different clock. That one also
+    /// infers a barge-in from the TTS span, which is right for a voice — sound over
+    /// sound means words went unheard — and wrong for keystrokes, which trample
+    /// nothing. Someone quietly starting to type while the agent talks is listening,
+    /// not interrupting; giving that the interruption treatment would tell the voice
+    /// its last reply had been cut off and flush the rest of the turn's output.
+    pub async fn note_typing(&self, now: Instant) {
+        self.inner.lock().await.last_typing = Some(now);
+    }
+
+    /// Their draft became a line: they are no longer composing it.
+    ///
+    /// Called when a typed line is accepted, and needed because the stamp outlives
+    /// the send by design — [`TYPING_ACTIVE_FOR`] is three seconds, so without this
+    /// the reply *to the line they just sent* would be refused as `Typing` for the
+    /// rest of that window. The state after a send is `Unheard`, which is exact and
+    /// which the next turn clears by starting.
+    pub async fn note_sent(&self) {
+        self.inner.lock().await.last_typing = None;
+    }
+
+    /// Are they mid-draft right now?
+    ///
+    /// Read by the same two callers as [`voice_active`](Self::voice_active), for the
+    /// same two reasons: the mouth so it does not answer half a thought, and the
+    /// loop's batching window so a generation and its errands are not spent on one.
+    pub async fn typing_active(&self, now: Instant) -> bool {
+        self.inner
+            .lock()
+            .await
+            .last_typing
+            .is_some_and(|at| now.saturating_duration_since(at) < TYPING_ACTIVE_FOR)
+    }
+
+    /// Wait, up to [`TYPING_SETTLE_WAIT`], for a draft to stop moving. Returns as
+    /// soon as they pause, immediately if they were never typing.
+    ///
+    /// Called by `say` before [`may_speak`](Self::may_speak), and existing only
+    /// because typing is the one floor condition whose end is not itself a signal.
+    /// A speaker who stops has uttered a last thing; a sender who stops has sent.
+    /// Someone who types two words and closes the laptop has produced nothing, so a
+    /// straight refusal would drop the reply into a silence with no turn coming to
+    /// carry it. Waiting converts the ordinary case — a pause mid-sentence, a draft
+    /// abandoned after a beat — into speech, and leaves the refusal for sustained
+    /// typing, where a send genuinely is on its way.
+    pub async fn settle_typing(&self) {
+        let until = Instant::now() + TYPING_SETTLE_WAIT;
+        while self.typing_active(Instant::now()).await {
+            let now = Instant::now();
+            if now >= until {
+                tracing::info!("waited out {TYPING_SETTLE_WAIT:?} and they are still typing");
+                return;
+            }
+            tokio::time::sleep(TYPING_SETTLE_POLL.min(until - now)).await;
+        }
+    }
+
     /// Mark `turn` for flush directly, without an audio span. Used when the mind
     /// is reorganized mid-turn (new human input lands while the prompt is still in
     /// flight): in the thinking phase no TTS has started, so `note_speech` never
@@ -431,6 +573,90 @@ mod floor_tests {
         floor.note_speech(t0).await;
         assert!(floor.voice_active(t0 + ms(300)).await, "mid-breath");
         assert!(!floor.voice_active(t0 + VOICE_ACTIVE_FOR + ms(1)).await, "they stopped");
+    }
+
+    /// The typed half of the same failure: nothing is audible, nothing has been
+    /// sent, and they are three words into a sentence.
+    #[tokio::test]
+    async fn a_draft_still_being_written_refuses() {
+        let floor = Floor::new();
+        let t0 = Instant::now();
+        floor.note_typing(t0).await;
+        assert_eq!(floor.may_speak(t0 + ms(300)).await, Err(Busy::Typing));
+        // ...and lapses on its own, since an abandoned draft sends no signal.
+        assert_eq!(floor.may_speak(t0 + TYPING_ACTIVE_FOR + ms(1)).await, Ok(()));
+    }
+
+    /// The stamp outlives the send by three seconds, so without [`Floor::note_sent`]
+    /// the reply *to the line they just sent* would be refused as `Typing`.
+    #[tokio::test]
+    async fn sending_the_line_ends_the_draft_it_came_from() {
+        let floor = Floor::new();
+        let t0 = Instant::now();
+        floor.note_typing(t0).await;
+        floor.note_sent().await;
+        floor.note_heard();
+        floor.note_turn_started(1);
+        assert_eq!(floor.may_speak(t0 + ms(50)).await, Ok(()));
+    }
+
+    /// A voice sounding and a draft moving at once answers `Speaking`: it is the
+    /// one that is rude rather than merely early.
+    #[tokio::test]
+    async fn a_live_voice_outranks_a_moving_draft() {
+        let floor = Floor::new();
+        let t0 = Instant::now();
+        floor.note_speech(t0).await;
+        floor.note_typing(t0).await;
+        assert_eq!(floor.may_speak(t0 + ms(100)).await, Err(Busy::Speaking));
+    }
+
+    /// Keystrokes must not manufacture a barge-in. Someone typing while the agent
+    /// talks is listening, and telling the voice it had been cut off would invite
+    /// it to say the whole reply again.
+    #[tokio::test]
+    async fn typing_through_a_reply_is_not_an_interruption() {
+        let floor = Floor::new();
+        let t0 = Instant::now();
+        floor.end_turn(7, "a reply long enough to still be sounding").await;
+        floor.audio_began(7, t0).await;
+        floor.note_typing(t0 + ms(500)).await;
+        assert!(floor.take_pending().await.is_none(), "no note");
+        assert!(!floor.should_skip(7).await, "and the turn is not flushed");
+    }
+
+    /// The wait exists so an abandoned draft cannot swallow a reply outright: they
+    /// stop, it returns, and the gate is open.
+    #[tokio::test(start_paused = true)]
+    async fn a_draft_that_stops_moving_lets_the_reply_through() {
+        let floor = Floor::new();
+        floor.note_typing(Instant::now()).await;
+        floor.settle_typing().await;
+        assert_eq!(floor.may_speak(Instant::now()).await, Ok(()));
+    }
+
+    /// Sustained typing still refuses — and there the refusal is safe, because a
+    /// line that is actively being written is a turn on its way.
+    #[tokio::test(start_paused = true)]
+    async fn typing_that_never_stops_still_refuses() {
+        let floor = Floor::new();
+        // Stamped here rather than only inside the task: a spawned future has not
+        // run by the time `settle_typing` takes its first look, so leaving the first
+        // keystroke to the typist would have it wait for a draft that does not exist
+        // yet and return at once.
+        floor.note_typing(Instant::now()).await;
+        let typist = {
+            let floor = floor.clone();
+            tokio::spawn(async move {
+                for _ in 0..40 {
+                    tokio::time::sleep(ms(150)).await;
+                    floor.note_typing(Instant::now()).await;
+                }
+            })
+        };
+        floor.settle_typing().await;
+        assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Typing));
+        typist.abort();
     }
 
     /// The 11:18 failure, which the acoustic half cannot see: the room had been

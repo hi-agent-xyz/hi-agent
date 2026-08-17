@@ -293,7 +293,7 @@ impl Spoken {
     /// The literal `say` returns. Written as a plain statement of what happened,
     /// because it is read by a model deciding what to do next — not a status code.
     ///
-    /// The two refusals say *what happened* and stop there. What to do about it —
+    /// The three refusals say *what happened* and stop there. What to do about it —
     /// let the line go, keep listening, fold it into the next one — is `reaction.md`'s
     /// to say, and putting an instruction here would be the host writing character.
     pub fn ack(self) -> &'static str {
@@ -307,6 +307,10 @@ impl Spoken {
             Spoken::NotSaid(super::Busy::Unheard) => {
                 "not said — they said something after this turn started that you haven't \
                  seen yet, so this reply is out of date"
+            }
+            Spoken::NotSaid(super::Busy::Typing) => {
+                "not said — they are still typing a line they haven't sent, so the thought \
+                 isn't finished"
             }
             // The one outcome that was a status code rather than a statement, and the
             // only one whose consequence the caller can still get wrong: a refusal is
@@ -400,6 +404,11 @@ impl ToolSink {
                 unreadable_back_in: false,
             });
         }
+        // A draft that is mid-pause gets a moment to settle before the gate is asked,
+        // because typing is the one floor condition whose ending is not itself a
+        // signal — see [`super::floor`]. Returns immediately unless they are actually
+        // typing, so the ordinary reply pays nothing for it.
+        mouth.floor.settle_typing().await;
         // **Asked here, not at turn start.** Length is a property of the text and can
         // be judged the moment it arrives; whether the room is free is a property of
         // *now*, and the turn that wrote these words began seconds ago.

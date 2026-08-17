@@ -1,8 +1,14 @@
-//! The text channel: `POST /api/in/text`, `GET /api/in/text`, `GET /api/out/text`.
+//! The text channel: `POST /api/in/text`, `POST /api/in/text/typing`,
+//! `GET /api/in/text`, `GET /api/out/text`.
 //!
 //! `POST /api/in/text` is the typed-input path: the body is dispatched to the
 //! mind (journalled + queued on `inbound`), echoed to live channel observers,
 //! and appended to the conversation as one message.
+//!
+//! `POST /api/in/text/typing` is the only thing here that is not input: a
+//! contentless ping saying a line is being written. It never becomes a message, a
+//! journal entry, or an observed frame — it goes to the floor and nowhere else, so
+//! the agent does not answer half a thought. See [`crate::body::reaction::floor`].
 //!
 //! `GET /api/out/text` is one long-lived NDJSON stream of the conversation: the
 //! current window whole, then one frame per message appended. `GET /api/messages`
@@ -80,6 +86,11 @@ pub async fn post_text(
         tracing::error!(error = %err, "journal append failed; accepting signal anyway");
     }
 
+    // The draft became a line, so they are no longer composing it. Without this the
+    // keystroke stamp would outlive the send by its whole window and refuse the
+    // reply to this very line — see [`crate::body::reaction::Floor::note_sent`].
+    state.floor.note_sent().await;
+
     // Append to the conversation and echo to live observers before dispatching
     // inward.
     state.note_message(Channel::Text, id, signal.ts, &signal.body, None, Some(sender));
@@ -90,6 +101,28 @@ pub async fn post_text(
     }
 
     StatusCode::ACCEPTED.into_response()
+}
+
+/// `POST /api/in/text/typing` — a keystroke landed in a line that has not been
+/// sent yet.
+///
+/// Contentless on purpose. The draft's *text* is nobody's business but the window
+/// holding it: this reports only that a thought is in progress, which is all the
+/// floor needs to not answer over it. It is deliberately not the recognition
+/// `interim`, which exists to be *shown* — a half-typed line is not shown anywhere,
+/// and routing drafts into that slot would put one window's unsent keystrokes on
+/// every other window's screen.
+///
+/// Cheap, idempotent, and fire-and-forget: a composer pings this while the person
+/// writes, and stopping is expressed by not pinging. Nothing is stored per client
+/// and no reply body is produced.
+pub async fn post_text_typing(
+    State(state): State<Arc<AppState>>,
+    AuthBearer(auth): AuthBearer,
+) -> impl IntoResponse {
+    tracing::debug!(auth = ?auth, "POST /api/in/text/typing");
+    state.floor.note_typing(tokio::time::Instant::now()).await;
+    StatusCode::ACCEPTED
 }
 
 /// `GET /api/out/text` — the conversation: the current window whole, then every

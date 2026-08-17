@@ -561,6 +561,9 @@ pub fn build(
         .route("/api/surfaces", get(surfaces::get_surfaces))
         .route("/api/surfaces/{id}", axum::routing::delete(surfaces::delete_surface))
         .route("/api/in/text", post(text::post_text).get(text::get_in_text))
+        // Not an input channel: a contentless liveness ping from whatever holds an
+        // unsent draft. It reaches the floor and stops there.
+        .route("/api/in/text/typing", post(text::post_text_typing))
         .route("/api/out/text", get(text::get_out_text))
         .route("/api/messages", get(text::get_messages))
         .route("/api/media/{*ref}", get(files::get_media))

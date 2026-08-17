@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { TYPING_PING_INTERVAL_MS, postInTextTyping } from "../channels/in/text";
 import { isEditableTarget } from "../lib/handoff";
 
 interface KeyboardFallbackProps {
@@ -36,6 +37,18 @@ export function KeyboardFallback({
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastPasteIdRef = useRef(0);
+  const lastTypingPingRef = useRef(0);
+
+  // Report that a line is being written, so the agent waits for the thought
+  // rather than answering the part of it that already landed. Throttled rather
+  // than debounced: the server wants to hear *while* they type, and a trailing
+  // debounce would report the draft only once it had already stopped moving.
+  const noteTyping = () => {
+    const now = Date.now();
+    if (now - lastTypingPingRef.current < TYPING_PING_INTERVAL_MS) return;
+    lastTypingPingRef.current = now;
+    postInTextTyping();
+  };
 
   // Start-typing-to-open: a single printable key turns the channel on and seeds
   // the line. Only active while the channel is off.
@@ -51,6 +64,9 @@ export function KeyboardFallback({
         // we just seeded and type the character twice ("h" → "hh").
         e.preventDefault();
         setText(e.key);
+        // The first character of a line counts as typing too — this is the path
+        // that opens the channel, so it is where most drafts actually start.
+        noteTyping();
         onOpen();
       }
     };
@@ -84,7 +100,12 @@ export function KeyboardFallback({
         data-hi-base-text-input
         value={text}
         spellCheck={false}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          // Emptying the line is not writing one — backspacing to nothing should
+          // hand the floor straight back rather than hold it for the full window.
+          if (e.target.value.trim()) noteTyping();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();

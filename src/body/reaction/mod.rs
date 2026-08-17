@@ -121,12 +121,12 @@ use uuid::Uuid;
 /// past this window, so it coalesced nothing at all while claiming to be what kept
 /// the voice from answering half a thought.
 ///
-/// It stays this small because [`BATCH_WHILE_SPEAKING`] covers those gaps instead,
-/// and only when there is actually a voice to wait for.
+/// It stays this small because [`BATCH_WHILE_COMPOSING`] covers those gaps instead,
+/// and only when there is actually someone mid-thought to wait for.
 const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 
 /// How far past the first close the batching window is held open while they are
-/// still audibly talking.
+/// still audibly talking, or still writing a line they have not sent.
 ///
 /// **Why the window needs this when the mouth already gates speech.** A `say` can
 /// be refused after the fact ([`floor`]) — but by then the turn has thought, and
@@ -137,14 +137,18 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// needed a correction of its own. The gate would have silenced the second reply
 /// and none of the rest of that.
 ///
-/// Costs nothing in a quiet room: with no voice active the window is exactly
-/// [`RESPONSE_SETTLE`] and this never runs.
+/// The typed case is the same waste through a different door: someone who sends a
+/// short line and keeps writing the rest of the thought would otherwise spend a
+/// generation, and dispatch its errands, on the opening clause.
+///
+/// Costs nothing in a quiet room: with nobody talking or typing the window is
+/// exactly [`RESPONSE_SETTLE`] and this never runs.
 ///
 /// **The cap is load-bearing**, and it is what keeps this from growing back into
-/// the rule that was just removed. A long monologue must not hold the batch open
-/// indefinitely: thinking early is how the errand gets started early, and whether
-/// speaking is welcome is answered at the mouth, not here.
-const BATCH_WHILE_SPEAKING: Duration = Duration::from_secs(5);
+/// the rule that was just removed. A long monologue — or a long paragraph — must not
+/// hold the batch open indefinitely: thinking early is how the errand gets started
+/// early, and whether speaking is welcome is answered at the mouth, not here.
+const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 
 /// Default idle interval between glance-ups — the agent's recurring moment of
 /// self-attention, and **Cognition's alone**. It is not a schedule of work: it injects
@@ -1579,8 +1583,8 @@ async fn reaction_loop(
         // already coalesces arrivals).
         if !was_down {
             // Where the window may not be held open past, however long they keep
-            // talking. See [`BATCH_WHILE_SPEAKING`].
-            let hold_until = Instant::now() + BATCH_WHILE_SPEAKING;
+            // going. See [`BATCH_WHILE_COMPOSING`].
+            let hold_until = Instant::now() + BATCH_WHILE_COMPOSING;
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
                     enqueue(&reaction, &mut workers, &mut batch, extra).await;
@@ -1590,13 +1594,17 @@ async fn reaction_loop(
                     Ok(Some(extra)) => enqueue(&reaction, &mut workers, &mut batch, extra).await,
                     Ok(None) => break true, // inbound closed mid-settle
                     Err(_) => {
-                        // The queue went quiet — but a finalized utterance lands
-                        // *after* the words are over, so silence on this channel is
-                        // not silence in the room. If they are still audibly going,
-                        // the rest of the sentence is on its way and belongs in this
-                        // batch; wait another window for it, up to the cap.
+                        // The queue went quiet — but a line lands on this channel
+                        // *after* it is over, whether it was finalized by the
+                        // recognizer or sent by a keypress. So silence here is not
+                        // silence in the room: if they are still audibly going, or
+                        // still writing something they have not sent, the rest of the
+                        // thought is on its way and belongs in this batch. Wait
+                        // another window for it, up to the cap.
                         let now = Instant::now();
-                        if now < hold_until && reaction.inner.floor.voice_active(now).await {
+                        let composing = reaction.inner.floor.voice_active(now).await
+                            || reaction.inner.floor.typing_active(now).await;
+                        if now < hold_until && composing {
                             continue;
                         }
                         break false; // the batch is closed

@@ -4,6 +4,11 @@ import { url } from "../../lib/base";
 // `postInText` sends a typed line to the agent (POST /api/in/text). The server
 // folds the accepted line into the shared text appearance; the sending window
 // keeps no optimistic private copy.
+//
+// `postInTextTyping` reports only that a line is being written, so the agent
+// does not answer a thought that is not finished — the typed counterpart of what
+// recognition partials already do for speech. It carries no text and expects no
+// answer; the draft stays in this window until it is sent.
 
 /**
  * Send a text signal to the agent.
@@ -33,4 +38,22 @@ export async function postInText(opts: {
       `/api/in/text POST failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
     );
   }
+}
+
+/** How often a moving draft is reported, at most. */
+export const TYPING_PING_INTERVAL_MS = 800;
+
+/**
+ * Say that an unsent line is being written.
+ *
+ * Fire-and-forget, and silent on failure by design: this only ever makes the
+ * agent wait a beat, so a ping that does not arrive costs a little politeness
+ * and nothing else — never a message, and never an error worth showing.
+ */
+export function postInTextTyping(): void {
+  void fetch(url("/api/in/text/typing"), {
+    method: "POST",
+    headers: { "X-HI-Surface": "1" },
+    keepalive: true,
+  }).catch(() => {});
 }
