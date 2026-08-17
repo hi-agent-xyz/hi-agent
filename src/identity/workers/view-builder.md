@@ -391,6 +391,13 @@ either side — is the one failure this frame makes easy. Let the composition re
 edges: a full-bleed image, a background that goes corner to corner, type at a scale the
 frame can carry.
 
+In CSS that failure is a `width` or a `max-width` on your root, and it never arrives
+alone: `width: min(1180px, 96vw)` comes with a radius and a drop shadow, because those
+are what a card is. The host floors the root at the frame in both axes, so the width is
+dead CSS — but the radius and the shadow are not, and they survive stretched across the
+whole window as rounded corners with paper showing through them. Don't build the card;
+there is nothing for it to sit on.
+
 **Little content is a poster, not a lonely sentence.** When the brief is one number,
 one line, one fact, the answer is *not* to shrink it into the middle and leave the rest
 empty. Set it large and compose the whole frame around it — that is what a designer

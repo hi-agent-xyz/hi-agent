@@ -837,6 +837,14 @@ button {
      worth, and gets out of the way when it has more. See the note above for why this
      is a `min-height` on the root and not a stretched grid track. */
   min-height: 100%;
+  /* The same floor across the width, and it has to be `min-width` — the natural fill
+     of a block box loses to any width the view declared, and what a view declares
+     when it declares one is a card: `width: min(1180px, 96vw)` with a radius and a
+     drop shadow. That held 1180px of a 1512px window and left the rest of the frame
+     as bare paper down the right-hand side. The frame is the view's box (the note
+     above), so a width picked for a card cannot decide how much of the window a view
+     holds; `min-width` is the one property that outranks a declared `width`. */
+  min-width: 100%;
   border-style: solid;
   border-color: transparent;
   border-width: var(--hi-safe-top)

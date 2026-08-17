@@ -45,6 +45,15 @@ describe("the view frame", () => {
     expect(block(".hi-view-fill:has(> :only-child)")).not.toMatch(/grid-template-rows/);
   });
 
+  // The width had no floor at all, on the assumption that a block box fills its parent
+  // anyway — which it does right up until the view declares a width, and a view that
+  // declares one is building a card: `width: min(1180px, 96vw)` held 1180px of a 1512px
+  // window and left the right-hand side of the frame as bare paper. `min-width` is the
+  // one property that outranks a declared `width`; the natural fill does not.
+  it("floors the root across the width too, over a width the view declared", () => {
+    expect(block(".hi-view-fill > :only-child")).toMatch(/min-width:\s*100%\s*;/);
+  });
+
   // The whole reason the layer must carry its own scroll: there is no scrollable
   // ancestor to fall back on. If this ever stops being true, the rule above can be
   // reconsidered — until then, removing it loses the bottom of every tall view.
