@@ -35,6 +35,17 @@ use crate::foundation::server::PartialMinute;
 /// client's requested version when present, so this is only the fallback.
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
+/// How long a dispatch verb waits for the owning loop to answer before it says it does
+/// not know.
+///
+/// All three of them wait — creating, cancelling and closing a working session — because
+/// all three are asked *about a session*, and a guess about whether a session exists is the
+/// one answer a caller cannot recover from. Ten seconds is far past a healthy loop: with
+/// control served in-turn, the round-trip is a channel hop plus a subprocess open, which
+/// measures in the hundreds of milliseconds. Reaching this timeout means the loop is
+/// wedged, and the reply says so instead of inventing the cheerful reading.
+const CONTROL_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// What the HTTP layer should send back. `Json` is a JSON-RPC response body;
 /// `Accepted` is the empty 202 for notifications/responses.
 pub enum McpReply {
@@ -128,7 +139,10 @@ fn send_message_tool() -> Value {
 fn create_worker_tool() -> Value {
     tool(
         "hi_create_worker",
-        "Start a working session to carry out a job, and get back its session id. It runs \
+        "Start a working session to carry out a job, and get back its session id. This call \
+         returns once the session is actually up, so the id it gives you answers \
+         immediately — if it says the session never opened, nothing is running that errand \
+         and it is yours to place elsewhere. It runs \
          with the full toolset and no voice of its own; it reports to you and to nobody else. \
          Send it the brief with `hi_send_message`, ask how it is doing with `hi_session_status`, and \
          read what it has produced with `hi_session_messages`. **It is yours until you end it**: \
@@ -1113,7 +1127,7 @@ async fn dispatch_tool(
             if let Err(err) = sink.send(LoopControl::CloseWorker { id: id.clone(), reply }).await {
                 return tool_error(&err.to_string());
             }
-            return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
+            return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, answer).await {
                 Ok(Ok(true)) => tool_ok(&format!(
                     "session {id} is closed. If it was mid-turn it will finish and report \
                      once more, then end. Its context is gone — a further errand needs a \
@@ -1174,7 +1188,7 @@ async fn dispatch_tool(
             if let Err(err) = sink.send(LoopControl::CancelWorker { id: id.clone(), reply }).await {
                 return tool_error(&err.to_string());
             }
-            return match tokio::time::timeout(std::time::Duration::from_secs(10), answer).await {
+            return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, answer).await {
                 Ok(Ok(true)) => tool_ok(&format!(
                     "stopped session {id} mid-work. It will report back with whatever it \
                      had got to. It stays alive and keeps its context, so hi_send_message it \
@@ -1325,7 +1339,17 @@ async fn dispatch_tool(
                 Some(subject.as_deref().unwrap_or(title.as_str())),
             );
             let resumed = resume.is_some();
-            return match sink
+            // **Waits for the session to exist, like `hi_cancel_worker` and
+            // `hi_close_worker` do.** This was the one dispatch verb that answered from the
+            // send: the message went into a buffered channel, the reply said `starting`, and
+            // whether anything had been *created* was still unknown — see
+            // [`LoopControl::CreateWorker`] for the turn where that cost a worker its whole
+            // life. Nothing downstream can compensate for it either, because the id is
+            // handed out in this reply: a caller told `starting` proceeds to brief, poll and
+            // close a session by name, and every one of those verbs answers "no such
+            // session" until the loop catches up.
+            let (ready, registered) = tokio::sync::oneshot::channel();
+            if let Err(err) = sink
                 .send(LoopControl::CreateWorker {
                     id: id.clone(),
                     title,
@@ -1334,19 +1358,41 @@ async fn dispatch_tool(
                     owner: Some(owner),
                     resume,
                     subject,
+                    ready,
                 })
                 .await
             {
-                Ok(()) if resumed => tool_ok(&format!(
-                    "session {id} starting from the errand's own thread — it opens knowing \
-                     what that session knew, so brief it on what has *changed*, not on the \
-                     job from scratch"
+                return tool_error(&err.to_string());
+            }
+            return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, registered).await {
+                Ok(Ok(Ok(()))) if resumed => tool_ok(&format!(
+                    "session {id} is up, resumed from the errand's own thread — it opens \
+                     knowing what that session knew, so brief it on what has *changed*, not \
+                     on the job from scratch"
                 )),
-                Ok(()) => tool_ok(&format!(
-                    "session {id} starting; brief it with hi_send_message, check it with \
+                Ok(Ok(Ok(()))) => tool_ok(&format!(
+                    "session {id} is up; brief it with hi_send_message, check it with \
                      hi_session_status"
                 )),
-                Err(err) => tool_error(&err.to_string()),
+                // The open failed. Said out loud rather than logged, because the caller is
+                // the only party that can put the errand somewhere else, and until now it
+                // was told the work had started.
+                Ok(Ok(Err(err))) => tool_error(&format!(
+                    "session {id} never opened: {err}. Nothing is running that errand."
+                )),
+                // The loop dropped the reply without answering — it is going down, or it
+                // wedged between the two.
+                Ok(Err(_)) => tool_error(&format!(
+                    "the owning loop gave no answer about session {id}; nothing is confirmed \
+                     to be running that errand"
+                )),
+                // **Do not create a second one on this.** A slow spawn and a failed spawn
+                // look the same from here, and only one of them is fixed by trying again.
+                Err(_) => tool_error(&format!(
+                    "no answer from the owning loop in time; session {id} may still be \
+                     starting — check hi_session_status before creating another worker for \
+                     this errand"
+                )),
             };
         }
         _ => {}

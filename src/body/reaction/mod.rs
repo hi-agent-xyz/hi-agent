@@ -1313,32 +1313,41 @@ enum Woke {
     Shutdown,
 }
 
-/// Apply one tool control command. Both are side-effects that run without a turn.
+/// Apply one tool control command. All three are side-effects that run without a turn.
 /// The live-worker map is the loop's own state, so this is the
 /// only place an off-loop tool call touches them — through the control channel, no
 /// locking.
+///
+/// **Every rung applies control through this one body**, including from inside a running
+/// turn ([`reflection::serving_control`], and cognition's own in-turn arm). A second copy
+/// is how the idle path and the in-turn path come to disagree about the same message.
+///
+/// It used to answer `Option<LoopInput>` and every arm answered `None` — a turn-driving
+/// reply no control message has ever had. The caller carried a whole `enqueue`-and-wake
+/// branch behind it that could not run.
 async fn apply_control(
     reaction: &Reaction,
     workers: &mut workers::WorkerRegistry,
     ctl: LoopControl,
-) -> Option<LoopInput> {
+) {
     match ctl {
-        LoopControl::CreateWorker { id, title, task, kind, owner, resume, subject } => {
-            if let Err(err) = workers
+        LoopControl::CreateWorker { id, title, task, kind, owner, resume, subject, ready } => {
+            let spawned = workers
                 .spawn_with_id(reaction, id, title, task, kind, owner, resume, subject)
-                .await
-            {
+                .await;
+            if let Err(err) = &spawned {
                 tracing::warn!(error = %err, "failed to create a working session");
             }
-            None
+            // The caller is waiting on this to learn whether the id it was handed names
+            // anything. Sent whichever way it went — a create nobody answers is the
+            // failure this reply exists to end.
+            let _ = ready.send(spawned.map(|_| ()).map_err(|err| err.to_string()));
         }
         LoopControl::CancelWorker { id, reply } => {
             let _ = reply.send(workers.interrupt(id).await);
-            None
         }
         LoopControl::CloseWorker { id, reply } => {
             let _ = reply.send(workers.close(id));
-            None
         }
     }
 }
@@ -1514,14 +1523,7 @@ async fn reaction_loop(
                 // a closed control channel as "nothing to apply" and keep waiting.
                 Woke::Control(None) => continue 'wait,
                 Woke::Control(Some(ctl)) => {
-                    if let Some(input) =
-                        apply_control(&reaction, &mut workers, ctl).await
-                    {
-                        enqueue(&reaction, &mut workers, &mut batch, input).await;
-                        if !down {
-                            break 'wait;
-                        }
-                    }
+                    apply_control(&reaction, &mut workers, ctl).await;
                     // A control side-effect was applied; keep waiting for a
                     // turn-driving reason rather than running an empty turn.
                 }

@@ -63,6 +63,19 @@ pub enum LoopControl {
     /// reader of a roster sees ([`crate::foundation::registry::Status::title`]); the task is
     /// the brief that becomes the session's first prompt. Deriving either from the other is
     /// the thing this pair exists to stop.
+    ///
+    /// **It carries a `ready` reply now, and that is what makes the answer true.** This was
+    /// the one dispatch verb that reported success from the *send* rather than from the
+    /// deed: the tool queued the message, said `session <id> starting`, and returned — so
+    /// for as long as the loop had not picked it up, every follow-up verb about that id
+    /// (`hi_session_status`, `hi_send_message`, `hi_cancel_worker`, `hi_close_worker`) was
+    /// asked about a session the switchboard had never heard of, and each answered
+    /// confidently that there was nothing there. Observed 2026-08-17 in one reflection
+    /// turn: create at 08:52:42, three "no live session" answers, `hi_close_worker` at
+    /// 08:55:34 replying *"was already gone — nothing to close"*, and the session actually
+    /// spawning at 08:55:45 — after which nobody could ever close it, because its owner had
+    /// been told it was gone. A create that has not registered yet is indistinguishable
+    /// from a create that never happened, so the caller has to wait for the difference.
     CreateWorker {
         id: SessionId,
         title: String,
@@ -71,6 +84,10 @@ pub enum LoopControl {
         owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
+        /// `Ok` once the session is registered, open and driving — the point from which
+        /// its id answers. `Err` carries why it never opened, which used to reach nothing
+        /// but a log line while the caller was told the errand had started.
+        ready: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     /// Stop the turn a working session is running (the `cancel_worker` tool).
     ///
@@ -616,6 +633,7 @@ mod tests {
                     owner: None,
                     resume: None,
                     subject: None,
+                    ready: tokio::sync::oneshot::channel().0,
                 })
                 .await
                 .unwrap();

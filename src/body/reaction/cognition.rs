@@ -247,25 +247,8 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker {
-                        id: worker, title, task, kind, owner, resume, subject,
-                    }) => {
-                        if let Err(err) = workers
-                            .spawn_with_id(
-                                &reaction, worker, title, task, kind, owner, resume, subject,
-                            )
-                            .await
-                        {
-                            tracing::warn!(error = %err, "cognition failed to create a worker");
-                        }
-                        continue;
-                    }
-                    Some(LoopControl::CancelWorker { id: worker, reply }) => {
-                        let _ = reply.send(workers.interrupt(worker).await);
-                        continue;
-                    }
-                    Some(LoopControl::CloseWorker { id: worker, reply }) => {
-                        let _ = reply.send(workers.close(worker));
+                    Some(ctl) => {
+                        super::apply_control(&reaction, &mut workers, ctl).await;
                         continue;
                     }
                     None => break,
@@ -392,33 +375,14 @@ async fn run(reaction: Reaction, registration: Registration) {
                             }
                         }
                     }
+                    // **All three verbs, served here, through the same body the idle arm
+                    // uses** ([`super::apply_control`]). Create is the one this arm was
+                    // built for, and the other two are called from mid-prompt just as
+                    // often: a cancel held until the turn ended would stop a worker no
+                    // earlier than doing nothing would have, and a close held that long
+                    // keeps a subprocess for no purpose.
                     ctl = control_rx.recv() => match ctl {
-                        Some(LoopControl::CreateWorker {
-                            id: worker, title, task, kind, owner, resume, subject,
-                        }) => {
-                            if let Err(err) = workers
-                                .spawn_with_id(
-                                    &reaction, worker, title, task, kind, owner, resume, subject,
-                                )
-                                .await
-                            {
-                                tracing::warn!(error = %err, "cognition failed to create a worker");
-                            }
-                        }
-                        // Served in-turn for a sharper version of the same reason: a
-                        // cancel is *only* ever called mid-prompt, and it is the one
-                        // control message whose whole value is how fast it lands. Held
-                        // until the turn ended, it would stop a worker no earlier than
-                        // doing nothing would have.
-                        Some(LoopControl::CancelWorker { id: worker, reply }) => {
-                            let _ = reply.send(workers.interrupt(worker).await);
-                        }
-                        // Served in-turn for the plainer reason: it is called mid-prompt
-                        // like the rest, and a close that waits for the turn to end holds
-                        // a subprocess open for no purpose.
-                        Some(LoopControl::CloseWorker { id: worker, reply }) => {
-                            let _ = reply.send(workers.close(worker));
-                        }
+                        Some(ctl) => super::apply_control(&reaction, &mut workers, ctl).await,
                         // The sender is gone; the turn still deserves to finish. A closed
                         // channel resolves immediately forever, so stop selecting on it.
                         None => break (&mut turn_fut).await,

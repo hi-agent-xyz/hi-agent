@@ -202,25 +202,8 @@ async fn run(reaction: Reaction, registration: Registration) {
             _ = mail.notified() => Wake::Turn,
             ctl = control_rx.recv() => {
                 match ctl {
-                    Some(LoopControl::CreateWorker {
-                        id: worker, title, task, kind, owner, resume, subject,
-                    }) => {
-                        if let Err(err) = workers
-                            .spawn_with_id(
-                                &reaction, worker, title, task, kind, owner, resume, subject,
-                            )
-                            .await
-                        {
-                            tracing::warn!(error = %err, "reflection failed to create a worker");
-                        }
-                        continue;
-                    }
-                    Some(LoopControl::CancelWorker { id: worker, reply }) => {
-                        let _ = reply.send(workers.interrupt(worker).await);
-                        continue;
-                    }
-                    Some(LoopControl::CloseWorker { id: worker, reply }) => {
-                        let _ = reply.send(workers.close(worker));
+                    Some(ctl) => {
+                        super::apply_control(&reaction, &mut workers, ctl).await;
                         continue;
                     }
                     None => break,
@@ -269,7 +252,16 @@ async fn run(reaction: Reaction, registration: Registration) {
 
                 workers.reap();
                 registry::global().start_turn(&id);
-                heartbeat::consolidate(&reaction, &id).await;
+                // A settling pass is the longest thing this rung does and the place it
+                // dispatches most — one `person-reader` per person present in the stretch.
+                // Every one of those calls is made from inside this await.
+                serving_control(
+                    &reaction,
+                    &mut workers,
+                    &mut control_rx,
+                    heartbeat::consolidate(&reaction, &id),
+                )
+                .await;
                 registry::global().finish_turn(&id);
             }
             Wake::Turn => {}
@@ -288,7 +280,14 @@ async fn run(reaction: Reaction, registration: Registration) {
         // busy here, and `start_turn` is deliberately idempotent.
         registry::global().start_turn(&id);
         workers.reap();
-        match turn(&reaction, id.clone(), &pending).await {
+        let turned = serving_control(
+            &reaction,
+            &mut workers,
+            &mut control_rx,
+            turn(&reaction, id.clone(), &pending),
+        )
+        .await;
+        match turned {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
@@ -301,6 +300,47 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
         }
         registry::global().finish_turn(&id);
+    }
+}
+
+/// Await `work` **while going on serving `control_rx`** — the shape Cognition already
+/// has, applied to the other rung that dispatches.
+///
+/// Every dispatch verb is called from *inside* a turn: the model reaches
+/// `hi_create_worker` mid-prompt, and the loop that has to honour it is the one running
+/// that prompt. Reflection awaited its turn outside its `select!`, so its own tool calls
+/// queued behind the turn that made them and were applied only once it ended. What that
+/// looked like from the caller's side, on 2026-08-17: a settling pass created a worker at
+/// 08:52:42, and for the next three minutes `hi_session_status`, `hi_send_message` and
+/// `hi_session_messages` all answered — truthfully — that no such session existed. The
+/// pass concluded the worker had never started, did the facet update itself, and closed a
+/// session that was not there yet. Eleven seconds later the turn ended, the queued create
+/// was applied, and the worker ran the same update a second time. It has been idle and
+/// unclosable ever since: its owner was told it was gone, so it will never ask again.
+///
+/// So this is not a latency improvement. A control message a loop cannot answer until it
+/// stops working is a message that gets a *wrong answer* in the meantime, and the wrong
+/// answer is the confident one.
+///
+/// The mail and clock arms stay outside, for Cognition's reason: serving them here would
+/// start a second turn on top of this one, and a turn boundary is what separates them.
+async fn serving_control<T>(
+    reaction: &Reaction,
+    workers: &mut workers::WorkerRegistry,
+    control_rx: &mut mpsc::Receiver<LoopControl>,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    let mut work = std::pin::pin!(work);
+    loop {
+        tokio::select! {
+            done = &mut work => return done,
+            ctl = control_rx.recv() => match ctl {
+                Some(ctl) => super::apply_control(reaction, workers, ctl).await,
+                // The senders are gone; the work still deserves to finish. A closed channel
+                // resolves immediately forever, so stop selecting on it.
+                None => return (&mut work).await,
+            },
+        }
     }
 }
 

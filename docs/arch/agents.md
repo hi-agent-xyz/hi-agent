@@ -368,6 +368,20 @@ session and lets the context go.
 does. That is a real leak and the honest place for it — an owner that loses track of its
 errands has a problem no timer was fixing, only concealing.
 
+**What the host owes in return: an id it hands out must already answer.** Putting the
+lifetime in the owner's hands only works if every verb the owner has about a session tells it
+the truth, and the three dispatch verbs are all *about a session* — so all three wait for the
+loop that owns it, and none of them reports from the send. This is not a latency preference.
+`hi_create_worker` used to answer as soon as the request was queued, so between the reply and
+the registration the errand had an id and no session, and every question asked with that id —
+status, message, cancel, close — was answered confidently in the negative. Observed
+2026-08-17: one reflection pass created a worker, was told three times over three minutes that
+no such session existed, did the work itself, and closed a session that had not been created
+yet; the close reported *"already gone"*, the worker spawned eleven seconds later, and became
+permanently unclosable — its owner had been told it was gone, so it would never ask again. An
+owner cannot be held responsible for a lifetime it was lied to about. **A "nothing there" must
+mean the session has ended, never that it has not begun.**
+
 **The two thinking rungs are long-lived from creation.** A rung that reopens each time cannot
 remember what it was in the middle of — and that is not something the ledger can hand back,
 because the ledger records what is **owed**, not what has already been tried, ruled out, or
