@@ -14,7 +14,8 @@
 //! Reaction doesn't, and who can dispatch work.
 //!
 //! Names and descriptions only. The input schemas are most of the bytes and none of the
-//! answer — `hi_say`'s schema is one string field, `hi_act`'s is nine — so a review view that
+//! answer — `hi_say`'s schema is one string field, `hi_create_worker`'s is five, each
+//! carrying a paragraph — so a review view that
 //! carried them would bury the surface it is meant to show. Read the schema in
 //! `foundation/mcp` when it matters.
 

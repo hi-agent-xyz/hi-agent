@@ -344,35 +344,16 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("worker") => vec![
             send_message_tool(),
             review_view_tool(),
-            tool(
-                "hi_look",
-                "See the user's screen right now — returns a screenshot of the main display, plus \
-                 its pixel size and the frontmost app. Use it to find where things are before you \
-                 `hi_act`, and again after acting to confirm what changed. The positions you pass to \
-                 `hi_act` are fractions of THIS image.",
-                json!({ "type": "object", "properties": {} }),
-            ),
-            tool(
-                "hi_act",
-                "Operate the user's screen like a human would: move, click, type, or press keys. \
-                 Positions are normalized fractions of the screen read off the latest `hi_look` — `x` \
-                 is 0.0 (left) to 1.0 (right), `y` is 0.0 (top) to 1.0 (bottom). After you act, call \
-                 `hi_look` again to check it worked.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "action": { "type": "string", "enum": ["click", "double_click", "right_click", "move", "drag", "type", "press"], "description": "What to do." },
-                        "x": { "type": "number", "description": "Target x as a 0..1 fraction of screen width. For click/double_click/right_click/move, and the start of a drag." },
-                        "y": { "type": "number", "description": "Target y as a 0..1 fraction of screen height." },
-                        "x2": { "type": "number", "description": "Drag end x (0..1), for action=drag." },
-                        "y2": { "type": "number", "description": "Drag end y (0..1), for action=drag." },
-                        "text": { "type": "string", "description": "Text to type, for action=type (handles non-ASCII like a song title)." },
-                        "key": { "type": "string", "description": "Key for action=press: return, tab, space, escape, delete, up, down, left, right, or a single character. For a chord like ⌘A use key=a with mods=[command]." },
-                        "mods": { "type": "array", "items": { "type": "string", "enum": ["command", "shift", "option", "control"] }, "description": "Modifier keys held during a press." },
-                    },
-                    "required": ["action"],
-                }),
-            ),
+            // **No `hi_look` / `hi_act`.** The worker used to hold the screen pair, and
+            // driving the *foreground* desktop is the one capability whose failures land
+            // on the person rather than in a report: the cursor moves under their hand,
+            // keystrokes go into whatever window has focus, and a misread screenshot
+            // types a URL into someone's open tab. It also had no consent hop — a worker
+            // holding `hi_act` just acted — so "the boss did not authorize this" was not
+            // a state the tool could be in. Withdrawn on those two grounds together.
+            // The implementations stay live and dispatchable (see `do_look` / `do_act`);
+            // re-advertising is these two `tool(…)` entries and nothing else, and it
+            // should not happen without a gate in front of `do_act`.
             video_text_to_text_tool(),
         ]
         .into_iter()
@@ -989,6 +970,11 @@ async fn dispatch_tool(
         // and so a session that somehow names it gets the real behaviour instead of
         // "unknown tool". Do not re-advertise it without taking that decision.
         "hi_record_reflex" => return reflex_record(data_dir, args).await,
+        // Also reachable by name only, and for a different reason: the screen pair works
+        // and was *withdrawn* from the worker surface (see `tools_for_role`), not left
+        // unfinished. Capture and input synthesis are the mechanism half of a capability
+        // the shell will own anyway, so they stay whole and exercised here rather than
+        // being deleted and rewritten later.
         "hi_look" => return do_look().await,
         "hi_act" => return do_act(args).await,
         "hi_image_text_to_text" => return do_image_text_to_text(data_dir, args).await,

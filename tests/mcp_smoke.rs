@@ -120,9 +120,13 @@ async fn tools_list_is_role_gated() {
     let names = tool_names(&worker);
     // One verb reaches another agent, and it is the only one.
     assert!(names.contains(&"hi_send_message".to_string()), "got {names:?}");
-    assert!(names.contains(&"hi_look".to_string()), "got {names:?}");
-    assert!(names.contains(&"hi_act".to_string()), "got {names:?}");
     assert!(!names.contains(&"hi_say".to_string()), "worker must not see say");
+    // The screen pair is withdrawn. `do_look`/`do_act` still exist and still dispatch by
+    // name, so the only thing standing between a worker and the user's live cursor is
+    // this surface — which makes it a thing to assert, not a thing to leave untested.
+    for gone in ["hi_look", "hi_act"] {
+        assert!(!names.contains(&gone.to_string()), "`{gone}` is withdrawn; got {names:?}");
+    }
     // The retired channel, in all three of its names. A worker that can still reach
     // the voice by a second route is a worker that will, and then two paths are live.
     for gone in ["ask", "surface", "delegate"] {
