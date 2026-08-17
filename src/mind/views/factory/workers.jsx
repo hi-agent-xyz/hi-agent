@@ -125,8 +125,12 @@ const T = {
     // there is, and the one a reader can match against another row on the page.
     ownedBy: (id) => `owned by ${id}`,
     endedAgo: (t) => `ended ${t} ago`,
-    lostToRestart: "lost to a restart",
-    lostNote: "The process ended underneath it — nothing got to report what it found.",
+    // A restart row, said the same way and in the same breath as an ordinary end. It is not
+    // a failure to flag: a rung's thread is handed straight back at boot, and a worker's is
+    // offered to Cognition to resume — see `registry::index::{resumable, lost_workers}`. All
+    // this word adds over "ended" is that nothing recorded the stop, which is why the time
+    // it carries is the start.
+    cutOffAgo: (t) => `cut off ${t} ago`,
     ranFor: (t) => `ran ${t}`,
     noEnded: "No sessions have ended yet.",
     // The session panel: the fold first, the record behind it.
@@ -197,8 +201,7 @@ const T = {
     unlinked: "没挂到任何任务",
     ownedBy: (id) => `归 ${id}`,
     endedAgo: (t) => `${t}前结束`,
-    lostToRestart: "重启时丢了",
-    lostNote: "进程在它下面结束了 —— 它做了什么没来得及报。",
+    cutOffAgo: (t) => `${t}前被打断`,
     ranFor: (t) => `跑了 ${t}`,
     noEnded: "还没有结束的会话。",
     transcript: "做了什么",
@@ -638,7 +641,6 @@ function EndedRow({ row, open, setOpen }) {
     <button
       type="button"
       className="hi-workers__row is-ended"
-      data-lost={lost ? "true" : undefined}
       data-open={isOpen ? "true" : undefined}
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: String(row.session), run: row.run })}
@@ -647,7 +649,7 @@ function EndedRow({ row, open, setOpen }) {
         <span className="hi-workers__dot" aria-hidden />
         <span className="hi-workers__pill">{label(row)}</span>
         <span className="hi-workers__elapsed">
-          {lost ? L.lostToRestart : when ? L.endedAgo(elapsed(when)) : ""}
+          {when ? (lost ? L.cutOffAgo(elapsed(when)) : L.endedAgo(elapsed(when))) : ""}
         </span>
       </span>
 
@@ -659,10 +661,6 @@ function EndedRow({ row, open, setOpen }) {
         {row.subject && <span>{L.onTask(row.subject)}</span>}
         {row.owner && <span>{L.ownedBy(row.owner)}</span>}
       </span>
-
-      {/* Said plainly, because "it was cut off" and "it finished" are not the same outcome,
-          and the difference is the reason this row exists at all. */}
-      {lost && <span className="hi-workers__lost">{L.lostNote}</span>}
     </button>
   );
 }
@@ -1259,11 +1257,6 @@ const CSS = `
     box-shadow: none;
   }
 
-  .hi-workers__row.is-ended[data-lost="true"] {
-    border-color: var(--danger-line);
-    background: var(--danger-wash);
-  }
-
   /* The card's top strip. Two short things at opposite ends, and it still wraps: the
      ended column is a fifth of the frame, narrow enough that "Reflection" and
      "ended 16h ago" do not always share a line, and wrapping is the right answer there
@@ -1405,14 +1398,6 @@ const CSS = `
     color: var(--fg-dim);
     overflow: hidden;
     overflow-wrap: anywhere;
-  }
-
-  .hi-workers__lost {
-    display: block;
-    margin-top: 7px;
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--danger);
   }
 
   .hi-workers__empty {
