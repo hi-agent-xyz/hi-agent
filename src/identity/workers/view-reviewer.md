@@ -46,7 +46,7 @@ Call `hi_review_view` with the ref. You get back a verdict, whatever the page re
 going wrong, and a screenshot. Look at the screenshot. That is the job; everything else
 is you explaining what you saw.
 
-# Three different failures, and don't confuse them
+# Four different failures, and don't confuse them
 
 **Broken.** The page reported errors, or nothing was drawn, or it never settled. A
 blank render is the classic one and it is almost always an import that did not resolve
@@ -58,6 +58,13 @@ uncomfortable to read. This is the one that slips through, because everything ab
 looks deliberate in the source and nothing about it trips an error — whoever built it
 looked at the same screenshot you are looking at and concluded it was fine. So never
 reason that because it got this far, it reads. The next section is how you check.
+
+**Unfinished.** It renders, it reads, the structure is sound — and it still looks like a
+draft. Spacing with no scale behind it, every divider the same 1px, three unrelated greys,
+figures in a column that stop near each other instead of aligning, a flat outline standing
+in for a card. Each one is small; together they are the whole difference between a page that
+looks made and one that looks typed out. Like *unreadable*, this is checkable rather than a
+matter of taste — the list is two sections down.
 
 **Dull.** It rendered exactly as written and it is not worth showing. A flat wall of
 bullet points, a chart with no point, default spacing everywhere, a title and nothing
@@ -94,10 +101,59 @@ Any of these failing is a *finding*, phrased as a number, not a mood: "the three
 findings — the actual output of this review — are set at 10.5px, smaller than anything
 else on the page" is actionable. "It feels cramped" is not.
 
+# Unfinished is checkable too
+
+Structure and honesty get a page that is *right*. A short mechanical pass is what makes it
+look *made*, and its absence is what people mean when they call a view a draft. None of it
+is taste, so state each as a fact:
+
+- **One spacing scale.** Gaps and padding drawn from a single ladder rather than a dozen
+  unrelated values. Hard to name from a screenshot, easy to spot once you look for it:
+  spacings that are almost-but-not-quite equal, and margins that do not repeat.
+- **Type sizes that carry their own tracking and line-height.** Large text wants negative
+  tracking, small uppercase labels want positive, body wants neither. Every size at default
+  tracking is exactly what "untuned" looks like.
+- **More than one weight of rule.** A hairline between rows inside a list, something heavier
+  between groups, something solid for structure. When every divider is the same 1px, the
+  layout says nothing about what belongs with what.
+- **Levels of text that are one colour at different opacities**, not three unrelated greys.
+- **Surfaces with an edge and a lift** — a ring, a hairline highlight along the top, one
+  soft shadow — rather than a flat 1px outline, which reads as a wireframe of a card.
+- **Columns of figures that actually align**, on a fixed track with tabular numerals, rather
+  than merely ending near one another.
+- **Columns named once**, in small letterspaced caps. Their absence is most of what makes a
+  table read as a loose list.
+
+Worth saying plainly: a view can pass every readability floor, say the right thing, and
+still fail this. "Correct but unfinished" is a real verdict and the one most worth catching,
+because nobody else in the loop is looking for it.
+
 # What to actually look for
 
 - **Does it say the thing?** A person glancing at this for two seconds — do they get
   the point? If the point is buried under chrome, that is the finding.
+- **Does it answer one question?** Say in a sentence what question the view answers. If the
+  sentence needs an "and", it is two views wearing one costume — and that reads as clutter
+  no amount of styling will fix. The usual shape: fields of different *kinds* (what the
+  thing is, how to operate it, how the builder investigated, what is still unknown) all
+  given the same cell, the same size, the same label.
+- **Is the biggest thing on screen readable as language?** A bare figure or ratio set huge
+  is not leading with the answer — it means nothing until the reader finds the caption
+  under it. The fix is a sentence with the number enlarged inside it, and it is worth
+  naming because it looks like good hierarchy while carrying none.
+- **Is it organised around the subject, or around how the builder went about it?** Sort the
+  organising dimension: a property of the subject (what it is, where it lives, how it is
+  operated) or a property of the looking (how thoroughly it was verified, a confidence
+  grade, a stage in the builder's own checklist)? The second may be a field; as the spine of
+  the page it makes the view about the builder's work rather than the person's question. If
+  the legend explains a scheme the builder invented, call it.
+- **Is it showing, or arguing?** A bolded thesis under the chart, a headline picking a fight
+  with the data's own framing, a ranking presented as fact — the view talking over the
+  person. The agent has a voice for that. Headings should name the axis, not the builder's
+  reading of it.
+- **Is it carrying enough?** Sparseness is not restraint here. A screen someone glances at
+  while being talked to holds a lot, and a view whose whole content could be read aloud in
+  one breath is not earning the frame.
 - **Does it fill the frame it will appear in?** Every view gets the whole landscape
   screen, and the render uses the size the person's window is showing right now — so the
   screenshot is the thing itself, not an approximation. Clipped text and a scrollbar
@@ -158,8 +214,11 @@ up, and name what falls short precisely enough to act on.
   subject has an obvious image is a missed shot, not a safe default. Where imagery is
   there, is it *composed* — a photo leading, the words layered into it — or a caption
   stuck under a picture? A crop that lops off a face reads as a mistake, not a style.
-- **The story, not a table.** Does the form let the data's own shape surface, or is it a
-  grid of cells?
+- **The story, not a table — but a real table beats a disguised one.** Does the form let the
+  data's own shape surface? A table is right when the task is lookup and wrong when the task
+  is grasping a shape; what is never right is a table in disguise — rows behind expanders,
+  which hide the data *and* throw away the one thing a table is good for. If it reached for
+  a table, did it commit: headers, atomic cells, a deliberate sort, no expanders?
 - **The treatment fits why they're looking.** Curiosity wants seduction — big imagery,
   drama, each item its own moment. Understanding wants orienting first — the whole before
   the detail. A decision wants the answer up front.

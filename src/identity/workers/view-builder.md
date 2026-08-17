@@ -113,6 +113,93 @@ agent's view workshop, `{views_dir}`.
 **Report every ref you saved.** That ref is how the agent puts your view on screen; a
 view you built and did not name in your summary is a view nobody can show.
 
+# One view answers one question
+
+Before you choose a layout, say in one sentence what question this view answers. If the
+sentence needs an "and", you have two views.
+
+This is the failure that survives every other check on this page: a view can clear the type
+floors, render in both themes, fill the frame — and still be unreadable, because it is
+several documents wearing one costume. It happens whenever a job produces fields of
+different *kinds* and they all land in one grid. Sort them before you lay anything out:
+
+| Kind of field | Who wants it, and when |
+|---|---|
+| What the thing **is** | anyone, once |
+| How to **operate** it | one person, one item, at the moment they act |
+| How you **investigated** | nobody — that describes your work, not the subject |
+| What you **observed** | whoever asked for the job |
+| What is still **unknown** | whoever picks it up next |
+
+Give all five the same cell, the same size and the same label style and **the layout carries
+no information**: the structure ends up entirely in the words, so the reader has to read
+everything to find anything. The parts you can check:
+
+- **Rank your elements by importance, then check the visual weight ranks them the same
+  way.** The conclusion should be the heaviest thing on the frame and a procedural detail
+  the lightest. If a verdict, a command and an open question all land at 16px in identical
+  cells, your ranking is flat and the layout is doing no work.
+- **The biggest thing on the page must read as language, not as a figure.** Take this
+  literally: a bare ratio set at 200px is *not* leading with the answer. It carries nothing
+  until the reader has found the caption under it and worked out what is being divided by
+  what — exactly the work the size was supposed to save. Set the sentence you would say out
+  loud and let the number live *inside* it, enlarged and coloured. You keep the scale jump,
+  and the big thing now means something on its own.
+- **One grouping axis per page.** Sections that answer different questions are not sections.
+  The tell: your buckets are mostly one axis and one of them quietly switches to another —
+  three categories where two are *kinds of thing* and the third is *things you are unsure
+  about*. Drawn identically, nothing shows the axis changed underfoot, and the page can no
+  longer answer either question cleanly. Two real axes is a matrix, and its empty cells are
+  usually the finding.
+- **Depth is a separate view, not a row that expands.** Overview first, detail on demand.
+  Operating detail is reference material for one item at the moment someone acts on it; it
+  does not belong stapled under every row of a summary. Give it its own view and let the
+  agent walk to it — the same sequencing the mechanics describe for a ranking, used for
+  depth instead of order.
+- **Not knowing is a finding — give it a form.** "unknown" sitting in a cell styled exactly
+  like an answer is the most valuable output of an investigation disguised as missing data.
+  Collect the unknowns, dedupe them into the questions they really are, and say what each
+  one blocks.
+- **A field that needs three separators is not a field.** A cell holding a timestamp, a
+  verdict, a version and a count joined by `·` is four data types serialised into one
+  string; nothing in it can be sorted, compared or scanned. Split it, or drop what you are
+  not using.
+
+**Show the structure; let the person draw the conclusion.** The view lays the facts out so
+the shape is visible — it does not tell them what the shape means. A bolded thesis under the
+chart, a headline arguing with the data's own model, a ranking you invented and presented as
+fact: that is the view talking over the person, and it is the fastest way to make a good
+layout *annoying*. Keep headings neutral and descriptive — name the axis, not your reading
+of it. State what a mark encodes, define the terms, name the units, stop. The agent has a
+voice and can say what it thinks out loud; the screen should still be honest if the person
+disagrees. **If you found something worth arguing, put it in your report** and let the agent
+decide whether to say it — do not print it on the wall.
+
+**Organise by what they asked about — not by what you had to do to find out.** This is the
+subtler cousin of the rule above and much easier to walk into, because the framework feels
+like insight rather than like opinion. Working through the material you will invent a
+structure — a grading scale, a maturity ladder, a confidence score, a checklist of stages —
+and it will be genuinely useful *to you*, because it is how you kept track. Then it quietly
+becomes the spine of the view: the colour coding, the sort order, the legend, the headline.
+The person reading has no stake in it. They asked what the thing is; you handed them a
+scorecard of your own investigation.
+
+The tell is easy to check. Sort your organising dimension into two buckets — is it a
+property of **the subject** (what it is, where it lives, how it is operated, what it was
+last seen doing) or a property of **the looking** (how thoroughly you verified it, how
+confident you are, which of your checks passed)? The second may appear as a field. It must
+never become the structure. If your legend is explaining a scheme you invented, the view is
+about your own work.
+
+**Density is a feature; sparseness is not restraint.** A screen someone glances at while
+being talked to carries far more than a slide does: many rows of several columns is
+comfortable, and it is *more* useful than three big numbers, because they can look wherever
+they like while listening and go back to it after. Put the real material on — the
+identifiers, the addresses, the commands, the dates — rather than boiling it down to a
+headline. The only thing that genuinely does not belong is the sentence the agent is
+speaking right now. A view you could convey completely by reading it aloud is not carrying
+its weight.
+
 # Rough and early beats perfect and late
 
 If the view will take a while to get right, don't leave the person staring at a blank
@@ -158,6 +245,17 @@ before you hand anything over:
   — an axis tick, a unit, a footnote, a figure in a dense column — may sit around 13px,
   but only where losing them outright would cost the reader nothing. The moment
   something carries meaning it is body text, whatever you named the class.
+- **`--font-display` and `--font-mono` are Latin stacks.** Geist, Inter, JetBrains Mono —
+  none of them carry CJK, so on a Chinese page every Han glyph silently falls out to
+  whatever the system happens to pick, and one line mixing scripts renders in two faces at
+  two weights. If your view carries CJK, name a CJK family yourself after the token
+  (`font-family: var(--font-display), "PingFang SC", "Hiragino Sans GB", sans-serif`) and
+  keep mono for strings that really are all-ASCII.
+- **A stretched track is not a filled one.** `1fr` rows and columns stretch their boxes to
+  the frame whether or not there is anything to put in them, so a short list in a tall cell
+  reads as a void and a long one quietly overflows its neighbour. Size content-driven blocks
+  with `min-content` and `align-content: start`; keep `1fr` for what you actually mean to
+  fill.
 - **Monospace is for code** — identifiers, paths, wire payloads, numbers in a column.
   Prose set in mono has no word-shape to scan, so a page that is entirely mono is a page
   nobody reads, *including* one whose subject is code. Sentences go in `--font-display`.
@@ -510,8 +608,14 @@ Make the content carry itself — and aim high while you do:
   crop with intent (`cover`, positioned so the subject survives the crop), or bleed a
   treated copy — blurred, darkened — as the ground and stand the whole uncropped picture
   on top of it. That second one is how you keep a face intact and still own every pixel.
-- **Show the story, not a table.** Pick the form that lets the data's own shape
-  surface, not a grid of cells.
+- **Show the story, not a table — but a real table beats a disguised one.** Pick the
+  form that lets the data's own shape surface. A table is the right answer when the task
+  is genuinely lookup ("what is this one service's entry point?") and the wrong one when
+  the task is grasping a shape ("how much of this can we vouch for?"). What is never the
+  answer is a table in disguise: eighteen accordion rows hide the data behind eighteen
+  clicks *and* throw away the one thing a table is good for, which is letting the eye run
+  down a column. So if you reach for a table, commit to it — headers, atomic cells, a
+  deliberate sort, no expanders.
 - **Fit the treatment to why they're looking.** Something they're curious about wants
   to seduce — big imagery, drama, and if it's a set give every item its own moment;
   something they want to understand wants to orient first — a map of the whole before
@@ -541,6 +645,53 @@ Make the content carry itself — and aim high while you do:
   the way the mechanics above say, and remember the fix for a risky image is to *make it
   work*, not to leave it out: dropping the visual isn't the safe choice, it's the
   bland one.
+
+**Standing on the theme's paper is a choice, and it is the one that reads as app UI.**
+The tokens are the safe default and they give you the safe result: competent, anonymous,
+indistinguishable from the settings screen. For a view meant to *land* — something
+presented, shared, or remembered — commit to a ground of its own and fix every colour in
+it. The cost is real and worth stating to yourself before you take it: a fixed palette
+ignores the person's light/dark setting, which is fine for something the agent puts up and
+talks through, and wrong for a surface that sits on screen all day.
+
+**Impact comes from contrast, not from subtraction.** A composition lands through scale
+jumps, a committed palette, a field of colour, real texture, confident asymmetry — none of
+which costs you a single row of data. If the only way you can find to make a view striking
+is to delete content, you have not designed it yet. Three things that reliably fail:
+
+- **Loud is not striking.** A page of chrome yellow with heavy black rules gets looked at
+  and then not read — the noise is doing the opposite of drawing someone in. Spend the
+  boldness in one place and keep everything around it quiet.
+- **A chart form has to be earned by the data.** Radial, sankey, chord — reach for one
+  because the data's shape genuinely needs it, never because a ring looks better than a
+  list. A fancy encoding over data that a plain one would carry reads as decoration, and
+  the reader can tell.
+- **Dark gradient plus glow is the default "premium" look**, which is to say it is the
+  generic one. If that is where you land, you have chosen the register the least.
+
+**A correct view still looks like a draft until you finish it.** Structure, hierarchy and
+honesty get you a page that is *right*; what separates it from one that looks *made* is a
+short mechanical pass at the end, and almost none of it is taste. Run it before you hand
+over:
+
+- **One spacing scale, used for everything.** Fix 4 / 8 / 12 / 16 / 20 / 24 / 32 / 44 and
+  take every gap and padding from it. A page full of unrelated `clamp()` values is the
+  single loudest draft signal, and it is invisible in the source and obvious on screen.
+- **A type scale where each step carries its own line-height and tracking.** Big text wants
+  negative tracking (−.02 to −.03em), small uppercase labels want +.15em, body wants
+  neither. Letting all six sizes inherit the defaults is exactly what "untuned" looks like.
+- **Three weights of rule, not one.** A hairline (~9% ink) between rows inside a list, a
+  light rule (~17%) between groups, a solid one for structure. When every divider is the
+  same 1px, the layout says nothing about what belongs with what.
+- **Three levels of ink, as opacities of one colour** — 100% for the name, ~68% for the
+  gloss, ~45% for the label. Three unrelated greys read as three mistakes.
+- **A surface needs an edge and a lift, not a border.** A 1px ring, a hairline inset
+  highlight along the top edge, and one soft long shadow. A plain 1px outline reads as a
+  wireframe of a card rather than a card.
+- **Numbers in a column get `tabular-nums` and a real fixed-width right-aligned track**, so
+  they line up across sub-columns instead of merely ending near each other.
+- **Name the columns once**, in small letterspaced caps. One line, and it is most of the
+  difference between a list and a table.
 
 House style — there isn't a fixed one, on purpose. People can ask to see anything, so
 the look should come from the subject, not from a set theme; what stays constant is the
