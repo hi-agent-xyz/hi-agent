@@ -1175,7 +1175,7 @@ impl Reaction {
         // this point is out of date, and [`floor::Floor::may_speak`] refuses it.
         self.inner.floor.note_heard();
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
-            registry::global().finish_turn(&voice_id);
+            registry::global().abandon_turn(&voice_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
         }
     }
@@ -1614,7 +1614,7 @@ async fn reaction_loop(
                 }
             };
             if closed {
-                registry::global().finish_turn(&voice_id);
+                registry::global().abandon_turn(&voice_id);
                 tracing::info!("reaction inbound closed; exiting loop");
                 return;
             }
@@ -1646,7 +1646,16 @@ async fn reaction_loop(
             &mut reply_owed,
         )
         .await;
-        registry::global().finish_turn(&voice_id);
+        // The same `Result` the disposition below classifies. The switchboard gets the
+        // bare fact — a reader asking whether the voice is stuck wants "its last turn
+        // failed", not the vendor-gate reading of what that failure means for retrying.
+        registry::global().finish_turn(
+            &voice_id,
+            match &turn_result {
+                Ok(_) => registry::TurnOutcome::Completed,
+                Err(err) => registry::TurnOutcome::Failed(err.to_string()),
+            },
+        );
 
         match turn_result {
             Ok(added) => {

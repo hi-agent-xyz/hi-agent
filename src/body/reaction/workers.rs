@@ -48,7 +48,7 @@ use crate::identity::{Role, WorkerType};
 use super::{LoopInput, Reaction};
 
 use crate::foundation::registry;
-use crate::foundation::registry::SessionId;
+use crate::foundation::registry::{SessionId, TurnOutcome};
 
 // A working session used to close itself after fifteen idle minutes. That timer was
 // written for a narrower world than the one it ended up policing: it meant "this errand is
@@ -682,7 +682,10 @@ async fn drive(
                     "working session paused on 402; task and session held"
                 );
                 busy.store(false, Ordering::Relaxed);
-                registry::global().finish_turn(id);
+                // A hold is still a turn that ended, and it ended badly — the 402 is the
+                // truest thing the roster can say about why this session is quiet. It is
+                // overwritten by the outcome of the rerun the moment energy comes back.
+                registry::global().finish_turn(id, TurnOutcome::Failed(err.to_string()));
                 energy_paused = true;
                 next_task = Some(task);
                 continue;
@@ -690,16 +693,24 @@ async fn drive(
             Err(err) => WorkerReportKind::Failed(err.to_string()),
         };
         busy.store(false, Ordering::Relaxed);
-        // The turn is over — say so, or `session_status` reports every session as
-        // permanently mid-turn once it has taken any mail at all.
-        registry::global().finish_turn(id);
-        let (state, summary_chars) = match &kind {
-            WorkerReportKind::Done(answer) => (WorkerState::Done, answer.chars().count()),
-            WorkerReportKind::Failed(err) => (WorkerState::Failed, err.chars().count()),
+        // Read once, for the three readers of one fact: the lifecycle event, the log line,
+        // and the switchboard row. The row is the one that had nothing — a report reaches
+        // the owner and a log line reaches an operator, while anyone asking the switchboard
+        // "how is it going" got `idle` whichever of these three it was.
+        let (state, summary_chars, outcome) = match &kind {
+            WorkerReportKind::Done(answer) => {
+                (WorkerState::Done, answer.chars().count(), TurnOutcome::Completed)
+            }
+            WorkerReportKind::Failed(err) => {
+                (WorkerState::Failed, err.chars().count(), TurnOutcome::Failed(err.clone()))
+            }
             WorkerReportKind::Interrupted(partial) => {
-                (WorkerState::Interrupted, partial.chars().count())
+                (WorkerState::Interrupted, partial.chars().count(), TurnOutcome::Interrupted)
             }
         };
+        // The turn is over — say so, or `session_status` reports every session as
+        // permanently mid-turn once it has taken any mail at all.
+        registry::global().finish_turn(id, outcome);
         observatory
             .record(
                                 EventKind::WorkerFinished { id: id.clone(), state, summary_chars },

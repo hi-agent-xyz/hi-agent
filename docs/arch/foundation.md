@@ -98,7 +98,7 @@ That is what makes "the switchboard is the host" a mechanism rather than an aspi
 |---|---|---|
 | `SendMessage(to, message)` | every agent | One direction, **no reply**. Returns whether it was *delivered*, never a response. Queues per target and merges while the target is mid-turn, so a burst arrives as one prompt |
 | `CreateWorker(title, task, type, subject?, resume?)` | Cognition, Reflection | → a session id. `title` is the errand in one line and `task` is the brief — see below. `subject` is the ledger task this errand serves, and is what makes "is anyone on this task" a lookup instead of a reading. `resume` picks an errand back up where a restart cut it off, and accepts **only** a thread from this boot's offer ([agents.md](agents.md#across-a-restart)) |
-| `SessionStatus(id)` | owners | alive · busy/idle · what it was given · **what it was last seen doing** · turns. **Meta only** — free to call |
+| `SessionStatus(id)` | owners | alive · busy/idle · what it was given · **what it was last seen doing** · **how its last turn ended** · turns. **Meta only** — free to call |
 | `SessionMessages(id)` | owners | its actual output. Costs context, so it is a separate call from status |
 
 **"What it was given" and "what it is doing" are two fields, never merged.** A task is set once
@@ -107,6 +107,18 @@ was mid-command or wedged — and the output tail could not fill the gap, becaus
 from what a session *says* and a session can work for minutes in silence. Keeping them apart
 also keeps tool noise out of `SessionMessages`, which is what an owner reads to learn what the
 work found.
+
+**And `idle` is two situations, so how the last turn ended is a third field.** Busy/idle is
+folded from whether a turn is in flight and whether mail is queued, and neither says anything
+about the turn that just ended — so a worker that answered its brief and one whose turn died
+on a `429` are the same word with the same clock, on the roster, in `SessionStatus`, and on the
+task's own ledger line. That is the silence-read-as-health failure one level in: not a session
+whose liveness is unknown, but one whose *outcome* is. It showed on 2026-08-18 — three workers
+failed inside two minutes, read as `idle`, and were told "Continue now; do not leave this idle".
+So the switchboard keeps the ending of the last finished turn (`completed` · `failed` with its
+reason · `interrupted`), and every surface that draws a quiet session draws it. It is recorded
+by the loop that ran the turn, as an argument to finishing one, because a loop that can drop a
+session out of `busy` without saying how is a loop that will.
 
 **The title and the brief are two arguments, and only the title enters the switchboard.** A
 brief for real work is a paragraph or five; the switchboard has no reader for a paragraph —

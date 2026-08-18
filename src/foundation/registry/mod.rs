@@ -241,6 +241,14 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 /// a line that wraps three times pushes every other session off the page.
 const ACTIVITY_LINE_CHARS: usize = 120;
 
+/// How long the reason a turn failed may be before it is cut.
+///
+/// Wider than an activity line because the useful half of a provider error is at the end —
+/// `exceeded retry limit, last status: 429 Too Many Requests` says nothing until its last
+/// four words — and narrower than a paragraph because it renders beside a state word on a
+/// roster row. The whole error is on the wire log either way.
+const OUTCOME_LINE_CHARS: usize = 200;
+
 /// How long a session's [`title`](Status::title) may be before it is cut.
 ///
 /// A headline, so the cap is roughly one column-width line and not a paragraph. The brief
@@ -295,6 +303,67 @@ pub enum Delivery {
     /// thing is worth saying is judgment and lives in prompts; who may be reached is a
     /// fact and lives here.
     NotPermitted,
+}
+
+/// How a turn ended, said by the loop that ran it.
+///
+/// **The switchboard held every fact about a session except whether its work went well.**
+/// [`Status::busy`] and [`Status::queued`] fold into one state word — running · waiting ·
+/// idle — and none of the three says anything about the turn that just ended, so a worker
+/// that answered its brief and one whose turn died on a 429 were the same row with the same
+/// clock. That was not a rendering gap: the fact was nowhere on the wire to render. Measured
+/// on 2026-08-18, when three workers failed inside two minutes (`exceeded retry limit, last
+/// status: 429`), reported `idle` on the roster and in `hi_session_status`, and were told
+/// "Continue now; do not leave this idle" — recovery by nagging what looked like a lazy
+/// session, because nothing anywhere said it had fallen over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnOutcome {
+    /// It ran to the end. Whether it *achieved* anything is the reader's to judge from what
+    /// it said; this is only the mechanical fact that the turn was not cut short.
+    Completed,
+    /// It died, and this is why — one line, already capped ([`OUTCOME_LINE_CHARS`]).
+    Failed(String),
+    /// Cancelled — by its owner, or by a shutdown. Not a fault, and it must not read as one:
+    /// a stopped worker is a decision somebody made.
+    Interrupted,
+}
+
+impl TurnOutcome {
+    /// The word this outcome renders as, everywhere. One spelling for the roster row, the
+    /// tool answer, and the ledger line, for the same reason the state word has one:
+    /// a journey test greps what the page shows.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed(_) => "failed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    /// The failure line, on a failure only.
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Failed(err) => Some(err.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an ending a reader should chase. `completed` is the answer nobody
+    /// needs told, and a row that announces it teaches the eye to skip the field.
+    pub fn is_trouble(&self) -> bool {
+        !matches!(self, Self::Completed)
+    }
+}
+
+/// How the last turn ended, and when it ended.
+///
+/// The clock is its own rather than [`Status::state_since`], which moves again the moment
+/// mail lands on the quiet session — so a worker that failed four minutes ago and has had a
+/// message waiting since would otherwise report its failure as ten seconds old.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnEnd {
+    pub outcome: TurnOutcome,
+    pub at: DateTime<Utc>,
 }
 
 /// What a session is and how it is doing — **metadata only, no content.**
@@ -374,6 +443,13 @@ pub struct Status {
     /// them — which is the same shape as the `tail`/`doing` split one level down: it is not
     /// enough to know a thing happened, you have to know when.
     pub doing_at: Option<DateTime<Utc>>,
+    /// How the last **finished** turn ended, and when — `None` until this session has
+    /// finished one. See [`TurnOutcome`] for what it exists to answer.
+    ///
+    /// It describes the previous turn while a new one runs, which is why every reader draws
+    /// it on a quiet row only: mid-turn, what the session is doing now is the answer, and
+    /// last turn's ending is the kind of stale fact that reads as current.
+    pub last_turn: Option<TurnEnd>,
 }
 
 /// One message in flight, with the return address the registry stamped on it.
@@ -492,6 +568,8 @@ struct Entry {
     doing: Option<String>,
     /// When `doing` was last replaced — see [`Status::doing_at`].
     doing_at: Option<DateTime<Utc>>,
+    /// How the last finished turn ended — see [`Status::last_turn`].
+    last_turn: Option<TurnEnd>,
     /// The codex thread hosting this session, once `thread/start` has answered. `None`
     /// between registration and that moment — the session exists first, deliberately.
     thread: Option<String>,
@@ -518,6 +596,7 @@ impl Entry {
             state_since: self.state_since,
             doing: self.doing.clone(),
             doing_at: self.doing_at,
+            last_turn: self.last_turn.clone(),
         }
     }
 
@@ -692,6 +771,7 @@ impl Registry {
                     output: String::new(),
                     doing: None,
                     doing_at: None,
+                    last_turn: None,
                     thread: None,
                     notify: notify.clone(),
                 },
@@ -1154,8 +1234,47 @@ impl Registry {
         self.sessions.lock().unwrap().get(id).map(|e| e.notify.clone())
     }
 
-    /// Mark a turn finished.
-    pub fn finish_turn(&self, id: &SessionId) {
+    /// Mark a turn finished, saying how it ended.
+    ///
+    /// **The outcome is a parameter and not a second call**, so that no loop can drop a
+    /// session out of `busy` without answering the question a quiet row raises. Every
+    /// caller here already holds the answer — it is the `Result` it just matched on — and
+    /// the one that genuinely has none is undoing a `start_turn` for a turn that never
+    /// ran, which is [`abandon_turn`](Self::abandon_turn) and says so.
+    pub fn finish_turn(&self, id: &SessionId, outcome: TurnOutcome) {
+        let outcome = match outcome {
+            TurnOutcome::Failed(err) => TurnOutcome::Failed(headline(&err, OUTCOME_LINE_CHARS)),
+            other => other,
+        };
+        let changed = {
+            let mut map = self.sessions.lock().unwrap();
+            if let Some(e) = map.get_mut(id) {
+                let changed = e.busy;
+                e.busy = false;
+                // Recorded whether or not `busy` moved. A loop calling this twice for one
+                // turn is reporting the same ending twice, not two turns — but a loop whose
+                // `start_turn` was folded into a `take_pending` edge never set `busy` from
+                // here at all, and dropping its outcome on that ground would lose the
+                // ending of exactly the turns that ran.
+                e.last_turn = Some(TurnEnd { outcome, at: Utc::now() });
+                e.note_state_change(changed);
+                changed
+            } else {
+                false
+            }
+        };
+        if changed {
+            self.note_activity();
+        }
+    }
+
+    /// Undo a `start_turn` for a turn that never ran — the send that failed, the loop that
+    /// exited between accepting a reason to speak and speaking.
+    ///
+    /// Distinct from [`finish_turn`](Self::finish_turn) because there is no ending to
+    /// record: writing `completed` here would report a turn that never happened as a
+    /// success, and `failed` would raise an alarm about a turn nothing attempted.
+    pub fn abandon_turn(&self, id: &SessionId) {
         let changed = {
             let mut map = self.sessions.lock().unwrap();
             if let Some(e) = map.get_mut(id) {
@@ -1906,7 +2025,7 @@ mod tests {
         let s = r.status(&b).unwrap();
         assert!(s.busy && !s.queued && s.turns == 1);
 
-        r.finish_turn(&b);
+        r.finish_turn(&b, TurnOutcome::Completed);
         assert!(!r.status(&b).unwrap().busy);
     }
 
@@ -1943,14 +2062,75 @@ mod tests {
         assert_eq!(r.status(&id).unwrap().state_since, running.state_since, "still running");
 
         // running → idle
-        r.finish_turn(&id);
+        r.finish_turn(&id, TurnOutcome::Completed);
         let done = r.status(&id).unwrap();
         assert!(!done.busy);
         assert!(done.state_since > running.state_since);
 
         // A second finish is not a transition.
-        r.finish_turn(&id);
+        r.finish_turn(&id, TurnOutcome::Completed);
         assert_eq!(r.status(&id).unwrap().state_since, done.state_since);
+    }
+
+    /// The ending is kept, because `busy: false` is the same word for a session that
+    /// answered and one whose turn died — and the roster, the ledger line and
+    /// `hi_session_status` all read `busy` to decide what to say.
+    #[test]
+    fn a_finished_turn_leaves_behind_how_it_ended() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        assert!(r.status(&id).unwrap().last_turn.is_none(), "nothing has ended yet");
+
+        r.post(&id, "go".into());
+        r.take_pending(&id);
+        r.finish_turn(&id, TurnOutcome::Failed("429 Too Many Requests".into()));
+        let end = r.status(&id).unwrap().last_turn.expect("an ending was recorded");
+        assert_eq!(end.outcome.as_str(), "failed");
+        assert_eq!(end.outcome.error(), Some("429 Too Many Requests"));
+        assert!(end.outcome.is_trouble());
+
+        // The next turn's ending replaces it: what a reader wants is the last one, and a
+        // failure that outlived its recovery is worse than no field at all.
+        r.take_pending(&id);
+        r.finish_turn(&id, TurnOutcome::Completed);
+        let end = r.status(&id).unwrap().last_turn.expect("still recorded");
+        assert_eq!(end.outcome, TurnOutcome::Completed);
+        assert!(!end.outcome.is_trouble(), "a clean ending is not news");
+        assert!(end.outcome.error().is_none());
+    }
+
+    /// A turn that never ran leaves no ending. The two call sites are a send that failed
+    /// and a loop exiting between accepting a reason to speak and speaking — `completed`
+    /// there would report a success nothing attempted, and `failed` would raise an alarm
+    /// about a turn nobody ran.
+    #[test]
+    fn an_abandoned_turn_records_no_ending() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Reaction, None, String::new(), None);
+        r.start_turn(&id);
+        r.abandon_turn(&id);
+        let st = r.status(&id).unwrap();
+        assert!(!st.busy);
+        assert!(st.last_turn.is_none(), "nothing ended, so nothing to say about how");
+    }
+
+    /// The reason renders on a roster row, so it arrives already one line and already cut —
+    /// the same rule the title and the activity line follow, for the same reason.
+    #[test]
+    fn a_failure_reason_is_capped_to_one_line() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        r.start_turn(&id);
+        r.finish_turn(&id, TurnOutcome::Failed(format!("stack
+trace {}", "x".repeat(400))));
+        let end = r.status(&id).unwrap().last_turn.unwrap();
+        let err = end.outcome.error().unwrap();
+        assert!(!err.contains('\n'), "flattened: {err}");
+        assert!(err.chars().count() <= OUTCOME_LINE_CHARS + 1, "capped: {}", err.chars().count());
+        assert!(err.ends_with('…'));
     }
 
     /// `doing` without an age says a session is alive and nothing more — the line reads the

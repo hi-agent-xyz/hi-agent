@@ -246,6 +246,7 @@ fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
                     // The state clock, not the `doing` clock: what a reader is asking is how
                     // long this session has been in the shape it is in.
                     since: st.state_since,
+                    last_turn: st.last_turn.as_ref().map(|end| end.outcome.clone()),
                 }),
             ))
         },

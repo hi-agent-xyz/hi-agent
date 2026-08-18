@@ -41,6 +41,12 @@
 //    several of them are drawn as though they were independent. They were, and the row
 //    contradicted itself three separate times — see `LiveRow`. The server now sends one
 //    `state` word and this file gates on it.
+// 5. **Quiet is two different endings, and the state word says neither.** `idle` is what a
+//    worker between instructions reports and what a worker whose turn died reports, because
+//    the word is folded from busy/queued and the ending was nowhere on the wire. On
+//    2026-08-18 three workers failed on a 429 inside two minutes, drew three `idle 3m` cards,
+//    and were sent "Continue now; do not leave this idle" — a recovery aimed at laziness.
+//    `last_turn` is the ending, drawn on quiet rows only, and only when it is bad news.
 //
 // Clicking any row — live or ended — opens what that session did. Those frames have been
 // written for every session all along (`WireTap::with_durable_log`) and nothing could read
@@ -111,6 +117,10 @@ const T = {
     // One word for what a session is doing with itself — the server folds `busy`+`queued`
     // into it, so there is nothing here to recombine and nothing to get wrong.
     state: { running: "running", waiting: "mail waiting", idle: "idle" },
+    // How the last turn ended, drawn only when that is something to chase. `completed` has
+    // no entry on purpose: a row that says so on every quiet card teaches the eye to skip
+    // the line, and the line only exists for the cards where it is bad news.
+    lastTurn: { failed: "last turn failed", interrupted: "last turn was stopped" },
     turns: (n) => (n === 1 ? "1 turn" : `${n} turns`),
     up: (t) => `up ${t}`,
     live: "Live", endedHead: "Just ended",
@@ -194,6 +204,7 @@ const T = {
     emptySub: "这就是全部 —— 不是还没加载出来。",
     noTitle: "（没写这是干什么的）",
     state: { running: "在跑", waiting: "有没读的", idle: "闲着" },
+    lastTurn: { failed: "上一轮挂了", interrupted: "上一轮被停了" },
     turns: (n) => `${n} 轮`,
     up: (t) => `已运行 ${t}`,
     live: "在跑", endedHead: "刚结束",
@@ -564,6 +575,17 @@ function LiveRow({ row, open, setOpen, indent }) {
   // the roster showing a session at all is the load-bearing part.
   const state = L.state[row.state] ? row.state : "idle";
   const running = state === "running";
+  // **The card's one blind spot until now: `idle` was the word for both endings.** A
+  // worker that answered its brief and one whose turn died on a 429 drew the same row with
+  // the same clock, and the only surface that knew the difference was the message fold
+  // inside the panel — which you have to open a session to reach. On 2026-08-18 that cost
+  // three workers a recovery: they read as idle, and were told to stop idling.
+  //
+  // Drawn on a quiet row only, for the same reason `doing` is drawn on a busy one — it is
+  // about a turn that is over, and beside `running` it describes the turn before the one in
+  // flight. A clean `completed` draws nothing: the field is here for bad news.
+  const ended =
+    !running && row.last_turn && row.last_turn.outcome !== "completed" ? row.last_turn : null;
   return (
     <button
       type="button"
@@ -627,6 +649,22 @@ function LiveRow({ row, open, setOpen, indent }) {
         <span className="hi-workers__doing">
           {row.doing}
           {row.doing_at && <span className="hi-workers__age"> · {elapsed(row.doing_at)}</span>}
+        </span>
+      )}
+
+      {/* The quiet row's half of that same slot: what a session is doing answers "is it
+          alive", and how its last turn ended answers "did it get anywhere" — one of the two
+          questions is live at a time, so they share the position and never the line.
+
+          The reason is carried whole rather than summarised: `429 Too Many Requests` and a
+          crashed subprocess call for different moves, and a row that said only "failed"
+          would send the reader into the panel every time. An unknown word from a newer
+          server prints itself rather than blanking the line. */}
+      {ended && (
+        <span className="hi-workers__ended">
+          {L.lastTurn[ended.outcome] || ended.outcome}
+          {ended.error ? `: ${ended.error}` : ""}
+          {ended.at && <span className="hi-workers__age"> · {elapsed(ended.at)}</span>}
         </span>
       )}
       {row.tail && <span className="hi-workers__tail">{row.tail}</span>}
@@ -1377,6 +1415,22 @@ const CSS = `
     font-size: 11.5px;
     line-height: 1.45;
     color: var(--accent);
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+
+  /* A turn that ended badly. Same slot and same clamp as the doing line — the two never
+     appear together — but in the danger colour and proportional type: this is a sentence
+     about what went wrong, not a command to scan. */
+  .hi-workers__ended {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    margin-top: 9px;
+    font-size: 12px;
+    line-height: 1.45;
+    font-weight: 600;
+    color: var(--danger);
     overflow: hidden;
     overflow-wrap: anywhere;
   }

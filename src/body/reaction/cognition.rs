@@ -62,7 +62,7 @@ use tokio::time::{Instant, sleep_until};
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
 use crate::identity::Role;
 use crate::foundation::observatory::EventKind;
-use crate::foundation::registry::{self, Registration};
+use crate::foundation::registry::{self, Registration, TurnOutcome};
 use crate::mind::memory::snapshot;
 
 use super::tools::{LoopControl, ToolOwner, ToolSink};
@@ -272,6 +272,20 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
         }
 
+        // **Every report queued here joins this turn, whichever arm woke us.** The select
+        // arm above cannot carry this alone: it is `biased` with mail ahead of the report
+        // channel, and a stretch busy enough to fail a worker is exactly a stretch with mail
+        // in it. Measured on 2026-08-18 — three workers died on a 429 inside two minutes,
+        // their reports sat unread behind mail for the fourteen minutes the log covers, and
+        // the only thing Cognition could see was the ledger row saying `idle`, which it
+        // answered by telling each one to stop idling. A terminal report is not something
+        // chatter may outrun.
+        while let Ok(input) = report_rx.try_recv() {
+            if let LoopInput::Worker(r) = input {
+                pending.push(workers::render_report_plainly(&r));
+            }
+        }
+
         // Drain whatever accumulated. A burst is merged by the switchboard into one
         // prompt, so no settle window is needed here.
         if let Some(batch) = registry::global().take_pending(&id) {
@@ -392,6 +406,13 @@ async fn run(reaction: Reaction, registration: Registration) {
         }
         .await;
 
+        // Read before the match takes the error: what the switchboard needs is the same
+        // fact the branch below logs, and a second `Result` would be a second chance to
+        // disagree with it.
+        let outcome = match &result {
+            Ok(()) => TurnOutcome::Completed,
+            Err(err) => TurnOutcome::Failed(err.to_string()),
+        };
         match result {
             Ok(()) => pending.clear(),
             Err(err) => {
@@ -436,7 +457,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         last_turn = Instant::now();
-        registry::global().finish_turn(&id);
+        registry::global().finish_turn(&id, outcome);
     }
 }
 

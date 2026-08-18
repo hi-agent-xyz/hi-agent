@@ -46,7 +46,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 
-use crate::foundation::registry::{self, SessionId, Status};
+use crate::foundation::registry::{self, SessionId, Status, TurnEnd};
 
 /// One live session, as the review view reads it.
 ///
@@ -137,6 +137,35 @@ struct WorkerDto {
     /// When `doing` was last replaced, RFC3339. What separates a busy session that is
     /// working from one that is hung: the line alone cannot.
     doing_at: Option<String>,
+    /// How the session's last **finished** turn ended, and when — absent until it has
+    /// finished one.
+    ///
+    /// **`state` cannot answer this and never could.** It is folded from busy/queued, so a
+    /// worker that answered its brief and one whose turn died on a 429 are the same word
+    /// (`idle`) with the same clock, and the difference existed nowhere on this wire. It
+    /// showed on 2026-08-18: three workers failed inside two minutes, three cards read
+    /// `idle 3m`, and the only surface that knew was the message fold of the wire log —
+    /// which a reader has to open a session to see.
+    ///
+    /// **Like `doing`, it is about a turn that is over**, so a reader draws it on a quiet
+    /// row. Beside `running` it describes the turn *before* the one in flight, which is the
+    /// same "finished session says idle and thinking at once" confusion one field up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_turn: Option<LastTurnDto>,
+}
+
+/// The ending of one turn, as a row reads it — see [`WorkerDto::last_turn`].
+#[derive(Serialize)]
+struct LastTurnDto {
+    /// `completed` · `failed` · `interrupted`, spelled as
+    /// [`TurnOutcome::as_str`](crate::foundation::registry::TurnOutcome::as_str) spells it.
+    outcome: &'static str,
+    /// When the turn ended, RFC3339. Its own clock and not `state_since`, which moves again
+    /// the moment mail lands on the quiet session.
+    at: String,
+    /// Why it failed, one line, on `failed` only. The whole error is on the wire log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 /// `GET /api/workers` — every live session in the switchboard.
@@ -426,6 +455,15 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         tail,
         doing: st.doing.clone(),
         doing_at: st.doing_at.map(stamp),
+        last_turn: st.last_turn.as_ref().map(last_turn),
+    }
+}
+
+fn last_turn(end: &TurnEnd) -> LastTurnDto {
+    LastTurnDto {
+        outcome: end.outcome.as_str(),
+        at: stamp(end.at),
+        error: end.outcome.error().map(str::to_owned),
     }
 }
 
@@ -509,6 +547,7 @@ mod tests {
             state_since: Utc.with_ymd_and_hms(2026, 8, 5, 3, minute + 1, 0).unwrap(),
             doing: None,
             doing_at: None,
+            last_turn: None,
         }
     }
 
@@ -551,6 +590,40 @@ mod tests {
         assert_eq!(v["tail"], "last line");
         assert!(v.get("busy").is_none(), "folded into `state`");
         assert!(v.get("queued").is_none(), "folded into `state`");
+        assert!(v.get("last_turn").is_none(), "absent until a turn has finished");
+    }
+
+    /// The ending the state word cannot carry. A row that failed and a row that answered
+    /// perfectly are both `idle`, so this is the only field that separates them — and the
+    /// reason has to survive the trip, because `429` and a dead subprocess are different
+    /// moves for whoever reads it.
+    #[test]
+    fn a_failed_last_turn_ships_with_its_reason() {
+        let mut st = status(9.into(), false, 12);
+        st.last_turn = Some(TurnEnd {
+            outcome: registry::TurnOutcome::Failed(
+                "exceeded retry limit, last status: 429 Too Many Requests".into(),
+            ),
+            at: Utc.with_ymd_and_hms(2026, 8, 5, 3, 14, 0).unwrap(),
+        });
+        let v = serde_json::to_value(dto(&st, None)).unwrap();
+        assert_eq!(v["state"], "idle", "the state word is unchanged by an ending");
+        assert_eq!(v["last_turn"]["outcome"], "failed");
+        assert_eq!(v["last_turn"]["at"], "2026-08-05T03:14:00Z");
+        assert_eq!(
+            v["last_turn"]["error"],
+            "exceeded retry limit, last status: 429 Too Many Requests"
+        );
+
+        // A clean ending still ships. Narrowing to bad news is the *view's* call — an API
+        // that dropped it could not answer "did that finish or is it still going".
+        st.last_turn = Some(TurnEnd {
+            outcome: registry::TurnOutcome::Completed,
+            at: Utc.with_ymd_and_hms(2026, 8, 5, 3, 14, 0).unwrap(),
+        });
+        let v = serde_json::to_value(dto(&st, None)).unwrap();
+        assert_eq!(v["last_turn"]["outcome"], "completed");
+        assert!(v["last_turn"].get("error").is_none(), "no reason on a turn that did not fail");
     }
 
     /// The three states, and the precedence between them. `waiting` is the one the old

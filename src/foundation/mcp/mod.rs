@@ -1071,8 +1071,26 @@ async fn dispatch_tool(
                 Some(what) => format!("; last seen doing: {what}"),
                 None => "; nothing observed yet".to_string(),
             };
+            // **The other half of that blindness, and the half that misreads as laziness.**
+            // A session whose turn died answers `idle` — the same word as one that finished
+            // cleanly — so an owner polling it twice concludes it is sitting on its hands
+            // and sends it a nudge. That is what happened on 2026-08-18 to three workers
+            // that had each fallen over on a 429. Said only on a quiet session: mid-turn,
+            // the ending of the previous turn is not what was asked.
+            let ended = match st
+                .last_turn
+                .as_ref()
+                .filter(|_| !st.busy)
+                .filter(|end| end.outcome.is_trouble())
+            {
+                Some(end) => match end.outcome.error() {
+                    Some(err) => format!("; its last turn FAILED: {err}"),
+                    None => "; its last turn was stopped".to_string(),
+                },
+                None => String::new(),
+            };
             return tool_ok(&format!(
-                "session {} — {state}; {} turn(s) so far; on: {}{doing}",
+                "session {} — {state}{ended}; {} turn(s) so far; on: {}{doing}",
                 st.id, st.turns, st.title
             ));
         }

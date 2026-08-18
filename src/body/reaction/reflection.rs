@@ -54,7 +54,7 @@ use tokio::time::Instant;
 
 use tokio::sync::mpsc;
 
-use crate::foundation::registry::{self, Registration};
+use crate::foundation::registry::{self, Registration, TurnOutcome};
 
 use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
@@ -262,9 +262,22 @@ async fn run(reaction: Reaction, registration: Registration) {
                     heartbeat::consolidate(&reaction, &id),
                 )
                 .await;
-                registry::global().finish_turn(&id);
+                // A settling pass has no `Result` to read: `consolidate` handles its own
+                // failures internally and the pass is over either way.
+                registry::global().finish_turn(&id, TurnOutcome::Completed);
             }
             Wake::Turn => {}
+        }
+
+        // Reports too, and for the reason spelled out in [`super::cognition`]: the arm above
+        // sits behind mail in a `biased` select, and a report it does not reach is a
+        // finished errand nobody is told about. A consolidation pass makes it worse here —
+        // it is the longest thing this rung does, and every report that lands during one
+        // arrives while the channel is unread.
+        while let Ok(input) = report_rx.try_recv() {
+            if let LoopInput::Worker(r) = input {
+                pending.push(workers::render_report_plainly(&r));
+            }
         }
 
         // Drain whatever accumulated, whichever way we woke — a consolidation pass is
@@ -287,6 +300,10 @@ async fn run(reaction: Reaction, registration: Registration) {
             turn(&reaction, id.clone(), &pending),
         )
         .await;
+        let outcome = match &turned {
+            Ok(()) => TurnOutcome::Completed,
+            Err(err) => TurnOutcome::Failed(err.to_string()),
+        };
         match turned {
             Ok(()) => pending.clear(),
             Err(err) => {
@@ -299,7 +316,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tracing::warn!(reflection = %id, error = %err, "reflection turn failed; mail held");
             }
         }
-        registry::global().finish_turn(&id);
+        registry::global().finish_turn(&id, outcome);
     }
 }
 

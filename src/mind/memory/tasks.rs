@@ -289,6 +289,13 @@ pub struct WorkingOnIt {
     pub doing: Option<String>,
     /// When it last changed state, for "how long has it been like this".
     pub since: DateTime<Utc>,
+    /// How its last finished turn ended, when the switchboard has seen one end.
+    ///
+    /// Carried because "who is on this task" and "is that going well" are one question to
+    /// the reader of a ledger line, and until this field the line could only answer the
+    /// first: a worker whose turn died reported as `idle`, which is what a worker between
+    /// instructions reports, and the two are opposite situations.
+    pub last_turn: Option<crate::foundation::registry::TurnOutcome>,
 }
 
 /// What the switchboard says about a task's worker — there is one, or the last restart took
@@ -481,6 +488,22 @@ fn worker_note(task: &Task, on_it: Option<&OnIt>, now: DateTime<Utc>) -> Option<
         Some(OnIt::Live(w)) => {
             let state = if w.busy { "busy" } else { "idle" };
             let mut note = format!("worker {} — {state} {}", w.session, ago_short(now, w.since));
+            // **`idle` after a turn that died says the wrong thing loudest.** The word is
+            // the same one a worker waiting for its next instruction reports, so the line
+            // that should read as an alarm reads as patience — and the move it invites is
+            // "get on with it" rather than "it fell over". Only on a quiet worker: while it
+            // is busy, what it is doing now is the answer and last turn's ending is stale.
+            if let Some(outcome) =
+                w.last_turn.as_ref().filter(|_| !w.busy).filter(|o| o.is_trouble())
+            {
+                match outcome.error() {
+                    Some(err) => {
+                        note.push_str(", last turn FAILED: ");
+                        note.push_str(err);
+                    }
+                    None => note.push_str(", last turn was stopped"),
+                }
+            }
             // What it is *doing*, not what it has said: a worker four minutes into a shell
             // command has produced no output, and its silence is the thing most easily
             // mistaken for death.
@@ -831,7 +854,13 @@ mod tests {
     }
 
     fn on_it(session: u64, busy: bool, doing: Option<&str>, since: DateTime<Utc>) -> WorkingOnIt {
-        WorkingOnIt { session: session.into(), busy, doing: doing.map(str::to_string), since }
+        WorkingOnIt {
+            session: session.into(),
+            busy,
+            doing: doing.map(str::to_string),
+            since,
+            last_turn: None,
+        }
     }
     use chrono::Duration;
 
@@ -926,6 +955,41 @@ mod tests {
         );
         assert!(text.contains("idle 40m"), "{text}");
         assert!(!text.contains("busy"), "{text}");
+    }
+
+    /// **And an idle worker whose turn died must not read like one waiting for orders.**
+    /// They are the same word — `idle` — and on 2026-08-18 that cost three workers a real
+    /// recovery: they had each fallen over on a 429, the ledger line said `idle`, and what
+    /// it got in reply was "Continue now; do not leave this idle".
+    #[test]
+    fn an_idle_worker_whose_turn_failed_says_so_with_the_reason() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let mut w = on_it(9, false, Some("$ cargo test"), now() - Duration::minutes(3));
+        w.last_turn = Some(crate::foundation::registry::TurnOutcome::Failed(
+            "exceeded retry limit, last status: 429 Too Many Requests".into(),
+        ));
+        let text = render_projection(std::slice::from_ref(&owed), now(), &staffed(&owed, w));
+        assert!(text.contains("idle 3m"), "{text}");
+        assert!(text.contains("last turn FAILED"), "{text}");
+        assert!(text.contains("429 Too Many Requests"), "the reason travels: {text}");
+    }
+
+    /// Said on a quiet worker only, and only about an ending worth chasing. Mid-turn, what
+    /// it is doing now is the answer; and a line that announced every clean turn would be on
+    /// most of the list, which is how a line stops being read.
+    #[test]
+    fn a_busy_worker_or_a_clean_ending_says_nothing_about_the_last_turn() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+
+        let mut busy = on_it(9, true, None, now() - Duration::minutes(1));
+        busy.last_turn = Some(crate::foundation::registry::TurnOutcome::Failed("429".into()));
+        let text = render_projection(std::slice::from_ref(&owed), now(), &staffed(&owed, busy));
+        assert!(!text.contains("last turn"), "it is working now: {text}");
+
+        let mut clean = on_it(9, false, None, now() - Duration::minutes(1));
+        clean.last_turn = Some(crate::foundation::registry::TurnOutcome::Completed);
+        let text = render_projection(std::slice::from_ref(&owed), now(), &staffed(&owed, clean));
+        assert!(!text.contains("last turn"), "a clean ending is not news: {text}");
     }
 
     /// **"Nobody" is only said where nobody is a problem.** A `todo` with no worker is what a
