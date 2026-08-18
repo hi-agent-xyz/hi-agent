@@ -614,14 +614,26 @@ pub struct Registry {
     resumable: Mutex<HashMap<String, String>>,
     /// The errands the last restart killed, for the boot glance to offer Cognition.
     ///
-    /// Snapshotted at [`Registry::attach_index`] rather than derived from `recent` on demand,
+    /// Seeded at [`Registry::attach_index`] rather than derived from `recent` on demand,
     /// because `recent` grows this run's own ends as sessions close and
     /// [`index::lost_workers`] reads the head of the list to decide which run "the previous
     /// one" was. A read taken after the first session closes would answer about this run and
     /// find nothing.
     ///
-    /// Read, never taken: unlike `resumable` there is no discard rule to express here, since
-    /// the only reader is the one-shot boot note.
+    /// **Outstanding rather than a snapshot: an entry leaves when it stops being owed.** It
+    /// was read and never taken while the only reader was the one-shot boot note, and a
+    /// second reader is what made that wrong. The ledger now consults it to say *why* a
+    /// `doing` task has nobody on it, and a list frozen at boot answers that with the state
+    /// of the boot for the rest of the run: a task restaffed forty minutes ago still reads as
+    /// cut off. The direction that actually cost something is the other one — a thread
+    /// already resumed stays on the offer, so the same dead errand can be picked up twice and
+    /// two sessions each believe they own it.
+    ///
+    /// It drains at the two points an errand stops being owed: its thread is taken
+    /// ([`Registry::take_lost_thread`]), or a live worker registers under its subject
+    /// ([`Registry::register`]). A task *closed* without either needs no drain — every reader
+    /// here is asked only about tasks that are active and `doing`, so an entry for a task
+    /// that left `doing` is already unreachable.
     lost: Mutex<Vec<index::Ended>>,
 }
 
@@ -684,6 +696,13 @@ impl Registry {
                     notify: notify.clone(),
                 },
             );
+        }
+        // **A live worker under this subject ends that errand's claim on the offer.** The
+        // task has somebody on it now, whether this session resumed the dead thread or
+        // started cold, and an entry left behind would go on explaining an absence that is
+        // over — see [`Registry::lost`](#structfield.lost).
+        if let Some(subject) = subject.as_deref() {
+            self.lost.lock().unwrap().retain(|end| end.subject.as_deref() != Some(subject));
         }
         // Recorded on the way in, not only on the way out, because the way out is exactly
         // what a crash skips. An `opened` with no `closed` is how a restart-killed session
@@ -774,6 +793,27 @@ impl Registry {
     /// put them in front of Cognition.
     pub fn lost_workers(&self) -> Vec<index::Ended> {
         self.lost.lock().unwrap().clone()
+    }
+
+    /// Take the offer for `thread`, leaving nothing behind — `true` if it was on the offer.
+    ///
+    /// **The check and the discard are one act.** Validating with a read and removing later
+    /// leaves a window where two callers both pass, and what comes out the other side is two
+    /// sessions resumed from one dead errand's mind, each registered as owning it. Taking is
+    /// also why a resume that fails downstream gets no second go at the thread: the rule
+    /// [`Registry::resumable`](#structfield.resumable) already states, for the reason it
+    /// states it — a retry is a cold open, never a second claim on the same mind.
+    pub fn take_lost_thread(&self, thread: &str) -> bool {
+        let mut lost = self.lost.lock().unwrap();
+        let before = lost.len();
+        lost.retain(|end| end.thread.as_deref() != Some(thread));
+        before != lost.len()
+    }
+
+    /// The ledger subjects whose worker the last restart killed and nothing has picked back
+    /// up, for the projection to say so — see [`crate::mind::memory::tasks::OnIt`].
+    pub fn lost_subjects(&self) -> std::collections::HashSet<String> {
+        self.lost.lock().unwrap().iter().filter_map(|end| end.subject.clone()).collect()
     }
 
     /// Unregister every live session, in id order.
@@ -1323,6 +1363,86 @@ mod tests {
             1,
             "a close in this run must not empty the offer"
         );
+    }
+
+    /// Seed a registry whose previous run died holding one errand on `th-errand`.
+    async fn boot_with_a_lost_errand(subject: Option<&str>) -> (tempfile::TempDir, Registry) {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let path = index::index_path(&data_dir);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        let at = Utc::now();
+        let mut text = String::new();
+        for record in [
+            index::opened_record(
+                "run-prev",
+                &4.into(),
+                Role::Worker(WorkerType::General),
+                Some(3.into()),
+                "finish the KT8-046 build",
+                subject,
+                at,
+            ),
+            index::thread_record("run-prev", &4.into(), "th-errand", at),
+        ] {
+            text.push_str(&format!("{}\n", serde_json::to_string(&record).unwrap()));
+        }
+        tokio::fs::write(&path, text).await.unwrap();
+        let r = reg();
+        r.attach_index(data_dir).await;
+        (dir, r)
+    }
+
+    /// **The offer is taken, and taking it is the check.** Before this it was read with an
+    /// `any()` and left in place, so nothing stopped the same dead errand being resumed
+    /// twice — two sessions opening from one mind, each registered as owning the task, and
+    /// the ledger naming whichever the join happened to iterate last.
+    #[tokio::test]
+    async fn a_lost_thread_is_offered_exactly_once() {
+        let (_dir, r) = boot_with_a_lost_errand(None).await;
+        assert!(r.take_lost_thread("th-errand"), "the offer this boot made");
+        assert!(!r.take_lost_thread("th-errand"), "the second claim on the same mind");
+        assert!(r.lost_workers().is_empty(), "taken means gone from the offer");
+    }
+
+    /// A thread nobody offered is refused, which is the older half of the same rule: a resume
+    /// argument is the one value a caller cannot derive from the work in front of it.
+    #[tokio::test]
+    async fn a_thread_that_was_never_offered_is_not_taken() {
+        let (_dir, r) = boot_with_a_lost_errand(None).await;
+        assert!(!r.take_lost_thread("th-confabulated"));
+        assert_eq!(r.lost_workers().len(), 1, "and a refused take leaves the offer alone");
+    }
+
+    /// **Putting somebody on the task is the other way an errand stops being owed.** The
+    /// ledger asks this list why a `doing` task has nobody on it; once a live worker is
+    /// registered under the subject, the honest answer is that somebody *is* on it, and a
+    /// frozen list would go on explaining an absence that ended forty minutes ago.
+    #[tokio::test]
+    async fn a_live_worker_under_the_subject_drains_the_entry() {
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        assert!(r.lost_subjects().contains("kt8-046"), "cut off, and nothing on it yet");
+
+        let id = mint();
+        r.register(
+            id,
+            Role::Worker(WorkerType::General),
+            Some(3.into()),
+            "finish the KT8-046 build".into(),
+            Some("kt8-046".into()),
+        );
+
+        assert!(r.lost_subjects().is_empty(), "restaffed, whether it resumed or started cold");
+        assert!(r.lost_workers().is_empty(), "and its thread is no longer on the offer");
+    }
+
+    /// A rung registers with no subject and must not touch the offer — the drain is keyed by
+    /// the ledger subject, and everything without one is nothing to do with it.
+    #[tokio::test]
+    async fn a_session_with_no_subject_drains_nothing() {
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        r.register(mint(), Role::Cognition, None, "the shared brain".into(), None);
+        assert!(r.lost_subjects().contains("kt8-046"));
     }
 
     #[test]

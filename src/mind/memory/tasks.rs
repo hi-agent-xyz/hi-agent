@@ -291,14 +291,38 @@ pub struct WorkingOnIt {
     pub since: DateTime<Utc>,
 }
 
+/// What the switchboard says about a task's worker — there is one, or the last restart took
+/// the one there was.
+///
+/// **One map, not two lookups, because a task can only be in one of these states.** The thing
+/// that makes a subject live is exactly the thing that drains its cut-off entry: a worker
+/// registering under it ([`crate::foundation::registry::Registry::register`]). Two maps would
+/// be free to say both, and the reader would have to pick.
+#[derive(Debug, Clone)]
+pub enum OnIt {
+    /// A session is registered under this subject right now.
+    Live(WorkingOnIt),
+    /// The last restart killed its worker and nothing has picked the errand back up.
+    ///
+    /// Worth distinguishing from a plain absence because the two call for different moves.
+    /// An errand nobody ever started has to be started; this one has a **mind still on the
+    /// boot offer** ([`crate::foundation::registry::Registry::lost_workers`]), so the cheap
+    /// answer is to resume it. It also stops the ledger from reporting the first minute of
+    /// every restart as though the work had been abandoned.
+    CutOff,
+}
+
 /// The active ledger as the agent reads it, annotated with who is on each task.
 ///
-/// `working` is keyed by task subject. An empty map is the honest answer immediately after a
-/// restart — nothing is registered yet — and every `doing` task then correctly reads as
-/// having nobody on it, which is the state this whole annotation exists to make visible.
+/// `working` is keyed by task subject. An empty map means nobody is on anything, and every
+/// `doing` task then reads as having nobody on it — the state this whole annotation exists to
+/// make visible. Immediately after a restart that is *true but not the whole answer*, which
+/// is what [`OnIt::CutOff`] carries: the switchboard is empty because the process died, not
+/// because the work was abandoned, and the difference is the difference between an alarm and
+/// a resume.
 pub async fn projection(
     data_dir: &Path,
-    working: &std::collections::HashMap<String, WorkingOnIt>,
+    working: &std::collections::HashMap<String, OnIt>,
 ) -> anyhow::Result<String> {
     Ok(render_projection(&active_tasks(data_dir).await?, Utc::now(), working))
 }
@@ -306,7 +330,7 @@ pub async fn projection(
 fn render_projection(
     active: &[Task],
     now: DateTime<Utc>,
-    working: &std::collections::HashMap<String, WorkingOnIt>,
+    working: &std::collections::HashMap<String, OnIt>,
 ) -> String {
     use std::fmt::Write as _;
 
@@ -443,9 +467,18 @@ fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
 ///
 /// A live worker is reported wherever there is one, `todo` and `serving` included, because
 /// that is positive information and cannot be a false alarm.
-fn worker_note(task: &Task, on_it: Option<&WorkingOnIt>, now: DateTime<Utc>) -> Option<String> {
+///
+/// **A restart gets its own answer, and it is still "nobody on it".** The phrase is not
+/// softened, because nobody is on it — but bare, it invites the reading that the errand was
+/// dropped, and for the first minute or two of every boot that is wrong in a way the reader
+/// cannot check: the process died, Cognition has not finished dispositioning the offer yet,
+/// and the dead worker's mind is sitting there resumable. Naming the cause is what separates
+/// "start a second worker on this" from "resume the one you have" — and, once the offer has
+/// been taken up or the errand written off, the entry drains and the line goes back to the
+/// bare phrase, which by then means what it says.
+fn worker_note(task: &Task, on_it: Option<&OnIt>, now: DateTime<Utc>) -> Option<String> {
     match on_it {
-        Some(w) => {
+        Some(OnIt::Live(w)) => {
             let state = if w.busy { "busy" } else { "idle" };
             let mut note = format!("worker {} — {state} {}", w.session, ago_short(now, w.since));
             // What it is *doing*, not what it has said: a worker four minutes into a shell
@@ -457,6 +490,13 @@ fn worker_note(task: &Task, on_it: Option<&WorkingOnIt>, now: DateTime<Utc>) -> 
             }
             Some(note)
         }
+        Some(OnIt::CutOff) if task.status == TaskStatus::Doing => Some(
+            "nobody on it — the restart cut its worker off, and its thread is still on the \
+             boot offer"
+                .to_owned(),
+        ),
+        // Same rule as below: said only where nobody is a problem.
+        Some(OnIt::CutOff) => None,
         None if task.status == TaskStatus::Doing => Some("nobody on it".to_owned()),
         None => None,
     }
@@ -786,7 +826,7 @@ mod tests {
 
     /// The common case for the projection tests that predate the join: nothing registered, so
     /// every task is unattended. `doing` rows then carry "nobody on it", which is correct.
-    fn nobody() -> std::collections::HashMap<String, WorkingOnIt> {
+    fn nobody() -> std::collections::HashMap<String, OnIt> {
         std::collections::HashMap::new()
     }
 
@@ -812,8 +852,12 @@ mod tests {
         task
     }
 
-    fn staffed(task: &Task, w: WorkingOnIt) -> std::collections::HashMap<String, WorkingOnIt> {
-        std::collections::HashMap::from([(task.subject.clone(), w)])
+    fn staffed(task: &Task, w: WorkingOnIt) -> std::collections::HashMap<String, OnIt> {
+        std::collections::HashMap::from([(task.subject.clone(), OnIt::Live(w))])
+    }
+
+    fn cut_off(task: &Task) -> std::collections::HashMap<String, OnIt> {
+        std::collections::HashMap::from([(task.subject.clone(), OnIt::CutOff)])
     }
 
     /// **The line this whole join exists for.** `doing` claims work is in flight; when the
@@ -825,6 +869,34 @@ mod tests {
         let owed = task("Ship the multilingual fix", TaskStatus::Doing);
         let text = render_projection(std::slice::from_ref(&owed), now(), &nobody());
         assert!(text.contains("nobody on it"), "{text}");
+    }
+
+    /// **The first minute of a restart is not an abandoned errand, and used to read as one.**
+    /// The switchboard is empty at boot by construction, so every `doing` task said "nobody
+    /// on it" — true, and indistinguishable from work dropped days ago. On 2026-08-17 the
+    /// voice read that ledger 67 seconds after a boot and reported five tasks as "只是开放任务,
+    /// 不是在执行"; the workers were up 16 seconds later. The phrase stays, the cause goes
+    /// with it.
+    #[test]
+    fn a_task_the_restart_unstaffed_says_what_happened_to_it() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let text = render_projection(std::slice::from_ref(&owed), now(), &cut_off(&owed));
+        assert!(text.contains("nobody on it"), "the phrase is not softened: {text}");
+        assert!(text.contains("restart cut its worker off"), "{text}");
+        assert!(text.contains("boot offer"), "there is a mind to resume, and that is the move: {text}");
+    }
+
+    /// And it is the same rule as the bare phrase about *where* it may be said. A `todo` or a
+    /// `serving` duty whose last handler died in the restart is not a problem to raise — the
+    /// phrase would be on most of the list again, cause and all.
+    #[test]
+    fn a_cut_off_todo_or_duty_is_still_not_flagged() {
+        for status in [TaskStatus::Todo, TaskStatus::Serving] {
+            let owed = task("Watch the ops group", status);
+            let text = render_projection(std::slice::from_ref(&owed), now(), &cut_off(&owed));
+            assert!(!text.contains("nobody on it"), "{status:?}: {text}");
+            assert!(!text.contains("restart"), "{status:?}: {text}");
+        }
     }
 
     /// And when someone *is* on it, the line carries the three facts that separate working

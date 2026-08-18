@@ -210,31 +210,47 @@ pub async fn agent_window(
 /// task" is a question about the present, so the answer is derived from what is actually
 /// registered at the moment the window is built. That is what makes it impossible for this to
 /// be stale: after a restart the switchboard is empty, so every `doing` task reads *nobody on
-/// it*, which is exactly true and exactly the thing that needs saying.
+/// it*, which is exactly true.
+///
+/// **True is not the whole answer, though, and the gap between them is a whole minute long.**
+/// The switchboard being empty right after a boot says nothing about whether the work was
+/// abandoned or whether the process simply died holding it, and the second is the common
+/// case — Cognition needs an LLM turn to read the boot offer and put people back on things.
+/// So the restart's own casualties are laid down first, from the offer, and the live join
+/// goes on top: a subject that has been restaffed is live, and one that has not says why it
+/// is not ([`tasks::OnIt::CutOff`]).
+///
+/// The order is also the tie-break, and it is deliberately this way round. Registering a live
+/// worker is what drains the cut-off entry, so the two sets are disjoint except during that
+/// drain — and a race there should resolve to the live answer, which cannot be a false alarm.
 ///
 /// Keyed by subject, last writer wins. Two live workers on one task is a mistake worth seeing
 /// rather than an invariant worth enforcing here — the ledger line will name one of them, and
 /// the roster (`GET /api/workers`) shows both.
-fn working_on_tasks() -> std::collections::HashMap<String, tasks::WorkingOnIt> {
-    crate::foundation::registry::global()
-        .statuses()
+fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
+    let registry = crate::foundation::registry::global();
+    let mut join: std::collections::HashMap<String, tasks::OnIt> = registry
+        .lost_subjects()
         .into_iter()
-        .filter(|st| st.role.is_worker())
-        .filter_map(|st| {
+        .map(|subject| (subject, tasks::OnIt::CutOff))
+        .collect();
+    join.extend(registry.statuses().into_iter().filter(|st| st.role.is_worker()).filter_map(
+        |st| {
             let subject = st.subject.clone()?;
             Some((
                 subject,
-                tasks::WorkingOnIt {
+                tasks::OnIt::Live(tasks::WorkingOnIt {
                     session: st.id,
                     busy: st.busy,
                     doing: st.doing.clone(),
                     // The state clock, not the `doing` clock: what a reader is asking is how
                     // long this session has been in the shape it is in.
                     since: st.state_since,
-                },
+                }),
             ))
-        })
-        .collect()
+        },
+    ));
+    join
 }
 
 /// The learned read on speaking up unprompted (`proactivity.md`), projected rather

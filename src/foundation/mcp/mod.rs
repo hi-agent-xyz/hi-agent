@@ -1278,14 +1278,20 @@ async fn dispatch_tool(
                 None => None,
                 Some(thread) if thread.trim().is_empty() => None,
                 Some(thread) => {
-                    let offered = registry::global().lost_workers();
-                    if !offered.iter().any(|end| end.thread.as_deref() == Some(thread)) {
+                    // **Taken, not checked.** Reading the offer here and discarding the
+                    // entry later leaves a window where two calls both pass, and what comes
+                    // out is two sessions resumed from one dead errand's mind, each
+                    // registered as owning it — see [`registry::Registry::take_lost_thread`].
+                    if !registry::global().take_lost_thread(thread) {
+                        let left = registry::global().lost_workers().len();
                         return tool_error(&format!(
                             "no errand from the last run is on thread `{thread}` — `resume` \
-                             takes a thread from the boot glance's offer, and there {}",
-                            match offered.len() {
-                                0 => "is no offer this run".to_string(),
-                                n => format!("are {n} on it"),
+                             takes a thread from the boot glance's offer, and takes it once, \
+                             so a thread already picked up this run is no longer on it; \
+                             there {}",
+                            match left {
+                                0 => "is nothing left on the offer".to_string(),
+                                n => format!("are {n} still on it"),
                             }
                         ));
                     }

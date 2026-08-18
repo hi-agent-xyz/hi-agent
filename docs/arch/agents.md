@@ -222,6 +222,18 @@ idle-out, or a hand-off that never happened, and until it was projected it was i
 from work in hand. It is a question, not an alarm — put someone on it, or write down that it is
 finished, blocked, or dropped — but it is not a state a task may sit in silently.
 
+**The minute after a boot is the one time that sentence needs its cause attached.** The
+switchboard is empty by construction at boot, so every `doing` task reads "nobody on it" at
+once. True — and the reading it invites, that the work was dropped, is wrong: the process died
+holding it, those errands' minds are sitting on the offer, and Cognition needs a turn to read
+the glance and put people back on things. That turn was measured at around eighty seconds, and
+it was long enough for the voice to report five running tasks as merely open. So the offer is
+not only a list Cognition picks from — it is what the ledger consults to say *why* nobody is on
+a task. A subject still on it reads "nobody on it — the restart cut its worker off, and its
+thread is still on the boot offer": the phrase intact, the cause named, and the cheap move
+named with it. When the errand is picked up or the task moves, the entry drains and the line
+goes back to the bare phrase, which by then means what it says.
+
 "Nobody on it" is said only where nobody is a problem, which is `doing`. An unattended `todo` is
 what a `todo` is, and a `serving` duty is between handler bursts for most of its life, so
 flagging those would put the phrase on most of the list and train the reader straight past it —
@@ -428,20 +440,30 @@ worker losing its context entirely and being recovered only if a task facet happ
 **The offer is taken with `CreateWorker(resume:)`, and only ever from the offer.** The handle is
 the thread id, and the host refuses one it did not just offer — a resume is the one argument a
 caller cannot derive from the work in front of it, and an unchecked thread id would fall back to
-a cold open that the caller believes carries context. Resuming yields a *new* session: new id,
-new registration, same prompt. Only where its mind starts differs, because to everything
+a cold open that the caller believes carries context. **Taken is literal — the check and the
+discard are one act**, so a thread leaves the offer the moment it is claimed. Reading it and
+removing it later leaves a window where two calls both pass, and what comes out is two sessions
+opened from one dead errand's mind, each registered as owning the task. This is the take-once
+rule the rungs' resume slot already expresses, and it carries the same consequence: a resume
+that fails downstream retries as a cold open, never as a second claim on the same mind.
+Resuming yields a *new* session: new id, new registration, same prompt. Only where its mind starts differs, because to everything
 downstream — ownership, addressing, reporting — this is a session that began now.
 
 **Only the previous run's errands are offered, so the offer ages out by itself.** The directory
-is append-only and unpruned and nothing marks an offer as consumed, so any wider filter would
-re-offer a three-week-old errand at every boot until it read as furniture. One restart is the
-window.
+is append-only and unpruned, so any wider filter would re-offer a three-week-old errand at every
+boot until it read as furniture. One restart is the window. Consumption *is* tracked, but only
+within a run — the entry leaves when its thread is taken or a live worker registers under its
+subject — and that lives in memory and dies with the process, so the boot filter cannot lean on
+it.
 
 **What the offer is against is not lost context — it is the silent drop.** An errand resumed and
 an errand judged stale are equally fine outcomes; a task left `doing` with nobody on it is not,
 because it is indistinguishable from a task being worked on — to the person, to the voice, and
 to the rung that wrote it an hour later. So the offer names the alternative rather than leaving
-it implied, and asks for the disposition in the ledger either way.
+it implied, and asks for the disposition in the ledger either way. And since an entry leaves
+only when the errand is picked up or the task moves, one still on the offer an hour into the run
+*is* the silent drop — no longer decaying into an ordinary-looking "nobody on it", but saying on
+the task's own line that a restart took its worker and nothing ever replaced it.
 
 **A resumed thread is re-handed its prompt.** `baseInstructions` is passed on resume exactly as
 on open, so a thread resumed by a newer binary runs that binary's prompt — the rungs' prompts are
