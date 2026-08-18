@@ -15,9 +15,11 @@
 //    just ended, at 4 · 4 · 2 — rather than in one long page of full-width rows. A row
 //    spent the frame's whole width on a line that was mostly empty and then bought the
 //    title out of what was left. A column-width card gives each field its own line instead.
-//    The frame here is the window *minus* the conversation rail (`docs/arch/stage.md`,
-//    ~320-460px), which is what the columns fold on: three, then two, then one, off a
-//    container query, because the rail changes this frame without changing the window.
+//    The columns fold on the frame — three, then two, then one — off a container query
+//    rather than a media query. The frame is the whole window now that the conversation
+//    is a popover over it rather than a rail beside it (`docs/arch/stage.md`), so the two
+//    measure the same thing here; the container query stays because the frame is what the
+//    layout is actually a function of, and the host is free to inset it again.
 //
 //    **And a card's title is one line, because what the server sends is now a headline.**
 //    A session used to be registered under the brief it was handed — for real work, a
@@ -1426,8 +1428,8 @@ const CSS = `
   /* ── the wire log panel ───────────────────────────────────────────────────── */
 
   /* Absolute, not fixed: it belongs to this view's frame. Fixed would break out of the
-     content inset and cover the conversation rail, which the plane model says an agent
-     surface may never do (docs/arch/stage.md). */
+     content inset and lie over the host's own surfaces — the controls, the conversation —
+     which the plane model says an agent surface may never do (docs/arch/stage.md). */
   .hi-workers__scrim {
     position: absolute;
     inset: 0;

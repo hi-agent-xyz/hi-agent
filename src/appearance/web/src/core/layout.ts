@@ -19,23 +19,25 @@
 
 /** How the conversation is presented. One surface, four states — not four surfaces.
  *
- * - `stage` — it fills the frame: the default face.
- * - `rail`  — a column beside the agent's view, with its full scrollback and input.
- * - `pill`  — collapsed to the newest line, floating over the view.
- * - `hidden` — a view is rendering the words itself.
+ * - `stage`   — it fills the frame: the default face.
+ * - `popover` — a panel over the agent's view, in the corner the controls hold,
+ *               carrying the full scrollback and its own input.
+ * - `pill`    — collapsed to the newest line, floating over the view.
+ * - `hidden`  — a view is rendering the words itself.
+ *
+ * The popover replaced a rail: a column the view had to inset past for as long as
+ * the conversation was open. The view is what is being read while it is up, and a
+ * permanent third of the window is a steep price for a surface that is idle most
+ * of that time — overlaying on demand costs the view nothing while it is closed.
+ * See `docs/arch/stage.md`.
  */
-export type Conversation = "stage" | "rail" | "pill" | "hidden";
+export type Conversation = "stage" | "popover" | "pill" | "hidden";
 
 /** The self-view fills the frame when nothing else is on it, else a corner pip. */
 export type Camera = "fill" | "pip";
 
 /** The input line follows the conversation — it is where the messages are. */
-export type Input = "center" | "rail";
-
-/** Below this window width there is no rail: a window this narrow cannot show two
- * things at once, and splitting it gives you two unusable ones. The conversation
- * is then the whole stage or the pill, and the person swaps between them. */
-export const RAIL_MIN_WIDTH = 760;
+export type Input = "center" | "popover";
 
 export interface StageInput {
   /** The agent has a view up. */
@@ -44,10 +46,8 @@ export interface StageInput {
   camera: boolean;
   /** The top-most view renders the conversation itself. */
   ownsConversation: boolean;
-  /** Window width, for the rail threshold. */
-  width: number;
-  /** The person collapsed the rail. A window preference — never server state, so
-   * a phone with no room for a rail cannot collapse a desktop's. */
+  /** The person put the conversation away. A window preference — never server
+   * state, so a phone cannot collapse a desktop's. */
   collapsed: boolean;
 }
 
@@ -57,18 +57,21 @@ export interface Stage {
   input: Input;
   /** How far to fade the presence while something leads. */
   demote: number;
-  /** Convenience for the shell: the view frame must inset past the rail. */
-  rail: boolean;
 }
 
 /**
  * Arrange the stage.
  *
  * The conversation yields the *frame* to whatever the agent puts up, and never the
- * *screen*: it narrows to a rail rather than collapsing, because it is the one
- * surface that keeps — see `docs/arch/text-transcript.md`. It collapses to the pill
- * only when the person asks or the window has no room, and disappears only when a
- * view has taken over rendering the words.
+ * *screen*: it becomes a panel over the view rather than degrading, because it is
+ * the one surface that keeps — see `docs/arch/text-transcript.md`. It collapses to
+ * the pill only when the person asks, and disappears only when a view has taken
+ * over rendering the words.
+ *
+ * There is no width threshold any more. The rail needed one — below ~760px a
+ * window cannot be split into two usable columns — but a popover splits nothing,
+ * so the same gesture works at every size and a narrow window gets the whole
+ * scrollback rather than only the newest line.
  *
  * The camera counts as occupying the stage for the same reason a view does: the
  * self-view is full-bleed, so leaving the conversation on the stage over it would
@@ -76,22 +79,20 @@ export interface Stage {
  */
 export function stage(input: StageInput): Stage {
   const occupied = input.content || input.camera;
-  const tooNarrow = input.width < RAIL_MIN_WIDTH;
 
   const conversation: Conversation =
     input.content && input.ownsConversation
       ? "hidden"
       : !occupied
         ? "stage"
-        : input.collapsed || tooNarrow
+        : input.collapsed
           ? "pill"
-          : "rail";
+          : "popover";
 
   return {
     conversation,
     camera: input.content ? "pip" : "fill",
-    input: conversation === "rail" ? "rail" : "center",
+    input: conversation === "popover" ? "popover" : "center",
     demote: input.content ? 0.72 : 0,
-    rail: conversation === "rail",
   };
 }

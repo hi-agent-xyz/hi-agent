@@ -926,9 +926,9 @@ pub async fn start(
                 .await
                 .context("compiling the built-in out-of-energy view")?,
         ),
-        // Declares nothing. The notice takes the agent's half of the screen; the
-        // conversation rails beside it, so the person keeps the record of what was
-        // said and the line to answer on. See `docs/arch/stage.md`.
+        // Declares nothing. The notice takes the agent's plane; the conversation
+        // opens over it, so the person keeps the record of what was said and the
+        // line to answer on. See `docs/arch/stage.md`.
         traits: None,
         // No ref on purpose. A ref exists so a *restored* view can be recompiled from
         // its source, and the condition slot is never restored from one: it is

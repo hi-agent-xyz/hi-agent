@@ -299,16 +299,19 @@ button {
   --z-view: 1;
   --z-cover: 2;
 
-  /* How much of the frame the conversation rail holds. Zero unless the shell says
-     otherwise, so every surface that has to step past it can do so unconditionally. */
-  --hi-rail: 0px;
-}
-
-/* The rail's measure: a readable line, never a column of two-word wraps, and
-   never more than a third of the window. Set on the root (not on the rail) so the
-   view frame and the input line can inset by the same number. */
-.hi-root[data-rail="open"] {
-  --hi-rail: clamp(320px, 30vw, 460px);
+  /* The conversation popover's box. Its measure is a readable line, never a column
+     of two-word wraps, and it gives way to the window on anything small enough that
+     a fixed 420px would run off the edge. Declared on the root rather than on the
+     panel because the input line is a separate fixed box that has to land under it,
+     the same width and the same right edge — one number, two surfaces. The view
+     frame is NOT among them: nothing insets past a popover, which is the whole of
+     what changed when the rail became one. */
+  --hi-pop-width: min(420px, calc(100vw - 40px));
+  --hi-pop-right: max(20px, var(--hi-safe-right));
+  /* The bottom band's rows, counted from the window's floor: the control cluster
+     is 38px tall sitting at 20, and the input line clears it by 10. Named so the
+     panel can sit on whichever of the two is actually the top row. */
+  --hi-pop-floor: calc(max(20px, var(--hi-safe-bottom)) + 48px);
 }
 
 /* --- Planes -----------------------------------------------------------
@@ -518,21 +521,44 @@ button {
   pointer-events: auto;
 }
 
-/* The rail: the conversation beside the agent's view instead of behind it. It
-   keeps everything the lead position has — the scrollback, the input at its foot,
-   the scroll position — in a narrower box, because narrowing is what a
-   conversation that KEEPS does when something else needs the frame. It is opaque
-   (the same paper the views stand on), so a view pinning a background at inset 0
-   still bleeds under it without showing through. */
-.hi-stage.hi-stage--rail {
-  right: auto;
-  width: var(--hi-rail);
-  padding-left: max(0px, var(--hi-safe-left));
-  background: var(--paper);
-  border-right: 1px solid var(--line);
+/* The popover: the conversation over the agent's view instead of beside it. It
+   keeps everything the lead position has — the whole scrollback, the input at its
+   foot, the scroll position — in a panel that takes none of the view's width,
+   because a view is what is being read while it is up and a conversation that
+   KEEPS can wait in the corner it is opened from.
+
+   It rises out of the controls cluster, so it is pinned to that corner rather than
+   centred: the button that opens it is directly below its foot, and its right edge
+   is that cluster's right edge, `--hi-pop-right` being the same 20px the controls
+   sit at. Bounded in height rather than stretched to the window — a panel that
+   reaches the titlebar is a drawer, and a drawer is the shape this is not. The
+   surface + blur is the app's floating-panel recipe (the drop box uses it too),
+   and it is what keeps the words legible over whatever a view paints under it. */
+.hi-stage.hi-stage--popover {
+  inset: auto;
+  right: var(--hi-pop-right);
+  bottom: var(--hi-pop-floor);
+  width: var(--hi-pop-width);
+  height: min(58vh, 560px, calc(100dvh - var(--hi-safe-top) - 148px));
+  border-radius: 18px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 18px 60px var(--shadow-strong);
+  /* The chat's own corners are square; the panel's radius is what clips them. */
+  overflow: hidden;
+  animation: hi-popover-in 180ms var(--ease);
 }
 
-.hi-stage.hi-stage--rail .hi-chat {
+/* While the input line holds the row above the controls, the panel stands on it
+   instead. Keyed on the line being *rendered* — the text channel can be off, and
+   `KeyboardFallback` renders nothing then — the same `:has` the pill uses. */
+.hi-root:has(.hi-kbd) .hi-stage.hi-stage--popover {
+  bottom: calc(var(--hi-pop-floor) + 56px);
+}
+
+.hi-stage.hi-stage--popover .hi-chat {
   width: 100%;
 }
 
@@ -646,8 +672,8 @@ button {
 }
 
 /* --- The conversation, collapsed --------------------------------------
-   The pill is the conversation collapsed, not a separate surface: the person
-   asked for the frame back (or the window is too narrow for a rail), so the list
+   The pill is the conversation collapsed, not a separate surface: the person put
+   the popover away and asked for the frame back, so the list
    shrinks to the line it currently ends on and floats over whatever has the
    stage — a dark scrim keeps it legible against anything behind. One fixed dock,
    centred above the bottom band. A view that renders the words itself hides this
@@ -736,9 +762,11 @@ button {
 
    The one thing the layer still supplies is the frame, because its insets are not
    the view's to know: the window's own chrome floats over the top strip (traffic
-   lights + centred title), the bottom band is shared with the pill, the camera pip
-   and the channel controls, and the left edge is the conversation rail whenever
-   one is open — all of them on the `cover` plane, all of them above this one.
+   lights + centred title) and the bottom band is shared with the pill, the camera
+   pip and the channel controls — all of them on the `cover` plane, all of them
+   above this one. The conversation is not among them any more: as a popover it
+   covers the frame rather than shortening it, so the view is handed the same
+   width whether it is open or away.
 
    Those insets ride on the view's own root as a **transparent border**, not as
    padding on this layer, and the difference is the whole point: a border is inside
@@ -798,8 +826,8 @@ button {
    and this layer declared no overflow at all, so a tall view was cut at the window
    edge with no scrollbar and no gesture that could reach the rest — the bottom of it
    simply did not exist. That is not something a view could reliably avoid, either:
-   the frame changes size under it when the rail opens, when the person resizes the
-   window, and between the review viewport and their actual one.
+   the frame changes size under it when the person resizes the window, and between
+   the review viewport and their actual one.
 
    So the layer carries a scroll of last resort. It is `auto`, so a view that fits —
    the poster, which is the normal and intended shape — is untouched and shows no
@@ -820,7 +848,7 @@ button {
   padding: var(--hi-safe-top)
     max(20px, var(--hi-safe-right))
     calc(var(--hi-safe-bottom) + 76px)
-    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
+    max(20px, var(--hi-safe-left));
   background: var(--paper);
   overflow-x: hidden;
   overflow-y: auto;
@@ -850,7 +878,7 @@ button {
   border-width: var(--hi-safe-top)
     max(20px, var(--hi-safe-right))
     calc(var(--hi-safe-bottom) + 76px)
-    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
+    max(20px, var(--hi-safe-left));
   background-origin: border-box !important;
 }
 
@@ -871,23 +899,23 @@ button {
   pointer-events: auto;
 }
 
-/* At the foot of the rail, under the messages it is adding to. The input follows
-   the conversation: a line nowhere near the messages reads as a command bar. It
-   also drops back below the control row, because the rail owns its own column and
-   the controls are not in it. */
-.hi-kbd.hi-kbd--rail {
-  left: max(0px, var(--hi-safe-left));
-  right: auto;
-  width: var(--hi-rail);
-  bottom: max(14px, var(--hi-safe-bottom));
-  padding: 0 16px;
+/* Under the conversation popover, as its foot: same width, same right edge, one
+   row lower — the panel's own bottom rises by exactly this row to make space (see
+   the `:has(.hi-kbd)` rule up in the conversation block). The input follows the
+   conversation, because a line nowhere near the messages reads as a command bar.
+   It keeps the centred line's row rather than dropping to the floor: the controls
+   cluster is in this corner and the two would sit on each other. */
+.hi-kbd.hi-kbd--popover {
+  left: auto;
+  right: var(--hi-pop-right);
+  width: var(--hi-pop-width);
 }
 
 /* Same step-past-the-pip the collapsed pill takes (the pip is
    clamp(180px, 24vw, 520px) wide from the left margin). Only the centred line
-   owes the corner anything — the railed one is in its own column, and the pip
-   steps past the rail rather than the other way round. */
-.hi-root:has(.hi-selfview--pip) .hi-kbd:not(.hi-kbd--rail) {
+   owes the corner anything — the popover's foot is over on the right, and the pip
+   holds the left. */
+.hi-root:has(.hi-selfview--pip) .hi-kbd:not(.hi-kbd--popover) {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
 
@@ -1141,9 +1169,6 @@ button {
 .hi-selfview {
   position: fixed;
   inset: 0;
-  /* Steps past the conversation rail so the person sees all of themselves rather
-     than the part the rail leaves over. */
-  left: var(--hi-rail);
   overflow: hidden;
   pointer-events: none;
   background: #0b0d10;
@@ -1171,8 +1196,7 @@ button {
 }
 
 .hi-selfview--pip {
-  inset: auto auto calc(var(--hi-safe-bottom) + 20px)
-    calc(max(20px, var(--hi-safe-left)) + var(--hi-rail));
+  inset: auto auto calc(var(--hi-safe-bottom) + 20px) max(20px, var(--hi-safe-left));
   width: clamp(180px, 24vw, 520px);
   height: auto;
   aspect-ratio: 4 / 3;
@@ -1188,6 +1212,14 @@ button {
 @keyframes hi-sentence-in {
   from { opacity: 0; transform: translateY(10px); filter: blur(3px); }
   to   { opacity: 1; transform: none; filter: blur(0); }
+}
+
+/* The panel rises out of the corner it is opened from. Only on the way in: the
+   chat is never unmounted, so there is no leaving element to animate — it stops
+   being visible, which is what keeps its scroll position. */
+@keyframes hi-popover-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* --- Reduced motion --------------------------------------------------- */
@@ -1209,9 +1241,10 @@ button {
   /* No `.hi-stage` override here. It used to pull the lead position to `top: 46%`
      and `width: 92vw`, which was right when the lead was a couple of floating
      sentences and wrong once it became the chat — it squashed the conversation
-     into the lower half of an already small window. A window this narrow is below
-     the rail threshold anyway, so the conversation is either the whole stage or
-     the pill, and both want the full frame. */
+     into the lower half of an already small window. The lead position wants the
+     whole frame at every size, and the conversation panel already gives way to a
+     window this narrow on its own: `--hi-pop-width` resolves to the window minus
+     its margins, so it lands as a full-width sheet without a breakpoint. */
   .hi-sentence {
     font-size: clamp(15px, 5vw, 24px);
   }

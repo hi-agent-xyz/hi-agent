@@ -13,10 +13,10 @@ interface KeyboardFallbackProps {
   onOpen: () => void;
   /** Turn the channel off — e.g. Esc. */
   onClose: () => void;
-  /** Where the line sits: centred in the bottom band, or at the foot of the
-   * conversation rail. The input follows the conversation, because typing into a
+  /** Where the line sits: centred in the bottom band, or under the conversation
+   * popover as its foot. The input follows the conversation, because typing into a
    * line nowhere near the messages is what makes a chat feel like a command bar. */
-  anchor: "center" | "rail";
+  anchor: "center" | "popover";
 }
 
 /**
@@ -94,7 +94,7 @@ export function KeyboardFallback({
   if (!open) return null;
 
   return (
-    <div className={anchor === "rail" ? "hi-kbd hi-kbd--rail" : "hi-kbd"}>
+    <div className={anchor === "popover" ? "hi-kbd hi-kbd--popover" : "hi-kbd"}>
       <input
         ref={inputRef}
         data-hi-base-text-input

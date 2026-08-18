@@ -31,8 +31,8 @@ interface ChannelControlsProps {
   /** Close the agent's view — the conversation takes the screen back. */
   onCloseViews: () => void;
   /** How the conversation is currently drawn, from the compositor. */
-  conversation: "stage" | "rail" | "pill" | "hidden";
-  /** Collapse the conversation rail to the pill, or bring it back. */
+  conversation: "stage" | "popover" | "pill" | "hidden";
+  /** Put the conversation popover away to the pill, or bring it back. */
   onToggleConversation: () => void;
 }
 
@@ -46,9 +46,10 @@ interface ChannelControlsProps {
  * Order: status · mic · speaker · keyboard · attach · camera · conversation · reset.
  *
  * The conversation toggle is the one control that appears and disappears, and it
- * has to: it collapses the rail to the pill and back, and there is no rail to
- * collapse unless something else is on the stage. Showing it while the
- * conversation *is* the stage would offer to hide the only thing on screen.
+ * has to: it opens the conversation popover over whatever is up and puts it away
+ * again, and there is nothing to open it over unless something else is on the
+ * stage. Showing it while the conversation *is* the stage would offer to hide the
+ * only thing on screen.
  */
 export function ChannelControls({
   activity,
@@ -68,8 +69,8 @@ export function ChannelControls({
   conversation,
   onToggleConversation,
 }: ChannelControlsProps) {
-  const railed = conversation === "rail";
-  const collapsible = railed || conversation === "pill";
+  const open = conversation === "popover";
+  const collapsible = open || conversation === "pill";
   return (
     <div className="hi-channels" role="group" aria-label="agent status and channels">
       <StatusButton activity={activity} />
@@ -133,13 +134,14 @@ export function ChannelControls({
       {collapsible && (
         <button
           type="button"
-          className={`hi-channel${railed ? " is-on" : ""}`}
+          className={`hi-channel${open ? " is-on" : ""}`}
           onClick={onToggleConversation}
-          title={railed ? "conversation — tap to collapse" : "conversation — tap to open"}
-          aria-pressed={railed}
-          aria-label={railed ? "collapse the conversation" : "open the conversation"}
+          title={open ? "conversation — tap to put away" : "conversation — tap to open"}
+          aria-pressed={open}
+          aria-expanded={open}
+          aria-label={open ? "put the conversation away" : "open the conversation"}
         >
-          <ConversationGlyph open={railed} />
+          <ConversationGlyph open={open} />
         </button>
       )}
 
@@ -236,17 +238,27 @@ function AttachGlyph() {
   );
 }
 
-/** The frame with its rail: filled while the conversation holds a column, an empty
- * frame once it has collapsed to the pill. The glyph is the layout, not a speech
- * bubble — what the button changes is how the screen is divided. */
+/** The frame with the conversation panel over its corner: solid while the panel is
+ * up, an outline of where it would land once it is away. The glyph is the layout,
+ * not a speech bubble — what the button changes is what is over the frame. It
+ * stops dividing the frame in two here, because the popover no longer does. */
 function ConversationGlyph({ open }: { open: boolean }) {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-      <rect x="4" y="5" width="16" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
       {open ? (
-        <rect x="4" y="5" width="6" height="14" rx="2.5" fill="currentColor" opacity="0.55" />
+        <rect x="11" y="9" width="9" height="10" rx="2" fill="currentColor" opacity="0.55" />
       ) : (
-        <path d="M10 5v14" stroke="currentColor" strokeWidth="1.6" strokeDasharray="2 2.5" />
+        <rect
+          x="11"
+          y="9"
+          width="9"
+          height="10"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeDasharray="2 2.5"
+        />
       )}
     </svg>
   );

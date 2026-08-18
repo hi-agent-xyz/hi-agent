@@ -61,9 +61,11 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * no size class to resolve: the server hands over at most two layers in z-order
  * (the agent's content, then the host's condition notice), and each gets the same
  * `.hi-view-fill` layer with its own layout. The frame's non-negotiable insets are
- * the window chrome, the bottom band the controls float in, and — while the
- * conversation holds a rail — the rail, all of which `.hi-view-fill` puts on the
- * view's own root as a transparent border rather than as padding of its own (see
+ * the window chrome and the bottom band the controls float in — and those two
+ * only: the conversation is a popover over this layer now rather than a rail
+ * beside it, so nothing it does changes the frame's size. `.hi-view-fill` puts
+ * both insets on the view's own root as a transparent border rather than as
+ * padding of its own (see
  * the stylesheet: a view returning several roots keeps the padding instead). So a
  * view that lays out nothing still lands legible and clear of the chrome, and a
  * ground it paints — pinned at `inset: 0` or simply set on the root it flows —

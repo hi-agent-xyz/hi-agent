@@ -236,9 +236,9 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 
 /// How long a "what is it doing" line may be before it is cut.
 ///
-/// It renders as one line on a roster beside the title, and the frame it renders in may be
-/// the window minus a ~400px conversation rail (`docs/arch/stage.md`), so a line that wraps
-/// three times pushes every other session off the page.
+/// It renders as one line on a roster beside the title, in a frame that is the window but
+/// may have the ~420px conversation popover over a corner of it (`docs/arch/stage.md`), so
+/// a line that wraps three times pushes every other session off the page.
 const ACTIVITY_LINE_CHARS: usize = 120;
 
 /// How long a session's [`title`](Status::title) may be before it is cut.
