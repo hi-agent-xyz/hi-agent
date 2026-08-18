@@ -12,6 +12,7 @@ use axum::routing::{get, patch, post, put};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, mpsc};
+use tower_http::compression::{CompressionLayer, CompressionLevel};
 use tower_http::trace::TraceLayer;
 
 use crate::mind::memory::Memory;
@@ -688,7 +689,18 @@ pub fn build(
         // The agent's view workshop on disk (under data_dir) — compiled view modules,
         // images, and build-agent artifacts. Served here, not in the appearance
         // router, because that router is embed-only and stateless.
-        .route("/views/{*path}", get(generated::views_file))
+        //
+        // Its own `Router` purely so the compressor can be scoped to it. `views_file`
+        // reads a whole file and hands back one buffered body, so it compresses like
+        // the embedded assets do — but it is the only route on this router that may
+        // be wrapped, which is why it cannot simply be a `.layer` on the parent:
+        // every `/api/*` neighbour above is a long-poll or SSE body that a
+        // compressor would buffer.
+        .merge(
+            Router::new()
+                .route("/views/{*path}", get(generated::views_file))
+                .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),
+        )
         .with_state(state.clone())
         .merge(crate::appearance::router())
         .fallback(not_found);

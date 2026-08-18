@@ -25,7 +25,9 @@ hi-wire = { path = "crates/hi-wire" }
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace"] }
+# `compression-*` is scoped to the static surfaces (the embedded SPA and the view
+# workshop) — never `/api/*`, whose long-poll and SSE bodies must not be buffered.
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "compression-br"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }

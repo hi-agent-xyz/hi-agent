@@ -63,6 +63,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use tower_http::compression::{CompressionLayer, CompressionLevel};
 
 /// Build the appearance router.
 ///
@@ -114,6 +115,30 @@ where
         .route("/site.webmanifest", get(|| async { serve_embedded("site.webmanifest") }))
         .route("/vite.svg", get(vite_svg))
         .route("/assets/{*path}", get(asset))
+        // Compress the SPA on the way out. Everything above is a whole buffered
+        // body — HTML, JS, CSS, icons — so there is nothing here to stall, which
+        // is exactly why the layer lives on *this* router and not on the server's:
+        // `/api/out/text` and the observe streams next door are long-poll bodies
+        // that end an utterance by closing, and a compressor between them and the
+        // socket would hold those bytes back.
+        //
+        // The bytes are already built and content-hashed, so this is the whole
+        // saving available: the SPA's first load is ~420 kB raw against ~125 kB
+        // encoded. Vite's many small entry chunks are a deliberate part of the
+        // import-map contract (see `web/vite.config.ts`) and cost ~5% against one
+        // combined blob — a rounding error next to sending it uncompressed.
+        //
+        // `DefaultPredicate` skips what must not be touched: bodies under 32 B,
+        // anything already `content-encoding`d, `text/event-stream`, and
+        // already-compressed image types — so the icon set below passes through.
+        // Quality 6, not the default. tower-http defaults to brotli quality 4, and
+        // browsers prefer `br` over `gzip` — so the default actually ships *more*
+        // bytes than gzip would (56,844 vs 56,549 on the 180 kB `global` chunk).
+        // Measured on that chunk: q4 56,844 (6 ms) · q6 53,307 (2 ms) · q11 49,036
+        // (149 ms). q6 beats gzip and stays cheap; q11 buys 8% more for 70x the CPU,
+        // on a body that is recompressed per request because nothing caches it here.
+        // `Precise(6)` leaves gzip at its own level 6 — already its default.
+        .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6)))
 }
 
 /// The language the person picked, captured once at startup.
