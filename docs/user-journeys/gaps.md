@@ -969,6 +969,58 @@ loop {
 
 ---
 
+## 29 · 干完了、干对了、然后没送到——而且全程没有任何一环报错 · ✅ **已修 `8f09542`,未复测**
+
+**症状。** 老板要的一个 view **做完了、改对了、存在磁盘上**,然后**从来没有送到他眼前**。22 分钟后他自己发现,问"这个任务完成了,但我什么都没收到"。整条链路上**没有一处失败**:worker 交了活,Cognition 收了报告,Reaction 收了消息,ledger 写了 `done`。每一环都成功了,而人什么都没拿到。
+
+**证据(2026-08-18,本机真实使用,非脚本 journey;全部取自对话之外)。**
+
+时间线取自 `data/sessions.jsonl`(observatory 事件流)与 `data/memory/raw/{text,view}/2026-08-18/`:
+
+| 时刻(UTC) | 来源 | 发生了什么 |
+|---|---|---|
+| 05:43:46 | `text.jsonl` `signal_in` | 老板:"need a view pls" / "give some trip plans" |
+| 06:03:46 | `text.jsonl` `signal_out` | 声音:"返川行程 view 已有 rough 版本…**尚未交付**" ← 明确的承诺 |
+| 06:25:08 | `sessions.jsonl` seq 386 | `worker_finished` — 改对的最终版完成 |
+| **06:25:54** | `tasks/holiday-2026-sichuan-trip-view/facet.md` | `status: done` + `completed_at`,正文写 *"Final corrected trip view **delivered** at stable ref"* |
+| **06:26:50** | `sessions.jsonl` seq 392 | Cognition → reaction,四段;前三段是 KT 台账、session 列表、Moss key;**最后一行**才是 "The corrected trip view is also ready at `zhao-li-2026-sichuan-trip/plan`." |
+| 06:27:10 / 06:27:14 | `text.jsonl` `signal_out` | 声音说了两句:Moss key、KT 状态。**第三件没说。** |
+| 06:32:17 | `text.jsonl` `signal_in` | 老板:"did you test??"(另一件事炸了,现场转热) |
+| 06:33:35 / 06:33:43 | `sessions.jsonl` seq 405/406 | **Reflection 抓到了**,分别告诉 reaction 和 cognition:这件事"没有被交到人手上" |
+| 06:54:22 | `text.jsonl` `signal_out` | 声音:"现在还没有可交付的新结果" ← 说这句时那个 view 已经躺在磁盘上 29 分钟 |
+
+两条**决定性**的外部证据:
+
+- `data/memory/raw/view/2026-08-18/view.jsonl` 当天**总共只有 7 条**上屏记录,最后一条是 06:16:22 的 `workers`——**早于这个 view 做完**。`grep -c sichuan` = **0**。它一次都没上过屏。
+- `data/views/zhao-li-2026-sichuan-trip/plan.jsx` 的 SHA-256 = `9f0a5066…`,与 worker 06:22:35 报告的最终版**逐字节相同**,`grep -c "新政\|仪陇"` = 21。**东西是好的**——改对了,存住了,只是没人看见。
+
+**机制,四层,每一层单独看都说得通。**
+
+1. **Cognition 天生看不见交付。** 它坐在对话之外,发给声音的**都是提议**(它自己的 prompt 就是这么写的),声音有权不采纳,而且**没有回执**。所以它判断"送到没有"时**只有 worker 那句话**可用——而 worker 说的 `delivered` 是"交到你手上"。**06:25:54 关账时它并非疏忽,它是在用手上仅有的信息做正确推理。**
+2. **`done` 是一扇单向门,而且是当场关死的。** `is_active()` = `Todo | Doing | Serving`,一写 `done`,这条 task **同时**退出 active 集合、退出 Cognition 的窗口、退出 Reaction 的窗口、退出以后每一次 glance-up ——全在一次文件写里。所以它不只是关错了,它是**在出错的同一秒关掉了唯一还能发现这个错的机制**。
+3. **一条 mail 夹了三件事,声音剪掉了第三件。** `LoopInput::Mail { owed }` 是**整批一个布尔**,不是每件一个;而 `reaction.md` 的 "match the detail to what they asked" / "count the messages too" 正好在推着它压缩。**被剪掉的恰恰是最没有近期上下文的那件**——因为老板最近这一分钟在吵的是别的事。
+4. **Reflection 抓到了,而这一抓是哑的。** 它给 reaction 的原话是 *"please surface it **only after** checking that requirement"*——一个前提条件,读起来是**别急着说**;它给 cognition 的那条落在一个已经写着 `done` 的账本上。而且它天生**晚 8 分钟**(它消化的是已经沉淀的段落),描述的状态早就变了,于是很容易被当成过时信息。
+
+**修法(`8f09542`)。补的是信息,不是闸。**
+
+`## On their screen`——真正上过屏的 view,新的在后——投进 Cognition 的窗口,和开放 task 列表、可达列表同一个待遇,理由也是同一条:**要去翻才知道的事,就是会漏的事**。关账权一点没动:一个写者、它自己的判断、host 不推翻任何状态。
+
+**被否掉的那条路值得记下来。** 先建的是另一版:task 里写 `deliverable: <ref>`,host 看见这个 ref 上屏才准它关账。**丢掉了**,因为那是"用一个要靠 agent 记得填的字段,去强制 agent 记得做事"——**忘了填的时候,机制不是不在,是悄悄不在**,和一次顺利的交付长得完全一样。**失败模式是静默的兜底比没有兜底更坏**,因为下游全都按它在的前提盖房子。投影不会这样坏:它要么在窗口里要么不在,而一个读到"你还没给他看过"仍然关账的 rung 是**做了决定**,不是漏了。
+
+顺带补了一个洞:journal 的上屏行记的是 **id 不是 ref**——真机上 `agent-context-reading/path` 这个 view 记成 `showed "agent-learning"`,于是"屏幕上出现过什么"这份唯一的持久记录,**没法和活儿本身的名字对上**。现在 ref 会跟着走。
+
+**没盖住的地方,三处,都是明知的:**
+
+- **只覆盖 view。** 文件、外部动作没有"上过屏"这种可观测落点,那一路目前**只有引导**。
+- **第 3 层没动。** 一条 mail 夹三件事、声音剪掉一件,机制还在。判断是:兜底既然每轮都在,就先看它够不够,而**再加一道一次性的框**同样可以被权衡掉、被剪掉——和被剪掉的那件事死于同一个动作。
+- **第 4 层没动。** Reflection 那句"只在确认之后再说"的措辞仍在 `reflection.md` 里。
+
+**未复测。** 需要的是一次真实演练:派一件出 view 的活,在它做完之前**把话题带到别处并且带热**,然后看——(a) 那个 view 到底有没有上屏;(b) `## On their screen` 里有没有它;(c) task 是在上屏**之后**才关的。判据全部取自 `raw/view/*/view.jsonl` 与 task facet,**不看 agent 自己怎么说**。
+
+**涉及。** [33](33-work-finishes-while-you-are-busy.md)(本条的正面 journey)、[25](25-resume-interrupted-work.md)(孪生:那条是被打断,这条是干完了没送到)、[20](20-reuse-built-views.md)、[26](gaps.md)(同一族:活一长人就听不见动静)。
+
+---
+
 ## 附:测试方法(复现用)
 
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:
