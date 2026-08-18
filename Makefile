@@ -9,7 +9,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock scripts/Info.plist \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test docker dmg app exe installer bump-version version
+.PHONY: help check-version build dev run test docker dmg app ios exe installer bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -47,6 +47,14 @@ dmg: check-version ## build hi-agent-<version>-macos-apple-silicon.dmg
 
 app: ## wrap the dev binary in a minimal ad-hoc-signed Hi Agent.app for local mic/camera testing (macOS)
 	./scripts/make-app.sh
+
+ios: ## build the iPhone/iPad client for the simulator (requires macOS and Xcode)
+	xcodebuild -project app/apple/ios/HiAgentIOS.xcodeproj \
+		-scheme HiAgentIOS \
+		-sdk iphonesimulator \
+		-configuration Debug \
+		CODE_SIGNING_ALLOWED=NO \
+		build
 
 # `make exe` is a Windows *build check*: it cross-compiles the binary from a
 # mac/linux host (proving the Windows code paths compile + link) without running
