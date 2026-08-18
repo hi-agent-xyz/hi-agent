@@ -361,8 +361,32 @@ surface are there to overrule the agent rather than to do its filing. That makes
 list bounded by closure and by nothing else: an instruction that says how to open a duty and
 not when to close one produces a list that only grows, and a projection where nothing reads as
 urgent because everything is on it. The two closing moments are symmetrical with the opening
-one and just as small — what was owed now exists, or the person stopped wanting it, in
-whatever words. A task whose last remaining step belongs to the person is not the agent's work
+one and just as small — what was owed **reached the person**, or the person stopped wanting
+it, in whatever words.
+
+**Reached them, not exists.** These read as the same moment and are not. A worker reports
+"delivered" meaning it handed the artifact up; the rung above closes on that word meaning
+the person has it; the two are the same word in every report anyone writes. And the rung
+doing the closing has no way to tell them apart: it is in no conversation, everything it
+sends the voice is a proposal the voice may decline, and nothing comes back. So a close
+written over a delivery that never happened is not carelessness — it is a rung reasoning
+correctly from the only information it has.
+
+**So give it the information, and leave the judgment alone.** `## On their screen` projects
+the views that actually went up into the ledger writer's window, the same way the open task
+list and the reachable list are projected: it is the one fact about its own work the rung
+cannot obtain by thinking harder, so it is the one that has to be handed to it. Closing
+stays exactly where it was — one writer, its own call, no status the host overrules.
+
+This was the fork worth naming, because the other road was tempting and wrong. A task could
+have carried the ref it owes and the host could have refused to let it close until it had
+seen that ref go out. That is enforcement resting on the agent remembering to fill in the
+very field that enforces it — and when it forgets, the mechanism is not merely absent, it is
+*silently* absent, which is indistinguishable from a delivery that went fine. A safety net
+whose failure mode is silence is worse than no net, because everything downstream is built
+believing it is there. A projection cannot fail that way: it is either in the window or it
+is not, and a rung that reads "you have not shown them this" and closes anyway has made a
+decision rather than an omission. A task whose last remaining step belongs to the person is not the agent's work
 in progress: it owes the ask, once, not the wait.
 
 > **TODO — closed tasks accumulate.** A task is a subject, a closed task is the record that it

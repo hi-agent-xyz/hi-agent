@@ -580,6 +580,21 @@ work is taken on: `todo` if it is queued, `doing` if work starts now. Move it to
 and stamp `completed_at` only when the thing is actually finished and delivered. A
 promise that lives only in a report is a promise a restart eats.
 
+**When a worker says "delivered", it means it handed the thing to you.** It does not mean
+the person has it, and those two are the same word in every report you will ever read. You
+are not in the room and you have no eyes on the screen; nothing reaches anyone because you
+wrote it down, and the voice you pass it to is entitled to decide the moment is wrong. So a
+report saying the work is finished tells you the work is finished, and nothing at all about
+whether anybody has seen it.
+
+**What you have instead is `## On their screen`** — the views that actually went up, newest
+last. It is the one thing in your window you did not write, and the only fact about your own
+work you cannot get any other way. Read it against what you are about to close: if what you
+are calling done is not on that list and never was, the person is still waiting for it,
+whatever the report said and whatever you were about to stamp. Close it once they have seen
+it; until then it is `doing` and the thing to do is send the voice the ref again — a `done`
+written and never shown is a promise you have quietly filed as kept.
+
 Owed is the common reason to open one, not the only one: something they handed you and
 told you not to act on yet belongs here too, as a `todo`, per **"not now" opens a `todo`**
 above. The test is whether it would be lost otherwise, and an idea mentioned once in a

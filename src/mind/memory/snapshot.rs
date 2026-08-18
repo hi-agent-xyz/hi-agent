@@ -200,7 +200,102 @@ pub async fn agent_window(
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
     );
-    join(&[carried.as_str(), owed.as_str(), reach.as_str()])
+    let shown = shown_recently(memory).await;
+    join(&[carried.as_str(), owed.as_str(), shown.as_str(), reach.as_str()])
+}
+
+/// How far back [`shown_recently`] looks. Long enough to cover a piece of work finishing
+/// and being handed over across a few turns; short enough that it is a list of what just
+/// happened rather than a history to read.
+const SHOWN_WINDOW_MIN: i64 = 90;
+
+/// What has actually been on the person's screen — the one fact about its own work that
+/// Cognition cannot find out any other way.
+///
+/// **It has no eyes and no confirmation.** It sends the voice a message; its own prompt
+/// says everything it sends is a proposal, never a delivery; nothing comes back. So when it
+/// decides a piece of work is finished it is deciding on a belief it has no way to check,
+/// and the failure that follows is not carelessness — it is a rung reasoning correctly from
+/// the only information it has. On 2026-08-18 a finished trip view was closed as delivered
+/// forty-six seconds after the worker reported it and fifty-six seconds *before* the voice
+/// was told the view existed; the voice then dropped it from a three-item message, and
+/// nothing in the system disagreed with anything, because nothing in the system knew.
+///
+/// **Information, not a rail.** The alternative was a `deliverable:` field on the task plus
+/// a refusal to let it close until the host had seen that ref go out — enforcement resting
+/// on the agent remembering to fill in the field that enforces it, whose failure mode is
+/// silence and therefore indistinguishable from success. This says what happened and leaves
+/// the judgment where it was. A rung that reads *"you have not shown them this"* and closes
+/// the task anyway has made a decision; the old one had not.
+///
+/// Read from the journal rather than the appearance state because the journal is the
+/// durable record and is already memory's to read — and because the appearance keeps only
+/// what is reachable now, which is a different question from what they have been shown.
+pub async fn shown_recently(memory: &Memory) -> String {
+    let since = Utc::now() - Duration::minutes(SHOWN_WINDOW_MIN);
+    let entries = match memory.journal.recent(since, RECENT_ENTRY_LIMIT).await {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::warn!(error = %err, "view log unreadable; window goes without it");
+            return String::new();
+        }
+    };
+    let mut seen: Vec<String> = Vec::new();
+    for entry in &entries {
+        // `SignalOut` only: a raise is something the agent did. Nothing arrives on the
+        // view channel, so a match on the other variant would be dead code pretending to
+        // be thorough.
+        let JournalEntry::SignalOut { channel: Channel::View, body, .. } = entry else {
+            continue;
+        };
+        let Some(name) = raised_name(body) else {
+            continue;
+        };
+        // Newest-last, one entry per destination: a view raised, moved past and raised
+        // again is one place they have been, not two.
+        seen.retain(|s| s != &name);
+        seen.push(name);
+    }
+    if seen.is_empty() {
+        return format!(
+            "# On their screen
+
+_Nothing has been put on their screen in the last {SHOWN_WINDOW_MIN} minutes._
+"
+        );
+    }
+    let mut out = format!(
+        "# On their screen
+
+_What they have actually been shown in the last {SHOWN_WINDOW_MIN} minutes, oldest first. Work they have not seen is work they are still waiting for, whatever its task says._
+
+"
+    );
+    for name in &seen {
+        out.push_str("- ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out
+}
+
+/// The durable name out of one journalled view line, or `None` if that line did not put
+/// anything up.
+///
+/// The line is `showed "<id>" [<ref>] (<module>)` — see `render_view_line`. The ref is what
+/// this wants, because the ref is what a piece of work is known by everywhere else; the id
+/// is whatever the voice called it in that moment. A dismissal is not a raise, and an
+/// inline view with no ref is named by its id, which is all it has.
+fn raised_name(body: &str) -> Option<String> {
+    let rest = body
+        .strip_prefix("showed ")
+        .or_else(|| body.strip_prefix("replaced "))?;
+    let quoted = rest.strip_prefix('"')?;
+    let (id, after) = quoted.split_once('"')?;
+    match after.trim_start().strip_prefix('[').and_then(|r| r.split_once(']')) {
+        Some((view_ref, _)) => Some(view_ref.to_owned()),
+        None => Some(id.to_owned()),
+    }
 }
 
 
@@ -535,6 +630,52 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max).collect();
         format!("{}\u{2026}", truncated)
+    }
+}
+
+/// The one thing this projection has to get right is *which name* it reports, because the
+/// name is what the rung reading it will compare against its own record of the work.
+#[cfg(test)]
+mod shown_tests {
+    use super::raised_name;
+
+    /// The ref wins, because the ref is what a piece of work is known by everywhere else.
+    /// The live instance really did log `showed "agent-learning"` for a view built at
+    /// `agent-context-reading/path`, and no reader of that line could have connected them.
+    #[test]
+    fn a_raise_is_named_by_its_ref_not_the_id_of_the_moment() {
+        assert_eq!(
+            raised_name(r#"showed "agent-learning" [agent-context-reading/path] (/views/_compiled/ab.mjs)"#),
+            Some("agent-context-reading/path".to_owned())
+        );
+        assert_eq!(
+            raised_name(r#"replaced "board" [zhao-li-kt-status/board] (/views/_compiled/cd.mjs)"#),
+            Some("zhao-li-kt-status/board".to_owned())
+        );
+    }
+
+    /// An inline view has no ref, and its id is the only name it will ever have.
+    #[test]
+    fn a_view_with_no_ref_falls_back_to_its_id() {
+        assert_eq!(
+            raised_name(r#"showed "a-quick-sketch" (/views/_compiled/ef.mjs)"#),
+            Some("a-quick-sketch".to_owned())
+        );
+    }
+
+    /// Clearing the screen is not showing them something, and counting it as one would put
+    /// a name on this list that the person never saw.
+    #[test]
+    fn a_dismissal_is_not_a_raise() {
+        assert_eq!(raised_name(r#"dismissed "tasks""#), None);
+    }
+
+    /// Lines this does not understand are skipped rather than guessed at — every old line
+    /// in the journal predates the ref and must not be read as something it is not.
+    #[test]
+    fn an_unparseable_line_names_nothing() {
+        assert_eq!(raised_name("showed something"), None);
+        assert_eq!(raised_name(""), None);
     }
 }
 

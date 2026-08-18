@@ -3013,7 +3013,7 @@ async fn emit_view(
     // Before it goes on the wire: showing something is as much an utterance as
     // saying it, and the screen persists across restarts, so a mind that can't read
     // back what it put up will put it up again.
-    let line = render_view_line(&id, op, module_url.as_deref());
+    let line = render_view_line(&id, op, module_url.as_deref(), view_ref.as_deref());
     record_out(reaction, Channel::View, line).await;
     let _ = reaction
         .inner
@@ -3030,15 +3030,71 @@ async fn emit_view(
 /// put kilobytes of markup on the hot path and back into every later prompt. The
 /// id carries the meaning — it is what the agent shows, replaces and dismisses by,
 /// and what `## On screen now` lists.
-fn render_view_line(id: &str, op: ViewOp, module_url: Option<&str>) -> String {
+///
+/// **The ref rides along when there is one, and that is not decoration.** The id is
+/// whatever the voice called this thing in the moment: a view built at
+/// `agent-context-reading/path` went into the log as `showed "agent-learning"`, and
+/// nothing anywhere connected the two. So the one durable record of what the person
+/// has actually been shown could not be read back against the one durable name a
+/// piece of work is known by — which is the gap [`shown_recently`] closes, and the
+/// reason the transcript could describe a whole afternoon of views without naming a
+/// single thing anyone could go and open.
+///
+/// [`shown_recently`]: crate::mind::memory::snapshot::shown_recently
+fn render_view_line(
+    id: &str,
+    op: ViewOp,
+    module_url: Option<&str>,
+    view_ref: Option<&str>,
+) -> String {
     let verb = match op {
         ViewOp::Show => "showed",
         ViewOp::Replace => "replaced",
         ViewOp::Dismiss => "dismissed",
     };
+    let named = match view_ref {
+        Some(view_ref) if view_ref != id => format!("{verb} \"{id}\" [{view_ref}]"),
+        _ => format!("{verb} \"{id}\""),
+    };
     match module_url {
-        Some(url) => format!("{verb} \"{id}\" ({url})"),
-        None => format!("{verb} \"{id}\""),
+        Some(url) => format!("{named} ({url})"),
+        None => named,
+    }
+}
+
+/// The transcript line is the durable record of what went on a screen, and until the ref
+/// rode along it could not say what had been shown in any name anyone else used.
+#[cfg(test)]
+mod view_line_tests {
+    use super::{ViewOp, render_view_line};
+
+    #[test]
+    fn a_named_view_carries_its_ref_alongside_the_id_of_the_moment() {
+        let line = render_view_line(
+            "agent-learning",
+            ViewOp::Show,
+            Some("/views/_compiled/ab.mjs"),
+            Some("agent-context-reading/path"),
+        );
+        assert_eq!(
+            line,
+            r#"showed "agent-learning" [agent-context-reading/path] (/views/_compiled/ab.mjs)"#
+        );
+    }
+
+    /// No ref, and nothing invented: an inline view is known by its id and that is all.
+    #[test]
+    fn an_inline_view_reads_exactly_as_it_always_did() {
+        let line = render_view_line("sketch", ViewOp::Show, Some("/views/_compiled/cd.mjs"), None);
+        assert_eq!(line, r#"showed "sketch" (/views/_compiled/cd.mjs)"#);
+    }
+
+    /// When the agent named the view by its ref there is nothing to add, and repeating it
+    /// would put the same string on the line twice.
+    #[test]
+    fn a_ref_that_is_already_the_id_is_not_said_twice() {
+        let line = render_view_line("factory/tasks", ViewOp::Show, None, Some("factory/tasks"));
+        assert_eq!(line, r#"showed "factory/tasks""#);
     }
 }
 
