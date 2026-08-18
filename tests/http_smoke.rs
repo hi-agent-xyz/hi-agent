@@ -321,6 +321,38 @@ async fn homepage_returns_html() {
 }
 
 #[tokio::test]
+async fn stats_returns_the_requested_window_and_rejects_an_unknown_one() {
+    let (base, _dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/stats?range=7d"))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.expect("stats JSON");
+    assert_eq!(body["period"]["range"], "7d");
+    assert_eq!(body["period"]["timezone"], "UTC");
+    assert_eq!(body["series"].as_array().expect("daily series").len(), 7);
+    for key in ["tokens", "sessions", "conversation", "tools", "tasks", "energy"] {
+        assert!(body["summary"].get(key).is_some(), "summary is missing {key}");
+    }
+    for key in ["facets", "episodes", "skills", "people", "drive", "custom_views"] {
+        assert!(body["inventory"].get(key).is_some(), "inventory is missing {key}");
+    }
+
+    let resp = client
+        .get(format!("{base}/api/stats?range=forever"))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.expect("error JSON");
+    assert_eq!(body["error"], "range must be 7d, 30d, 90d or all");
+}
+
+#[tokio::test]
 async fn vision_get_streams_camera_video() {
     // "Vision is video": the camera streams WebM over WS /api/in/vision/stream and
     // GET /api/in/vision plays it back — one camera session per long-poll response,

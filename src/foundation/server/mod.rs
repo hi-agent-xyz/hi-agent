@@ -41,6 +41,7 @@ pub mod sessions;
 pub mod settings;
 pub mod skills;
 pub mod stage;
+pub mod stats;
 pub mod stubs;
 pub mod surfaces;
 pub mod tasks;
@@ -664,6 +665,7 @@ pub fn build(
         .route("/api/workers/{id}/frames", get(workers::get_frames))
         .route("/api/workers/{id}/messages", get(workers::get_messages))
         .route("/api/activity", get(activity::get_activity))
+        .route("/api/stats", get(stats::get_stats))
         .route("/api/tools", get(tools::get_tools))
         .route("/api/drive", get(drive::get_drive))
         .route("/api/drive/file/{*path}", get(drive::get_drive_file))

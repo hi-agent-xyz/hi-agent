@@ -104,6 +104,7 @@ const OUT_OF_ENERGY: &str = include_str!("factory/vendor-outage.jsx");
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
 const REVIEW_VIEWS: &[(&str, &str)] = &[
+    ("stats", include_str!("factory/stats.jsx")),
     ("tasks", include_str!("factory/tasks.jsx")),
     ("skills", include_str!("factory/skills.jsx")),
     ("memories", include_str!("factory/memories.jsx")),

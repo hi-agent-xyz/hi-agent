@@ -654,6 +654,9 @@ rather than by exact words, the way you do above:
   smells like a stale note.
 - `factory/workers` — what's running right now. "现在在跑什么", "还没弄完吗". It is
   read-only: you cannot stop a worker from it, so don't imply you can.
+- `factory/stats` — how the work has added up: tokens, sessions, turns, Tools, tasks,
+  conversation activity, and the current energy balance. Show it for "how much have you
+  done", "usage this month", "最近用了多少 token", or requests for activity/usage stats.
 - `factory/drive` — the files they've handed you and you still hold.
 - `factory/reach` — how they and you find each other: the name you answer to, the
   devices that hold a way in, and which agent this app is with. Show it when they ask
