@@ -12,8 +12,17 @@ export interface SpeechLinkPart {
 
 export type SpeechPart = SpeechTextPart | SpeechLinkPart;
 
-const URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
-const TRAILING_PUNCTUATION_RE = /[.,!?;:)\]}，。！？；：、）】》」』”’]+$/u;
+// Where a URL ends. Latin prose puts a space there; CJK prose puts nothing —
+// `…/sample.mp3。听完再告诉我` has only the punctuation to stop on, and a greedy
+// class swallows the rest of the sentence into the href. So CJK punctuation,
+// ideographs, kana, hangul and full-width forms terminate a URL too, alongside
+// whitespace and the markup quotes.
+const URL_STOP =
+  "\\s<>\"'`\\u2013\\u2014\\u2018-\\u201F\\u2026\\u3000-\\u303F\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uAC00-\\uD7AF\\uFF00-\\uFFEF";
+const URL_RE = new RegExp(`https?://[^${URL_STOP}]+`, "gi");
+// ASCII sentence punctuation the class above cannot exclude (`.` and `)` are
+// ordinary URL characters), stripped only where it trails the whole match.
+const TRAILING_PUNCTUATION_RE = /[.,!?;:)\]}]+$/u;
 
 function appendText(parts: SpeechPart[], text: string): void {
   if (!text) return;
