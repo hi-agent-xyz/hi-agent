@@ -679,6 +679,12 @@ button:not([data-slot]) {
    centred above the bottom band. A view that renders the words itself hides this
    entirely (handled in the host, not here).
 
+   It is a caption, so it does not keep: the line shows for as long as it is worth
+   reading and then fades out, leaving the view whole. Nothing is lost by that —
+   the list behind it holds the original and the popover is one press away, which
+   is exactly what the old caption band could not say. The dwell is `ui/caption.ts`;
+   this is only the fade it drives.
+
    Gutters reserve space for corner widgets the dock would otherwise *overlap* —
    and only those. The controls cluster is a 38px row sitting 20px off the bottom
    (top edge 58px); the dock's own floor is 74px, a full row above it, so the two
@@ -697,6 +703,42 @@ button:not([data-slot]) {
   transform: none;
   pointer-events: none;
   text-align: center;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 460ms var(--ease);
+}
+
+/* Spent. Fades rather than cutting, and only then goes `hidden` — the delay is
+   what makes the element non-interactive and unreachable by a screen reader at
+   the end of the fade instead of at the start of it. The base `.hi-stage` hidden
+   rule above cuts straight to `hidden`, which is right for the chat (never
+   animated, mounted for its scroll position) and wrong here; this rule carries a
+   class more to overrule it. */
+.hi-stage.hi-stage--captions[data-shown="false"] {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 460ms var(--ease),
+    visibility 0s 460ms;
+}
+
+/* Reaching for a link in the line holds the fade off — a caption that dissolves
+   under the cursor takes the one thing in it that was an offer, not a record.
+   Deliberately CSS and not a `held` flag in the host: this can only match while
+   the dock is still on screen and still under the pointer, so it cannot get stuck
+   the way a flag does when the dock unmounts between enter and leave.
+
+   Nothing sets `pointer-events: none` on the link on the way out, and that is not
+   an oversight: hover *is* hit-testing, so a link that stops being hit-testable
+   the instant the dwell expires can never match `:hover`, and this rule would be
+   dead. `visibility: hidden` at the end of the fade does the same job without the
+   circle — the cost is a link that stays clickable for the 460ms it is dissolving,
+   which is a link doing what it says. */
+.hi-stage.hi-stage--captions[data-shown="false"]:has(.hi-speech-link:hover),
+.hi-stage.hi-stage--captions[data-shown="false"]:has(.hi-speech-link:focus-visible) {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 460ms var(--ease);
 }
 
 /* When the camera pip holds the lower-left corner, push the dock's left edge past
@@ -1230,6 +1272,11 @@ button:not([data-slot]) {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    /* With every duration at zero, a leftover delay is not motion — it is lag.
+       The pill's fade-out defers `visibility` until the fade ends; without this it
+       would stay clickable and readable to a screen reader for 460ms after it had
+       visually gone. */
+    transition-delay: 0s !important;
   }
 }
 

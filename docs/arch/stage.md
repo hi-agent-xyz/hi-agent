@@ -4,10 +4,12 @@
 2026 — the rail is a popover:** the conversation no longer holds a column beside the
 agent's view, it opens as a panel over it, out of the corner the controls are in. That
 reverses this document's own *Rejected* entry, and the reversal is argued where the rail
-was described. Everything else stands. Defines what may be on screen at once, and how the
-conversation, the agent's views and the host's own surfaces share it. Supersedes the
-placement half of `core/layout.ts`'s doc comment and the "every view owns the whole frame"
-rule in `ui/ViewSlot.tsx`.
+was described. **Amended August 18, 2026 — the pill is timed:** it shows the newest line
+while that line is worth reading and then fades out, instead of holding it over the view
+until the next one replaces it; argued in *The pill is timed* below. Everything else
+stands. Defines what may be on screen at once, and how the conversation, the agent's views
+and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
+doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
 ## The problem
 
@@ -74,7 +76,7 @@ whole stage again in every state — the conversation covers it rather than shor
 |---|---|---|
 | **stage** | nothing in `content` | the chat fills the frame — today's default face, unchanged |
 | **popover** | `content` is up and the person has not put it away | the chat in a fixed-measure panel over the content, rising out of the controls' corner; full scrollback, own input |
-| **pill** | the person put the popover away | the newest line, floating over the content — today's docked caption |
+| **pill** | the person put the popover away | the newest line, floating over the content while it is fresh, then gone — a caption |
 
 `SpeechText` survives exactly here: **the pill is the conversation collapsed, not a
 separate surface.** One source, three presentations, and the person moves between them.
@@ -105,8 +107,9 @@ open, and the person opens it exactly when they want to read.
 
 What the rail was actually protecting — *the record must never disappear because the agent
 decided to show something* — is untouched: the panel is up by default when content appears,
-carries the full scrollback and the input, and the pill still holds the newest line behind
-it. The conversation still never degrades; it now stops charging rent.
+carries the full scrollback and the input, and the pill carries the newest line behind it
+for as long as it is worth reading. The conversation still never degrades; it now stops
+charging rent.
 
 | | |
 |---|---|
@@ -125,6 +128,43 @@ it, or the toggle again. Escape defers to whoever already handled it (`defaultPr
 so clearing a half-typed line closes the line and leaves the conversation up; the press-
 behind ignores the controls cluster and the input line, which are the panel's own foot and
 its own button standing in separate boxes.
+
+## The pill is timed
+
+*August 18: the pill used to hold the newest line indefinitely — until another line
+replaced it, or the person opened the popover. It now fades a few seconds after that line
+settles, and the dock sits empty until the next thing is said.*
+
+**Why it held in the first place, and why that reason is gone.** It held because the pill
+was written when it was the whole of the conversation on that screen: let the line go and
+the words were gone, since there was nowhere else to look. Since August 11 there is —
+the popover, one press away, carrying the full journal-seeded scrollback. What the pill
+shows is a *copy*. A copy has no claim on the frame it is sitting over once it has been
+read, and holding one there means the ordinary resting state of a view is a sentence from
+some earlier minute lying across its bottom edge.
+
+**This does not reinstate the caption band's timer**, which *What this reverses* (below)
+argues against and is right about. The band's timer was *spending* the words: it revealed
+an utterance the buffer had already deleted, so whatever it advanced past was lost, and it
+advanced whether or not anyone was looking (`arch-refactor.md`, the half-spent-text
+finding). This one hides a copy while the original stays in the list. That is the whole
+distinction — a timer over a durable list costs nothing; a timer over a queue costs the
+message. It is also why no presence check belongs here: whether anyone was looking does
+not matter, because nothing is spent by their not having been.
+
+| | |
+|---|---|
+| Dwell | a floor plus reading time, capped — `captionDwell` in [`ui/caption.ts`](../../src/appearance/web/src/ui/caption.ts). The cap is the pill's own three-line clamp: past that there is no more of the line on screen to read |
+| Clock | the line's own `ts`, never this window's mount. One rule covers reload, resync and a second device joining mid-conversation: a line said an hour ago opens already spent, so a window never flashes a stale sentence over the view |
+| Rolling speech | no deadline while an interim is in flight — it is still being said |
+| Exit | a fade, then `visibility: hidden` at the end of it, so the spent line stops being reachable by pointer or screen reader exactly when it stops being visible |
+| Reaching for it | a link in the line holds the fade off while it is hovered or focused (`:has(.hi-speech-link:hover)`) — a link is an offer, not a record, and a caption that dissolves under the cursor takes it away |
+
+**The presentation is still `pill`.** Whether the pill has anything on it right now is not
+a placement question, so `stage()` does not answer it and does not learn a clock: the pass
+says where the pill goes, the shell says how long it stays. Nor is the line unmounted when
+it expires — the dock fades and the line stays in it, so the next thing said cross-fades
+with it instead of appearing into a box that just collapsed.
 
 ## Who decides the presentation
 
@@ -396,6 +436,12 @@ never lose anything makes the face a chat log"* was correct about it.
 It stopped being true on August 11, when the conversation became an append-only list that
 keeps. Nothing about a list gets worse for being visible longer. The line survived its own
 premise.
+
+The pill's timer (*The pill is timed*, above) is not that premise coming back. It is the
+same argument read the other way: the band was timed because its words were *spent*, and
+the pill is timed because its words are *not* — the copy can go precisely because the
+original stays. What a stage has room for was never the question; what the screen owes a
+sentence nobody can lose was.
 
 `ViewSlot`'s *"every view owns the whole frame"* narrows to *"every view owns the frame it
 is handed"*. The z-ordered stack it replaced stays abolished — this is composition between

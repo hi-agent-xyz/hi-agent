@@ -22,7 +22,11 @@
  * - `stage`   — it fills the frame: the default face.
  * - `popover` — a panel over the agent's view, in the corner the controls hold,
  *               carrying the full scrollback and its own input.
- * - `pill`    — collapsed to the newest line, floating over the view.
+ * - `pill`    — collapsed to the newest line, floating over the view. A caption
+ *               and not a shelf: it shows while the line is worth reading and
+ *               then fades, because what it holds is a copy of something the
+ *               list behind it keeps. The dwell is the shell's (`ui/caption.ts`);
+ *               this pass says where the pill goes, never how long it stays.
  * - `hidden`  — a view is rendering the words itself.
  *
  * The popover replaced a rail: a column the view had to inset past for as long as

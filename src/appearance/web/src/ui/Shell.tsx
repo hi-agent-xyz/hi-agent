@@ -7,6 +7,7 @@ import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
 import { Chat } from "./Chat";
 import { SpeechText, type SpeechItem } from "./SpeechText";
+import { useCaption } from "./caption";
 import { ViewSlot } from "./ViewSlot";
 import { KeyboardFallback } from "./KeyboardFallback";
 import { ChannelControls } from "./ChannelControls";
@@ -112,8 +113,14 @@ export function Shell() {
   }, [popover]);
 
   // The pill shows the newest thing said, or the line currently being recognized
-  // if one is in flight — the same tail the chat ends on.
+  // if one is in flight — the same tail the chat ends on. It is a caption, so it
+  // shows for as long as that line is worth reading and then fades: what it holds
+  // is a copy, and the list behind it keeps the original. `lastSpoken` is not
+  // cleared when the dwell runs out — the line stays mounted and the dock fades,
+  // so a fresh line has something to cross-fade with rather than appearing into a
+  // collapsed box.
   const newest = messages[messages.length - 1];
+  const captionShown = useCaption({ interim, line: newest });
   const lastSpoken: SpeechItem[] = interim
     ? [{ id: -1, text: interim, speaker: "user", pending: true }]
     : newest
@@ -169,7 +176,11 @@ export function Shell() {
           // pass — which says `pip` whenever a view leads, camera or no camera.
           // With the camera off the words then stepped past nothing and sat
           // ~400px right of centre.
-          <div className="hi-stage hi-stage--captions">
+          <div
+            className="hi-stage hi-stage--captions"
+            data-shown={captionShown ? "true" : "false"}
+            aria-hidden={captionShown ? undefined : true}
+          >
             <SpeechText items={lastSpoken} />
           </div>
         )}
