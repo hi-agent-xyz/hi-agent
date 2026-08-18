@@ -674,11 +674,15 @@ export function useAgentSession(): AgentSession {
         await audioBus.resume();
         if (audioBus.ctx.state !== "running") {
           const events = ["pointerdown", "keydown", "touchstart"];
+          // Capture, so this is a sensor for *any* interaction rather than a key
+          // handler: keys typed into host chrome stop at the document and never
+          // reach the window (`lib/keyboard.ts`), and the first thing a person
+          // does is often type a message.
           const resumeOnGesture = () => {
             void audioBus.resume();
-            for (const ev of events) window.removeEventListener(ev, resumeOnGesture);
+            for (const ev of events) window.removeEventListener(ev, resumeOnGesture, true);
           };
-          for (const ev of events) window.addEventListener(ev, resumeOnGesture);
+          for (const ev of events) window.addEventListener(ev, resumeOnGesture, true);
         }
         const voice = new VoicePlayer(
           audioBus,

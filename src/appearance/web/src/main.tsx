@@ -5,6 +5,7 @@ import { Inspect } from "./inspect/Inspect";
 import { usePath } from "./inspect/router";
 import { installAuthGate } from "./lib/authGate";
 import { installBase, inCore } from "./lib/base";
+import { installKeyPlanes } from "./lib/keyboard";
 import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
 import { installNativeFeel } from "./lib/nativeFeel";
@@ -35,7 +36,14 @@ installStageReport();
 // The face reads as an app, not a web page: no double-click word-select, no
 // right-click page menu. Only the face — the inspect console below is an
 // operator's browser tool, where Reload and "open in new tab" are the point.
-if (!inCore().startsWith("/inspect")) installNativeFeel();
+if (!inCore().startsWith("/inspect")) {
+  installNativeFeel();
+  // And the keyboard follows the planes: a key typed into the host's own line or
+  // controls never reaches an agent view's window listener. Installed here, ahead
+  // of the first view import, because the guard can only silence listeners that
+  // have not run yet.
+  installKeyPlanes();
+}
 
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
 // serves the page in prod; this only covers the dev seam, where Vite serves index.html

@@ -15,7 +15,10 @@ are pictures:** the row is the system views plus what the person kept, not the w
 inventory, which reverses this document's own deferral of a pinned subset; and a raise is
 captured by the headless renderer the moment it goes up, which reverses *marks, not
 screenshots*. Both are argued in *Going back to a view the agent has moved past* and
-*The tile is a picture of the raise*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+*The tile is a picture of the raise*. **Amended the same day — the keyboard follows the
+planes:** the plane the focus is in owns the keystroke, so a view can no longer take a key
+typed into the host's own line or controls; argued in *The keyboard follows the planes*.
+Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -561,6 +564,60 @@ The conversation's own flip disappears here. Today it moves between z 2 as the c
 60 as the pill; on three planes it is on `cover` in all three presentations, and the only
 thing that changes between them is the box the compositor hands it.
 
+### The keyboard follows the planes
+
+*August 18: the stack settled who covers whom and `pointer-events` settled whose a click
+is. Keys had no rule at all, and the plane order turned out to be the answer for them too.*
+
+**A keystroke does not travel down the stack.** It starts at whatever holds the focus and
+bubbles up through the document to the window — so `z-index` cannot reach it, and neither
+can the cover plane's `pointer-events: none`. An agent view that writes
+`window.addEventListener("keydown", …)` hears every key in the window, whichever plane it
+was typed into. A deck binds Space and the arrows to page itself; the person clicks into
+the line to write a message; every Space they type pages the deck and never lands in the
+line, because the view called `preventDefault()` on a keystroke aimed at the host's own
+input. The controls are in the same position — Space on a focused button.
+
+**So: the keyboard belongs to the plane the focus is in**, in the same order as paint. The
+agent's plane is below the person's there too.
+
+| Focus is in | Who hears the key |
+|---|---|
+| `cover` — the line, the controls, any host surface | the host alone; the view is never told |
+| `view` | the view alone; the host's *global* affordances stand down rather than firing alongside it |
+| neither — the room | both, the host first, and a host claim (a `preventDefault` from one of its handlers) ends it there |
+
+The third row is what keeps a deck working: Space and the arrows are not printable by
+start-typing-to-open's test, so with the focus nowhere in particular they pass through
+untouched, and a letter that *does* open the conversation is claimed and stops.
+
+**Enforced once, at the document** ([`lib/keyboard.ts`](../../src/appearance/web/src/lib/keyboard.ts)),
+for the reason `nativeFeel.ts` installs itself there: the code on the other side is
+agent-authored and cannot be asked to check whose key it is. The guard sits one node short
+of the window, which is the whole trick — React's delegated handlers have already run
+(React attaches at the root container, below the document), so chrome behaves exactly as
+before, and `stopImmediatePropagation` then ends the key before any listener on the
+document or the window sees it.
+
+- **Host chrome's own global keys go through the same guard**, not through `window`: an
+  `onHostKey` registry the guard runs itself. Escape closing the popover and
+  start-typing-to-open are the two. Registration order is preserved and `defaultPrevented`
+  still reads true from a surface below, so the Escape ladder — clear the half-written
+  line, and only an empty line closes the panel — is untouched.
+- **`keyup` and `keypress` are routed with `keydown`**, so a view counting a key down and
+  up is never handed half a press whose start it never saw.
+- **A sensor is not a handler.** The one listener that wants every interaction regardless
+  of plane — the audio context's resume-on-first-gesture — moves to the capture phase,
+  ahead of the guard, rather than being excepted by it.
+
+A view binding on the window is *not* the mistake here, and is not asked to change: bubble
+listeners are exactly what the guard is in front of, so a deck keeps its Space and its
+arrows for every key the person did not aim at chrome. **What this does not reach** is a
+view that registers in the *capture* phase on the window — capture runs before the target,
+so nothing at the document can get in front of it. That one line is written where view
+authors read it (`identity/workers/view-builder.md`), as the only key-binding rule they
+have to keep.
+
 ## What this reverses
 
 *"A stage has room for a line, not a transcript"*
@@ -666,6 +723,18 @@ Built on `design/stage`, in this order:
    `localStorage` pref — it starts on, and a put-away is this screen's for a minute rather
    than a setting still in force tomorrow. `.hi-chat` takes the card recipe off
    `.hi-stage--popover`, which is left holding placement alone, and gains the title row.
+
+9. **The keyboard (August 18)** — `lib/keyboard.ts`: `keyOrigin` reads the plane off the
+   event target, `hostHearsKey` / `viewHearsKey` are the two-line routing (unit-tested
+   without a DOM, which is why they are separate from the listener), and `installKeyPlanes`
+   is called from `main.tsx` beside `installNativeFeel`, before the first view import.
+   `Shell`'s Escape and `Composer`'s start-typing-to-open stop being `window` listeners and
+   become `onHostKey` registrations; the audio resume-on-gesture listener moves to capture.
+   Checked against a real browser as well as the unit tests — a page holding both planes, a
+   deck bound to the window, and trusted key events over CDP — because the load-bearing
+   claim is about event order, which a unit test of the routing cannot see: a Space typed
+   into the line lands in the line and does not page the deck, and the same Space with the
+   focus anywhere else still pages it.
 
 **Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
 the wire vocabulary — it has no server-side existence to name, so this is naming, not

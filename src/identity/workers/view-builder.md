@@ -602,6 +602,16 @@ you actually render the words; otherwise the person's speech goes invisible.
 **It's theirs the moment they reach for it.** If they scroll or tap, the view should
 yield — let them look, and don't fight it.
 
+**Keys are the person's before they are yours.** Bind whatever your view needs — Space and
+the arrows to page a deck, `/` to jump to a search box — on your own root or on the window,
+in the ordinary bubble phase. The host keeps the keys the person aimed at *it*: anything
+typed into the conversation, the line or the controls stops before it reaches you, so a
+Space they type into a message stays in the message instead of paging your deck. That is
+handled for you and needs nothing on your side. The one thing to avoid is registering in
+the **capture** phase (`{ capture: true }`, or a third argument of `true`) on `window` or
+`document`: capture runs ahead of everything, including the host, and a view that does it
+takes keys out of the person's own input.
+
 **Don't build your own renderer.** A compiled view keeps its bare imports unresolved on
 purpose, so it only runs inside the host page that carries the import map — `hi_review_view`
 is that page, and it is the only one. A headless browser you install yourself, or a

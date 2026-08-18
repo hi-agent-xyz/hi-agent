@@ -3,6 +3,7 @@ import { usePresence, useMessages, useChannels, useSendText } from "../core";
 import { useViews } from "../core/views";
 import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
+import { onHostKey } from "../lib/keyboard";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
 import { Chat } from "./Chat";
@@ -99,21 +100,25 @@ export function Shell() {
   // exclusion of its own any more: it is inside the panel, so `contains` already
   // covers it. Escape defers to whoever already handled it, so clearing a
   // half-typed line closes the line and leaves the conversation up.
+  //
+  // Escape arrives through `onHostKey` rather than a `window` listener, because a
+  // key pressed in the panel is chrome's and stops at the document — one node
+  // short of the window (`lib/keyboard.ts`). It also means a view holding the
+  // focus keeps its own Escape.
   useEffect(() => {
     if (!popover) return;
-    const onKey = (event: KeyboardEvent) => {
+    const releaseKey = onHostKey((event) => {
       if (event.key === "Escape" && !event.defaultPrevented) setTextChannel(false);
-    };
+    });
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (popoverRef.current?.contains(target as Node)) return;
       if (target?.closest?.(".hi-channels")) return;
       setTextChannel(false);
     };
-    window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => {
-      window.removeEventListener("keydown", onKey);
+      releaseKey();
       window.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, [popover, setTextChannel]);

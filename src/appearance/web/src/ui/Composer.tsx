@@ -3,6 +3,7 @@ import { ArrowUpIcon } from "lucide-react";
 
 import { TYPING_PING_INTERVAL_MS, postInTextTyping } from "../channels/in/text";
 import { isEditableTarget } from "../lib/handoff";
+import { onHostKey } from "../lib/keyboard";
 import {
   InputGroup,
   InputGroupAddon,
@@ -66,16 +67,23 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
 
   // Start-typing-to-open: a single printable key brings the conversation back and
   // seeds the line. Only active while it is away.
+  //
+  // Through `onHostKey`, so it fires for the room and for chrome's own controls
+  // but never while a view holds the focus — a view that binds a letter to page
+  // itself must not also seed a message with it. Space and the arrows are not
+  // printable by this test (`\S`, and a name longer than one character), so a
+  // deck keeps them whenever the person is not typing into chrome.
   useEffect(() => {
     if (shown || !onOpen) return;
-    const onKey = (e: KeyboardEvent) => {
+    return onHostKey((e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       // Someone else already owns the keystroke — a view's own input, say.
       if (isEditableTarget(e.target)) return;
       if (e.key.length === 1 && /\S/.test(e.key)) {
         // Swallow it. Opening focuses the line inside this same keydown, so the
         // browser's default insertion would land in the field we just seeded and
-        // type the character twice ("h" → "hh").
+        // type the character twice ("h" → "hh"). It is also the host's claim on
+        // the key, which is what keeps it from reaching the view underneath.
         e.preventDefault();
         setText(e.key);
         // The first character of a line counts as typing too — this is the path
@@ -83,9 +91,7 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
         noteTyping();
         onOpen();
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    });
   }, [shown, onOpen]);
 
   useEffect(() => {
