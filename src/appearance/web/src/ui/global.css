@@ -1031,24 +1031,37 @@ button:not([data-slot]) {
   gap: 10px;
 }
 
+/* The cluster is the only way in and out, and it is always standing on paper the
+   agent painted: a view's background fills the whole frame, the reserved bottom
+   band included (`.hi-view-fill > :only-child`, `background-origin: border-box`).
+   So it cannot be dressed for the host's own white page. `--surface`/`--line`/
+   `--fg-mute` are the quiet tokens for a card sitting on that white, and against
+   a view that paints warm off-white they vanish outright — a 0.72 near-white disc
+   on cream is the same colour, a 0.12 hairline is not a ring, and `--fg-mute`
+   glyphs land near 3:1. Dressed at the weights the views band already uses over a
+   view (`--surface-strong`, `--line-strong`, `--fg-dim` ink), the disc reads on any
+   backdrop: on a light one the ring and the contact shadow cut it out; on a dark
+   one the disc itself does. */
 .hi-channel {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-strong);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  color: var(--fg-mute);
-  box-shadow: 0 6px 22px var(--shadow);
+  color: var(--fg-dim);
+  /* Two layers: a tight contact shadow that draws the edge when the disc and the
+     paper behind it are the same value, and the wide soft one for lift. */
+  box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
   transition: color 200ms var(--ease), border-color 200ms var(--ease),
     box-shadow 200ms var(--ease);
 }
 
 .hi-channel:hover {
-  color: var(--fg-dim);
+  color: var(--fg);
 }
 
 .hi-channel:disabled {
@@ -1064,7 +1077,8 @@ button:not([data-slot]) {
 .hi-channel.is-on {
   color: var(--accent);
   border-color: var(--accent-line);
-  box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 22px var(--shadow);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 1px 3px var(--shadow-strong),
+    0 8px 24px var(--shadow);
 }
 
 /* --- Combined status --------------------------------------------------
@@ -1082,7 +1096,7 @@ button:not([data-slot]) {
   width: 1px;
   height: 24px;
   margin: 0 2px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 
 .hi-status-button--starting,
