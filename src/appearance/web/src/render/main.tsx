@@ -125,7 +125,7 @@ const stubSession: AgentSession = {
   videoError: null,
   visionStream: null,
   audioOutput: false,
-  textInput: false,
+  text: true,
   toggleAudio: () => {},
   toggleVideo: () => {},
   toggleAudioOutput: () => {},

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { Chat, groupMessages } from "./Chat";
+import { Composer } from "./Composer";
 import { readsAsName } from "./Avatar";
 import type { Message, Sender } from "../channels/out/text";
 
@@ -97,6 +98,49 @@ describe("the avatar column", () => {
     expect(html).toContain('title="someone — not recognized"');
   });
 
+});
+
+describe("the card", () => {
+  // The shape borrowed from shadcn's own chat: a title line, the messages, the
+  // line being written. Same card in both placements — only the box it stands in
+  // changes, which is the compositor's business and not this component's.
+  it("names who the conversation is with, above the messages", () => {
+    const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
+
+    const title = html.indexOf('class="hi-chat-head"');
+    const scroller = html.indexOf('data-slot="message-scroller"');
+    expect(title).toBeGreaterThanOrEqual(0);
+    expect(html).toContain("Hi Agent");
+    expect(title, "the title is the card's first row").toBeLessThan(scroller);
+  });
+});
+
+describe("the line being written", () => {
+  // It used to be a box of its own, positioned to look flush with the panel by
+  // sharing its width and right edge. Inside the conversation it is part of it,
+  // which is what lets one control put both away together.
+  it("stands in the conversation's own foot, under the messages", () => {
+    const html = renderToStaticMarkup(
+      <Chat messages={[said("1", "帮我看下")]}>
+        <Composer onSend={() => {}} shown onOpen={() => {}} />
+      </Chat>,
+    );
+
+    const chat = html.indexOf('class="hi-chat"');
+    const scroller = html.indexOf('data-slot="message-scroller"');
+    const foot = html.indexOf('class="hi-chat-foot"');
+    expect(chat).toBeGreaterThanOrEqual(0);
+    expect(scroller).toBeGreaterThan(chat);
+    expect(foot, "the foot is inside the conversation, after the messages").toBeGreaterThan(
+      scroller,
+    );
+    expect(html).toContain('data-slot="input-group"');
+  });
+
+  it("renders nothing where the shell gives it no foot", () => {
+    const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
+    expect(html).not.toContain("hi-chat-foot");
+  });
 });
 
 describe("readsAsName", () => {

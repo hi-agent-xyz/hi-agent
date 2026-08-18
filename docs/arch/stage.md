@@ -6,8 +6,11 @@ agent's view, it opens as a panel over it, out of the corner the controls are in
 reverses this document's own *Rejected* entry, and the reversal is argued where the rail
 was described. **Amended August 18, 2026 — the pill is timed:** it shows the newest line
 while that line is worth reading and then fades out, instead of holding it over the view
-until the next one replaces it; argued in *The pill is timed* below. Everything else
-stands. Defines what may be on screen at once, and how the conversation, the agent's views
+until the next one replaces it; argued in *The pill is timed* below. **Amended the same
+day — the conversation is a card and the line is inside it:** a one-line title, the
+messages, and the line being written, in one card that is the same in both placements; and
+the text channel's one control moves the whole of it; argued in *The line is inside the
+conversation*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -74,18 +77,16 @@ whole stage again in every state — the conversation covers it rather than shor
 
 | Presentation | When | What is on screen |
 |---|---|---|
-| **stage** | nothing in `content` | the chat fills the frame — today's default face, unchanged |
-| **popover** | `content` is up and the person has not put it away | the chat in a fixed-measure panel over the content, rising out of the controls' corner; full scrollback, own input |
+| **stage** | nothing in `content` | the card, centred in the room with the paper breathing at its edges — the default face |
+| **popover** | `content` is up and the person has not put it away | the chat in a fixed-measure panel over the content, rising out of the controls' corner; full scrollback, and the line being written standing in its foot |
 | **pill** | the person put the popover away | the newest line, floating over the content while it is fresh, then gone — a caption |
 
 `SpeechText` survives exactly here: **the pill is the conversation collapsed, not a
 separate surface.** One source, three presentations, and the person moves between them.
 
-**The input follows the conversation.** On the stage it is the centered line it is today;
-with the popover up it sits under the panel as its foot, the same width and the same right
-edge, under the messages it is adding to; put away it returns to the floating centered
-line. The input is where the conversation is, because typing into a line that is nowhere
-near the messages is what makes a chat feel like a command bar.
+**The input is in the conversation** — the last clause of that sentence started as *the
+input follows the conversation*, which was three placements kept in step by hand; it is
+one surface now. See *The line is inside the conversation*.
 
 ## The popover
 
@@ -126,8 +127,9 @@ is the stylesheet's business again, and the pass is a function of what is on scr
 **Dismissal is what makes it a popover and not a panel.** Escape, a press anywhere behind
 it, or the toggle again. Escape defers to whoever already handled it (`defaultPrevented`),
 so clearing a half-typed line closes the line and leaves the conversation up; the press-
-behind ignores the controls cluster and the input line, which are the panel's own foot and
-its own button standing in separate boxes.
+behind ignores the controls cluster, which is the panel's own button standing in its own
+box. The line needs no exclusion any more: it is inside the panel, so *behind it* already
+excludes it.
 
 ## The pill is timed
 
@@ -166,12 +168,84 @@ says where the pill goes, the shell says how long it stays. Nor is the line unmo
 it expires — the dock fades and the line stays in it, so the next thing said cross-fades
 with it instead of appearing into a box that just collapsed.
 
+## The line is inside the conversation
+
+*August 18: the line the person writes on used to be a box of its own in the bottom band
+(`.hi-kbd`), positioned to read as the panel's foot — the panel's width, the panel's right
+edge, and the panel's own floor lifted by exactly that row to make space. It is rendered
+inside the panel now, and the control that shows the conversation is the control that
+shows the line.*
+
+**Two toggles for one surface was the tell.** A keyboard button showed the line; a separate
+conversation button opened the panel over a view. Neither state a person could reach by
+moving only one of them was a state worth having: a conversation opened to read with no way
+to answer in it, or a line floating over a view with the thread it is adding to put away.
+So the cluster is one control per channel now — mic · speaker · **text** · camera — and the
+text one moves the whole of its channel: the record, the scrollback, and the line.
+
+That also ends the control that appeared and disappeared. The conversation toggle had to:
+it opened a popover, and there is nothing to open one over unless something else is on the
+stage. The text control is a channel's control, so it is there whatever is on screen.
+
+What it deletes, and the deletions are the argument:
+
+| Gone | Why it existed |
+|---|---|
+| the conversation toggle | to move the half of the surface the keyboard button did not |
+| `--hi-pop-width` / `--hi-pop-right` read by a second box, and the `:has(.hi-kbd)` rules lifting the panel and the pill by the line's row | to hold two boxes flush enough to read as one |
+| `Stage.input` (`"center" \| "popover"`) | the pass had to place the line in every state; it goes where the conversation goes, which is not a question |
+
+**Put away means away, with nothing else on the stage too** — a reversal of *"collapsing
+with nothing up is not a way to hide the conversation"*, which the compositor enforced and
+a test named. It was right when the pill was a shelf that would have been left holding a
+sentence over an empty room, and when the button doing it was the conversation's own, so
+refusing simply meant not showing it. Neither holds now: the pill is timed, so what is left
+is the room and a line that fades; and the button is the **text channel's**, which cannot be
+the one control in the cluster that goes dead in the state where its channel is the whole
+face.
+
+### The conversation is a card, in both placements
+
+The shape is [shadcn's own chat](https://ui.shadcn.com/docs/components/base/message-scroller):
+**a card — a one-line title, the messages, the line being written.** It is the same card
+wherever the conversation is; the compositor decides only which box it stands in, the middle
+of the room or the corner over a view.
+
+That is a change to the lead position, not to the popover. The card recipe — border, glass,
+shadow, radius — was declared on `.hi-stage--popover`, so the same conversation was a
+bounded card over a view and a full-bleed column on the stage: one surface with two looks,
+and the look depended on whether the agent happened to have something up. The recipe is on
+`.hi-chat` now and the placement rules say nothing about what the card is. The lead position
+keeps a margin around it so the paper and the presence field stay visible at its edges, which
+is what makes the conversation float in the room rather than *be* the room.
+
+**The title names who the conversation is with, and holds nothing else.** There is no thread
+to title — the record is one append-only list ([`text-transcript.md`](text-transcript.md)) —
+so there is no "new chat" to offer beside it either, and the agent's current state is the
+status button's job in the controls cluster. A header that repeated any of those would be
+chrome charging rent on a panel that is already bounded in height.
+
+**Any printable key brings it back** and seeds the first character, which is the safety net
+under all of this — the way in never depends on finding the control, so putting the
+conversation away is never a corner someone is stuck in.
+
+**Escape is still the popover's, not the line's.** In the line it clears a half-written
+draft and stops there; on an empty line it passes through to the shell, which puts the
+popover away. Dismissal is what makes a popover a popover, and clearing what you typed is
+not dismissal.
+
+**A view that owns the conversation owns the writing of it too.** `owns_conversation` used
+to leave the host's line floating over the view; a view rendering the words and a host line
+under it are two places to type into one conversation. The trait now stands the whole
+surface down.
+
 ## Who decides the presentation
 
 - **By default, nobody:** it is derived — `content` present → popover; no content → stage;
   put away → pill.
-- **The person** toggles popover ↔ pill from the channel controls, and dismisses the
-  popover with Escape or a press behind it.
+- **The person** shows the conversation or puts it away from the text channel's control in
+  the cluster — one control, in every state — and dismisses the popover with Escape or a
+  press behind it.
 - **The agent cannot.** It has no tool for it and gains none. The one thing that must
   never disappear because the agent decided so is the record of what it said.
 - **A view may stand the host down** by declaring `owns_conversation` — it renders the
@@ -259,7 +333,6 @@ stage({
 }): {
   conversation: "stage" | "popover" | "pill" | "hidden";
   camera: "fill" | "pip";
-  input: "center" | "popover";
   demote: number;            // presence fade, unchanged
 }
 ```
@@ -354,7 +427,7 @@ internal order.
 |---|---|---|---|
 | 0 | `ground` | the room | the paper (`.hi-presence`), the grain (`.hi-atmosphere`) |
 | 1 | `view` | everything the agent put on screen | the content view, the condition notice over it |
-| 2 | `cover` | everything the host owns and the agent can never occlude | the camera self view, the conversation, the input line, the controls, alerts |
+| 2 | `cover` | everything the host owns and the agent can never occlude | the camera self view, the conversation (the line being written included, in its foot), the controls, alerts |
 
 **The order has a meaning, not just a value: the agent's plane is below the person's.**
 Nothing the agent shows can rise above the record of what was said or the controls to
@@ -381,7 +454,7 @@ Two things that were previously settled by accident now fall out instead of bein
   message, not the conversation, so under the trait's own meaning the claim was never
   true; it was a way to suppress the caption band behind a notice that read badly with one
   floating over it. Carried forward as `owns_conversation` it would have gone from
-  cosmetic to harmful: it would take down the record and the input line at the exact
+  cosmetic to harmful: it would take down the record and the line at the exact
   moment the person needs to read what happened and go fix it. No bundled view declares
   anything now, and a test says so.
 - **Order inside `view` is the wire's order.** `ViewBus::wait_state` already emits content
@@ -519,6 +592,16 @@ Built on `design/stage`, in this order:
    the two land flush), a 180ms rise, and the dismissals — Escape, and a capture-phase
    `pointerdown` that spares the controls cluster so the toggle does not close-then-reopen.
    The toggle's glyph stops drawing a divided frame and draws a panel over a corner of it.
+
+8. **The card, and the line inside it (August 18)** — `KeyboardFallback` becomes `ui/Composer.tsx`,
+   rendered as `<Chat>`'s child and drawn in its foot; it is a `shadcn` `InputGroup`
+   (`ui/shadcn/input-group.tsx`), so the single-line `<input>` becomes a textarea that
+   grows, Shift+Enter breaks a line, and the send button lives in the box. Deleted:
+   `.hi-kbd` and its four rules, the two `:has(.hi-kbd)` lifts, `Stage.input` with its
+   `Input` type, `ChannelControls`' conversation button and glyph, and the text channel's
+   `localStorage` pref — it starts on, and a put-away is this screen's for a minute rather
+   than a setting still in force tomorrow. `.hi-chat` takes the card recipe off
+   `.hi-stage--popover`, which is left holding placement alone, and gains the title row.
 
 **Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
 the wire vocabulary — it has no server-side existence to name, so this is naming, not

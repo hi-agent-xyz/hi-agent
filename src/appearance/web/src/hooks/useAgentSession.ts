@@ -48,7 +48,6 @@ export type WindowState = "active" | "background" | "closed";
 interface ChannelPrefs {
   audioInput: boolean;
   videoInput: boolean;
-  textInput: boolean;
   audioOutput: boolean;
 }
 
@@ -56,7 +55,6 @@ const PREFS_KEY = "hi.channels.v1";
 const DEFAULT_PREFS: ChannelPrefs = {
   audioInput: true,
   videoInput: false,
-  textInput: false,
   audioOutput: true,
 };
 
@@ -84,7 +82,6 @@ function loadPrefs(): ChannelPrefs {
     return {
       audioInput: typeof p.audioInput === "boolean" ? p.audioInput : DEFAULT_PREFS.audioInput,
       videoInput: typeof p.videoInput === "boolean" ? p.videoInput : DEFAULT_PREFS.videoInput,
-      textInput: typeof p.textInput === "boolean" ? p.textInput : DEFAULT_PREFS.textInput,
       audioOutput: typeof p.audioOutput === "boolean" ? p.audioOutput : DEFAULT_PREFS.audioOutput,
     };
   } catch {
@@ -121,15 +118,16 @@ export interface AgentSession {
   visionStream: MediaStream | null;
   /** Whether the agent's voice (audio output) channel is on. */
   audioOutput: boolean;
-  /** Whether the text input channel is on (the input line is shown). */
-  textInput: boolean;
+  /** Whether the text channel is on — the conversation and the line that adds to
+   * it, which are one surface and go up and away together. */
+  text: boolean;
   /** Flip the audio-input channel on/off independently of the others. */
   toggleAudio: () => void;
   /** Flip the vision-input channel on/off independently of the others. */
   toggleVideo: () => void;
   /** Flip the agent's voice (audio output) on/off; text output is unaffected. */
   toggleAudioOutput: () => void;
-  /** Turn the text input channel on/off (shows/hides the input line). */
+  /** Show the conversation, or put it away. */
   setTextChannel: (on: boolean) => void;
   sendText: (text: string) => void;
 }
@@ -174,7 +172,12 @@ export function useAgentSession(): AgentSession {
   // the upload-only `visionRef` so a render is triggered when it appears/clears.
   const [visionStream, setVisionStream] = useState<MediaStream | null>(null);
   const [audioOutput, setAudioOutput] = useState(prefsRef.current.audioOutput);
-  const [textInput, setTextInput] = useState(prefsRef.current.textInput);
+  // The text channel starts on, and is not remembered across visits: it is the
+  // default face of the application, and putting it away is something a person
+  // does to *this* screen for a minute — not a setting that should still be in
+  // force tomorrow, least of all when a stray press behind the popover is one of
+  // the ways to do it.
+  const [textOn, setTextOn] = useState(true);
   const [backendActivity, setBackendActivity] = useState<AgentActivity | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   // Is anyone actually looking at this window right now?
@@ -639,15 +642,8 @@ export function useAgentSession(): AgentSession {
     });
   }, [persistPrefs]);
 
-  // ---- text input channel: show/hide the input line ----------------------
-  const setTextChannel = useCallback(
-    (on: boolean) => {
-      prefsRef.current.textInput = on;
-      persistPrefs();
-      setTextInput(on);
-    },
-    [persistPrefs],
-  );
+  // ---- text channel: show the conversation, or put it away ---------------
+  const setTextChannel = useCallback((on: boolean) => setTextOn(on), []);
 
   // Restore the input channels the user last had on — but *honestly*: a saved-on
   // mic/camera is re-acquired only when its permission is already granted, so the
@@ -834,7 +830,7 @@ export function useAgentSession(): AgentSession {
     videoError,
     visionStream,
     audioOutput,
-    textInput,
+    text: textOn,
     toggleAudio,
     toggleVideo,
     toggleAudioOutput,

@@ -68,7 +68,7 @@ export function useChannels() {
     videoError: s.videoError,
     visionStream: s.visionStream,
     audioOutput: s.audioOutput,
-    textInput: s.textInput,
+    text: s.text,
     toggleAudio: s.toggleAudio,
     toggleVideo: s.toggleVideo,
     toggleAudioOutput: s.toggleAudioOutput,

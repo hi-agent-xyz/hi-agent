@@ -21,13 +21,18 @@
  *
  * - `stage`   — it fills the frame: the default face.
  * - `popover` — a panel over the agent's view, in the corner the controls hold,
- *               carrying the full scrollback and its own input.
+ *               carrying the full scrollback and, in its foot, the line being
+ *               written.
  * - `pill`    — collapsed to the newest line, floating over the view. A caption
  *               and not a shelf: it shows while the line is worth reading and
  *               then fades, because what it holds is a copy of something the
  *               list behind it keeps. The dwell is the shell's (`ui/caption.ts`);
  *               this pass says where the pill goes, never how long it stays.
  * - `hidden`  — a view is rendering the words itself.
+ *
+ * Putting it away puts *all* of it away, the line included, because the line is
+ * inside it (`ui/Composer.tsx`). That is what lets one control own the surface —
+ * see `docs/arch/stage.md`.
  *
  * The popover replaced a rail: a column the view had to inset past for as long as
  * the conversation was open. The view is what is being read while it is up, and a
@@ -40,9 +45,6 @@ export type Conversation = "stage" | "popover" | "pill" | "hidden";
 /** The self-view fills the frame when nothing else is on it, else a corner pip. */
 export type Camera = "fill" | "pip";
 
-/** The input line follows the conversation — it is where the messages are. */
-export type Input = "center" | "popover";
-
 export interface StageInput {
   /** The agent has a view up. */
   content: boolean;
@@ -50,15 +52,15 @@ export interface StageInput {
   camera: boolean;
   /** The top-most view renders the conversation itself. */
   ownsConversation: boolean;
-  /** The person put the conversation away. A window preference — never server
-   * state, so a phone cannot collapse a desktop's. */
+  /** The person put the conversation away — the text channel's own on/off. A
+   * window preference, never server state, so a phone cannot collapse a
+   * desktop's. */
   collapsed: boolean;
 }
 
 export interface Stage {
   conversation: Conversation;
   camera: Camera;
-  input: Input;
   /** How far to fade the presence while something leads. */
   demote: number;
 }
@@ -71,6 +73,15 @@ export interface Stage {
  * the one surface that keeps — see `docs/arch/text-transcript.md`. It collapses to
  * the pill only when the person asks, and disappears only when a view has taken
  * over rendering the words.
+ *
+ * **Asking works with nothing on the stage too**, and that is a reversal: the pass
+ * used to ignore `collapsed` unless something else was up, on the reasoning that
+ * hiding the only thing on screen is not a thing to offer. Two changes make it
+ * one. The pill is timed now, so what is left behind is the room and a line that
+ * fades, not a shelf. And the same control that puts the conversation away is the
+ * text channel's — refusing here would leave the one channel whose button does
+ * nothing in the state where it is the whole face. Any printable key brings it
+ * back (`ui/Composer.tsx`).
  *
  * There is no width threshold any more. The rail needed one — below ~760px a
  * window cannot be split into two usable columns — but a popover splits nothing,
@@ -87,16 +98,15 @@ export function stage(input: StageInput): Stage {
   const conversation: Conversation =
     input.content && input.ownsConversation
       ? "hidden"
-      : !occupied
-        ? "stage"
-        : input.collapsed
-          ? "pill"
-          : "popover";
+      : input.collapsed
+        ? "pill"
+        : occupied
+          ? "popover"
+          : "stage";
 
   return {
     conversation,
     camera: input.content ? "pip" : "fill",
-    input: conversation === "popover" ? "popover" : "center",
     demote: input.content ? 0.72 : 0,
   };
 }

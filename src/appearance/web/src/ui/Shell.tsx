@@ -9,7 +9,7 @@ import { Chat } from "./Chat";
 import { SpeechText, type SpeechItem } from "./SpeechText";
 import { useCaption } from "./caption";
 import { ViewSlot } from "./ViewSlot";
-import { KeyboardFallback } from "./KeyboardFallback";
+import { Composer } from "./Composer";
 import { ChannelControls } from "./ChannelControls";
 import { CameraPreview } from "./CameraPreview";
 import { HandoffOverlay } from "./HandoffOverlay";
@@ -49,36 +49,32 @@ export function Shell() {
   const presence = usePresence();
   const { messages, interim, loadOlder } = useMessages();
   const ch = useChannels();
+  // Pulled out because `useChannels` hands back a fresh object every render, and
+  // the dismissal effect below would resubscribe its window listeners on each one.
+  const { setTextChannel } = ch;
   const sendText = useSendText();
   const { views, clear, parked, liveMoved, returnToLive } = useViews();
-  // Whether the views band is open. A window preference like `collapsed` below, and
-  // never server state for the same reason: it says what this window is showing the
-  // person, not what the agent expressed.
+  // Whether the views band is open. A window preference like the text channel's
+  // own on/off, and never server state for the same reason: it says what this
+  // window is showing the person, not what the agent expressed.
   const [bandOpen, setBandOpen] = useState(false);
-  // The person's own collapse. A window preference, deliberately not server state:
-  // it says how THIS window draws the conversation, not what the agent expressed,
-  // and a second device must not put away the conversation on this one.
-  const [collapsed, setCollapsed] = useState(false);
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  // Stable, because the composer's start-typing-to-open listener depends on it.
+  const openConversation = useCallback(() => setTextChannel(true), [setTextChannel]);
   const pasteIntoTextInput = useCallback((text: string) => {
     pasteIdRef.current += 1;
     setPastedInputText({ id: pasteIdRef.current, text });
   }, []);
-  const handoff = useHandoff({
-    textInputOpen: ch.textInput,
-    sendText,
-    pasteIntoTextInput,
-  });
 
   const top = views[views.length - 1];
   const layout = composeStage({
     content: views.length > 0,
     camera: !!ch.visionStream,
     ownsConversation: top?.traits?.owns_conversation ?? false,
-    collapsed,
+    collapsed: !ch.text,
   });
 
   // The conversation is shown as itself in two of its four states; the pill is a
@@ -87,22 +83,32 @@ export function Shell() {
   const chatShown = layout.conversation === "stage" || layout.conversation === "popover";
   const popover = layout.conversation === "popover";
 
+  const handoff = useHandoff({
+    // Whether there is a line on screen to paste into. Since the line lives in
+    // the conversation, that is the same question as whether the conversation is
+    // drawn as itself: put away, or stood down by a view that renders the words
+    // itself, a paste is sent rather than dropped into a box nobody can see.
+    textInputOpen: chatShown,
+    sendText,
+    pasteIntoTextInput,
+  });
+
   // A popover is dismissed by reaching past it: Escape, or a press on anything
-  // behind it. Two exclusions, and both are the surface's own body rather than
-  // "behind" it — the controls cluster (whose toggle would otherwise close on the
-  // press and reopen on the click) and the input line, which is this panel's foot
-  // standing in its own box. Escape defers to whoever already handled it, so
-  // clearing a half-typed line closes the line and leaves the conversation up.
+  // behind it. One exclusion, the controls cluster — whose toggle would otherwise
+  // close on the press and reopen on the click. The line being written needs no
+  // exclusion of its own any more: it is inside the panel, so `contains` already
+  // covers it. Escape defers to whoever already handled it, so clearing a
+  // half-typed line closes the line and leaves the conversation up.
   useEffect(() => {
     if (!popover) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) setCollapsed(true);
+      if (event.key === "Escape" && !event.defaultPrevented) setTextChannel(false);
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (popoverRef.current?.contains(target as Node)) return;
-      if (target?.closest?.(".hi-channels, .hi-kbd")) return;
-      setCollapsed(true);
+      if (target?.closest?.(".hi-channels")) return;
+      setTextChannel(false);
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -110,7 +116,7 @@ export function Shell() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, [popover]);
+  }, [popover, setTextChannel]);
 
   // The pill shows the newest thing said, or the line currently being recognized
   // if one is in flight — the same tail the chat ends on. It is a caption, so it
@@ -164,7 +170,14 @@ export function Shell() {
           data-shown={chatShown ? "true" : "false"}
           aria-hidden={chatShown ? undefined : true}
         >
-          <Chat messages={messages} interim={interim} onLoadOlder={loadOlder} />
+          <Chat messages={messages} interim={interim} onLoadOlder={loadOlder}>
+            <Composer
+              onSend={sendText}
+              shown={chatShown}
+              pastedText={pastedInputText}
+              onOpen={layout.conversation === "hidden" ? null : openConversation}
+            />
+          </Chat>
         </div>
 
         {layout.conversation === "pill" && (
@@ -201,29 +214,18 @@ export function Shell() {
           videoOn={ch.videoInput}
           onToggleVideo={ch.toggleVideo}
           videoError={ch.videoError}
-          textOn={ch.textInput}
-          onToggleText={() => ch.setTextChannel(!ch.textInput)}
+          textOn={ch.text}
+          onToggleText={() => setTextChannel(!ch.text)}
           voiceOn={ch.audioOutput}
           onToggleVoice={ch.toggleAudioOutput}
           onPickFiles={() => fileInputRef.current?.click()}
           fileSending={handoff.isSending}
           onCloseViews={clear}
-          conversation={layout.conversation}
-          onToggleConversation={() => setCollapsed((away) => !away)}
           viewsOpen={bandOpen}
           onToggleViews={() => setBandOpen((open) => !open)}
           parked={parked !== null}
           liveMoved={liveMoved}
           onReturnToLive={returnToLive}
-        />
-
-        <KeyboardFallback
-          onSend={sendText}
-          open={ch.textInput}
-          pastedText={pastedInputText}
-          onOpen={() => ch.setTextChannel(true)}
-          onClose={() => ch.setTextChannel(false)}
-          anchor={layout.input}
         />
 
         <HandoffOverlay

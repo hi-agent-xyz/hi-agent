@@ -1,5 +1,12 @@
 import { url } from "../lib/base";
-import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -36,6 +43,17 @@ import { SenderAvatar } from "./Avatar";
  * of "you have not scrolled to this yet" stays in this component and is never
  * reported anywhere — see `docs/arch/host.md#attachment` for why that direction
  * is closed.
+ *
+ * The line the person writes on stands in its foot (`children`, which is
+ * `ui/Composer.tsx`) rather than beside it. It is one surface: the messages and
+ * the line that adds to them open, move and go away together, which is what lets
+ * one control own the whole of it — see `docs/arch/stage.md`.
+ *
+ * **It is a card in both of its placements** — a title line, the messages, the
+ * line being written — and the compositor decides only which box the card stands
+ * in: the middle of the room, or the popover's corner over a view. The card was
+ * previously the popover's own surface, so the same conversation was a bounded
+ * panel over a view and a full-bleed column on the stage.
  */
 
 /** A run of consecutive messages from one sender, rendered as one cluster. */
@@ -174,13 +192,16 @@ function AttachmentView({ attachment }: { attachment: NonNullable<ChatMessage["a
 
 export interface ChatProps {
   messages: ChatMessage[];
+  /** The conversation's foot — the line being written. Rendered here so it is
+   * part of the panel rather than a second box held flush with it by hand. */
+  children?: ReactNode;
   /** The live recognition partial, shown pending at the tail. */
   interim?: string | undefined;
   /** Prepend a page of older messages; resolves to how many arrived. */
   onLoadOlder?: () => Promise<number>;
 }
 
-export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
+export function Chat({ messages, interim, onLoadOlder, children }: ChatProps) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   // What is at the foot right now: the newest message, and the partial being
@@ -188,100 +209,112 @@ export function Chat({ messages, interim, onLoadOlder }: ChatProps) {
   const tail = `${messages[messages.length - 1]?.id ?? ""}|${interim ?? ""}`;
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
-      <MessageScroller className="hi-chat">
-        <ScrollbackTrigger
-          onLoadOlder={onLoadOlder}
-          oldestId={messages[0]?.id}
-          viewportRef={viewportRef}
-        />
-        <StickToBottom tail={tail} viewportRef={viewportRef} />
-        <MessageScrollerViewport ref={viewportRef} preserveScrollOnPrepend className="px-4 py-6">
-          <MessageScrollerContent className="mx-auto w-full max-w-[52rem] gap-6">
-            {/* One group is one item, and the item is a DIRECT child of the content.
-                The scroller reads `data-message-id` off its own children only, so
-                the wrapper div that used to hold the day separator hid every message
-                from it — which quietly made `preserveScrollOnPrepend` a no-op, and
-                scrolling back landed at the top of the page just fetched instead of
-                holding the line being read. The separator goes inside the item.
+      <div className="hi-chat">
+        {/* One line, and it names who is on the other side of the conversation.
+            Nothing else belongs in it: there is no thread to title (the record is
+            one append-only list — `docs/arch/text-transcript.md`), so no "new
+            chat" to offer beside it, and the agent's current state is the status
+            button's job in the controls cluster. */}
+        <header className="hi-chat-head">
+          <img src={url("/icon.svg")} alt="" className="hi-chat-mark" />
+          <span className="hi-chat-title">Hi Agent</span>
+        </header>
+        <MessageScroller className="hi-chat-scroller">
+          <ScrollbackTrigger
+            onLoadOlder={onLoadOlder}
+            oldestId={messages[0]?.id}
+            viewportRef={viewportRef}
+          />
+          <StickToBottom tail={tail} viewportRef={viewportRef} />
+          <MessageScrollerViewport ref={viewportRef} preserveScrollOnPrepend className="px-4 py-6">
+            <MessageScrollerContent className="mx-auto w-full max-w-[52rem] gap-6">
+              {/* One group is one item, and the item is a DIRECT child of the content.
+                  The scroller reads `data-message-id` off its own children only, so
+                  the wrapper div that used to hold the day separator hid every message
+                  from it — which quietly made `preserveScrollOnPrepend` a no-op, and
+                  scrolling back landed at the top of the page just fetched instead of
+                  holding the line being read. The separator goes inside the item.
 
-                No `scrollAnchor`: that pins the newest item to the TOP of the
-                viewport, which is the shape for a reply unfolding under your
-                question. A messenger follows its foot instead — see `StickToBottom`. */}
-            {groups.map((group) => (
-              <MessageScrollerItem key={group.key} messageId={group.key}>
-                {group.daySeparator && (
-                  <div className="my-4 text-center text-xs text-muted-foreground">
-                    {group.daySeparator}
-                  </div>
-                )}
-                <Message align={group.role === "user" ? "end" : "start"}>
-                  {/* First child, so `Message`'s own row-reverse on the person's
-                      side puts it on the outer edge without a second rule. */}
-                  <SenderAvatar sender={group.sender} role={group.role} />
-                  <MessageContent>
-                    {/* `w-full` is load-bearing, and it is what makes the bubbles'
-                        `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
-                        `self-end` on its children on the person's side, which takes
-                        the group off `stretch` and sizes it shrink-to-fit — i.e. to
-                        the max-content of its widest bubble. Then that bubble's 80%
-                        cap resolves against its own width and clips it: a line that
-                        had room to spare wrapped one character early, every time,
-                        because it was the longest in its run. (Capping the group at
-                        `max-w-full` fixed the opposite overflow — one pasted
-                        `file:///…` path dragging the whole run past the frame — but
-                        left the percentage measuring the wrong box.) Full width
-                        fixes both: the cap is honest, the bubbles right-align on
-                        their own `self-end`, and long paths wrap inside their
-                        bubble. */}
-                    <MessageGroup className="w-full">
-                      {group.messages.map((message) => (
-                        <Bubble
-                          key={message.id}
-                          align={group.role === "user" ? "end" : "start"}
-                          variant={group.role === "user" ? "secondary" : "default"}
-                        >
-                          <BubbleContent>
-                            {message.attachment && (
-                              <AttachmentView attachment={message.attachment} />
-                            )}
-                            {message.text && <Body text={message.text} />}
-                          </BubbleContent>
-                        </Bubble>
-                      ))}
-                    </MessageGroup>
-                    <time
-                      className="mt-1 block text-[11px] text-muted-foreground"
-                      dateTime={group.messages[group.messages.length - 1]?.ts}
-                    >
-                      {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
-                    </time>
-                  </MessageContent>
-                </Message>
-              </MessageScrollerItem>
-            ))}
+                  No `scrollAnchor`: that pins the newest item to the TOP of the
+                  viewport, which is the shape for a reply unfolding under your
+                  question. A messenger follows its foot instead — see `StickToBottom`. */}
+              {groups.map((group) => (
+                <MessageScrollerItem key={group.key} messageId={group.key}>
+                  {group.daySeparator && (
+                    <div className="my-4 text-center text-xs text-muted-foreground">
+                      {group.daySeparator}
+                    </div>
+                  )}
+                  <Message align={group.role === "user" ? "end" : "start"}>
+                    {/* First child, so `Message`'s own row-reverse on the person's
+                        side puts it on the outer edge without a second rule. */}
+                    <SenderAvatar sender={group.sender} role={group.role} />
+                    <MessageContent>
+                      {/* `w-full` is load-bearing, and it is what makes the bubbles'
+                          `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
+                          `self-end` on its children on the person's side, which takes
+                          the group off `stretch` and sizes it shrink-to-fit — i.e. to
+                          the max-content of its widest bubble. Then that bubble's 80%
+                          cap resolves against its own width and clips it: a line that
+                          had room to spare wrapped one character early, every time,
+                          because it was the longest in its run. (Capping the group at
+                          `max-w-full` fixed the opposite overflow — one pasted
+                          `file:///…` path dragging the whole run past the frame — but
+                          left the percentage measuring the wrong box.) Full width
+                          fixes both: the cap is honest, the bubbles right-align on
+                          their own `self-end`, and long paths wrap inside their
+                          bubble. */}
+                      <MessageGroup className="w-full">
+                        {group.messages.map((message) => (
+                          <Bubble
+                            key={message.id}
+                            align={group.role === "user" ? "end" : "start"}
+                            variant={group.role === "user" ? "secondary" : "default"}
+                          >
+                            <BubbleContent>
+                              {message.attachment && (
+                                <AttachmentView attachment={message.attachment} />
+                              )}
+                              {message.text && <Body text={message.text} />}
+                            </BubbleContent>
+                          </Bubble>
+                        ))}
+                      </MessageGroup>
+                      <time
+                        className="mt-1 block text-[11px] text-muted-foreground"
+                        dateTime={group.messages[group.messages.length - 1]?.ts}
+                      >
+                        {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
+                      </time>
+                    </MessageContent>
+                  </Message>
+                </MessageScrollerItem>
+              ))}
 
-            {/* The line being recognized: a preview, so it sits outside the list
-                and is replaced by the real message when it settles. */}
-            {interim && (
-              <MessageScrollerItem>
-                <Message align="end">
-                  {/* The avatar's space, held empty. Recognition has not settled, so
-                      there is nobody to draw yet — and a silhouette that becomes a
-                      face a second later would be the flicker, not the answer. The
-                      spacer keeps the bubble on the same line it will land on. */}
-                  <div className="size-7 shrink-0" aria-hidden />
-                  <MessageContent>
-                    <Bubble align="end" variant="outline" className="opacity-70">
-                      <BubbleContent>{interim}</BubbleContent>
-                    </Bubble>
-                  </MessageContent>
-                </Message>
-              </MessageScrollerItem>
-            )}
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <MessageScrollerButton direction="end" />
-      </MessageScroller>
+              {/* The line being recognized: a preview, so it sits outside the list
+                  and is replaced by the real message when it settles. */}
+              {interim && (
+                <MessageScrollerItem>
+                  <Message align="end">
+                    {/* The avatar's space, held empty. Recognition has not settled, so
+                        there is nobody to draw yet — and a silhouette that becomes a
+                        face a second later would be the flicker, not the answer. The
+                        spacer keeps the bubble on the same line it will land on. */}
+                    <div className="size-7 shrink-0" aria-hidden />
+                    <MessageContent>
+                      <Bubble align="end" variant="outline" className="opacity-70">
+                        <BubbleContent>{interim}</BubbleContent>
+                      </Bubble>
+                    </MessageContent>
+                  </Message>
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton direction="end" />
+        </MessageScroller>
+        {children && <div className="hi-chat-foot">{children}</div>}
+      </div>
     </MessageScrollerProvider>
   );
 }

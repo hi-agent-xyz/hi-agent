@@ -17,7 +17,6 @@ describe("stage", () => {
   it("nothing on the stage → the conversation is the face", () => {
     const s = stage(at());
     expect(s.conversation).toBe("stage");
-    expect(s.input).toBe("center");
     expect(s.demote).toBe(0);
   });
 
@@ -26,18 +25,22 @@ describe("stage", () => {
   it("a view on screen → the conversation moves over it, it does not collapse", () => {
     const s = stage(at({ content: true }));
     expect(s.conversation).toBe("popover");
-    expect(s.input).toBe("popover");
     expect(s.demote).toBe(0.72);
   });
 
-  it("the person puts it away → the pill, and the input goes back to centre", () => {
+  it("the person puts it away → the pill, and the line being written goes with it", () => {
+    // There is no separate answer for the input any more: it is inside the
+    // conversation, so putting the conversation away puts the line away too.
     const s = stage(at({ content: true, collapsed: true }));
     expect(s.conversation).toBe("pill");
-    expect(s.input).toBe("center");
   });
 
-  it("collapsing with nothing up is not a way to hide the conversation", () => {
-    expect(stage(at({ collapsed: true })).conversation).toBe("stage");
+  // Reversed on purpose. The pill is timed now, so what is left behind is the room
+  // and a line that fades rather than a shelf — and the control that does this is
+  // the text channel's, which cannot be the one button in the cluster that goes
+  // dead in the state where its channel is the whole face.
+  it("putting it away with nothing up leaves the room, not the stage", () => {
+    expect(stage(at({ collapsed: true })).conversation).toBe("pill");
   });
 
   // The rail's width threshold went with the rail: a popover splits no window, so
@@ -63,12 +66,20 @@ describe("stage", () => {
   });
 
   it("a view that renders the words itself stands the host down", () => {
-    const s = stage(at({ content: true, ownsConversation: true }));
-    expect(s.conversation).toBe("hidden");
-    expect(s.input, "the person can still type").toBe("center");
+    // Including the line: a view that owns the conversation owns the writing of
+    // it too, and a host line floating over one would be a second place to type.
+    expect(stage(at({ content: true, ownsConversation: true })).conversation).toBe("hidden");
   });
 
   it("a view's claim on the words means nothing once it is gone", () => {
     expect(stage(at({ ownsConversation: true })).conversation).toBe("stage");
+  });
+
+  // The claim is the view's, not the person's: standing the host down is not the
+  // same as being asked for the room, and it outranks it while the view is up.
+  it("a view's claim outranks the person's put-away", () => {
+    expect(stage(at({ content: true, ownsConversation: true, collapsed: true })).conversation).toBe(
+      "hidden",
+    );
   });
 });

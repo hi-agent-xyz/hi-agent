@@ -16,9 +16,9 @@ interface ChannelControlsProps {
   onToggleVideo: () => void;
   /** Surfaced if the last attempt to turn vision on failed. */
   videoError?: string | null;
-  /** Whether the text input channel is on. */
+  /** Whether the text channel is on — the conversation and its line, together. */
   textOn: boolean;
-  /** Flip the text input channel on/off. */
+  /** Show the conversation, or put it away. */
   onToggleText: () => void;
   /** Whether the agent's voice (audio output) is on. */
   voiceOn: boolean;
@@ -30,10 +30,6 @@ interface ChannelControlsProps {
   fileSending: boolean;
   /** Close the agent's view — the conversation takes the screen back. */
   onCloseViews: () => void;
-  /** How the conversation is currently drawn, from the compositor. */
-  conversation: "stage" | "popover" | "pill" | "hidden";
-  /** Put the conversation popover away to the pill, or bring it back. */
-  onToggleConversation: () => void;
   /** Whether the views band is open. */
   viewsOpen: boolean;
   /** Open/close the views band. */
@@ -53,15 +49,19 @@ interface ChannelControlsProps {
  * present (no state-gated chrome) so a user who can't (or won't) use a given
  * channel still has a clear way in or out; the trailing reset closes the agent's
  * view, which gives the conversation the screen back.
- * Order: status · mic · speaker · keyboard · attach · camera · conversation · reset.
+ * Order: status · mic · speaker · text · attach · camera · views · reset.
  *
- * The conversation toggle is the one control that appears and disappears, and it
- * has to: it opens the conversation popover over whatever is up and puts it away
- * again, and there is nothing to open it over unless something else is on the
- * stage. Showing it while the conversation *is* the stage would offer to hide the
- * only thing on screen.
+ * **One control per channel, and the text one owns the whole of its channel.**
+ * There used to be two: a keyboard button that showed the input line and a
+ * separate conversation button that opened the popover over a view — a control
+ * that had to appear and disappear, because there is nothing to open a popover
+ * over unless something else is on the stage. Now that the line is written inside
+ * the conversation rather than beside it (`ui/Composer.tsx`), the two were toggling
+ * halves of one surface, and one press moves all of it: the record, the scrollback
+ * and the line. What is left is what the cluster was always for — mic, speaker,
+ * text, camera, one apiece.
  *
- * **Return-to-live appears the same way, for the same reason.** It is the most frequent
+ * **Return-to-live is the one control that appears and disappears.** It is the most frequent
  * action once a person has gone back, so it cannot cost opening the band first — and it
  * would mean nothing while they are already on the live view. It carries the dot when a
  * raise landed while they were away, because a raise signals rather than yanks.
@@ -81,16 +81,12 @@ export function ChannelControls({
   onPickFiles,
   fileSending,
   onCloseViews,
-  conversation,
-  onToggleConversation,
   viewsOpen,
   onToggleViews,
   parked,
   liveMoved,
   onReturnToLive,
 }: ChannelControlsProps) {
-  const open = conversation === "popover";
-  const collapsible = open || conversation === "pill";
   return (
     <div className="hi-channels" role="group" aria-label="agent status and channels">
       <StatusButton activity={activity} />
@@ -122,9 +118,10 @@ export function ChannelControls({
         type="button"
         className={`hi-channel${textOn ? " is-on" : ""}`}
         onClick={onToggleText}
-        title={textOn ? "text on — tap to hide" : "text off — tap to type"}
+        title={textOn ? "conversation — tap to put away" : "conversation — tap to open"}
         aria-pressed={textOn}
-        aria-label={textOn ? "hide the text input" : "show the text input"}
+        aria-expanded={textOn}
+        aria-label={textOn ? "put the conversation away" : "open the conversation"}
       >
         <KeyboardGlyph />
       </button>
@@ -150,20 +147,6 @@ export function ChannelControls({
       >
         <CamGlyph off={!videoOn} />
       </button>
-
-      {collapsible && (
-        <button
-          type="button"
-          className={`hi-channel${open ? " is-on" : ""}`}
-          onClick={onToggleConversation}
-          title={open ? "conversation — tap to put away" : "conversation — tap to open"}
-          aria-pressed={open}
-          aria-expanded={open}
-          aria-label={open ? "put the conversation away" : "open the conversation"}
-        >
-          <ConversationGlyph open={open} />
-        </button>
-      )}
 
       {parked && (
         <button
@@ -305,32 +288,6 @@ function AttachGlyph() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-    </svg>
-  );
-}
-
-/** The frame with the conversation panel over its corner: solid while the panel is
- * up, an outline of where it would land once it is away. The glyph is the layout,
- * not a speech bubble — what the button changes is what is over the frame. It
- * stops dividing the frame in two here, because the popover no longer does. */
-function ConversationGlyph({ open }: { open: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-      <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
-      {open ? (
-        <rect x="11" y="9" width="9" height="10" rx="2" fill="currentColor" opacity="0.55" />
-      ) : (
-        <rect
-          x="11"
-          y="9"
-          width="9"
-          height="10"
-          rx="2"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeDasharray="2 2.5"
-        />
-      )}
     </svg>
   );
 }
