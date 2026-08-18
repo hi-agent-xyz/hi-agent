@@ -1,12 +1,12 @@
 // The headless render page — one agent view, mounted standalone, for a screenshot.
 //
 // This exists because a compiled view is NOT a self-contained bundle: it keeps
-// `react` / `@hi/ui` / `@hi/core` / `motion/react` as bare specifiers that only
-// the host page's import map can resolve. Pointing a browser at the `.mjs`
-// therefore renders nothing. This page IS a host page — a second Vite entry in
-// the same build, so Rollup puts the shared modules in the very chunks the
-// import map names, and the Rust route serves it through the same import-map
-// injection `GET /` uses. One map, one React, no second copy to drift.
+// `react` / `@/components/ui/card` / `@hi/core` / `motion/react` as bare
+// specifiers that only the host page's import map can resolve. Pointing a browser
+// at the `.mjs` therefore renders nothing. This page IS a host page — a second
+// Vite entry in the same build, so Rollup puts the shared modules in the very
+// chunks the import map names, and the Rust route serves it through the same
+// import-map injection `GET /` uses. One map, one React, no second copy to drift.
 //
 // What it deliberately does not do: mount `SessionProvider`. That opens the mic,
 // the camera and every channel long-poll, and registers as a live
@@ -23,6 +23,7 @@ import { SessionContext } from "../core/session";
 import type { AgentSession } from "../hooks/useAgentSession";
 import { ActivityMeter } from "../lib/activityMeter";
 import { applyHostChrome } from "../lib/chrome";
+import "../ui/tailwind.css";
 import "../ui/global.css";
 
 /** What the driver reads back out of the page. */
@@ -65,8 +66,9 @@ function note(what: unknown): void {
 // Page-side collectors. The driver ALSO watches CDP's Runtime/Log domains — these
 // two channels overlap on purpose. CDP sees things the page cannot (a subresource
 // 404 with its status code); the page sees things CDP reports only as an opaque
-// rejection (the exact `Failed to resolve module specifier "@hi/ui"` text from a
-// dynamic import, which is the single most common real failure).
+// rejection (the exact `Failed to resolve module specifier
+// "@/components/ui/card"` text from a dynamic import, which is the single most
+// common real failure).
 window.addEventListener("error", (e) => note(e.error ?? e.message));
 window.addEventListener("unhandledrejection", (e) => note(e.reason));
 const consoleError = console.error.bind(console);

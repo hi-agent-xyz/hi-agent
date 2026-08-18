@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // The stack is static and declared once — three planes, ground / view / cover,
 // and the numbers are 0, 1, 2 (docs/arch/stage.md). This test is the thing that
@@ -9,7 +10,7 @@ import { join } from "node:path";
 // application arrived at 2 / 2 / 8 / 50 / 55 / 60 / 60 / 60 / 80, with the
 // conversation parked underneath the view plane and no one able to say why.
 
-const UI = new URL(".", import.meta.url).pathname;
+const UI = fileURLToPath(new URL(".", import.meta.url));
 // Comments stripped first: this stylesheet explains itself at length, and several
 // of those explanations name `z-index:` in prose.
 const CSS = readFileSync(join(UI, "global.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

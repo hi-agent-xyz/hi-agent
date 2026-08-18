@@ -20,13 +20,13 @@
 //!
 //! ## Why a module URL and not a source string
 //!
-//! A compiled view deliberately keeps its bare imports (`react`, `@hi/ui`,
-//! `@hi/core`, `motion/react`) unresolved, bound at runtime by the host page's
-//! import map so host and view share one React instance. There is therefore no
-//! way to render a view by handing a browser a file: it must be loaded by a real
-//! host page carrying that map. That page is `GET /render/view`, and its map
-//! comes from the same embedded artifact `GET /` injects — one map, not a second
-//! copy free to drift.
+//! A compiled view deliberately keeps its bare imports (`react`,
+//! `@/components/ui/card`, `@hi/core`, `motion/react`) unresolved, bound at
+//! runtime by the host page's import map so host and view share one React
+//! instance. There is therefore no way to render a view by handing a browser a
+//! file: it must be loaded by a real host page carrying that map. That page is
+//! `GET /render/view`, and its map comes from the same embedded artifact `GET /`
+//! injects — one map, not a second copy free to drift.
 //!
 //! So the input is a served module URL (what
 //! [`crate::mind::views::ViewCompiler::compile`] returns) plus the base URL of
@@ -465,12 +465,15 @@ mod tests {
     #[test]
     fn reported_problems_fail_the_render_and_are_quoted_verbatim() {
         let v = rendered(
-            vec!["TypeError: Failed to resolve module specifier \"@hi/ui\""],
+            vec!["TypeError: Failed to resolve module specifier \"@/components/ui/card\""],
             false,
         );
         match v.verdict() {
             Verdict::Failed(why) => {
-                assert!(why.contains("@hi/ui"), "the error text must survive: {why}");
+                assert!(
+                    why.contains("@/components/ui/card"),
+                    "the error text must survive: {why}"
+                );
             }
             other => panic!("expected a failure, got {other:?}"),
         }

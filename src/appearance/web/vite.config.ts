@@ -10,17 +10,47 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 // The shared-instance contract. Each shim entry (src/shared/*) re-exports a
 // dependency that BOTH host chrome and agent-authored view modules must share a
-// single instance of. Rollup dedupes the real module into a common chunk that
-// the host and each shim reference; we emit an import map pointing every bare
-// specifier at its shim chunk, so an agent module's `import {…} from "react"` /
-// `"@hi/core"` resolves to the very same instance the host loaded.
+// single instance of. The shadcn entries are the actual generated component
+// source files, exposed under their standard import names — no UI barrel or
+// wrapper package sits between a view and shadcn.
 const SHARED_SPECIFIERS: Record<string, string> = {
   "src/shared/react.ts": "react",
   "src/shared/react-dom.ts": "react-dom",
   "src/shared/jsx-runtime.ts": "react/jsx-runtime",
   "src/shared/motion.ts": "motion/react",
   "src/shared/core.ts": "@hi/core",
-  "src/shared/ui.ts": "@hi/ui",
+};
+
+const SHADCN_SPECIFIERS: Record<string, string> = Object.fromEntries(
+  [
+    "accordion",
+    "alert",
+    "avatar",
+    "badge",
+    "button",
+    "card",
+    "checkbox",
+    "input",
+    "label",
+    "progress",
+    "scroll-area",
+    "select",
+    "separator",
+    "skeleton",
+    "switch",
+    "table",
+    "tabs",
+    "textarea",
+    "tooltip",
+  ].map((name) => [
+    `src/ui/shadcn/${name}.tsx`,
+    `@/components/ui/${name}`,
+  ]),
+);
+
+const IMPORT_SPECIFIERS = {
+  ...SHARED_SPECIFIERS,
+  ...SHADCN_SPECIFIERS,
 };
 
 // After the bundle is built, write dist/importmap.json mapping each shared bare
@@ -34,7 +64,7 @@ function emitImportMap(): Plugin {
       for (const chunk of Object.values(bundle)) {
         if (chunk.type !== "chunk" || !chunk.isEntry || !chunk.facadeModuleId) continue;
         const facade = chunk.facadeModuleId.replace(/\\/g, "/");
-        for (const [suffix, spec] of Object.entries(SHARED_SPECIFIERS)) {
+        for (const [suffix, spec] of Object.entries(IMPORT_SPECIFIERS)) {
           if (facade.endsWith(suffix)) imports[spec] = "/" + chunk.fileName;
         }
       }
@@ -48,19 +78,17 @@ function emitImportMap(): Plugin {
 }
 
 // Dev mirror of the import map. In prod the Rust `index()` handler injects a map
-// pointing each shared specifier at its built `/assets/share-*` chunk; in dev
-// there is no build, so we point them at the `src/shared/*` shim modules Vite
-// serves. An agent view fetched raw from the backend then resolves `@hi/ui` /
-// `react` to the very modules the host loaded (Vite dedupes the real dep), so
-// host and view share one instance — exactly as prod. Only `apply: "serve"`:
-// the build path already emits its own map.
+// pointing each specifier at its built entry chunk; in dev there is no build, so
+// we point at the source module Vite serves. An agent view fetched raw from the
+// backend then resolves React, @hi/core and direct shadcn imports to the same
+// modules the host loaded. Only `apply: "serve"`: the build path emits its map.
 //
 // Why this only affects views: Vite pre-resolves the host's own bare imports at
 // transform time, so they never consult the import map — only the backend-served
 // view modules carry live bare specifiers for the browser to resolve.
 function devImportMap(): Plugin {
   const imports = Object.fromEntries(
-    Object.entries(SHARED_SPECIFIERS).map(([file, spec]) => [spec, "/" + file]),
+    Object.entries(IMPORT_SPECIFIERS).map(([file, spec]) => [spec, "/" + file]),
   );
   return {
     name: "hi-dev-importmap",
@@ -150,15 +178,12 @@ const proxy: Record<string, ProxyOptions> = Object.fromEntries(
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), basicSsl(), emitImportMap(), devImportMap()],
-  // `@hi/core` (session hooks) and `@hi/ui` (static primitives) are the stable
-  // import surface both host chrome and agent-authored views author against.
+  // @hi/core is the live-session surface. UI imports use the standard shadcn
+  // paths mapped above directly to generated component source files.
   resolve: {
     alias: {
       "@hi/core": r("./src/core/index.ts"),
-      "@hi/ui": r("./src/ui/kit/index.tsx"),
-      // What the vendored shadcn components import. Build-time only: it is not a
-      // shared specifier, so it never enters the import map agent views resolve
-      // against — those still see exactly `react`, `@hi/core`, `@hi/ui`, `motion/react`.
+      // What the generated shadcn components import internally at build time.
       "@": r("./src"),
     },
   },
@@ -194,7 +219,12 @@ export default defineConfig({
         "share-jsx-runtime": r("src/shared/jsx-runtime.ts"),
         "share-motion": r("src/shared/motion.ts"),
         "share-core": r("src/shared/core.ts"),
-        "share-ui": r("src/shared/ui.ts"),
+        ...Object.fromEntries(
+          Object.keys(SHADCN_SPECIFIERS).map((file) => {
+            const name = file.split("/").at(-1)!.replace(/\.tsx$/, "");
+            return [`ui-${name}`, r(file)];
+          }),
+        ),
       },
     },
   },

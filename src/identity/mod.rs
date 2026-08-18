@@ -995,6 +995,21 @@ mod soul_tests {
         assert!(WORKER_VIEW_BUILDER_BASE.contains("factory/"));
     }
 
+    /// Quick Views are an authoring judgment over ordinary JSX, not a second
+    /// representation the host has to interpret. The prompt carries only a concise
+    /// direct-import listing for the installed shadcn source.
+    #[test]
+    fn the_builder_uses_shadcn_directly_without_a_ui_layer() {
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("Quick View"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("ordinary composition"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("Available shadcn components"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("@/components/ui/card"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("Do not create a JSON description"));
+        assert!(
+            WORKER_VIEW_BUILDER_BASE.contains("same JSX whether the result is quick or custom")
+        );
+    }
+
     /// The frame log had a writer since `70479a9` and no *pointer* — no prompt anywhere
     /// named `memory/raw/sessions/`, so the one consumer the design allows (an agent that
     /// goes and looks) could not know it existed. `docs/arch/foundation.md` is explicit

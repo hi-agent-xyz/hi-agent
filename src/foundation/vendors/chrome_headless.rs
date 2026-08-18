@@ -6,9 +6,9 @@
 //! Chrome can screenshot a URL with a single command line, and it would be a
 //! third of this code. It would also be the exact failure the architecture warns
 //! about: *"the command exited zero" is not "the thing worked"*. A view whose
-//! `@hi/ui` import fails to resolve still produces a perfectly valid PNG — of an
-//! empty white page — and `--screenshot` exits 0. The most common real defect
-//! would be reported as a pass.
+//! `@/components/ui/card` import fails to resolve still produces a perfectly
+//! valid PNG — of an empty white page — and `--screenshot` exits 0. The most
+//! common real defect would be reported as a pass.
 //!
 //! So we attach a real session and read the page's own account of itself
 //! alongside the pixels, from four sources at once:
@@ -23,8 +23,9 @@
 //! plus a fifth, page-side: `window.__hiRender.errors`, which the render page
 //! fills from `window.onerror`, `unhandledrejection`, a `console.error` shim and
 //! — crucially — the `catch` on its dynamic `import()`. That last one is where
-//! `Failed to resolve module specifier "@hi/ui"` arrives in readable form; CDP
-//! alone reports it only as a rejected promise inside the page's own handler.
+//! `Failed to resolve module specifier "@/components/ui/card"` arrives in
+//! readable form; CDP alone reports it only as a rejected promise inside the
+//! page's own handler.
 //!
 //! The same session also gives us a **deterministic settle point**: the page sets
 //! `__hiRender.ready` once React has committed, two frames have painted, fonts
@@ -550,11 +551,11 @@ mod tests {
         s.absorb_event(&json!({
             "method": "Runtime.exceptionThrown",
             "params": { "exceptionDetails": { "exception": {
-                "description": "TypeError: Failed to resolve module specifier \"@hi/ui\""
+                "description": "TypeError: Failed to resolve module specifier \"@/components/ui/card\""
             }}}
         }));
         assert_eq!(s.problems.len(), 1);
-        assert!(s.problems[0].contains("@hi/ui"), "{:?}", s.problems);
+        assert!(s.problems[0].contains("@/components/ui/card"), "{:?}", s.problems);
     }
 
     #[test]

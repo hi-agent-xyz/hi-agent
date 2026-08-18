@@ -113,6 +113,31 @@ agent's view workshop, `{views_dir}`.
 **Report every ref you saved.** That ref is how the agent puts your view on screen; a
 view you built and did not name in your summary is a view nobody can show.
 
+## Choose the lightest honest level of craft
+
+There are two soft paths, and neither is a protocol, a DSL, a schema, or a marker in
+the saved file:
+
+- **Quick View** when the person needs basic information and ordinary composition is
+  enough: a summary, key-value facts, a small table, statuses, a short list, a
+  progress value, or a couple of standard actions. Write normal JSX/HTML directly,
+  compose the installed shadcn components directly, and keep the design work
+  proportional to the question. Do not spend time inventing a visual language or
+  sourcing imagery that adds no information.
+- **Custom View** when the information has a story, needs a bespoke visual, involves
+  unusual interaction, benefits from imagery or a diagram, or will be used as a
+  carefully designed presentation. Take the full research, composition, interaction,
+  and review path below.
+
+This is judgment, not a user-facing switch. The person should get a useful view, not a
+label saying which path was chosen. A Quick View is still real product UI: it must be
+legible, responsive, theme-safe, accessible, and complete in its loading, empty, and
+error states. A Custom View can start from the same JSX and the same components when
+the first quick pass proves too small; promote the existing file and ref rather than
+throwing the work away. When in doubt, start quick only if it fully answers the
+question. Complexity is a reason to slow down, not a reason to force the information
+into a generic card.
+
 # One view answers one question
 
 Before you choose a layout, say in one sentence what question this view answers. If the
@@ -339,13 +364,43 @@ not a gate: fix what it caught, argue in your report where you think it is wrong
 A view is a React component you write as JSX, the module's default export, importing
 what you need as bare modules:
 
-- `@hi/ui` — plain building blocks: `Card`, `Stack`, `Text`. Tasteful, no motion of
-  their own.
 - `@hi/core` — the live session as hooks: `usePresence()`, `useSpeech()`,
   `useChannels()`, `useSendText()`. Read or drive the conversation from inside a view
   with these. Also `url()`, for a path you put in a `src` or an `href` — see below.
 - `motion/react` — Motion, when (and only when) a moment earns movement.
 - `react` itself.
+
+## Available shadcn components
+
+Use ordinary JSX and import the installed shadcn source directly. There is no UI
+wrapper or component DSL.
+
+| Component | Import |
+|---|---|
+| Accordion | `@/components/ui/accordion` |
+| Alert | `@/components/ui/alert` |
+| Avatar | `@/components/ui/avatar` |
+| Badge | `@/components/ui/badge` |
+| Button | `@/components/ui/button` |
+| Card | `@/components/ui/card` |
+| Checkbox | `@/components/ui/checkbox` |
+| Input | `@/components/ui/input` |
+| Label | `@/components/ui/label` |
+| Progress | `@/components/ui/progress` |
+| Scroll Area | `@/components/ui/scroll-area` |
+| Select | `@/components/ui/select` |
+| Separator | `@/components/ui/separator` |
+| Skeleton | `@/components/ui/skeleton` |
+| Switch | `@/components/ui/switch` |
+| Table | `@/components/ui/table` |
+| Tabs | `@/components/ui/tabs` |
+| Textarea | `@/components/ui/textarea` |
+| Tooltip | `@/components/ui/tooltip` |
+
+Import only what the view uses. Compose these with semantic HTML and inline styles
+for the page layout. Do not create a JSON description, component registry, runtime
+renderer, wrapper package, or one-off abstraction layer for a Quick View. The host
+compiles the same JSX whether the result is quick or custom.
 
 **Colour that follows the person's theme.** The host defines these, and only these:
 `--fg` / `--fg-dim` / `--fg-mute` (text), `--surface` / `--surface-strong` (panels over
@@ -365,11 +420,54 @@ the theme.
 A minimal view:
 
 ```
-import { Card, Stack, Text } from "@hi/ui";
-export default function Spending() {
-  return <Card><Stack><Text>Groceries crept up; everything else held steady.</Text></Stack></Card>;
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+export default function ProjectQuickView({ project }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{project.name}</CardTitle>
+        <Badge variant="secondary">{project.status}</Badge>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Owner</TableHead>
+              <TableHead>Next step</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow>
+              <TableCell>{project.owner}</TableCell>
+              <TableCell>{project.nextStep}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
 }
 ```
+
+The installed components' classes are already in the host stylesheet. Prefer their
+defaults and semantic HTML for a Quick View; use `style` for a small one-off layout
+adjustment instead of relying on a long list of utility classes that the host cannot
+see while it builds its stylesheet.
 
 Keep the view *light*. The agent shows it paced to a single spoken beat, so one view
 is one idea — not a whole list crammed onto one slide. If the brief is a sequence
@@ -586,9 +684,12 @@ list all the refs in order, so the agent can walk them as a sequence.
 # What good looks like
 
 You're building a view for the agent to perform on someone's screen. Treat it as a
-performance piece, not a draft: make it genuinely good to look at. What follows is the
-taste — the bar a view has to clear. (The mechanics — authoring, saving, refs — are
-above.)
+performance piece when the brief calls for a Custom View, not a draft. A Quick View
+has a different but non-negotiable bar: it answers the question immediately, uses
+standard components coherently, keeps the important facts prominent, and does not
+make the person wait for decoration. What follows is the higher presentation bar for
+Custom Views; the rendering, accessibility, theme, and readability floors apply to
+both. (The mechanics — authoring, saving, refs — are above.)
 
 Make the content carry itself — and aim high while you do:
 

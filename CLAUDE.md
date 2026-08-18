@@ -57,7 +57,7 @@ The two environments serve the web app differently, and this asymmetry has bitte
 - **Prod**: `cargo build --release` bundles the built SPA (`src/appearance/web/dist/`) into the binary via `RustEmbed` ([src/appearance/embed.rs](src/appearance/embed.rs)). The Rust server serves `GET /`, `/assets/*`, and `/generated/*` all **same-origin**, and [index()](src/appearance/mod.rs) injects the import map into the HTML.
 - **Dev**: Vite serves the page; the Rust `index()`/import-map injection does **not** run. Dev mirrors prod via the Vite proxy (`/generated`) + a serve-only import-map plugin ([vite.config.ts](src/appearance/web/vite.config.ts)). If a view 404s or its bare imports don't resolve in dev, suspect this seam first.
 
-Agent views are NOT self-contained bundles: the compiled `.mjs` keeps bare imports (`react`, `@hi/ui`, `@hi/core`, `motion/react`) resolved via the page import map to the host's shared instances — required so host and view share one React instance (hooks/context cross the boundary). Do not bundle these deps into views. See the shims in [src/appearance/web/src/shared/](src/appearance/web/src/shared/).
+Agent views are NOT self-contained bundles: the compiled `.mjs` keeps bare imports (`react`, direct shadcn paths such as `@/components/ui/card`, `@hi/core`, `motion/react`) resolved via the page import map to the host's shared instances — required so host and view share one React instance (hooks/context cross the boundary). Do not bundle these deps into views. See the shims in [src/appearance/web/src/shared/](src/appearance/web/src/shared/) and the direct component entries in [src/appearance/web/vite.config.ts](src/appearance/web/vite.config.ts).
 
 ## Deployment shapes (intended)
 

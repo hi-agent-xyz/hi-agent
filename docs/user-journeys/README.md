@@ -89,3 +89,4 @@ What "done" looks like, and how the user knows it worked.
 
 - [30 · 画张图,再改一版(生成即产物,存进 drive 拿 ref)](30-make-a-picture.md) — 四个生成任务(text/image-to-image、text/image-to-video)从"声明了但没接线"到真跑通:**模型由 agent 挑**(工具描述现列当下可达的模型 + 最好/最快/最便宜),旋钮咽不下就报错点名换谁能办、**绝不静默丢弃或换模型**;产物落 `drive/generated/`(**不褪色**,区别于 raw 的相机帧),`drive/<path>` 作为 ref 语法第二条臂,让相机拍的 / 别人递的 / 自己刚画的走同一个参数;视频不占线,几分钟后以**一条消息**带 ref 送回。填上 [12](12-play-with-child.md) 实测记的"图是代码画的、非图像模型"。**图像那条已实测出图**(2048×2048 真图落 drive、ref 可回喂、不能编辑的模型如实拒绝);gpt-image-2 只有单测、视频两条未跑;agent 自主派单那段被本机 Reaction 不开口挡住,待复测。
 - [31 · 听见整个房间,但只在该接话时接话](31-hear-the-room.md) — ASR/diarization 只做机械感知,Reaction 从整段语义判断话是不是在跟自己说;旁聊、电视、问句碎片不触发回答或任务,却可作为近期外围语境,在后来被问到时重新关联。身份只说明谁说的,不说明说给谁;不依赖 wake word。指南已补,运行时 sender/外围上下文/cognition handoff 待实现与实测。
+- [32 · 基础信息先给一个 Quick View,复杂了再认真做](32-quick-views.md) — **软引导**而非 DSL:基本信息用普通 JSX/HTML 从 `@/components/ui/*` 直接 import 已安装的 shadcn 组件,复杂信息从同一个文件和 ref 升级为 Custom View;Quick View 仍过实际渲染、主题、窄屏、空态和错误态检查。

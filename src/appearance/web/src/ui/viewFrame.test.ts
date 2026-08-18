@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // The frame a view is handed is fixed in both axes — it is the window minus the
 // insets, and the window does not grow (docs/arch/stage.md, "The frame is fixed,
@@ -13,7 +14,7 @@ import { join } from "node:path";
 // viewport-bounded), and it only bites on the person's window at their size. A
 // stylesheet test is the only place it can be caught early.
 
-const UI = new URL(".", import.meta.url).pathname;
+const UI = fileURLToPath(new URL(".", import.meta.url));
 const CSS = readFileSync(join(UI, "global.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
 /** The declarations of the first top-level rule whose selector list is exactly `selector`. */

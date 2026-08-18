@@ -11,7 +11,6 @@
     "resolveJsonModule": true,
     "paths": {
       "@hi/core": ["./src/core/index.ts"],
-      "@hi/ui": ["./src/ui/kit/index.tsx"],
       "@/*": ["./src/*"]
     },
     "isolatedModules": true,

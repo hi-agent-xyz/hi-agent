@@ -28,17 +28,48 @@ use hi_agent::foundation::server::{self, ServerSeams};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 
-/// A view that renders visible content through the shared `@hi/ui` primitives —
-/// i.e. one that only works if the import map bound its bare imports.
+/// A Quick View that renders visible content through direct shadcn imports —
+/// i.e. one that only works if the import map binds each component specifier and
+/// the render page loads the shared Tailwind layer.
 const GOOD_VIEW: &str = r#"
-import { Card, Stack, Text } from "@hi/ui";
-export default function Spending() {
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+export default function SpendingQuickView() {
   return (
     <Card>
-      <Stack>
-        <Text>Groceries crept up; everything else held steady.</Text>
-        <Text>Nothing else moved.</Text>
-      </Stack>
+      <CardHeader>
+        <CardTitle>Last month</CardTitle>
+        <Badge variant="secondary">Mostly steady</Badge>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Category</TableHead>
+              <TableHead>Change</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow>
+              <TableCell>Groceries</TableCell>
+              <TableCell>Up slightly</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
     </Card>
   );
 }
@@ -272,7 +303,14 @@ async fn the_render_page_is_served_with_the_host_import_map() {
     let map = html.find("type=\"importmap\"").expect("the import map is injected");
     let script = html.find("type=\"module\"").expect("the page has a module script");
     assert!(map < script, "the import map must precede the module script");
-    for spec in ["\"react\"", "\"@hi/ui\"", "\"@hi/core\"", "\"motion/react\""] {
+    for spec in [
+        "\"react\"",
+        "\"@hi/core\"",
+        "\"motion/react\"",
+        "\"@/components/ui/badge\"",
+        "\"@/components/ui/card\"",
+        "\"@/components/ui/table\"",
+    ] {
         assert!(html.contains(spec), "the map must bind {spec}");
     }
 }

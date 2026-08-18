@@ -64,7 +64,7 @@
   --font-sans: var(--font-display);
   --font-mono: var(--font-mono);
 
-  --radius: 14px;
+  --radius: 8px;
 }
 
 /* Utilities the shadcn chat components use that Tailwind does not ship.

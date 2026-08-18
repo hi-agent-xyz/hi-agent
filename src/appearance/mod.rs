@@ -263,11 +263,11 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// exactly one agent view, for the headless renderer to load and screenshot.
 ///
 /// **Why a route at all.** A compiled view keeps its bare imports (`react`,
-/// `@hi/ui`, `@hi/core`, `motion/react`) unresolved by design, so the host and
-/// the view share one React instance. There is therefore no such thing as
-/// rendering a view by pointing a browser at its `.mjs`: it has to be loaded by a
-/// page that carries the import map. Backend routes are the one thing the agent
-/// cannot hot-load, so this ships as a bundled seed (see
+/// `@/components/ui/card`, `@hi/core`, `motion/react`) unresolved by design, so
+/// the host and the view share one React instance. There is therefore no such
+/// thing as rendering a view by pointing a browser at its `.mjs`: it has to be
+/// loaded by a page that carries the import map. Backend routes are the one
+/// thing the agent cannot hot-load, so this ships as a bundled seed (see
 /// `docs/arch/foundation.md#hot-loading`).
 ///
 /// **One map, not two.** The map comes from the same embedded `importmap.json`
