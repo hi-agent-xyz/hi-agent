@@ -146,13 +146,13 @@ without going through it. What the agent carries forward is generated into its s
 
 Nine files, one per [role](arch/agents.md): the three rungs — `reaction.md`, `cognition.md`,
 `reflection.md` — and six worker types under `workers/`: `general`, `view-builder`,
-`view-reviewer`, `decision-maker`, `file-filer`, `person-reader`. Each is **whole**: a worker's
+`view-reviewer`, `decision-maker`, `drive-organizer`, `person-reader`. Each is **whole**: a worker's
 prompt is the same kind of object as a rung's, with no shared base above it, because a
-`common.md` meant a file-filer read how to review its own artwork.
+`common.md` meant a drive-organizer read how to review its own artwork.
 
 Names that are *retired* get swept on boot rather than left to read as current — `core.md`,
-`meaning.md`, `appearance.md`, `aesthetic.md`, `workers/common.md`, and the two rung renames
-`speaking.md` and `deliberation.md`.
+`meaning.md`, `appearance.md`, `aesthetic.md`, `workers/common.md`, the two rung renames
+`speaking.md` and `deliberation.md`, and the worker rename `workers/file-filer.md`.
 
 - **World priors** — `world.md` *(proposed, not built)*: "YOLO is good for X", "lark-cli does
   Y". The agent would read it like **an article from a kind-of-trusted source**, *digest it into

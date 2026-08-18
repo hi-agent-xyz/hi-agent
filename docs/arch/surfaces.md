@@ -74,9 +74,9 @@ and then get copied** into drive. Both trees are synced, so that is duplication 
 durability gain. The log holds the event; the bytes are staged and moved.
 
 **A handed file is the deliberate exception, and it is not a violation of the above.** It
-lands in the log's media store like any other signal, and the filing worker **copies** it
-into [`drive/`](data.md#drive) rather than moving it. Two reasons, and the first is the
-one that matters:
+lands in the log's media store like any other signal, and the [drive
+organizer](agents.md#drive-organizer) **copies** it into [`drive/`](data.md#drive) rather
+than moving it. Two reasons, and the first is the one that matters:
 
 - **The two stores have different retention, which is the whole point of having both.**
   The log's copy [fades](data.md#forgetting) once its day is consolidated and cold; the
@@ -90,7 +90,7 @@ one that matters:
   of.
 
 Stated at this length because the rule above reads as forbidding it, and someone
-reasonable will otherwise "fix" the filing worker to move rather than copy. The cost is a
+reasonable will otherwise "fix" the drive organizer to move rather than copy. The cost is a
 few megabytes duplicated; the alternative is a promise quietly broken.
 
 ## Carriers

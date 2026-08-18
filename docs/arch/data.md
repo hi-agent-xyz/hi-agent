@@ -417,6 +417,12 @@ so what is worth keeping about one is a note and a skill, not a registry row.
 latency. Emergent — *"this turned out to be worth keeping"* — is graduated later by
 reflection. Same destination, two latencies, told apart by judgment.
 
+**Reading and writing it is every agent's**, not one session's errand: whoever knows what
+it is putting down and where it goes puts it down. The
+[drive organizer](agents.md#drive-organizer) is who the rest ask when they *don't* know —
+where a new thing belongs, where an existing one is, or to straighten a corner that has
+drifted. It holds the layout; it is not a gate in front of the disk.
+
 **Bytes and meaning split.** A handed-over document puts its bytes here verbatim and a
 provenance-bearing claim into memory. Quantitative data is kept whole and analysed by a
 separate tool; only conclusions become memory. Digesting a dataset into prose destroys the

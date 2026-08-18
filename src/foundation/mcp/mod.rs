@@ -184,9 +184,13 @@ fn create_worker_tool() -> Value {
                                     builder composes gets one, alongside showing it rather than \
                                     ahead of it, \
                                     `decision-maker` to get a call made so work can continue \
-                                    without the person, `file-filer` to put something handed \
-                                    over into the drive — a file, or a key or password pasted \
-                                    into the chat, `person-reader` to read one person out of \
+                                    without the person, `drive-organizer` when the drive is the \
+                                    problem — where something handed over belongs (a file, or a \
+                                    key or password pasted into the chat), where an existing one \
+                                    is, or a corner that wants straightening; reading and writing \
+                                    `drive/` yourself needs no worker at all, so reach for this \
+                                    one only when *where* is what you don't know, \
+                                    `person-reader` to read one person out of \
                                     the record and write their facet — the settling pass's, and \
                                     not yours to start unless you are it.",
                 },

@@ -313,7 +313,7 @@ const TYPE = {
   "view-builder": "View builder",
   "view-reviewer": "View reviewer",
   "decision-maker": "Decision maker",
-  "file-filer": "File filer",
+  "drive-organizer": "Drive organizer",
   "person-reader": "Person reader",
 };
 
@@ -463,7 +463,7 @@ export default function Workers() {
  *  By what the rung is *for*, not by how many there are. The outward ladder — the
  *  voice, the thinking behind it, the outward brain — is what someone opens this
  *  page to watch, so it takes the first column. Reflection is the housekeeping rung
- *  and takes the second, so its workers (a filer, a view-builder) can never push the
+ *  and takes the second, so its workers (an organizer, a view-builder) can never push the
  *  outward ladder down the page.
  *
  *  A rung this file has never heard of lands in the outward column rather than

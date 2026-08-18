@@ -2328,8 +2328,8 @@ mod slug_tests {
     /// so an unnameable errand is a caller that sent punctuation.
     #[test]
     fn an_unusable_hint_falls_back_to_the_type() {
-        assert_eq!(slug_for(Role::Worker(WorkerType::FileFiler), Some("!!!")), "file-filer");
-        assert_eq!(slug_for(Role::Worker(WorkerType::FileFiler), None), "file-filer");
+        assert_eq!(slug_for(Role::Worker(WorkerType::DriveOrganizer), Some("!!!")), "drive-organizer");
+        assert_eq!(slug_for(Role::Worker(WorkerType::DriveOrganizer), None), "drive-organizer");
     }
 
     /// **No minted id can collide with a literal route segment.** `/api/workers/ended` is

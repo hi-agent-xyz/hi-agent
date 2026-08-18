@@ -976,11 +976,11 @@ mod tests {
     async fn what_the_writer_writes_is_readable_the_moment_a_flush_returns() {
         let dir = tempfile::tempdir().unwrap();
         let writer = Writer::start(dir.path().to_path_buf());
-        writer.write(opened_record("run-a", &2.into(), Role::Worker(WorkerType::FileFiler), Some(1.into()), "file it", None, ts(3)));
+        writer.write(opened_record("run-a", &2.into(), Role::Worker(WorkerType::DriveOrganizer), Some(1.into()), "file it", None, ts(3)));
         writer.write(closed_record(&ended_now(
             "run-a",
             &2.into(),
-            Role::Worker(WorkerType::FileFiler),
+            Role::Worker(WorkerType::DriveOrganizer),
             Some(1.into()),
             "file it",
             None,
@@ -993,7 +993,7 @@ mod tests {
 
         let ends = seed(dir.path(), "run-b").await;
         assert_eq!(ends.len(), 1, "opened + closed for one session is one row");
-        assert_eq!(ends[0].worker_type.as_deref(), Some("file-filer"));
+        assert_eq!(ends[0].worker_type.as_deref(), Some("drive-organizer"));
         assert_eq!(ends[0].how, EndedHow::Closed);
     }
 

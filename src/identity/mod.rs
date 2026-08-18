@@ -54,7 +54,7 @@ const WORKER_GENERAL_BASE: &str = include_str!("workers/general.md");
 const WORKER_VIEW_BUILDER_BASE: &str = include_str!("workers/view-builder.md");
 const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md");
 const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md");
-const WORKER_FILE_FILER_BASE: &str = include_str!("workers/file-filer.md");
+const WORKER_DRIVE_ORGANIZER_BASE: &str = include_str!("workers/drive-organizer.md");
 const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
 
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
@@ -84,8 +84,11 @@ pub enum WorkerType {
     /// Makes a call so work can continue without the person
     /// (`docs/arch/agents.md#decision-maker`).
     DecisionMaker,
-    /// Files something the person handed over into `drive/`.
-    FileFiler,
+    /// Knows how `drive/` is laid out: puts a new thing where the drive is already
+    /// going, says where an existing one lives, and straightens a corner that has
+    /// drifted (`docs/arch/agents.md#drive-organizer`). Reading and writing the drive is
+    /// every agent's; this is the one that is asked when *where* is the hard part.
+    DriveOrganizer,
     /// Reads one person out of the record and folds what it learns into their facet —
     /// including the `## Working with them` section the voice is projected
     /// ([`crate::mind::memory::conduct`]).
@@ -100,7 +103,7 @@ impl WorkerType {
             Self::ViewBuilder => "view-builder",
             Self::ViewReviewer => "view-reviewer",
             Self::DecisionMaker => "decision-maker",
-            Self::FileFiler => "file-filer",
+            Self::DriveOrganizer => "drive-organizer",
             Self::PersonReader => "person-reader",
         }
     }
@@ -112,7 +115,7 @@ impl WorkerType {
         Self::ViewBuilder,
         Self::ViewReviewer,
         Self::DecisionMaker,
-        Self::FileFiler,
+        Self::DriveOrganizer,
         Self::PersonReader,
     ];
 
@@ -147,7 +150,7 @@ impl WorkerType {
             Self::ViewBuilder => WORKER_VIEW_BUILDER_BASE,
             Self::ViewReviewer => WORKER_VIEW_REVIEWER_BASE,
             Self::DecisionMaker => WORKER_DECISION_MAKER_BASE,
-            Self::FileFiler => WORKER_FILE_FILER_BASE,
+            Self::DriveOrganizer => WORKER_DRIVE_ORGANIZER_BASE,
             Self::PersonReader => WORKER_PERSON_READER_BASE,
         }
     }
@@ -203,7 +206,7 @@ impl Role {
         Self::Worker(WorkerType::ViewBuilder),
         Self::Worker(WorkerType::ViewReviewer),
         Self::Worker(WorkerType::DecisionMaker),
-        Self::Worker(WorkerType::FileFiler),
+        Self::Worker(WorkerType::DriveOrganizer),
         Self::Worker(WorkerType::PersonReader),
     ];
 
@@ -240,7 +243,7 @@ impl Role {
             Self::Worker(WorkerType::ViewBuilder) => "workers/view-builder",
             Self::Worker(WorkerType::ViewReviewer) => "workers/view-reviewer",
             Self::Worker(WorkerType::DecisionMaker) => "workers/decision-maker",
-            Self::Worker(WorkerType::FileFiler) => "workers/file-filer",
+            Self::Worker(WorkerType::DriveOrganizer) => "workers/drive-organizer",
             Self::Worker(WorkerType::PersonReader) => "workers/person-reader",
         }
     }
@@ -294,7 +297,7 @@ impl Role {
 /// would otherwise be the majority of a flat `prompts/`. One file per type and **no
 /// shared base**: a worker's prompt is whole, the same way a rung's is. `common.md` used
 /// to sit above them as the layer every type composed with, which meant a decision-maker
-/// read how to drive a camera and a file-filer read how to review its own artwork. The
+/// read how to drive a camera and a drive-organizer read how to review its own artwork. The
 /// price is duplication — a preamble repeated in each, plus ~36 further lines shared by
 /// two or three of them — and drift between the copies is the risk the prompt tests
 /// below hold.
@@ -348,6 +351,10 @@ const RETIRED_PROMPTS: &[&str] = &[
     // exactly like a current one.
     "speaking.md",
     "deliberation.md",
+    // The worker rename. `file-filer` only put a handed-over file down; `drive-organizer`
+    // owns the layout — putting down, finding, and straightening — so the old file left in
+    // place would read as a second, narrower filing role that nothing can dispatch.
+    "workers/file-filer.md",
 ];
 
 /// A role's **whole** system prompt: its installed `.md`, entire and interpolated.
@@ -787,10 +794,10 @@ mod soul_tests {
         let dir = tempfile::tempdir().unwrap();
         install_prompts(dir.path()).unwrap();
 
-        let filer = role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await;
+        let organizer = role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await;
         assert!(
-            filer.contains("memory/raw/file/"),
-            "the filer is pointed at the flat channel directory"
+            organizer.contains("memory/raw/file/"),
+            "the organizer is pointed at the flat channel directory"
         );
 
         for t in WorkerType::ALL {
@@ -827,10 +834,10 @@ mod soul_tests {
         const VIEW_LAYER: &str = "hi_review_view";
         let builder = role_prompt(dir.path(), Role::Worker(WorkerType::ViewBuilder)).await;
         assert!(builder.contains(VIEW_LAYER));
-        assert!(!builder.contains("Report the path"), "the filing layer must not ride along");
+        assert!(!builder.contains("Report the paths"), "the drive layer must not ride along");
 
-        let filer = role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await;
-        assert!(!filer.contains(VIEW_LAYER), "the view layer must not ride along");
+        let organizer = role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await;
+        assert!(!organizer.contains(VIEW_LAYER), "the view layer must not ride along");
     }
 
     /// Durability across a restart is **behaviour, not machinery**: nothing persists a
@@ -840,7 +847,7 @@ mod soul_tests {
     ///
     /// Pinned on the two rungs that can lose real time (the general worker and the view
     /// builder) plus the decision-maker, whose whole output *is* its report. The reviewer
-    /// and the filer are left out on purpose — one returns a verdict, the other's work is
+    /// and the organizer are left out on purpose — one returns a verdict, the other's work is
     /// the files it has already written.
     #[tokio::test]
     async fn the_long_running_workers_are_told_to_write_as_they_go() {
@@ -866,7 +873,7 @@ mod soul_tests {
         // rule — the others build, judge, or file.
         let general = role_prompt(dir.path(), Role::Worker(WorkerType::General)).await;
         assert!(general.contains("outside world can already see"));
-        for t in [WorkerType::ViewReviewer, WorkerType::FileFiler] {
+        for t in [WorkerType::ViewReviewer, WorkerType::DriveOrganizer] {
             let p = role_prompt(dir.path(), Role::Worker(t)).await;
             assert!(!p.contains("only copy of the work"), "{} rode along", t.as_str());
         }
@@ -924,7 +931,7 @@ mod soul_tests {
     fn the_worker_is_not_told_about_a_tool_it_does_not_have() {
         for base in [WORKER_GENERAL_BASE, WORKER_VIEW_BUILDER_BASE,
                      WORKER_VIEW_REVIEWER_BASE, WORKER_DECISION_MAKER_BASE,
-                     WORKER_FILE_FILER_BASE, WORKER_PERSON_READER_BASE] {
+                     WORKER_DRIVE_ORGANIZER_BASE, WORKER_PERSON_READER_BASE] {
             assert!(!base.contains("`ask`"));
             assert!(!base.contains("`delegate`"));
             assert!(!base.contains("`alarm`"));
@@ -1016,15 +1023,15 @@ mod soul_tests {
     /// that the host "records the session stream verbatim and interprets none of it", so a
     /// code-level reader was never the answer; a path in the character was.
 
-    /// The filing worker copies rather than moves, and the reason has to travel with the
+    /// The drive organizer copies rather than moves, and the reason has to travel with the
     /// instruction: `docs/arch/surfaces.md` forbids log-then-copy for streamed bulk, so a
     /// reasonable person reading only that rule would "fix" this into a move — dangling
     /// the journal's own reference to the bytes, for the one class of object where the
     /// bytes are the point.
     #[test]
-    fn the_filing_worker_is_told_why_it_copies() {
-        assert!(WORKER_FILE_FILER_BASE.contains("copy, never move"));
-        assert!(WORKER_FILE_FILER_BASE.contains("fades"));
+    fn the_drive_organizer_is_told_why_it_copies() {
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("copy, never move"));
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("fades"));
     }
 
     /// `docs/arch/agents.md` retires the perception tool because "a ref is a path, and
@@ -1035,16 +1042,37 @@ mod soul_tests {
     #[tokio::test]
     async fn the_rungs_that_open_a_ref_are_told_where_refs_start() {
         assert!(COGNITION_BASE.contains("{raw_dir}"), "cognition must name the root");
-        assert!(WORKER_FILE_FILER_BASE.contains("{raw_dir}"), "the filer must name the root");
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("{raw_dir}"), "the organizer must name the root");
 
         let dir = tempfile::tempdir().unwrap();
         let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
         for text in [
             cognition_prompt(dir.path()).await,
-            role_prompt(dir.path(), Role::Worker(WorkerType::FileFiler)).await,
+            role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await,
         ] {
             assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
             assert!(text.contains(&root), "the substituted root must be the absolute raw root");
+        }
+    }
+
+    /// The drive is **every agent's to read and write** now
+    /// (`docs/arch/agents.md#drive-organizer`), and the drive organizer is who they ask when
+    /// *where* is the hard part rather than a gate in front of the disk. That only works if
+    /// the prompts saying so name where the drive is, and if the name survives substitution:
+    /// an unexpanded `{drive_dir}` is a path to nothing, and the symptom is a rung reporting
+    /// the filing cabinet empty rather than reporting it could not find one.
+    #[tokio::test]
+    async fn the_prompts_that_send_a_rung_to_the_drive_name_where_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        let drive = abs(dir.path()).join("drive").display().to_string();
+        for text in [
+            cognition_prompt(dir.path()).await,
+            role_prompt(dir.path(), Role::Worker(WorkerType::General)).await,
+            role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await,
+        ] {
+            assert!(!text.contains("{drive_dir}"), "an unresolved placeholder reached the rung");
+            assert!(text.contains(&drive), "the substituted drive must be the absolute drive dir");
         }
     }
 
@@ -1248,7 +1276,7 @@ mod soul_tests {
             "Cognition dispatches the filing, so Cognition must hold the same line"
         );
         assert!(
-            WORKER_FILE_FILER_BASE.contains("file nothing"),
+            WORKER_DRIVE_ORGANIZER_BASE.contains("file nothing"),
             "and the worker that would write it is the last place to stop"
         );
     }
@@ -1278,11 +1306,11 @@ mod soul_tests {
     #[test]
     fn a_filed_key_carries_what_it_opens_and_not_the_machine() {
         assert!(
-            WORKER_FILE_FILER_BASE.contains("a bare secret with no note of what it's for"),
-            "the filer must be told an entry is more than the secret"
+            WORKER_DRIVE_ORGANIZER_BASE.contains("a bare secret with no note of what it's for"),
+            "the organizer must be told an entry is more than the secret"
         );
         assert!(
-            WORKER_FILE_FILER_BASE.contains("Not which environment variable holds it"),
+            WORKER_DRIVE_ORGANIZER_BASE.contains("Not which environment variable holds it"),
             "and that the machine-bound half stays behind when the drive moves"
         );
     }

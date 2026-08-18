@@ -308,11 +308,11 @@ Reflection, and never surface in the conversation. What must stay singular is th
 and the *task ledger* — not the act of asking for help.
 
 **It works across the whole store**: it merges a person seen on two occasions, dedupes
-skills, does drive housekeeping.
+skills, hands drive housekeeping to a [drive organizer](#drive-organizer).
 
 Its workers come in two kinds:
 
-- **Per-store organizers** — people, episodes, facets, views, skills, tools.
+- **Per-store organizers** — people, episodes, facets, views, skills, tools, the drive.
 - **Cross-store graduations**, named by the edge they perform: `episode → skill`,
   `raw → drive bytes + facets meaning`, and `"promised, never delivered" → open task`.
 
@@ -522,7 +522,7 @@ rather than an anonymous worker, and `GET /api/workers` report it.
 | View Builder | builds a view |
 | View Reviewer | renders it, screenshots it, and **looks at it** before it ships |
 | Decision Maker | makes the call that lets work continue without the user — below |
-| File Filer | puts something the person handed over into `drive/`, filed where the drive is already going |
+| Drive Organizer | knows how `drive/` is laid out — puts a new thing where the drive is already going, says where an existing one is, straightens a corner that has drifted |
 
 Workers are **volatile**: they live in process memory and die with it. Nothing durable may
 live only inside one. Recovery is therefore **reconstruction from Tasks, never continuation**
@@ -593,6 +593,46 @@ Reversibility is what it weighs most heavily: the harder something is to walk ba
 it should prefer asking. That is [invariant 9](arch.md#invariants), applied here as judgment
 rather than restated as a rule — nothing enforces it, and the rationale it leaves behind is
 how we find out when it judged badly.
+
+### Drive Organizer
+
+**The drive is everyone's to read and write.** [`drive/`](data.md#drive) is a directory on
+the same disk as everything else, and an agent that knows what it is putting down and where
+it goes puts it down. There is no gatekeeper and no write path that must be asked for —
+routing every save through one session would make the filing cabinet slower to reach than
+the memory beside it, and buy no tidiness for the cost.
+
+What is scarce is not the access, it is **knowing where**. The layout is a judgment that
+accreted; it cannot be derived from a listing. So this worker is the one that holds it, and
+it is reached for in the three cases where the answer is not already obvious to whoever
+asked:
+
+- **Put this somewhere** — a thing has arrived and nobody knows where it belongs: a file
+  handed over, or [a key pasted into the chat](data.md#keys-passwords-and-the-one-question)
+  whose only bytes are the ones in the task.
+- **Where is this** — something is in there and the caller cannot find it, or cannot tell
+  which of two candidates is the one meant.
+- **Straighten this** — a corner has drifted: a file in the wrong folder, two folders that
+  mean the same thing, a name nobody could search for months from now.
+
+Reached **through the owner**, like the [decision maker](#decision-maker) and for the same
+structural reason: a worker holds no `CreateWorker`, so one that does not know where
+something goes says so to whoever created it and keeps moving meanwhile. Reflection's drive
+housekeeping is a **dispatch to one of these**, not work it does inside the pass — the same
+shape as its [`person-reader`](#workers) organizers, and for the same reason: a pass that
+does the tidying inline pays the whole layout's context on every wake.
+
+**It matches the drive; it does not redesign it.** A new folder only when nothing fits,
+named the way the existing ones are named. An errand that quietly reorganizes everything is
+how a person loses track of their own things.
+
+**The one rule that cannot bend: a drive path can be the address inside a facet.** Move or
+rename a file and every claim pointing at the old path is fixed in the same pass, or the
+tidy has left memory aimed at nothing — worse than the mess it cleaned.
+
+**A handed-over file is copied, never moved.** [`surfaces.md`](surfaces.md#bulk) carries
+the reasoning at length: the log's copy fades and the drive's is permanent, and moving the
+bytes degrades the journal's own reference to a caption.
 
 ## Delegation
 

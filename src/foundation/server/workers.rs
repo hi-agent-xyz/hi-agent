@@ -88,7 +88,7 @@ struct WorkerDto {
     ///
     /// **This used to be unanswerable.** The switchboard held a role type of its own with
     /// no room for the specialism, so `create_worker` consumed the type to pick a system
-    /// prompt and nothing kept it — every `view-builder` and `file-filer` in flight
+    /// prompt and nothing kept it — every `view-builder` and `drive-organizer` in flight
     /// reported here as a bare `worker`, and "has the reviewer ever actually run?" had no
     /// answer outside a transcript. One `Role` carries both now.
     #[serde(rename = "type")]
@@ -667,7 +667,7 @@ mod tests {
     /// The regression this whole change exists for: a specialist in flight is reportable
     /// as one. Before, `create_worker` consumed the type to choose a prompt and the
     /// switchboard recorded a bare `worker`, so nothing downstream could tell a view
-    /// reviewer from a file filer.
+    /// reviewer from a drive organizer.
     #[test]
     fn a_specialist_is_reportable_as_one() {
         let id = registry::mint(Role::Worker(WorkerType::ViewReviewer), Some("judge it"));
