@@ -1208,4 +1208,82 @@ mod soul_tests {
         install_prompts(dir.path()).unwrap();
         assert!(reflection_prompt(dir.path()).await.contains("tends your own house"));
     }
+
+    /// **The failure this pins actually happened.** Asked to remember an API key, the voice
+    /// answered that it would keep it in a secure credential store and record only the
+    /// name — and there is no such store: [`crate::foundation::credentials`] holds our own
+    /// vendor keys, keyed `(mode, feature)` and written from Settings, and no tool writes
+    /// one. So nothing was saved, while the key itself landed verbatim in the raw log, both
+    /// session transcripts and the runtime's rollout. The exact inversion of the promise.
+    ///
+    /// `docs/arch/data.md#keys-passwords-and-the-one-question` settles it: the drive holds
+    /// keys in the clear, like anything else handed over. What the prompts then have to
+    /// carry is the part no rail enforces — that there is no vault to claim.
+    #[test]
+    fn no_rung_may_offer_a_secure_store_that_does_not_exist() {
+        assert!(
+            REACTION_BASE.contains("Don't invent somewhere safe to put it"),
+            "the voice does the promising, so the voice is where this has to be said"
+        );
+        assert!(
+            COGNITION_BASE.contains("There is no vault and no secure store"),
+            "and the rung that would dispatch the filing must not believe in one either"
+        );
+    }
+
+    /// **Absent is not yes, and this is the half that costs something to get wrong.** The
+    /// person is asked once, ever, and the answer is a facet — which means it can be missing
+    /// (never written, or a seed that lost it). Resolving *missing* to *file* would file a
+    /// key against a person who said never; resolving it to *ask* costs one question. So
+    /// both the rung that dispatches and the worker that writes must refuse without a yes,
+    /// and the voice must know that a standing choice it cannot find is not one.
+    #[test]
+    fn a_key_is_never_filed_without_an_answer() {
+        assert!(
+            REACTION_BASE.contains("A standing choice you can't find is not a"),
+            "the voice must re-ask rather than assume the answer it cannot see"
+        );
+        assert!(
+            COGNITION_BASE.contains("never treat *not knowing* as a yes"),
+            "Cognition dispatches the filing, so Cognition must hold the same line"
+        );
+        assert!(
+            WORKER_FILE_FILER_BASE.contains("file nothing"),
+            "and the worker that would write it is the last place to stop"
+        );
+    }
+
+    /// The three answers are one exchange with the person, so exactly one prompt runs it.
+    /// Two rungs asking is two prompts, and a person asked twice about the same key learns
+    /// the question is noise. The voice owns it because the voice is the one in the room.
+    #[test]
+    fn exactly_one_rung_asks_the_key_question() {
+        let asks: Vec<_> = Role::ALL
+            .iter()
+            .filter(|r| r.base().contains("以后都存"))
+            .collect();
+        assert_eq!(
+            asks.len(),
+            1,
+            "exactly one prompt may carry the ask, found {asks:?}"
+        );
+        assert_eq!(asks[0].prompt_name(), "reaction");
+    }
+
+    /// A key filed as a bare secret is a string nobody can use in three months, which is the
+    /// quiet failure here — it looks filed and is useless. The entry has to say what it
+    /// opens. And the env var it happens to sit in on *this* machine is the one thing that
+    /// must not travel in it: `docs/arch/arch.md` invariant 11, in the softest place it
+    /// shows up.
+    #[test]
+    fn a_filed_key_carries_what_it_opens_and_not_the_machine() {
+        assert!(
+            WORKER_FILE_FILER_BASE.contains("a bare secret with no note of what it's for"),
+            "the filer must be told an entry is more than the secret"
+        );
+        assert!(
+            WORKER_FILE_FILER_BASE.contains("Not which environment variable holds it"),
+            "and that the machine-bound half stays behind when the drive moves"
+        );
+    }
 }

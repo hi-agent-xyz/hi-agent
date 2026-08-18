@@ -133,8 +133,12 @@ Each is a statement we can test, and each has a real failure behind it.
 9. **Irreversible or outward-facing → ask.** No silent outward action, ever. This one is
    about reversibility, and it stands — as guidance the agent follows, not a gate the host
    enforces.
-10. **Secrets never enter the brain.** They live in env or keychain and are decrypted at call
-    time.
+10. **A secret handed over is filed like anything else handed over** — into
+    [`drive/`](data.md#drive), in the clear, because the drive is the person's own filing
+    cabinet and a key is one of the things people keep in one. It travels with the
+    directory. The person is told once what that means and decides; **absent an answer,
+    nothing is filed** — the safe failure is asking twice, never filing what they said not
+    to.
 11. **No absolute host path is persisted into `data/`.** The directory has to stay portable.
 12. **Who a signal came from is decided at the boundary, never derived from what it says** —
     and *unknown* is an answer the record keeps. A name inferred from content is

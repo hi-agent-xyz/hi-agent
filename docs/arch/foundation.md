@@ -345,9 +345,15 @@ Two things about devices that no amount of code fixes:
 - **The logged-in session *is* the credential.** Publishing to a platform with no open API
   means driving an app that is already signed in — no key to store, nothing to leak.
 
-Where there *is* a key: the [notebook](data.md#drive) records the endpoint, the calling
-convention, and **which environment variable holds the secret**. The secret itself lives in
-env or keychain and is decrypted at call time. It never enters a thinking layer.
+Where there *is* a key: it goes into the [drive](data.md#keys-passwords-and-the-one-question)
+under `accounts/`, in the clear, alongside the endpoint and the calling convention — one
+entry, so a job months from now finds the key and how to use it in the same place. Which
+environment variable holds it is a fact about *this machine* and belongs in a note about the
+machine, not in the entry: the drive travels and the env does not.
+
+Asking for the key and asking to keep it are one exchange, not two. The person is asked
+about keeping **once, ever** — not per key — and the answer stands until they change it; see
+the three answers and the *absent → ask* rule there.
 
 ## Honesty about reach
 

@@ -8,11 +8,17 @@ what it owes, what it made, and who it is.
 The binary is interchangeable. The directory is the agent.
 
 > **A thought, not yet built.** If `data/` is genuinely everything, then `jack.hi` is a
-> complete agent-for-Jack that any hi-agent binary can open and continue. Two things keep
-> that possible and are worth protecting now: **no absolute host paths are ever persisted
-> into `data/`**, and the honest limit — a portable directory carries *knowledge and
-> history, not authority*. Secrets and OS grants deliberately do not travel, so opening one
-> on a new machine means re-granting.
+> complete agent-for-Jack that any hi-agent binary can open and continue. One thing keeps
+> that possible and is worth protecting now: **no absolute host paths are ever persisted
+> into `data/`**. The honest limit is narrower than it once read — **secrets travel**, in
+> the clear, in [`drive/`](#drive); what does not travel is an **OS grant**, which is held
+> by the machine and re-clicked there. So opening one on a new box costs the grants back,
+> not the keys.
+>
+> The cost is stated rather than mitigated: a copy of `jack.hi` is a copy of every key in
+> it. That is the property a person's own drive has always had, it is the one they were
+> told about before the first key went in, and encrypting it here would only move the
+> question to where the passphrase lives.
 
 ## Who holds the pen
 
@@ -47,7 +53,8 @@ upgrade either clobbers what the agent built or can no longer refresh what we sh
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
-| Secrets never enter a thinking layer | The one invariant structure alone cannot enforce |
+| A handed-over secret is filed in `drive/`, in the clear | It is already in the log verbatim the moment it is pasted; a second, curated copy is the only part we get to choose, and refusing it buys nothing while losing the key |
+| The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
 
 ## `memory/raw/`
 
@@ -399,8 +406,8 @@ Distinct from the person's own archive.
 | | |
 |---|---|
 | Projects | artifacts and bytes it produced or was given |
-| Notes | verbatim pages — endpoints, calling conventions, where a key lives |
-| Accounts | what it is logged into, and **where** each secret lives — never the secret |
+| Notes | verbatim pages — endpoints, calling conventions, how a thing is driven |
+| Accounts | what it is logged into, the endpoint and calling convention, **and the key itself** |
 | Ledgers | append-only, e.g. message-id → done, so a serving task never duplicates or misses |
 
 There is no devices entry, on purpose: a device is [a tool plus a procedure](foundation.md#devices),
@@ -417,6 +424,42 @@ thing that made it worth having.
 
 **Sensitivity is cross-cutting** — private at ingest, in storage, on any view, and on any
 outbound carrier. Not just at one of them.
+
+### Keys, passwords, and the one question
+
+A key, a password, a token — handed over in the conversation rather than as a file — is
+filed here like anything else, under `accounts/`, in the clear. It is not a special class of
+thing with a vault of its own: the drive is the person's filing cabinet, and this is what
+people keep in one.
+
+**One question, asked the first time it comes up, and never again.** Not per key — per
+person, once, because a prompt that fires on every key is a prompt that gets waved through.
+What is being decided is that the drive holds keys in the clear and carries them wherever it
+goes. Three answers:
+
+| | |
+|---|---|
+| **this one** | file it; ask again next time |
+| **all of them** | standing yes — file keys from here on without asking |
+| **none** | standing no — never file a key; hold it for this exchange and let it go |
+
+The answer is [a facet](#memory), the same as any other durable preference about the person,
+and it reaches the voice the way the rest do — through the seed.
+
+**Absent an answer, ask.** A lost or never-written preference costs one extra question. It
+must never cost a key filed against a *none* that went missing, so *no answer* resolves to
+*ask*, never to *file*.
+
+**Filing it is not using it.** A key in `accounts/` names what it opens and how it is
+called, so a job months later can pick it up. Nothing about being filed puts it in front of
+a thinking rung that did not go and fetch it, and nothing puts it back in a transcript, on a
+screen, or into an outbound carrier — that is the sensitivity rule above, and a key is the
+sharpest case of it.
+
+**It is in the log already, and that is what makes this cheap.** The moment it was pasted it
+landed verbatim in `memory/raw/`, which is append-only and does not fade for text. So the
+decision here was never *whether the directory holds this key* — it does either way. It is
+only whether there is also a copy someone curated, in the place the agent will actually look.
 
 ## `skills/`
 

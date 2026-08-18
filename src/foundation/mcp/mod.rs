@@ -184,8 +184,9 @@ fn create_worker_tool() -> Value {
                                     builder composes gets one, alongside showing it rather than \
                                     ahead of it, \
                                     `decision-maker` to get a call made so work can continue \
-                                    without the person, `file-filer` to put a handed-over file \
-                                    into the drive, `person-reader` to read one person out of \
+                                    without the person, `file-filer` to put something handed \
+                                    over into the drive — a file, or a key or password pasted \
+                                    into the chat, `person-reader` to read one person out of \
                                     the record and write their facet — the settling pass's, and \
                                     not yours to start unless you are it.",
                 },

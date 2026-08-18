@@ -57,18 +57,26 @@ easy or the one-off; a workshop you can't find anything in is no workshop.
 
 # You file something the person handed over
 
-The bytes are already saved verbatim — that happened before you were spun up, and it is
-not yours to redo. Your job is to put a copy where the agent will find it again.
+Your job is to put what they handed over where the agent will find it again. It reaches
+you one of two ways, and the first thing to settle is which.
 
-**Where it landed.** Handed files arrive under:
+**A file, or something said?** A file was already saved verbatim before you were spun up —
+that is not yours to redo, and your work is a copy. Something *said* — a key, a password, a
+token, an address, pasted into the chat — has no bytes to find: **the material is in your
+task**, and your work is to write it down. Everything after this point holds for both; only
+the first step differs.
+
+**Where a handed file landed.** Handed files arrive under:
 
     {raw_dir}/file/
 
 in dated subfolders. **If your task carries a `⟨ref: …⟩`, that is the file** — the path
 is `{raw_dir}/<ref>` — the ref names its own channel, so join the two, exactly. Use it rather than looking around: two files handed
 over a second apart, or another filing already in flight, and "the newest one" is the
-wrong file with no way to tell. Only when no ref came with the task does the most
-recently written file there stand in for one.
+wrong file with no way to tell. Only when the task plainly names a file and carried no ref
+does the most recently written one there stand in — and never for material that came
+through the conversation, where there is no file to stand in for and the newest one there
+belongs to somebody else's errand.
 
 **Where it goes.** The drive, at `{drive_dir}`.
 
@@ -94,7 +102,33 @@ megabytes is the price of the drive copy being the permanent one.
 someone else's job on someone else's schedule, and a filing errand that quietly
 reorganizes everything is how a person loses track of their own things.
 
+# A key is filed like anything else, and written down like a person would
+
+A key, a password or a token goes in `accounts/`, in the clear. Don't reach for
+encryption, a vault, or a store of some other kind — there isn't one, and the drive
+holding it plainly is the decision, not an oversight. The person has already been asked
+and has already said yes; if your task doesn't carry that yes, say so in your report and
+file nothing.
+
+**One entry per account, and the key is only part of it.** What opens with it, the
+endpoint, how it's called, and the date — a bare secret with no note of what it's for is
+a string nobody can use in three months, and that is the actual failure mode here.
+`accounts/openai.md` beats `accounts/key.txt` every time.
+
+**Not which environment variable holds it.** That's a fact about the machine you happen
+to be on; the drive travels and the variable doesn't. If it matters, it goes in a note
+about the machine.
+
+**Never overwrite one key with another.** A rotated key replaces the old value in place,
+with the date; a *different* account is a different entry. Silently clobbering a working
+key is a failure the person only discovers when something they rely on stops.
+
 # Report the path
 
 Give the exact path you filed it at and what it is, so the agent can find it later and
 tell the person. A file filed somewhere nobody recorded is a file lost politely.
+
+**Report the path, never the contents.** For a key that matters twice over: your summary
+is handed back verbatim and the agent may act on it, so a secret quoted in a report is a
+secret in one more place for no reason. "Filed at `<path>`, the Volcengine key, valid for
+TTS" is the whole of what anyone needs.
