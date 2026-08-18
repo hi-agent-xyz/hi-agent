@@ -1274,3 +1274,210 @@ button:not([data-slot]) {
     height: 44px;
   }
 }
+
+/* --- Views band --------------------------------------------------------
+   Opened by the views control and anchored directly above it. A band rather
+   than a sheet: it is opened to compare what is up with something that was,
+   so it stays as short as its two rows allow and dismisses on choosing. It
+   sits on the `cover` plane with the rest of the host's chrome, so nothing
+   the agent shows can rise over it. */
+.hi-views-band {
+  position: fixed;
+  right: max(20px, var(--hi-safe-right));
+  bottom: calc(max(20px, var(--hi-safe-bottom)) + 58px);
+  width: min(720px, calc(100vw - 2 * max(20px, var(--hi-safe-right))));
+  pointer-events: auto;
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  background: var(--surface-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 10px 40px var(--shadow);
+  overflow: hidden;
+}
+
+.hi-views-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.hi-views-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.hi-views-hint {
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+
+.hi-views-empty {
+  margin: 0;
+  padding: 2px 14px 12px;
+  font-size: 12.5px;
+  color: var(--fg-mute);
+}
+
+/* Both rows scroll horizontally and hide their bar: the row is the affordance,
+   and a visible scrollbar inside a 16px-radius band reads as a seam. */
+.hi-views-strip,
+.hi-views-places {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.hi-views-strip::-webkit-scrollbar,
+.hi-views-places::-webkit-scrollbar {
+  display: none;
+}
+
+.hi-views-strip {
+  gap: 9px;
+  padding: 2px 14px 12px;
+}
+
+.hi-views-card {
+  flex: 0 0 auto;
+  width: 118px;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.hi-views-card:focus-visible,
+.hi-views-chip:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+/* The tile is the box a thumbnail would occupy if these were captured; today it
+   carries the identity mark instead. */
+.hi-views-tile {
+  display: grid;
+  place-items: center;
+  width: 118px;
+  height: 76px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.6);
+  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
+}
+
+.hi-views-card.is-here .hi-views-tile {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.hi-views-title {
+  display: block;
+  padding-top: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hi-views-when {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+.hi-views-pip {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-2);
+}
+
+.hi-views-places {
+  gap: 6px;
+  padding: 2px 14px 12px;
+}
+
+.hi-views-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 200ms var(--ease), background 200ms var(--ease);
+}
+
+.hi-views-chip:hover {
+  border-color: var(--line-strong);
+}
+
+.hi-views-chip.is-here {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+}
+
+.hi-views-ico {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.64);
+}
+
+/* Return-to-live carries the dot when a raise landed while the person was away.
+   The dot is the whole of the signal: the alternative is moving them off the
+   thing they went back to read, which is the one thing this must never do. */
+.hi-channel-live {
+  position: relative;
+}
+
+.hi-channel-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+@media (max-width: 640px) {
+  .hi-views-band {
+    right: max(12px, var(--hi-safe-right));
+    bottom: calc(max(12px, var(--hi-safe-bottom)) + 46px);
+    width: calc(100vw - 2 * max(12px, var(--hi-safe-right)));
+  }
+  .hi-views-card,
+  .hi-views-tile {
+    width: 104px;
+  }
+  .hi-views-tile {
+    height: 68px;
+  }
+}

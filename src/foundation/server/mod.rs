@@ -573,6 +573,10 @@ pub fn build(
         // The view channel — the retained appearance, served as versioned
         // whole-state snapshots (long-poll on `?since=`).
         .route("/api/out/view", get(view::get_out_view).delete(view::clear_out_view))
+        // The views a person can go to by name, and the compile that lets one window
+        // mount one without taking the stage away from what the agent raised.
+        .route("/api/views", get(view::list_views))
+        .route("/api/views/open", post(view::open_view))
         // Vision is an input channel that is also observable: the camera streams
         // WebM over the WS, GET plays the live video; POST persists a still frame.
         .route("/api/in/vision", post(vision::post_vision).get(vision::get_vision))

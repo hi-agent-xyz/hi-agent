@@ -12,6 +12,7 @@ import { KeyboardFallback } from "./KeyboardFallback";
 import { ChannelControls } from "./ChannelControls";
 import { CameraPreview } from "./CameraPreview";
 import { HandoffOverlay } from "./HandoffOverlay";
+import { ViewsBand } from "./ViewsBand";
 
 /**
  * The host chrome — a calm, breathing room — reading the session through
@@ -48,7 +49,11 @@ export function Shell() {
   const { messages, interim, loadOlder } = useMessages();
   const ch = useChannels();
   const sendText = useSendText();
-  const { views, clear } = useViews();
+  const { views, clear, parked, liveMoved, returnToLive } = useViews();
+  // Whether the views band is open. A window preference like `collapsed` below, and
+  // never server state for the same reason: it says what this window is showing the
+  // person, not what the agent expressed.
+  const [bandOpen, setBandOpen] = useState(false);
   // The person's own collapse. A window preference, deliberately not server state:
   // it says how THIS window draws the conversation, not what the agent expressed,
   // and a second device must not put away the conversation on this one.
@@ -169,6 +174,11 @@ export function Shell() {
           </div>
         )}
 
+        {/* The views band, directly above the controls that open it. Short by
+            design: it is opened to compare what is up with something that was, and a
+            tall sheet would cover the thing being compared. */}
+        {bandOpen && <ViewsBand onDismiss={() => setBandOpen(false)} />}
+
         {/* The lower cluster starts with the activity status, then keeps every
             channel available. Managed energy is represented only by the
             gate-owned full-screen view. */}
@@ -189,6 +199,11 @@ export function Shell() {
           onCloseViews={clear}
           conversation={layout.conversation}
           onToggleConversation={() => setCollapsed((away) => !away)}
+          viewsOpen={bandOpen}
+          onToggleViews={() => setBandOpen((open) => !open)}
+          parked={parked !== null}
+          liveMoved={liveMoved}
+          onReturnToLive={returnToLive}
         />
 
         <KeyboardFallback

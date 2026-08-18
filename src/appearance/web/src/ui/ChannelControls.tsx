@@ -34,6 +34,16 @@ interface ChannelControlsProps {
   conversation: "stage" | "popover" | "pill" | "hidden";
   /** Put the conversation popover away to the pill, or bring it back. */
   onToggleConversation: () => void;
+  /** Whether the views band is open. */
+  viewsOpen: boolean;
+  /** Open/close the views band. */
+  onToggleViews: () => void;
+  /** Whether this window is looking at something other than the live view. */
+  parked: boolean;
+  /** A raise landed while parked — the signal that stands in for being yanked there. */
+  liveMoved: boolean;
+  /** Back to what the agent has up now. */
+  onReturnToLive: () => void;
 }
 
 /**
@@ -50,6 +60,11 @@ interface ChannelControlsProps {
  * again, and there is nothing to open it over unless something else is on the
  * stage. Showing it while the conversation *is* the stage would offer to hide the
  * only thing on screen.
+ *
+ * **Return-to-live appears the same way, for the same reason.** It is the most frequent
+ * action once a person has gone back, so it cannot cost opening the band first — and it
+ * would mean nothing while they are already on the live view. It carries the dot when a
+ * raise landed while they were away, because a raise signals rather than yanks.
  */
 export function ChannelControls({
   activity,
@@ -68,6 +83,11 @@ export function ChannelControls({
   onCloseViews,
   conversation,
   onToggleConversation,
+  viewsOpen,
+  onToggleViews,
+  parked,
+  liveMoved,
+  onReturnToLive,
 }: ChannelControlsProps) {
   const open = conversation === "popover";
   const collapsible = open || conversation === "pill";
@@ -145,6 +165,35 @@ export function ChannelControls({
         </button>
       )}
 
+      {parked && (
+        <button
+          type="button"
+          className={`hi-channel hi-channel-live${liveMoved ? " has-dot" : ""}`}
+          onClick={onReturnToLive}
+          title={
+            liveMoved
+              ? "back to now — the agent has shown something since"
+              : "back to what is up now"
+          }
+          aria-label="back to the live view"
+        >
+          <LiveGlyph />
+          {liveMoved && <span className="hi-channel-dot" aria-hidden="true" />}
+        </button>
+      )}
+
+      <button
+        type="button"
+        className={`hi-channel${viewsOpen ? " is-on" : ""}`}
+        onClick={onToggleViews}
+        title="views — what has been shown, and where you can go"
+        aria-pressed={viewsOpen}
+        aria-expanded={viewsOpen}
+        aria-label="views"
+      >
+        <ViewsGlyph />
+      </button>
+
       <button
         type="button"
         className="hi-channel"
@@ -155,6 +204,28 @@ export function ChannelControls({
         <ResetGlyph />
       </button>
     </div>
+  );
+}
+
+/** Tiles: the band's contents, not any one view. */
+function ViewsGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <rect x="3" y="4.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="13.5" y="4.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3" y="13.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="13.5" y="13.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+/** Skip-to-end: back to the newest thing, which is what live means here. */
+function LiveGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M6 6l7 6-7 6z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M18 5.5v13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
   );
 }
 

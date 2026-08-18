@@ -26,6 +26,13 @@
 //! expression, for later reflection). Module URLs stay valid across restarts
 //! because compiled views are content-addressed on disk and never collected
 //! (see [`crate::mind::views`]).
+//!
+//! The state also carries `history`: the recent raises, oldest first, so a person
+//! can go back to something the agent has moved past. It is the *record of raises*,
+//! not of anybody's navigation — a window's position in it is that window's own and
+//! is never reported here, exactly as scroll position is never reported for the
+//! conversation. There is one list and one cursor per window, and because a raise
+//! only ever appends, no navigation can be truncated by one arriving.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -70,10 +77,27 @@ struct Appearance {
     content: Option<RetainedView>,
     /// The host's condition layer over the content (e.g. a vendor outage).
     condition: Option<RetainedView>,
+    /// What has been raised into `content`, oldest first — the newest entry is
+    /// what is up now. See [`record_raise`].
+    history: Vec<HistoryEntry>,
     /// Bumped on every state change; the long-poll's `since` compares against it.
     version: u64,
     /// Pulsed whenever `version` bumps so parked readers re-check.
     notify: Arc<Notify>,
+}
+
+/// How many raises the history keeps. Bounded because the point of it is reaching
+/// something the agent has moved past within a working stretch, not archiving the
+/// day — the snapshots under `raw/appearance/` are the archive, and a fuller browser
+/// over them can be its own view. Bounded also keeps the state small enough that
+/// resending it whole on every version bump stays the right design.
+const HISTORY_MAX: usize = 24;
+
+/// One raise, and when it happened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct HistoryEntry {
+    view: RetainedView,
+    at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,8 +133,27 @@ struct Snapshot {
     content: Option<RetainedView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     condition: Option<RetainedView>,
+    /// The recent raises, oldest first. `#[serde(default)]` is the back-compat
+    /// lever: a snapshot written before the history existed reloads with an empty
+    /// one, which is exactly right — nothing is known to have been raised, so there
+    /// is nowhere to go back to until the agent shows something.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    history: Vec<HistoryEntry>,
     #[serde(default, rename = "views", skip_serializing_if = "Vec::is_empty")]
     legacy_views: Vec<RetainedView>,
+}
+
+/// Which slot a delivered layer came out of.
+///
+/// The wire used to carry only z-order, which is enough to paint and not enough to
+/// compose: a window showing a *past* view in place of the live one has to keep the
+/// condition layer over it, and could not tell which of the two layers that was. An
+/// outage must still cover what the person went back to.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WireSlot {
+    Content,
+    Condition,
 }
 
 /// One active view as delivered to the browser.
@@ -121,6 +164,30 @@ pub struct WireView {
     /// What the view declared about itself; absent = host-owned captions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub traits: Option<ViewTraits>,
+    pub slot: WireSlot,
+}
+
+/// One past raise as delivered to the browser.
+///
+/// `label` is derived here rather than declared by the view, because a view declares
+/// nothing but `owns_conversation` and inventing a title field would make every
+/// existing view untitled. The ref's last segment is the honest name — it is what the
+/// agent typed to show it and what the file is called — and an inline view falls back
+/// to its id, the way a browser falls back to a URL for a page with no `<title>`.
+///
+/// `view_ref` is the lever that decides what re-opening means: a named view is
+/// re-resolved from its current source (so `factory/tasks` reopens as today's board),
+/// while an inline view can only ever come back as the artifact it compiled to. The
+/// client sends the ref back when there is one, and mounts `module_url` when there
+/// isn't. This is the same named/inline split [`ViewBus::refresh_sources`] turns on.
+#[derive(Debug, Clone, Serialize)]
+pub struct WireHistoryEntry {
+    pub id: String,
+    pub module_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view_ref: Option<String>,
+    pub label: String,
+    pub at: DateTime<Utc>,
 }
 
 /// The full appearance state — the body of one `GET /api/out/view`
@@ -128,10 +195,17 @@ pub struct WireView {
 /// content view followed by the host's condition layer. The wire shape is
 /// unchanged — an ordered list of full-bleed layers — only what can appear in it
 /// is now bounded.
+///
+/// `history` rides in the same response rather than getting its own endpoint,
+/// because it changes exactly when the appearance does: one long-poll, one version,
+/// and no second sync path that could disagree with the first about what is up.
 #[derive(Debug, Clone, Serialize)]
 pub struct ViewState {
     pub version: u64,
     pub views: Vec<WireView>,
+    /// The recent raises, oldest first. The last entry is what is on the stage now,
+    /// which is what makes "the person is at the end" mean "the person is live".
+    pub history: Vec<WireHistoryEntry>,
 }
 
 impl ViewBus {
@@ -145,6 +219,7 @@ impl ViewBus {
             Some(snap) => Appearance {
                 content: snap.content.or_else(|| snap.legacy_views.last().cloned()),
                 condition: snap.condition,
+                history: snap.history,
                 version: snap.version,
                 notify: Arc::new(Notify::new()),
             },
@@ -169,6 +244,10 @@ impl ViewBus {
     ///
     /// A write that changes nothing is dropped, so a repeated `show` of what is
     /// already up costs no version bump, no client re-render and no snapshot.
+    ///
+    /// A raise is also recorded in `history`, so the person can reach it again after
+    /// the agent has moved on. A dismiss is not: the empty room is not somewhere to
+    /// go back to, and the view it cleared is already in the list.
     pub async fn apply(&self, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
@@ -177,6 +256,9 @@ impl ViewBus {
         };
         if entry.content == next {
             return;
+        }
+        if let Some(raised) = &next {
+            record_raise(&mut entry.history, raised.clone(), Utc::now());
         }
         entry.content = next;
         entry.version += 1;
@@ -308,6 +390,11 @@ impl ViewBus {
     /// The condition layer is deliberately left alone: it reflects a live process
     /// state rather than anything the person put there, so clearing it would only
     /// have it reconciled straight back.
+    ///
+    /// The history is left alone too. Reclaiming the screen says "not now", not
+    /// "forget what you showed me" — and a clear that also wiped the way back to the
+    /// view being cleared would make the reclaim the most destructive control in the
+    /// product.
     pub async fn clear(&self) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
@@ -352,13 +439,28 @@ impl ViewBus {
                 return ViewState {
                     version: entry.version,
                     // z-order: content first, the condition layer over it.
-                    views: [entry.content.as_ref(), entry.condition.as_ref()]
-                        .into_iter()
-                        .flatten()
-                        .map(|v| WireView {
-                            id: v.id.clone(),
-                            module_url: v.module_url.clone(),
-                            traits: v.traits,
+                    views: [
+                        (WireSlot::Content, entry.content.as_ref()),
+                        (WireSlot::Condition, entry.condition.as_ref()),
+                    ]
+                    .into_iter()
+                    .filter_map(|(slot, v)| v.map(|v| (slot, v)))
+                    .map(|(slot, v)| WireView {
+                        id: v.id.clone(),
+                        module_url: v.module_url.clone(),
+                        traits: v.traits,
+                        slot,
+                    })
+                    .collect(),
+                    history: entry
+                        .history
+                        .iter()
+                        .map(|h| WireHistoryEntry {
+                            id: h.view.id.clone(),
+                            module_url: h.view.module_url.clone(),
+                            view_ref: h.view.view_ref.clone(),
+                            label: label_for(&h.view),
+                            at: h.at,
                         })
                         .collect(),
                 };
@@ -408,6 +510,59 @@ fn resolve_slot(
                 view_ref: envelope.view_ref,
             }))
         }
+    }
+}
+
+/// Record one raise at the end of `history`, dropping any earlier entry for the same
+/// destination and trimming the oldest away past [`HISTORY_MAX`].
+///
+/// **Appending is the only thing that ever happens to this list**, and that is what
+/// makes it safe for the agent and the person to share one of them. A browser's back
+/// stack destroys its forward entries when you navigate from a back position, and it
+/// can afford to because you are its only navigator; here the agent raises views too,
+/// and losing the entry a person was on their way back to because the agent spoke
+/// would be indefensible. So a raise never truncates, and a person's position is just
+/// a cursor over the list — there is no branch to destroy.
+///
+/// **Same destination, one entry.** A destination is the `view_ref` when there is one
+/// and the `module_url` when there isn't, which is precisely the identity that decides
+/// what re-opening will render: two raises of `factory/tasks` resolve to the same
+/// recompiled board, so two tiles would offer one place twice. Two *different* inline
+/// views have different content hashes and both stay. The surviving entry moves to the
+/// end and takes the newer timestamp, because what matters about it is when the screen
+/// last showed it.
+fn record_raise(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
+    let destination = |v: &RetainedView| {
+        v.view_ref.clone().unwrap_or_else(|| v.module_url.clone())
+    };
+    let key = destination(&view);
+    history.retain(|h| destination(&h.view) != key);
+    history.push(HistoryEntry { view, at });
+    let overflow = history.len().saturating_sub(HISTORY_MAX);
+    history.drain(..overflow);
+}
+
+/// A human label for one past raise.
+///
+/// The ref's last segment with its separators opened up and its first letter raised:
+/// `factory/people-review` → `People review`. An inline view has no ref and falls back
+/// to its id. Nothing here reads the view's source — the label is wanted for every
+/// entry in the state on every version bump, and a dozen file reads per long-poll
+/// response to recover a nicer string is the wrong trade. (The `// purpose:` line the
+/// factory views open with is the nicer string, if this ever proves too thin.)
+fn label_for(view: &RetainedView) -> String {
+    humanize_ref(view.view_ref.as_deref().unwrap_or(&view.id))
+}
+
+/// `factory/people-review` → `People review`. Shared with the view inventory
+/// (`GET /api/views`), so a view carries the same name wherever the person meets it.
+pub(crate) fn humanize_ref(view_ref: &str) -> String {
+    let last = view_ref.rsplit('/').next().unwrap_or(view_ref);
+    let opened = last.replace(['-', '_'], " ");
+    let mut chars = opened.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => view_ref.to_string(),
     }
 }
 
@@ -483,6 +638,7 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
         as_of: now,
         content: entry.content.clone(),
         condition: entry.condition.clone(),
+        history: entry.history.clone(),
         legacy_views: Vec::new(),
     };
     let bytes = match serde_json::to_vec_pretty(&snap) {
@@ -548,6 +704,10 @@ mod tests {
         state.views.iter().map(|v| v.id.as_str()).collect()
     }
 
+    fn history_ids(state: &ViewState) -> Vec<&str> {
+        state.history.iter().map(|h| h.id.as_str()).collect()
+    }
+
     #[tokio::test]
     async fn late_subscriber_receives_retained_state() {
         let tmp = tempfile::tempdir().unwrap();
@@ -596,6 +756,167 @@ mod tests {
     /// second topic *replaces* the first instead of stacking on it. This is the
     /// case that used to pile up — the appearance history has states fourteen
     /// views deep, every one of them an unrelated topic nobody dismissed.
+    #[tokio::test]
+    async fn a_raise_the_screen_moved_past_stays_reachable_in_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.apply(show("bj01", "/m/bj01.mjs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(ids(&state), vec!["bj01"], "one slot, as before");
+        assert_eq!(
+            history_ids(&state),
+            vec!["tasks", "bj01"],
+            "oldest first, and the newest entry is what is up now"
+        );
+    }
+
+    #[tokio::test]
+    async fn dismissing_leaves_the_way_back_to_what_was_dismissed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.apply(dismiss("tasks")).await;
+
+        let state = bus.wait_state(None).await;
+        assert!(state.views.is_empty(), "the room is empty");
+        assert_eq!(
+            history_ids(&state),
+            vec!["tasks"],
+            "the empty room is not a place to go back to, but the view it cleared is"
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_the_screen_does_not_clear_the_way_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.clear().await;
+
+        let state = bus.wait_state(None).await;
+        assert!(state.views.is_empty());
+        assert_eq!(history_ids(&state), vec!["tasks"], "reclaiming says not now, not forget");
+    }
+
+    #[tokio::test]
+    async fn the_same_named_view_raised_twice_is_one_entry_at_the_newer_position() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+        bus.apply(show_ref("drive", "/m/drive.mjs", "factory/drive")).await;
+        // Same ref, recompiled to a different module — still the same destination.
+        bus.apply(show_ref("tasks", "/m/tasks-v2.mjs", "factory/tasks")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(
+            history_ids(&state),
+            vec!["drive", "tasks"],
+            "one tile per destination, moved to the newest position"
+        );
+        assert_eq!(state.history[1].module_url, "/m/tasks-v2.mjs");
+    }
+
+    #[tokio::test]
+    async fn two_different_inline_views_both_stay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("a", "/m/aaa.mjs")).await;
+        bus.apply(show("b", "/m/bbb.mjs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(
+            history_ids(&state),
+            vec!["a", "b"],
+            "distinct artifacts are distinct destinations"
+        );
+        assert!(
+            state.history.iter().all(|h| h.view_ref.is_none()),
+            "an inline view never gains a ref, so it reopens as the artifact it was"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_is_bounded_and_drops_the_oldest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        for n in 0..HISTORY_MAX + 3 {
+            bus.apply(show(&format!("v{n}"), &format!("/m/v{n}.mjs"))).await;
+        }
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.history.len(), HISTORY_MAX);
+        assert_eq!(state.history.first().unwrap().id, "v3", "the oldest three fell off");
+        assert_eq!(state.history.last().unwrap().id, format!("v{}", HISTORY_MAX + 2));
+    }
+
+    #[tokio::test]
+    async fn a_raise_only_ever_appends_so_nothing_a_person_was_returning_to_is_lost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("a", "/m/a.mjs")).await;
+        bus.apply(show("b", "/m/b.mjs")).await;
+        bus.apply(show("c", "/m/c.mjs")).await;
+        // The person is parked on "a" — a cursor this bus never hears about. The
+        // agent raising "d" must not disturb anything between there and the end.
+        bus.apply(show("d", "/m/d.mjs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(
+            history_ids(&state),
+            vec!["a", "b", "c", "d"],
+            "append-only: no forward entries were truncated by the new raise"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_label_is_the_refs_last_segment_opened_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("pr", "/m/pr.mjs", "factory/people-review")).await;
+        bus.apply(show("bj01-final", "/m/x.mjs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.history[0].label, "People review");
+        assert_eq!(state.history[1].label, "Bj01 final", "an inline view falls back to its id");
+    }
+
+    #[tokio::test]
+    async fn history_survives_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+            bus.apply(show("bj01", "/m/bj01.mjs")).await;
+        }
+
+        let reloaded = ViewBus::load(tmp.path());
+        let state = reloaded.wait_state(None).await;
+        assert_eq!(
+            history_ids(&state),
+            vec!["tasks", "bj01"],
+            "the way back is part of the state, so it comes back with it"
+        );
+        assert_eq!(state.history[0].view_ref.as_deref(), Some("factory/tasks"));
+    }
+
+    #[tokio::test]
+    async fn the_condition_layer_never_enters_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.reconcile(show("outage", "/m/outage.mjs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(ids(&state), vec!["tasks", "outage"], "layered over, as before");
+        assert_eq!(
+            history_ids(&state),
+            vec!["tasks"],
+            "an outage is a process condition, not somewhere the person was taken"
+        );
+    }
+
     #[tokio::test]
     async fn showing_replaces_rather_than_stacks() {
         let tmp = tempfile::tempdir().unwrap();

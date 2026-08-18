@@ -28,12 +28,76 @@ export interface WireView {
   module_url: string;
   /** What the view declared; absent = host-owned captions. */
   traits?: ViewTraits;
+  /** Which server slot this layer came out of. A window showing a past view puts it in
+   * place of `content` and keeps `condition` over it — an outage still covers whatever
+   * the person went back to. Absent on a server older than the field. */
+  slot?: "content" | "condition";
+}
+
+/** One past raise, as the server recorded it.
+ *
+ * `view_ref` decides what re-opening means. A named view is re-resolved from its
+ * current source, so `factory/tasks` comes back as today's board — reopen it through
+ * `openView(ref)`. An inline view has no ref and can only come back as the artifact it
+ * compiled to, so mount its `module_url` directly. */
+export interface WireHistoryEntry {
+  id: string;
+  module_url: string;
+  view_ref?: string;
+  /** Derived server-side from the ref's last segment, or the id for an inline view. */
+  label: string;
+  /** ISO timestamp of the raise. */
+  at: string;
 }
 
 /** The conversation's full appearance state — one GET /api/out/view response. */
 export interface ViewState {
   version: number;
   views: WireView[];
+  /** The recent raises, oldest first; the last is what is on the stage now. Absent on
+   * a server older than the history — read as empty, which reads as "nowhere to go
+   * back to", which is the truthful answer from a server that isn't recording. */
+  history?: WireHistoryEntry[];
+}
+
+/** One view that exists on disk and can be opened by name — `GET /api/views`. */
+export interface ListedView {
+  view_ref: string;
+  label: string;
+}
+
+/** Every named view in the views tree. The inventory behind the band's lower row. */
+export async function listViews(): Promise<ListedView[]> {
+  const res = await fetch(url("/api/views"), {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`/api/views failed: ${res.status} ${res.statusText}`);
+  return (await res.json()) as ListedView[];
+}
+
+/** What one window needs to mount a named view locally. */
+export interface OpenedView {
+  id: string;
+  module_url: string;
+  traits?: ViewTraits;
+}
+
+/** Compile a named view for this window to mount.
+ *
+ * Deliberately does not touch the content slot: the stage stays what the agent raised,
+ * so a second device is unaffected and the agent's "as you can see here" stays true of
+ * what it put up. Where this window is looking is this window's own, like scroll
+ * position. */
+export async function openView(viewRef: string): Promise<OpenedView> {
+  const res = await fetch(url("/api/views/open"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-HI-Surface": "1" },
+    body: JSON.stringify({ ref: viewRef }),
+  });
+  if (!res.ok) throw new Error(`/api/views/open failed: ${res.status} ${res.statusText}`);
+  return (await res.json()) as OpenedView;
 }
 
 export interface SubscribeViewOpts {

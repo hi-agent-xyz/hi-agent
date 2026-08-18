@@ -8,7 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { subscribeViewState, clearViewState, type ViewTraits } from "../channels/out/view";
+import {
+  subscribeViewState,
+  clearViewState,
+  openView,
+  type ViewTraits,
+  type WireHistoryEntry,
+} from "../channels/out/view";
 import { usePresence, useWake } from "./session";
 
 // How long a newly appearing view waits for the voice before showing anyway.
@@ -28,17 +34,44 @@ export interface ActiveView {
   traits?: ViewTraits;
 }
 
+/** What identifies a *destination* — the same rule the server dedupes history by: the
+ * durable ref when there is one, else the content-addressed module. Two raises of
+ * `factory/tasks` are one place; two different inline views are two. */
+function destinationOf(entry: { view_ref?: string; module_url: string }): string {
+  return entry.view_ref ?? entry.module_url;
+}
+
 interface ViewsValue {
   views: ActiveView[];
   /** Clear the screen back to the default empty room. Server-side, so every
    * device + a refresh converge on the cleared screen; the empty state arrives
    * via the same long-poll. */
   clear: () => void;
+  /** The recent raises, oldest first — the server's record of what it put up. */
+  history: WireHistoryEntry[];
+  /** The destination this window is parked on, or `null` when it is on the live one.
+   * Local to this window and never reported, exactly like the conversation's scroll
+   * position: a phone that went back must not move the desktop. */
+  parked: string | null;
+  /** A raise landed while this window was parked. The signal that replaces yanking. */
+  liveMoved: boolean;
+  /** Park on one past raise. */
+  goTo: (entry: WireHistoryEntry) => void;
+  /** Park on a named view from the inventory. */
+  openRef: (viewRef: string) => void;
+  /** Back to what the agent has up now. */
+  returnToLive: () => void;
 }
 
 const ViewsContext = createContext<ViewsValue>({
   views: [],
   clear: () => {},
+  history: [],
+  parked: null,
+  liveMoved: false,
+  goTo: () => {},
+  openRef: () => {},
+  returnToLive: () => {},
 });
 
 /**
@@ -58,9 +91,19 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const { reactive } = usePresence();
   const playingRef = useRef(false);
   const voiceWaitersRef = useRef<Set<() => void>>(new Set());
-  const [views, setViews] = useState<Map<string, { moduleUrl: string; traits?: ViewTraits }>>(
-    new Map(),
-  );
+  /** The live layers, in wire order (= z-order), each tagged with the slot it came
+   * out of so a parked window can keep the condition layer over what it went back to. */
+  const [wire, setWire] = useState<
+    { id: string; moduleUrl: string; traits?: ViewTraits; slot?: string }[]
+  >([]);
+  const [history, setHistory] = useState<WireHistoryEntry[]>([]);
+  /** Where this window is looking, when that is not the live view. */
+  const [parked, setParked] = useState<{ key: string; view: ActiveView } | null>(null);
+  const [liveMoved, setLiveMoved] = useState(false);
+  const parkedRef = useRef<{ key: string; view: ActiveView } | null>(null);
+  useEffect(() => {
+    parkedRef.current = parked;
+  }, [parked]);
 
   useEffect(() => {
     playingRef.current = reactive;
@@ -123,11 +166,15 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
             for (const v of state.views) applied.add(v.id);
             // Mirror the snapshot wholesale: array order = z-order. ViewSlot
             // keys by id, so unchanged views keep their mounted component.
-            setViews(
-              new Map(
-                state.views.map((v) => [v.id, { moduleUrl: v.module_url, traits: v.traits }]),
-              ),
+            setWire(
+              state.views.map((v) => ({
+                id: v.id,
+                moduleUrl: v.module_url,
+                traits: v.traits,
+                slot: v.slot,
+              })),
             );
+            setHistory(state.history ?? []);
           }
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
@@ -142,13 +189,89 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     };
   }, [woken]);
 
-  const value = useMemo<ViewsValue>(
-    () => ({
-      views: [...views].map(([id, v]) => ({ id, moduleUrl: v.moduleUrl, traits: v.traits })),
+  // The live destination is the newest raise, because every raise appends one. When
+  // this window is parked and that changes, the person is told rather than moved: a
+  // raise arriving must not yank the thing they went back to read out from under
+  // them, the same refusal the conversation makes by not auto-scrolling to a new
+  // message. If the agent happens to raise exactly what they went back to, they are
+  // simply live again and there is nothing to signal.
+  const liveKey = history.length > 0 ? destinationOf(history[history.length - 1]!) : null;
+  const prevLiveKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevLiveKeyRef.current;
+    prevLiveKeyRef.current = liveKey;
+    const p = parkedRef.current;
+    if (!p) return;
+    if (liveKey && liveKey === p.key) {
+      setParked(null);
+      setLiveMoved(false);
+      return;
+    }
+    if (liveKey !== prev) setLiveMoved(true);
+  }, [liveKey]);
+
+  const returnToLive = useCallback(() => {
+    setParked(null);
+    setLiveMoved(false);
+  }, []);
+
+  const goTo = useCallback((entry: WireHistoryEntry) => {
+    const key = destinationOf(entry);
+    // An inline view has no durable name and is only ever the artifact it compiled
+    // to, so it mounts straight from the record.
+    if (!entry.view_ref) {
+      setParked({ key, view: { id: entry.id, moduleUrl: entry.module_url } });
+      return;
+    }
+    // A named view is re-resolved, so going back to `factory/tasks` lands on today's
+    // board rather than a module compiled against a schema the app has moved past.
+    void openView(entry.view_ref).then(
+      (opened) =>
+        setParked({
+          key,
+          view: { id: opened.id, moduleUrl: opened.module_url, traits: opened.traits },
+        }),
+      () =>
+        // Source gone, or no longer compiling. The artifact it was shown as is still
+        // on disk and still mounts: a stale view beats an empty room, which is the
+        // same call `ViewBus::refresh_sources` makes on the server.
+        setParked({ key, view: { id: entry.id, moduleUrl: entry.module_url } }),
+    );
+  }, []);
+
+  const openRef = useCallback((viewRef: string) => {
+    void openView(viewRef).then(
+      (opened) =>
+        setParked({
+          key: viewRef,
+          view: { id: opened.id, moduleUrl: opened.module_url, traits: opened.traits },
+        }),
+      // Nothing the person can act on, and blanking the stage would be worse than
+      // leaving them where they are.
+      (error) => console.warn("opening a view failed", error),
+    );
+  }, []);
+
+  const value = useMemo<ViewsValue>(() => {
+    const bare = ({ id, moduleUrl, traits }: (typeof wire)[number]): ActiveView => ({
+      id,
+      moduleUrl,
+      traits,
+    });
+    const views = parked
+      ? [parked.view, ...wire.filter((v) => v.slot === "condition").map(bare)]
+      : wire.map(bare);
+    return {
+      views,
       clear,
-    }),
-    [views, clear],
-  );
+      history,
+      parked: parked?.key ?? null,
+      liveMoved,
+      goTo,
+      openRef,
+      returnToLive,
+    };
+  }, [wire, parked, clear, history, liveMoved, goTo, openRef, returnToLive]);
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 

@@ -148,10 +148,55 @@ put away the one next to it. It is also the same refusal [`text-transcript.md`](
 about scroll position: a window's own view of the conversation stays in the window and is
 never reported.
 
+## Going back to a view the agent has moved past
+
+`replace` destroys what was up, and until now the only way back was asking the agent to
+show it again — asking someone to redraw a whiteboard they just erased. The screen keeps
+a **history**: the raises, oldest first, carried in the same `GET /api/out/view` state and
+persisted in the same snapshots. The newest entry is what is on the stage, which is what
+makes *the person is at the end* mean *the person is live*.
+
+**One list, and appending is the only thing that happens to it.** A browser's back stack
+destroys its forward entries when you navigate from a back position, and can afford to
+because you are its only navigator. Here the agent raises views too, so losing the entry
+someone was on their way back to because the agent spoke would be indefensible. The agent
+appends; the person moves a cursor. There is no branch, so nothing can be truncated, and
+the stack and the history are the same object.
+
+**The cursor is the window's, and is never reported.** Which entry a window is parked on
+is that window's own, exactly like the conversation's scroll position — a phone that went
+back must not move the desktop. The content slot stays the agent's: what it raised is
+still what a second device shows and still what it will refer to out loud.
+
+**A raise signals; it never yanks.** Landing a new view on someone who went back to read
+something is the same mistake as auto-scrolling the conversation to a new message. The
+return-to-live control carries a dot instead. If the agent happens to raise exactly what
+they went back to, they are simply live again and there is nothing to signal.
+
+**Same destination, one entry** — the ref when there is one, the module when there isn't.
+Two raises of `factory/tasks` are one place, because both re-resolve to the same
+recompiled board; two different inline views are two artifacts and both stay. This is the
+same named/inline split `refresh_sources` turns on, and it decides what re-opening means:
+a named view comes back as what it *is now*, an inline one only ever as what it *was*.
+
+**The person may go to a place; the agent decides what to raise.** A dozen views ship with
+no way to reach any of them except asking, which is the interaction cost of a chatbot
+sitting on top of what is otherwise an app. `GET /api/views` is the inventory and
+`POST /api/views/open` compiles one for a window to mount — deliberately not a third
+writer of the appearance. The condition view is not in the inventory: it is the host's,
+and offering it would let a person summon an outage that isn't happening.
+
+There is **no person-owned pinned subset** yet. The tree holds about a dozen views, they
+fit one row, and pinning is the only part of this that would need new state syncing
+across devices. Add it when the row is long enough to be a problem.
+
 ## What stays on the wire, and what does not
 
-`GET /api/out/view` keeps carrying exactly what it carries today: the `content` and
-`condition` slots, in z-order. **The conversation and the camera are not added to it.**
+`GET /api/out/view` carries the `content` and `condition` slots in z-order, each tagged
+with the slot it came out of, plus the history above. The tag is what lets a window
+showing a past view keep the condition layer over it — an outage must still cover what
+the person went back to, and z-order alone could not say which of the two layers that
+was. **The conversation and the camera are not added to it.**
 
 They are constant participants — never absent, never dismissable, nothing to converge on
 — so a slot for them would be state with one value, and `on_screen()` would start
