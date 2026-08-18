@@ -48,6 +48,11 @@ export interface WireHistoryEntry {
   label: string;
   /** ISO timestamp of the raise. */
   at: string;
+  /** A picture of this raise, captured server-side the moment it went up and served
+   * from `/views/_shots/<hash>.png`. Absent while the capture is still running, and
+   * for good on a view that did not render cleanly — the tile falls back to its mark
+   * either way. */
+  shot_url?: string;
 }
 
 /** The conversation's full appearance state — one GET /api/out/view response. */
@@ -64,9 +69,18 @@ export interface ViewState {
 export interface ListedView {
   view_ref: string;
   label: string;
+  /** One of the surfaces we ship, under `factory/`. These are the standing floor of
+   * the bookmarks row: always there, and not removable. */
+  system: boolean;
+  /** The person put this one in the row. Never true for a system view, which is in
+   * the row by being system. */
+  bookmarked: boolean;
 }
 
-/** Every named view in the views tree. The inventory behind the band's lower row. */
+/** Every named view in the views tree — the whole inventory, each entry saying
+ * whether it is a system surface and whether the person kept it. The band's lower row
+ * is the two of those together; the rest of the tree is the agent's working files and
+ * is deliberately not a place a person is offered. */
 export async function listViews(): Promise<ListedView[]> {
   const res = await fetch(url("/api/views"), {
     method: "GET",
@@ -98,6 +112,21 @@ export async function openView(viewRef: string): Promise<OpenedView> {
   });
   if (!res.ok) throw new Error(`/api/views/open failed: ${res.status} ${res.statusText}`);
   return (await res.json()) as OpenedView;
+}
+
+/** Keep a named view in the bookmarks row, or drop it out of it.
+ *
+ * Server-side because a bookmark has to be the same on the desktop and the phone —
+ * unlike the cursor, which is each window's own. Only a named, non-system view can be
+ * bookmarked: an inline view is only ever the disposable artifact it compiled to, and
+ * a system view is in the row already. */
+export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
+  const res = await fetch(url("/api/views/bookmarks"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref: viewRef, on }),
+  });
+  if (!res.ok) throw new Error(`/api/views/bookmarks failed: ${res.status} ${res.statusText}`);
 }
 
 export interface SubscribeViewOpts {

@@ -1405,11 +1405,6 @@ button:not([data-slot]) {
   background: var(--line);
 }
 
-.hi-views-hint {
-  text-transform: none;
-  letter-spacing: 0.04em;
-}
-
 .hi-views-empty {
   margin: 0;
   padding: 2px 14px 12px;
@@ -1420,14 +1415,14 @@ button:not([data-slot]) {
 /* Both rows scroll horizontally and hide their bar: the row is the affordance,
    and a visible scrollbar inside a 16px-radius band reads as a seam. */
 .hi-views-strip,
-.hi-views-places {
+.hi-views-bookmarks {
   display: flex;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
 .hi-views-strip::-webkit-scrollbar,
-.hi-views-places::-webkit-scrollbar {
+.hi-views-bookmarks::-webkit-scrollbar {
   display: none;
 }
 
@@ -1436,10 +1431,17 @@ button:not([data-slot]) {
   padding: 2px 14px 12px;
 }
 
+/* The card holds two controls — go there, and keep it — so it is a box rather than
+   a button; `.hi-views-open` is the button that fills it. */
 .hi-views-card {
+  position: relative;
   flex: 0 0 auto;
   width: 118px;
+}
+
+.hi-views-open {
   display: block;
+  width: 100%;
   padding: 0;
   border: 0;
   background: none;
@@ -1448,18 +1450,22 @@ button:not([data-slot]) {
   cursor: pointer;
 }
 
-.hi-views-card:focus-visible,
-.hi-views-chip:focus-visible {
+.hi-views-open:focus-visible,
+.hi-views-go:focus-visible,
+.hi-views-keep:focus-visible,
+.hi-views-drop:focus-visible {
   outline: 2px solid var(--accent-line);
   outline-offset: 3px;
   border-radius: 10px;
 }
 
-/* The tile is the box a thumbnail would occupy if these were captured; today it
-   carries the identity mark instead. */
+/* The tile is the picture of the raise. Until the capture lands — and for good on a
+   view that didn't render cleanly — it carries the identity mark instead, which is
+   what the whole row used to be. */
 .hi-views-tile {
   display: grid;
   place-items: center;
+  overflow: hidden;
   width: 118px;
   height: 76px;
   border-radius: 9px;
@@ -1470,9 +1476,56 @@ button:not([data-slot]) {
   transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
 }
 
+/* `cover`, because the shot is the window's aspect and the tile is close to it but
+   not equal: fitting would letterbox every picture against the tile's own border. */
+.hi-views-shot {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
 .hi-views-card.is-here .hi-views-tile {
   border-color: transparent;
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* Keeping a view is a second verb on the card, so it sits *on* the picture rather
+   than beside the title — over the corner a board is least likely to be saying
+   anything in, on its own scrim so it reads over a light shot and a dark one. It is
+   quiet until the card is hovered, and loud once the view is kept. */
+.hi-views-keep {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface-strong);
+  box-shadow: 0 1px 3px var(--shadow-strong);
+  color: var(--fg-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 160ms var(--ease), color 160ms var(--ease);
+}
+
+.hi-views-card:hover .hi-views-keep,
+.hi-views-keep:focus-visible,
+.hi-views-keep.is-kept {
+  opacity: 1;
+}
+
+.hi-views-keep:hover {
+  color: var(--fg);
+}
+
+.hi-views-keep.is-kept {
+  color: var(--accent);
 }
 
 .hi-views-title {
@@ -1500,25 +1553,64 @@ button:not([data-slot]) {
   background: var(--accent-2);
 }
 
-.hi-views-places {
+.hi-views-bookmarks {
   gap: 6px;
   padding: 2px 14px 12px;
 }
 
+/* A kept chip carries a second verb (drop it), so the chip is the frame and the
+   label inside it is the button. A system chip has only the one and looks identical,
+   because it *is* identical to go to — the difference is only that it cannot leave. */
 .hi-views-chip {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 7px;
   height: 30px;
-  padding: 0 11px 0 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: none;
   color: var(--fg);
   font-size: 12px;
-  cursor: pointer;
   transition: border-color 200ms var(--ease), background 200ms var(--ease);
+}
+
+.hi-views-go {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0 11px 0 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+/* The cross only pays for its width once the pointer is on the chip; until then the
+   row is chips, not chips-with-a-close-box. */
+.hi-views-drop {
+  display: grid;
+  place-items: center;
+  width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  cursor: pointer;
+  overflow: hidden;
+  opacity: 0;
+  transition: width 160ms var(--ease), opacity 160ms var(--ease), color 160ms var(--ease);
+}
+
+.hi-views-chip:hover .hi-views-drop,
+.hi-views-drop:focus-visible {
+  width: 22px;
+  opacity: 1;
+}
+
+.hi-views-drop:hover {
+  color: var(--fg);
 }
 
 .hi-views-chip:hover {
@@ -1539,6 +1631,18 @@ button:not([data-slot]) {
   font-size: 10px;
   font-weight: 700;
   color: rgba(0, 0, 0, 0.64);
+}
+
+/* Nothing hovers on a touch screen, so both of the band's second verbs — keep this
+   raise, drop this bookmark — have to be standing there instead of appearing. */
+@media (hover: none) {
+  .hi-views-keep {
+    opacity: 1;
+  }
+  .hi-views-drop {
+    width: 22px;
+    opacity: 1;
+  }
 }
 
 /* Return-to-live carries the dot when a raise landed while the person was away.

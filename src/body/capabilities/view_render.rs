@@ -84,6 +84,38 @@ const MAX_STAGE: u32 = 16_384;
 /// person drags the window, and the next review should use the new size.
 static STAGE: std::sync::RwLock<Option<Viewport>> = std::sync::RwLock::new(None);
 
+/// The skin the desktop window is currently in, as the face last reported it.
+///
+/// Sits beside [`STAGE`] and is reported by the same lane for the same reason: the
+/// page already knows the answer (`data-theme`, else `prefers-color-scheme`) with no
+/// OS call, and a picture of a view rendered in the other skin is a wrong record of
+/// what the person was looking at.
+///
+/// Only the *thumbnail* path reads it. `hi_review_view` deliberately renders both
+/// skins, because a review exists to catch the colour that resolves in one and not
+/// the other — pinning it to the window's would blind the review to half of that.
+static STAGE_THEME: std::sync::RwLock<Option<&'static str>> = std::sync::RwLock::new(None);
+
+/// Record the skin the desktop window is in. Anything that is not a skin we can
+/// render is ignored, keeping the last good answer.
+pub fn set_stage_theme(theme: &str) -> bool {
+    let known = match theme {
+        "light" => "light",
+        "dark" => "dark",
+        _ => return false,
+    };
+    if let Ok(mut slot) = STAGE_THEME.write() {
+        *slot = Some(known);
+    }
+    true
+}
+
+/// The skin to render into, or `None` when no window has reported one — which the
+/// render page reads as its own default (light).
+pub fn stage_theme() -> Option<String> {
+    STAGE_THEME.read().ok().and_then(|s| *s).map(str::to_owned)
+}
+
 /// Record the frame the desktop window is showing. Out-of-range reports are
 /// dropped rather than stored (see [`MIN_STAGE`]).
 ///

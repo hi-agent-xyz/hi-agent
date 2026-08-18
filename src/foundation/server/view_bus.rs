@@ -188,6 +188,12 @@ pub struct WireHistoryEntry {
     pub view_ref: Option<String>,
     pub label: String,
     pub at: DateTime<Utc>,
+    /// A picture of this raise, served from `/views/_shots/<hash>.png` — absent while
+    /// the capture is still running, and for good on a view that did not render
+    /// cleanly. The tile falls back to its mark either way, so this is decoration on
+    /// a record that is complete without it. See [`super::view_shots`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shot_url: Option<String>,
 }
 
 /// The full appearance state — the body of one `GET /api/out/view`
@@ -259,6 +265,17 @@ impl ViewBus {
         }
         if let Some(raised) = &next {
             record_raise(&mut entry.history, raised.clone(), Utc::now());
+            // Take the picture now, while this *is* the screen. Off the write path
+            // entirely: nothing here waits for a browser, and a shot that never
+            // arrives leaves the tile on its mark.
+            let bus = self.clone();
+            super::view_shots::capture(
+                self.data_dir.clone(),
+                raised.module_url.clone(),
+                move || {
+                    tokio::spawn(async move { bus.note_shot().await });
+                },
+            );
         }
         entry.content = next;
         entry.version += 1;
@@ -407,6 +424,22 @@ impl ViewBus {
         persist(&self.data_dir, entry).await;
     }
 
+    /// A thumbnail finished rendering: wake the long-polls so they collect the
+    /// `shot_url` the response before them was built without.
+    ///
+    /// **Bumps the version without persisting a snapshot.** The snapshots under
+    /// `raw/appearance/` are the record of what was on screen, and a picture taken of
+    /// a raise that already happened changes nothing about that — writing one would
+    /// put a state in the appearance history identical to its predecessor and dated
+    /// later, which is exactly the noise reflection has to read past. The version is
+    /// only the long-poll's comparator, so it is free to run ahead of the newest
+    /// snapshot; a restart resyncs every client from `since: None` regardless.
+    async fn note_shot(&self) {
+        let mut map = self.inner.lock().await;
+        map.version += 1;
+        map.notify.notify_waiters();
+    }
+
     /// The id currently on screen, if any. The reaction reads this into
     /// each turn so the agent can *see* its own presentation surface — what it has
     /// shown — instead of guessing ids from the transcript. This is the read side of
@@ -461,6 +494,10 @@ impl ViewBus {
                             view_ref: h.view.view_ref.clone(),
                             label: label_for(&h.view),
                             at: h.at,
+                            shot_url: super::view_shots::url_for(
+                                &self.data_dir,
+                                &h.view.module_url,
+                            ),
                         })
                         .collect(),
                 };

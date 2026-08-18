@@ -1,9 +1,16 @@
 //! The stage lane — the desktop window reports the frame it is showing.
 //!
-//! `POST /api/stage` carries `{"width":…,"height":…,"scale":…}` in CSS pixels, and
-//! the only consumer is `review_view`: it renders into whatever the window last
-//! reported, so a builder composes for the frame the person actually has and a
-//! reviewer signs off on that same frame.
+//! `POST /api/stage` carries `{"width":…,"height":…,"scale":…,"theme":…}` in CSS
+//! pixels, and both consumers are renderers: `review_view` renders into whatever the
+//! window last reported, so a builder composes for the frame the person actually has
+//! and a reviewer signs off on that same frame; and the views band's thumbnails
+//! (`view_shots`) render into that frame *and* that skin, so the picture in the
+//! history row is of the screen the person was looking at.
+//!
+//! The skin is reported here rather than passed per render for the same reason the
+//! frame is: the page is the only thing that knows it, it is a property of the
+//! window and not of any one call, and asking the OS instead would turn a portable
+//! fact into a platform mechanism.
 //!
 //! **Why the page is asked rather than the window.** The number is a rendering
 //! parameter, not a perception, and the page already holds it (`innerWidth` /
@@ -36,6 +43,11 @@ pub struct StageFrame {
     /// `window.devicePixelRatio`. Absent reads as the review default.
     #[serde(default)]
     scale: Option<f64>,
+    /// The skin the window is in — `data-theme` when one is forced, else what
+    /// `prefers-color-scheme` resolves to. Absent on a client older than the field,
+    /// which keeps whatever was reported last.
+    #[serde(default)]
+    theme: Option<String>,
 }
 
 /// Record the frame the desktop window is showing.
@@ -52,6 +64,12 @@ pub async fn post_stage(Json(frame): Json<StageFrame>) -> StatusCode {
         return StatusCode::BAD_REQUEST;
     }
     let scale = frame.scale.unwrap_or(view_render::DEFAULT_SCALE);
+    // A theme we don't know is dropped on its own rather than failing the report: the
+    // frame is the half anything depends on, and rejecting the whole POST over the
+    // decoration would leave every later review rendering at a stale size.
+    if let Some(theme) = frame.theme.as_deref() {
+        view_render::set_stage_theme(theme);
+    }
     if view_render::set_stage_frame(width as u32, height as u32, scale) {
         StatusCode::ACCEPTED
     } else {

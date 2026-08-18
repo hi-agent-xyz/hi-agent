@@ -48,6 +48,7 @@ pub mod transcript;
 pub mod tools;
 pub mod view;
 pub mod view_bus;
+pub mod view_shots;
 pub mod vision;
 pub mod wire;
 pub mod workers;
@@ -577,6 +578,7 @@ pub fn build(
         // mount one without taking the stage away from what the agent raised.
         .route("/api/views", get(view::list_views))
         .route("/api/views/open", post(view::open_view))
+        .route("/api/views/bookmarks", post(view::bookmark_view))
         // Vision is an input channel that is also observable: the camera streams
         // WebM over the WS, GET plays the live video; POST persists a still frame.
         .route("/api/in/vision", post(vision::post_vision).get(vision::get_vision))

@@ -1,11 +1,13 @@
 import { url } from "./base";
 // Client for the stage lane — tell the backend the frame this window is showing.
 //
-// The one consumer is `hi_review_view`: it renders a view at whatever we last
+// Both consumers are renderers. `hi_review_view` renders a view at whatever we last
 // reported, so a view-builder session composes for the frame the person actually
 // has and a reviewer signs off on that same frame. Before this, both worked
 // against a hardcoded 1280×800 that matched no real window, which is how a
 // composition built at one aspect shipped with its cards overlapping at another.
+// The views band's history thumbnails render into that frame *and* the skin we
+// report, so the picture on a tile is of the screen this window was showing.
 //
 // **Only the desktop window reports.** The same page also runs in the menu-bar
 // popover (380×540, portrait) and in a plain browser tab; a review rendered at
@@ -17,11 +19,21 @@ import { url } from "./base";
 // Fire-and-forget, like the attention lane: a dropped report just means the next
 // review uses the previous frame.
 
-/** CSS pixels, plus the display's device pixel ratio. */
+/** CSS pixels, the display's device pixel ratio, and the skin. */
 interface StageFrame {
   width: number;
   height: number;
   scale: number;
+  theme: "light" | "dark";
+}
+
+/** The skin this window is actually in: a forced `data-theme` when the person has
+ *  pinned one, else whatever `prefers-color-scheme` resolves to — the same two-step
+ *  `global.css` paints by, read here rather than restated. */
+function currentTheme(): "light" | "dark" {
+  const forced = document.documentElement.getAttribute("data-theme");
+  if (forced === "light" || forced === "dark") return forced;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 /** Coalesce a resize drag into one report. A drag fires `resize` continuously and
@@ -34,6 +46,7 @@ function currentFrame(): StageFrame {
     width: window.innerWidth,
     height: window.innerHeight,
     scale: window.devicePixelRatio || 1,
+    theme: currentTheme(),
   };
 }
 
@@ -64,7 +77,7 @@ export function installStageReport(): () => void {
 
   const report = () => {
     const frame = currentFrame();
-    const key = `${frame.width}x${frame.height}@${frame.scale}`;
+    const key = `${frame.width}x${frame.height}@${frame.scale}/${frame.theme}`;
     if (key === last) return;
     last = key;
     void send(frame);
@@ -75,10 +88,21 @@ export function installStageReport(): () => void {
     timer = setTimeout(report, SETTLE_MS);
   };
 
+  // The skin can change without the frame moving — the system flipping at dusk, or
+  // the person pinning one in Settings — and a thumbnail rendered in the other skin
+  // is a wrong picture of what they were looking at. Both routes are watched: the
+  // media query for the system's answer, and the attribute for a pinned one.
+  const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+  scheme?.addEventListener("change", report);
+  const pinned = new MutationObserver(report);
+  pinned.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+
   report();
   window.addEventListener("resize", onResize);
   return () => {
     clearTimeout(timer);
     window.removeEventListener("resize", onResize);
+    scheme?.removeEventListener("change", report);
+    pinned.disconnect();
   };
 }

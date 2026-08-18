@@ -10,7 +10,12 @@ until the next one replaces it; argued in *The pill is timed* below. **Amended t
 day — the conversation is a card and the line is inside it:** a one-line title, the
 messages, and the line being written, in one card that is the same in both placements; and
 the text channel's one control moves the whole of it; argued in *The line is inside the
-conversation*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+conversation*. **Amended the same day — the band's lower row is bookmarks, and its tiles
+are pictures:** the row is the system views plus what the person kept, not the whole
+inventory, which reverses this document's own deferral of a pinned subset; and a raise is
+captured by the headless renderer the moment it goes up, which reverses *marks, not
+screenshots*. Both are argued in *Going back to a view the agent has moved past* and
+*The tile is a picture of the raise*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -300,9 +305,68 @@ sitting on top of what is otherwise an app. `GET /api/views` is the inventory an
 writer of the appearance. The condition view is not in the inventory: it is the host's,
 and offering it would let a person summon an outage that isn't happening.
 
-There is **no person-owned pinned subset** yet. The tree holds about a dozen views, they
-fit one row, and pinning is the only part of this that would need new state syncing
-across devices. Add it when the row is long enough to be a problem.
+**The row is a person-owned subset, not the inventory** — amended August 18, 2026,
+because the condition this document set for adding one arrived. It said there was no
+pinned subset yet, that a dozen views fit one row, and to add it when the row got long
+enough to be a problem. What is in the tree after a fortnight of building is that dozen
+plus every one-off any builder ever wrote — `entry`, `entry b`, `entry mlat`, `mount b`
+— so the row became a list of the agent's scratch files with the surfaces a person
+actually wants buried among them, which is worse than the asking it replaced.
+
+So the floor is the **system views** (`factory/`), which are how a person reaches their
+tasks, their memory and their files at all and are therefore always in the row and never
+removable. Everything above the floor is there because the person put it there: the star
+on a history card keeps a view, the cross on a chip drops it. `GET /api/views` still
+reports the whole tree — the inventory is the truth about what exists — and now marks
+each entry `system` and `bookmarked`; `POST /api/views/bookmarks` is the one write.
+
+**A bookmark is server state, and the cursor is not.** They look alike and are opposite:
+which entry a window is parked on is that window's own, like scroll position, while a
+bookmark is a thing the person decided once and must find again on the phone. Kept refs
+live in the config store rather than the views tree, which is disposable and re-seeded on
+every boot — an upgrade replaces `factory/` wholesale and must not take the person's row
+with it.
+
+**Only a named view can be kept.** An inline view is only ever the content-addressed
+artifact it compiled to, in a cache that prunes; a bookmark to one would be a bookmark to
+a hash that stops resolving. This is the same named/inline split that decides what
+re-opening means, applied to the same question one step earlier.
+
+## The tile is a picture of the raise
+
+Amended August 18, 2026, reversing *marks, not screenshots*. The history row's box was a
+coloured initial derived from the view's identity, on the argument that a view is a live
+React app with no moment at which its pixels are available: capturing at replace time
+reaches a module that may already be unmounted, and re-mounting a named view offscreen
+renders *today* rather than the record it stands in.
+
+That argument assumed the browser had to be the person's. It doesn't. `view_render`
+already drives a headless Chromium over the `/render/view` host page for
+`hi_review_view`, so a raise can be rendered **at the instant it is raised** — the same
+module, the same moment, the same frame the window reported. It is not a reconstruction
+of the past; it is a second camera on the present.
+
+Three properties keep it affordable, and each is load-bearing:
+
+- **Content-addressed.** The key is the compiled module's own hash, so an artifact
+  renders once no matter how often it is raised, and a recompile is correctly a
+  different picture. `views/_shots/` sits beside `_compiled/` and is disposable in
+  exactly the same way.
+- **One at a time.** A `show, say, show, say` walk-through would otherwise put a browser
+  per beat on the machine already running the agent.
+- **Off the write path, and silent.** `apply` has returned before the browser opens. A
+  capture that fails, blanks or times out writes nothing and the tile stays on its mark
+  — which is the whole of the old design, still there as the floor.
+
+The capture bumps the appearance version when it lands, so the picture reaches the
+windows already watching, but **writes no snapshot**: a picture of a raise that already
+happened changes nothing about what was on screen, and a state identical to its
+predecessor and dated later is exactly the noise reflection has to read past.
+
+The window reports its **skin** on the stage lane beside its frame, for the same reason
+it reports the frame: the page is the only thing that knows, and a light picture of a
+view the person saw dark is a wrong record. `hi_review_view` still renders both skins —
+a review exists to catch the colour that resolves in one and not the other.
 
 ## What stays on the wire, and what does not
 

@@ -89,8 +89,9 @@ export default function Broken() {
 struct Harness {
     base_url: String,
     compiler: ViewCompiler,
-    _dir: tempfile::TempDir,
-    _seams: ServerSeams,
+    dir: PathBuf,
+    _tmp: tempfile::TempDir,
+    seams: ServerSeams,
 }
 
 /// Stand up the real router over a temp data dir, plus a compiler writing into
@@ -121,7 +122,13 @@ async fn harness(esbuild: PathBuf) -> Harness {
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let compiler = ViewCompiler::new(esbuild, dir.path());
-    Harness { base_url: format!("http://{addr}"), compiler, _dir: dir, _seams: seams }
+    Harness {
+        base_url: format!("http://{addr}"),
+        compiler,
+        dir: dir.path().to_path_buf(),
+        _tmp: dir,
+        seams,
+    }
 }
 
 /// Locate an esbuild native binary already provisioned on this host — the
@@ -344,4 +351,91 @@ async fn the_reach_surface_renders_on_a_core_that_has_nothing_yet() {
         !view_render::is_blank_png(&out.png),
         "reach rendered blank — its module scope probably threw"
     );
+}
+
+/// The views band's history tile carries a **real picture of the raise**, and this is
+/// the whole path that produces it: the reaction emits a `show`, the bus records it,
+/// a headless browser renders the module it went up as, the shot is downscaled into
+/// `views/_shots/`, and the next `/api/out/view` carries its URL — which really is
+/// fetchable, really is a PNG, and really is not a blank page.
+///
+/// The last part is what makes this worth an end-to-end test rather than unit ones.
+/// Each half is already covered (the renderer above, the naming and downscale in
+/// `view_shots`), and every interesting way this breaks is *between* them: a version
+/// that never bumps so the picture arrives at nobody, a `_shots/` path the `/views/`
+/// route will not serve, a capture that races the state it is supposed to appear in.
+#[tokio::test]
+async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
+    let Some(h) = ready().await else { return };
+
+    // The capture path resolves the compiler and this server's own origin the same way
+    // `hi_review_view` does — through the published render context.
+    hi_agent::mind::views::set_render_context(h.compiler.clone(), h.base_url.clone());
+
+    let module_url = h.compiler.compile(GOOD_VIEW).await.expect("compiles");
+    h.seams
+        .out_tx
+        .send(hi_agent::body::reaction::OutboundSignal::View {
+            envelope: hi_agent::types::ViewEnvelope {
+                id: "spending".to_string(),
+                op: hi_agent::types::ViewOp::Show,
+                module_url: Some(module_url.clone()),
+                traits: None,
+                view_ref: None,
+            },
+        })
+        .await
+        .expect("out_tx send");
+
+    // Long-poll until the entry carries its shot: `since` parks until something bumps
+    // the version, and the capture's own bump is the thing being tested. Bounded well
+    // above a cold browser launch so a slow machine reports a real failure, not a flake.
+    let client = reqwest::Client::new();
+    let shot_url = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut since: Option<u64> = None;
+        loop {
+            let query = since.map(|s| format!("?since={s}")).unwrap_or_default();
+            let state: serde_json::Value = client
+                .get(format!("{}/api/out/view{query}", h.base_url))
+                .send()
+                .await
+                .expect("send")
+                .json()
+                .await
+                .expect("body");
+            since = state["version"].as_u64();
+            if let Some(url) = state["history"][0]["shot_url"].as_str() {
+                return url.to_string();
+            }
+        }
+    })
+    .await
+    .expect("a thumbnail should land within a minute");
+
+    assert!(
+        shot_url.starts_with("/views/_shots/"),
+        "served out of the shots cache, got {shot_url}"
+    );
+    assert!(
+        h.dir.join("views/_shots").join(shot_url.rsplit('/').next().unwrap()).exists(),
+        "the file is really on disk under the data dir"
+    );
+
+    let png = client
+        .get(format!("{}{shot_url}", h.base_url))
+        .send()
+        .await
+        .expect("fetch the shot");
+    assert!(png.status().is_success(), "the /views/ route serves it: {}", png.status());
+    assert_eq!(
+        png.headers().get("content-type").and_then(|v| v.to_str().ok()),
+        Some("image/png"),
+    );
+    let bytes = png.bytes().await.expect("body").to_vec();
+    assert!(
+        !view_render::is_blank_png(&bytes),
+        "the tile must not be a picture of a blank page"
+    );
+    let img = image::load_from_memory(&bytes).expect("decodes as an image");
+    assert!(img.width() <= 480, "scaled down to a tile, got {}px wide", img.width());
 }
