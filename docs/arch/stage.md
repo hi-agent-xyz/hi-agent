@@ -363,6 +363,13 @@ the row wearing a time from three days ago and lighting up as *here*. So the row
 whichever fact about it is later. Going back to a card is a cursor move and does not
 re-time it — the row must not reshuffle under a finger that is browsing it.
 
+**The band opens on where you are.** The row is longer than it is wide and the cursor is
+not always at its head — a raise lands there, but a card gone back to keeps its place —
+so opening the band scrolls the card marked *here* into view, and one that is already
+whole on screen is left alone. Only on opening: a raise arriving while the band is up
+must not drag the row out from under someone reading it, which is the refusal the
+return-to-live dot exists to make, applied to the row itself.
+
 **The trail's own half stays in the window.** A visit is not appended to the server's
 list — a separate question from whether the *move* is reported, which it is (*Where they
 went is reported; the cursor still is not*, below): the newest entry in that list is what

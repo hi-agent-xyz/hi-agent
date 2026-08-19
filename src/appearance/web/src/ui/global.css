@@ -1404,6 +1404,11 @@ button:not([data-slot]) {
 .hi-views-strip {
   gap: 9px;
   padding: 2px 14px 12px;
+  /* Positioned so it is the cards' `offsetParent`: opening the band scrolls the card
+     marked *here* into view, and that sum only works if the card's offset and the
+     strip's `scrollLeft` are measured in the same box. Without this the offsets come
+     out relative to the band, which is the fixed one. */
+  position: relative;
 }
 
 /* The card holds two controls — go there, and keep it — so it is a box rather than

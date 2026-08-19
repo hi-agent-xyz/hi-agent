@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
+import { scrollToShow } from "../lib/strip";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
 /**
@@ -44,6 +45,12 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * view that did not render cleanly, leaves the tile on the coloured mark derived from
  * the view's identity, which is what the whole row used to be.
  *
+ * **It opens on where you are.** The row can be a dozen cards long and the cursor is
+ * not always at its head — a raise lands there, but a card gone back to keeps its place
+ * — so opening the band scrolls the one marked *here* into view. Once, on opening: a
+ * raise arriving afterwards must not drag the row out from under someone reading it,
+ * which is the same refusal the return-to-live dot exists to make.
+ *
  * **The inventory is re-read while the band is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually the band
  * opening; the shot lands a second or two later, and this is what carries it onto the
@@ -55,6 +62,22 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */
   const [broken, setBroken] = useState<Set<string>>(() => new Set());
+
+  const strip = useRef<HTMLDivElement>(null);
+  const hereCard = useRef<HTMLElement>(null);
+  /** Whether opening has already placed the row. The inventory poll re-renders the band
+   * every few seconds, and re-running this would keep hauling the row back. */
+  const placed = useRef(false);
+
+  // Before paint, so the row is simply *at* the right place rather than seen to jump
+  // there. `scrollLeft` rather than `scrollIntoView`, which would also scroll whatever
+  // ancestor it decided was interesting, and would animate.
+  useLayoutEffect(() => {
+    if (placed.current || !strip.current || !hereCard.current) return;
+    placed.current = true;
+    const at = scrollToShow(strip.current, hereCard.current);
+    if (at !== null) strip.current.scrollLeft = at;
+  });
 
   /** Stars clicked whose write has not come back yet. A re-read that was already in
    * flight when the click happened answers with the old row, and applying it would
@@ -125,7 +148,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
       {trail.length === 0 ? (
         <p className="hi-views-empty">nothing has been shown yet</p>
       ) : (
-        <div className="hi-views-strip">
+        <div className="hi-views-strip" ref={strip}>
           {trail.map((entry) => {
             const key = destinationOf(entry);
             const isLive = key === live;
@@ -138,7 +161,11 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
             // being a system surface, is a thing the star can act on.
             const keepable = listed && !listed.system ? listed : null;
             return (
-              <span className={`hi-views-card${key === here ? " is-here" : ""}`} key={key}>
+              <span
+                className={`hi-views-card${key === here ? " is-here" : ""}`}
+                key={key}
+                ref={key === here ? hereCard : undefined}
+              >
                 <button
                   type="button"
                   className="hi-views-open"
