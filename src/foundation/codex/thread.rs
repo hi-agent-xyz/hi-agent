@@ -273,7 +273,7 @@ impl SessionRun {
         // A message that never streamed still has to be *said*. Deltas are the usual
         // path, but they are not guaranteed — a provider that returns the assistant
         // message as one completed item produces `item/completed` and no deltas at all,
-        // and projecting only from deltas made the voice go silent while the turn
+        // and projecting only from deltas made Reaction go silent while the turn
         // reported `Completed`. Caught in a live run against a non-streaming upstream:
         // `reply_chars=0` on a turn that had plainly succeeded.
         if method == "item/completed"
@@ -608,7 +608,7 @@ mod tests {
     }
 
     /// A provider that does not stream returns the whole message as one completed item.
-    /// The voice must still say it — this exact case shipped silent once.
+    /// Reaction must still say it — this exact case shipped silent once.
     #[tokio::test]
     async fn a_message_that_never_streamed_is_still_spoken() {
         let mut r = run("turn_1");

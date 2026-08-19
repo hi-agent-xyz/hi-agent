@@ -105,9 +105,9 @@ being wrong first:
 |---|---|
 | **One verb: `SendMessage(to, message)`** | `delegate`, `ask`, `surface`, `handoff`, `notify`, and a pull-only worker channel — all were this verb wearing a name that described one use of it |
 | **The arbiter is retired into Reaction** | a host module arbitrating a mouth that one per-scene agent already owns |
-| **Deliberation is retired into Cognition** | its *reason* (the voice cannot read) was real and moved; its *scoping* was per-scene, and once scene went it was a singleton in front of a singleton. Two rungs meant two hops for one answer. Safe only with its replacement rule below |
+| **Deliberation is retired into Cognition** | its *reason* (Reaction cannot read) was real and moved; its *scoping* was per-scene, and once scene went it was a singleton in front of a singleton. Two rungs meant two hops for one answer. Safe only with its replacement rule below |
 | **Cognition never grinds** | what "one session held free for the conversation" was really buying. A brain that dispatches every artifact, side effect and long errand stays as free as a rung reserved for it, in one hop instead of two |
-| **A hand-down is a reply owed** | Deliberation's answer was must-relay *structurally* (the host framed the report). Cognition's is mail, and its prompt says mail is a proposal — so the host marks the answer to a hand-down as owed, or a voice that speaks only what it chooses to is entitled to drop the reply the person is waiting for |
+| **A hand-down is a reply owed** | Deliberation's answer was must-relay *structurally* (the host framed the report). Cognition's is mail, and its prompt says mail is a proposal — so the host marks the answer to a hand-down as owed, or a rung that speaks only what it chooses to is entitled to drop the reply the person is waiting for |
 | **Cognition is sole ledger writer and sole worker creator** | two writers to one ledger means one is wrong with no way to tell which |
 | **Perception needs no tool** | `see` retired — a ref is a path, and an agent that reads files can open it. What it needs is knowing where things land |
 | **Full frames, not modelled events** | modelling existed so the host could infer intent; intent is now explicit |
@@ -135,9 +135,9 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 
 | | |
 |---|---|
-| *(this branch)* | **Turn-taking moves to the mouth: the voice stops answering thoughts that aren't finished.** `interrupts.rs` → `floor.rs`, `InterruptRegistry` → `Floor`, and `hi_say` now asks it — at the instant the words are ready, not when the turn began — whether the room is the voice's to take. Two refusals: **their voice is sounding** (a recognized partial within ~900ms) and **a line went unheard** (an exact counter against its value at turn start). Both answer `not said`; **nothing is queued**, and the reply is rewritten by the next turn, which the line they just said was going to drive anyway. `RESPONSE_SETTLE` is demoted in name and doc to what it always was — batching — because it counts *finalized* utterances and a person mid-thought produces those constantly: measured live, every one of one speaker's six inter-burst gaps (1.4–4.9s) was longer than the 700ms window, so it coalesced nothing while being described as the thing that kept the voice from answering half a thought. Backstop: three refusals in a row and the fourth goes through, so a talkative stretch cannot mute the agent. This also stops the barge-in half firing on people who never interrupted — three consecutive turns in the measured conversation carried `## Interrupted` and none of them had been. **838 lib + integration + 65 web tests green, no new warnings.** Design edited to match: `host.md#the-floor` (new), `surfaces.md` batching, `mod.rs`'s *superseded drafts are never generated* reversed — generation is speculative now. `gaps.md#27`, journey 15's sibling section. **Not run against a live instance, and that is the whole of what is left**: the two conditions and the backstop are unit-tested, but a real partial stream is the one thing curl cannot drive. **`turn/steer` into Reaction was planned for this commit and deliberately dropped**: `cognition.rs:328` already argues the case — *what a person just said is the one input that can invalidate work in flight* — and Reaction is the one rung nobody steers, but with a strict `Unheard` gate a steered turn's `say` is refused anyway, so it would change nothing. It becomes worth building the moment we can tell *ordering*: a steered line arrives as its own `userMessage` item, so a `say` emitted after that item provably saw it and can be let through. That is the next thing here, and it needs the item stream, not a guess. **Second commit, from a second live case:** the same `voice_active` fact gains an upstream reader — the batching window is held open while they are still audibly talking, capped at 5s. The mouth's gate cannot stand in for it, and that is the whole argument: a batch that closed **0.8s** early turned one question into two 30s generations, two spoken replies, a `back_in` armed off a third of the request, and **two overlapping errands** into Cognition. Refusing the second `say` unsays none of that — a turn spent on a fragment has already thought and already dispatched. `gaps.md#28` |
-| *(prior branch)* | **The voice's pulse is cut; the glance-up is Cognition's alone.** `LoopInput::Pulse`, the timer arm that produced it, and the `pulse_every` / `last_activity` / `pulsed_once` bookkeeping all go; `render_pulse` moves into `cognition.rs`, its only caller left, so the `(pulse)` word now names exactly one thing. **Reaction wakes on three things and no clock: input, mail, its own check-in.** The argument is the one `gaps.md#1` already made and only half-acted on — the pulse woke the rung that cannot read the ledger, and Reaction is tools-off, so the wake handed it nothing it could not already see in the window it gets on *every* turn. Measured: two post-restart pulses, both concluding without a `say`. It was also the most expensive wake there is, since that window rides every turn and accumulates in the session (46k → 70k → 96k tokens over three no-op turns, read off the Sessions view). `pulse` / `DEFAULT_PULSE` survive as Cognition's cadence and as the ceiling the check-in floor widens to; `Channel::Clock` now carries check-ins and nothing else, and `NON_ACTIVITY_CHANNELS` keeps its one reader. **730 lib tests + integration green, 0 warnings.** Not run against a live instance |
-| *(earlier)* | **Deliberation is retired into Cognition.** Four rungs become three. `Role::Deliberation`, `deliberation.md`, `deliberation_prompt`, the `is_deliberation` flag threaded through spawn/drive/report, `warm_deliberation`, `deliberate`, the `deliberation` MCP arm and the per-conversation warm-up all go. The hand-down is now one `post` into Cognition's standing inbox — no session to open, no warm one to resume, no fallback spawn — and `follow_up` died with it, taking the warm-idle path that had exactly one client. `Worker` drops to two handles (`session`, `drive`); its `task`/`transcript`/`busy` were copies of switchboard state whose last reader was the voice's status line, which now asks `registry::session_of_role(Cognition)`. Two jobs moved intact: opening refs, and writing the conversation's brief. One was rebuilt: must-relay, as `LoopInput::Mail { owed }`. **720 tests green, 0 warnings.** Not run against a live instance |
+| *(this branch)* | **Turn-taking moves to the mouth: Reaction stops answering thoughts that aren't finished.** `interrupts.rs` → `floor.rs`, `InterruptRegistry` → `Floor`, and `hi_say` now asks it — at the instant the words are ready, not when the turn began — whether the room is Reaction's to take. Two refusals: **their voice is sounding** (a recognized partial within ~900ms) and **a line went unheard** (an exact counter against its value at turn start). Both answer `not said`; **nothing is queued**, and the reply is rewritten by the next turn, which the line they just said was going to drive anyway. `RESPONSE_SETTLE` is demoted in name and doc to what it always was — batching — because it counts *finalized* utterances and a person mid-thought produces those constantly: measured live, every one of one speaker's six inter-burst gaps (1.4–4.9s) was longer than the 700ms window, so it coalesced nothing while being described as the thing that kept Reaction from answering half a thought. Backstop: three refusals in a row and the fourth goes through, so a talkative stretch cannot mute the agent. This also stops the barge-in half firing on people who never interrupted — three consecutive turns in the measured conversation carried `## Interrupted` and none of them had been. **838 lib + integration + 65 web tests green, no new warnings.** Design edited to match: `host.md#the-floor` (new), `surfaces.md` batching, `mod.rs`'s *superseded drafts are never generated* reversed — generation is speculative now. `gaps.md#27`, journey 15's sibling section. **Not run against a live instance, and that is the whole of what is left**: the two conditions and the backstop are unit-tested, but a real partial stream is the one thing curl cannot drive. **`turn/steer` into Reaction was planned for this commit and deliberately dropped**: `cognition.rs:328` already argues the case — *what a person just said is the one input that can invalidate work in flight* — and Reaction is the one rung nobody steers, but with a strict `Unheard` gate a steered turn's `say` is refused anyway, so it would change nothing. It becomes worth building the moment we can tell *ordering*: a steered line arrives as its own `userMessage` item, so a `say` emitted after that item provably saw it and can be let through. That is the next thing here, and it needs the item stream, not a guess. **Second commit, from a second live case:** the same `voice_active` fact gains an upstream reader — the batching window is held open while they are still audibly talking, capped at 5s. The mouth's gate cannot stand in for it, and that is the whole argument: a batch that closed **0.8s** early turned one question into two 30s generations, two spoken replies, a `back_in` armed off a third of the request, and **two overlapping errands** into Cognition. Refusing the second `say` unsays none of that — a turn spent on a fragment has already thought and already dispatched. `gaps.md#28` |
+| *(prior branch)* | **Reaction's pulse is cut; the glance-up is Cognition's alone.** `LoopInput::Pulse`, the timer arm that produced it, and the `pulse_every` / `last_activity` / `pulsed_once` bookkeeping all go; `render_pulse` moves into `cognition.rs`, its only caller left, so the `(pulse)` word now names exactly one thing. **Reaction wakes on three things and no clock: input, mail, its own check-in.** The argument is the one `gaps.md#1` already made and only half-acted on — the pulse woke the rung that cannot read the ledger, and Reaction is tools-off, so the wake handed it nothing it could not already see in the window it gets on *every* turn. Measured: two post-restart pulses, both concluding without a `say`. It was also the most expensive wake there is, since that window rides every turn and accumulates in the session (46k → 70k → 96k tokens over three no-op turns, read off the Sessions view). `pulse` / `DEFAULT_PULSE` survive as Cognition's cadence and as the ceiling the check-in floor widens to; `Channel::Clock` now carries check-ins and nothing else, and `NON_ACTIVITY_CHANNELS` keeps its one reader. **730 lib tests + integration green, 0 warnings.** Not run against a live instance |
+| *(earlier)* | **Deliberation is retired into Cognition.** Four rungs become three. `Role::Deliberation`, `deliberation.md`, `deliberation_prompt`, the `is_deliberation` flag threaded through spawn/drive/report, `warm_deliberation`, `deliberate`, the `deliberation` MCP arm and the per-conversation warm-up all go. The hand-down is now one `post` into Cognition's standing inbox — no session to open, no warm one to resume, no fallback spawn — and `follow_up` died with it, taking the warm-idle path that had exactly one client. `Worker` drops to two handles (`session`, `drive`); its `task`/`transcript`/`busy` were copies of switchboard state whose last reader was Reaction's status line, which now asks `registry::session_of_role(Cognition)`. Two jobs moved intact: opening refs, and writing the conversation's brief. One was rebuilt: must-relay, as `LoopInput::Mail { owed }`. **720 tests green, 0 warnings.** Not run against a live instance |
 | `d78b350` | **W0 compile pass.** Ten blind commits: 0 errors, 0 warnings. The one red test was stale (`STT_PROVIDER` after BYOK), not breakage. The two feared parallel-authorship collisions never happened |
 | `c110aff` | Per-scene rung renamed **Deliberation**. The *cognition tunables* keep the word in its other sense |
 | `a1c0a75` | **The scene's memory has a writer.** `memory/prompts/scenes/<id>.md` had a reader since `bcf9781` and none in `src/` |
@@ -153,7 +153,7 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 | `f3324de` | **The switchboard stops needing a scene.** `create_worker` belongs to the sceneless rungs and was unreachable by exactly them |
 | `70479a9` | **N7a — full frames.** The stream is recorded verbatim *and* kept; the tap was a 4000-frame ring that survived nothing |
 | `c3cf110` | **A run has a name.** Frames file per agent session under a run id — session ids restart at 1 every boot, so without it two runs share one file |
-| `c085e29` | **The frame log is not a scene, and every session carries its minted id.** Four bugs of one shape. `raw/sessions/` was read back as a conversation and warmed a full loop every boot. Reaction *and* Reflection were opened with `session_id: None`, so the one verb reached only two of four rungs — the voice held a mailbox it had no identity to send from. Reflection was not on the switchboard at all. `create_worker`'s only fence was Reaction's missing id, i.e. an accident |
+| `c085e29` | **The frame log is not a scene, and every session carries its minted id.** Four bugs of one shape. `raw/sessions/` was read back as a conversation and warmed a full loop every boot. Reaction *and* Reflection were opened with `session_id: None`, so the one verb reached only two of four rungs — Reaction held a mailbox it had no identity to send from. Reflection was not on the switchboard at all. `create_worker`'s only fence was Reaction's missing id, i.e. an accident |
 | `15391e9` | **The observatory admits sceneless events.** `record` takes `Option<&Scene>` and returns *before* the map entry is created — passing a placeholder was enough to put `*consolidation*` in the dashboard's scene list. `SceneView.workers` deleted: it could only ever hold the workers incidentally hosted in that scene |
 | `598a243` | **The one verb is observable, and the event log has a reader.** `MessageSent` for agent→agent *and* host→agent, so work travelling **up** is visible for the first time. New Events tab subscribes an `onEvent` callback that had sat with no subscriber since it was written |
 | `12fddee` | **The worker map is an optimization, not a pool.** N3a cut — see the design-changes table above |
@@ -161,7 +161,7 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 | `d90156f` | **N3 — Cognition.** Registration is process-lifetime, the ACP session is **per wake** (⚠️ **reversed** — see the long-lived-rungs entry below). Owns the ledger, hosts its own workers under `*cognition*`, never speaks |
 | `9d7bc97` | **An address is a session id, and reachability is projected.** Also: one mail renderer, replacing three that had already drifted |
 | `fdc4111` | **The clock goes**, and everything that waited on it says so — a task's `due` fires nothing |
-| `42c1530` | **The voice's brief is one file**, named for the rung that reads it: `speaking.md` → `reaction.md`; the alarm instruction goes with it |
+| `42c1530` | **Reaction's brief is one file**, named for the rung that reads it: `speaking.md` → `reaction.md`; the alarm instruction goes with it |
 | `a0aae29` | **A worker has a type**, and the type is a prompt file — `CreateWorker(type)`, five bundled prompts, the const dies |
 | `50c0863` | **The view reviewer gets a way to render** (`review_view`) — the first caller the browser stack has ever had |
 | `0b8fde0` | **Deliberation is opened as Deliberation**, and the `_` fallback arm goes |
@@ -174,11 +174,11 @@ spawn, see, WorkerId, ToolCallStub, FollowMailbox, `Address` (any form), scene-a
 | `cd008a6` | The agent is told where its own sessions are kept, and why it copies a handed file |
 | `f3961e1` `85f1116` | **Every prompt is one whole file.** The seed, `core.md`, `meaning.md`, `self.md`, `workers/common.md`, `appearance.md`, `aesthetic.md` all deleted; 9 flat files remain |
 | `fdc4111` | **The clock goes, and everything that waited on it says so.** See the struck-out N4 — settled, not pending |
-| `42c1530` | **`speaking.md` → `reaction.md`, and the frame moves into the file.** A file per role, per `arch.md#character`. The ~40-line Rust preamble (one self; your two tools) was the half an operator could not override. The voice also stops being told to set an alarm it has no tool for |
+| `42c1530` | **`speaking.md` → `reaction.md`, and the frame moves into the file.** A file per role, per `arch.md#character`. The ~40-line Rust preamble (one self; your two tools) was the half an operator could not override. Reaction also stops being told to set an alarm it has no tool for |
 | `a0aae29` | **A worker has a type, and the type is a prompt file.** `CreateWorker(type)` was in `foundation.md` and not in the code, which is *why* one prompt carried five specialisms as `When your task is to…` conditionals. Now `prompts/workers/` — `common.md` + one per type; the `const &str` is gone, so every role prompt is operator-overridable. **New: `decision-maker.md`, `file-filer.md`** |
 | `50c0863` | **N7b (half) — the view reviewer can render, so it can exist.** `review_view(ref, theme?, region?, size?)` on the worker surface: compile → render → verdict + problems + screenshot. 1000+ lines of browser-proven stack had no caller because no session could reach it. **New: `view-reviewer.md`**; `view-builder.md` corrected (it pointed at `look`, which screenshots the *user's screen*) |
 | `0b8fde0` | **Deliberation is opened as Deliberation, and the `_` arm is empty.** The rung was opened as `SessionRole::Worker`, so the registry called it one thing and its `X-HI-Role` another — and the fallback arm was not just dead but *armed*: `deliberation` had no arm, so constructing the role would have landed it there with `say` and no `send_message` |
-| `5e1780a` | **The voice stops being handed a roster it neither owns nor can act on.** `## Working sessions (delegated)` listed other sessions' workers and told Reaction to `delegate with worker:<id>` — the last live advertisement of a retired tool, generated per turn, which is why the prompt sweep never caught it. Now one line about Deliberation, only while it runs |
+| `5e1780a` | **Reaction stops being handed a roster it neither owns nor can act on.** `## Working sessions (delegated)` listed other sessions' workers and told Reaction to `delegate with worker:<id>` — the last live advertisement of a retired tool, generated per turn, which is why the prompt sweep never caught it. Now one line about Deliberation, only while it runs |
 
 ---
 
@@ -206,8 +206,8 @@ needed renames and nothing else.
    work wants it.
 
 **What it costs, once:** codex has no `disableBuiltInTools`. `exec_command` / `apply_patch` are always
-in the schema, so the Reaction's tools-off voice is now soft — a `read-only` sandbox plus
-`speaking.md` as the real system prompt. The escape hatch, if the voice reaches for a shell in
+in the schema, so Reaction's tools-off posture is now soft — a `read-only` sandbox plus
+`speaking.md` as the real system prompt. The escape hatch, if Reaction reaches for a shell in
 practice, is to take it off the agent process entirely (one direct Responses call, no `tools` array),
 not a hard rail. This is the one deliberate regression.
 
@@ -224,7 +224,7 @@ not a hard rail. This is the one deliberate regression.
 - **Codex gates our own MCP tools, even under `approvalPolicy: "never"`** — and it asks via
   `mcpServer/elicitation/request`, not an approval method. A blanket `{"decision":"accept"}` for every
   server request drew `missing field 'action'`; declining the elicitation turned a `say` into "user
-  rejected MCP tool call" and the voice went silent. Now: `default_tools_approval_mode: "auto"` on our
+  rejected MCP tool call" and Reaction went silent. Now: `default_tools_approval_mode: "auto"` on our
   server block, plus an answer *per request shape*, and **an error rather than a guess** for anything
   unrecognised.
 
@@ -726,21 +726,21 @@ What landed:
 - **`core.md` is now the agentic self** — who you are, what you know vs. remember, refs and how
   to open them, files, faces, their computer, handing work onward, what's owed and how it's
   held (with the `facet.md` schema), where you stop and ask, and looking at your own output.
-- **`speaking.md` is the voice's whole brief** — it absorbed what only the mouth can act on:
+- **`speaking.md` is Reaction's whole brief** — it absorbed what only the mouth can act on:
   the transcript format, the exchanges, presenting on screen, the built-in view refs, what
   they can receive, presence, speaking first, energy.
 - **`character_seed`** replaces `load_soul`: `core.md` + `meaning.md` + `self.md` + the
   workshop, by absolute path. Wired as the **first of three layers** on Deliberation — who it
   is, then the worker capability guidance, then the role. A plain worker still goes without it.
 - **`reaction_system_prompt(data_dir)`** is async and reads the *installed* `speaking.md`, so
-  `speaking.local.md` reaches the voice — it never did before — and carries the two things the
-  seed held that only the voice can use: the first-meeting cue and the language line.
+  `speaking.local.md` reaches Reaction — it never did before — and carries the two things the
+  seed held that only Reaction can use: the first-meeting cue and the language line.
 - **`proactivity.md` is projected**, not fetched, in `snapshot::window`. It is consulted before
-  breaking a silence and only the voice can break one, so a path to it was a path nobody could
+  breaking a silence and only Reaction can break one, so a path to it was a path nobody could
   follow.
 - The dead `soul` plumbing is gone (`ReactionInner`, `start`, `lib.rs`). `heartbeat::swap` now
   re-seeds with the real Reaction prompt — and **passes `builtin_tools: Some(vec![])`**, which
-  it did not: one rotation would have handed the voice its built-ins back.
+  it did not: one rotation would have handed Reaction its built-ins back.
 
 `see`, `delegate` and `alarm` are gone from the prompts along with the retired vocabulary.
 `alarm` returns with the clock (N4).
@@ -761,7 +761,7 @@ agent→agent path.
 
 Readers first, then the deletion:
 
-- **A scene's voice reads its mail** — its inbox is a wake reason in the loop's `select!`, and
+- **A scene's Reaction reads its mail** — its inbox is a wake reason in the loop's `select!`, and
   mail drives a turn. That is what makes `send_message(to: scene)` *reach* someone.
 - **A worker reads its mail** — its private `FollowMailbox` is gone. Two mailboxes for one
   session meant the sender's choice decided whether a message was ever read, and only one had
@@ -783,7 +783,7 @@ Three bugs surfaced on the way, all latent because nothing drained an inbox:
 
 - `create_worker` was **declared with no dispatch arm** — it answered "unknown tool".
 - `open_reaction_session` registered a **new** Reaction per session open and never unregistered:
-  three clear-paths on `origin/main`, no `unregister` anywhere, so a scene accumulated voices
+  three clear-paths on `origin/main`, no `unregister` anywhere, so a scene accumulated Reactions
   and `Address::Scene` resolved to an arbitrary dead one. Now scope-bound (`register_scoped`,
   released on drop) — the first fix covered two of three exits, which was the same bug smaller.
 - The `_` fallback arm's tools (`delegate`, `alarm`, `see`, `record_reflex`) were never
@@ -904,7 +904,7 @@ worker that sleeps and messages home. `alarm`, `schedule_alarm`, `Alarms`, `take
 
 What that costs is stated once, in [`docs/arch/core.md#glancing-up`](docs/arch/core.md), and
 nowhere else: a `due` is read and ordered, never fired, so a deadline is met at the next glance;
-and nothing wakes the voice when a promise is running **late**. The safety property that makes
+and nothing wakes Reaction when a promise is running **late**. The safety property that makes
 an agent-chosen mechanism sound is `verify` being a **result** check, which lives with
 [Tasks](docs/arch/data.md).
 
@@ -943,7 +943,7 @@ change** — this is implementation catching up to `agents.md` and to `data.md`'
 a contract, not an existence check".
 
 **Still missing, and it is exactly `At(_)`:** a task's `due` fires nothing, so a deadline is
-met at the next glance rather than on time, and nothing wakes the voice when a promise is
+met at the next glance rather than on time, and nothing wakes Reaction when a promise is
 running *late* — the other half of the L1 finding, untouched.
 
 **Unverified:** both wakes are timing-dependent and have no test (`note_for` pins the
@@ -999,19 +999,19 @@ the unhandled rows. Nothing pins the floor or the settle against a real clock.
 
 ### ~~R — Role prompts~~ · **on `main` (`a0aae29`), then superseded by the flattening (`85f1116`)**
 
-`42c1530` the voice's brief is one file · `a0aae29` a worker has a type.
+`42c1530` Reaction's brief is one file · `a0aae29` a worker has a type.
 
 **Two prompts that named tools nobody holds are gone.** `speaking.md` told Reaction to
 *"set an alarm"* — a tool declared only in the dead `_` arm, for a clock that no longer
 exists as of `fdc4111`. `WORKER_SYSTEM_PROMPT` told workers to *"call the `ask` tool"* —
-retired with the old channel. Both promises survive with honest mechanisms: the voice
+retired with the old channel. Both promises survive with honest mechanisms: Reaction
 sizes a silence and leans long *because nothing will remind it*; a worker raises a
 question to its owner and never waits.
 
 **`speaking.md` → `reaction.md`, and the Rust frame moved into it.** `arch.md#character`
 says a file per role and this was the one named for an activity. The ~40-line `format!`
 preamble above it — the one-self framing, the two-tool brief — was the half an operator
-could not override, so the voice's character lived in two places with one editable.
+could not override, so Reaction's character lived in two places with one editable.
 
 **`CreateWorker(type)` is real, and that is what made the split possible.** The type has
 been in `foundation.md` since the interface was written; the tool took only `task`, which
@@ -1083,12 +1083,12 @@ this is already its job — plus sharpening `cognition.md`. **Not yet written.**
 **It also reopens a fork closed the same morning.** "Does `WakeTarget` need a scene?" was closed
 *no — the pulse is a scene-loop timer, not a clock client*. Correct about the pulse. A promised
 check-in is a third registration, inherently per-scene, targeting **Reaction**. The "running
-late" half cannot be fixed softly at all: nothing can wake the voice to say so.
+late" half cannot be fixed softly at all: nothing can wake Reaction to say so.
 
 **Half of that is now answered, by presence rather than by a clock (N6).** A *return* is
 per-scene, targets Reaction, and needed no timer at all — it is caused by the person, so it is
 observed directly rather than polled for. The half that stands is the one that genuinely needs a
-clock: nothing wakes the voice when it is running **late**. Being told when they come back is not
+clock: nothing wakes Reaction when it is running **late**. Being told when they come back is not
 the same as being told on time.
 
 **Not a rung — the reason there are no more rungs.** With the clock skipped, nothing left on
@@ -1189,7 +1189,7 @@ intended registrations lose **"you just came back"** — a return is not due at 
 by the person, and a timer could only find one by polling. `surfaces.md` also loses its last
 **arbiter** references, which were retired vocabulary.
 
-~~**Still open, and named rather than papered over:** nothing wakes the voice when it is running
+~~**Still open, and named rather than papered over:** nothing wakes Reaction when it is running
 *late* on a promise — the "running late" half of the L1 finding is untouched, because nothing in
 the host fires at a named time. A return gets them told; nothing gets them told on time.~~
 **Closed by N8** (2026-08-10, on `feat/check-in`, unpushed). It stayed open one N too long:
@@ -1210,7 +1210,7 @@ Three mechanisms, and the third is the one that mattered:
 1. **The pulse cannot reach these gaps.** Default 30m, and `last_activity` resets on
    every turn — so no silence in the transcript ever came close.
 2. **A worker reports at completion only.** Nothing travels up mid-flight.
-3. **The number the voice names had no reader.** `reaction.md` tells it to put a size on
+3. **The number Reaction names had no reader.** `reaction.md` tells it to put a size on
    a silence and then says outright *"You have no timer — nothing taps you on the
    shoulder at the minute you named"* — while the same section's last line is the
    judgment: *"a check-in that arrives is a promise kept; one they have to ask for is
@@ -1220,9 +1220,9 @@ What looked like proactive updates in the transcript were all riding on `Woke::R
 — and a person coming back to the window is precisely the moment they were about to ask.
 
 **`docs/arch/` was edited, deliberately.** `core.md#glancing-up` gains *the check-in* and
-loses "nothing wakes the voice when a promise is running late" from its costs;
+loses "nothing wakes Reaction when a promise is running late" from its costs;
 `surfaces.md` gains `back_in` on `say`; `agents.md` gives Reaction the deadline as part
-of the social layer it already owns. **This does not reopen N4.** One slot per voice, one
+of the social layer it already owns. **This does not reopen N4.** One slot per Reaction, one
 deadline, one wake, no target, no payload; a task's `due` still fires nothing; scheduling
 past a cadence is still the agent's own. It is a second deadline in the `select!` that
 already carries the pulse's.
@@ -1232,9 +1232,9 @@ already carries the pulse's.
   number nobody was told. An overlong (rejected) utterance arms nothing.
 - **`Said` replaces the bare `Spoken` return**, so the ack confirms the number the host
   is now holding. An unreadable `back_in` arms nothing **and says so** — swallowing it
-  would leave the voice believing it was covered, which is worse than no timer.
+  would leave Reaction believing it was covered, which is worse than no timer.
 - **`LoopInput::CheckIn`** is its own wake beside `Pulse` and `Returned`, for the same
-  reason `Returned` is: rendering it as `(pulse)` would tell the voice to stay quiet at
+  reason `Returned` is: rendering it as `(pulse)` would tell Reaction to stay quiet at
   the instant it should speak.
 - **A floor under an open-ended silence** (`check_in`, default 5m, doubling to the pulse,
   `off` disables). The observed failure was mostly promises with *no number at all*, so a
@@ -1242,19 +1242,19 @@ already carries the pulse's.
   majority of it. Deliberation-busy only — Cognition's workers are not this loop's to
   describe. The note distinguishes the two sources: a floor must never claim a promise
   nobody heard. **The backoff dial is whether the last check-in produced speech**, not a
-  blind doubling — the voice is the only thing that knows if there was anything to say,
+  blind doubling — Reaction is the only thing that knows if there was anything to say,
   so a cadence that keeps landing stays at 5m and one that keeps passing in silence
   widens itself out of the way.
 - **Discharged by the thing it was about coming back** — a Deliberation report clears an
-  untouched slot, so the voice is not woken to say "you told them they'd hear by now"
+  untouched slot, so Reaction is not woken to say "you told them they'd hear by now"
   right after it has just told them. A slot the same turn re-armed is kept.
 - **Dropped into an empty room**, not held: the words would be held anyway and `Returned`
-  already wakes the voice with a fresher read.
+  already wakes Reaction with a fresher read.
 
 **Unverified, and it is the whole point:** no live run. The re-test is one real errand
 that takes >5 minutes — hand it over, *don't ask*, and watch for `check-in fired` in
 `server.log` plus whether what gets spoken is actual progress rather than "still working
-on it". `render_status`'s 240-char tail is the only substance the voice has to build that
+on it". `render_status`'s 240-char tail is the only substance Reaction has to build that
 from, and whether that is enough is exactly what a live run answers.
 
 ### ~~N6 (original framing)~~
@@ -1324,7 +1324,7 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
    saying is ordinary and correct. **Zero `say` in a whole run, against direct questions, is
    the register being wrong** — and only the pattern shows that, never a single turn.
 
-   **The cause was not prompt adherence; it was the tool surface.** The voice was holding
+   **The cause was not prompt adherence; it was the tool surface.** Reaction was holding
    codex's built-ins (one turn ran `nl -ba views/people/voice-roster.jsx | sed …` mid-sentence),
    and a session with a shell answers like a coding agent: markdown findings with file:line
    links, as message text. Two builds, same model, same first message, fresh `--data-dir` each:
@@ -1352,7 +1352,7 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
 5. **Every-turn projection + outbound journal** (`bcf9781`, `2438f3d`) — changed *when* the
    window is injected and *why* a turn is recorded. Neither is falsifiable by a type checker.
 6. **The re-cut character** (N1). Two questions a type checker cannot ask: does Deliberation
-   actually Read `core.md` when the seed tells it to, and does the voice still sound like
+   actually Read `core.md` when the seed tells it to, and does Reaction still sound like
    itself now that `speaking.md` carries twice as much? A first meeting on a fresh
    `--data-dir` exercises both ends of it at once.
 7. **Mail drives a turn** (N2). `send_message(to: scene)` is supposed to *reach* the person, not
@@ -1450,17 +1450,17 @@ if wrong; one first meeting on a fresh `--data-dir` covers 1, 1b, 4, 5, 6, 7, 8 
   guided by prompt, logged rather than blocked.
 - **A worker's `Bash` can read the auth token from its own env.** Non-hacker threat model.
 - ~~**`_meta` tool restriction is vendor-specific.**~~ ~~**Moot since the codex swap** — Codex offers
-  no built-in-tool switch at all, so the Reaction's tools-off voice is now soft guidance plus a
+  no built-in-tool switch at all, so Reaction's tools-off posture is now soft guidance plus a
   read-only sandbox.~~ **Wrong, and it cost us the `say`-less run above (2026-08-10).** Codex has the
   switch; it is spelled as a *permission profile*, not a tool list:
 
-      "permissions": { "hi-agent-voice": { "default_tools_enabled": false } },
-      "default_permissions": "hi-agent-voice"
+      "permissions": { "hi-agent-reaction": { "default_tools_enabled": false } },
+      "default_permissions": "hi-agent-reaction"
 
   in the thread's `config`. The flatter spellings do not exist — 0.144.1 under `--strict-config`
   answers `unknown configuration field tools.default_tools_enabled`, and
   `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`. Codex logs
-  `Permissions profile 'hi-agent-voice' does not define any recognized filesystem entries …
+  `Permissions profile 'hi-agent-reaction' does not define any recognized filesystem entries …
   Filesystem access will remain restricted` when it takes, which is both the proof it parsed
   and the posture Reaction wants. The MCP attach is configured separately and survives it.
   Reaction only — `agents.md` gives "no built-ins at all" to no other rung.
@@ -1560,7 +1560,7 @@ a commit. What is genuinely unfinished here is behaviour, not structure: the ven
 half-classified, and one mechanism — `record_reflex` — can never fire. It is labelled where it
 lives, which is the standard this file holds. **Presence now gates** (N6) —
 the one thing that can be spent is withheld, `say` reports what became of an utterance, and
-coming back is an event the voice is woken for. Lateness is now an event too (N8): the voice
+coming back is an event Reaction is woken for. Lateness is now an event too (N8): Reaction
 names a size in `say`'s `back_in` and the host wakes it when that is up, with a floor beneath
 for the silence it left open-ended. It did not want the clock — it wanted one deadline, which
 is the thing N4 was never arguing against.

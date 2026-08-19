@@ -68,7 +68,7 @@ fn project(statuses: &[Status]) -> AgentActivity {
         .filter(|status| status.role == Role::Reaction)
         .any(|status| status.busy || status.queued);
 
-    // There is one user-facing voice. Cognition and its descendants are delegated work.
+    // There is one user-facing rung: Reaction. Cognition and its descendants are delegated work.
     // Reflection and its descendants are maintenance, not a user-facing obligation
     // represented by this status.
     let delegated_busy_count = statuses

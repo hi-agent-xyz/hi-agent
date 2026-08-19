@@ -2,7 +2,7 @@
 //!
 //! One mpsc per conversation, one task per conversation; turns run serially against a single
 //! Reaction agent session that is opened and primed when the conversation stands up, then
-//! reused as the conversation's continuous voice. The reading and thinking is Cognition's,
+//! reused for the whole conversation. The reading and thinking is Cognition's,
 //! which stands in its own loop and answers by mail; Reaction never blocks on it.
 //!
 //! ## Turn-taking lives here, not in the client
@@ -19,10 +19,10 @@
 //!    turn-taking rule as well — wait for quiet, then answer — and it could never
 //!    have been one: it counts *finalized utterances*, which a person mid-thought
 //!    produces constantly. Measured live, every gap between one speaker's bursts
-//!    was longer than the settle, so it coalesced nothing and the voice answered
+//!    was longer than the settle, so it coalesced nothing and Reaction answered
 //!    a half-finished sentence four times in twenty-five seconds.
-//! 2. **The floor decides, and it decides at the mouth.** Whether the room is the
-//!    voice's to speak into is asked when the words are ready, not when the turn
+//! 2. **The floor decides, and it decides at the mouth.** Whether the room is
+//!    Reaction's to speak into is asked when the words are ready, not when the turn
 //!    that wrote them began — seconds earlier, which is long enough for the person
 //!    to have started a new sentence or said the thing that mattered. `say` is
 //!    refused if their voice is sounding, or if a line landed that this turn never
@@ -51,7 +51,7 @@
 //!
 //! ## Heavy work goes to a working session, not onto the floor
 //!
-//! The mind keeps a single voice, so it must never block the floor on slow
+//! There is one Reaction and one mouth, so it must never block the floor on slow
 //! work. When a turn needs research, multi-step tool use, or anything
 //! long-running, the mind calls the `delegate` tool with the task; the reaction
 //! spawns a [`workers`] session for it and keeps talking. The worker
@@ -119,7 +119,7 @@ use uuid::Uuid;
 /// person mid-thought produces finalized utterances constantly — this timer's only
 /// input. Live, one speaker's gaps between bursts ran 1.4–4.9s, every one of them
 /// past this window, so it coalesced nothing at all while claiming to be what kept
-/// the voice from answering half a thought.
+/// Reaction from answering half a thought.
 ///
 /// It stays this small because [`BATCH_WHILE_COMPOSING`] covers those gaps instead,
 /// and only when there is actually someone mid-thought to wait for.
@@ -158,7 +158,7 @@ const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 /// the recurring arm and never the boot one, which is restart recovery rather than a
 /// cadence (see [`cognition`]).
 ///
-/// **The voice has no pulse, and that absence is deliberate.** The conversation loop used
+/// **Reaction has no pulse, and that absence is deliberate.** The conversation loop used
 /// to wake itself on this same cadence and run a turn into an empty room. Three things
 /// killed it. Reaction is tools-off, so a wake handed it nothing it could not already see
 /// in the window it gets on *every* turn — the least-informed rung was the one deciding
@@ -167,7 +167,7 @@ const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 /// standing duty sat unread in the ledger (`docs/user-journeys/gaps.md#1`). And it was the
 /// most expensive wake in the system, because the projected window rides every turn and
 /// accumulates in the session. Unprompted speech now comes from the rung that can
-/// actually check: Cognition glances up, reads the ledger, and mails the voice — which
+/// actually check: Cognition glances up, reads the ledger, and mails Reaction — which
 /// drives a turn like any other reason to speak.
 const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
 
@@ -182,18 +182,18 @@ pub(super) fn pulse_interval() -> Option<Duration> {
     duration_tunable(config::tunables::get(config::KEY_PULSE), DEFAULT_PULSE)
 }
 
-/// The floor under an open-ended silence: how long the voice may stay quiet while its
+/// The floor under an open-ended silence: how long Reaction may stay quiet while its
 /// own thinking is still running before the host wakes it to say where things stand.
 ///
-/// Five minutes because the failure it answers was measured — an errand ran, the voice
+/// Five minutes because the failure it answers was measured — an errand ran, Reaction
 /// said "I'll report once confirmed" with no number, and the person filled the next
 /// thirteen to eighteen minutes by asking "progress?" three times in one morning. It
 /// only ever fires while work is genuinely in flight, and a wake is permission to
-/// speak, not an obligation: the voice reads the room and may stay quiet.
+/// speak, not an obligation: Reaction reads the room and may stay quiet.
 const DEFAULT_CHECK_IN: Duration = Duration::from_secs(300);
 
 /// The floor gap for an open-ended silence ([`DEFAULT_CHECK_IN`]), or `None` when
-/// `check_in` is `0`/`off` — which leaves only the check-ins the voice arms itself
+/// `check_in` is `0`/`off` — which leaves only the check-ins Reaction arms itself
 /// through `say`'s `back_in`, never no check-ins at all.
 fn check_in_interval() -> Option<Duration> {
     duration_tunable(config::tunables::get(config::KEY_CHECK_IN), DEFAULT_CHECK_IN)
@@ -203,7 +203,7 @@ fn check_in_interval() -> Option<Duration> {
 /// interrupted every five minutes, so each consecutive host-armed check-in doubles the
 /// gap — the reflection backoff's shape — and stops at the glance-up cadence, which is
 /// already the answer to "how often does this agent look up from what it's doing". A word
-/// from the voice or the person resets it: the conversation is live again.
+/// from Reaction or the person resets it: the conversation is live again.
 fn check_in_cap() -> Duration {
     pulse_interval().unwrap_or(DEFAULT_PULSE)
 }
@@ -757,21 +757,21 @@ const LOOP_QUEUE_CAPACITY: usize = 64;
 enum LoopInput {
     Human(Signal),
     Worker(workers::WorkerReport),
-    /// The voice's own check-in coming due — it said they'd hear back by now, or it
+    /// Reaction's own check-in coming due — it said they'd hear back by now, or it
     /// left a silence open-ended while its thinking ran and the host put a floor under
     /// it ([`tools::NextWord`]).
     ///
     /// **The only clock this loop still answers to**, and it never wears the `(pulse)`
     /// marker Cognition's glance-up does. That marker means a quiet moment almost nothing
     /// is worth breaking; this is the moment a word was *owed*, and rendering the two the
-    /// same would tell the voice to stay quiet at precisely the instant it should speak.
+    /// same would tell Reaction to stay quiet at precisely the instant it should speak.
     CheckIn { owed: tools::Owed },
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
     Mail {
         mail: Vec<crate::foundation::registry::Message>,
-        /// Whether this mail answers a question the voice handed down and the person is
+        /// Whether this mail answers a question Reaction handed down and the person is
         /// still waiting on — in which case it is **a reply owed**, not one signal among
         /// many.
         ///
@@ -780,8 +780,8 @@ enum LoopInput {
         /// host could frame it as must-relay; Cognition's arrives as ordinary mail, and
         /// Cognition's own prompt tells it that everything it sends is *a proposal, never
         /// a delivery*. That is right for a finding it raised on its own and wrong for an
-        /// answer to a question a person asked thirty seconds ago: a voice that speaks
-        /// only what it chooses to is entitled to drop a proposal, and dropping it means
+        /// answer to a question a person asked thirty seconds ago: Reaction, which speaks
+        /// only what it chooses to, is entitled to drop a proposal, and dropping it means
         /// the person who asked never hears back. So the host, which is the only thing that
         /// knows a hand-down is outstanding, says which kind of message this is.
         owed: bool,
@@ -871,7 +871,7 @@ struct ReactionInner {
     /// it tags audio spans and the channel logs so a reply is traceable end to
     /// end. (The client no longer needs it — turns are internal to the mind.)
     turn_seq: AtomicU64,
-    voice: Mutex<Option<VoiceHandle>>,
+    loop_handle: Mutex<Option<LoopHandle>>,
     /// Wall-monotonic time of the most recent inbound human signal — the global
     /// "fresh input" signal the single consolidated reflection
     /// clock reads to decide base-vs-backoff cadence (see [`reflection`]).
@@ -894,7 +894,7 @@ struct ReactionInner {
     server_ready: watch::Receiver<bool>,
 }
 
-struct VoiceHandle {
+struct LoopHandle {
     id: registry::SessionId,
     inbound: mpsc::Sender<LoopInput>,
 }
@@ -953,7 +953,7 @@ pub async fn start(
             energy_view,
             views_dir,
             turn_seq: AtomicU64::new(0),
-            voice: Mutex::new(None),
+            loop_handle: Mutex::new(None),
             vendor,
             vendor_wake: tokio::sync::Notify::new(),
             last_signal_at: std::sync::Mutex::new(Instant::now()),
@@ -1010,18 +1010,18 @@ pub async fn start(
     });
 
     // Warm-up requests: a presence GET (a client opening a `/api/out/*` long-poll)
-    // asks us to stand the voice up now, so its subprocess and agent session are open
-    // before the first utterance lands. `ensure_voice` is idempotent — repeated GETs
+    // asks us to stand Reaction up now, so its subprocess and agent session are open
+    // before the first utterance lands. `ensure_up` is idempotent — repeated GETs
     // against an already-live loop are no-ops.
     let warm_reaction = reaction.clone();
     tokio::spawn(async move {
         while warm_rx.recv().await.is_some() {
-            warm_reaction.ensure_voice().await;
+            warm_reaction.ensure_up().await;
         }
         tracing::warn!("reaction warm channel closed; warm-up loop exiting");
     });
 
-    // Stand the voice up at boot so its subprocess and agent session are open before
+    // Stand Reaction up at boot so its subprocess and agent session are open before
     // anything arrives — the same warm-up a presence GET asks for, just not waiting
     // for one. There is nothing to *select* here any more: the machinery this
     // replaced picked which of N conversations were worth re-warming, at the cost of a
@@ -1029,7 +1029,7 @@ pub async fn start(
     // always "the one".
     let boot_reaction = reaction.clone();
     tokio::spawn(async move {
-        boot_reaction.ensure_voice().await;
+        boot_reaction.ensure_up().await;
     });
 
     // Consolidated reflection ("sleep"): one pass over the shared frontier on
@@ -1076,7 +1076,7 @@ pub async fn start(
 
 /// Channels that do **not** count as a conversation being alive. Exactly one: `clock`,
 /// where the host's own wakes are recorded — today a check-in coming due, and nothing
-/// else since the voice's pulse was cut.
+/// else since Reaction's pulse was cut.
 ///
 /// This is load-bearing. Those wakes are journaled (a restart otherwise sees a turn with
 /// no cause), but the host noticing the time is not a conversation, and anything that
@@ -1158,11 +1158,11 @@ impl Reaction {
         *self.inner.last_signal_at.lock().unwrap() = Instant::now();
         self.inner.reflect_wake.notify_one();
 
-        let (voice_id, sender) = self.get_or_create_voice().await;
-        // The signal is now accepted by the voice. Marking the Reaction
+        let (reaction_id, sender) = self.get_or_create_loop().await;
+        // The signal is now accepted by Reaction. Marking the Reaction
         // session here closes the small gap between the final transcript and the
         // loop's next receive; the loop owns the matching finish edge.
-        registry::global().start_turn(&voice_id);
+        registry::global().start_turn(&reaction_id);
 
         // A new signal never cancels the in-flight prompt: the serial loop folds it
         // into the next turn (fix-forward), and the lightweight reaction decides per
@@ -1175,39 +1175,39 @@ impl Reaction {
         // this point is out of date, and [`floor::Floor::may_speak`] refuses it.
         self.inner.floor.note_heard();
         if let Err(err) = sender.send(LoopInput::Human(signal)).await {
-            registry::global().abandon_turn(&voice_id);
+            registry::global().abandon_turn(&reaction_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
         }
     }
 
-    /// Stand the voice's loop up now (idempotent), so its warm-up prologue runs and
+    /// Stand Reaction's loop up now (idempotent), so its warm-up prologue runs and
     /// it is hot before the first utterance. Driven by a presence signal — a client
     /// opening one of the `/api/out/*` long-polls; an already-live loop is a no-op.
-    pub async fn ensure_voice(&self) {
-        let _ = self.get_or_create_voice().await;
+    pub async fn ensure_up(&self) {
+        let _ = self.get_or_create_loop().await;
     }
 
-    async fn get_or_create_voice(&self) -> (registry::SessionId, mpsc::Sender<LoopInput>) {
-        let mut slot = self.inner.voice.lock().await;
+    async fn get_or_create_loop(&self) -> (registry::SessionId, mpsc::Sender<LoopInput>) {
+        let mut slot = self.inner.loop_handle.lock().await;
         if let Some(handle) = slot.as_ref() {
             return (handle.id.clone(), handle.inbound.clone());
         }
 
-        // Register the stable voice address before any asynchronous startup work.
+        // Register the stable Reaction address before any asynchronous startup work.
         // Cognition's boot recovery may need to deliver here while the codex subprocess
         // is still opening/warming; the mailbox can safely queue that message until
         // the loop reaches its wait.
-        let voice = registry::register_scoped(
+        let registration = registry::register_scoped(
             registry::mint(Role::Reaction, None),
             Role::Reaction,
             None,
-            "the voice".to_string(),
+            "what reaches the person".to_string(),
         );
 
-        let voice_id = voice.id();
+        let reaction_id = registration.id();
         let (tx, rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
-        *slot = Some(VoiceHandle {
-            id: voice_id.clone(),
+        *slot = Some(LoopHandle {
+            id: reaction_id.clone(),
             inbound: tx.clone(),
         });
         drop(slot);
@@ -1236,7 +1236,7 @@ impl Reaction {
         // How many utterances the mouth has accepted. The loop holds the other end so a
         // turn can tell whether it spoke while its bracket is still open.
         let said = Arc::new(AtomicU64::new(0));
-        // When the voice next owes them a word. `say` writes it from the `/mcp` task;
+        // When Reaction next owes them a word. `say` writes it from the `/mcp` task;
         // the loop below reads it as a deadline. See [`tools::NextWord`].
         let next_word = tools::NextWord::default();
 
@@ -1268,12 +1268,12 @@ impl Reaction {
                 control_rx,
                 control_tx,
                 Speaking { beats: beats_tx, said, next_word },
-                voice,
+                registration,
             )
             .await;
         });
 
-        (voice_id, tx)
+        (reaction_id, tx)
     }
 }
 
@@ -1289,7 +1289,7 @@ struct Speaking {
     beats: mpsc::Sender<sequencer::Beat>,
     /// Utterances the mouth has accepted, ever. See [`tools::Mouth::said`].
     said: Arc<AtomicU64>,
-    /// When the voice next owes them a word — armed by `say`, read here as a deadline.
+    /// When Reaction next owes them a word — armed by `say`, read here as a deadline.
     /// It travels with the mouth for the same reason `said` does: it is set at the
     /// instant of speech and read by the loop that has to act on it.
     next_word: tools::NextWord,
@@ -1305,7 +1305,7 @@ enum Woke {
     /// The process-wide vendor gate changed level. Re-read [`Vendor::turn_gate`];
     /// the notification carries no state and therefore cannot go stale.
     Vendor,
-    /// A deadline came up: a vendor-recovery probe, or the voice's own check-in
+    /// A deadline came up: a vendor-recovery probe, or Reaction's own check-in
     /// ([`tools::NextWord`]). Which one is worked out on the far side, from the
     /// deadlines themselves, so both keep one arm.
     Timer,
@@ -1363,10 +1363,10 @@ async fn reaction_loop(
     _control_keepalive: mpsc::Sender<LoopControl>,
     // The loop's end of the mouth: the sequencer inlet and the utterance count.
     speaking: Speaking,
-    // Registered synchronously by `ensure_voice`, before this task is spawned,
+    // Registered synchronously by `ensure_up`, before this task is spawned,
     // so recovery can already address the conversation while its warm-up runs. Held here so
     // every loop exit unregisters it by scope.
-    voice: registry::Registration,
+    registration: registry::Registration,
 ) {
     // The conversation's persistent reaction session: opened and primed during startup when
     // possible, then reused for every turn as the conversation's continuous mind. Only this
@@ -1386,26 +1386,26 @@ async fn reaction_loop(
     // delegates runs here; workers post progress and results back through
     // `worker_inbound` into this same loop.
     let mut workers = workers::WorkerRegistry::new(worker_inbound);
-    let voice_id = voice.id();
-    let voice_mail = voice.mail.clone();
-    tracing::info!(voice = %voice_id, "reaction per-reaction loop up");
+    let reaction_id = registration.id();
+    let reaction_mail = registration.mail.clone();
+    tracing::info!(reaction = %reaction_id, "reaction per-reaction loop up");
 
-    // Pull the voice's cold start ahead of the person's first message: it opens a
+    // Pull Reaction's cold start ahead of the person's first message: it opens a
     // subprocess, initializes the wire + MCP, and pre-sends its system prompt. Input and
     // recovery mail queue while it runs. Cognition warms itself in its own loop.
     let mut startup_warm_pending = false;
     if reaction.wait_for_server_ready().await {
         startup_warm_pending =
-            warm_sessions(&reaction, &voice_id, &mut reaction_session, &mut window_memo).await;
+            warm_sessions(&reaction, &reaction_id, &mut reaction_session, &mut window_memo).await;
     }
 
-    // The check-in floor's current gap, doubling while the voice keeps leaving an
+    // The check-in floor's current gap, doubling while Reaction keeps leaving an
     // open-ended silence over running work and resetting the moment either side speaks
-    // to it. `None` = `check_in: off`, i.e. only the check-ins the voice arms itself.
+    // to it. `None` = `check_in: off`, i.e. only the check-ins Reaction arms itself.
     let check_in_base = check_in_interval();
     let mut check_in_gap = check_in_base;
 
-    // Whether the voice has handed something down that the person is still waiting on.
+    // Whether Reaction has handed something down that the person is still waiting on.
     // Set when a turn hands the human request to Cognition, cleared when Cognition's
     // answer comes back — which is the moment that answer must be relayed rather than
     // weighed. See [`LoopInput::Mail::owed`] for why the host has to be the one holding
@@ -1426,7 +1426,7 @@ async fn reaction_loop(
             let gate = reaction.inner.vendor.turn_gate();
             if startup_warm_pending && matches!(gate, TurnGate::Go) {
                 startup_warm_pending =
-                    warm_sessions(&reaction, &voice_id, &mut reaction_session, &mut window_memo).await;
+                    warm_sessions(&reaction, &reaction_id, &mut reaction_session, &mut window_memo).await;
                 continue 'wait;
             }
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
@@ -1436,7 +1436,7 @@ async fn reaction_loop(
                 break 'wait;
             }
             let down = !matches!(gate, TurnGate::Go);
-            // The voice's own check-in. Suppressed while down — it calls the model and
+            // Reaction's own check-in. Suppressed while down — it calls the model and
             // would just fail — but *not* dropped: an owed word is still owed after an
             // outage, and later rather than never is the whole point of it.
             let check_in_at = if down { None } else { speaking.next_word.due_at() };
@@ -1455,7 +1455,7 @@ async fn reaction_loop(
                     _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
-                    _ = voice_mail.notified() => Woke::Mail,
+                    _ = reaction_mail.notified() => Woke::Mail,
                     _ = sleep_until(deadline) => Woke::Timer,
                     _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
@@ -1464,7 +1464,7 @@ async fn reaction_loop(
                     _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
-                    _ = voice_mail.notified() => Woke::Mail,
+                    _ = reaction_mail.notified() => Woke::Mail,
                     _ = reaction.inner.shutdown.cancelled() => Woke::Shutdown,
                 },
             };
@@ -1486,17 +1486,17 @@ async fn reaction_loop(
                     tracing::info!("shutdown requested; exiting per-reaction loop");
                     return;
                 }
-                // Mail for the conversation's voice. It drives a turn like any other
+                // Mail for Reaction. It drives a turn like any other
                 // reason to speak — that is what makes `send_message(to: conversation)`
                 // actually reach the person rather than wait for them to say
                 // something next. A spurious wake (the notify raced a take) finds
                 // an empty inbox and simply goes back to waiting.
                 Woke::Mail => {
-                    if let Some(mail) = registry::global().drain_pending(&voice_id) {
+                    if let Some(mail) = registry::global().drain_pending(&reaction_id) {
                         // A reply is owed only if one was outstanding *and* this mail is
                         // from the rung it was handed to. Mail from Reflection, or an
                         // unsolicited finding Cognition raised on its own, stays a
-                        // proposal the voice weighs — that judgment is the voice's and
+                        // proposal Reaction weighs — that judgment is Reaction's and
                         // this must not overrule it.
                         let from_brain = registry::global()
                             .session_of_role(Role::Cognition)
@@ -1542,14 +1542,14 @@ async fn reaction_loop(
                         }
                         continue 'wait;
                     }
-                    // The word the voice owes them. Taking it disarms it, so a voice that
+                    // The word Reaction owes them. Taking it disarms it, so a turn that
                     // reads the room and stays quiet is not re-woken for the same overdue
                     // promise on the next iteration.
                     if let Some(owed) = speaking.next_word.take_due(now) {
                         // Fired whether or not anyone is looking. It used to be dropped
                         // into an empty room, because the words would have been withheld
-                        // anyway and a return would wake the voice with a fresher read —
-                        // and both of those went with the presence gate. What the voice
+                        // anyway and a return would wake Reaction with a fresher read —
+                        // and both of those went with the presence gate. What Reaction
                         // says now lands in the conversation and waits there.
                         tracing::info!(promised = owed.promised, "check-in fired");
                         enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
@@ -1571,9 +1571,9 @@ async fn reaction_loop(
         }
 
         // A turn-driving reason has been accepted. Include the settle window in the
-        // turn: from the person's point of view the voice is already preparing its
+        // turn: from the person's point of view Reaction is already preparing its
         // response, even though it is briefly collecting adjacent input.
-        registry::global().start_turn(&voice_id);
+        registry::global().start_turn(&reaction_id);
 
         let was_down = reaction.inner.vendor.is_down();
 
@@ -1614,7 +1614,7 @@ async fn reaction_loop(
                 }
             };
             if closed {
-                registry::global().abandon_turn(&voice_id);
+                registry::global().abandon_turn(&reaction_id);
                 tracing::info!("reaction inbound closed; exiting loop");
                 return;
             }
@@ -1641,16 +1641,16 @@ async fn reaction_loop(
             &batch,
             &mut reaction_session,
             &mut window_memo,
-            &voice_id,
+            &reaction_id,
             &speaking,
             &mut reply_owed,
         )
         .await;
         // The same `Result` the disposition below classifies. The switchboard gets the
-        // bare fact — a reader asking whether the voice is stuck wants "its last turn
+        // bare fact — a reader asking whether Reaction is stuck wants "its last turn
         // failed", not the vendor-gate reading of what that failure means for retrying.
         registry::global().finish_turn(
-            &voice_id,
+            &reaction_id,
             match &turn_result {
                 Ok(_) => registry::TurnOutcome::Completed,
                 Err(err) => registry::TurnOutcome::Failed(err.to_string()),
@@ -1697,7 +1697,7 @@ async fn reaction_loop(
         }
 
         // A promise is discharged by the thing it was about coming back. This turn was
-        // handed its own thinking with an instruction to relay it, so waking the voice
+        // handed its own thinking with an instruction to relay it, so waking Reaction
         // later to say "you told them they'd hear by now" would be the host arguing with
         // a word already spoken. Only when the slot is untouched: a turn that named a new
         // number ("still on it — another five minutes") armed a *new* promise, and that
@@ -1707,11 +1707,11 @@ async fn reaction_loop(
         }
 
         // How the check-in floor paces itself, and the dial is **whether the last one was
-        // worth it**. A word from the person, a number the voice just named, or a check-in
+        // worth it**. A word from the person, a number Reaction just named, or a check-in
         // that actually produced speech all mean the cadence is earning its keep, so it
         // stays at the base gap. One that came and went in silence doubles it, up to the
         // glance-up cadence — a job running for hours must not be interrupted every five
-        // minutes, and the voice is the only thing that knows whether there was anything to say.
+        // minutes, and Reaction is the only thing that knows whether there was anything to say.
         // (The reflection backoff's shape, for the same reason.)
         let spoke = speaking.said.load(Ordering::Relaxed) > said_before;
         if by_human || spoke || speaking.next_word.peek().is_some_and(|o| o.promised) {
@@ -1720,9 +1720,9 @@ async fn reaction_loop(
             check_in_gap = check_in_gap.map(|gap| (gap * 2).min(check_in_cap()));
         }
 
-        // The floor itself. `reaction.md` asks the voice to put a size on every silence
+        // The floor itself. `reaction.md` asks Reaction to put a size on every silence
         // it opens; when it doesn't, this is what keeps "never go dark on a long job"
-        // from resting entirely on the model remembering to. A promise the voice made
+        // from resting entirely on the model remembering to. A promise Reaction made
         // itself outranks it — `floor` leaves an armed slot alone.
         //
         // Only while the conversation's own thinking is still running. A quiet agent with
@@ -1768,7 +1768,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
-/// A reaction turn: the single fast conversational voice. An agent session
+/// A reaction turn: the single fast conversational rung. An agent session
 /// ([`Role::Reaction`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
 /// switched off at session open. A turn is a single quick generation: it speaks by
@@ -1779,7 +1779,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 ///
 /// Cognition — the reading and thinking — runs in parallel: the turn's human request is
 /// handed down to it ([`hand_down_to_cognition`]), which works off the floor and answers
-/// by mail, driving a turn of its own. So the reaction stays the single fast voice.
+/// by mail, driving a turn of its own. So the reaction stays the single fast rung.
 ///
 /// `handed_down` is set when this turn actually handed something down, so the loop knows
 /// a reply is outstanding and can frame the answer as one when it arrives.
@@ -1791,15 +1791,15 @@ async fn run_reaction_turn(
     batch: &[LoopInput],
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     speaking: &Speaking,
     handed_down: &mut bool,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     reaction.inner.floor.note_turn_started(turn_id);
 
-    // This turn's delta: whether the conversation's own thinking is still running (so the
-    // voice can say "still on it" rather than guess), any barge-in note, and the new
+    // This turn's delta: whether the conversation's own thinking is still running (so
+    // Reaction can say "still on it" rather than guess), any barge-in note, and the new
     // signals. The projected state it all hangs off is assembled in [`turn_context`].
     //
     // **There is no `## Presence` section any more.** It carried a decaying belief about
@@ -1839,7 +1839,7 @@ async fn run_reaction_turn(
     let session = match reaction_session {
         Some(s) => s.clone(),
         None => {
-            let opened = open_reaction_session(reaction, voice_id).await?;
+            let opened = open_reaction_session(reaction, reaction_id).await?;
             *reaction_session = Some(opened.clone());
             memo.forget();
             opened
@@ -1848,7 +1848,7 @@ async fn run_reaction_turn(
 
     let context = turn_context(
         &reaction.inner.memory,
-        voice_id,
+        reaction_id,
         memo,
         &worker_status,
         &on_screen,
@@ -1857,7 +1857,7 @@ async fn run_reaction_turn(
     )
     .await;
 
-    // Captured before the prompt is handed over — it is moved into `drive_voice`.
+    // Captured before the prompt is handed over — it is moved into `drive_reaction`.
     let context_chars = context.chars().count();
     tracing::info!(ctx_chars = context_chars, "reaction: prompting session");
     let _ = speaking
@@ -1866,7 +1866,7 @@ async fn run_reaction_turn(
         .await;
 
     let mut turn_error = None;
-    let completed = match drive_voice(&session, voice_id, context).await {
+    let completed = match drive_reaction(&session, reaction_id, context).await {
         Ok(Drove { text, compacted }) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
             // sequencer while the turn was running. Anything the model *typed* is
@@ -1948,8 +1948,8 @@ async fn run_reaction_turn(
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
         let _ = reaction.inner.vendor.note_success();
-        // Hand the turn's human request down to Cognition — the reading and thinking the
-        // voice cannot do — so it works off the floor while the voice moves on. Its answer
+        // Hand the turn's human request down to Cognition — the reading and thinking
+        // Reaction cannot do — so it works off the floor while Reaction moves on. Its answer
         // comes back as mail, which drives a turn of its own.
         //
         // **This is a post, not a spawn.** It used to open (or resume) a whole session
@@ -1990,21 +1990,21 @@ async fn run_reaction_turn(
 /// copy in a finite window. Measured on one live thread: 108 turns, 10,125 chars each,
 /// of which the standing sections were 5,848 and moved 14 times between them. The thread
 /// became 80% its own preamble, and the compaction that followed kept ten copies of that
-/// preamble and dropped every tool call — the voice's own examples of speaking with it.
+/// preamble and dropped every tool call — Reaction's own examples of speaking with it.
 ///
 /// So each block declares a [`Cadence`] and `memo` holds what this thread was last told.
 /// The reads still happen per turn (they have to, to know whether anything moved) and
 /// they are small; what stops happening is the repetition.
 async fn turn_context(
     memory: &Memory,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     memo: &mut WindowMemo,
     worker_status: &str,
     on_screen: &str,
     interrupted: &str,
     new_signals: &str,
 ) -> String {
-    let mut blocks = snapshot::window(memory, voice_id).await;
+    let mut blocks = snapshot::window(memory, reaction_id).await;
     // The turn's own view of live work and screen: state like the rest, and just as
     // repetitive — `On screen now` moved 12 times in 108 turns, `Still looking into` 32.
     blocks.push(snapshot::Block {
@@ -2367,7 +2367,7 @@ mod turn_context_tests {
 /// and already wakes on it, so this is the whole of the hand-down: no session to open, no
 /// warm one to resume, no fallback spawn. That is what retiring Deliberation bought.
 ///
-/// Posted on the **host's** behalf (`from: None`) rather than sent from the voice. The
+/// Posted on the **host's** behalf (`from: None`) rather than sent from Reaction. The
 /// distinction is not cosmetic: `send` applies the addressing rules that govern one agent
 /// reaching another, and this is the host driving its own loop. It also renders bare, so
 /// the request reaches Cognition as the request rather than as a colleague quoting it.
@@ -2377,7 +2377,7 @@ mod turn_context_tests {
 /// it is in the transcript the next hand-down carries.
 async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
     let Some(brain) = registry::global().session_of_role(Role::Cognition) else {
-        tracing::warn!("no cognition session to hand down to; the voice answers alone this turn");
+        tracing::warn!("no cognition session to hand down to; Reaction answers alone this turn");
         return false;
     };
     let delivery = registry::global().post(&brain.id, task.clone());
@@ -2406,7 +2406,7 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
 /// pause without replacing a session that is already live.
 async fn warm_sessions(
     reaction: &Reaction,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
 ) -> bool {
@@ -2414,7 +2414,7 @@ async fn warm_sessions(
     // One warm-up, not two. The second was Deliberation's, and Cognition — which now
     // holds that job — warms itself inside its own loop rather than being stood up from
     // the conversation's.
-    warm_reaction_session(reaction, voice_id, reaction_session, memo).await;
+    warm_reaction_session(reaction, reaction_id, reaction_session, memo).await;
     let blocked_after = crate::foundation::energy_state::is_out();
     if blocked_after {
         // `SessionRun::wait` records the durable 402 edge. Apply its scheduler level
@@ -2434,7 +2434,7 @@ async fn warm_sessions(
 /// first real turn cold-opens normally.
 async fn warm_reaction_session(
     reaction: &Reaction,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     held: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
 ) {
@@ -2446,7 +2446,7 @@ async fn warm_reaction_session(
         return;
     }
 
-    let session = match open_reaction_session(reaction, voice_id).await {
+    let session = match open_reaction_session(reaction, reaction_id).await {
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
@@ -2461,7 +2461,7 @@ async fn warm_reaction_session(
     // `thread/start`, so the character is in place the moment the session exists. Layer 2
     // is this next line — what it *knows* coming in, handed over before anyone has said
     // anything to it.
-    seed_session(reaction, &session, voice_id, memo).await;
+    seed_session(reaction, &session, reaction_id, memo).await;
     tracing::info!("reaction session warmed");
     *held = Some(session);
 }
@@ -2484,12 +2484,12 @@ async fn warm_reaction_session(
 async fn seed_session(
     reaction: &Reaction,
     session: &AgentSession,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     memo: &mut WindowMemo,
 ) {
     memo.forget();
     let window =
-        turn_context(&reaction.inner.memory, voice_id, memo, "", "", "", "").await;
+        turn_context(&reaction.inner.memory, reaction_id, memo, "", "", "", "").await;
     if window.trim().is_empty() {
         tracing::info!("reaction seed: nothing to carry in yet");
         return;
@@ -2506,7 +2506,7 @@ async fn seed_session(
     };
     while let Some(update) = run.next_update().await {
         if let Some(what) = update.activity() {
-            registry::global().record_activity(voice_id, &what);
+            registry::global().record_activity(reaction_id, &what);
         }
     }
     if let Err(err) = run.wait().await {
@@ -2543,14 +2543,14 @@ async fn record_reaction_session_closed(
 /// minimal `show`-only `/mcp` surface, so a turn is a single quick generation that
 /// may also put one already-built view on screen.
 ///
-/// `voice_id` is the loop's own switchboard registration — the *same* id across every
-/// reopen, because the conversation has one voice however many subprocesses
+/// `reaction_id` is the loop's own switchboard registration — the *same* id across every
+/// reopen, because the conversation has one Reaction however many subprocesses
 /// have hosted it. Passing it is what puts `X-HI-Session-Id` on the session's MCP
-/// attach; without it the voice held a mailbox it had no identity to send from, and
+/// attach; without it Reaction held a mailbox it had no identity to send from, and
 /// `send_message` answered "this session has none" to the one rung that talks most.
 async fn open_reaction_session(
     reaction: &Reaction,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
 ) -> anyhow::Result<Arc<AgentSession>> {
     let session = Arc::new(
         reaction
@@ -2558,7 +2558,7 @@ async fn open_reaction_session(
             .agent
             .session(
                 Role::Reaction,
-                Some(voice_id.clone()),
+                Some(reaction_id.clone()),
                 SessionOpts {
                     system_prompt: Some(
                         crate::identity::reaction_system_prompt(
@@ -2588,7 +2588,7 @@ async fn open_reaction_session(
     Ok(session)
 }
 
-/// What one drive of the voice produced.
+/// What one drive of Reaction produced.
 struct Drove {
     /// Everything it **typed** — working-out, not speech.
     text: String,
@@ -2603,21 +2603,21 @@ struct Drove {
 /// the beats), so the drive loop just keeps streaming text past them, exactly like a
 /// worker's loop; `wait()` then parks the session and surfaces any real prompt error
 /// (a gateway 402/429, a transport reset) to the caller's classifier.
-async fn drive_voice(
+async fn drive_reaction(
     session: &AgentSession,
-    voice_id: &registry::SessionId,
+    reaction_id: &registry::SessionId,
     context: String,
 ) -> anyhow::Result<Drove> {
     let mut run = session.prompt(context).await?;
     let mut text = String::new();
     let mut compacted = false;
     while let Some(update) = run.next_update().await {
-        // The voice was the one rung reporting nothing at all to the switchboard: its
+        // Reaction was the one rung reporting nothing at all to the switchboard: its
         // words go to the transcript rather than the output tail, so its roster row read
         // "nothing said yet" for the whole life of the process. What it is *doing* is the
         // honest answer to "is the mouth alive", and it is the only one available here.
         if let Some(what) = update.activity() {
-            registry::global().record_activity(voice_id, &what);
+            registry::global().record_activity(reaction_id, &what);
         }
         match update {
             SessionUpdate::Text(t) => text.push_str(&t),
@@ -2858,8 +2858,8 @@ fn render_batch(batch: &[LoopInput]) -> String {
                 let _ = writeln!(s, "{}", registry::render(mail));
             }
             // The must-relay framing Deliberation's report used to carry, on the path the
-            // answer actually travels now. "Relay it" is not "dump it verbatim": the
-            // voice still says it in its own plain words and reconciles with whatever it
+            // answer actually travels now. "Relay it" is not "dump it verbatim": Reaction
+            // still says it in its own plain words and reconciles with whatever it
             // already said — what it may not do is read this and stay quiet.
             LoopInput::Mail { mail, owed: true } => {
                 let _ = writeln!(
@@ -2883,10 +2883,10 @@ acknowledge it — tell them what you found):\n{}",
 /// ledger, and what is worth saying about it is Reaction's alone. It may also be
 /// nothing: the wake is permission to speak, not an instruction to.
 ///
-/// The two sources read differently on purpose. A promise the voice made is a fact the
+/// The two sources read differently on purpose. A promise Reaction made is a fact the
 /// *person* holds too — they were told a number and it has passed, so silence now is a
 /// visibly broken promise. A host floor is only the agent's own rule about going dark;
-/// nobody is waiting on a specific minute, and saying so keeps the voice from inventing
+/// nobody is waiting on a specific minute, and saying so keeps Reaction from inventing
 /// a promise it never made.
 fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
     // Since the promise was made, not since the deadline: the deadline is normally
@@ -2920,7 +2920,7 @@ fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
 /// be written down. Each goes on the channel that names its origin — a heartbeat is
 /// not something the person said, and neither is the brain's answer coming back.
 /// A worker's row keeps the substance and drops the framing [`workers::render_report`]
-/// wraps it in for the prompt; that framing is an instruction to the voice, not part
+/// wraps it in for the prompt; that framing is an instruction to Reaction, not part
 /// of the signal.
 fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
     match input {
@@ -2939,9 +2939,9 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             render_check_in(owed, Instant::now()),
         )),
         // Mail crosses no wire, so this is its only chance to be written down.
-        // The `owed` framing is deliberately dropped: it is an instruction to the voice
+        // The `owed` framing is deliberately dropped: it is an instruction to Reaction
         // about this turn, not part of the signal, and a later reader of the journal is
-        // not the voice.
+        // not Reaction.
         LoopInput::Mail { mail, .. } => {
             Some((Channel::Worker, Origin::Worker, registry::render(mail)))
         }
@@ -3109,7 +3109,7 @@ async fn emit_view(
 /// and what `## On screen now` lists.
 ///
 /// **The ref rides along when there is one, and that is not decoration.** The id is
-/// whatever the voice called this thing in the moment: a view built at
+/// whatever Reaction called this thing in the moment: a view built at
 /// `agent-context-reading/path` went into the log as `showed "agent-learning"`, and
 /// nothing anywhere connected the two. So the one durable record of what the person
 /// has actually been shown could not be read back against the one durable name a
@@ -3181,7 +3181,7 @@ mod view_line_tests {
 /// the host framed it as must-relay, onto the **mail** path, where Cognition's own prompt
 /// says everything it sends is *a proposal, never a delivery*. Both halves of that need
 /// to keep being true at once: an answer the person is waiting for must be framed as owed,
-/// and an unsolicited finding must not be — otherwise the voice either drops replies or
+/// and an unsolicited finding must not be — otherwise Reaction either drops replies or
 /// loses the judgment about when to speak that makes it worth having.
 #[cfg(test)]
 mod hand_down_tests {
@@ -3203,7 +3203,7 @@ mod hand_down_tests {
 
     /// The other half, and the one that would rot quietly: if every message from the
     /// brain were framed as owed, "everything you send is a proposal" would be a lie the
-    /// prompt tells and the host contradicts, and the voice would narrate every
+    /// prompt tells and the host contradicts, and Reaction would narrate every
     /// background finding at the person.
     #[test]
     fn an_unsolicited_finding_stays_a_proposal() {
@@ -3260,7 +3260,7 @@ mod check_in_tests {
     }
 
     /// A promise the person heard and a floor the host set are different situations,
-    /// and the note has to read as the one it is. Telling the voice it "said ten
+    /// and the note has to read as the one it is. Telling Reaction it "said ten
     /// minutes" when it named no number invents a promise, which is exactly the kind of
     /// claim `reaction.md` spends a section forbidding.
     #[test]
@@ -3287,9 +3287,9 @@ mod check_in_tests {
         assert!(note.contains("11m"), "10m promised + 1m late: {note}");
     }
 
-    /// The voice's only clock wake must read as the moment a word was *owed*. Cognition's
+    /// Reaction's only clock wake must read as the moment a word was *owed*. Cognition's
     /// `(pulse)` marker means the opposite — a quiet moment almost nothing is worth
-    /// breaking — and wearing it here would tell the voice to stay quiet at precisely the
+    /// breaking — and wearing it here would tell Reaction to stay quiet at precisely the
     /// instant it should speak.
     #[test]
     fn a_check_in_never_wears_the_glance_up_marker() {

@@ -1,4 +1,4 @@
-//! The floor: who is holding it, and therefore whether the voice may take it.
+//! The floor: who is holding it, and therefore whether Reaction may take it.
 //!
 //! Two questions live here, and they are the same question from opposite ends.
 //!
@@ -86,7 +86,7 @@
 //!
 //! **The gate above is what makes this half rare, and that is the point.** It
 //! used to fire on people who had never interrupted anything: we started speaking
-//! over someone who simply had not stopped, and then told the voice its words had
+//! over someone who simply had not stopped, and then told Reaction its words had
 //! gone unheard — which invited it to say them again. Three consecutive turns in
 //! the measured conversation carried that note, and none of them had been
 //! interrupted.
@@ -180,7 +180,7 @@ const TYPING_SETTLE_POLL: Duration = Duration::from_millis(250);
 /// and take a small one. Reset by any utterance that lands.
 const MAX_CONSECUTIVE_REFUSALS: u64 = 3;
 
-/// Why the voice may not speak the words it just produced.
+/// Why Reaction may not speak the words it just produced.
 ///
 /// Both mean *not said*, and neither is an error. What separates them is what the
 /// voice should make of it, which is why they are two arms and not a bool: one is
@@ -250,7 +250,7 @@ pub struct Floor {
     /// line against a turn without waiting on a lock.
     latest_turn: Arc<AtomicU64>,
     /// Human lines accepted into the conversation, ever. Bumped as each one is
-    /// handed to the voice's queue, **not** when the loop dequeues it — during a
+    /// handed to Reaction's queue, **not** when the loop dequeues it — during a
     /// generation nothing dequeues, and "did they say something while I was
     /// thinking" is exactly the question.
     heard: Arc<AtomicU64>,
@@ -279,7 +279,7 @@ impl Floor {
         Self::default()
     }
 
-    /// One more line from the person has been accepted for the voice. Called at
+    /// One more line from the person has been accepted for Reaction. Called at
     /// the moment it enters the queue, which is the moment it becomes something
     /// a turn already in flight cannot have seen.
     pub fn note_heard(&self) {
@@ -303,7 +303,7 @@ impl Floor {
             .is_some_and(|at| now.saturating_duration_since(at) < VOICE_ACTIVE_FOR)
     }
 
-    /// May the voice say what it just produced? `Ok(())`, or which of the two
+    /// May Reaction say what it just produced? `Ok(())`, or which of the two
     /// refusals applies.
     ///
     /// **Order matters and is not arbitrary.** `Speaking` is checked first
@@ -434,7 +434,7 @@ impl Floor {
     /// infers a barge-in from the TTS span, which is right for a voice — sound over
     /// sound means words went unheard — and wrong for keystrokes, which trample
     /// nothing. Someone quietly starting to type while the agent talks is listening,
-    /// not interrupting; giving that the interruption treatment would tell the voice
+    /// not interrupting; giving that the interruption treatment would tell Reaction
     /// its last reply had been cut off and flush the rest of the turn's output.
     pub async fn note_typing(&self, now: Instant) {
         self.inner.lock().await.last_typing = Some(now);
@@ -612,7 +612,7 @@ mod floor_tests {
     }
 
     /// Keystrokes must not manufacture a barge-in. Someone typing while the agent
-    /// talks is listening, and telling the voice it had been cut off would invite
+    /// talks is listening, and telling Reaction it had been cut off would invite
     /// it to say the whole reply again.
     #[tokio::test]
     async fn typing_through_a_reply_is_not_an_interruption() {

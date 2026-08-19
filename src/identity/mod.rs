@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 /// **One file per rung, and each is that rung's whole system prompt** — nothing points
 /// at anything else and nothing is fetched. They are reached through [`Role::base`], and
 /// divide only by which entry point reads them back: [`reaction_system_prompt`] for the
-/// tools-off voice, [`role_prompt`] for everything else. All ship in the binary and
+/// tools-off Reaction, [`role_prompt`] for everything else. All ship in the binary and
 /// refresh on every build.
 ///
 /// The cost of "whole" is that ~2,000 words of shared character live in three copies,
@@ -90,7 +90,7 @@ pub enum WorkerType {
     /// every agent's; this is the one that is asked when *where* is the hard part.
     DriveOrganizer,
     /// Reads one person out of the record and folds what it learns into their facet —
-    /// including the `## Working with them` section the voice is projected
+    /// including the `## Working with them` section Reaction is projected
     /// ([`crate::mind::memory::conduct`]).
     PersonReader,
 }
@@ -479,7 +479,7 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
     role_prompt(data_dir, Role::Reflection).await
 }
 
-/// **Reaction**'s system prompt — the conversation's voice (`docs/arch/agents.md#reaction`).
+/// **Reaction**'s system prompt — what reaches the person (`docs/arch/agents.md#reaction`).
 ///
 /// Reaction is tools-off by design: it has no Read, so nothing it needs may be a path.
 /// Its brief is therefore **inlined and singular** — `reaction.md` *is* its whole system
@@ -490,19 +490,19 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// **The frame that used to sit above the file is now the top of the file.** It was
 /// ~40 lines of Rust string literal carrying the two things a reader would look for
 /// first — that Reaction is one self rather than a dispatcher with colleagues, and what
-/// its tools are — which meant the voice's brief lived in two places, only one of them
+/// its tools are — which meant Reaction's brief lived in two places, only one of them
 /// operator-overridable. A prompt is prose; it belongs in the `.md`. The file is now
 /// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
 /// rather than for the activity, which is what `speaking.md` was.
 ///
 /// Its surface is `hi_say` · `hi_show` · `hi_send_message`
 /// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
-/// three: the file once said "you have exactly two", then told the voice to "hand it
+/// three: the file once said "you have exactly two", then told Reaction to "hand it
 /// onward" without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded
 /// [`REACTION_BASE`]. Two things
-/// stay in code because they are *state*, not character, and the voice cannot fetch
+/// stay in code because they are *state*, not character, and Reaction cannot fetch
 /// either: the **first-meeting** cue and the **language** preference.
 pub async fn reaction_system_prompt(data_dir: &Path) -> String {
     let base = data_dir.join("prompts").join("reaction.md");
@@ -524,7 +524,7 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
 /// accrued yet. It disappears on its own the moment any history exists (a memory
 /// episode written, a duty taken on), so it can only ever colour
 /// the very first hello, never nag. It rides on **Reaction**, because the hello and the
-/// welcome view are both the voice's to give.
+/// welcome view are both Reaction's to give.
 const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
@@ -582,11 +582,11 @@ mod soul_tests {
     use super::*;
 
     #[tokio::test]
-    async fn fresh_install_gets_the_first_meeting_cue_in_the_voice() {
+    async fn fresh_install_gets_the_first_meeting_cue_in_reaction() {
         // A brand-new data dir has no episodes and nothing owed — so the
-        // *voice's* prompt carries the one-time first-hello cue and the welcome view.
-        // It rides here rather than on an agentic seed because the hello is the
-        // voice's to give and it cannot go and read anything.
+        // *Reaction's* prompt carries the one-time first-hello cue and the welcome view.
+        // It rides here rather than on an agentic seed because the hello is
+        // Reaction's to give and it cannot go and read anything.
         let dir = tempfile::tempdir().unwrap();
         assert!(is_first_meeting(dir.path()));
         let prompt = reaction_system_prompt(dir.path()).await;
@@ -613,7 +613,7 @@ mod soul_tests {
 
 
     #[tokio::test]
-    async fn the_voice_gets_the_language_line_too() {
+    async fn reaction_gets_the_language_line_too() {
         // Settings ▸ Language has to reach the rung that actually talks, and that rung
         // cannot read a file to find it.
         use crate::foundation::credentials::set_setting;
@@ -674,7 +674,7 @@ mod soul_tests {
 
     /// The prompt names the tools; the runtime spells them `mcp__<server>__<tool>`, and the
     /// model only learns that by looking. A compaction deletes what it looked up, and the
-    /// one tool whose absence throws nothing is the voice — which is exactly how a live
+    /// one tool whose absence throws nothing is Reaction — which is exactly how a live
     /// thread went two and a half hours without speaking on 2026-08-13. So the spelling is
     /// in the prompt, and this fails if either half of it moves.
     #[test]
@@ -769,7 +769,7 @@ mod soul_tests {
     }
 
     #[tokio::test]
-    async fn the_voices_whole_brief_is_the_file() {
+    async fn reactions_whole_brief_is_the_file() {
         // The frame used to be a ~40-line Rust literal above `speaking.md`, which put
         // the two things a reader looks for first — that Reaction is one self, and what
         // its tools are — outside the file an operator can override. Both now live in
@@ -895,13 +895,13 @@ mod soul_tests {
 
     /// **The one string two files must agree on.** The person-reader writes a section
     /// under a fixed heading; `conduct::section` slices on that exact heading and puts
-    /// what it finds in front of the voice on every turn. Nothing at runtime notices a
+    /// what it finds in front of Reaction on every turn. Nothing at runtime notices a
     /// mismatch — the slice simply finds nothing, the window quietly goes without it,
     /// and the symptom is a preference the person stated that never takes hold. Which is
     /// the exact failure this pair was built to fix, so it is pinned here rather than
     /// left to a live test to discover.
     #[test]
-    fn the_reader_writes_the_heading_the_voice_is_projected() {
+    fn the_reader_writes_the_heading_reaction_is_projected() {
         let heading = crate::mind::memory::conduct::HEADING;
         assert!(
             WORKER_PERSON_READER_BASE.contains(&format!("\n    {heading}\n")),
@@ -1077,20 +1077,20 @@ mod soul_tests {
     }
 
     #[test]
-    fn the_voice_has_exactly_one_timer_and_is_told_its_name() {
+    fn reaction_has_exactly_one_timer_and_is_told_its_name() {
         // The retired clock stays retired: `alarm` was a general scheduler and its
         // vocabulary must not creep back (`docs/arch/host.md#glancing-up`).
         assert!(!REACTION_BASE.contains("set an alarm"));
         assert!(!REACTION_BASE.contains("When the alarm fires"));
 
-        // What replaced "you have no timer" is one deadline the voice arms itself, on
+        // What replaced "you have no timer" is one deadline Reaction arms itself, on
         // the utterance that makes the promise. The brief has to name the parameter,
         // because a promise the model never arms is the failure this was built for —
         // the person filling the silence by asking "progress?".
         assert!(REACTION_BASE.contains("back_in"), "the brief must name the parameter");
         assert!(
             REACTION_BASE.contains("only timer you have"),
-            "and must not leave the voice thinking it has more than one"
+            "and must not leave Reaction thinking it has more than one"
         );
         assert!(
             !REACTION_BASE.contains("You have no timer"),
@@ -1121,13 +1121,13 @@ mod soul_tests {
     /// leaves the rung is `hi_send_message`, and everywhere else in its prompt silence is a
     /// legitimate outcome it is explicitly trusted to choose. That trust is correct for a
     /// glance-up and catastrophic for a hand-down, where a person is sitting in front of
-    /// the voice waiting. `cognition::turn` carries a host-side backstop for it; this
+    /// Reaction waiting. `cognition::turn` carries a host-side backstop for it; this
     /// asserts the prompt asks for the right thing in the first place, because a backstop
     /// that fires every turn means the guidance is not working.
     #[test]
-    fn a_hand_down_from_the_voice_is_always_answered() {
+    fn a_hand_down_from_reaction_is_always_answered() {
         assert!(
-            COGNITION_BASE.contains("A hand-down from the voice is always answered"),
+            COGNITION_BASE.contains("A hand-down from Reaction is always answered"),
             "Cognition must be told the one case where silence is not an option"
         );
         assert!(
@@ -1139,7 +1139,7 @@ mod soul_tests {
     /// The two jobs Deliberation existed for, now Cognition's. Both are the kind of thing
     /// that reads as decoration and is load-bearing: without the first, the rung that can
     /// open the photo does not know it should; without the second, Reaction's brief has no
-    /// writer at all and the voice walks into every turn blank.
+    /// writer at all and Reaction walks into every turn blank.
     #[test]
     fn cognition_carries_what_deliberation_was_for() {
         assert!(
@@ -1177,7 +1177,7 @@ mod soul_tests {
     }
 
     /// A rung with no mouth must not be handed the words for one. Cognition proposes and
-    /// Reaction voices; a role layer that said "tell them" would have it try to speak
+    /// Reaction speaks; a role layer that said "tell them" would have it try to speak
     /// through a sink that carries no sequencer, and blame the tool.
     #[test]
     fn cognition_is_not_told_to_speak() {
@@ -1237,7 +1237,7 @@ mod soul_tests {
         assert!(reflection_prompt(dir.path()).await.contains("tends your own house"));
     }
 
-    /// **The failure this pins actually happened.** Asked to remember an API key, the voice
+    /// **The failure this pins actually happened.** Asked to remember an API key, Reaction
     /// answered that it would keep it in a secure credential store and record only the
     /// name — and there is no such store: [`crate::foundation::credentials`] holds our own
     /// vendor keys, keyed `(mode, feature)` and written from Settings, and no tool writes
@@ -1251,7 +1251,7 @@ mod soul_tests {
     fn no_rung_may_offer_a_secure_store_that_does_not_exist() {
         assert!(
             REACTION_BASE.contains("Don't invent somewhere safe to put it"),
-            "the voice does the promising, so the voice is where this has to be said"
+            "Reaction does the promising, so Reaction is where this has to be said"
         );
         assert!(
             COGNITION_BASE.contains("There is no vault and no secure store"),
@@ -1264,12 +1264,12 @@ mod soul_tests {
     /// (never written, or a seed that lost it). Resolving *missing* to *file* would file a
     /// key against a person who said never; resolving it to *ask* costs one question. So
     /// both the rung that dispatches and the worker that writes must refuse without a yes,
-    /// and the voice must know that a standing choice it cannot find is not one.
+    /// and Reaction must know that a standing choice it cannot find is not one.
     #[test]
     fn a_key_is_never_filed_without_an_answer() {
         assert!(
             REACTION_BASE.contains("A standing choice you can't find is not a"),
-            "the voice must re-ask rather than assume the answer it cannot see"
+            "Reaction must re-ask rather than assume the answer it cannot see"
         );
         assert!(
             COGNITION_BASE.contains("never treat *not knowing* as a yes"),
@@ -1283,7 +1283,7 @@ mod soul_tests {
 
     /// The three answers are one exchange with the person, so exactly one prompt runs it.
     /// Two rungs asking is two prompts, and a person asked twice about the same key learns
-    /// the question is noise. The voice owns it because the voice is the one in the room.
+    /// the question is noise. Reaction owns it because Reaction is the one in the room.
     #[test]
     fn exactly_one_rung_asks_the_key_question() {
         let asks: Vec<_> = Role::ALL

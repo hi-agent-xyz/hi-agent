@@ -45,7 +45,7 @@ impl Role {
     /// Codex has no single switch for its own toolset: `builtin_tools: []` was ACP's,
     /// the profile's `default_tools_enabled` reads like the replacement and removes
     /// nothing, and each tool is off at its own key. Two comments here have now claimed
-    /// otherwise while the voice went on holding a shell — and a voice holding a shell
+    /// otherwise while Reaction went on holding a shell — and Reaction holding a shell
     /// answers in prose instead of calling `say`, which reaches nobody.
     ///
     /// For Reaction this value rides *inside* the profile rather than as the
@@ -282,7 +282,7 @@ impl AgentLayer {
                     // These are hi-agent's *own* tools, served by this very process —
                     // there is nobody to ask about them. Without this codex gates every
                     // call behind an approval, which showed up live as `say` failing
-                    // with "user rejected MCP tool call" and the voice going silent.
+                    // with "user rejected MCP tool call" and Reaction going silent.
                     "default_tools_approval_mode": "auto",
                 }
             }),
@@ -309,7 +309,7 @@ impl AgentLayer {
             //
             // `update_plan` is left alone deliberately: its key takes a struct, not a
             // bool (`expected struct UpdatePlanToolConfig`), and a planning scratchpad
-            // nobody reads is not what makes a voice slow.
+            // nobody reads is not what makes Reaction slow.
             features.insert("shell_tool".into(), json!(false));
             features.insert("view_image".into(), json!(false));
             config.insert("tools".into(), json!({ "web_search": false }));
@@ -329,14 +329,14 @@ impl AgentLayer {
 
 /// The codex permission profile Reaction's thread opens under, and its name.
 ///
-/// The profile carries the voice's **sandbox**, because a thread opened with
+/// The profile carries Reaction's **sandbox**, because a thread opened with
 /// `permissions` may not also pass `sandbox` — codex answers `permissions cannot be
 /// combined with sandbox`, the profile being the thing that owns that setting.
 ///
 /// It does **not** carry the toolset, though it reads as if it should.
 /// `default_tools_enabled = false` was taken to be codex's switch for its own tools —
 /// shell, apply-patch, web search — and it is not: with the profile provably in force
-/// (`thread/read` reporting `activePermissionProfile: hi-agent-voice`), the upstream
+/// (`thread/read` reporting `activePermissionProfile: hi-agent-reaction`), the upstream
 /// request still offered `exec_command`, `write_stdin` and `apply_patch`. It is kept
 /// because it is the profile's own statement of intent and costs nothing; the tools are
 /// actually removed one knob at a time in [`AgentLayer::thread_config`].
@@ -350,7 +350,7 @@ impl AgentLayer {
 /// `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`.
 /// Which named permission profile a role's thread opens under, if any.
 ///
-/// Only the voice has one, and it is the same role that must *not* pass `sandbox` —
+/// Only Reaction has one, and it is the same role that must *not* pass `sandbox` —
 /// codex refuses a `thread/start` carrying both, the profile being what owns that
 /// setting. Every other rung keeps the plain param.
 fn permission_profile(role: Role) -> Option<String> {
@@ -359,7 +359,7 @@ fn permission_profile(role: Role) -> Option<String> {
 
 fn reaction_permissions() -> (&'static str, serde_json::Value) {
     (
-        "hi-agent-voice",
+        "hi-agent-reaction",
         json!({ "default_tools_enabled": false, "sandbox": Sandbox::ReadOnly.as_str() }),
     )
 }
@@ -443,17 +443,17 @@ mod tests {
     #[test]
     fn only_the_voice_opens_with_the_agents_own_tools_off() {
         let (name, _) = reaction_permissions();
-        let voice = layer().thread_config(&config(), Role::Reaction, Some(1.into()));
-        assert_eq!(voice["features"]["shell_tool"], false);
-        assert_eq!(voice["tools"]["web_search"], false);
-        assert_eq!(voice["permissions"][name]["default_tools_enabled"], false);
+        let reaction = layer().thread_config(&config(), Role::Reaction, Some(1.into()));
+        assert_eq!(reaction["features"]["shell_tool"], false);
+        assert_eq!(reaction["tools"]["web_search"], false);
+        assert_eq!(reaction["permissions"][name]["default_tools_enabled"], false);
         // `default_permissions` is the config.toml spelling and does nothing here; the
         // name travels as a `thread/start` parameter instead. Asserted absent so nobody
         // re-adds it and reads a passing test as enforcement.
-        assert!(!voice.contains_key("default_permissions"));
+        assert!(!reaction.contains_key("default_permissions"));
         // The restriction is codex's own toolset; ours arrives over MCP and must survive
-        // it, or the profile that was meant to leave the voice holding `say` takes it.
-        assert!(voice.contains_key("mcp_servers"));
+        // it, or the profile that was meant to leave Reaction holding `say` takes it.
+        assert!(reaction.contains_key("mcp_servers"));
 
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             let config = layer().thread_config(&config(), *role, Some(1.into()));
@@ -481,7 +481,7 @@ mod tests {
     }
 
     /// The two spellings are mutually exclusive on the wire — codex rejects a
-    /// `thread/start` carrying both — so the voice must be the one role that names a
+    /// `thread/start` carrying both — so Reaction must be the one role that names a
     /// profile, and every other role the one that names a sandbox.
     #[test]
     fn only_the_voice_opens_under_a_named_permission_profile() {
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(
             profile["sandbox"],
             Role::Reaction.sandbox().as_str(),
-            "the voice's posture must not depend on which of the two spellings is read"
+            "Reaction's posture must not depend on which of the two spellings is read"
         );
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             assert!(permission_profile(*role).is_none(), "{role:?} passes a sandbox");

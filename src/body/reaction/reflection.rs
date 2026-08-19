@@ -36,7 +36,7 @@
 //! 2. **A drain.** Nothing read its inbox — the note this replaces said so outright. A
 //!    registered rung nobody reads is a mailbox that answers "delivered" and forgets.
 //! 3. **A host for its workers.** Reflection registers its own role-specific tool
-//!    sink, so work it creates returns to Reflection rather than the voice or Cognition.
+//!    sink, so work it creates returns to Reflection rather than Reaction or Cognition.
 //! 4. **Two kinds of wake.** Reflection is the one rung driven by a clock *and* by mail.
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
 //!    which is the only shape of timing the host has (`docs/arch/host.md#glancing-up`).

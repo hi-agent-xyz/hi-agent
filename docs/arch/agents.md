@@ -13,11 +13,11 @@ prompt, not new machinery.
 | Decision | Reasoning |
 |---|---|
 | Fast means *no fetch*, not *no knowledge* | Reaction runs a capable model; it is fast because it cannot wait on anything |
-| The reading is separate from the voice | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and the voice may not go deaf while that happens. That someone is Cognition |
+| The reading is separate from Reaction | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and Reaction may not go deaf while that happens. That someone is Cognition |
 | Cognition never grinds | It is on the conversation's path, so a turn it spends *doing* is a turn the person waits through. It reads and answers; anything with an artifact, a side effect or a long tail is a worker's |
 | Cognition stays idle | Someone has to be awake when nobody is talking, and it must be free when they are |
 | Only workers act | The moment there is an artifact or a side effect, that is a worker. A division of labour, not a security boundary — [tool surfaces](foundation.md#default-tool-surfaces) are sized for context, not to fence anyone out |
-| Cognition never speaks | Single-voice coherence: it proposes, Reaction voices |
+| Cognition never speaks | Single-voice coherence: it proposes, Reaction speaks |
 | The switchboard is the host | No agent↔agent link; all routing and timers are Rust |
 | A worker belongs to the session that created it | Ownership is what makes delegation addressable at all — a report has exactly one place to go, and it is not "the conversation" by default |
 | Work travels **up**, never sideways | A report goes to whoever asked for it, who decides what is worth passing further up. Nothing reaches the person except through Reaction |
@@ -76,8 +76,8 @@ The mouth. One Reaction, one mouth, one turn at a time —
 [invariant 1](arch.md#invariants). It speaks, holds the floor, manages the interaction, and
 decides whether to answer from what it holds or hand the question onward.
 
-**Tools: `hi_say`, `hi_show`, and `SendMessage`.** Its two expression channels are calls — the
-voice included — plus the one verb that reaches another agent. **No reads, no fetches, no
+**Tools: `hi_say`, `hi_show`, and `SendMessage`.** Its two expression channels are calls — speech
+included — plus the one verb that reaches another agent. **No reads, no fetches, no
 working directory, and no built-ins at all**: it is fast because it *cannot* wait on
 anything, not because it is small. Judging the edge of your own knowledge is a hard problem
 and needs a capable model.
@@ -90,7 +90,7 @@ see [Attachment](host.md#attachment).) See
 
 Owning that timing includes the one deadline in this host that fires at a named minute:
 `hi_say`'s `back_in` arms the [check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
-that brings the voice back to keep a promise it made. It belongs here for the same
+that brings Reaction back to keep a promise it made. It belongs here for the same
 reason the rest of the social layer does — the rung that named the number is the rung
 that owes the word.
 
@@ -112,7 +112,7 @@ that owes the word.
 working-out; it reaches nobody, by design. So a turn that writes prose and calls nothing to
 say it has not been thwarted on its way to the person — it has produced silence, which is a
 move this rung is allowed and often right to make. **This is the ordinary case, not a fault
-state, and it has no name of its own** — there is no "silent voice", no "mute" condition to
+state, and it has no name of its own** — there is no "silent Reaction", no "mute" condition to
 detect. Requiring an explicit `hi_say` is the whole design: it is what lets the rung think
 in the open without narrating itself at the person.
 
@@ -163,7 +163,7 @@ the measure for everything else: **projected = what Reaction must know without r
 
 ### Cognition — minutes and beyond
 
-**The brain, and the conversation's reading.** One of it for the whole agent. The voice
+**The brain, and the conversation's reading.** One of it for the whole agent. Reaction
 hands the turn's request down to it, and it does its heavy lifting by **delegating** — owns
 [Tasks](data.md#tasks), dispatches workers, reasons across everything in memory, and stays
 idle so it is free the moment something arrives.
@@ -182,7 +182,7 @@ an errand leaves the person waiting. Staying free is now a duty rather than a ru
 
 It is the **only** thing that creates workers, and the **only** writer of the task ledger.
 Both follow from the same idea: durable work is what it means for something to be real, and
-deciding that is judgment, not bookkeeping the voice should do in passing.
+deciding that is judgment, not bookkeeping Reaction should do in passing.
 
 **Dispatch is two verbs, not one: hand out and take back.** A worker can be *interrupted*
 mid-turn (`hi_cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
@@ -206,7 +206,7 @@ outlives one:
 > **After a restart, before any user input:** the glance-up fires → Cognition wakes → reads
 > open tasks → runs each one's `verify` and believes the answer → checks what already landed
 > so nothing is redone → does or re-arms what is still wanted → for the user-facing ones,
-> messages Reaction, which voices it when the room is right.
+> messages Reaction, which speaks it when the room is right.
 
 **Who is on a task is projected with the task, and it is computed, never stored.** A worker
 records the ledger subject it was created for (`CreateWorker(subject:)`), so each projected line
@@ -227,7 +227,7 @@ switchboard is empty by construction at boot, so every `doing` task reads "nobod
 once. True — and the reading it invites, that the work was dropped, is wrong: the process died
 holding it, those errands' minds are sitting on the offer, and Cognition needs a turn to read
 the glance and put people back on things. That turn was measured at around eighty seconds, and
-it was long enough for the voice to report five running tasks as merely open. So the offer is
+it was long enough for Reaction to report five running tasks as merely open. So the offer is
 not only a list Cognition picks from — it is what the ledger consults to say *why* nobody is on
 a task. A subject still on it reads "nobody on it — the restart cut its worker off, and its
 thread is still on the boot offer": the phrase intact, the cause named, and the cheap move
@@ -253,14 +253,14 @@ the process starts, then on the pulse cadence while anything is owed.
 
 #### The hand-down
 
-Answers travel back the way they came: what the voice handed down is answered to the voice.
+Answers travel back the way they came: what Reaction handed down is answered to Reaction.
 Cognition's results arrive **unframed** — Reaction is what turns "the build failed" into
 something that fits the room it is in.
 
 **An answer the person is waiting for is a reply owed, not a proposal**, and that is the one
 place the previous line inverts. Everything else Cognition sends is a proposal Reaction may
-decide not to voice; an answer to a question asked thirty seconds ago is not, because a
-voice entitled to drop it means the person who asked never hears back. The host is what
+decide not to say; an answer to a question asked thirty seconds ago is not, because a
+rung entitled to drop it means the person who asked never hears back. The host is what
 knows the difference — it posted the hand-down, so it marks the answer as owed when it
 returns, and Reaction relays it in its own words rather than weighing whether to.
 
@@ -298,7 +298,7 @@ everything else. It keeps the **session per pass** that Cognition has since give
 that divergence is deliberate: see [Session lifetime](#session-lifetime-per-rung).
 
 **Never speaks.** That belongs to Reaction, and a second mouth inside the consolidation
-loop is a second voice. What it wants said it sends to Cognition or to Reaction, and
+loop is a second Reaction. What it wants said it sends to Cognition or to Reaction, and
 Reaction chooses the moment.
 
 **It does dispatch**, and that too was once forbidden here on the reasoning that it would
@@ -330,7 +330,7 @@ own account when something didn't land, because that account is what the agent *
 and comes apart from what it did precisely when it matters; it searches for an existing rule
 before writing a new one, since a second copy of an instruction that already failed grows
 the store and changes nothing; and it keeps the [`## Working with them`](data.md#memory)
-section the voice is handed on every turn. A guideline that careful must be versioned and
+section Reaction is handed on every turn. A guideline that careful must be versioned and
 ours to tune, not improvised per pass.
 
 So `people` is also the one dimension the settling pass does **not** write. It still names
@@ -458,7 +458,7 @@ it.
 
 **What the offer is against is not lost context — it is the silent drop.** An errand resumed and
 an errand judged stale are equally fine outcomes; a task left `doing` with nobody on it is not,
-because it is indistinguishable from a task being worked on — to the person, to the voice, and
+because it is indistinguishable from a task being worked on — to the person, to Reaction, and
 to the rung that wrote it an hour later. So the offer names the alternative rather than leaving
 it implied, and asks for the disposition in the ledger either way. And since an entry leaves
 only when the errand is picked up or the task moves, one still on the offer an hour into the run

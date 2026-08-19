@@ -172,7 +172,7 @@ computed at read time rather than stored as a level, so answers can honestly dis
 revisable, correctable by one sentence from the person.
 
 A person's facet carries one section under a fixed heading, **`## Working with them`**, and
-that section alone is projected into the voice's window, on the cadence below. Everything above it —
+that section alone is projected into Reaction's window, on the cadence below. Everything above it —
 who they are, what they are building, how their world is arranged — is recall. Everything
 under it is what changes what the agent does next: how they want work delivered, what is
 theirs to decide rather than the agent's, what reliably goes fine and should not be
@@ -240,7 +240,7 @@ matters more than it looks.
 
 **Announced events are not enough.** Cognition writes `memory/facets/tasks/<subject>/facet.md`
 and its own seed *as files*, with file access — there is no tool call for it, so the host never
-sees it happen. An announcement the writer forgets is a change the voice never learns, and for
+sees it happen. An announcement the writer forgets is a change Reaction never learns, and for
 the ledger that is the failure this whole design exists to prevent: *retrieval can miss, and a
 missed duty is a silently broken promise*.
 
@@ -251,15 +251,15 @@ line *is* the event.
 
 **Cold is the one moment the seed is re-sent whole.** A thread is cold on its first turn and on
 the turn after a compaction. The second case is the load-bearing one: compaction rewrites the
-history and promises nothing about what it kept — on the 2026-08-13 voice thread it kept ten
+history and promises nothing about what it kept — on the 2026-08-13 Reaction thread it kept ten
 copies of the standing preamble and dropped every tool call in sixty turns, taking every example
-of `hi_say` with it, and the voice then went two and a half hours without speaking while still
+of `hi_say` with it, and Reaction then went two and a half hours without speaking while still
 calling its other tools. Everything the host believed the model could see stopped being true at
 once. So the same signal that re-seeds the window is the signal that the model may no longer
 know how it speaks.
 
 **Who writes a seed.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has no file
-access and cannot write its own: the voice's seed is *consumed* by Reaction and *written by*
+access and cannot write its own: Reaction's seed is *consumed* by Reaction and *written by*
 [Cognition](agents.md#cognition--minutes-and-beyond) — the rung that already reads around and
 works out what was asked. That falls out of the tool surfaces rather than being imposed on them.
 Reflection owns rebuilding a **missing** seed, on the pass that already regenerates
@@ -319,7 +319,7 @@ always the block verbatim.
 
 **And an empty ledger says so out loud**, which sending-on-change made load-bearing: a block
 that renders to nothing is skipped rather than sent, so a silent empty meant the last duty
-could close with the voice still believing it was owed. Nothing else would have told it — a
+could close with Reaction still believing it was owed. Nothing else would have told it — a
 task is closed by a file edit, not by a message.
 
 The floor is the events themselves, 387 chars a turn: the actual content of the conversation.
@@ -368,7 +368,7 @@ it, in whatever words.
 "delivered" meaning it handed the artifact up; the rung above closes on that word meaning
 the person has it; the two are the same word in every report anyone writes. And the rung
 doing the closing has no way to tell them apart: it is in no conversation, everything it
-sends the voice is a proposal the voice may decline, and nothing comes back. So a close
+sends Reaction is a proposal Reaction may decline, and nothing comes back. So a close
 written over a delivery that never happened is not carelessness — it is a rung reasoning
 correctly from the only information it has.
 
@@ -397,7 +397,7 @@ in progress: it owes the ask, once, not the wait.
 
 Four properties, each earned by a real failure:
 
-1. **Global.** There is one place a result can be voiced, so a task carries no destination.
+1. **Global.** There is one place a result can be said, so a task carries no destination.
 2. **Always projected** into every agent's window, never fetched on demand.
 3. **Liveness is a contract, not an existence check** — a serving task carries how to verify
    it is really alive (a count, not "something is running"), how to restart it, and either
@@ -474,7 +474,7 @@ goes. Three answers:
 | **none** | standing no — never file a key; hold it for this exchange and let it go |
 
 The answer is [a facet](#memory), the same as any other durable preference about the person,
-and it reaches the voice the way the rest do — through the seed.
+and it reaches Reaction the way the rest do — through the seed.
 
 **Absent an answer, ask.** A lost or never-written preference costs one extra question. It
 must never cost a key filed against a *none* that went missing, so *no answer* resolves to

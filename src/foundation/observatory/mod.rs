@@ -7,7 +7,7 @@
 //! [`TextAppearance`]) that the reaction, workers and heartbeat feed as
 //! those things happen. It keeps two things:
 //!
-//! - a **live mirror** — the voice's current state (reaction session, context
+//! - a **live mirror** — Reaction's current state (reaction session, context
 //!   budget, last turn), for `GET /api/sessions`;
 //! - an **event history** — a bounded ring of lifecycle [`SessionEvent`]s plus a
 //!   live `broadcast`, streamed verbatim over SSE on `GET /api/sessions/events`,
@@ -98,9 +98,9 @@ pub struct TurnView {
     pub reply_chars: Option<usize>,
 }
 
-/// The full live picture of the agent's voice, served by `GET /api/sessions`.
+/// The full live picture of Reaction, served by `GET /api/sessions`.
 ///
-/// **Voice-shaped state only.** There is deliberately no `workers` here: a working
+/// **Reaction-shaped state only.** There is deliberately no `workers` here: a working
 /// session belongs to whoever created it, and worker lifecycle is carried by the event
 /// log ([`EventKind::WorkerSpawned`] and friends), which is keyed by session and does
 /// not have to lie about where the work lives.
@@ -217,7 +217,7 @@ impl Observatory {
     /// broadcast both happen under the history lock so a concurrent
     /// [`subscribe`](Self::subscribe) sees a consistent, dup-free cut.
     ///
-    /// History takes everything; the mirror takes only what describes the voice —
+    /// History takes everything; the mirror takes only what describes Reaction —
     /// a worker spawning is real history, but it is not the state of the mouth.
     pub async fn record(&self, kind: EventKind) {
         // Mirror first (its own lock), so a snapshot taken right after the event
@@ -243,7 +243,7 @@ impl Observatory {
         let _ = self.inner.tx.send(event);
     }
 
-    /// A live snapshot of the voice's state.
+    /// A live snapshot of Reaction's state.
     pub async fn snapshot(&self) -> AgentView {
         self.inner.agent.read().await.clone()
     }
@@ -284,8 +284,8 @@ impl Observatory {
                     });
                 }
                 // Worker open is mirrored by WorkerSpawned; a reflection pass is a
-                // throwaway we don't surface as a standing session. Cognition is not the
-                // voice, so it is history-only — which is where a rung nobody is
+                // throwaway we don't surface as a standing session. Cognition is not
+                // Reaction, so it is history-only — which is where a rung nobody is
                 // listening to honestly belongs. It is *recorded* either way: the event
                 // log is what names a rung, and until it did, a rung was
                 // indistinguishable from a worker.
@@ -299,7 +299,7 @@ impl Observatory {
                 }
             }
             // Worker open/close is history-only; summarizer, Reflection, and
-            // Cognition sessions are not represented as standing voice state.
+            // Cognition sessions are not represented as standing Reaction state.
             EventKind::SessionClosed { .. } => {}
             EventKind::TurnStarted { turn, .. } => {
                 if let Some(s) = view.reaction_session.as_mut() {
@@ -332,15 +332,15 @@ impl Observatory {
                     reply_chars: Some(*reply_chars),
                 });
             }
-            // Worker lifecycle is history, not voice state — see [`AgentView`]. A
+            // Worker lifecycle is history, not Reaction state — see [`AgentView`]. A
             // working session is keyed by its own id and owned by whoever asked for it,
             // so folding it into the mouth's state would answer a question nobody
             // asked. Read these off the event log.
             EventKind::WorkerSpawned { .. }
             | EventKind::WorkerResumed { .. }
             | EventKind::WorkerFinished { .. } => {}
-            // Also history-only, and deliberately not summarized onto the voice. An
-            // edge has two ends and at most one of them is the voice, so any single
+            // Also history-only, and deliberately not summarized onto Reaction. An
+            // edge has two ends and at most one of them is Reaction, so any single
             // slot would have to pick one and pretend. `last_question` was that
             // mistake — one slot fed by two different events, each overwriting the
             // other — and `docs/arch/foundation.md#debug-surfaces` forbids it.
@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(obs.event_count().await, 2);
     }
 
-    /// A rung that is not the voice is real history and must not be mirrored as the
+    /// A rung that is not Reaction is real history and must not be mirrored as the
     /// mouth's state — Reflection opening a pass says nothing about whether anyone is
     /// being spoken to.
     #[tokio::test]
@@ -512,7 +512,7 @@ mod tests {
         })
         .await;
 
-        assert!(obs.snapshot().await.reaction_session.is_none(), "no voice was invented");
+        assert!(obs.snapshot().await.reaction_session.is_none(), "no reaction was invented");
         let (replay, _rx) = obs.subscribe().await;
         assert_eq!(replay.len(), 1, "but it is still history");
     }

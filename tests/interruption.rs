@@ -19,7 +19,7 @@
 //! is excluded even though the turn itself completes. See
 //! `src/reaction/interrupts.rs` (unit-tested there).
 //!
-//! **This is about the voice's own turn, and `hi_cancel_worker` does not contradict it.**
+//! **This is about Reaction's own turn, and `hi_cancel_worker` does not contradict it.**
 //! Two different situations. Here, a second signal arrives while the reaction is
 //! mid-thought and nothing should be cut: the person is still talking, the turn folds
 //! their words in, and cancelling would only make the agent forget half of what it just

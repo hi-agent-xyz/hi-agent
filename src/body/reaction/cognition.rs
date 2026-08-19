@@ -98,14 +98,14 @@ async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
 
-    // Its workers run under its own role-specific sink rather than the voice's.
+    // Its workers run under its own role-specific sink rather than Reaction's.
     let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
     let (report_tx, mut report_rx) = mpsc::channel::<LoopInput>(LOOP_QUEUE_CAPACITY);
     reaction
         .inner
         .tools
         // `mouth: None` — no sequencer, no audio, no screen. Cognition proposes; Reaction
-        // voices. That it *cannot* express is now a fact about the sink rather than an
+        // speaks. That it *cannot* express is now a fact about the sink rather than an
         // agreement between the tool list and the role check at dispatch.
         .register(
             ToolOwner::Cognition,
@@ -316,13 +316,13 @@ async fn run(reaction: Reaction, registration: Registration) {
         //
         // **Mail is served here, and it does not start a turn — it walks into the one that
         // is running** ([`AgentSession::steer`]). What it answers was measured: the person
-        // said "what? we backup sqlite before every deploy??", the voice relayed it in
+        // said "what? we backup sqlite before every deploy??", Reaction relayed it in
         // eight seconds, and it sat in this inbox for seven minutes because the turn it
         // contradicted was still going. It was read twenty-seven seconds after the step it
         // would have prevented. A rung holding a shell for sixteen minutes with no way in
         // is a rung with no supervisor, and the person is the only supervisor there is.
         //
-        // **Only the voice steers.** What a person just said is the one input that can
+        // **Only Reaction steers.** What a person just said is the one input that can
         // invalidate work in flight; a worker's message is a report about work that is
         // going fine, and letting reports interrupt would turn every busy stretch into a
         // stutter. Everything not steered — and everything steering *failed* to deliver —
@@ -338,19 +338,19 @@ async fn run(reaction: Reaction, registration: Registration) {
                     done = &mut turn_fut => break done,
                     _ = mail.notified() => {
                         let Some(batch) = registry::global().take_pending(&id) else { continue };
-                        let (voice, rest): (Vec<_>, Vec<_>) =
-                            batch.into_iter().partition(from_the_voice);
+                        let (steering, rest): (Vec<_>, Vec<_>) =
+                            batch.into_iter().partition(from_reaction);
                         if !rest.is_empty() {
                             arrived.push(registry::render(&rest));
                         }
-                        if voice.is_empty() {
+                        if steering.is_empty() {
                             continue;
                         }
                         // The heading is a fact about *delivery* — the model is mid-turn
                         // and needs to know this reached it there rather than at the start
                         // of a fresh one. What that obliges it to do is `cognition.md`'s
                         // to say, not the host's.
-                        let rendered = registry::render(&voice);
+                        let rendered = registry::render(&steering);
                         // **Bounded, because a request to this app-server is not
                         // guaranteed to be answered.** Probed against the pinned 0.147:
                         // a method it knows, addressed to a thread that no longer exists,
@@ -493,11 +493,11 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
     };
 
     if first {
-        // Cognition can send only to live session ids. Stand the voice up before
+        // Cognition can send only to live session ids. Stand Reaction up before
         // building this turn's window so every owed user-facing delivery has
-        // somewhere to land after a restart. `ensure_voice` registers the address
+        // somewhere to land after a restart. `ensure_up` registers the address
         // synchronously; its warm-up may continue while mail queues behind it.
-        reaction.ensure_voice().await;
+        reaction.ensure_up().await;
     }
 
     let count = active.len();
@@ -826,15 +826,15 @@ async fn open_session(
 /// cannot have remembered, because it did not exist yet. Injecting per turn is what makes
 /// "projected, not retrieved" true rather than true-at-open — the same correction the
 /// reaction loop's prompt builder carries.
-/// Was this message put here by the voice?
+/// Was this message put here by Reaction?
 ///
 /// The one sender whose word can invalidate work already in flight, because it is the only
 /// one carrying what a *person* just said. Host-posted mail (`from: None`) is not a
 /// colleague and does not steer; neither does a worker, whose messages are reports about
 /// work that is going to plan. A sender that has since gone (no registry entry) reads as
-/// not-the-voice, which is the safe way round: the cost is a message waiting for the turn
+/// not-Reaction, which is the safe way round: the cost is a message waiting for the turn
 /// boundary it would have waited for anyway.
-fn from_the_voice(m: &registry::Message) -> bool {
+fn from_reaction(m: &registry::Message) -> bool {
     m.from
         .as_ref()
         .and_then(|from| registry::global().status(from))
@@ -898,7 +898,7 @@ async fn turn(
             SessionUpdate::Text(text) => {
                 full.push_str(&text);
                 // Mirror it into the switchboard's bounded tail, or `hi_session_messages`
-                // answers "nothing yet" forever — and the voice's `## Still looking into`
+                // answers "nothing yet" forever — and Reaction's `## Still looking into`
                 // line has no other way to see what this rung is making of the question.
                 registry::global().record_output(id, &text);
             }

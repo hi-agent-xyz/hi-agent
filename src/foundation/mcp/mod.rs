@@ -117,7 +117,7 @@ fn send_message_tool() -> Value {
          reply, and the return value only tells you whether it was delivered. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
          message so it knows where to reach you. `to` is always a **session id**. The three \
-         standing rungs are `reaction` (the voice), `cognition` (the brain) and `reflection` \
+         standing rungs are `reaction` (what reaches the person), `cognition` (the brain) and `reflection` \
          — one of each, always those names. A worker's id comes back from \
          `hi_create_worker` and looks like `view-builder-kyoto-trip`; a message you received \
          carries its sender's. Everyone you may reach right now is listed in your window \
@@ -363,7 +363,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         ]
         .into_iter()
         // Generation belongs to the rung that does the job. Reaction must stay a
-        // voice (its surface is the one hard rail) and Cognition reads and dispatches —
+        // mouth (its surface is the one hard rail) and Cognition reads and dispatches —
         // a worker is the only rung that produces artifacts.
         .chain(generation_tools())
         .collect(),
@@ -531,7 +531,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // exactly this surface minus the dispatch verbs; folding it in added nothing to
         // declare.
         //
-        // No `hi_say`, no `hi_show`: it proposes, Reaction voices. Enforced three ways
+        // No `hi_say`, no `hi_show`: it proposes, Reaction speaks. Enforced three ways
         // that agree — absent here, refused at dispatch above, and its sink carries no
         // sequencer to express through.
         Some("cognition") => vec![
@@ -545,7 +545,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // **Reaction** — the mouth. Its two expression channels plus the one verb that
         // reaches another agent, and nothing else: no reads, no fetches, no built-ins
         // (`docs/arch/agents.md#reaction`). A stale comment stood above the arm before
-        // this one saying the voice "speaks via plain message text (not a `hi_say` tool)
+        // this one saying Reaction "speaks via plain message text (not a `hi_say` tool)
         // and gets exactly one expression tool — `hi_show`", which had not been true since
         // `hi_say` was added here; it also sat directly above the *cognition* arm, so it
         // described the wrong rung in the wrong place.
@@ -948,7 +948,7 @@ async fn dispatch_tool(
     args: &Value,
 ) -> Value {
     // Expression tools belong to the reaction alone — it is the single
-    // guideline-carrying voice, so everything the person sees or hears goes through
+    // guideline-carrying rung, so everything the person sees or hears goes through
     // its `reaction.md` generation. A worker or reflection session must never speak
     // or take the screen even if its model emits the call (these aren't in its
     // advertised surface); enforce that structurally here, not just via the tool list.
@@ -1432,7 +1432,7 @@ async fn dispatch_tool(
             // tool's whole justification is that speech is answerable, and an answer
             // that always reads "spoken" answers nothing. It also confirms the check-in
             // this call armed, so a promise the host is now holding is never something
-            // the voice has to assume it made.
+            // Reaction has to assume it made.
             sink.say(text, arg_opt("back_in").as_deref())
                 .await
                 .map(crate::body::reaction::Said::ack)
@@ -2633,7 +2633,7 @@ mod surface_tests {
 
     /// Reaction's whole surface, pinned. `hi_say` lived in the unreachable fallback arm
     /// for the entire life of the reaction/cognition split — defined, dispatchable, and
-    /// advertised to nobody — so the voice fell back to plain message text. Nothing
+    /// advertised to nobody — so Reaction fell back to plain message text. Nothing
     /// failed; it just quietly stopped being a call that returns.
     #[test]
     fn reaction_holds_say_and_show_and_nothing_else() {
@@ -2681,7 +2681,7 @@ mod surface_tests {
         }
     }
 
-    /// One dispatcher. A the voice that could create workers would be a second one,
+    /// One dispatcher. A Reaction that could create workers would be a second one,
     /// spawning against Cognition unseen.
     /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
     /// legacy fallback, which handed it `hi_say` and `hi_show` — refused at dispatch — and

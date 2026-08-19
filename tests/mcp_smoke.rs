@@ -94,10 +94,10 @@ async fn tools_list_is_role_gated() {
     .await
     .expect("json");
     let names = tool_names(&reaction);
-    // The reaction is the fast conversational voice: its two expression channels, both
+    // The reaction is the fast conversational rung: its two expression channels, both
     // calls, plus the one verb that reaches another agent. Nothing that reads or fetches.
-    // This asserted one tool while `hi_say` sat in the unreachable fallback arm and the
-    // voice fell back to plain message text — the test agreed with the code and both
+    // This asserted one tool while `hi_say` sat in the unreachable fallback arm and
+    // Reaction fell back to plain message text — the test agreed with the code and both
     // were wrong about the design.
     let mut names = names;
     names.sort();
@@ -128,7 +128,7 @@ async fn tools_list_is_role_gated() {
         assert!(!names.contains(&gone.to_string()), "`{gone}` is withdrawn; got {names:?}");
     }
     // The retired channel, in all three of its names. A worker that can still reach
-    // the voice by a second route is a worker that will, and then two paths are live.
+    // Reaction by a second route is a worker that will, and then two paths are live.
     for gone in ["ask", "surface", "delegate"] {
         assert!(!names.contains(&gone.to_string()), "`{gone}` is retired; got {names:?}");
     }

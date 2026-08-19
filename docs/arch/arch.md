@@ -84,7 +84,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   HOST         wire · channel mux · transcript ·
   (Rust)       sessions (+ heartbeat) · reflex · vendor gate
   ─────────────────────────────────────────────────────────────────────────────
-  AGENTS       the voice:  Reaction
+  AGENTS       the mouth:  Reaction
                the brain:  Cognition · Reflection
                workers:    general · view builder · view reviewer · decision maker
                all of the above = one agent session, differing only by prompt + tools
@@ -108,7 +108,7 @@ Each is a statement we can test, and each has a real failure behind it.
    division of labour, not a security boundary. Per-role prompts and
    [tool surfaces](foundation.md#default-tool-surfaces) are a *context optimization* — a
    smaller window and a faster turn — not a rail deciding which agent may call which tool.
-3. **The voice never waits on a slower rung.** Reaction hands work down and reads the answer
+3. **Reaction never waits on a slower rung.** Reaction hands work down and reads the answer
    when it arrives; it does not block on Cognition or a worker. A mouth that waits is a
    person left staring at silence, and no result is worth going deaf for.
 
@@ -122,7 +122,7 @@ Each is a statement we can test, and each has a real failure behind it.
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
    through Reaction, which decides whether it is worth saying and says it as a message.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Two loops pace
-   glancing up — Cognition's glance-up and the reflection backoff. The voice has no
+   glancing up — Cognition's glance-up and the reflection backoff. Reaction has no
    cadence of its own: it wakes on input, on mail, and on its own check-in. Scheduling
    past that is the agent's to arrange with the shell it already has; see
    [glancing up](host.md#glancing-up).

@@ -13,7 +13,7 @@ hand — without any of that reaching the thinking layers as protocol.
 | A device is both a surface and an effector | Same hardware, two roles, told apart by who moved first |
 | File is a signal, but carries a **ref** — never content | A handed-over object, not something perceived |
 | Vision emits a ref; the agent decides whether to look | Perception is *pulled*, not pushed |
-| Everything outbound is a tool call, the voice included | The arbiter needs somewhere to stand: a call can be held, queued or refused, and the caller finds out. The words stay natural language |
+| Everything outbound is a tool call, speech included | The arbiter needs somewhere to stand: a call can be held, queued or refused, and the caller finds out. The words stay natural language |
 
 ## Surfaces
 
@@ -157,7 +157,7 @@ place it should be paid for.
 
 There is no marker vocabulary anywhere, and nothing is parsed back out of the model's text.
 
-What survives of "think, then organize words" is the half that mattered: **the voice is still
+What survives of "think, then organize words" is the half that mattered: **what reaches the person is still
 natural language**. Reaction writes the sentence it means — it just hands it over instead of
 streaming it at the world. The thinking layers express intent; the host articulates it, and
 now it can also decline to.

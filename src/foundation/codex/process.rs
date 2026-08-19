@@ -121,7 +121,7 @@ pub enum Sandbox {
 }
 
 impl Sandbox {
-    /// Also read by the permission profile the voice opens under, which carries its own
+    /// Also read by the permission profile Reaction opens under, which carries its own
     /// sandbox rather than the `thread/start` param.
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -764,7 +764,7 @@ fn answer_server_request(
         // With `_meta.codex_approval_kind`, it is codex gating a tool call — including
         // *our own* MCP tools, which it gates even under `approvalPolicy: "never"`.
         // Declining those is declining the agent's own hands: live, it turned a `say`
-        // into "user rejected MCP tool call" and the voice went silent while the turn
+        // into "user rejected MCP tool call" and Reaction went silent while the turn
         // reported success. Accept.
         //
         // Without it, an MCP server is asking the *person* for structured input. There

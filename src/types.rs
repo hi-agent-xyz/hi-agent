@@ -41,7 +41,7 @@ pub enum Channel {
     /// `docs/arch/stage.md#where-they-went-is-reported-the-cursor-still-is-not`.
     View,
     /// The host noticing the time: today a check-in coming due, and nothing else since
-    /// the voice's pulse was cut.
+    /// Reaction's pulse was cut.
     /// Inbound, because it drives a turn exactly like an utterance does — but it
     /// came from no one, which is why it gets its own channel rather than being
     /// mixed into `text` where it would read as something the person said.

@@ -685,12 +685,12 @@ mod tests {
     /// boot resumes from, and the case the whole record exists for.
     #[test]
     fn a_restart_row_keeps_its_thread() {
-        let opened = opened_record("run-a", &2.into(), Role::Reaction, None, "the voice", None, ts(5));
-        let thread = thread_record("run-a", &2.into(), "th-voice", ts(5));
+        let opened = opened_record("run-a", &2.into(), Role::Reaction, None, "Reaction", None, ts(5));
+        let thread = thread_record("run-a", &2.into(), "th-reaction", ts(5));
         let ends = fold(&format!("{}{}", line(&opened), line(&thread)), "run-b");
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].how, EndedHow::Restart);
-        assert_eq!(ends[0].thread.as_deref(), Some("th-voice"));
+        assert_eq!(ends[0].thread.as_deref(), Some("th-reaction"));
     }
 
     /// Only the resident rungs are resumed by themselves. A worker keeps its thread on

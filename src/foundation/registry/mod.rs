@@ -625,7 +625,7 @@ impl Entry {
 ///
 /// The reaction loop leaves by several paths — inbound closed, closed mid-settle, shutdown
 /// — and a registration released at only some of them is how the agent ends up with more
-/// than one voice, `reachable` then offering an arbitrary dead one. Rather than
+/// than one Reaction, `reachable` then offering an arbitrary dead one. Rather than
 /// remember every exit, hold this: the exits are then not something anyone has to get
 /// right again, including whoever adds the next one.
 pub struct Registration {
@@ -1022,8 +1022,8 @@ impl Registry {
     /// Deliberately narrow, and narrow **per asker**, because this is the whole of what an
     /// agent knows about the rest of the agent: what it is offered here is what it can
     /// do. A worker gets its owner and nothing else, which is also the only thing the
-    /// routing rule would let it send to; the voice's rungs get the shared brain; Cognition
-    /// gets the voice, because that is the one way anything reaches the person.
+    /// routing rule would let it send to; Reaction's rungs get the shared brain; Cognition
+    /// gets Reaction, because that is the one way anything reaches the person.
     ///
     /// Rebuilt every turn by the caller. There is no cache and should not be: the answer
     /// is only true for as long as those sessions are up, and a stale id is worse than no
@@ -1040,20 +1040,20 @@ impl Registry {
                     out.push(("the session that asked for this work".to_string(), owner.clone()));
                 }
             }
-            // The voice hands work up, and that is all it addresses.
+            // Reaction hands work up, and that is all it addresses.
             Role::Reaction => {
                 if let Some((id, _)) = map.iter().find(|(_, e)| e.role == Role::Cognition) {
                     out.push(("cognition — the shared brain".to_string(), id.clone()));
                 }
             }
-            // The voice, so anything worth saying has somewhere to land, plus whatever
-            // this rung has running. A voice that is cold simply is not here, which is
+            // Reaction, so anything worth saying has somewhere to land, plus whatever
+            // this rung has running. A Reaction that is cold simply is not here, which is
             // the fact Cognition needs before it decides to hold a result rather than
             // send at it.
             Role::Cognition | Role::Reflection => {
                 for (id, e) in map.iter() {
                     if e.role == Role::Reaction {
-                        out.push(("the voice — what reaches the person".to_string(), id.clone()));
+                        out.push(("what reaches the person".to_string(), id.clone()));
                     }
                 }
                 for (id, e) in map.iter() {
@@ -1650,7 +1650,7 @@ mod tests {
     }
 
     /// The bug this exists to make impossible: the reaction loop leaves by several paths, and
-    /// a registration released at only some of them leaves a second voice behind for the
+    /// a registration released at only some of them leaves a second Reaction behind for the
     /// one role — which `reachable` would then offer, and a sender would send at.
     #[test]
     fn a_scoped_registration_ends_with_its_scope() {
@@ -1658,9 +1658,9 @@ mod tests {
         global().register(sender.clone(), Role::Cognition, None, String::new(), None);
 
         let id = {
-            let voice =
+            let reaction =
                 register_scoped(mint(), Role::Reaction, None, String::new());
-            let id = voice.id();
+            let id = reaction.id();
             assert_eq!(
                 global().send(&sender, &id, "hi".into()),
                 Delivery::Delivered
@@ -1672,7 +1672,7 @@ mod tests {
         assert_eq!(
             global().send(&sender, &id, "hi again".into()),
             Delivery::Unknown,
-            "no stale voice is left registered"
+            "no stale reaction is left registered"
         );
         global().unregister(&sender);
     }
@@ -1719,7 +1719,7 @@ mod tests {
         );
     }
 
-    /// The projection that replaced name-a-destination addressing. The voice is offered
+    /// The projection that replaced name-a-destination addressing. Reaction is offered
     /// the shared brain and nothing else, because handing work up is the only edge it has.
     #[test]
     fn the_voice_is_offered_the_shared_brain() {
@@ -1749,7 +1749,7 @@ mod tests {
         assert!(r.reachable(&rx).is_empty());
     }
 
-    /// Cognition is offered the live voice, because that is the one way anything it
+    /// Cognition is offered the live Reaction, because that is the one way anything it
     /// works out reaches the person.
     #[test]
     fn cognition_is_offered_the_voice_and_its_own_workers() {
@@ -1762,7 +1762,7 @@ mod tests {
 
         let who = r.reachable(&cog);
         let ids: Vec<SessionId> = who.iter().map(|(_, id)| id.clone()).collect();
-        assert!(ids.contains(&rx), "the voice: {who:?}");
+        assert!(ids.contains(&rx), "Reaction: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
         assert!(!ids.contains(&other), "someone else's worker is not offered: {who:?}");
     }
@@ -1811,12 +1811,12 @@ mod tests {
         let r = reg();
         let (cog, rx) = (mint(), mint());
         r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
-        r.register(rx, Role::Reaction, None, "the voice".into(), None);
+        r.register(rx, Role::Reaction, None, "what reaches the person".into(), None);
 
         let who = r.reachable(&cog);
         assert!(
             who.iter().all(|(label, _)| !label.contains("not linked")),
-            "the voice is not an unlabelled worker: {who:?}"
+            "Reaction is not an unlabelled worker: {who:?}"
         );
         assert!(!r.has_unlinked_worker(&cog), "a rung is not an unlinked worker");
     }
@@ -1964,12 +1964,12 @@ mod tests {
     fn noting_a_thread_puts_it_on_the_live_session() {
         let r = Registry::new();
         let id = mint();
-        r.register(id.clone(), Role::Reaction, None, "the voice".into(), None);
-        r.note_thread(&id, "th-voice");
+        r.register(id.clone(), Role::Reaction, None, "Reaction".into(), None);
+        r.note_thread(&id, "th-reaction");
 
         assert_eq!(
             r.sessions.lock().unwrap().get(&id).and_then(|e| e.thread.clone()).as_deref(),
-            Some("th-voice"),
+            Some("th-reaction"),
         );
     }
 

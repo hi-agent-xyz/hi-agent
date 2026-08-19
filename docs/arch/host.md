@@ -51,8 +51,8 @@ recognizes by face or voice is content it knows, not a partition it lives in —
 walking into the room does not start a second conversation.
 
 > **This replaced `Scene`, which was removed.** A scene was "the situation a signal belongs
-> to", the isolation unit keying a Reaction, a Deliberation (the rung then between the
-> voice and the brain), a memory slice, and a tag on
+> to", the isolation unit keying a Reaction, a Deliberation (the rung then between
+> Reaction and the brain), a memory slice, and a tag on
 > every tool attach. It was removed for three reasons, in increasing order of weight:
 >
 > 1. **It isolated two rungs of four.** Cognition and Reflection are global by design and
@@ -92,7 +92,7 @@ it.
 - **Turn-taking** — still host-side, and it happens at the **mouth**, not before Reaction is
   woken. See [The floor](#the-floor); the quiet-settle timer that used to be named here is
   [batching](surfaces.md#batching) and nothing else.
-- **Social timing** — when to voice a worker's answer, when to let it wait.
+- **Social timing** — when to say a worker's answer, when to let it wait.
 
 *The fourth duty, a **presence gate**, has been retired outright rather than moved — see
 [Attachment](#attachment).*
@@ -105,7 +105,7 @@ are facts about the wire, not reads of the room.
 
 ### The floor
 
-**Whether the voice may speak is decided when the words are ready, not when the turn that
+**Whether Reaction may speak is decided when the words are ready, not when the turn that
 wrote them began.** A generation takes seconds and the room moves inside them. So `hi_say`
 is gated at the mouth, on two facts the host can check and the model cannot:
 
@@ -307,7 +307,7 @@ do that, each pacing itself from inside its own subsystem — **Cognition's glan
 wake shortly after the process starts, then on the `pulse` cadence whenever anything is
 owed) and the **reflection backoff** for consolidation.
 
-**The voice has no cadence, and that absence is deliberate.** A pulse used to wake the
+**Reaction has no cadence, and that absence is deliberate.** A pulse used to wake the
 conversation loop on the same knob and run a turn into an empty room. Reaction is
 tools-off, so the wake handed it nothing it could not already see in the window it gets on
 *every* turn — the least-informed rung was the one deciding whether to speak. The journeys
@@ -331,7 +331,7 @@ promise is only a promise once it has been said, so there is no way to arm a wak
 a number nobody was told.
 
 **Why this is not the clock this design removed.** It holds exactly one deadline per
-voice, it fires nothing but that voice's own loop, it carries no task and no target,
+Reaction, it fires nothing but that Reaction's own loop, it carries no task and no target,
 and a task's `due` still fires nothing. With the pulse gone it is the only deadline in
 Reaction's `select!` that is not vendor recovery — which is an argument for keeping it
 exactly this small, never for letting it grow into the removed clock's replacement. Every
@@ -339,21 +339,21 @@ property the removal was protecting survives: scheduling past a cadence remains 
 agent's own, arranged with the shell it has.
 
 **And a floor beneath it, because a promise can go unmade.** While the conversation's
-own thinking is still running and the voice left the silence open-ended, the host arms
+own thinking is still running and Reaction left the silence open-ended, the host arms
 a check-in itself — five minutes, doubling to the glance-up cadence. **The dial on that gap is
 whether the last one was worth it**: a check-in that produced speech keeps the base
-cadence, one that passed in silence widens it. The voice is the only thing that knows
+cadence, one that passed in silence widens it. Reaction is the only thing that knows
 whether there was anything to say, so it is the thing that sets the pace.
 
 The note says which of the two it is. A promise the person heard is a fact they hold
-too; a floor is only the agent's own rule about not going dark, and a voice told it
+too; a floor is only the agent's own rule about not going dark, and Reaction told it
 "promised" when it named nothing would be inventing one. Both are **permission to
 speak, never an instruction to**: what is worth saying is read off `## Still looking
 into` and the projected ledger, and staying quiet is a legitimate answer.
 
 A check-in **fires whether or not anyone is looking**. It used to be dropped into an
 empty room, on the reasoning that the words would be withheld anyway and a return would
-wake the voice with a fresher read. Both halves of that went with the
+wake Reaction with a fresher read. Both halves of that went with the
 [gate](#attachment): a check-in produces a message, a message waits in the conversation,
 and there is no return edge left to defer it to.
 
@@ -451,9 +451,9 @@ projection and orders what is shown, and nothing in the host fires on it. At a
 30-minute glance-up that is fine for a filing deadline and wrong for a wake-me-at-07:00
 alarm, which is the agent's to arrange per the table above.
 
-What used to stand here as the second cost — *nothing wakes the voice when a promise
+What used to stand here as the second cost — *nothing wakes Reaction when a promise
 is running late* — is the check-in above, and it was removed for a reason worth
-keeping in view. It read as a rough edge and was a broken product: the voice named a
+keeping in view. It read as a rough edge and was a broken product: Reaction named a
 number, nothing read it, and the person closed the gap by asking "progress?". A
 promise whose only enforcement is the model remembering to speak is not a promise, and
 `reaction.md` said so in its own words long before the host could act on it — *a

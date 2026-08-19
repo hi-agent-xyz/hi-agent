@@ -1,5 +1,5 @@
 //! `## Working with them` — the slice of a person's facet that is read *before
-//! acting*, projected into the voice's window.
+//! acting*, projected into Reaction's window.
 //!
 //! **No new store.** What the agent has come to understand about a person already
 //! lives in one place — `facets/people/<subject>/facet.md`, prose regenerated from
@@ -44,7 +44,7 @@ pub const HEADING: &str = "## Working with them";
 /// Hard cap, in characters, on everything this contributes to one window.
 ///
 /// **Three thousand, and it is code's**, like every other bound in the projection: the
-/// agent decides what it has understood, not how much of the voice's window that
+/// agent decides what it has understood, not how much of Reaction's window that
 /// costs. Read against the ~6k the conversation's brief may take and the ~2.5k the
 /// ledger takes, it is the smallest of the three — correct, because this is the
 /// slowest-moving of them. Over it, the text says so, because a ceiling that shows up
@@ -118,7 +118,7 @@ pub fn section(markdown: &str) -> Option<&str> {
     (!body.is_empty()).then_some(body)
 }
 
-/// Everything the voice must know about how to be with the people in front of it,
+/// Everything Reaction must know about how to be with the people in front of it,
 /// as one block — or `""` when nobody has been understood that far yet, which is
 /// the ordinary state of a fresh install.
 ///
@@ -126,7 +126,7 @@ pub fn section(markdown: &str) -> Option<&str> {
 /// announced in the injected text, addressed to the one who can act on it.
 /// Drop the `[[memory-link]]` citations a facet carries.
 ///
-/// **The voice cannot follow one.** It is tools-off by design — no file access, nothing to
+/// **Reaction cannot follow one.** It is tools-off by design — no file access, nothing to
 /// open a link with — so a citation reaching it is provenance addressed to a reader that
 /// isn't there. Cognition and Reflection read the facet itself and keep every one of them.
 ///
@@ -247,7 +247,7 @@ mod tests {
 
     /// The whole seam, end to end, on prose shaped the way a facet actually reads —
     /// biography above the heading, conduct under it, refs on every claim. What this
-    /// pins is that the voice receives *only* the second half: the org chart and the
+    /// pins is that Reaction receives *only* the second half: the org chart and the
     /// product history are recall, and paying for them on every turn is what a bounded
     /// window cannot afford.
     #[tokio::test]
@@ -324,7 +324,7 @@ not a reason to start asking.
 mod citation_tests {
     use super::*;
 
-    /// The voice cannot open a `[[link]]`, and on one live window 19 of them took 1,014
+    /// Reaction cannot open a `[[link]]`, and on one live window 19 of them took 1,014
     /// characters — 31% of a section the host was already truncating. The guidance stays;
     /// the addresses go.
     #[test]

@@ -241,7 +241,7 @@ async fn dispatch(
     };
 
     // Owner is Cognition: what the handler *chooses* to raise needs somewhere to land,
-    // and the rung that can amend the ledger and reach the voice is the only sound
+    // and the rung that can amend the ledger and reach Reaction is the only sound
     // answer. `None` would leave an escalation addressed to nobody.
     let owner = registry::global()
         .session_of_role(Role::Cognition)

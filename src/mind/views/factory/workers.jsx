@@ -273,7 +273,7 @@ function words() {
 }
 const L = words();
 
-/** The ladder, top to bottom — the order `docs/arch/agents.md` gives: the voice, the
+/** The ladder, top to bottom — the order `docs/arch/agents.md` gives: Reaction, the
  *  thinking behind it, the outward brain, the housekeeper. A role not named here sorts
  *  after these rather than being dropped, so a sixth rung appears instead of vanishing. */
 const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
@@ -287,7 +287,7 @@ const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
  *  once. A present participle reads as a live status, and the actual status sits two lines
  *  below it — so a row said `speaking` and then `idle`, which is a contradiction if you
  *  read the pill as it is written. And the task line beside it already names the rung, and
- *  names it better: `speaking · the voice`, `thinking · the shared brain`. The pill was
+ *  names it better: `speaking · what reaches the person`, `thinking · the shared brain`. The pill was
  *  saying the same thing twice, in the worse of the two words.
  *
  *  Not translated, in either direction. A rung's name is this system's own vocabulary
@@ -460,8 +460,8 @@ export default function Workers() {
 
 /** Which live column a group belongs in.
  *
- *  By what the rung is *for*, not by how many there are. The outward ladder — the
- *  voice, the thinking behind it, the outward brain — is what someone opens this
+ *  By what the rung is *for*, not by how many there are. The outward ladder — Reaction,
+ *  the thinking behind it, the outward brain — is what someone opens this
  *  page to watch, so it takes the first column. Reflection is the housekeeping rung
  *  and takes the second, so its workers (an organizer, a view-builder) can never push the
  *  outward ladder down the page.

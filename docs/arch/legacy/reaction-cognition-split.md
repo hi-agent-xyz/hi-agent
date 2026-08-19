@@ -74,7 +74,7 @@ The bridge between the two sessions is **two host-side tokio tasks + two `mpsc` 
 - **cognition→reaction** (`surface`): cognition's `surface` tool call arrives at `/mcp`; the
   handler does `reaction_tx.send(FromCognition{…})`, landing as an ordinary input on the
   reaction's *next* turn (this generalizes today's `LoopInput::Worker` path). The reaction
-  arbitrates whether/when/how to voice it.
+  arbitrates whether/when/how to say it.
 
 **The driver owns the clock.** "Cognition brings something up on its own" = the *cognition
 driver task* has a `select!` arm on a timer or a worker report; when it fires, the driver
@@ -104,20 +104,20 @@ reaction's cheap memory prep is the only synchronous part; cognition's warm is b
   memory" symptom. **UNBUILT** — build on the Mac.
 - **Stage 2 — must-relay + smart model (DONE, unbuilt).** Cognition's report is tagged
   `is_cognition` end-to-end (`WorkerReport`) and `render_report` frames a cognition result
-  as a *must-relay instruction to the voice* ("this is the answer you owe them — say what
+  as a *must-relay instruction to Reaction* ("this is the answer you owe them — say what
   you found now"), where a plain worker's report stays an observation on the reaction's own
   timing. `reaction_model()` now returns the **main smart model** (was pinned to the small
   slot — a retired workaround for the old adapter-hang era).
 - **Stage 3a — `surface`, cognition-initiated (DONE, unbuilt).** Cognition (and any worker)
-  gets a `surface` MCP verb: hand something to the voice *mid-work*, without waiting to
+  gets a `surface` MCP verb: hand something to Reaction *mid-work*, without waiting to
   finish — an interim finding, or something raised on its own initiative. It rides the same
   path as `ask` (`SceneControl::WorkerSurface` → `apply_control` → a `WorkerReportKind::
-  Surfaced` report), but crucially it **drives a turn** (returns `Some(LoopInput)`), so the
-  voice gets to say it *even with no human input*. That is the mechanism for
+  Surfaced` report), but crucially it **drives a turn** (returns `Some(LoopInput)`), so
+  Reaction gets to say it *even with no human input*. That is the mechanism for
   cognition-initiated speech — "bring something up like a person," gated by the reaction's
   own read of the room. A cognition `surface` is must-relay; a task worker's is an
   observation. Single mouth preserved: cognition still never `hi_say`s — it proposes, the
-  reaction voices.
+  reaction speaks.
 - **Stage 3b — full switchboard (DEFERRED).** The remaining, larger pieces: promoting
   cognition from a voiceless `Worker` into a **first-class session with its own driver task and
   independent timer wake-source** (so it can surface from *idle*, not only while a turn or a
@@ -182,7 +182,7 @@ Three sessions, three tempos:
 
 | Session | Tempo | What it is |
 |---|---|---|
-| **reaction** *(new)* | fast, **non-agentic** | The single voice + live conversational surface. **One direct Anthropic Messages call** per committed turn: `system` = `speaking.md`, **no tools**, small/fast model; it speaks via the returned text. Owns turn-taking. Presence gates emission only. |
+| **reaction** *(new)* | fast, **non-agentic** | The single mouth + live conversational surface. **One direct Anthropic Messages call** per committed turn: `system` = `speaking.md`, **no tools**, small/fast model; it speaks via the returned text. Owns turn-taking. Presence gates emission only. |
 | **cognition** | agentic | The *previous* reaction session, renamed. Keeps tools + delegation. Always thinks / coordinates / delegates and **prepares responses as intents**. Presence-blind. Slow — but now **off the conversational critical path**. |
 | **worker sessions** | agentic | Unchanged. Task executors cognition delegates to. |
 
@@ -234,7 +234,7 @@ tunable.)
    §7 — "a worker produces an intent; the reaction articulates it"; cognition now feeds
    intents the same way).
 4. reaction **articulates** cognition's / workers' intents as they land, as the single
-   voice — reconciling with what it already said (don't contradict the quick ack).
+   mouth — reconciling with what it already said (don't contradict the quick ack).
 
 Presence appears **only** as the emission gate ("hold the `hi_say` if the room's empty");
 cognition never considers it. Turn-taking / floor logic (is it my turn?) stays — that's
@@ -256,8 +256,8 @@ conversation, not presence.
   byte-for-byte unchanged.
 - **Cognition wiring** — `WorkerRegistry::cognize` runs a **persistent cognition worker**
   (spawn once, follow-up each turn) seeded with the turn's human request; it thinks/works
-  off the floor and reports back as an ordinary `LoopInput::Worker` the reaction voices. So
-  the reaction is the single fast voice; cognition (agentic) does the work in parallel. No
+  off the floor and reports back as an ordinary `LoopInput::Worker` the reaction speaks. So
+  the reaction is the single fast rung; cognition (agentic) does the work in parallel. No
   MCP/role surgery — a worker already holds no `hi_say` (it reports, never speaks), and the
   human-only task render keeps cognition from re-ingesting its own report.
 

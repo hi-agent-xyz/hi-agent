@@ -343,7 +343,7 @@ fn render_projection(
 
     // **An empty ledger says so out loud**, and that is not decoration. The window is sent
     // on change now, and a block that renders to nothing is skipped rather than sent — so a
-    // silent empty meant the last duty could close and the voice would go on believing it
+    // silent empty meant the last duty could close and Reaction would go on believing it
     // was owed. Nothing else tells it: a task is closed by a file edit, not by a message.
     // Sixty characters, once, against a silently broken promise.
     if active.is_empty() {

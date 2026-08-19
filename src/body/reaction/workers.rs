@@ -1,6 +1,6 @@
 //! Working sessions — the reaction's hands.
 //!
-//! The reaction keeps a single voice and must never block the floor on slow
+//! There is one Reaction and one mouth, so it must never block the floor on slow
 //! work, so heavy or long-running tasks are delegated here. A worker is a
 //! *voiceless capability within the conversation*: it has the full substrate — the
 //! conversation's memory, tools, code execution, and its own sub-agents — but holds no
@@ -95,7 +95,7 @@ pub(super) struct WorkerReport {
     pub(super) task: String,
     pub(super) kind: WorkerReportKind,
     /// The session this report is *for*. `None` means the reaction loop — the report
-    /// becomes a signal the voice may speak to. `Some` means it travels up to the
+    /// becomes a signal Reaction may speak to. `Some` means it travels up to the
     /// session that asked for the work, and the conversation never sees it.
     pub(super) owner: Option<SessionId>,
 }
@@ -121,7 +121,7 @@ pub(super) enum WorkerReportKind {
 /// One live working session — **two handles, and nothing else**.
 ///
 /// It used to also carry `task`, `transcript` and `busy`, each a second copy of
-/// something the switchboard already holds. Their last reader was the voice's status
+/// something the switchboard already holds. Their last reader was Reaction's status
 /// line, which read them for Deliberation; that line now asks `registry::global()` about
 /// Cognition, and the copies went with it. What is left is the two things the switchboard
 /// genuinely cannot do — cancel a running turn, and abort a task — because both are
@@ -165,7 +165,7 @@ struct Worker {
 ///   `Worker::drive`. A session that has finished is the thing that knows it finished;
 ///   self-removal at the end of `drive_worker` replaces both, and works for a worker
 ///   with no reaction loop to reap it.
-/// - **Status** — no longer a reader of this map at all. What the voice needs is whether
+/// - **Status** — no longer a reader of this map at all. What Reaction needs is whether
 ///   *Cognition* is working on the conversation's behalf, and that is the switchboard's
 ///   to answer ([`registry::status`] plus the tail `record_output` keeps).
 ///
@@ -487,7 +487,7 @@ impl WorkerRegistry {
 /// builds a tail nobody needs when the question is only *is anything in flight*.
 ///
 /// **Cognition, and nothing else.** A worker belongs to whoever created it, and this
-/// loop creates none — so the roster of other people's work is not the voice's to
+/// loop creates none — so the roster of other people's work is not Reaction's to
 /// describe, and their substance comes back down the report path, which drives a turn of
 /// its own.
 pub(super) fn thinking() -> bool {
@@ -497,20 +497,20 @@ pub(super) fn thinking() -> bool {
 }
 
 /// One line for Reaction's turn: whether the agent is still working on what was just
-/// asked, so the voice can say "still on it" with a straight face instead of guessing.
+/// asked, so Reaction can say "still on it" with a straight face instead of guessing.
 /// Empty string when there is nothing to say.
 ///
 /// **It reads the switchboard, not a local map.** The block this replaced listed every
 /// live session under `## Working sessions (delegated)`, which was wrong twice over:
 /// Reaction owns none of them, and the idle rows advertised a `delegate` tool retired
-/// with the old channel. What survives is the one fact the voice needs mid-conversation,
+/// with the old channel. What survives is the one fact Reaction needs mid-conversation,
 /// and since the hand-down now goes to Cognition, Cognition is the session it is about.
 pub(super) fn render_status() -> String {
     let Some(status) = registry::global().session_of_role(Role::Cognition) else {
         return String::new();
     };
     if !status.busy {
-        // Idle means it finished, and finishing sends the voice a message it has already
+        // Idle means it finished, and finishing sends Reaction a message it has already
         // seen. A second mention here would read as work still in flight.
         return String::new();
     }
@@ -543,12 +543,12 @@ impl Drop for WorkerRegistry {
 /// Render one report for the `## New signals` section the reaction sees.
 ///
 /// **Every report reaching here is now a task worker's**, and it stays an observation the
-/// reaction voices on its own social timing — it may already have spoken to it, or choose
+/// reaction speaks on its own social timing — it may already have spoken to it, or choose
 /// to show a view instead of narrating.
 ///
 /// This function used to have a second, must-relay shape for Deliberation's reports,
-/// because the conversation's own thinking came back on this path and a voice that speaks
-/// only what it chooses to was entitled to drop it. The reading rung is Cognition now and
+/// because the conversation's own thinking came back on this path and Reaction,
+/// which speaks only what it chooses to, was entitled to drop it. The reading rung is Cognition now and
 /// it answers by mail, so that framing moved to where the answer actually travels
 /// ([`super::LoopInput::Mail::owed`]). The failure it guards against is unchanged; only
 /// the path is.
@@ -580,7 +580,7 @@ pub(super) fn render_report(report: &WorkerReport) -> String {
 }
 
 /// The same report with the prompt framing stripped: who reported, what happened,
-/// and what came back. [`render_report`] speaks *to* the voice ("this is the answer
+/// and what came back. [`render_report`] speaks *to* Reaction ("this is the answer
 /// you owe them, relay it now") because it is building a turn; the durable log wants
 /// the signal itself, so a later reader sees what the worker actually returned
 /// rather than an instruction addressed to a mind that has since restarted.
@@ -817,7 +817,7 @@ async fn run_worker(
                 // the whole life of every session.
                 //
                 // This is also the *only* live-progress mirror now: the observatory's
-                // The voice-specific worker tail is gone, because a worker's
+                // Reaction-specific worker tail is gone, because a worker's
                 // progress belongs to its owner. Whoever asked for the work can read it
                 // here, keyed by the session id they were handed.
                 registry::global().record_output(&id, &text);

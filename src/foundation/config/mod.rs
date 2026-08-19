@@ -39,12 +39,12 @@ pub const KEY_EFFORT: &str = "effort";
 /// Idle interval between Cognition's glance-ups — how often the brain looks up from what
 /// it is doing and reads down the ledger. Duration grammar (`90s`/`30m`/`1h`); `0`/`off`
 /// silences the recurring arm but never the one wake shortly after boot, which is restart
-/// recovery rather than a cadence; unset / unparseable → the built-in default. The voice
+/// recovery rather than a cadence; unset / unparseable → the built-in default. Reaction
 /// has no cadence of its own — it is woken by input, mail, and its own check-in.
 pub const KEY_PULSE: &str = "pulse";
-/// How long the voice may leave an open-ended silence standing while its own thinking
+/// How long Reaction may leave an open-ended silence standing while its own thinking
 /// is still running, before the host wakes it to say where things stand. Duration
-/// grammar; `0`/`off` disables the floor — leaving only the check-ins the voice arms
+/// grammar; `0`/`off` disables the floor — leaving only the check-ins Reaction arms
 /// itself through `say`'s `back_in`, never no check-ins at all; unset → the built-in
 /// default (5m). The gap doubles on each consecutive host-armed check-in, up to `pulse`.
 pub const KEY_CHECK_IN: &str = "check_in";
@@ -328,7 +328,7 @@ impl AgentConfig {
         vec![(ENV_LLM_KEY.to_string(), self.upstream_key.clone())]
     }
 
-    /// The model the **reaction** (the conversational voice) should run: the **main,
+    /// The model the **reaction** (what reaches the person) should run: the **main,
     /// smart** model, same as cognition. The reaction's core skill is judging the edge
     /// of what it already holds — "can I answer from my prepared context, or must I
     /// hand this to cognition?" — which is a smart-model job, not a small-model one.

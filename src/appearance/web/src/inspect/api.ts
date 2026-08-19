@@ -1,6 +1,6 @@
 import { url } from "../lib/base";
 // Inspect data layer — typed views over the endpoints the Rust backend exposes:
-//   GET  /api/sessions                    → live snapshot of the voice (JSON)
+//   GET  /api/sessions                    → live snapshot of Reaction (JSON)
 //   GET  /api/sessions/events             → SSE of every lifecycle event ("session")
 //   GET  /api/channels                     → SSE of channel activity ("channel")
 //
@@ -27,7 +27,7 @@ export interface TurnView {
   reply_chars: number | null;
 }
 
-// Voice-shaped state only. Worker lifecycle is NOT here: a working session belongs to
+// Reaction-shaped state only. Worker lifecycle is NOT here: a working session belongs to
 // whoever created it, so it is not the state of the mouth. Read workers off the event
 // stream instead (`worker_spawned` / `worker_finished`), which is keyed by session.
 export interface AgentView {
@@ -50,7 +50,7 @@ export interface SessionEvent {
   [k: string]: unknown;
 }
 
-/** Fetch the live snapshot of the voice. Throws on network/HTTP error. */
+/** Fetch the live snapshot of Reaction. Throws on network/HTTP error. */
 export async function fetchSessions(signal?: AbortSignal): Promise<AgentView> {
   const res = await fetch(url("/api/sessions"), { signal });
   if (!res.ok) throw new Error(`GET /api/sessions → ${res.status}`);

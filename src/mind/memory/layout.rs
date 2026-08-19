@@ -60,7 +60,7 @@ pub fn raw_root(data_dir: &Path) -> PathBuf {
 ///
 /// **An absent file is ordinary**, not an error, and losing one costs a reflection pass
 /// rather than knowledge: everything in a seed is a digest of things that are themselves
-/// durable. Cognition writes the voice's when it has something worth carrying and leaves it
+/// durable. Cognition writes Reaction's when it has something worth carrying and leaves it
 /// alone otherwise, and has written nothing at all before the first exchange. Every reader
 /// degrades to the log tail.
 pub fn seed_dir(data_dir: &Path) -> PathBuf {
@@ -68,7 +68,7 @@ pub fn seed_dir(data_dir: &Path) -> PathBuf {
 }
 
 /// `prompts/seed/reaction.md` — what the conversation carries forward, written by
-/// Cognition (the voice has no file access to write its own) and handed to the thread it
+/// Cognition (Reaction has no file access to write its own) and handed to the thread it
 /// opens.
 pub fn reaction_seed_path(data_dir: &Path) -> PathBuf {
     seed_dir(data_dir).join("reaction.md")

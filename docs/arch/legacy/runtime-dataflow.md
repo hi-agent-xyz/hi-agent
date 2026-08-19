@@ -136,7 +136,7 @@ The carrier choice follows a line that is both technically real (notification vs
 - **Emission — fire-and-forget output → carriers #1/#2 (natural language + markers/typed blocks).** Speaking and showing. The brain merely *expresses*; the reaction renders to the right channel. No return value. (A person talks and gestures without invoking an API.)
 - **Action / perception — needs a result or has structured arguments → carrier #3 (tool calls).** "Look at the camera now," "what is on screen," "set a timer." Request → response. (A person deliberately turns to look, picks up the cup.)
 
-Keeping the brain's *voice* in natural language while routing *answerable* needs through tools is what preserves the "think, then organize words" separation: cognition expresses intent; the reaction articulates it.
+Keeping the brain's *wording* in natural language while routing *answerable* needs through tools is what preserves the "think, then organize words" separation: cognition expresses intent; the reaction articulates it.
 
 ### Channel × carrier (default convention)
 
@@ -217,7 +217,7 @@ Delegation is not "call a worker, get a summary." During a run:
 - the **worker** can post progress, a question, or a need-for-input ("need vendor account credentials");
 - the **reaction** can inject information, guidance, or "proceed with a placeholder."
 
-Asks are **non-blocking intents**, not blocking calls. The worker proceeds with a placeholder and reconciles later — **fix-forward on missing input**, the same spirit as fix-forward/no-cancel. The reaction decides *when, whether, and how* to voice an ask on its own social timing:
+Asks are **non-blocking intents**, not blocking calls. The worker proceeds with a placeholder and reconciles later — **fix-forward on missing input**, the same spirit as fix-forward/no-cancel. The reaction decides *when, whether, and how* to say an ask on its own social timing:
 
 - the person said "don't bother me for an hour" → hold the ask, keep building with placeholders;
 - the person said nothing and no answer arrives in a few minutes → the reaction's **social timeout** fires and it tells the worker to proceed with a placeholder.

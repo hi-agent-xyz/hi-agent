@@ -62,7 +62,7 @@ pub const CARRIED_FORWARD_CHARS: usize = 6_000;
 /// sent 108 times, 5,848 characters apiece per turn, to deliver 14 changes. The thread
 /// ended up 80% re-sent state against 20% everything the agent had ever done or said, and
 /// when the window filled, codex's compaction kept ten copies of the standing preamble and
-/// dropped every tool call in the history — including every example of the voice speaking.
+/// dropped every tool call in the history — including every example of Reaction speaking.
 /// Nothing here was unnecessary *once*. All of it was unnecessary *again*.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cadence {
@@ -76,7 +76,7 @@ pub enum Cadence {
     ColdOnly,
 }
 
-/// One titled block of the voice's window.
+/// One titled block of Reaction's window.
 pub struct Block {
     /// Stable identity across turns — what "has this changed?" is asked about. Never
     /// shown to the model.
@@ -141,7 +141,7 @@ pub async fn window(
         }
     };
     let unprompted = speaking_up_unprompted(data_dir).await;
-    // Who this rung may reach, by id — see [`agent_window`]. For the voice that is
+    // Who this rung may reach, by id — see [`agent_window`]. For Reaction that is
     // the brain and nothing else: work goes up.
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
@@ -163,12 +163,12 @@ pub async fn window(
     ]
 }
 
-/// The window for an agent that is not the voice — what it must know without going to
+/// The window for an agent that is not Reaction — what it must know without going to
 /// look.
 ///
-/// The voice-shaped [`window`] cannot serve one: four of its five sections are the
-/// conversation's (its brief, its recent tail, the proactivity read that only a
-/// voice can act on). What survives without a conversation is what belongs to the whole
+/// The Reaction-shaped [`window`] cannot serve one: four of its five sections are the
+/// conversation's (its brief, its recent tail, the proactivity read that only
+/// Reaction can act on). What survives without a conversation is what belongs to the whole
 /// agent — the open-task ledger, and whatever this agent has written down for itself.
 ///
 /// **Projected, not retrieved**, which is the whole reason this exists rather than a
@@ -196,7 +196,7 @@ pub async fn agent_window(
     // Who it can reach, by id. This is projection for the same reason the ledger is:
     // an address that has to be guessed is an address that can be wrong in a way the
     // guesser cannot detect. Durable work is recovered from the ledger, and this is
-    // where a live session to voice it through becomes visible — or visibly does not.
+    // where a live session to say it through becomes visible — or visibly does not.
     let reach = crate::foundation::registry::render_reachable(
         &crate::foundation::registry::global().reachable(id),
     );
@@ -212,13 +212,13 @@ const SHOWN_WINDOW_MIN: i64 = 90;
 /// What has actually been on the person's screen — the one fact about its own work that
 /// Cognition cannot find out any other way.
 ///
-/// **It has no eyes and no confirmation.** It sends the voice a message; its own prompt
+/// **It has no eyes and no confirmation.** It sends Reaction a message; its own prompt
 /// says everything it sends is a proposal, never a delivery; nothing comes back. So when it
 /// decides a piece of work is finished it is deciding on a belief it has no way to check,
 /// and the failure that follows is not carelessness — it is a rung reasoning correctly from
 /// the only information it has. On 2026-08-18 a finished trip view was closed as delivered
-/// forty-six seconds after the worker reported it and fifty-six seconds *before* the voice
-/// was told the view existed; the voice then dropped it from a three-item message, and
+/// forty-six seconds after the worker reported it and fifty-six seconds *before* Reaction
+/// was told the view existed; Reaction then dropped it from a three-item message, and
 /// nothing in the system disagreed with anything, because nothing in the system knew.
 ///
 /// **Information, not a rail.** The alternative was a `deliverable:` field on the task plus
@@ -286,7 +286,7 @@ _What they have actually been shown in the last {SHOWN_WINDOW_MIN} minutes, olde
 ///
 /// The line is `showed "<id>" [<ref>] (<module>)` — see `render_view_line`. The ref is what
 /// this wants, because the ref is what a piece of work is known by everywhere else; the id
-/// is whatever the voice called it in that moment. A dismissal is not a raise, and an
+/// is whatever Reaction called it in that moment. A dismissal is not a raise, and an
 /// inline view with no ref is named by its id, which is all it has.
 fn raised_name(body: &str) -> Option<String> {
     let rest = body
@@ -355,7 +355,7 @@ fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
 /// than fetched.
 ///
 /// It is consulted **before breaking a silence**, and the only rung that can break one
-/// is the voice — which cannot open a file. So a path to it would be a path nobody can
+/// is Reaction — which cannot open a file. So a path to it would be a path nobody can
 /// follow: this is the projection test (`docs/arch/data.md#what-earns-a-place`) coming
 /// out the other way from the tasks ledger. Written whole by the reflection pass
 /// ([`crate::mind::memory::proactivity`]); absent until the first reflection, which is
@@ -412,7 +412,7 @@ const SYSTEMS_KEY: &str = "systems";
 /// What the rung actually doing the work must know without going to look: the standing
 /// record for the systems this job touches, then the task's own record.
 ///
-/// **Systems first, task second, and that is the same decision the voice's window makes
+/// **Systems first, task second, and that is the same decision Reaction's window makes
 /// with conduct.** What stands is read as framing; what is in flight is read as the
 /// situation. A procedure that arrives after two pages of ledger is a procedure that gets
 /// skimmed — and skimming it is how a canonical script ends up reinvented.
@@ -880,7 +880,7 @@ mod window_tests {
         assert!(text.contains("needs sudo"), "{text}");
     }
 
-    /// Nothing of a *conversation* may leak into a standing agent's window. The voice-shaped
+    /// Nothing of a *conversation* may leak into a standing agent's window. The Reaction-shaped
     /// sections are four fifths of `window`, and each one would be answering a question
     /// about a room Cognition is not in.
     #[tokio::test]
@@ -901,7 +901,7 @@ mod window_tests {
     /// The ledger is the one exception, and it earns it: **empty is a fact about what is
     /// owed**, not an absent section. Since the window is sent on change, a ledger that
     /// renders to nothing would be skipped rather than sent, and the last duty could close
-    /// with the voice still believing it was owed — nothing else would tell it, because a
+    /// with Reaction still believing it was owed — nothing else would tell it, because a
     /// task is closed by a file edit and not by a message.
     #[tokio::test]
     async fn an_empty_standing_window_carries_only_that_nothing_is_owed() {
