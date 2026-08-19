@@ -58,6 +58,19 @@ const WORKER_DRIVE_ORGANIZER_BASE: &str = include_str!("workers/drive-organizer.
 const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
 const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
 
+/// Reference pages under `craft/`, installed beside the prompts and read from disk only
+/// when a job touches them.
+///
+/// **These are not [`Role`]s.** A role's prompt is what a session *is*, loaded whole
+/// before it does anything; a craft page is something it goes and opens, the way it
+/// opens a view already in the workshop. Keeping them out of `Role::ALL` is what lets
+/// the set grow without every session paying for the ones it never reads —
+/// `view-builder.md` names the page and the session decides.
+const CRAFT_PAGES: &[(&str, &str)] = &[(
+    "data-visualization.md",
+    include_str!("craft/data-visualization.md"),
+)];
+
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
 /// (`docs/arch/foundation.md#the-agent-session-registry`), and the payload of
 /// [`Role::Worker`].
@@ -313,14 +326,18 @@ impl Role {
 /// below hold.
 pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("prompts");
-    // The nested one first: creating `prompts/workers/` creates `prompts/` with it.
+    // The nested ones first: creating `prompts/workers/` creates `prompts/` with it.
     std::fs::create_dir_all(dir.join("workers"))?;
+    std::fs::create_dir_all(dir.join("craft"))?;
     for role in Role::ALL {
         let name = role.prompt_name();
         std::fs::write(
             dir.join(format!("{name}.md")),
             role.base(),
         )?;
+    }
+    for (name, body) in CRAFT_PAGES {
+        std::fs::write(dir.join("craft").join(name), body)?;
     }
     for gone in RETIRED_PROMPTS {
         let at = dir.join(gone);
@@ -336,7 +353,8 @@ pub fn install_prompts(data_dir: &Path) -> std::io::Result<()> {
     tracing::info!(
         dir = %dir.display(),
         roles = Role::ALL.len(),
-        "installed bundled prompts (one per role, workers under workers/)"
+        craft = CRAFT_PAGES.len(),
+        "installed bundled prompts (one per role, workers under workers/, craft pages under craft/)"
     );
     Ok(())
 }
@@ -705,6 +723,14 @@ mod soul_tests {
         // The live ones are untouched by the sweep.
         assert!(p.join("reaction.md").exists());
         assert!(p.join("workers/view-builder.md").exists());
+        // The craft pages land too, and `view-builder.md` sends the session to this
+        // exact path — a page named in a prompt but absent from disk is a dead end the
+        // session can only discover the hard way.
+        assert!(p.join("craft/data-visualization.md").exists());
+        assert!(
+            WORKER_VIEW_BUILDER_BASE.contains("prompts/craft/data-visualization.md"),
+            "the view builder stopped naming the page install puts on disk"
+        );
     }
 
     /// The prompt names the tools; the runtime spells them `mcp__<server>__<tool>`, and the

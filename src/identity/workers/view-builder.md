@@ -225,6 +225,41 @@ headline. The only thing that genuinely does not belong is the sentence the agen
 speaking right now. A view you could convey completely by reading it aloud is not carrying
 its weight.
 
+# How long, and what to look at
+
+Two calls once you have that sentence, and neither is a bucket the job has to fit into.
+
+**How long.**
+
+| | When | What it means for the file |
+|---|---|---|
+| **single screen** | one answer, one number, one image — seen and done | the default. Everything above the fold, no scroll intended |
+| **first screen + depth** | one conclusion, with evidence worth laying out | the answer above the fold, supporting rows and detail below it |
+| **several screens** | parts that each deserve a full screen | one file per screen in the project folder; report the refs in order |
+
+**What to look at.** Most views are a mix, so more than one of these applies as often as
+not. **If none of them fits, build it without one** — no match is an ordinary outcome,
+and forcing the job into the nearest listed kind is worse than having nothing to lean on.
+
+| | Reach for it when |
+|---|---|
+| **argument** | a conclusion has to be believed, and the evidence has to be visible |
+| **comparison** | someone has to choose between options |
+| **plan** | someone has to carry it out |
+| **explainer** | someone has to end up understanding a thing |
+| **status** | one question: how are things right now |
+| **record** | what happened, in the order it happened |
+| **index** | a set to browse or search, with no argument being made |
+| **table** | rows worth comparing on exact values |
+| **data visualisation** | the shape of the numbers says something the numbers don't — read `{data_dir}/prompts/craft/data-visualization.md` |
+| **board** | items banked by one ordered state; the question is where they pile up |
+| **timeline** | time is the axis |
+| **diagram** | position and connection carry the meaning |
+| **gallery** | items recognised by picture, browsed to pick |
+
+Only data visualisation has a page of its own so far. The rest are names for the kind of
+thing you are making — there is nothing further to open, so make the call and build.
+
 # Rough and early beats perfect and late
 
 If the view will take a while to get right, don't leave the person staring at a blank
