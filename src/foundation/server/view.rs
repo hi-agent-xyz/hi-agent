@@ -69,7 +69,29 @@ pub struct ListedView {
     /// The person put this one in the row. Always false for a system view, which is
     /// in the row by being system.
     pub bookmarked: bool,
+    /// A picture of this surface as it currently stands, served from
+    /// `/views/_shots/ref/<ref>.png`. Absent until one has been taken — see
+    /// [`super::view_shots`] for when that is. It is what a card the person opens
+    /// carries into the band's row, so a view they went to has a face even though the
+    /// agent never raised it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shot_url: Option<String>,
 }
+
+/// How many first pictures one inventory read may start rendering. The band is the only
+/// caller and a person opens it a few times an hour, so this warms the shipped dozen
+/// over a handful of opens instead of putting twelve Chromiums on the machine at the
+/// moment someone reaches for their tasks. Missing pictures only: keeping one current is
+/// the job of opening the view, which is also the only evidence anyone cares what is
+/// on it.
+const WARM_PER_READ: usize = 3;
+
+/// Refs a warm-up is already working on. The band re-reads the inventory every few
+/// seconds while it is open, and a picture takes longer than that to render, so without
+/// this every read would queue the same three views again behind the ones already
+/// rendering them.
+static WARMING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// `app_settings` key holding the person's bookmarked refs, as a JSON array.
 ///
@@ -125,9 +147,59 @@ pub async fn list_views(
     for view in &mut found {
         view.system = view.view_ref.starts_with(SYSTEM_PREFIX);
         view.bookmarked = !view.system && saved.iter().any(|r| r == &view.view_ref);
+        view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref);
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
+
+    // The row's own views, and only the ones with no picture at all. Reading the
+    // inventory *is* the signal that the band is open, which is the one moment the
+    // pictures are about to be looked at.
+    let cold: Vec<String> = {
+        let mut warming = WARMING.lock().unwrap_or_else(|held| held.into_inner());
+        found
+            .iter()
+            .filter(|v| (v.system || v.bookmarked) && v.shot_url.is_none())
+            .map(|v| v.view_ref.clone())
+            .filter(|view_ref| warming.insert(view_ref.clone()))
+            .take(WARM_PER_READ)
+            .collect()
+    };
+    if !cold.is_empty() {
+        tokio::spawn(warm_shots(state.clone(), cold));
+    }
     axum::Json(found)
+}
+
+/// Take a first picture of each of `refs`, in the background.
+///
+/// Compiling is what makes this more than a render: a surface's picture has to be of
+/// the view as it is now, so it goes through the same resolve-and-compile the person's
+/// own open does. Everything here is best-effort — a view that no longer resolves or
+/// compiles simply keeps the mark it already had, and the band never learns there was
+/// an attempt.
+async fn warm_shots(state: Arc<AppState>, refs: Vec<String>) {
+    for view_ref in refs {
+        if warm_one(&state, &view_ref).await {
+            // Same bump a raise's capture makes: the picture has to reach the windows
+            // whose long-poll was answered before it existed.
+            state.views.note_shot().await;
+        }
+        WARMING.lock().unwrap_or_else(|held| held.into_inner()).remove(&view_ref);
+    }
+}
+
+/// One warm-up: resolve, compile, render. `true` if a picture landed.
+async fn warm_one(state: &Arc<AppState>, view_ref: &str) -> bool {
+    let Some(render) = crate::mind::views::render_context() else {
+        return false;
+    };
+    let Ok((source, _)) = crate::mind::views::resolve_ref(&state.data_dir, view_ref).await else {
+        return false;
+    };
+    let Ok(module_url) = render.compiler.compile(&source).await else {
+        return false;
+    };
+    super::view_shots::take_ref(&state.data_dir, view_ref, &module_url).await
 }
 
 #[derive(serde::Deserialize)]
@@ -232,7 +304,13 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
             let label = crate::foundation::server::view_bus::humanize_ref(&view_ref);
             // `system`/`bookmarked` are decided by the caller, which is the only place
             // that has read the store.
-            out.push(ListedView { view_ref, label, system: false, bookmarked: false });
+            out.push(ListedView {
+                view_ref,
+                label,
+                system: false,
+                bookmarked: false,
+                shot_url: None,
+            });
         }
     }
 }
@@ -265,6 +343,11 @@ pub struct OpenedView {
 /// It resolves the ref every time rather than handing back a remembered module, which is
 /// what makes opening `factory/tasks` show today's board. An inline view has no ref and
 /// cannot be opened this way at all; the client mounts its recorded artifact directly.
+///
+/// It also re-takes the surface's picture, which is how a view the agent never raised
+/// gets a face in the band at all, and how the shipped surfaces stop showing the board
+/// they had the first time anyone looked. Bounded by the same staleness rule every
+/// other surface capture uses, so opening the same view five times is one render.
 pub async fn open_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
@@ -287,12 +370,27 @@ pub async fn open_view(
         }
     };
     match render.compiler.compile(&source).await {
-        Ok(module_url) => axum::Json(OpenedView {
-            id: view_ref,
-            module_url,
-            traits,
-        })
-        .into_response(),
+        Ok(module_url) => {
+            // Going somewhere is the moment its picture is worth re-taking: the person
+            // is looking at the board right now, so whatever the browser sees a second
+            // later is what they saw. Off the response path — this returns before the
+            // capture starts, and the band picks the picture up on its next read.
+            let bus = state.views.clone();
+            super::view_shots::capture_ref(
+                state.data_dir.clone(),
+                view_ref.clone(),
+                module_url.clone(),
+                move || {
+                    tokio::spawn(async move { bus.note_shot().await });
+                },
+            );
+            axum::Json(OpenedView {
+                id: view_ref,
+                module_url,
+                traits,
+            })
+            .into_response()
+        }
         Err(error) => (
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
             format!("view does not compile: {error}"),

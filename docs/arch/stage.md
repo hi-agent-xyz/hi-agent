@@ -18,7 +18,13 @@ screenshots*. Both are argued in *Going back to a view the agent has moved past*
 *The tile is a picture of the raise*. **Amended the same day — the keyboard follows the
 planes:** the plane the focus is in owns the keystroke, so a view can no longer take a key
 typed into the host's own line or controls; argued in *The keyboard follows the planes*.
-**Amended August 19, 2026 — the conversation stands in one box:** the panel keeps the same
+**Amended August 19, 2026 — the row reads newest first, and a surface's picture is of
+today:** the band's upper row is the *trail* — the agent's raises and the person's own
+opens, one card per destination, newest at the head instead of the tail; and a named
+view's picture is filed under its ref and re-taken when someone opens it, instead of
+being written once against the artifact it first compiled to. Argued in *Going back to a
+view the agent has moved past* and *The tile is a picture*. **Amended August 19, 2026 —
+the conversation stands in one box:** the panel keeps the same
 corner and the same measure whether or not the agent has a view up, so the `stage`
 presentation is gone and with it the jump the person saw whenever something went up;
 argued in *One box, whatever else is on the stage*. **Amended the same day — a move is
@@ -339,6 +345,32 @@ a **history**: the raises, oldest first, carried in the same `GET /api/out/view`
 persisted in the same snapshots. The newest entry is what is on the stage, which is what
 makes *the person is at the end* mean *the person is live*.
 
+**The row reads newest first, and it is the window's trail, not the server's list** —
+amended August 19, 2026. Two things were wrong with showing the list as it is stored.
+
+The first is the order. The row overflows within an afternoon and a strip only ever
+scrolls from its start, so oldest-first put the live view — the single entry certain to
+be wanted, and the one the cursor is on — reliably off the right-hand edge, and made
+"a re-raise moves the view to the newest end" mean "a re-raise moves it out of sight".
+The list is still stored oldest-first, because appending is the only thing that happens
+to it; the row renders it head-first.
+
+The second is what counts as a place the person has been. Opening a bookmark is arriving
+somewhere, but it left no card, so a surface the person went to had no timestamp, no
+picture, and no position — while the card for the *last raise* of that same view sat in
+the row wearing a time from three days ago and lighting up as *here*. So the row is the
+**trail**: the server's raises and this window's own opens, one card per destination,
+whichever fact about it is later. Going back to a card is a cursor move and does not
+re-time it — the row must not reshuffle under a finger that is browsing it.
+
+**The trail's own half stays in the window.** A visit is not appended to the server's
+list — a separate question from whether the *move* is reported, which it is (*Where they
+went is reported; the cursor still is not*, below): the newest entry in that list is what
+is on the stage, so appending to it would tell the desktop the agent had raised something
+because a phone tapped a bookmark. The server's list is the record of raises; the window merges its own
+visits into the row it draws and forgets them when it closes, exactly as it forgets where
+it was parked.
+
 **One list, and appending is the only thing that happens to it.** A browser's back stack
 destroys its forward entries when you navigate from a back position, and can afford to
 because you are its only navigator. Here the agent raises views too, so losing the entry
@@ -434,7 +466,7 @@ artifact it compiled to, in a cache that prunes; a bookmark to one would be a bo
 a hash that stops resolving. This is the same named/inline split that decides what
 re-opening means, applied to the same question one step earlier.
 
-## The tile is a picture of the raise
+## The tile is a picture
 
 Amended August 18, 2026, reversing *marks, not screenshots*. The history row's box was a
 coloured initial derived from the view's identity, on the argument that a view is a live
@@ -469,6 +501,43 @@ The window reports its **skin** on the stage lane beside its frame, for the same
 it reports the frame: the page is the only thing that knows, and a light picture of a
 view the person saw dark is a wrong record. `hi_review_view` still renders both skins —
 a review exists to catch the colour that resolves in one and not the other.
+
+**A named surface's picture is of today, not of its first morning** — amended August 19,
+2026. Content-addressing is right about an artifact and wrong about a surface, and the
+row holds both. An inline view *is* the artifact it compiled to: its picture is a record,
+written once. `factory/tasks` is not — the card leads to whatever the board says when it
+is opened, because opening re-resolves the ref, so a tile of the tasks that were open the
+first time anyone looked is a wrong picture of the place the card goes. So a named view's
+picture is filed under its **ref** (`_shots/ref/<ref>.png`), and re-taken when someone
+opens it and the last one has gone stale — by the clock, or because the view's source has
+been written since, which is the one staleness that cannot wait for a clock: the agent
+rewrites views, and a picture of the build before the rewrite is wrong however recently
+it was taken. The URL carries the file's mtime, because the
+`_shots/` route hands out a year-long immutable cache that is correct for a hash and
+would otherwise pin the first picture in the browser forever.
+
+Two paths take it, and both are the same act as the raise capture — a second camera on
+what someone is looking at right now. `POST /api/views/open` re-takes the picture of the
+view being opened. `GET /api/views` — which is read when the band opens, and only then —
+takes a **first** picture for up to three of the row's own views that have none, so the
+shipped surfaces stop being a row of coloured letters without putting a browser per
+bookmark on the machine at the moment someone reaches for their tasks. Staleness is not
+chased there: keeping a picture current is what opening the view is for, and opening it
+is also the only evidence anyone cares what is on it.
+
+The render is given the person's **language** as well as their skin, for the same reason
+and by the same lane: the bundled surfaces carry both copies and pick per render, so
+without it every tile of them was a picture of a screen in English that the person has
+never seen.
+
+**The tile shows the whole frame.** It cropped to fill (`cover`) on the argument that the
+shot is the window's aspect and the tile is near enough that fitting would only letterbox
+it — but the tile is 1.55 and a 1440×788 window is 1.83, and the answer to that gap was
+cutting 15% of the width off a picture whose whole job is to be recognised. What survives
+the cut reads as a screenshot that got truncated, because it is one. The picture is fitted
+whole; the few pixels of margin are the view's own mark, which was always the ground the
+picture loaded over.
+
 
 ## What stays on the wire, and what does not
 

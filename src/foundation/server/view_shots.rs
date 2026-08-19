@@ -29,6 +29,17 @@
 //! screen waits for this — [`ViewBus::apply`](super::view_bus::ViewBus::apply) has
 //! already returned by the time the browser opens.
 //!
+//! **A named surface's picture is keyed by its ref, and a record's by its artifact.**
+//! Content-addressing alone froze the wrong half of this: `factory/tasks` renders once
+//! and then shows that morning's board forever, while re-opening it deliberately
+//! re-resolves to *today's*. So the two kinds of picture are stored apart —
+//! `_shots/<artifact>.png` for an inline view, which is only ever the artifact it
+//! compiled to and so is written once; `_shots/ref/<ref>.png` for a named view, which
+//! is a standing surface and is re-taken when the person opens it and the last one has
+//! gone stale — older than [`REFRESH_AFTER`], or older than the view's own source, which
+//! the agent rewrites. The URL carries the file's mtime so the year-long cache the
+//! `_shots/` route hands out still expires on a re-take.
+//!
 //! The one honest limitation: a view that reads live data renders with the data it
 //! has a second later, not a frozen copy. At 118×76 that is a distinction without a
 //! difference, and it is the same distinction a browser's tab switcher makes.
@@ -48,6 +59,12 @@ const THUMB_WIDTH: u32 = 480;
 /// is roughly ten histories' worth — enough that going back to something from this
 /// morning still has its picture.
 const KEEP: usize = 200;
+
+/// How old a named surface's picture may be before opening it takes a new one. A
+/// surface is a live board, so its tile is a claim about what is on it now; an hour-old
+/// claim is a lie the person can see through, and a per-open re-render is a browser per
+/// click. Fifteen minutes is where a picture stops being about the same working stretch.
+const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// Renders happen one at a time. See the module docs: the alternative is a raise
 /// sequence spawning a browser per beat.
@@ -78,6 +95,14 @@ fn shot_name(module_url: &str) -> String {
     format!("u{:016x}.png", hasher.finish())
 }
 
+/// Where a named surface's picture lives — `_shots/ref/<ref>.png`, mirroring the ref's
+/// own path. A ref is validated to names and `/` (see [`crate::mind::views::valid_ref`]),
+/// so it is already a safe relative path and a safe URL; anything else has no picture.
+fn ref_shot_path(data_dir: &Path, view_ref: &str) -> Option<PathBuf> {
+    crate::mind::views::valid_ref(view_ref)
+        .then(|| shots_dir(data_dir).join("ref").join(format!("{view_ref}.png")))
+}
+
 /// The URL a captured shot is served at, or `None` while none has been taken.
 ///
 /// Called once per history entry when the appearance state is built — a couple of
@@ -87,14 +112,112 @@ pub fn url_for(data_dir: &Path, module_url: &str) -> Option<String> {
     shots_dir(data_dir).join(&name).exists().then(|| format!("/views/_shots/{name}"))
 }
 
+/// The URL of a named surface's current picture, or `None` while none has been taken.
+///
+/// **Carries the file's mtime.** The `_shots/` route serves a year-long immutable
+/// `Cache-Control`, which is right for a content-addressed artifact and wrong for a
+/// path that is re-taken in place: without the stamp the browser would go on showing
+/// this morning's board out of its own cache no matter how often the server re-renders
+/// it. The stamp changes on every re-take, so each picture is still cached forever —
+/// as itself.
+pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
+    let path = ref_shot_path(data_dir, view_ref)?;
+    let stamp = std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("/views/_shots/ref/{view_ref}.png?v={stamp}"))
+}
+
 /// Capture `module_url` in the background, then call `done` if a new shot landed.
 ///
 /// Returns immediately. `done` is how the picture reaches the people already
 /// watching: the appearance state that carried this raise was built before the shot
 /// existed, so something has to bump the version once it does.
 pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send + 'static) {
+    let path = shots_dir(&data_dir).join(shot_name(&module_url));
+    spawn_capture(path, module_url, None, done);
+}
+
+/// Capture a *named* surface — the picture behind `factory/tasks` rather than behind
+/// the artifact it happens to have compiled to.
+///
+/// Unlike a record shot this one is re-taken once it has gone stale — see [`take_ref`]
+/// — because the thing it is a picture of has moved on. Same browser, same lock, same
+/// silence on failure.
+pub fn capture_ref(
+    data_dir: PathBuf,
+    view_ref: String,
+    module_url: String,
+    done: impl FnOnce() + Send + 'static,
+) {
     tokio::spawn(async move {
-        match run(&data_dir, &module_url).await {
+        if take_ref(&data_dir, &view_ref, &module_url).await {
+            done();
+        }
+    });
+}
+
+/// The same capture, waited on. For a caller working through a list, which needs to
+/// know when one is finished before starting the next — see the band's warm-up in
+/// [`super::view::list_views`]. `true` if a new picture landed.
+pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool {
+    let Some(path) = ref_shot_path(data_dir, view_ref) else {
+        return false;
+    };
+    // A picture older than the source it is a picture of is of a build that no longer
+    // exists — the agent rewrote the view — and no amount of it being *recent* makes it
+    // current. This is the one staleness that cannot wait for the clock.
+    let source = data_dir.join("views").join(format!("{view_ref}.jsx"));
+    let written = std::fs::metadata(&source).ok().and_then(|m| m.modified().ok());
+    match run(&path, module_url, Some(REFRESH_AFTER), written).await {
+        Ok(landed) => landed,
+        // A thumbnail is decoration on a row that works without it — see `spawn_capture`.
+        Err(error) => {
+            tracing::debug!(view_ref = %view_ref, %error, "capturing a view thumbnail failed");
+            false
+        }
+    }
+}
+
+/// Is `path` a picture we are content to keep?
+///
+/// `stale_after: None` is write-once — any file there will do, which is what a record of
+/// a raise wants. `Some(ttl)` also requires it to be younger than `ttl`, and
+/// `newer_than` requires it to postdate the source it claims to be a picture of.
+fn good_enough(
+    path: &Path,
+    stale_after: Option<std::time::Duration>,
+    newer_than: Option<std::time::SystemTime>,
+) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let Ok(taken) = meta.modified() else {
+        // A filesystem that cannot say when the file was written can still say it is
+        // there, which is all a write-once key needs.
+        return stale_after.is_none() && newer_than.is_none();
+    };
+    if newer_than.is_some_and(|written| taken < written) {
+        return false;
+    }
+    match stale_after {
+        None => true,
+        Some(ttl) => taken.elapsed().is_ok_and(|age| age < ttl),
+    }
+}
+
+fn spawn_capture(
+    path: PathBuf,
+    module_url: String,
+    stale_after: Option<std::time::Duration>,
+    done: impl FnOnce() + Send + 'static,
+) {
+    tokio::spawn(async move {
+        match run(&path, &module_url, stale_after, None).await {
             Ok(true) => done(),
             Ok(false) => {}
             // A thumbnail is decoration on a record that is complete without it, so a
@@ -109,10 +232,13 @@ pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send
 
 /// Render, downscale, write. `Ok(false)` means there was nothing to do or nothing
 /// worth keeping.
-async fn run(data_dir: &Path, module_url: &str) -> anyhow::Result<bool> {
-    let dir = shots_dir(data_dir);
-    let path = dir.join(shot_name(module_url));
-    if path.exists() {
+async fn run(
+    path: &Path,
+    module_url: &str,
+    stale_after: Option<std::time::Duration>,
+    newer_than: Option<std::time::SystemTime>,
+) -> anyhow::Result<bool> {
+    if good_enough(path, stale_after, newer_than) {
         return Ok(false);
     }
     // Published at startup; absent in a unit test and on a process that never stood
@@ -122,8 +248,8 @@ async fn run(data_dir: &Path, module_url: &str) -> anyhow::Result<bool> {
     };
 
     let _one_at_a_time = CAPTURING.lock().await;
-    // Another capture of the same artifact may have finished while we queued.
-    if path.exists() {
+    // Another capture of the same key may have finished while we queued.
+    if good_enough(path, stale_after, newer_than) {
         return Ok(false);
     }
 
@@ -134,6 +260,10 @@ async fn run(data_dir: &Path, module_url: &str) -> anyhow::Result<bool> {
     // The skin the person is actually in. A light picture of a view they saw dark is
     // a wrong record, and the window reports its theme for exactly this.
     req.theme = view_render::stage_theme();
+    // And the language they picked, for the same reason: the system views carry both
+    // copies and choose per render, so without this every tile of them is a picture of
+    // a screen in English that the person has never seen.
+    req.lang = crate::appearance::language();
 
     let rendered = view_render::render(&req).await?;
     // A view that failed to mount, threw, or painted one flat colour has no picture
@@ -149,10 +279,11 @@ async fn run(data_dir: &Path, module_url: &str) -> anyhow::Result<bool> {
     }
 
     let thumb = tokio::task::spawn_blocking(move || downscale(&rendered.png)).await??;
-    tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(&path, &thumb).await?;
+    let dir = path.parent().unwrap_or(path);
+    tokio::fs::create_dir_all(dir).await?;
+    tokio::fs::write(path, &thumb).await?;
     tracing::debug!(module_url = %module_url, bytes = thumb.len(), "captured a view thumbnail");
-    prune(&dir).await;
+    prune(dir).await;
     Ok(true)
 }
 
@@ -171,7 +302,9 @@ fn downscale(png: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Drop the oldest shots past [`KEEP`]. Best-effort: a directory that cannot be read
+/// Drop the oldest shots past [`KEEP`]. Bites the artifact cache, which grows with
+/// every recompile; `ref/` is bounded by the number of named views in the tree and so
+/// never reaches it. Best-effort: a directory that cannot be read
 /// or a file that cannot be removed leaves the cache larger than intended, which is
 /// not a condition worth reporting.
 async fn prune(dir: &Path) {
@@ -215,6 +348,62 @@ mod tests {
         assert!(name.starts_with('u') && name.ends_with(".png"), "{name}");
         assert_eq!(name, shot_name("/views/hand-written.js"), "and it is stable");
         assert_ne!(name, shot_name("/views/other.js"));
+    }
+
+    #[test]
+    fn a_named_surface_is_keyed_by_its_ref_and_stamped_with_its_age() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(url_for_ref(dir.path(), "factory/tasks"), None, "nothing taken yet");
+
+        let path = ref_shot_path(dir.path(), "factory/tasks").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"x").unwrap();
+
+        let url = url_for_ref(dir.path(), "factory/tasks").unwrap();
+        let (file, stamp) = url.split_once("?v=").unwrap();
+        assert_eq!(file, "/views/_shots/ref/factory/tasks.png");
+        assert!(stamp.parse::<u64>().unwrap() > 0, "carries the mtime: {url}");
+    }
+
+    /// A ref reaches this as text from the wire. Everything that is not a ref — a
+    /// traversal above all — has no picture rather than a path.
+    #[test]
+    fn only_a_valid_ref_names_a_picture() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad in ["../../etc/passwd", "factory/../../x", "has.dot", ""] {
+            assert!(ref_shot_path(dir.path(), bad).is_none(), "{bad}");
+        }
+    }
+
+    /// A record shot is written once; a surface shot is written again once it is old.
+    #[test]
+    fn a_surface_picture_goes_stale_and_a_record_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        assert!(!good_enough(&path, None, None), "nothing there yet");
+        std::fs::write(&path, b"x").unwrap();
+
+        assert!(good_enough(&path, None, None), "a record is any file at the key");
+        assert!(good_enough(&path, Some(REFRESH_AFTER), None), "a fresh surface stands");
+        assert!(
+            !good_enough(&path, Some(std::time::Duration::ZERO), None),
+            "an aged-out surface is re-taken",
+        );
+    }
+
+    /// The agent rewrites views, and a picture of the build before the rewrite is wrong
+    /// however recently it was taken.
+    #[test]
+    fn a_picture_older_than_the_view_it_shows_is_not_good_enough() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        std::fs::write(&path, b"x").unwrap();
+        let taken = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let before = taken - std::time::Duration::from_secs(60);
+        let after = taken + std::time::Duration::from_secs(60);
+        assert!(good_enough(&path, Some(REFRESH_AFTER), Some(before)), "source is older");
+        assert!(!good_enough(&path, Some(REFRESH_AFTER), Some(after)), "source is newer");
     }
 
     #[test]

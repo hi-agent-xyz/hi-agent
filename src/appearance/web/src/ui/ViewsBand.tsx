@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
@@ -10,10 +11,12 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * with something that was there before, and a tall sheet would cover the very thing
  * being compared. Choosing dismisses it for the same reason.
  *
- * **Two rows, because there are two ways to want a view.** The upper row is history:
- * the raises the server recorded, oldest left, newest right, so going back is going
- * left and the live one is where the row ends. The lower row is bookmarks — the
- * surfaces we ship, plus whatever the person kept — which exists because a dozen
+ * **Two rows, because there are two ways to want a view.** The upper row is the trail:
+ * where this window can go back to, **newest first** — the raises the server recorded
+ * and the places the person opened themselves, one card per destination. Newest first
+ * because the row overflows and only ever scrolls from its start, so oldest-first put
+ * the live view, of all things, off the right-hand edge. The lower row is bookmarks —
+ * the surfaces we ship, plus whatever the person kept — which exists because a dozen
  * views shipped with no way to reach any of them except asking the agent to show it.
  *
  * **The lower row is not the inventory.** It was, and what is actually in the views
@@ -32,30 +35,55 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * reading fifteen of them is a long drag. The strip keeps four to six legible at once
  * and swipes on a phone, where a perspective carousel is unusable.
  *
- * **Pictures, with the mark underneath.** The tile carries a real screenshot of the
- * raise, captured server-side the instant it went up by the same headless browser
- * `hi_review_view` drives — so it is a picture of the screen the person was looking
- * at, at the frame and in the skin their window reported. A capture that is still
- * running, or a view that did not render cleanly, leaves the tile on the coloured
- * mark derived from the view's identity, which is what the whole row used to be.
+ * **Pictures, with the mark underneath.** The tile carries a real screenshot, captured
+ * server-side by the same headless browser `hi_review_view` drives, at the frame and in
+ * the skin and language the window reported — a picture of the screen the person was
+ * looking at, not a reconstruction. A named surface's picture is re-taken when they
+ * open it, because the card leads to *today's* board and a tile promising last week's
+ * would be a wrong picture of the place it goes. A capture that is still running, or a
+ * view that did not render cleanly, leaves the tile on the coloured mark derived from
+ * the view's identity, which is what the whole row used to be.
+ *
+ * **The inventory is re-read while the band is up.** A picture is only taken when
+ * someone shows an interest in the view, and the first interest is usually the band
+ * opening; the shot lands a second or two later, and this is what carries it onto the
+ * card the person is already looking at.
  */
 export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
-  const { history, parked, goTo, openRef } = useViews();
+  const { trail, live, parked, goTo, openRef } = useViews();
   const [inventory, setInventory] = useState<ListedView[]>([]);
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */
   const [broken, setBroken] = useState<Set<string>>(() => new Set());
 
+  /** Stars clicked whose write has not come back yet. A re-read that was already in
+   * flight when the click happened answers with the old row, and applying it would
+   * flick the star off under the finger and on again a poll later. */
+  const inFlight = useRef(new Map<string, boolean>());
+
   useEffect(() => {
     let alive = true;
-    void listViews().then(
-      (found) => alive && setInventory(found),
-      // An inventory that cannot be read leaves the row empty; history still works,
-      // and the person is no worse off than before the band existed.
-      (error) => console.warn("listing views failed", error),
-    );
+    const read = () =>
+      void listViews().then(
+        (found) =>
+          alive &&
+          setInventory(
+            found.map((v) => {
+              const pending = inFlight.current.get(v.view_ref);
+              return pending === undefined ? v : { ...v, bookmarked: pending };
+            }),
+          ),
+        // An inventory that cannot be read leaves the row empty; the trail still works,
+        // and the person is no worse off than before the band existed.
+        (error) => console.warn("listing views failed", error),
+      );
+    read();
+    // Re-read while the band is up, for the pictures: a read is a directory walk and a
+    // handful of `stat`s, and it stops the moment the band closes.
+    const again = setInterval(read, INVENTORY_POLL_MS);
     return () => {
       alive = false;
+      clearInterval(again);
     };
   }, []);
 
@@ -71,19 +99,21 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
    * and a star that waits on a round-trip reads as a dropped click. A failed write
    * puts it back, which is the only thing that could disagree with the store. */
   const keep = useCallback((viewRef: string, on: boolean) => {
+    inFlight.current.set(viewRef, on);
     setInventory((current) =>
       current.map((v) => (v.view_ref === viewRef ? { ...v, bookmarked: on } : v)),
     );
-    void setBookmark(viewRef, on).catch((error) => {
-      console.warn("storing the bookmark failed", error);
-      setInventory((current) =>
-        current.map((v) => (v.view_ref === viewRef ? { ...v, bookmarked: !on } : v)),
-      );
-    });
+    void setBookmark(viewRef, on)
+      .catch((error) => {
+        console.warn("storing the bookmark failed", error);
+        setInventory((current) =>
+          current.map((v) => (v.view_ref === viewRef ? { ...v, bookmarked: !on } : v)),
+        );
+      })
+      .finally(() => inFlight.current.delete(viewRef));
   }, []);
 
-  const liveKey = history.length > 0 ? destinationOf(history[history.length - 1]!) : null;
-  const here = parked ?? liveKey;
+  const here = parked ?? live;
   const bookmarks = inventory.filter((view) => view.system || view.bookmarked);
 
   return (
@@ -92,17 +122,20 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
         <span className="hi-views-heading">history</span>
         <span className="hi-views-rule" aria-hidden="true" />
       </div>
-      {history.length === 0 ? (
+      {trail.length === 0 ? (
         <p className="hi-views-empty">nothing has been shown yet</p>
       ) : (
         <div className="hi-views-strip">
-          {history.map((entry) => {
+          {trail.map((entry) => {
             const key = destinationOf(entry);
-            const isLive = key === liveKey;
-            const shot = entry.shot_url && !broken.has(entry.shot_url) ? entry.shot_url : null;
+            const isLive = key === live;
+            // The inventory wins when it has one: it is re-read while the band is up,
+            // so it is the fresher of the two answers about a named surface's picture.
+            const listed = entry.view_ref ? known.get(entry.view_ref) : undefined;
+            const current = listed?.shot_url ?? entry.shot_url;
+            const shot = current && !broken.has(current) ? current : null;
             // Only a named view that is still on disk, and isn't already in the row by
             // being a system surface, is a thing the star can act on.
-            const listed = entry.view_ref ? known.get(entry.view_ref) : undefined;
             const keepable = listed && !listed.system ? listed : null;
             return (
               <span className={`hi-views-card${key === here ? " is-here" : ""}`} key={key}>
@@ -171,7 +204,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
               type="button"
               className="hi-views-go"
               onClick={() => {
-                openRef(view.view_ref);
+                openRef(view.view_ref, view.label);
                 onDismiss();
               }}
             >
@@ -198,10 +231,10 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   );
 }
 
-/** The same destination identity the server dedupes by and the cursor is keyed on. */
-function destinationOf(entry: { view_ref?: string; module_url: string }): string {
-  return entry.view_ref ?? entry.module_url;
-}
+/** How often the band re-reads the inventory while it is up — long enough not to be a
+ * poll anyone notices, short enough that a picture taken because the band opened lands
+ * on the card before the person has finished reading the row. */
+const INVENTORY_POLL_MS = 3000;
 
 function StarMark({ filled }: { filled: boolean }) {
   return (

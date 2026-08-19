@@ -1434,9 +1434,9 @@ button:not([data-slot]) {
   border-radius: 10px;
 }
 
-/* The tile is the picture of the raise. Until the capture lands — and for good on a
-   view that didn't render cleanly — it carries the identity mark instead, which is
-   what the whole row used to be. */
+/* The tile is the picture. Until the capture lands — and for good on a view that
+   didn't render cleanly — it carries the identity mark instead, which is what the whole
+   row used to be. */
 .hi-views-tile {
   display: grid;
   place-items: center;
@@ -1451,13 +1451,18 @@ button:not([data-slot]) {
   transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
 }
 
-/* `cover`, because the shot is the window's aspect and the tile is close to it but
-   not equal: fitting would letterbox every picture against the tile's own border. */
+/* `contain`, so the whole frame is in the tile. This was `cover` on the argument that
+   the shot is the window's aspect and the tile is close enough that fitting would only
+   letterbox it — but "close" is doing all the work there and it isn't true: a 1440×788
+   window renders 1.83 into a tile of 1.55, and cover answers that by cutting 15% of the
+   width off a picture whose whole job is to be recognised. What is left after the cut
+   reads as a screenshot that got truncated, because it is one. The bands `contain`
+   leaves are a few pixels of the view's own mark, which is the ground the picture was
+   always loading over. */
 .hi-views-shot {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: top center;
+  object-fit: contain;
   display: block;
 }
 

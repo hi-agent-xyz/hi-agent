@@ -160,6 +160,18 @@ pub fn set_language(value: impl Into<String>) {
     let _ = LANGUAGE.set(value.into());
 }
 
+/// The language the person picked, or `None` when they left it on `system` — which is
+/// the browser's question to answer (`navigator.language`), not ours. Read by the
+/// thumbnail capture, which drives a headless page that has no browser preference to
+/// fall back on and would otherwise picture every bundled view in English.
+pub fn language() -> Option<String> {
+    LANGUAGE
+        .get()
+        .map(String::as_str)
+        .filter(|v| !v.is_empty() && *v != "system")
+        .map(str::to_owned)
+}
+
 /// Rewrite `<html lang="…">` to the person's setting. A no-op when nothing was
 /// published or the document has no `lang` attribute to replace — in which case the
 /// built `index.html` keeps its `lang="en"`, which is the right default anyway.

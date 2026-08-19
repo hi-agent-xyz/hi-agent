@@ -16,6 +16,7 @@ import {
   type ViewTraits,
   type WireHistoryEntry,
 } from "../channels/out/view";
+import { destinationOf, trailOf } from "./trail";
 import { usePresence, useWake } from "./session";
 
 // How long a newly appearing view waits for the voice before showing anyway.
@@ -35,21 +36,18 @@ export interface ActiveView {
   traits?: ViewTraits;
 }
 
-/** What identifies a *destination* — the same rule the server dedupes history by: the
- * durable ref when there is one, else the content-addressed module. Two raises of
- * `factory/tasks` are one place; two different inline views are two. */
-function destinationOf(entry: { view_ref?: string; module_url: string }): string {
-  return entry.view_ref ?? entry.module_url;
-}
-
 interface ViewsValue {
   views: ActiveView[];
   /** Clear the screen back to the default empty room. Server-side, so every
    * device + a refresh converge on the cleared screen; the empty state arrives
    * via the same long-poll. */
   clear: () => void;
-  /** The recent raises, oldest first — the server's record of what it put up. */
-  history: WireHistoryEntry[];
+  /** Where this window can go back to, **newest first**: what the agent raised, plus
+   * the places this window went on its own, one entry per destination. */
+  trail: WireHistoryEntry[];
+  /** The destination the agent has up now — the newest *raise*, which is not
+   * necessarily the head of the trail: a bookmark opened after it sits above it. */
+  live: string | null;
   /** The destination this window is parked on, or `null` when it is on the live one.
    * Local to this window and never reported, exactly like the conversation's scroll
    * position: a phone that went back must not move the desktop. **The move that put it
@@ -60,8 +58,9 @@ interface ViewsValue {
   liveMoved: boolean;
   /** Park on one past raise. */
   goTo: (entry: WireHistoryEntry) => void;
-  /** Park on a named view from the inventory. */
-  openRef: (viewRef: string) => void;
+  /** Park on a named view from the inventory, and put it at the head of the trail:
+   * going somewhere is arriving somewhere, whether the agent took you or you went. */
+  openRef: (viewRef: string, label: string) => void;
   /** Back to what the agent has up now. */
   returnToLive: () => void;
 }
@@ -69,7 +68,8 @@ interface ViewsValue {
 const ViewsContext = createContext<ViewsValue>({
   views: [],
   clear: () => {},
-  history: [],
+  trail: [],
+  live: null,
   parked: null,
   liveMoved: false,
   goTo: () => {},
@@ -100,6 +100,15 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     { id: string; moduleUrl: string; traits?: ViewTraits; slot?: string }[]
   >([]);
   const [history, setHistory] = useState<WireHistoryEntry[]>([]);
+  /** Places this window went that the agent did not take it to — a bookmark opened.
+   *
+   * Local, and dies with the window. Not because the move is a secret — it is posted as
+   * a perception the moment it happens, see `reportWentTo` — but because the server's
+   * list is the record of *raises*, and its newest entry is what is on the stage:
+   * appending to it would tell the desktop the agent had raised something because a
+   * phone tapped a bookmark. So that list stays what it is and this rides alongside it
+   * into the row. */
+  const [visits, setVisits] = useState<WireHistoryEntry[]>([]);
   /** Where this window is looking, when that is not the live view. */
   const [parked, setParked] = useState<{ key: string; view: ActiveView } | null>(null);
   const [liveMoved, setLiveMoved] = useState(false);
@@ -256,19 +265,34 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  const openRef = useCallback((viewRef: string) => {
+  const openRef = useCallback((viewRef: string, label: string) => {
     reportWentTo({ viewRef, live: viewRef === liveKeyRef.current });
     void openView(viewRef).then(
-      (opened) =>
+      (opened) => {
         setParked({
           key: viewRef,
           view: { id: opened.id, moduleUrl: opened.module_url, traits: opened.traits },
-        }),
+        });
+        // Only on arrival: a request that failed is not a place anyone went.
+        setVisits((was) => [
+          ...was.filter((v) => v.view_ref !== viewRef),
+          {
+            id: opened.id,
+            module_url: opened.module_url,
+            view_ref: viewRef,
+            label,
+            at: new Date().toISOString(),
+          },
+        ]);
+      },
       // Nothing the person can act on, and blanking the stage would be worse than
       // leaving them where they are.
       (error) => console.warn("opening a view failed", error),
     );
   }, []);
+
+  // What the agent raised and where this window went, as one row. See `trailOf`.
+  const trail = useMemo(() => trailOf(history, visits), [history, visits]);
 
   const value = useMemo<ViewsValue>(() => {
     const bare = ({ id, moduleUrl, traits }: (typeof wire)[number]): ActiveView => ({
@@ -282,14 +306,15 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     return {
       views,
       clear,
-      history,
+      trail,
+      live: liveKey,
       parked: parked?.key ?? null,
       liveMoved,
       goTo,
       openRef,
       returnToLive,
     };
-  }, [wire, parked, clear, history, liveMoved, goTo, openRef, returnToLive]);
+  }, [wire, parked, clear, trail, liveKey, liveMoved, goTo, openRef, returnToLive]);
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 

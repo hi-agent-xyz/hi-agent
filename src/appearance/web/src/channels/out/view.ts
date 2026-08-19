@@ -48,10 +48,12 @@ export interface WireHistoryEntry {
   label: string;
   /** ISO timestamp of the raise. */
   at: string;
-  /** A picture of this raise, captured server-side the moment it went up and served
-   * from `/views/_shots/<hash>.png`. Absent while the capture is still running, and
-   * for good on a view that did not render cleanly — the tile falls back to its mark
-   * either way. */
+  /** A picture of this entry, served from `/views/_shots/`. For a named view it is a
+   * picture of the surface as it currently stands — the card leads to today's board, so
+   * the tile is of today's board — and for an inline view it is the artifact's own,
+   * captured the moment it went up. Absent while the capture is still running, and for
+   * good on a view that did not render cleanly; the tile falls back to its mark either
+   * way. */
   shot_url?: string;
 }
 
@@ -75,6 +77,11 @@ export interface ListedView {
   /** The person put this one in the row. Never true for a system view, which is in
    * the row by being system. */
   bookmarked: boolean;
+  /** A picture of this surface as it currently stands, or absent until one has been
+   * taken. Named views only — an inline view has no ref to file a picture under. This
+   * is the fresher of the two answers about a named view's tile, because the band
+   * re-reads the inventory while it is open. */
+  shot_url?: string;
 }
 
 /** Every named view in the views tree — the whole inventory, each entry saying

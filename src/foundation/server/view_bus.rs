@@ -342,13 +342,26 @@ impl ViewBus {
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
             let bus = self.clone();
-            super::view_shots::capture(
-                self.data_dir.clone(),
-                raised.module_url.clone(),
-                move || {
-                    tokio::spawn(async move { bus.note_shot().await });
-                },
-            );
+            let done = move || {
+                tokio::spawn(async move { bus.note_shot().await });
+            };
+            // A named view is a standing surface — its picture is filed under the ref
+            // and re-taken as the board moves; an inline view is only ever the artifact
+            // it compiled to, and its picture is written once. Same split the whole
+            // history turns on. See [`super::view_shots`].
+            match raised.view_ref.clone() {
+                Some(view_ref) => super::view_shots::capture_ref(
+                    self.data_dir.clone(),
+                    view_ref,
+                    raised.module_url.clone(),
+                    done,
+                ),
+                None => super::view_shots::capture(
+                    self.data_dir.clone(),
+                    raised.module_url.clone(),
+                    done,
+                ),
+            }
         }
         entry.content = next;
         entry.version += 1;
@@ -507,7 +520,7 @@ impl ViewBus {
     /// later, which is exactly the noise reflection has to read past. The version is
     /// only the long-poll's comparator, so it is free to run ahead of the newest
     /// snapshot; a restart resyncs every client from `since: None` regardless.
-    async fn note_shot(&self) {
+    pub(super) async fn note_shot(&self) {
         let mut map = self.inner.lock().await;
         map.version += 1;
         map.notify.notify_waiters();
@@ -567,10 +580,7 @@ impl ViewBus {
                             view_ref: h.view.view_ref.clone(),
                             label: label_for(&h.view),
                             at: h.at,
-                            shot_url: super::view_shots::url_for(
-                                &self.data_dir,
-                                &h.view.module_url,
-                            ),
+                            shot_url: shot_for(&self.data_dir, &h.view),
                         })
                         .collect(),
                 };
@@ -641,6 +651,21 @@ fn resolve_slot(
 /// views have different content hashes and both stay. The surviving entry moves to the
 /// end and takes the newer timestamp, because what matters about it is when the screen
 /// last showed it.
+/// The picture to hang on one past raise.
+///
+/// A named view's tile is its **surface** picture, not a picture of the moment it went
+/// up: re-opening `factory/tasks` deliberately re-resolves to today's board, so a tile
+/// promising last Tuesday's would be a wrong picture of the place the card leads to.
+/// An inline view has no surface to be current about and keeps its artifact's shot —
+/// and so does a named entry whose surface picture has not been taken yet, which is
+/// how every raise recorded before this split keeps the picture it already had.
+fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
+    view.view_ref
+        .as_deref()
+        .and_then(|r| super::view_shots::url_for_ref(data_dir, r))
+        .or_else(|| super::view_shots::url_for(data_dir, &view.module_url))
+}
+
 fn record_raise(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
     let key = destination_of(&view);
     history.retain(|h| destination_of(&h.view) != key);
