@@ -215,8 +215,8 @@ some earlier minute lying across its bottom edge.
 **This does not reinstate the caption band's timer**, which *What this reverses* (below)
 argues against and is right about. The band's timer was *spending* the words: it revealed
 an utterance the buffer had already deleted, so whatever it advanced past was lost, and it
-advanced whether or not anyone was looking (`arch-refactor.md`, the half-spent-text
-finding). This one hides a copy while the original stays in the list. That is the whole
+advanced whether or not anyone was looking (the half-spent-text finding, 2026-08-05).
+This one hides a copy while the original stays in the list. That is the whole
 distinction — a timer over a durable list costs nothing; a timer over a queue costs the
 message. It is also why no presence check belongs here: whether anyone was looking does
 not matter, because nothing is spent by their not having been.
@@ -800,8 +800,8 @@ have to keep.
 ([`Shell.tsx:101`](../../src/appearance/web/src/ui/Shell.tsx)) is wrong, and it is wrong
 for a reason worth writing down: it was true of the **caption band**, which was a timed
 reveal of an utterance that had already been spent and evicted — a band of that kind gets
-worse the longer it is, and the note in `arch-refactor.md` that *"an N large enough to
-never lose anything makes the face a chat log"* was correct about it.
+worse the longer it is, and the note that *"an N large enough to never lose anything makes
+the face a chat log"* was correct about it.
 
 It stopped being true on August 11, when the conversation became an append-only list that
 keeps. Nothing about a list gets worse for being visible longer. The line survived its own

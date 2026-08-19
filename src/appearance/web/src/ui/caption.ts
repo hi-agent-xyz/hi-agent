@@ -10,8 +10,8 @@ import { useEffect, useState } from "react";
  *
  * This is not the old caption band's timer under a new name. That timer was
  * *spending* the words: the band revealed an utterance the buffer had already
- * deleted, so whatever it advanced past was gone (`arch-refactor.md`, the
- * half-spent-text finding). This one hides a copy that is still in the list
+ * deleted, so whatever it advanced past was gone (the half-spent-text finding,
+ * 2026-08-05). This one hides a copy that is still in the list
  * behind it. That difference is the whole argument — a timer over a durable list
  * costs nothing; a timer over a queue costs the message.
  */

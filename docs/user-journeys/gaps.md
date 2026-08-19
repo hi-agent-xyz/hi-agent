@@ -1,6 +1,6 @@
 # 实测缺口清单(live-test gaps)
 
-**这份文件收集"跑真机跑出来的"缺口**——不是设计分歧,不是代码没跟上设计(那些是重构的工作本身,见 `arch-refactor.md`),而是**把 journey 当规格、对着真实运行的实例测出来的行为差距**。
+**这份文件收集"跑真机跑出来的"缺口**——不是设计分歧,不是代码没跟上设计(那些是重构的工作本身,见 [`docs/status.md`](../status.md)),而是**把 journey 当规格、对着真实运行的实例测出来的行为差距**。
 
 每条给出:症状、**从对话之外验证到的证据**(帧日志 / `server.log` / 磁盘产物,不是 agent 自己的说法)、机制落在哪、以及涉及哪些 journey。
 
@@ -46,7 +46,7 @@
 - Cognition **只被信件唤醒**,没有自己的时钟。
 - 当时时钟被 deferred,`due` 不触发任何东西(此后时钟被**彻底放弃**,见 `5429a97`——`due` 从此是"只读不触发",写进了 `docs/arch/data.md`)。
 
-这正是 `arch-refactor.md` 在 skip 掉 N4 时**自己写下的那个洞**(*"Cognition, which owns the ledger, has no pulse; it is woken only by mail. That is the hole"*)——现在它在真机上被 journey 撞到了。那份文件同时给了窄修法:**在 Cognition 的 `select!` 上加一条 timer 臂**,带上 conversation pulse 用的同一句"读一遍你的开放职责",二十行,不是调度器。
+这正是当时跳过时钟(N4)时**重构工作本身写下的那个洞**(*"Cognition, which owns the ledger, has no pulse; it is woken only by mail. That is the hole"*)——现在它在真机上被 journey 撞到了。那份文件同时给了窄修法:**在 Cognition 的 `select!` 上加一条 timer 臂**,带上 conversation pulse 用的同一句"读一遍你的开放职责",二十行,不是调度器。(引文出自已删除的 `arch-refactor.md`,见 `git show cc17edc:arch-refactor.md`。)
 
 **注意这跟 2026-06-18 那次失败不是同一个原因。** 那次是 `self.md` 写读路径不一致(已修);这次职责**正确地**落进了规范台账,依然接不上,原因是结构性的。
 

@@ -4,9 +4,22 @@
 
 Bias to action. Make the engineering calls you can make yourself and start building in the same turn the approach is agreed — don't stack up confirmation questions or re-ask "go?". Just decide: sensible defaults, anything already implied by stated preferences or memory, and choices that are cheap to reverse. Reserve questions for forks that are genuinely consequential, hard to undo, or a matter of the user's preference — and batch those into a single ask. Never invent an option the user wouldn't want and then ask them to rule it out.
 
-**During the architecture refactor, this has a sharper form.** `docs/arch/` is the goal state and the implementation is a long way from it *by design* — hundreds of mismatches are known and expected. **A place where the code doesn't match the design is the work, not a finding: align it and move on.** Do not write a paragraph explaining that the code does X while the design says Y; go change the code. Surface only three things: a conflict *inside* the design, something the design never specifies that the code must decide, or a change to the design itself (state it, then make it — in `docs/arch/`, not by diverging quietly). The untracked `arch-refactor.md` at the repo root carries the full agreement and the current worklist; read it before starting arch work.
+**`docs/arch/` is the goal state, not a description of what exists.** Never edit it to match the code. **A place where the code doesn't match it is the work, not a finding: align it and move on.** Do not write a paragraph explaining that the code does X while the design says Y; go change the code. Surface only three things: a conflict *inside* the design, something the design never specifies that the code must decide, or a change to the design itself (state it, then make it — in `docs/arch/`, not by diverging quietly).
+
+**Status lives in [docs/status.md](docs/status.md), never in `docs/arch/`** — a design document that doubles as a status report goes stale in a way that makes readers distrust the design too. That file is the ledger of what is built, what has been *watched running*, and what has no code; read it before starting architectural work, and update it when one of those three changes. Its central distinction is the one this repo keeps paying for: **built is not watched.** A mechanism that is described and absent typechecks.
 
 **Be specific, not literary.** Name the function, the file, and the failing condition — "nothing calls `take_pending(id)`, so messages sit in the inbox forever", not "it needs a drain". Metaphor is fine after the mechanism, never instead of it. And keep "the design says X" clearly separate from "the code currently does X".
+
+## What the refactor learned — rules that outlived it
+
+Four disciplines paid for repeatedly, in mechanisms that looked done. Every one of them typechecked.
+
+- **Delete rather than deprecate.** A compatibility path kept "just until the replacement lands" is the thing that quietly becomes permanent. Every mechanism this repo has retired went by deletion.
+- **Real and unexercised is fine; described and absent is not.** Landing machinery before the thing it talks to exists is an acceptable intermediate state. A prompt, doc or comment naming a mechanism that does not exist is not — that is how a dead soul seed, a write-only verb, a switchboard with no readers and a frame log that kept nothing all shipped green.
+- **Nothing may read as finished that isn't.** If something is on loan, wrong-shaped, or unverified, that fact belongs in the code comment *and* in [docs/status.md](docs/status.md) **before** the commit lands. A wrong call that is written down is cheap to reverse; one that reads as done is not.
+- **A temporarily wrong owner is allowed only if the loan is named.** Take it when the right owner has no code yet — but say so in the prompt, and name the item that takes it back. The loans that were never named are the ones that became permanent.
+
+One build discipline goes with them: **each commit compiles standalone**, not just the final state of a branch. An intermediate that does not build is useless for bisecting, and that gap has been shipped here once already.
 
 ## Making changes: always in a worktree
 
@@ -59,11 +72,13 @@ The two environments serve the web app differently, and this asymmetry has bitte
 
 Agent views are NOT self-contained bundles: the compiled `.mjs` keeps bare imports (`react`, direct shadcn paths such as `@/components/ui/card`, `@hi/core`, `motion/react`) resolved via the page import map to the host's shared instances — required so host and view share one React instance (hooks/context cross the boundary). Do not bundle these deps into views. See the shims in [src/appearance/web/src/shared/](src/appearance/web/src/shared/) and the direct component entries in [src/appearance/web/vite.config.ts](src/appearance/web/vite.config.ts).
 
-## Deployment shapes (intended)
+## Deployment shapes
 
-The app targets two install shapes:
-1. **Docker on a server** — `make docker` builds the image; users run it server-side.
-2. **Bundled desktop app** (e.g. macOS) — a packaged native install for the desktop. _Desktop bundling is not wired up in-repo yet (no Tauri/Electron)._
+A **core** installs in two shapes:
+1. **Docker on a server** — `make docker` builds the image; users run it server-side. Note that a published port is not loopback, so a Docker deployment is gated from first run (see § *Testing user journeys live* for the first-boot credential).
+2. **Bundled desktop app** — `make dmg` builds the hermetic macOS `.dmg`; `make app` wraps the dev binary in a minimal ad-hoc-signed `.app` for local mic/camera testing. `make exe` / `make installer` are the Windows pair (they build; they have never been run on Windows). No Tauri and no Electron: the binary is its own shell.
+
+**Surfaces are a separate axis from install shapes.** `crates/hi-app` is the roster + local proxy the face talks to; `app/apple/ios` is a native iPhone/iPad client. Both are API clients holding no engine state — they attach to a core, they are not one.
 
 The managed runtime (codex + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. Both are native binaries that merely ship through the npm registry, so provisioning is an HTTPS GET of each platform tarball plus `tar -x` — **there is no Node and no npm** in this path. On a dev box with a pin-matching `codex` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)). The agent is `codex app-server`, a native binary hi-agent talks JSON-RPC to over stdio.
 
@@ -71,7 +86,7 @@ The managed runtime (codex + esbuild) auto-installs into the OS cache on first r
 
 ## macOS entry shape (tray vs. headless)
 
-On macOS the binary's default shape is a **desktop app**: AppKit owns the main thread and shows a menu-bar status item (Open / Quit), while the HTTP server + reaction run on a background thread ([run_with_tray](src/lib.rs); status item in [vendors/macos_tray.rs](src/vendors/macos_tray.rs)). Everywhere else (Linux/Docker) tokio keeps the main thread as before. Still one binary — this is the main-thread inversion the distribution model accepted as the cost of a tray; no shell crate, no Tauri.
+On macOS the binary's default shape is a **desktop app**: AppKit owns the main thread and shows a menu-bar status item (Open / Quit), while the HTTP server + reaction run on a background thread ([run_with_tray](src/lib.rs); status item in [vendors/macos_tray.rs](src/foundation/vendors/macos_tray.rs)). Everywhere else (Linux/Docker) tokio keeps the main thread as before. Still one binary — this is the main-thread inversion the distribution model accepted as the cost of a tray; no shell crate, no Tauri.
 
 The tray **auto-skips when `SSH_CONNECTION` is set** (no window server over SSH) or with `--no-tray`, falling back to the server-owns-main-thread path. So the SSH journey-testing command below is unchanged. The visible icon can only be tested from a real desktop session (same GUI-session wall as screencast/hotkey); over SSH you can verify compile, tests, and that startup logs `tray skipped (headless)` and still binds.
 
@@ -120,7 +135,9 @@ The engine's outbound API grows from config CRUD into a **bidirectional perceive
 
 **Boundary rule going forward:** a capability's *mechanism* (OS touch) belongs in the shell; its *policy* (cross-platform logic) belongs in the engine. A new surface is API-client-native only if it's presentational. When unsure which bucket something falls in, that's a consequential fork — ask.
 
-**Status:** direction agreed, not yet built. First move is Phase 1 against [vendors/macos_settings.rs](src/vendors/macos_settings.rs) (today pure objc2, hand-laid frames).
+**Status: Phase 1 is built — do not rebuild it.** [vendors/macos_swift_settings.rs](src/foundation/vendors/macos_swift_settings.rs) bridges a SwiftUI Settings window ([swift/HiSettings.swift](src/foundation/vendors/swift/HiSettings.swift)) that reads and writes settings **over the loopback config API**, not via FFI into engine state; the only FFI is the single `hi_settings_open` entry point, which `build.rs` compiles and links on macOS. The objc2 window it replaced is still at [vendors/macos_settings.rs](src/foundation/vendors/macos_settings.rs). `crates/hi-app` and the native iOS client prove the same boundary from the other side.
+
+**Phase 2 — flipping process ownership to Swift — is not started**, and the streaming perceive/act protocol it needs (the biggest design object in the refactor) has no design yet.
 
 ## Testing user journeys live (Mac mini)
 
