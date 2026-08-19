@@ -92,7 +92,20 @@ use crate::foundation::registry::{SessionId, TurnOutcome};
 /// live speech.
 pub(super) struct WorkerReport {
     pub(super) id: SessionId,
-    pub(super) task: String,
+    /// **The errand's title, not the prompt it was driven with.** These are not the same
+    /// string and the difference is most of the report: the opening prompt is the brief
+    /// *after* the host put the standing record for the systems it touches in front of it
+    /// ([`WorkerRegistry::spawn_inner`]), so quoting it back put the task facet and every
+    /// system facet into the owner's window on every completion. Measured 2026-08-18 on one
+    /// `kt8-059` completion: 6,770 characters of quoted prompt carrying a 1,427-character
+    /// report, and 43% of everything that arrived in Cognition's window over four days.
+    ///
+    /// The title costs 36 characters and says the same thing to a reader, which is why
+    /// `create_worker` asks for it separately and caps it — and why the lifecycle event
+    /// beside this one already carried the title rather than the brief. Nothing is lost:
+    /// what the errand *was* is on the roster and the ledger every turn, and the brief
+    /// itself was the owner's own words, sent from the owner's own thread.
+    pub(super) title: String,
     pub(super) kind: WorkerReportKind,
     /// The session this report is *for*. `None` means the reaction loop — the report
     /// becomes a signal Reaction may speak to. `Some` means it travels up to the
@@ -294,6 +307,7 @@ impl WorkerRegistry {
         let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
             id.clone(),
+            title.clone(),
             Some(opening),
             session,
             transcript.clone(),
@@ -579,23 +593,23 @@ pub(super) fn render_report(report: &WorkerReport) -> String {
         WorkerReportKind::Done(answer) => format!(
             "working session {} finished — task was \"{}\":\n{}",
             report.id,
-            report.task,
+            report.title,
             answer.trim()
         ),
         WorkerReportKind::Failed(err) => format!(
             "working session {} FAILED — task was \"{}\": {}",
             report.id,
-            report.task,
+            report.title,
             err.trim()
         ),
         WorkerReportKind::Interrupted(partial) if partial.trim().is_empty() => format!(
             "working session {} was stopped before it produced anything — task was \"{}\"",
-            report.id, report.task
+            report.id, report.title
         ),
         WorkerReportKind::Interrupted(partial) => format!(
             "working session {} was stopped part-way — task was \"{}\". What it had got to:\n{}",
             report.id,
-            report.task,
+            report.title,
             partial.trim()
         ),
     }
@@ -612,7 +626,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
         WorkerReportKind::Failed(err) => ("failed", err.trim()),
         WorkerReportKind::Interrupted(partial) => ("was stopped", partial.trim()),
     };
-    format!("worker {} {verb} — task \"{}\": {body}", report.id, report.task)
+    format!("worker {} {verb} — task \"{}\": {body}", report.id, report.title)
 }
 
 /// Drive one worker across one or more tasks, posting a terminal report after each and
@@ -629,6 +643,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 /// A worker is the thing that knows it has ended, so it is the thing that says so.
 async fn drive_worker(
     id: SessionId,
+    title: String,
     initial_task: Option<String>,
     session: Arc<AgentSession>,
     transcript: Arc<Mutex<String>>,
@@ -640,13 +655,19 @@ async fn drive_worker(
 ) {
     // Wrapped so *every* way out of the drive loop unregisters, including ones added
     // later. The one exit this cannot cover is an abort, and [`Drop`] holds that case.
-    drive(&id, initial_task, session, transcript, inbound, observatory, mail, busy, owner).await;
+    drive(&id, &title, initial_task, session, transcript, inbound, observatory, mail, busy, owner)
+        .await;
     registry::global().unregister(&id);
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn drive(
     id: &SessionId,
+    // The errand's name, carried the whole way down so every report this loop posts can
+    // say what it was without quoting the prompt it ran. A follow-up turn is driven by a
+    // mail message, so the prompt is not even the brief by then — the title is the only
+    // string that stays true for the life of the session.
+    title: &str,
     initial_task: Option<String>,
     session: Arc<AgentSession>,
     transcript: Arc<Mutex<String>>,
@@ -745,7 +766,7 @@ async fn drive(
             "working session turn done"
         );
         let report =
-            WorkerReport { id: id.clone(), task: task.clone(), kind, owner: owner.clone() };
+            WorkerReport { id: id.clone(), title: title.to_string(), kind, owner: owner.clone() };
         if inbound.send(LoopInput::Worker(report)).await.is_err() {
             tracing::warn!(worker = %id, "worker report dropped; reaction loop gone");
             return;
@@ -904,9 +925,42 @@ mod ownership_tests {
     fn report(kind: WorkerReportKind) -> WorkerReport {
         WorkerReport {
             id: 7.into(),
-            task: "build the 1-pager skill".into(),
+            title: "build the 1-pager skill".into(),
             kind,
             owner: Some(2.into()),
+        }
+    }
+
+    /// A report names the errand; it does not quote the prompt that ran it.
+    ///
+    /// The two used to be one field, and the field held the *opening prompt* — the brief
+    /// after [`WorkerRegistry::spawn_inner`] put the standing record for every system the
+    /// task touches in front of it. So each completion carried the task facet and the
+    /// system facets back into the owner's window, where they stayed for the rest of a
+    /// long-lived thread. On one measured `kt8-059` completion that was 6,770 characters
+    /// of quoted prompt around a 1,427-character report, and 43% of everything that
+    /// reached Cognition over four days.
+    ///
+    /// Nothing was lost by dropping it: the title says what the errand was, and the
+    /// roster and the ledger carry the same handle on every turn.
+    #[test]
+    fn a_report_carries_the_errand_title_and_not_the_prompt() {
+        let opening_prompt = "## The systems this touches\n### ktv\n# KTV\n\n-                               The working tree is at /Users/someone/projects/KTV\n\n                              ## What you are asked to do\nRun the timed acceptance.";
+        let report = WorkerReport {
+            id: 7.into(),
+            title: "resume KT8-059 live timing acceptance".into(),
+            kind: WorkerReportKind::Done("Held without a billable call.".into()),
+            owner: Some(2.into()),
+        };
+
+        for line in [render_report(&report), render_report_plainly(&report)] {
+            assert!(line.contains("resume KT8-059 live timing acceptance"), "{line}");
+            assert!(line.contains("Held without a billable call."), "{line}");
+            assert!(
+                !line.contains("The systems this touches"),
+                "the brief must not travel back up: {line}"
+            );
+            assert!(!line.contains(opening_prompt), "{line}");
         }
     }
 
