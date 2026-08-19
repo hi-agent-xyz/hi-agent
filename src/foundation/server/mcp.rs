@@ -48,6 +48,7 @@ pub async fn post_mcp(
     match mcp::handle(
         &state.tool_registry,
         &state.data_dir,
+        &state.privacy,
         &state.video_in_partial,
         &state.observatory,
         role.as_deref(),

@@ -91,7 +91,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   ─────────────────────────────────────────────────────────────────────────────
   data/        memory (raw = the log · episodes · facets · tasks ·
                        prompts = generated, one per agent that needs state) ·
-               prompts (bundled) · drive · skills · views
+               prompts (bundled) · private values · drive · skills · views
   ─────────────────────────────────────────────────────────────────────────────
   FOUNDATION   engine   runtime · agent wire/MCP · gateway · config · store I/O · build ·
                         observatory · energy
@@ -133,12 +133,12 @@ Each is a statement we can test, and each has a real failure behind it.
 9. **Irreversible or outward-facing → ask.** No silent outward action, ever. This one is
    about reversibility, and it stands — as guidance the agent follows, not a gate the host
    enforces.
-10. **A secret handed over is filed like anything else handed over** — into
-    [`drive/`](data.md#drive), in the clear, because the drive is the person's own filing
-    cabinet and a key is one of the things people keep in one. It travels with the
-    directory. The person is told once what that means and decides; **absent an answer,
-    nothing is filed** — the safe failure is asking twice, never filing what they said not
-    to.
+10. **Private values stay local; models receive references.** The trusted core and its
+    local commands may know, retain, and use a key, password, or PII value, but exact bytes
+    are projected before an external model request. A retained secret is an ordinary
+    `drive/accounts/secrets/*.txt` file, and that path is the reference used by brokers
+    and local commands. See
+    [`privacy.md`](privacy.md).
 11. **No absolute host path is persisted into `data/`.** The directory has to stay portable.
 12. **Who a signal came from is decided at the boundary, never derived from what it says** —
     and *unknown* is an answer the record keeps. A name inferred from content is
@@ -156,6 +156,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
+| [`privacy.md`](privacy.md) | the local/private trust boundary, model projection, secret references and brokered use |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |
 

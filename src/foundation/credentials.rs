@@ -145,9 +145,8 @@ pub struct Tokens {
     pub access_expires_at: String,
 }
 
-/// Upstream LLM credentials — the gateway the codex child talks to, and which model
-/// on it. Rendered into a thread's `model_providers` entry plus the one env var codex
-/// reads the key from; see `AgentConfig::thread_config` / `auth_child_env`.
+/// Upstream LLM credentials — held by the trusted host's privacy proxy. Codex receives
+/// the model choice plus a loopback provider and never receives this endpoint or key.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmCredentials {

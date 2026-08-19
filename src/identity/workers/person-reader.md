@@ -51,9 +51,11 @@ Do not work from what you remember, and do not work from what was said about it
 afterwards.
 
 Your own words in the log are **what you believed at the time**. What you actually did
-is in the worker reports, the timestamps, and the tool calls — under
-`{raw_dir}/worker/` and `{sessions_dir}`. Go and read them for the stretch in
-question, in order, with the clock in view.
+is in worker reports, timestamps, and tool calls. Read the episode's `from_id` and
+`to_id`, then use `hi_read_journal_range`; use `hi_read_session_log` for the relevant
+session's frame tail. Both are host-projected readers: they filter private values before
+returning anything. The raw journal and session directories are deliberately unavailable
+to your shell.
 
 When the two disagree, **the record is right, and the disagreement is the most useful
 thing you will find that day.** An account of a mistake that is itself mistaken will

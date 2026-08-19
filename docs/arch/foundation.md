@@ -39,6 +39,7 @@ so an upgrade replaces one and never the other.
 | Runtime | process management, the bundled toolchain |
 | Agent wire / MCP | the agent wire and the tool surface, routed by session id |
 | Gateway + vendors | model access, credentials, energy accounting |
+| Privacy projector + secret-file broker | strips private values at external-model egress; resolves drive-file references inside bound HTTP effects |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
 | Prompt assembly | installs `prompts/factory/` from the binary at boot; hands each rung its [seed](data.md#prompts) and truncates it, audibly, at the cap |
@@ -57,8 +58,9 @@ observatory and the logger are debug surfaces: lossy and disposable by design. M
 you get either a log shaped by what is convenient to display, or a debug view nobody dares
 drop. Both are worse than keeping two things that happen to look alike.
 
-Like every debug surface here, it shows [ground truth](#debug-surfaces) — raw fields, no
-per-event interpretation.
+Like every debug surface here, it shows [ground truth](#debug-surfaces) — protocol fields
+without per-event interpretation, but never raw private values. Redaction is a boundary rule,
+not an interpretation of what an event meant.
 
 ### Energy
 
@@ -74,8 +76,11 @@ useless and does not say why.
 
 # Tools
 
-There is no separate "effector" layer. From the agent's side everything is a tool call, and
-`Bash` is the effector for most of the world.
+There is no separate general "effector" layer. From the agent's side everything is a tool
+call, and `Bash` is the effector for most of the world. Private values are ordinary local
+drive files: Bash may consume them by path, while a foundation broker offers a safer
+destination-bound HTTP path. Exact values are projected before external-model transport.
+See [`privacy.md`](privacy.md).
 
 ## Decisions
 
@@ -284,22 +289,30 @@ host fences anyone out.
 | **Cognition** | `SendMessage` · `CreateWorker` · session reads · **opening** a ledger row | it delegates rather than does, and it may create a duty but never retire one — that goes to a [Task Manager](agents.md#task-manager) |
 | **Reflection** | as Cognition, plus memory curation | it curates `data/`; duties are not its to record |
 | **Task Manager** | a worker's surface, aimed at one dimension | the only role that may **change** a task's `status` — close, reopen, stand down; it files and delivers none of it |
-| **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |
+| **Workers** | projected files and memory, shell, devices, web, build, brokered private capabilities | the job is here, so the surface is wide; ordinary drive files, including managed secret files, are locally usable |
 
 Reaction is the one exception to "default, not rail". Its surface is **enforced at session
 open**, because the argument for the rung — that it is fast since it *cannot* wait — is worth
 nothing if it can quietly open a file. Restricting our own tools is not enough for that; the
 underlying agent's built-ins have to be restricted too, or "cannot" means "was asked not to".
 
-Perception needs no tool of its own. An agent that can read files can open a photo that
-arrived, because the signal carried a **ref** and a ref is a path. What it needs is not a
-grant but *knowing where things land* — which is prompt, not plumbing.
+Private refs are drive paths. Workers use projected readers for UTF-8
+attachments, journal ranges, and session logs, and a host copier for filing attachment
+bytes without routing them through a model-controlled shell. Image/video understanding
+remains a separate media capability; the text privacy boundary does not claim OCR or media
+inspection.
 
 A **pure transform** changes data; an **effecting tool** changes the world. Workers carry the
 effecting ones because that is where the work is, not because anyone above is untrusted — a
 role reaching outside its default is a sizing mistake to correct, not an intrusion to block.
 The real guardrails are [invariant 9](arch.md#invariants) and the
 [gates](#gates) below, and both are judgment.
+
+The external-model boundary is enforced at provider egress. Model-driven local commands may
+consume secret drive files by path, while every later provider request is projected again.
+Commands should keep values out of argv and output. This is not a strict sandbox against a
+command intentionally transforming or exfiltrating a value; that stronger threat model
+would require broker-only access and is not the chosen design.
 
 ## Bundled
 
@@ -358,15 +371,14 @@ Two things about devices that no amount of code fixes:
 - **The logged-in session *is* the credential.** Publishing to a platform with no open API
   means driving an app that is already signed in — no key to store, nothing to leak.
 
-Where there *is* a key: it goes into the [drive](data.md#keys-passwords-and-the-one-question)
-under `accounts/`, in the clear, alongside the endpoint and the calling convention — one
-entry, so a job months from now finds the key and how to use it in the same place. Which
-environment variable holds it is a fact about *this machine* and belongs in a note about the
-machine, not in the entry: the drive travels and the env does not.
+Where there *is* a key: its bytes go into one
+[secret drive file](privacy.md#secret-files). A job months from now finds what it may use
+and how, then hands the path to a brokered tool or generates a command that reads the text
+file at execution time without embedding or printing it.
 
-Asking for the key and asking to keep it are one exchange, not two. The person is asked
-about keeping **once, ever** — not per key — and the answer stands until they change it; see
-the three answers and the *absent → ask* rule there.
+The target retention policy asks once whether handed-over credentials should be kept for
+this exchange, always, or never. That preference flow is not implemented yet; the current
+projector auto-retains detected secrets so their references remain usable across turns.
 
 ## Honesty about reach
 

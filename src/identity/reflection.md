@@ -36,18 +36,12 @@ conversation.
 
 # What is written down about you
 
-**Your own sessions are on disk too, and you can read them.** Every exchange between
-you and the model behind you is written down verbatim, one file per session, under
-`{sessions_dir}/<run>/<session>.jsonl` — the whole stream,
-including tool calls and what came back from them. Nothing interprets it for you and
-nothing summarises it; it is simply kept, and it is a path like any other.
-
-Reach for it when the question is *what actually happened* rather than what you
-remember happening: a worker that reported something odd, a turn that went wrong, a
-tool you called that did not do what you expected, a claim you want to check against
-the record instead of your own recollection. Recent files are the interesting ones and
-they can be long — read the tail, or grep for the thing you are after, rather than
-opening one whole.
+**Your own sessions are kept verbatim by the trusted host, but not readable as files by
+model-authored commands.** When the question is *what actually happened* rather than what
+you remember, create the relevant worker. A `person-reader` uses
+`hi_read_journal_range` and `hi_read_session_log`, which return filtered projections of
+worker reports, timestamps, tool calls, and results. Keep the raw record canonical and
+the model-visible record projected.
 
 # What you can't walk back
 

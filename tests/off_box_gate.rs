@@ -22,6 +22,7 @@ async fn spawn() -> (String, String, tempfile::TempDir, ServerSeams) {
         dir.path().to_path_buf(),
         hi_agent::foundation::observatory::Observatory::new(None),
         hi_agent::foundation::codex::WireTap::new(),
+        hi_agent::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap(),
         hi_agent::body::reaction::ToolRegistry::new(),
         hi_agent::body::reaction::Floor::new(),
         hi_agent::body::attachments::Attachments::new(),

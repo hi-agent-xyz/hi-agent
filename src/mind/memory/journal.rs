@@ -129,6 +129,32 @@ pub async fn after_cursor(
     Ok(entries)
 }
 
+/// The inclusive signal-id range `[from_id, to_id]`, oldest first, capped at
+/// `limit`. This is the host-side reader for model sessions that may inspect a
+/// historical episode but may not open `memory/raw/` directly.
+pub async fn range(
+    data_dir: &Path,
+    from_id: &str,
+    to_id: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<Vec<JournalEntry>> {
+    let since = uuidv7_ts(from_id).ok_or_else(|| anyhow::anyhow!("from_id is not a UUIDv7"))?;
+    if let Some(to_id) = to_id
+        && uuidv7_ts(to_id).is_none()
+    {
+        anyhow::bail!("to_id is not a UUIDv7");
+    }
+
+    let mut entries = Vec::new();
+    read_signal_dirs(data_dir, since, &mut entries).await?;
+    entries.sort_by(|a, b| (entry_ts(a), entry_id(a)).cmp(&(entry_ts(b), entry_id(b))));
+    entries.retain(|entry| {
+        entry_id(entry) >= from_id && to_id.is_none_or(|to_id| entry_id(entry) <= to_id)
+    });
+    entries.truncate(limit);
+    Ok(entries)
+}
+
 /// The wall-clock timestamp embedded in a uuidv7 string, or `None` if it doesn't
 /// parse / isn't a v7. Used to pick the first day-folder [`after_cursor`] must
 /// scan — an id greater than the cursor cannot predate the cursor's millisecond —
@@ -318,6 +344,16 @@ mod after_cursor_tests {
         let ids = seed(&j, 5).await;
         let got = after_cursor(dir.path(), None, 2).await.unwrap();
         assert_eq!(id_strings(&got), vec![ids[0].clone(), ids[1].clone()]);
+    }
+
+    #[tokio::test]
+    async fn range_is_inclusive_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = Journal::open(dir.path().to_path_buf()).await.unwrap();
+        let ids = seed(&j, 4).await;
+
+        let got = range(dir.path(), &ids[1], Some(&ids[3]), 2).await.unwrap();
+        assert_eq!(id_strings(&got), ids[1..3]);
     }
 
     #[tokio::test]

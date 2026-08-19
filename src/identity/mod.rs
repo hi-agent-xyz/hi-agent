@@ -433,16 +433,6 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
     let dir = |p: PathBuf| p.display().to_string();
     let mut out = text
         .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
-        // The root a `⟨ref: <day>/<file>⟩` resolves against: `<raw_dir>/<channel>/<ref>`.
-        // Without it a ref is a fragment, not a path — and "a ref is a path, and an agent
-        // that can read files can open it" is the reasoning that retired the perception
-        // tool (`docs/arch/agents.md`). The rung was told to open refs and never told
-        // where they start.
-        .replace("{raw_dir}", &dir(crate::mind::memory::layout::raw_root(&base)))
-        .replace(
-            "{sessions_dir}",
-            &dir(crate::mind::memory::layout::raw_root(&base).join("sessions")),
-        )
         .replace(
             "{facets_dir}",
             &dir(crate::mind::memory::layout::facets_dir(&base)),
@@ -841,8 +831,8 @@ mod soul_tests {
 
         let organizer = role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await;
         assert!(
-            organizer.contains("memory/raw/file/"),
-            "the organizer is pointed at the flat channel directory"
+            organizer.contains("hi_copy_file_to_drive"),
+            "the organizer must use the host attachment copier"
         );
 
         for t in WorkerType::ALL {
@@ -963,8 +953,8 @@ mod soul_tests {
     /// it matters. Pin the destinations so a prompt edit cannot quietly drop them.
     #[test]
     fn the_reader_is_sent_to_the_wire() {
-        assert!(WORKER_PERSON_READER_BASE.contains("{raw_dir}/worker/"));
-        assert!(WORKER_PERSON_READER_BASE.contains("{sessions_dir}"));
+        assert!(WORKER_PERSON_READER_BASE.contains("`hi_read_journal_range`"));
+        assert!(WORKER_PERSON_READER_BASE.contains("`hi_read_session_log`"));
         assert!(WORKER_PERSON_READER_BASE.contains("{facets_dir}"));
     }
 
@@ -1062,12 +1052,6 @@ mod soul_tests {
         );
     }
 
-    /// The frame log had a writer since `70479a9` and no *pointer* — no prompt anywhere
-    /// named `memory/raw/sessions/`, so the one consumer the design allows (an agent that
-    /// goes and looks) could not know it existed. `docs/arch/foundation.md` is explicit
-    /// that the host "records the session stream verbatim and interprets none of it", so a
-    /// code-level reader was never the answer; a path in the character was.
-
     /// The drive organizer copies rather than moves, and the reason has to travel with the
     /// instruction: `docs/arch/surfaces.md` forbids log-then-copy for streamed bulk, so a
     /// reasonable person reading only that rule would "fix" this into a move — dangling
@@ -1075,19 +1059,19 @@ mod soul_tests {
     /// bytes are the point.
     #[test]
     fn the_drive_organizer_is_told_why_it_copies() {
-        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("copy, never move"));
-        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("fades"));
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("Copy, never move"));
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("fade"));
     }
 
-    /// `docs/arch/agents.md` retires the perception tool because "a ref is a path, and
-    /// an agent that can read files can open it" — which is only true if the rung is
-    /// told where refs start. Nothing said, so the two prompts that open one now name
-    /// `{raw_dir}`, and it has to survive substitution: an unexpanded placeholder is a
-    /// path to nothing, and the rung reports the file missing rather than empty.
+    /// Raw refs are host handles, not paths handed to a model-controlled shell. The two
+    /// prompts that act on attachments must name the projected reader/copier and must not
+    /// point the model at the canonical raw root.
     #[tokio::test]
-    async fn the_rungs_that_open_a_ref_are_told_where_refs_start() {
-        assert!(COGNITION_BASE.contains("{raw_dir}"), "cognition must name the root");
-        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("{raw_dir}"), "the organizer must name the root");
+    async fn attachment_prompts_use_host_adapters_not_raw_paths() {
+        assert!(COGNITION_BASE.contains("`hi_read_text_file`"));
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("`hi_copy_file_to_drive`"));
+        assert!(!COGNITION_BASE.contains("{raw_dir}"));
+        assert!(!WORKER_DRIVE_ORGANIZER_BASE.contains("{raw_dir}"));
 
         let dir = tempfile::tempdir().unwrap();
         let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
@@ -1095,8 +1079,7 @@ mod soul_tests {
             cognition_prompt(dir.path()).await,
             role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await,
         ] {
-            assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
-            assert!(text.contains(&root), "the substituted root must be the absolute raw root");
+            assert!(!text.contains(&root), "the canonical raw root reached a model prompt");
         }
     }
 
@@ -1229,8 +1212,9 @@ mod soul_tests {
     #[test]
     fn cognition_carries_what_deliberation_was_for() {
         assert!(
-            COGNITION_BASE.contains("A ref is a path"),
-            "Cognition must be told that looking is opening a path, not calling a tool"
+            COGNITION_BASE.contains("A ref is an opaque handle")
+                && COGNITION_BASE.contains("`hi_read_text_file`"),
+            "Cognition must route private refs through a host adapter"
         );
         assert!(
             COGNITION_BASE.contains("{conversation_memory}"),
@@ -1343,74 +1327,63 @@ mod soul_tests {
     /// one. So nothing was saved, while the key itself landed verbatim in the raw log, both
     /// session transcripts and the runtime's rollout. The exact inversion of the promise.
     ///
-    /// `docs/arch/data.md#keys-passwords-and-the-one-question` settles it: the drive holds
-    /// keys in the clear, like anything else handed over. What the prompts then have to
-    /// carry is the part no rail enforces — that there is no vault to claim.
+    /// `docs/arch/privacy.md` settles it: one ordinary `drive/accounts/secrets/*.txt` file
+    /// is both the local storage and the stable reference tools and commands use. What the
+    /// prompts have to carry is the part no rail enforces — that there is no vault to
+    /// claim — so the voice, the brain, and the drive organizer must all name the same file.
     #[test]
-    fn no_rung_may_offer_a_secure_store_that_does_not_exist() {
+    fn every_key_prompt_names_the_ordinary_drive_secret_file() {
         assert!(
-            REACTION_BASE.contains("Don't invent somewhere safe to put it"),
-            "Reaction does the promising, so Reaction is where this has to be said"
+            REACTION_BASE.contains("drive/accounts/secrets/openai-api-key.txt")
+                && REACTION_BASE.contains("contains only the exact credential"),
+            "Reaction does the promising, so Reaction must describe the implemented file"
         );
         assert!(
-            COGNITION_BASE.contains("There is no vault and no secure store"),
-            "and the rung that would dispatch the filing must not believe in one either"
+            COGNITION_BASE.contains("drive/accounts/secrets/openai-api-key.txt")
+                && COGNITION_BASE.contains("ordinary text file"),
+            "Cognition must carry the same file contract"
+        );
+        assert!(
+            WORKER_DRIVE_ORGANIZER_BASE.contains("ordinary text file")
+                && WORKER_DRIVE_ORGANIZER_BASE.contains("stable reference"),
+            "the organizer must preserve the managed file"
         );
     }
 
-    /// **Absent is not yes, and this is the half that costs something to get wrong.** The
-    /// person is asked once, ever, and the answer is a facet — which means it can be missing
-    /// (never written, or a seed that lost it). Resolving *missing* to *file* would file a
-    /// key against a person who said never; resolving it to *ask* costs one question. So
-    /// both the rung that dispatches and the worker that writes must refuse without a yes,
-    /// and Reaction must know that a standing choice it cannot find is not one.
+    /// **The prompts may not promise a choice the host cannot honour.** The one-time
+    /// *this / all / none* retention question is a documented target
+    /// (`docs/arch/data.md#keys-passwords-and-the-one-question`) and nothing implements it:
+    /// the projector files every detected secret automatically. Until that flow exists, a
+    /// prompt that describes the question teaches the agent to claim an answer was applied,
+    /// which is the same inversion as promising a vault that isn't there — so both the
+    /// voice and the brain have to say plainly that retention is automatic.
     #[test]
-    fn a_key_is_never_filed_without_an_answer() {
+    fn prompts_are_honest_about_current_auto_retention() {
         assert!(
-            REACTION_BASE.contains("A standing choice you can't find is not a"),
-            "Reaction must re-ask rather than assume the answer it cannot see"
+            REACTION_BASE.contains("retains detected secrets automatically")
+                && REACTION_BASE.contains("not implemented"),
+            "Reaction is in the room, so Reaction must not imply the choice was offered"
         );
         assert!(
-            COGNITION_BASE.contains("never treat *not knowing* as a yes"),
+            COGNITION_BASE.contains("retained automatically")
+                && COGNITION_BASE.contains("not implemented"),
             "Cognition dispatches the filing, so Cognition must hold the same line"
         );
-        assert!(
-            WORKER_DRIVE_ORGANIZER_BASE.contains("file nothing"),
-            "and the worker that would write it is the last place to stop"
-        );
     }
 
-    /// The three answers are one exchange with the person, so exactly one prompt runs it.
-    /// Two rungs asking is two prompts, and a person asked twice about the same key learns
-    /// the question is noise. Reaction owns it because Reaction is the one in the room.
+    /// The model keeps the operational context that makes a file reference useful, while
+    /// the drive organizer preserves the stable path.
     #[test]
-    fn exactly_one_rung_asks_the_key_question() {
-        let asks: Vec<_> = Role::ALL
-            .iter()
-            .filter(|r| r.base().contains("以后都存"))
-            .collect();
-        assert_eq!(
-            asks.len(),
-            1,
-            "exactly one prompt may carry the ask, found {asks:?}"
-        );
-        assert_eq!(asks[0].prompt_name(), "reaction");
-    }
-
-    /// A key filed as a bare secret is a string nobody can use in three months, which is the
-    /// quiet failure here — it looks filed and is useless. The entry has to say what it
-    /// opens. And the env var it happens to sit in on *this* machine is the one thing that
-    /// must not travel in it: `docs/arch/arch.md` invariant 11, in the softest place it
-    /// shows up.
-    #[test]
-    fn a_filed_key_carries_what_it_opens_and_not_the_machine() {
+    fn a_secret_file_carries_what_it_opens_without_printing_the_value() {
         assert!(
-            WORKER_DRIVE_ORGANIZER_BASE.contains("a bare secret with no note of what it's for"),
-            "the organizer must be told an entry is more than the secret"
+            COGNITION_BASE.contains("service or endpoint")
+                && COGNITION_BASE.contains("calling convention"),
+            "Cognition must remember enough metadata to use the reference"
         );
         assert!(
-            WORKER_DRIVE_ORGANIZER_BASE.contains("Not which environment variable holds it"),
-            "and that the machine-bound half stays behind when the drive moves"
+            WORKER_DRIVE_ORGANIZER_BASE.contains("Do not move, rename, duplicate, print")
+                && WORKER_DRIVE_ORGANIZER_BASE.contains("break the stable reference"),
+            "the organizer must preserve the path and avoid printing the value"
         );
     }
 }

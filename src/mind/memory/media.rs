@@ -165,7 +165,8 @@ pub fn safe_rel_path(path: &str) -> bool {
 
 /// Resolve a drive-relative path to a regular file inside [`drive_root`], or `None`.
 pub async fn resolve_in_drive(data_dir: &Path, rel: &str) -> Option<PathBuf> {
-    resolve_in_root(&drive_root(data_dir), rel).await
+    let root = drive_root(data_dir);
+    resolve_in_root(&root, rel).await
 }
 
 /// Resolve `rel` inside `root`, yielding the path only if it is a regular file that is

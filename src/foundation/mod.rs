@@ -34,6 +34,7 @@ pub mod mcp;
 pub mod models;
 pub mod observatory;
 pub mod pcm;
+pub mod privacy;
 pub mod registry;
 pub mod run;
 pub mod segment;

@@ -42,10 +42,10 @@ use crate::foundation::server::AppState;
 // guard too many — the copy that gets a fix is never reliably the copy in the path
 // under attack.
 
-use crate::mind::memory::media::{drive_root as drive_dir, resolve_in_root};
+use crate::mind::memory::media::{drive_root as drive_dir, resolve_in_drive};
 
 #[cfg(test)]
-use crate::mind::memory::media::safe_rel_path;
+use crate::mind::memory::media::{resolve_in_root, safe_rel_path};
 
 /// A file's mtime as `2026-08-04T10:00:00Z`. Falls back to the epoch when the platform
 /// has no mtime — a missing timestamp must not drop the entry from the listing.
@@ -83,8 +83,8 @@ struct EntryDto {
 }
 
 /// Walk the drive. Iterative (a stack of dirs) rather than recursive so no boxing is
-/// needed; dotfiles are skipped as editor/OS litter. Directories are emitted as
-/// entries too — an empty `drive/papers/` is a real thing the view should show.
+/// needed; hidden entries are skipped as incidental editor/OS files. Directories are
+/// emitted as entries too — an empty `drive/papers/` is a real thing the view should show.
 /// A missing root yields no entries: nothing has been filed yet, which is not an error.
 async fn walk_drive(root: &std::path::Path) -> std::io::Result<Vec<EntryDto>> {
     let mut out: Vec<EntryDto> = Vec::new();
@@ -105,9 +105,16 @@ async fn walk_drive(root: &std::path::Path) -> std::io::Result<Vec<EntryDto>> {
             } else {
                 format!("{prefix}/{name}")
             };
-            // An entry we cannot stat (a broken symlink, a file removed mid-walk) is
-            // skipped rather than failing the whole listing.
-            let (Ok(ft), Ok(meta)) = (ent.file_type().await, ent.metadata().await) else {
+            let Ok(ft) = ent.file_type().await else {
+                continue;
+            };
+            // The file endpoint refuses symlinks after canonicalisation. The listing
+            // should not advertise an alias it will never serve.
+            if ft.is_symlink() {
+                continue;
+            }
+            // An entry removed mid-walk is skipped rather than failing the whole list.
+            let Ok(meta) = ent.metadata().await else {
                 continue;
             };
             let is_dir = ft.is_dir();
@@ -147,7 +154,7 @@ pub async fn get_drive_file(
     State(state): State<Arc<AppState>>,
     Path(path): Path<String>,
 ) -> Response {
-    let Some(full) = resolve_in_root(&drive_dir(&state.data_dir), &path).await else {
+    let Some(full) = resolve_in_drive(&state.data_dir, &path).await else {
         return (StatusCode::NOT_FOUND, "not found\n").into_response();
     };
     let Ok(bytes) = tokio::fs::read(&full).await else {

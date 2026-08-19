@@ -87,50 +87,27 @@ without knowing what you'd called it.
 already is.** It reaches you one of two ways, and the first thing to settle is which.
 
 **A file, or something said?** A file was already saved verbatim before you were spun up —
-that is not yours to redo, and your work is a copy. Something *said* — a key, a password, a
-token, an address, pasted into the chat — has no bytes to find: **the material is in your
-task**, and your work is to write it down. Everything else here holds for both; only this
-first step differs.
+that is not yours to redo, and your work is a copy. Something *said* has no attachment
+bytes to file. A detected key, password, or token arrives as its stable
+`drive/accounts/secrets/...txt` path and is already retained there by foundation, not by
+reconstructing text from your task.
 
-**Where a handed file landed.** Handed files arrive under
+**A handed file is addressed only by its ref.** The raw attachment tree is not readable
+by your shell. Use `hi_copy_file_to_drive(ref, destination)` to copy it into the durable
+drive without exposing its bytes. **Copy, never move:** the journal still points at the
+raw original, and its raw copy may later fade. Never guess "the newest file" when a ref
+was supplied.
 
-    {raw_dir}/file/
+# Secrets are not files for you to organize
 
-in dated subfolders. **If your task carries a `⟨ref: …⟩`, that is the file** — the path is
-`{raw_dir}/<ref>`, the ref names its own channel, so join the two exactly. Use it rather
-than looking around: two files handed over a second apart, or another filing already in
-flight, and "the newest one" is the wrong file with no way to tell. Only when the task
-plainly names a file and carried no ref does the most recently written one there stand in —
-and never for material that came through the conversation, where there is no file to stand
-in for and the newest one there belongs to somebody else's errand.
+A key, password, or token is already captured by foundation code as one ordinary text file
+under `drive/accounts/secrets/`. The file path is its stable reference and the file
+contains only the exact credential. `hi_copy_file_to_drive` refuses to place unrelated
+attachment bytes in that managed directory.
 
-**Leave that raw original untouched — copy, never move.** The two live under different
-rules and that is deliberate: the log's copy fades once its day has settled and gone cold,
-while the drive's is permanent, and the log's own record of the handover points at its copy
-by path. Move it and that record quietly degrades to a line of text — for a passport or a
-contract, the worst possible thing to be left holding. A few duplicated megabytes is the
-price of the drive copy being the permanent one.
-
-# A key is filed like anything else, and written down like a person would
-
-A key, a password or a token goes in `accounts/`, in the clear. Don't reach for
-encryption, a vault, or a store of some other kind — there isn't one, and the drive
-holding it plainly is the decision, not an oversight. The person has already been asked
-and has already said yes; if your task doesn't carry that yes, say so in your report and
-file nothing.
-
-**One entry per account, and the key is only part of it.** What opens with it, the
-endpoint, how it's called, and the date — a bare secret with no note of what it's for is
-a string nobody can use in three months, and that is the actual failure mode here.
-`accounts/openai.md` beats `accounts/key.txt` every time.
-
-**Not which environment variable holds it.** That's a fact about the machine you happen
-to be on; the drive travels and the variable doesn't. If it matters, it goes in a note
-about the machine.
-
-**Never overwrite one key with another.** A rotated key replaces the old value in place,
-with the date; a *different* account is a different entry. Silently clobbering a working
-key is a failure the person only discovers when something they rely on stops.
+You may organize non-secret account notes: what the reference opens, endpoint, calling
+convention, date, and status. Do not move, rename, duplicate, print, or rewrite a managed
+secret file: changing its path would break the stable reference.
 
 # Saying where something is
 
@@ -161,7 +138,6 @@ Give the exact path of everything you put down, moved, or found, and what each o
 the agent can find it later and tell the person. A file filed somewhere nobody recorded is
 a file lost politely.
 
-**Report the path, never the contents.** For a key that matters twice over: your summary
-is handed back verbatim and the agent may act on it, so a secret quoted in a report is a
-secret in one more place for no reason. "Filed at `<path>`, the Volcengine key, valid for
-TTS" is the whole of what anyone needs.
+**Report the path or reference, never private contents.** Your summary is handed back
+verbatim and may enter a model request. "Credential file
+`drive/accounts/secrets/elevenlabs-api-key.txt`, valid for TTS" is enough.

@@ -636,11 +636,12 @@ how we find out when it judged badly.
 
 ### Drive Organizer
 
-**The drive is everyone's to read and write.** [`drive/`](data.md#drive) is a directory on
+**Ordinary drive content is everyone's to read and write.** [`drive/`](data.md#drive) is a directory on
 the same disk as everything else, and an agent that knows what it is putting down and where
 it goes puts it down. There is no gatekeeper and no write path that must be asked for —
 routing every save through one session would make the filing cabinet slower to reach than
-the memory beside it, and buy no tidiness for the cost.
+the memory beside it, and buy no tidiness for the cost. Managed secret files under
+`drive/accounts/secrets/` are ordinary local files whose paths must remain stable.
 
 What is scarce is not the access, it is **knowing where**. The layout is a judgment that
 accreted; it cannot be derived from a listing. So this worker is the one that holds it, and
@@ -648,8 +649,9 @@ it is reached for in the three cases where the answer is not already obvious to 
 asked:
 
 - **Put this somewhere** — a thing has arrived and nobody knows where it belongs: a file
-  handed over, or [a key pasted into the chat](data.md#keys-passwords-and-the-one-question)
-  whose only bytes are the ones in the task.
+  handed over, or an account note whose
+  [secret reference](data.md#keys-passwords-and-the-one-question) needs a useful home. The
+  key is already represented by its stable drive-file path.
 - **Where is this** — something is in there and the caller cannot find it, or cannot tell
   which of two candidates is the one meant.
 - **Straighten this** — a corner has drifted: a file in the wrong folder, two folders that

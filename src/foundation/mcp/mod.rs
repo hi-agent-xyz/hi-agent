@@ -350,11 +350,177 @@ fn review_view_tool() -> Value {
     )
 }
 
+/// Brokered HTTP: the model chooses an operation and a drive-file reference; the
+/// trusted host resolves and injects the value at the destination boundary.
+fn http_request_tool() -> Value {
+    tool(
+        "hi_http_request",
+        "Make an HTTP API request through the trusted host. Use `auth_ref` when the \
+         conversation contains a `[SECRET_REF:drive/accounts/secrets/...txt]`; the host resolves it, \
+         injects it, and never returns \
+         the credential. The same ref is an ordinary text file path that local CLIs can \
+         consume without putting the value in the command text. Redirects are not followed. \
+         HTTPS is required except for loopback.",
+        json!({
+            "type": "object",
+            "properties": {
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+                    "default": "GET"
+                },
+                "url": { "type": "string", "description": "The complete HTTP(S) URL." },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Non-secret request headers. Authentication headers are broker-managed."
+                },
+                "body": {
+                    "description": "Optional string body or JSON value."
+                },
+                "auth_ref": {
+                    "type": "string",
+                    "description": "Secret drive-file ref, e.g. `drive/accounts/secrets/openai-api-key.txt`. Omit for an unauthenticated request."
+                },
+                "auth_scheme": {
+                    "type": "string",
+                    "enum": ["bearer", "basic", "header"],
+                    "default": "bearer"
+                },
+                "auth_username": {
+                    "type": "string",
+                    "description": "Username for basic auth; the referenced value is used as the password."
+                },
+                "auth_header": {
+                    "type": "string",
+                    "description": "Header name for header auth, commonly `X-API-Key`."
+                }
+            },
+            "required": ["url"]
+        }),
+    )
+}
+
+fn read_text_file_tool() -> Value {
+    tool(
+        "hi_read_text_file",
+        "Read a UTF-8 text attachment or drive file through the trusted host. Pass the \
+         complete `ref` from the signal, such as `file/...`, or a `drive/...` ref. The \
+         host filters private values before returning text. Binary files, PDFs, OCR, and \
+         files over 1 MiB are deliberately unsupported.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "A complete `file/...` or `drive/...` ref."
+                }
+            },
+            "required": ["ref"]
+        }),
+    )
+}
+
+fn copy_file_to_drive_tool() -> Value {
+    tool(
+        "hi_copy_file_to_drive",
+        "Copy an attachment into the durable drive without exposing its bytes to the \
+         model-controlled shell. `ref` must be the complete `file/...` ref from the \
+         handover signal. `destination` is relative to `drive/`; existing files are \
+         never overwritten. `accounts/secrets/` contains managed secret text files and \
+         cannot receive attachment bytes through this copier.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "The complete `file/...` ref from the attachment signal."
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "A safe path relative to `drive/`, including the filename."
+                }
+            },
+            "required": ["ref", "destination"]
+        }),
+    )
+}
+
+fn read_journal_range_tool() -> Value {
+    tool(
+        "hi_read_journal_range",
+        "Read an inclusive range from the private signal journal through the trusted \
+         host. Take `from_id` and `to_id` from an episode's frontmatter. The returned \
+         JSON is recursively filtered before it reaches you; the raw journal directory \
+         is not readable by model-authored commands.",
+        json!({
+            "type": "object",
+            "properties": {
+                "from_id": {
+                    "type": "string",
+                    "description": "Inclusive UUIDv7 signal id from episode frontmatter."
+                },
+                "to_id": {
+                    "type": "string",
+                    "description": "Optional inclusive UUIDv7 ending signal id."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "default": 150
+                }
+            },
+            "required": ["from_id"]
+        }),
+    )
+}
+
+fn read_session_log_tool() -> Value {
+    tool(
+        "hi_read_session_log",
+        "Read the tail of a private Codex session frame log through the trusted host. \
+         The host selects the latest matching run when `run` is omitted and recursively \
+         filters every frame before returning it. Use this to verify what a worker or \
+         tool actually did without opening `memory/raw/sessions/`.",
+        json!({
+            "type": "object",
+            "properties": {
+                "session": {
+                    "type": "string",
+                    "description": "The hi-agent session id, such as `general-api-test`."
+                },
+                "run": {
+                    "type": "string",
+                    "description": "Optional twelve-character run id."
+                },
+                "contains": {
+                    "type": "string",
+                    "description": "Optional literal filter applied before the tail is selected."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 200
+                }
+            },
+            "required": ["session"]
+        }),
+    )
+}
+
 pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
             send_message_tool(),
             review_view_tool(),
+            http_request_tool(),
+            read_text_file_tool(),
+            copy_file_to_drive_tool(),
+            read_journal_range_tool(),
+            read_session_log_tool(),
+            image_text_to_text_tool(),
             // **No `hi_look` / `hi_act`.** The worker used to hold the screen pair, and
             // driving the *foreground* desktop is the one capability whose failures land
             // on the person rather than in a report: the cursor moves under their hand,
@@ -897,6 +1063,7 @@ fn show_tool() -> Value {
 pub async fn handle(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
     role: Option<&str>,
@@ -934,7 +1101,18 @@ pub async fn handle(
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             McpReply::Json(result(
                 id,
-                dispatch_tool(registry, data_dir, video_partial, observatory, session_id, role, name, &args).await,
+                dispatch_tool(
+                    registry,
+                    data_dir,
+                    privacy,
+                    video_partial,
+                    observatory,
+                    session_id,
+                    role,
+                    name,
+                    &args,
+                )
+                .await,
             ))
         }
         // ping is a no-op request the client may send.
@@ -950,6 +1128,7 @@ pub async fn handle(
 async fn dispatch_tool(
     registry: &ToolRegistry,
     data_dir: &std::path::Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
     session_id: Option<crate::foundation::registry::SessionId>,
@@ -965,6 +1144,20 @@ async fn dispatch_tool(
     if matches!(name, "hi_say" | "hi_show") && role != Some("reaction") {
         return tool_error(&format!(
             "`{name}` is reaction-only; role `{}` may not speak or show",
+            role.unwrap_or("<none>")
+        ));
+    }
+    if matches!(
+        name,
+        "hi_http_request"
+            | "hi_read_text_file"
+            | "hi_copy_file_to_drive"
+            | "hi_read_journal_range"
+            | "hi_read_session_log"
+    ) && role != Some("worker")
+    {
+        return tool_error(&format!(
+            "`{name}` is worker-only; role `{}` may not access private host adapters",
             role.unwrap_or("<none>")
         ));
     }
@@ -1004,6 +1197,21 @@ async fn dispatch_tool(
         "hi_text_to_video" => return do_text_to_video(data_dir, session_id, args).await,
         "hi_image_to_video" => return do_image_to_video(data_dir, session_id, args).await,
         "hi_review_view" => return do_review_view(data_dir, args).await,
+        "hi_read_text_file" => return do_read_text_file(data_dir, privacy, args).await,
+        "hi_copy_file_to_drive" => return do_copy_file_to_drive(data_dir, args).await,
+        "hi_read_journal_range" => {
+            return do_read_journal_range(data_dir, privacy, args).await;
+        }
+        "hi_read_session_log" => return do_read_session_log(data_dir, privacy, args).await,
+        "hi_http_request" => {
+            return match crate::foundation::privacy::broker::http_request(privacy, args).await {
+                Ok(response) => match serde_json::to_string_pretty(&response) {
+                    Ok(response) => tool_ok(&response),
+                    Err(error) => tool_error(&format!("encoding HTTP response: {error}")),
+                },
+                Err(error) => tool_error(&error.to_string()),
+            };
+        }
         _ => {}
     }
 
@@ -1478,6 +1686,363 @@ async fn dispatch_tool(
     match outcome {
         Ok(ack) => tool_ok(&ack),
         Err(err) => tool_error(&err.to_string()),
+    }
+}
+
+const MAX_PROJECTED_TEXT_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_SESSION_LOG_READ_BYTES: u64 = 8 * 1024 * 1024;
+
+async fn do_read_text_file(
+    data_dir: &Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
+    args: &Value,
+) -> Value {
+    let Some(reff) = args
+        .get("ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return tool_error("hi_read_text_file requires `ref`");
+    };
+    let is_handed_file = crate::mind::memory::media::parse_ref(reff)
+        .is_some_and(|(channel, _, _)| channel == crate::types::Channel::File);
+    if !is_handed_file && !reff.starts_with(crate::mind::memory::media::DRIVE_PREFIX) {
+        return tool_error("hi_read_text_file accepts only `file/...` or `drive/...` refs");
+    }
+    let Some(path) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
+        return tool_error("hi_read_text_file: that ref is unavailable");
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return tool_error(&format!("hi_read_text_file: cannot inspect ref: {error}"));
+        }
+    };
+    if metadata.len() > MAX_PROJECTED_TEXT_FILE_BYTES {
+        return tool_error("hi_read_text_file: file exceeds the 1 MiB text-reader limit");
+    }
+    let text = match tokio::fs::read_to_string(&path).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+            return tool_error(
+                "hi_read_text_file: file is not UTF-8 text; binary files, PDFs, and OCR are unsupported",
+            );
+        }
+        Err(error) => {
+            return tool_error(&format!("hi_read_text_file: reading ref failed: {error}"));
+        }
+    };
+    match privacy.filter().project_text(&text) {
+        Ok(projected) => tool_ok(&projected.text),
+        Err(error) => tool_error(&format!(
+            "hi_read_text_file: privacy projection failed: {error}"
+        )),
+    }
+}
+
+async fn do_copy_file_to_drive(data_dir: &Path, args: &Value) -> Value {
+    let Some(reff) = args
+        .get("ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return tool_error("hi_copy_file_to_drive requires `ref`");
+    };
+    if !crate::mind::memory::media::parse_ref(reff)
+        .is_some_and(|(channel, _, _)| channel == crate::types::Channel::File)
+    {
+        return tool_error("hi_copy_file_to_drive accepts only a handed `file/...` ref");
+    }
+    let Some(source) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
+        return tool_error("hi_copy_file_to_drive: that attachment is unavailable");
+    };
+    let Some(destination) = args
+        .get("destination")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return tool_error("hi_copy_file_to_drive requires `destination`");
+    };
+    if !crate::mind::memory::media::safe_rel_path(destination) {
+        return tool_error("hi_copy_file_to_drive: destination must be a safe drive-relative path");
+    }
+    if destination == "accounts/secrets" || destination.starts_with("accounts/secrets/") {
+        return tool_error(
+            "hi_copy_file_to_drive: accounts/secrets contains managed secret text files and cannot hold attachment bytes",
+        );
+    }
+
+    let (mut output, path) = match create_new_drive_file(data_dir, destination).await {
+        Ok(result) => result,
+        Err(error) => return tool_error(&format!("hi_copy_file_to_drive: {error}")),
+    };
+    let mut input = match tokio::fs::File::open(&source).await {
+        Ok(input) => input,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&path).await;
+            return tool_error(&format!(
+                "hi_copy_file_to_drive: opening attachment failed: {error}"
+            ));
+        }
+    };
+    if let Err(error) = tokio::io::copy(&mut input, &mut output).await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return tool_error(&format!(
+            "hi_copy_file_to_drive: copying attachment failed: {error}"
+        ));
+    }
+    use tokio::io::AsyncWriteExt as _;
+    if let Err(error) = output.flush().await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return tool_error(&format!(
+            "hi_copy_file_to_drive: flushing attachment failed: {error}"
+        ));
+    }
+    if let Err(error) = output.sync_data().await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return tool_error(&format!(
+            "hi_copy_file_to_drive: syncing attachment failed: {error}"
+        ));
+    }
+    tool_ok(&format!(
+        "copied without exposing the bytes: ⟨ref: {}⟩",
+        crate::mind::memory::media::drive_ref(destination)
+    ))
+}
+
+async fn create_new_drive_file(
+    data_dir: &Path,
+    destination: &str,
+) -> anyhow::Result<(tokio::fs::File, PathBuf)> {
+    use anyhow::{Context, bail};
+
+    let root = crate::mind::memory::media::drive_root(data_dir);
+    tokio::fs::create_dir_all(&root).await?;
+    let canonical_root = tokio::fs::canonicalize(&root).await?;
+    let mut parts = destination.split('/').collect::<Vec<_>>();
+    let file_name = parts.pop().context("destination has no filename")?;
+    let mut parent = canonical_root.clone();
+    for part in parts {
+        parent.push(part);
+        match tokio::fs::symlink_metadata(&parent).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("destination parent may not contain a symlink");
+            }
+            Ok(metadata) if !metadata.is_dir() => bail!("destination parent is not a directory"),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir(&parent).await?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let canonical = tokio::fs::canonicalize(&parent).await?;
+        if !canonical.starts_with(&canonical_root) {
+            bail!("destination escapes drive");
+        }
+        parent = canonical;
+    }
+    let path = parent.join(file_name);
+    let file = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .await
+        .with_context(|| format!("creating {}", path.display()))?;
+    Ok((file, path))
+}
+
+async fn do_read_journal_range(
+    data_dir: &Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
+    args: &Value,
+) -> Value {
+    let Some(from_id) = args
+        .get("from_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return tool_error("hi_read_journal_range requires `from_id`");
+    };
+    let to_id = args
+        .get("to_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(150)
+        .clamp(1, 500) as usize;
+    let mut entries =
+        match crate::mind::memory::journal::range(data_dir, from_id, to_id, limit + 1).await
+        {
+            Ok(entries) => entries,
+            Err(error) => return tool_error(&format!("hi_read_journal_range: {error}")),
+        };
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
+    let mut value = json!({
+        "from_id": from_id,
+        "to_id": to_id,
+        "entries": entries,
+        "truncated": truncated,
+    });
+    projected_json_tool_result(privacy, &mut value, "hi_read_journal_range")
+}
+
+async fn do_read_session_log(
+    data_dir: &Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
+    args: &Value,
+) -> Value {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+
+    let Some(session) = args
+        .get("session")
+        .and_then(Value::as_str)
+        .and_then(|value| value.trim().parse::<registry::SessionId>().ok())
+    else {
+        return tool_error("hi_read_session_log requires a valid `session` id");
+    };
+    let run = args
+        .get("run")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let (run, path) = match find_session_log(data_dir, &session, run).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return tool_error("hi_read_session_log: no frame log for that session"),
+        Err(error) => return tool_error(&format!("hi_read_session_log: {error}")),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return tool_error(&format!("hi_read_session_log: cannot inspect log: {error}"));
+        }
+    };
+    let mut file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(error) => return tool_error(&format!("hi_read_session_log: cannot open log: {error}")),
+    };
+    let clipped = metadata.len() > MAX_SESSION_LOG_READ_BYTES;
+    if clipped
+        && let Err(error) = file
+            .seek(std::io::SeekFrom::End(-(MAX_SESSION_LOG_READ_BYTES as i64)))
+            .await
+    {
+        return tool_error(&format!("hi_read_session_log: cannot seek log: {error}"));
+    }
+    let mut bytes = Vec::new();
+    if let Err(error) = file.read_to_end(&mut bytes).await {
+        return tool_error(&format!("hi_read_session_log: cannot read log: {error}"));
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let text = if clipped {
+        text.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        text.as_ref()
+    };
+    let contains = args
+        .get("contains")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(200)
+        .clamp(1, 1000) as usize;
+    let matching = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| contains.is_none_or(|needle| line.contains(needle)))
+        .collect::<Vec<_>>();
+    let total = matching.len();
+    let frames = matching[total.saturating_sub(limit)..]
+        .iter()
+        .map(|line| {
+            serde_json::from_str(line).unwrap_or_else(|_| Value::String((*line).to_string()))
+        })
+        .collect::<Vec<_>>();
+    let mut value = json!({
+        "run": run,
+        "session": session.to_string(),
+        "frames": frames,
+        "matching_frames": total,
+        "truncated": clipped || total > limit,
+    });
+    projected_json_tool_result(privacy, &mut value, "hi_read_session_log")
+}
+
+async fn find_session_log(
+    data_dir: &Path,
+    session: &registry::SessionId,
+    run: Option<&str>,
+) -> anyhow::Result<Option<(String, PathBuf)>> {
+    let sessions = crate::mind::memory::layout::raw_root(data_dir).join("sessions");
+    if let Some(run) = run {
+        if !is_private_run_id(run) {
+            anyhow::bail!("run must be twelve lowercase hexadecimal characters");
+        }
+        let path = crate::mind::memory::layout::session_frames_path(data_dir, run, session);
+        return Ok(tokio::fs::try_exists(&path)
+            .await?
+            .then(|| (run.to_string(), path)));
+    }
+
+    let mut dirs = match tokio::fs::read_dir(&sessions).await {
+        Ok(dirs) => dirs,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut latest: Option<(std::time::SystemTime, String, PathBuf)> = None;
+    while let Some(entry) = dirs.next_entry().await? {
+        if !entry.file_type().await?.is_dir() {
+            continue;
+        }
+        let Ok(run) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !is_private_run_id(&run) {
+            continue;
+        }
+        let path = crate::mind::memory::layout::session_frames_path(data_dir, &run, session);
+        let Ok(metadata) = tokio::fs::metadata(&path).await else {
+            continue;
+        };
+        let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if latest
+            .as_ref()
+            .is_none_or(|(current, _, _)| modified > *current)
+        {
+            latest = Some((modified, run, path));
+        }
+    }
+    Ok(latest.map(|(_, run, path)| (run, path)))
+}
+
+fn is_private_run_id(run: &str) -> bool {
+    run.len() == 12
+        && run
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn projected_json_tool_result(
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
+    value: &mut Value,
+    tool_name: &str,
+) -> Value {
+    if let Err(error) = privacy.filter().project_json(value) {
+        return tool_error(&format!("{tool_name}: privacy projection failed: {error}"));
+    }
+    match serde_json::to_string_pretty(value) {
+        Ok(text) => tool_ok(&text),
+        Err(error) => tool_error(&format!("{tool_name}: encoding result failed: {error}")),
     }
 }
 
@@ -2669,6 +3234,189 @@ mod surface_tests {
         }
     }
 
+    #[test]
+    fn brokered_http_is_worker_only() {
+        let worker = names(Some("worker"));
+        for tool in [
+            "hi_http_request",
+            "hi_read_text_file",
+            "hi_copy_file_to_drive",
+            "hi_read_journal_range",
+            "hi_read_session_log",
+        ] {
+            assert!(worker.contains(&tool.to_string()), "worker is missing {tool}");
+        }
+        for role in [Some("reaction"), Some("cognition"), Some("reflection"), None] {
+            let tools = names(role);
+            for tool in [
+                "hi_http_request",
+                "hi_read_text_file",
+                "hi_copy_file_to_drive",
+                "hi_read_journal_range",
+                "hi_read_session_log",
+            ] {
+                assert!(!tools.contains(&tool.to_string()), "{role:?} must not receive {tool}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn brokered_http_dispatch_rejects_non_workers() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
+        let partial = Mutex::new(None);
+        let obs = Observatory::new(None);
+
+        for role in [Some("reaction"), Some("cognition"), Some("reflection"), None] {
+            let got = dispatch_tool(
+                &tools,
+                dir.path(),
+                &privacy,
+                &partial,
+                &obs,
+                Some(7.into()),
+                role,
+                "hi_http_request",
+                &json!({ "url": "https://example.com" }),
+            )
+            .await;
+            assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true));
+            assert!(
+                got["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("worker-only"),
+                "{role:?} must fail before any network request"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn projected_private_readers_never_return_secret_bytes() {
+        use chrono::Utc;
+        use crate::mind::memory::layout::MediaSlot;
+        use crate::types::{Channel, JournalEntry, Origin, Sender};
+
+        let dir = tempfile::tempdir().unwrap();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
+        let secret = [
+            "sk-proj-",
+            "abcdefghij_klmnopqrst-uvwxyz0123456789ABCDEFGHIJ",
+        ]
+        .concat();
+
+        let now = Utc::now();
+        let rel = crate::mind::memory::media::store_blob(
+            dir.path(),
+            Channel::File,
+            now,
+            MediaSlot::InputOneOff,
+            "txt",
+            format!("token={secret}").as_bytes(),
+        )
+        .await
+        .unwrap();
+        let reff = crate::mind::memory::media::signal_ref(Channel::File, now, &rel);
+        let read = do_read_text_file(dir.path(), &privacy, &json!({ "ref": reff }))
+            .await
+            .to_string();
+        assert!(!read.contains(&secret));
+        assert!(read.contains("SECRET_REF"));
+
+        let journal = crate::mind::memory::journal::Journal::open(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let first = uuid::Uuid::now_v7().to_string();
+        journal
+            .append(JournalEntry::SignalIn {
+                id: first.clone(),
+                ts: now,
+                channel: Channel::Text,
+                body: format!("credential {secret}"),
+                stream: None,
+                media: None,
+                origin: Some(Origin::Human),
+                sender: Some(Sender::unknown()),
+            })
+            .await
+            .unwrap();
+        let range = do_read_journal_range(
+            dir.path(),
+            &privacy,
+            &json!({ "from_id": first, "limit": 10 }),
+        )
+        .await
+        .to_string();
+        assert!(!range.contains(&secret));
+        assert!(range.contains("SECRET_REF"));
+
+        let run = "0123456789ab";
+        let session: registry::SessionId = "general-private-reader".parse().unwrap();
+        let log = crate::mind::memory::layout::session_frames_path(dir.path(), run, &session);
+        tokio::fs::create_dir_all(log.parent().unwrap()).await.unwrap();
+        tokio::fs::write(
+            &log,
+            format!(r#"{{"raw":"authorization: Bearer {secret}"}}"#),
+        )
+        .await
+        .unwrap();
+        let frames = do_read_session_log(
+            dir.path(),
+            &privacy,
+            &json!({ "session": session.to_string(), "run": run }),
+        )
+        .await
+        .to_string();
+        assert!(!frames.contains(&secret));
+        assert!(frames.contains("SECRET_REF"));
+    }
+
+    #[tokio::test]
+    async fn attachment_copy_bypasses_the_shell_and_protects_secret_file_dir() {
+        use chrono::Utc;
+        use crate::mind::memory::layout::MediaSlot;
+        use crate::types::Channel;
+
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let rel = crate::mind::memory::media::store_blob(
+            dir.path(),
+            Channel::File,
+            now,
+            MediaSlot::InputOneOff,
+            "txt",
+            b"ordinary attachment",
+        )
+        .await
+        .unwrap();
+        let reff = crate::mind::memory::media::signal_ref(Channel::File, now, &rel);
+        let copied = do_copy_file_to_drive(
+            dir.path(),
+            &json!({ "ref": reff, "destination": "documents/note.txt" }),
+        )
+        .await;
+        assert_eq!(copied["isError"], false);
+        assert_eq!(
+            tokio::fs::read(dir.path().join("drive/documents/note.txt"))
+                .await
+                .unwrap(),
+            b"ordinary attachment"
+        );
+
+        let refused = do_copy_file_to_drive(
+            dir.path(),
+            &json!({
+                "ref": crate::mind::memory::media::signal_ref(Channel::File, now, &rel),
+                "destination": "accounts/secrets/raw.txt"
+            }),
+        )
+        .await;
+        assert_eq!(refused["isError"], true);
+        assert!(!dir.path().join("drive/accounts/secrets/raw.txt").exists());
+
+    }
+
     /// An unknown role gets **nothing**, and that is the point.
     ///
     /// This arm used to hold the legacy agentic reaction's kit — `hi_say`, `hi_show`,
@@ -2800,6 +3548,7 @@ mod surface_tests {
     async fn the_generation_tasks_dispatch_rather_than_falling_through() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
@@ -2807,6 +3556,7 @@ mod surface_tests {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),
+                &privacy,
                 &partial,
                 &obs,
                 Some(7.into()),
@@ -2884,6 +3634,7 @@ mod surface_tests {
     async fn create_worker_is_refused_to_non_owner_roles_at_dispatch() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
@@ -2891,6 +3642,7 @@ mod surface_tests {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),
+                &privacy,
                 &partial,
                 &obs,
                 // An identity, so this cannot pass for the old accidental rejection.
@@ -2915,6 +3667,7 @@ mod surface_tests {
     async fn create_worker_refuses_a_brief_with_no_title() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
@@ -2925,6 +3678,7 @@ mod surface_tests {
             let got = dispatch_tool(
                 &tools,
                 dir.path(),
+                &privacy,
                 &partial,
                 &obs,
                 Some(7.into()),
@@ -2954,12 +3708,14 @@ mod surface_tests {
     async fn a_send_that_reaches_nobody_is_still_recorded_as_an_edge() {
         let dir = tempfile::tempdir().unwrap();
         let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
         let partial = Mutex::new(None);
         let obs = Observatory::new(None);
 
         let got = dispatch_tool(
             &tools,
             dir.path(),
+            &privacy,
             &partial,
             &obs,
                 Some(7.into()),

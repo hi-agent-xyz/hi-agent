@@ -18,11 +18,11 @@ and justified. Memory internals are owned by [`memory.md`](memory.md); this doc 
 |---|---|
 | **Durability is the only physical boundary** — precious (synced, backed up) vs. disposable (regenerable, gitignored) | It's the one distinction the system *must* act on; everything else is soft convention |
 | **Everything is memory; the drive is memory's verbatim annex, not a rival store** | A person has one mind that *reaches for* a notebook when exact bytes matter — the notebook isn't a second memory |
-| **Meaning-valued → digested into memory (fuzzy); bytes-valued → kept verbatim in the drive** | Reconstruction is right for understanding, catastrophic for an API key |
+| **Meaning-valued → digested into memory; exact bytes → ordinary drive files** | Reconstruction is right for understanding, catastrophic for an exact artifact or credential |
 | **`drive/` is verbatim and reflection-read-only; `views/` is fully disposable** | Once precious and disposable live in separate trees, the old `.cache` dotdir marker is unneeded — a whole tree is disposable, nothing to mark |
 | **Ad-hoc views start in `views/`; their source *graduates* into `drive/` when worth keeping** | Filing is a deliberate act, the same fluid→solid move as `raw → facet`; most views die in `views/`, unmissed |
 | **Capabilities are reached as on-demand skills, not always-loaded tools** | MCP tools cost context every turn; a long tail of capabilities belongs in the loaded-on-demand tier |
-| **Secrets are resolved at call-time by the effector, never held in the mind's context** | You don't recite your password to use it; the value sits in the drive/env, the mind holds only a pointer |
+| **Secret files stay local and are projected at model egress** | Local commands can use a stable drive path without putting credential characters in model requests |
 | **`prompts/factory/` is ours and disposable; `prompts/seed/` is the agent's** | Same kind of thing — text fed to a session at init — so they share a parent; the subdirectory says who wrote it. Losing `factory/` costs nothing (the binary is the original); losing a seed costs one reflection pass, not knowledge |
 
 ---
@@ -40,6 +40,8 @@ data/
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
     projects/<p>/    #   sedimented work: kept view source + assets (the source of record)
     notes/  papers/  #   agent-curated keeps: the notebook, references, the digested world-doc — open shape
+    accounts/
+      secrets/       #   one ordinary owner-only .txt file per retained credential
     …                #   the agent makes folders like a person organizes Documents
 
   views/             # the view workshop — disposable, gitignored, regenerable   (replaced workspace/)
@@ -61,7 +63,8 @@ data/
 Five **kinds**, each a place on a person's computer:
 
 1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and and nothing that exists to prime a session — a seed is a digest *over* this record and lives in `prompts/seed/`. Mostly reconstructive: reflection summarizes and regenerates the understanding.
-2. **drive/** — Documents + the notebook. What the agent deliberately keeps, **verbatim**.
+2. **drive/** — Documents + the notebook. What the agent deliberately keeps,
+   **verbatim**, including ordinary credential files under `accounts/secrets/`.
 3. **views/** — the view workshop. Where views are built; safe to wipe.
 4. **prompts/** — what a session is handed. `factory/` is the manual handed over at the factory: how to be, read-only to the agent and reinstalled from the binary every boot. `seed/` beside it is what the agent wrote for itself, fed as the thread's first message.
 5. **codex-home/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
@@ -188,8 +191,9 @@ isn't "two stores"; it's one memory that *offloads* the bytes it refuses to blur
   it exists and how to use it (on-demand, in `drive/notes` + memory). MCP stays the small
   always-loaded control set; the long tail loads on demand.
 - **Secrets stay out of the reconstructive layer.** The mind knows "invoke this via that
-  skill"; the **effector resolves the secret at call-time** from the drive/env. The token
-  never enters the mind's reasoning or a transcript.
+  skill" and carries the stable `drive/accounts/secrets/...txt` path. A trusted broker or
+  local command reads the file at execution time; the final projector removes exact values
+  before a request reaches an external model.
 
 ## Graduation: ad-hoc → sediment
 
@@ -228,8 +232,9 @@ Filing = a memory claim taking an address. The keep-bit *is* "a durable claim re
   new index to maintain), or a thin explicit "kept index"?
 - **Per-project `dist/` vs. a shared content-addressed compiled cache** — legibility vs.
   compile-once dedup.
-- **Credentials in `drive/` vs. env with the drive page only pointing at the env var** —
-  leaning pointer, to keep the actual secret off the agent's filesystem-of-record.
+- **Protected-drive-store encryption and portable export wrapping** — the model boundary is decided
+  in [`arch/privacy.md`](arch/privacy.md); the at-rest key hierarchy still needs its own
+  implementation decision.
 
 ## References
 

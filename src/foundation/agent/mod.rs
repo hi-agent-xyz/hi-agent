@@ -11,10 +11,9 @@
 //! cannot touch another, and there is no thread-id demux. The cost is a fresh
 //! subprocess spawn + `initialize` + MCP `tools/list` round-trip per session.
 //!
-//! Keeping a process per session also keeps the credential fresh: codex reads the
-//! upstream key from its own environment, so a key minted after boot reaches the next
-//! session simply by being spawned with it. One shared app-server would have frozen
-//! whatever key was current when the host started.
+//! Keeping a process per session also isolates local rollout state. The child receives
+//! only a per-boot credential for the loopback model proxy; the trusted host resolves
+//! the current upstream credential when each request crosses that proxy.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +24,8 @@ use crate::foundation::codex::process::Sandbox;
 use crate::foundation::codex::{AgentSession, CodexProcess, ProcessRegistry, SessionOpts, WireTap};
 use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SESSION_ID};
 use crate::identity::Role;
+
+const REACTION_PERMISSION_PROFILE: &str = "hi-agent-reaction";
 
 /// The sandbox half of what a [`Role`] decides, kept here beside the codex process it
 /// configures rather than in [`crate::identity`], which has no business knowing what a
@@ -53,9 +54,9 @@ impl Role {
     /// its place next to the list: it bounds whatever arrives by a route the list did
     /// not anticipate, and it is a mechanism rather than an enumeration.
     ///
-    /// Every other rung gets full access, which is what the ACP path did in effect —
-    /// Claude ran unsandboxed with every permission request auto-allowed — so the wire
-    /// swap changes the wire and not what a worker may do.
+    /// Every other rung gets full access, including ordinary files in drive and the
+    /// network needed to run CLIs. Sensitive values are projected at the model egress
+    /// boundary, not hidden from Hi Agent's local execution environment.
     fn sandbox(self) -> Sandbox {
         match self {
             Role::Reaction => Sandbox::ReadOnly,
@@ -66,9 +67,7 @@ impl Role {
 
 /// How to spawn one codex subprocess. Cloned per session: the pinned runtime, args,
 /// and **static** env (codex home, server URL, PATH — resolved once at startup).
-/// The volatile upstream credential is NOT frozen here — it is re-resolved from the
-/// credential store at each [`session`](AgentLayer::session) spawn and merged onto
-/// this env, so a fresh child never carries a stale key.
+/// The upstream credential never enters this environment.
 #[derive(Debug, Clone)]
 pub struct SpawnConfig {
     pub program: PathBuf,
@@ -84,14 +83,16 @@ pub struct AgentLayer {
 
 struct Inner {
     spawn: SpawnConfig,
-    /// Data dir, so each spawn can re-resolve the upstream credential from the
-    /// store ([`AgentConfig::resolve`]) rather than freeze a boot-time key. Cheap
-    /// SQLite read, dwarfed by the subprocess spawn + `initialize` it precedes.
+    /// Data dir used as the default session root and for resolving non-secret model
+    /// configuration such as the selected model.
     data_dir: PathBuf,
     /// hi-agent's own HTTP base URL (e.g. `http://127.0.0.1:12358`), used to build
     /// each session's MCP attach URL (`<base>/mcp`). The same value the child gets
     /// as `HI_AGENT_BASE_URL`.
     server_base_url: String,
+    /// Per-boot model proxy token plus the private-data projector/broker. Only the
+    /// token enters the child; the upstream LLM credential stays in the host.
+    privacy: crate::foundation::privacy::PrivacyBoundary,
     /// Raw JSON-RPC wire tap — every session's subprocess records its frames here
     /// for the raw session inspector. Handed to each [`CodexProcess`] at spawn.
     tap: WireTap,
@@ -107,12 +108,14 @@ impl AgentLayer {
         data_dir: PathBuf,
         tap: WireTap,
         server_base_url: String,
+        privacy: crate::foundation::privacy::PrivacyBoundary,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 spawn,
                 data_dir,
                 server_base_url,
+                privacy,
                 tap,
                 registry: ProcessRegistry::new(),
             }),
@@ -144,13 +147,13 @@ impl AgentLayer {
         // agent's own world. Workers still override with `views_dir`.
         let cwd = cwd.or_else(|| Some(self.inner.data_dir.clone()));
 
-        // Merge the current upstream credential onto the static env at spawn time, so this
-        // child always carries the freshest key from the store (broker re-mint, Settings
-        // edit, mode switch) — never a stale boot-time snapshot.
+        // The child authenticates only to the loopback privacy proxy. The upstream
+        // credential is resolved by the host proxy on each request and never enters
+        // this process environment.
         let cfg = AgentConfig::resolve(&self.inner.data_dir);
         let spawn = &self.inner.spawn;
         let mut env = spawn.env.clone();
-        env.extend(cfg.auth_child_env());
+        env.extend(self.inner.privacy.child_env());
 
         tracing::info!(role = role.as_str(), cwd = ?cwd, "spawning codex subprocess for session");
         let (process, rx) = CodexProcess::spawn(
@@ -272,7 +275,14 @@ impl AgentLayer {
             headers.insert(HEADER_SESSION_ID.to_string(), json!(id.to_string()));
         }
 
-        let mut config = cfg.thread_config();
+        let mut config = cfg.thread_config(
+            &format!(
+                "{}{}",
+                self.inner.server_base_url,
+                crate::foundation::privacy::proxy::MODEL_PROXY_BASE_PATH
+            ),
+            crate::foundation::privacy::ENV_MODEL_PROXY_KEY,
+        );
         config.insert(
             "mcp_servers".into(),
             json!({
@@ -298,6 +308,18 @@ impl AgentLayer {
         // thread was opened unable to hear.
         let mut features = serde_json::Map::new();
         features.insert("steer".into(), json!(true));
+        // The provider reads its loopback proxy credential from the parent process
+        // environment. Model-authored commands must not inherit that token, or any
+        // other key/secret/token the host happened to launch with.
+        config.insert(
+            "shell_environment_policy".into(),
+            json!({
+                "ignore_default_excludes": false,
+                "filters": {
+                    crate::foundation::privacy::ENV_MODEL_PROXY_KEY: "exclude",
+                },
+            }),
+        );
         if role == Role::Reaction {
             let (name, profile) = reaction_permissions();
             config.insert("permissions".into(), json!({ name: profile }));
@@ -348,18 +370,19 @@ impl AgentLayer {
 /// do not exist either: 0.144.1 under `--strict-config` answers
 /// `unknown configuration field tools.default_tools_enabled`, and
 /// `permissions.default_tools_enabled` with `expected struct PermissionProfileToml`.
-/// Which named permission profile a role's thread opens under, if any.
+/// Which named permission profile a role's thread opens under.
 ///
 /// Only Reaction has one, and it is the same role that must *not* pass `sandbox` —
 /// codex refuses a `thread/start` carrying both, the profile being what owns that
-/// setting. Every other rung keeps the plain param.
+/// setting. Every other rung keeps the plain param, and keeps its full-access
+/// sandbox so local commands can consume ordinary drive files.
 fn permission_profile(role: Role) -> Option<String> {
-    (role == Role::Reaction).then(|| reaction_permissions().0.to_string())
+    (role == Role::Reaction).then(|| REACTION_PERMISSION_PROFILE.to_string())
 }
 
 fn reaction_permissions() -> (&'static str, serde_json::Value) {
     (
-        "hi-agent-reaction",
+        REACTION_PERMISSION_PROFILE,
         json!({ "default_tools_enabled": false, "sandbox": Sandbox::ReadOnly.as_str() }),
     )
 }
@@ -379,6 +402,11 @@ mod tests {
             PathBuf::from("/tmp/hi-agent-test"),
             WireTap::new(),
             "http://127.0.0.1:12358".to_string(),
+            crate::foundation::privacy::PrivacyBoundary::open(&PathBuf::from(format!(
+                "/tmp/hi-agent-privacy-test-{}",
+                uuid::Uuid::new_v4()
+            )))
+            .unwrap(),
         )
     }
 
@@ -426,10 +454,14 @@ mod tests {
     /// Swept over every role rather than a hand-written list of four, so a worker type
     /// added later cannot quietly arrive sandboxed or unsandboxed unnoticed.
     #[test]
-    fn only_the_voice_is_sandboxed() {
+    fn only_the_voice_is_read_only() {
         assert_eq!(Role::Reaction.sandbox(), Sandbox::ReadOnly);
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
-            assert_eq!(role.sandbox(), Sandbox::FullAccess, "{role:?} does real work");
+            assert_eq!(
+                role.sandbox(),
+                Sandbox::FullAccess,
+                "{role:?} must be able to use drive files from local commands"
+            );
         }
     }
 
@@ -457,7 +489,10 @@ mod tests {
 
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
             let config = layer().thread_config(&config(), *role, Some(1.into()));
-            assert!(!config.contains_key("permissions"), "{role:?} works, and working needs tools");
+            assert!(
+                !config.contains_key("permissions"),
+                "{role:?} works under its full-access sandbox"
+            );
             // `features` is no longer Reaction's alone — `steer` is asked for on every
             // thread — so the sweep is over the switches that *remove* a built-in rather
             // than over the key that carries them.
@@ -498,7 +533,7 @@ mod tests {
             "Reaction's posture must not depend on which of the two spellings is read"
         );
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
-            assert!(permission_profile(*role).is_none(), "{role:?} passes a sandbox");
+            assert!(permission_profile(*role).is_none());
         }
     }
 
@@ -514,6 +549,22 @@ mod tests {
                 "worker",
                 "{} asked for a surface of its own",
                 t.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn model_auth_tokens_are_not_inherited_by_shell_commands() {
+        for role in Role::ALL {
+            let config = layer().thread_config(&config(), *role, Some(1.into()));
+            assert_eq!(
+                config["shell_environment_policy"]["ignore_default_excludes"],
+                false
+            );
+            assert_eq!(
+                config["shell_environment_policy"]["filters"]
+                    [crate::foundation::privacy::ENV_MODEL_PROXY_KEY],
+                "exclude"
             );
         }
     }

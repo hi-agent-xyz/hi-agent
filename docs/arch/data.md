@@ -10,15 +10,14 @@ The binary is interchangeable. The directory is the agent.
 > **A thought, not yet built.** If `data/` is genuinely everything, then `jack.hi` is a
 > complete agent-for-Jack that any hi-agent binary can open and continue. One thing keeps
 > that possible and is worth protecting now: **no absolute host paths are ever persisted
-> into `data/`**. The honest limit is narrower than it once read — **secrets travel**, in
-> the clear, in [`drive/`](#drive); what does not travel is an **OS grant**, which is held
-> by the machine and re-clicked there. So opening one on a new box costs the grants back,
-> not the keys.
+> into `data/`**. Private values travel as ordinary files under
+> `drive/accounts/secrets/`; what does not travel is an **OS grant**, which is held by the
+> machine and re-clicked there. So opening one on a new box costs the grants back, not the
+> keys.
 >
-> The cost is stated rather than mitigated: a copy of `jack.hi` is a copy of every key in
-> it. That is the property a person's own drive has always had, it is the one they were
-> told about before the first key went in, and encrypting it here would only move the
-> question to where the passphrase lives.
+> The cost is stated rather than hidden: a portable copy of drive is a copy of every key
+> in it. At-rest encryption and export wrapping matter, but they are separate from the
+> model boundary in [`privacy.md`](privacy.md).
 
 ## Who holds the pen
 
@@ -26,7 +25,7 @@ The question is not *where* something lives — it all lives here — but **who 
 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
-| `memory/raw/` — the log: everything in and out, as it crossed | `memory/` — episodes, facets, tasks; and `prompts/seed/` |
+| `memory/raw/` — the log; `drive/accounts/secrets/` — managed credential files | `memory/` — episodes, facets, tasks; `prompts/seed/`; ordinary `drive/` content |
 | `prompts/` — the bundled system prompts, all of them | `drive/` — what was decided worth keeping |
 | `skills/`, `views/` — the `factory/` layer | `skills/`, `views/` — everything the agent built |
 
@@ -53,7 +52,7 @@ upgrade either clobbers what the agent built or can no longer refresh what we sh
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
-| A handed-over secret is filed in `drive/`, in the clear | It is already in the log verbatim the moment it is pasted; a second, curated copy is the only part we get to choose, and refusing it buys nothing while losing the key |
+| A handed-over secret is retained as `drive/accounts/secrets/*.txt`; that path is its reference | The whole drive stays portable and local commands can use the file without embedding its value in model requests |
 | The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
 
 ## `memory/raw/`
@@ -511,7 +510,7 @@ Distinct from the person's own archive.
 |---|---|
 | Projects | artifacts and bytes it produced or was given |
 | Notes | verbatim pages — endpoints, calling conventions, how a thing is driven |
-| Accounts | what it is logged into, the endpoint and calling convention, **and the key itself** |
+| Accounts | what it is logged into, the endpoint and calling convention, and an opaque `secret_ref` |
 | Ledgers | append-only, e.g. message-id → done, so a serving task never duplicates or misses |
 
 There is no devices entry, on purpose: a device is [a tool plus a procedure](foundation.md#devices),
@@ -521,11 +520,14 @@ so what is worth keeping about one is a note and a skill, not a registry row.
 latency. Emergent — *"this turned out to be worth keeping"* — is graduated later by
 reflection. Same destination, two latencies, told apart by judgment.
 
-**Reading and writing it is every agent's**, not one session's errand: whoever knows what
+**Reading and writing ordinary drive content is every agent's**, not one session's errand:
+whoever knows what
 it is putting down and where it goes puts it down. The
 [drive organizer](agents.md#drive-organizer) is who the rest ask when they *don't* know —
 where a new thing belongs, where an existing one is, or to straighten a corner that has
-drifted. It holds the layout; it is not a gate in front of the disk.
+drifted. It holds the layout; it is not a gate in front of the disk. Foundation creates
+managed files under `drive/accounts/secrets/`; agents preserve those stable paths and may
+use them in local operations.
 
 **Bytes and meaning split.** A handed-over document puts its bytes here verbatim and a
 provenance-bearing claim into memory. Quantitative data is kept whole and analysed by a
@@ -533,25 +535,26 @@ separate tool; only conclusions become memory. Digesting a dataset into prose de
 thing that made it worth having.
 
 **Sensitivity is cross-cutting** — private at ingest, in storage, on any view, and on any
-outbound carrier. Not just at one of them.
+outbound carrier. The full trust boundary, including model projection and brokered use, is
+[`privacy.md`](privacy.md).
 
 ### Keys, passwords, and the one question
 
-A key, a password, a token — handed over in the conversation rather than as a file — is
-filed here like anything else, under `accounts/`, in the clear. It is not a special class of
-thing with a vault of its own: the drive is the person's filing cabinet, and this is what
-people keep in one.
+A key, password, or token handed over in conversation is captured by foundation code as
+one text file under `drive/accounts/secrets/`. The file contains only the exact value; its
+`drive/...` path is the stable reference a model-facing agent remembers and places into
+broker calls or local command lines.
 
-**One question, asked the first time it comes up, and never again.** Not per key — per
-person, once, because a prompt that fires on every key is a prompt that gets waved through.
-What is being decided is that the drive holds keys in the clear and carries them wherever it
-goes. Three answers:
+**Target retention policy: one question, asked the first time it comes up, and never
+again.** Not per key — per person, once, because a prompt that fires on every key is a
+prompt that gets waved through. What is being decided is whether drive retains handed-over
+credentials after the current exchange. Three answers:
 
 | | |
 |---|---|
-| **this one** | file it; ask again next time |
-| **all of them** | standing yes — file keys from here on without asking |
-| **none** | standing no — never file a key; hold it for this exchange and let it go |
+| **this one** | retain it; ask again next time |
+| **all of them** | standing yes — retain keys from here on without asking |
+| **none** | standing no — never retain a key; hold it for this exchange and let it go |
 
 The answer is [a facet](#memory), the same as any other durable preference about the person,
 and it reaches Reaction the way the rest do — through the seed.
@@ -560,16 +563,19 @@ and it reaches Reaction the way the rest do — through the seed.
 must never cost a key filed against a *none* that went missing, so *no answer* resolves to
 *ask*, never to *file*.
 
-**Filing it is not using it.** A key in `accounts/` names what it opens and how it is
-called, so a job months later can pick it up. Nothing about being filed puts it in front of
-a thinking rung that did not go and fetch it, and nothing puts it back in a transcript, on a
-screen, or into an outbound carrier — that is the sensitivity rule above, and a key is the
-sharpest case of it.
+This preference flow is not implemented yet. The current projector auto-retains detected
+secrets as `drive/accounts/secrets/*.txt` so their references remain usable across turns.
 
-**It is in the log already, and that is what makes this cheap.** The moment it was pasted it
-landed verbatim in `memory/raw/`, which is append-only and does not fade for text. So the
-decision here was never *whether the directory holds this key* — it does either way. It is
-only whether there is also a copy someone curated, in the place the agent will actually look.
+**Retaining locally is not sending it to the provider.** A job months later can select the
+file by service and path. A trusted local broker can resolve the value inside an HTTP
+operation, and a local command can read the text file at execution time. The final model-egress
+projector replaces exact known values before a later request leaves Hi Agent.
+
+**It is in the local log already, which is why the model boundary cannot be a convention.**
+The moment it was pasted it landed verbatim in `memory/raw/`. Model-driven sessions therefore
+do not read that tree directly; foundation projects a filtered view. Retention decides whether
+the private broker may still resolve the value after this exchange, not whether the local
+record ever received it.
 
 ## `skills/`
 

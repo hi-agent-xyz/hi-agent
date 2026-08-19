@@ -155,16 +155,14 @@ pub async fn get_out_text(
         |(mut rx, pending, attached, transcript)| async move {
             let frame = match pending {
                 Some(frame) => frame,
-                None => loop {
-                    match rx.recv().await {
-                        Ok(frame) => break frame,
-                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!(missed = n, "text subscriber lagged; resyncing");
-                            let (resync, _) = transcript.subscribe();
-                            break resync;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => return None,
+                None => match rx.recv().await {
+                    Ok(frame) => frame,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "text subscriber lagged; resyncing");
+                        let (resync, _) = transcript.subscribe();
+                        resync
                     }
+                    Err(broadcast::error::RecvError::Closed) => return None,
                 },
             };
             let mut line = serde_json::to_vec(&frame).expect("a frame is serializable");
