@@ -1244,20 +1244,33 @@ mod soul_tests {
         );
     }
 
-    /// The pen has two ends, and only one of them was ever written down. Holding the sole
-    /// write on the ledger makes Cognition the sole *closer* too — nothing else in the loop
-    /// can retire a task, so an instruction that only says how to open one produces a list
-    /// that grows and never shrinks. That is not hypothetical: nine tasks stayed `open`
-    /// across a week, three of them delivered or called off out loud, and the closing
-    /// decision got handed to the person as buttons on a screen they never pressed.
+    /// **The pen has two ends, and both must be somebody's.** An instruction that says how to
+    /// open a task and not how to close one produces a list that grows and never shrinks —
+    /// nine tasks stayed `open` across a week, three of them delivered or called off out loud,
+    /// and the closing decision got handed to the person as buttons on a screen they never
+    /// pressed.
+    ///
+    /// Closing has since moved off Cognition and onto the task manager, which makes this
+    /// invariant *more* fragile rather than less: the hole reopens if either end goes quiet —
+    /// Cognition never starting a manager, or the manager not being told closing is its job.
+    /// So both ends are asserted here, and the handoff between them is named in the one place
+    /// it can be forgotten.
     #[test]
-    fn the_rung_holding_the_pen_is_told_to_close_as_well_as_open() {
+    fn both_ends_of_the_pen_have_an_owner() {
         assert!(
-            COGNITION_BASE.contains("Closing is yours"),
-            "the ledger's only writer must be told closing is its job too"
+            COGNITION_BASE.contains("Opening is yours. Changing a row is not."),
+            "the rung that opens must be told in as many words that it does not close"
         );
         assert!(
-            COGNITION_BASE.contains("You owe the ask, not the wait"),
+            COGNITION_BASE.contains("task-manager"),
+            "and must be told what does, by the type name it has to pass"
+        );
+        assert!(
+            WORKER_TASK_MANAGER_BASE.contains("Closing is the job"),
+            "the rung that closes must be told closing is the whole point of it"
+        );
+        assert!(
+            WORKER_TASK_MANAGER_BASE.contains("The task owes the ask, not the wait"),
             "a task whose last step is theirs must not sit open as a reminder for them"
         );
     }

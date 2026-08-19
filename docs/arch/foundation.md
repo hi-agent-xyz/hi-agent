@@ -281,9 +281,9 @@ host fences anyone out.
 | Role | Default surface | Why that size |
 |---|---|---|
 | **Reaction** | `hi_say` · `hi_show` · `SendMessage`, and **no built-ins at all** | its expression channels plus the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
-| **Cognition** | `SendMessage` · `CreateWorker` · session reads | it delegates rather than does — including the filing, which goes to a [Task Manager](agents.md#task-manager) |
+| **Cognition** | `SendMessage` · `CreateWorker` · session reads · **opening** a ledger row | it delegates rather than does, and it may create a duty but never retire one — that goes to a [Task Manager](agents.md#task-manager) |
 | **Reflection** | as Cognition, plus memory curation | it curates `data/`; duties are not its to record |
-| **Task Manager** | a worker's surface, aimed at one dimension | the **sole writer** of a task's `status`; it files what is owed and delivers none of it |
+| **Task Manager** | a worker's surface, aimed at one dimension | the only role that may **change** a task's `status` — close, reopen, stand down; it files and delivers none of it |
 | **Workers** | everything — shell, devices, web, build | the job is here, so the surface is wide |
 
 Reaction is the one exception to "default, not rail". Its surface is **enforced at session

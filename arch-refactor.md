@@ -276,29 +276,59 @@ than the code being nudged into line:
 | tickets marked `done`, then audited the next day *by the same rung*, which found none had reached the person | 3 — one reopened, two left in `done` |
 | a `serving` row cancelled in a batch **60s after** a reflection naming it as on duty | `feishu-it-group-watcher` — machinery still running a day later; a failed self-heal then spawned **461 orphaned processes in 25 minutes** (463 live, 708 MB) and nothing said a word: closing had removed the only `verify:` from view |
 
-**Built:** `WorkerType::TaskManager` with `identity/workers/task-manager.md`, in `ALL` and
-`prompt_name`, labelled in the sessions view, and named in `CreateWorker`'s description.
-**895 lib + integration green, 0 warnings.** The type is real and **nothing dispatches it**:
-`identity/cognition.md` still says the filing is Cognition's, which is (4) below.
+**⚠️ The design moved again while (4) was being written, and the new shape is sharper.** The
+first cut said Cognition writes no `status` at all. Writing the prompt showed that cannot hold:
+`cognition.md` also says *create the row the moment the work is taken on, because a promise
+that lives only in a report is a promise a restart eats* — and a promise waiting on a worker to
+be spawned **is** a promise living in a report. So opening stays with Cognition and the rule
+is now **create vs change**:
 
-The prompt is written to today's mechanism — it stamps `status_since` / `completed_at` /
-`cancelled_at` **by hand**, because (1) does not exist yet. Once it does, the stamping is
-redundant rather than wrong, and that paragraph comes out.
+> **Cognition may create a ledger row. Only a Task Manager may change one.**
+
+The two are different kinds of act, which is why the split is defensible where "one writer" was
+not: opening is something Cognition *witnessed* (the ask happened in the conversation it was
+in) and must be instant; closing is a claim *about the world* that the dispatcher is worst
+placed to make. They never touch the same row-state, so they cannot contradict each other.
+`data.md`, `agents.md` and `foundation.md` all carry the corrected rule.
+
+**Built:** `WorkerType::TaskManager` with `identity/workers/task-manager.md`, in `ALL` and
+`prompt_name`, labelled in the sessions view, named in `CreateWorker`'s description. (1) and
+(4) below are **done**: the reconcile pass runs on every window build, and `cognition.md` now
+hands closing down via a `## Handing the ledger down` section instead of doing it. The closing
+doctrine — the three ways a finished task refuses to close, and the disposition rules for
+closing unconfirmed — **moved bodily** out of `cognition.md` into the manager's prompt and was
+re-aimed for a session with no channels (it asks *through its owner*; it cannot wait for an
+answer it will not be alive to receive).
+
+`the_rung_holding_the_pen_is_told_to_close_as_well_as_open` became
+`both_ends_of_the_pen_have_an_owner`, and now asserts the handoff from both sides. The failure
+it guards — nine tasks open for a week because closing had no owner — gets *more* fragile under
+a split, not less: the hole reopens if either Cognition stops starting managers or the manager
+stops being told closing is its job.
 
 **Build order** (nothing below is written yet):
 
-1. The diff pass stamps and normalises — smallest, benefits every existing writer immediately,
-   and independent of everything else here.
+1. ~~The diff pass stamps and normalises.~~ **Done.** `tasks::reconcile`, run from
+   `tasks::projection`. Dry-run over a copy of the real 62-record store: 58 rewritten on the
+   first pass, 0 on the second; 2 of 7 unstamped closes derived from `status_since`, the other
+   5 left empty because nothing in them says when they closed; all 8 legacy records re-emitted;
+   the two largest came back byte-identical apart from the spelling.
 2. `verify:` keeps running for a while after a `serving` row closes; a duty whose machinery
-   still answers is reported, not silently dropped.
+   still answers is reported, not silently dropped. **This is the one that would have caught
+   the watcher**, and it is now the most valuable thing left here.
 3. The pass reports what it cannot fix — misfiled `verify:`, unknown status words, a task
-   directory with no row — into the manager's window as facts, never as refusals.
-4. **`identity/cognition.md`**: the glance-up hands the filing down instead of doing it, and
-   `## You hold what is owed` stops saying Cognition is the ledger's writer. Until this lands
-   the type is dead weight. Needs the no-subject exemption in the same pass, or the manager
-   trips *not linked to any task* on itself at every glance-up.
-5. Migrate the 8 legacy records and backfill the missing stamps — mechanical once (1) exists,
-   and worth doing *after* so the pass is what does it.
+   directory with no row, a closed record with no instant to date it — into the manager's
+   window as facts, never as refusals.
+4. ~~`identity/cognition.md` hands the filing down.~~ **Done**, along with the design
+   correction above.
+5. **Still open, and now the manager's own first job rather than a migration script:** the 5
+   legacy records that came out of (1) as closed-with-no-instant, the two task directories with
+   no row at all, `kt8-070` / `ktv-doubao-ref-only` still sitting in `done` after the audit that
+   found no acceptance, and `feishu-it-group-watcher` cancelled while its machinery runs.
+6. **The no-subject exemption** — `CreateWorker(subject)` is omitted for a manager, but the
+   reachable list still renders it as *not linked to any task*, which is the line that means
+   "staff this". It needs its own wording or the manager trips that alarm on itself every
+   glance-up. Not yet built; the prompts say to omit `subject` and nothing enforces it.
 
 
 ### T — Topology: core, app, community

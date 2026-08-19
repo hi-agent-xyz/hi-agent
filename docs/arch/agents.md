@@ -25,7 +25,7 @@ prompt, not new machinery.
 | **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
 | A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
 | **A worker keeps a current best, always showable** | The layer split only pays off if the thorough layer has something to hand up: a job that builds privately and assembles at the end leaves Reaction one answer to "show me what you have", and it is "not yet". So a deliverable is built *in place* — one artifact advanced as the work lands, with the unconfirmed parts marked in it — rather than assembled at the end. Unconditional: nothing here reads whether anyone is watching, which is the fact [`host.md`](host.md#attachment) retired the presence gate for not being derivable. If nobody asks it costs a file the worker was keeping anyway |
-| One writer to the ledger, and it is a [Task Manager](#task-manager) | Two writers to one ledger means one of them is wrong and no way to tell which. It is not Cognition, because whoever hands the work out must not also rule on whether it landed |
+| Cognition may **create** a ledger row; only a [Task Manager](#task-manager) may **change** one | Opening is witnessed in the conversation and must be instant — a promise waiting on a worker is one a restart eats. Closing is a claim about the world, and whoever handed the work out is the worst-placed agent to make it. Disjoint transitions, so the two can never contradict each other |
 | **A gap in the request is work, not a question** | Every rung, not just the Decision Maker. Waiting on the user is the worst outcome available, so an unknown gets the most defensible reading, stated out loud; asking is the fallback for when no reading is defensible *and* the gap gates the work |
 
 ### Ownership and addressing
@@ -184,11 +184,14 @@ It is the **only** thing that creates workers. Durable work is what it means for
 be real, and deciding to take some on is judgment, not bookkeeping Reaction should do in
 passing.
 
-**It no longer files what it dispatches.** Writing the ledger was Cognition's for the same
-reason creating workers is, and the two turned out not to be the same reason at all: opening a
-duty is the dispatcher's call, and ruling that one *ended* is a claim about the world that the
-dispatcher is the worst-placed agent to make about its own errands. That goes to a [Task
-Manager](#task-manager); Cognition keeps the noticing and hands the looking down.
+**It opens duties; it no longer closes them.** Writing the ledger was all Cognition's for the
+same reason creating workers is, and it turned out to be two acts rather than one. Opening
+stays: the ask happened in the conversation this rung was in, and it has to be filed in that
+same turn or it is a promise a restart eats. Ruling that a duty *ended* is a claim about the
+world, and the rung that handed the work out is the worst-placed one to make it about its own
+errand. So it may create a row and may never change one — closing, reopening and standing a
+duty down all go to a [Task Manager](#task-manager). Cognition keeps the noticing and hands
+the looking down.
 
 **Dispatch is two verbs, not one: hand out and take back.** A worker can be *interrupted*
 mid-turn (`hi_cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
@@ -559,7 +562,7 @@ rather than an anonymous worker, and `GET /api/workers` report it.
 | Decision Maker | makes the call that lets work continue without the user — below |
 | Drive Organizer | knows how `drive/` is laid out — puts a new thing where the drive is already going, says where an existing one is, straightens a corner that has drifted |
 | Person Reader | reads one person out of the record and folds it into their facet, including the `## Working with them` Reaction is projected |
-| Task Manager | keeps [the ledger](data.md#tasks) — the only thing that may write a task's `status`. It files; it never delivers — below |
+| Task Manager | keeps [the ledger](data.md#tasks) — the only thing that may **change** a task's `status`, so closing, reopening and standing a duty down are all its. It files; it never delivers — below |
 
 Workers are **volatile**: they live in process memory and die with it. Nothing durable may
 live only inside one. Recovery is therefore **reconstruction from Tasks, never continuation**
@@ -673,9 +676,10 @@ bytes degrades the journal's own reference to a caption.
 
 ### Task Manager
 
-**Filing what is owed is a job, so it gets a worker.** It was Cognition's, bundled in with
+**Ruling that a duty ended is a job, so it gets a worker.** It was Cognition's, bundled in with
 dispatching — and bundling those two puts the ruling on whether work landed in the hands of
-whoever handed the work out. That is the loop [Tasks](data.md#tasks) records failing in the
+whoever handed the work out. Opening stayed behind, because that half *is* the dispatcher's and
+has to be instant; what moved is every transition after it. That is the loop [Tasks](data.md#tasks) records failing in the
 open. A manager is not the more honest agent; it is the differently placed one. It did not do
 the work, so *is this finished* is a question it can only answer by going and looking.
 

@@ -373,9 +373,18 @@ and writes facets. What is special is the guidance attached, not the machinery.
 **One ledger.** Nothing else records a duty: there is no second, friendlier list of what is
 owed, because two ledgers means one of them is wrong and no way to tell which.
 
-**The ledger has one writer, and it is a worker.** Filing what is owed is its own job, and it
-is not the job of the rung that hands the work out. Cognition dispatches; a [Task
-Manager](agents.md#task-manager) files. Splitting them is not tidiness — it breaks the loop where
+**Cognition may create a row. It may never change one.** That is the whole of the split, and
+it is sharper than "one writer" because the two halves are not the same kind of act. Opening
+is something Cognition **witnessed** — the person asked, in the conversation it was in — and it
+has to happen in that same turn, because *a promise that lives only in a report is a promise a
+restart eats*, and a promise waiting on a worker to be spawned is a promise living in a report.
+Closing is a claim **about the world**: that the thing reached them. Nobody witnesses that from
+inside the conversation, least of all the agent that handed the work out.
+
+So every transition of a row that already exists — closing, reopening, standing a duty down —
+belongs to a [Task Manager](agents.md#task-manager), and nothing else may perform one. The two
+writers cannot contradict each other because they never touch the same row-state: one turns
+nothing into `todo` or `doing`, the other owns everything after that. Splitting them is not tidiness — it breaks the loop where
 whoever did the work also rules on whether it landed, and that loop has already failed in the
 open: three tickets were marked `done` on one day and audited the next *by the same rung*, which
 found that none of them had ever reached the person, reopened one, and left the other two
@@ -383,7 +392,7 @@ sitting in `done`. A manager is not more honest than a dispatcher. It is differe
 did not do the work, so "is this finished" is a question it can only answer by looking.
 
 **What the manager decides, and what the store keeps coherent.** The manager owns the one word
-that says what is owed — `status` — and it owns the prose. It does not own the consequences of
+that says what is owed once a row exists — `status` — and it owns the prose. It does not own the consequences of
 its own decision. `status_since`, `completed_at` and `cancelled_at` all follow mechanically
 from a status that moved, and a mind that has to remember to write them is a mind that will
 sometimes not: of sixty-two records in one live store, seven sat in `done` with no
