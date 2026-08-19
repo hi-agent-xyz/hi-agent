@@ -769,23 +769,17 @@ enum LoopInput {
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
-    Mail {
-        mail: Vec<crate::foundation::registry::Message>,
-        /// Whether this mail answers a question Reaction handed down and the person is
-        /// still waiting on — in which case it is **a reply owed**, not one signal among
-        /// many.
-        ///
-        /// **This flag replaces `WorkerReport::is_deliberation`, and it exists for the
-        /// same failure.** Deliberation's answer arrived on the report path, where the
-        /// host could frame it as must-relay; Cognition's arrives as ordinary mail, and
-        /// Cognition's own prompt tells it that everything it sends is *a proposal, never
-        /// a delivery*. That is right for a finding it raised on its own and wrong for an
-        /// answer to a question a person asked thirty seconds ago: Reaction, which speaks
-        /// only what it chooses to, is entitled to drop a proposal, and dropping it means
-        /// the person who asked never hears back. So the host, which is the only thing that
-        /// knows a hand-down is outstanding, says which kind of message this is.
-        owed: bool,
-    },
+    ///
+    /// **Nothing here says whether this is the answer to a hand-down.** It used to: a
+    /// host-held `owed` flag framed mail from Cognition as must-relay when a hand-down
+    /// was outstanding. It was deleted because it could not tell the two cases apart and
+    /// never had to. The host knows only that *a* hand-down went out; whether *this*
+    /// message answers it is a reading of the message against the request — and Reaction
+    /// holds both, the request in its own long-lived session and the answer right here.
+    /// Code was computing a worse approximation of something the reader can see, and
+    /// spending a boolean and three call sites to do it. The standing rule moved into
+    /// `reaction.md`, where guidance about how to read something belongs.
+    Mail { mail: Vec<crate::foundation::registry::Message> },
 }
 
 /// Parse a duration token: a bare integer is seconds, or an integer with an
@@ -1405,13 +1399,6 @@ async fn reaction_loop(
     let check_in_base = check_in_interval();
     let mut check_in_gap = check_in_base;
 
-    // Whether Reaction has handed something down that the person is still waiting on.
-    // Set when a turn hands the human request to Cognition, cleared when Cognition's
-    // answer comes back — which is the moment that answer must be relayed rather than
-    // weighed. See [`LoopInput::Mail::owed`] for why the host has to be the one holding
-    // this rather than either rung.
-    let mut reply_owed = false;
-
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
     // drop the mail it was attempting to deliver. Cleared on a successful turn (the
@@ -1493,27 +1480,8 @@ async fn reaction_loop(
                 // an empty inbox and simply goes back to waiting.
                 Woke::Mail => {
                     if let Some(mail) = registry::global().drain_pending(&reaction_id) {
-                        // A reply is owed only if one was outstanding *and* this mail is
-                        // from the rung it was handed to. Mail from Reflection, or an
-                        // unsolicited finding Cognition raised on its own, stays a
-                        // proposal Reaction weighs — that judgment is Reaction's and
-                        // this must not overrule it.
-                        let from_brain = registry::global()
-                            .session_of_role(Role::Cognition)
-                            .is_some_and(|brain| {
-                                mail.iter().any(|m| m.from.as_ref() == Some(&brain.id))
-                            });
-                        let owed = reply_owed && from_brain;
-                        if owed {
-                            reply_owed = false;
-                        }
-                        enqueue(
-                            &reaction,
-                            &mut workers,
-                            &mut batch,
-                            LoopInput::Mail { mail, owed },
-                        )
-                        .await;
+                        enqueue(&reaction, &mut workers, &mut batch, LoopInput::Mail { mail })
+                            .await;
                         if !down {
                             break 'wait;
                         }
@@ -1632,7 +1600,13 @@ async fn reaction_loop(
         // The agent's own thinking coming back — the thing a promise made *about* it was
         // for. Captured with what was armed going in, so the discharge below can tell an
         // untouched promise from a fresh one this turn just made.
-        let by_thinking_back = batch.iter().any(|i| matches!(i, LoopInput::Mail { owed: true, .. }));
+        //
+        // **Mail from Cognition, whatever it says.** This is the one place the host still
+        // needs to know the brain wrote, and it needs a mechanical fact rather than a
+        // reading: a promise was made *about* work being under way, so the work reporting
+        // anything at all is what discharges it. Whether the message answers the question
+        // is Reaction's to read — see [`LoopInput::Mail`].
+        let by_thinking_back = batch.iter().any(mail_from_cognition);
         let armed_before = speaking.next_word.peek();
         let said_before = speaking.said.load(Ordering::Relaxed);
 
@@ -1643,7 +1617,6 @@ async fn reaction_loop(
             &mut window_memo,
             &reaction_id,
             &speaking,
-            &mut reply_owed,
         )
         .await;
         // The same `Result` the disposition below classifies. The switchboard gets the
@@ -1768,6 +1741,20 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
+/// Whether this input is mail Cognition wrote.
+///
+/// The one thing about mail the host still decides, and it is deliberately the dumbest
+/// possible question: *did the brain write?* — not *is this the answer?* The second used
+/// to be a host-held flag and could never be answered from here (see [`LoopInput::Mail`]);
+/// the first is a session id comparison and discharges a promise made about work being
+/// under way ([`tools::NextWord`]), which is the only caller.
+fn mail_from_cognition(input: &LoopInput) -> bool {
+    let LoopInput::Mail { mail } = input else { return false };
+    registry::global()
+        .session_of_role(Role::Cognition)
+        .is_some_and(|brain| mail.iter().any(|m| m.from.as_ref() == Some(&brain.id)))
+}
+
 /// A reaction turn: the single fast conversational rung. An agent session
 /// ([`Role::Reaction`]) on the small model, carrying `reaction.md` as its system
 /// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
@@ -1781,9 +1768,6 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 /// handed down to it ([`hand_down_to_cognition`]), which works off the floor and answers
 /// by mail, driving a turn of its own. So the reaction stays the single fast rung.
 ///
-/// `handed_down` is set when this turn actually handed something down, so the loop knows
-/// a reply is outstanding and can frame the answer as one when it arrives.
-///
 /// v1 keeps it simple — no mid-turn reorganization. A turn is one fast generation, so a
 /// human speaking during it just queues and the serial loop folds it into the next turn.
 async fn run_reaction_turn(
@@ -1793,7 +1777,6 @@ async fn run_reaction_turn(
     memo: &mut WindowMemo,
     reaction_id: &registry::SessionId,
     speaking: &Speaking,
-    handed_down: &mut bool,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     reaction.inner.floor.note_turn_started(turn_id);
@@ -1958,7 +1941,7 @@ async fn run_reaction_turn(
         // anyway. Nothing to hand off on a turn nobody spoke into — a report, a check-in.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
-            *handed_down = hand_down_to_cognition(reaction, task).await;
+            hand_down_to_cognition(reaction, task).await;
         }
     }
     if let Some(err) = turn_error {
@@ -2360,8 +2343,7 @@ mod turn_context_tests {
     }
 }
 
-/// Hand this turn's human request down to Cognition, and report whether it landed —
-/// which is whether the person is now waiting on an answer.
+/// Hand this turn's human request down to Cognition.
 ///
 /// **One post into a standing inbox.** Cognition is already up, already has a mailbox,
 /// and already wakes on it, so this is the whole of the hand-down: no session to open, no
@@ -2372,13 +2354,14 @@ mod turn_context_tests {
 /// reaching another, and this is the host driving its own loop. It also renders bare, so
 /// the request reaches Cognition as the request rather than as a colleague quoting it.
 ///
-/// `false` when there is nobody to hand to — Cognition has not warmed yet, or died — and
-/// the caller must not then wait for an answer that cannot come. The request is not lost:
-/// it is in the transcript the next hand-down carries.
-async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
+/// A hand-down that does not land — Cognition has not warmed yet, or died — is logged and
+/// nothing more. **Nothing waits on the answer**, so there is no outstanding-reply state to
+/// keep straight, which is what made the old `bool` return worth having. The request is not
+/// lost either way: it is in the transcript the next hand-down carries.
+async fn hand_down_to_cognition(reaction: &Reaction, task: String) {
     let Some(brain) = registry::global().session_of_role(Role::Cognition) else {
         tracing::warn!("no cognition session to hand down to; Reaction answers alone this turn");
-        return false;
+        return;
     };
     let delivery = registry::global().post(&brain.id, task.clone());
     reaction
@@ -2391,12 +2374,8 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) -> bool {
             message: task,
         })
         .await;
-    match delivery {
-        registry::Delivery::Delivered => true,
-        other => {
-            tracing::warn!(cognition = %brain.id, delivery = ?other, "hand-down did not land");
-            false
-        }
+    if !matches!(delivery, registry::Delivery::Delivered) {
+        tracing::warn!(cognition = %brain.id, delivery = ?delivery, "hand-down did not land");
     }
 }
 
@@ -2854,21 +2833,11 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::CheckIn { owed } => {
                 let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
             }
-            LoopInput::Mail { mail, owed: false } => {
+            // One arm, and no framing. What to do with mail — pass on what someone is
+            // waiting for, weigh the timing of what nobody asked for — is standing
+            // guidance in `reaction.md`, not a sentence the host picks per delivery.
+            LoopInput::Mail { mail } => {
                 let _ = writeln!(s, "{}", registry::render(mail));
-            }
-            // The must-relay framing Deliberation's report used to carry, on the path the
-            // answer actually travels now. "Relay it" is not "dump it verbatim": Reaction
-            // still says it in its own plain words and reconciles with whatever it
-            // already said — what it may not do is read this and stay quiet.
-            LoopInput::Mail { mail, owed: true } => {
-                let _ = writeln!(
-                    s,
-                    "Your thinking is back — this is the answer you owe the person, so relay \
-what matters here in your own plain words now (don't leave them waiting, and don't just \
-acknowledge it — tell them what you found):\n{}",
-                    registry::render(mail)
-                );
             }
         }
     }
@@ -2938,11 +2907,10 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             Origin::Host,
             render_check_in(owed, Instant::now()),
         )),
-        // Mail crosses no wire, so this is its only chance to be written down.
-        // The `owed` framing is deliberately dropped: it is an instruction to Reaction
-        // about this turn, not part of the signal, and a later reader of the journal is
-        // not Reaction.
-        LoopInput::Mail { mail, .. } => {
+        // Mail crosses no wire, so this is its only chance to be written down. It is
+        // journaled as what was written, which is now also how it reached the window —
+        // there is no per-delivery framing left to strip ([`LoopInput::Mail`]).
+        LoopInput::Mail { mail } => {
             Some((Channel::Worker, Origin::Worker, registry::render(mail)))
         }
     }
@@ -3175,14 +3143,20 @@ mod view_line_tests {
     }
 }
 
-/// The hand-down's return path, pinned at the point where it can silently go wrong.
+/// The hand-down's return path, pinned where it can silently go wrong: **the host must
+/// not put words around mail.**
 ///
-/// Killing Deliberation moved the conversation's answer from the **report** path, where
-/// the host framed it as must-relay, onto the **mail** path, where Cognition's own prompt
-/// says everything it sends is *a proposal, never a delivery*. Both halves of that need
-/// to keep being true at once: an answer the person is waiting for must be framed as owed,
-/// and an unsolicited finding must not be — otherwise Reaction either drops replies or
-/// loses the judgment about when to speak that makes it worth having.
+/// It did once. Killing Deliberation moved the conversation's answer from the report path
+/// onto the mail path, and a host-held `owed` flag reinstated the must-relay framing the
+/// report used to carry. The flag is gone (see [`LoopInput::Mail`]) because it decided by
+/// a rule that could not see what it was deciding about — the host knows a hand-down went
+/// out, never whether *this* message answers it — and because the framing was a sentence
+/// in a prompt either way: it read like a check and enforced nothing. The rule it was
+/// approximating is in `reaction.md` now, where Reaction can apply it to the message in
+/// front of it instead of to a boolean about some earlier turn.
+///
+/// So what is pinned is the absence: mail reaches the window as what was written, with no
+/// per-delivery instruction wrapped around it.
 #[cfg(test)]
 mod hand_down_tests {
     use super::*;
@@ -3193,34 +3167,28 @@ mod hand_down_tests {
     }
 
     #[test]
-    fn an_answer_the_person_is_waiting_for_is_framed_as_owed() {
-        let rendered =
-            render_batch(&[LoopInput::Mail { mail: vec![mail("the label says 500mg", Some(7.into()))], owed: true }]);
-        assert!(rendered.contains("the label says 500mg"), "{rendered}");
-        assert!(rendered.contains("the answer you owe the person"), "{rendered}");
-        assert!(rendered.contains("don't leave them waiting"), "{rendered}");
+    fn mail_reaches_the_window_unframed() {
+        let one = || mail("the label says 500mg", Some(7.into()));
+        let rendered = render_batch(&[LoopInput::Mail { mail: vec![one()] }]);
+        assert_eq!(rendered.trim(), registry::render(&[one()]));
     }
 
-    /// The other half, and the one that would rot quietly: if every message from the
-    /// brain were framed as owed, "everything you send is a proposal" would be a lie the
-    /// prompt tells and the host contradicts, and Reaction would narrate every
-    /// background finding at the person.
+    /// An answer and an unsolicited finding are the same shape on the wire. Nothing here
+    /// tells them apart, and that is the point — reading them apart is Reaction's job and
+    /// it has the request in session to do it with.
     #[test]
-    fn an_unsolicited_finding_stays_a_proposal() {
-        let rendered =
-            render_batch(&[LoopInput::Mail { mail: vec![mail("the backup job died", Some(7.into()))], owed: false }]);
-        assert!(rendered.contains("the backup job died"), "{rendered}");
-        assert!(!rendered.contains("owe the person"), "{rendered}");
-    }
-
-    /// A promise made *about* the thinking is discharged by the thinking coming back —
-    /// which is now an owed mail rather than a report, and the check-in pacing keys on it.
-    #[test]
-    fn owed_mail_is_what_counts_as_the_thinking_coming_back() {
-        let back = LoopInput::Mail { mail: vec![mail("done", Some(7.into()))], owed: true };
-        let unsolicited = LoopInput::Mail { mail: vec![mail("fyi", Some(7.into()))], owed: false };
-        assert!(matches!(back, LoopInput::Mail { owed: true, .. }));
-        assert!(!matches!(unsolicited, LoopInput::Mail { owed: true, .. }));
+    fn an_answer_and_a_finding_are_rendered_alike() {
+        let rendered = |text: &str| {
+            render_batch(&[LoopInput::Mail { mail: vec![mail(text, Some(7.into()))] }])
+        };
+        let answer = rendered("the build passed");
+        let finding = rendered("the backup job died");
+        assert!(answer.contains("the build passed"), "{answer}");
+        assert!(finding.contains("the backup job died"), "{finding}");
+        for rendered in [&answer, &finding] {
+            assert!(!rendered.contains("owe"), "host framing came back: {rendered}");
+            assert!(!rendered.contains("relay"), "host framing came back: {rendered}");
+        }
     }
 }
 

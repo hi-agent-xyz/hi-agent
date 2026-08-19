@@ -156,10 +156,10 @@ the measure for everything else: **projected = what Reaction must know without r
 > the purpose, and answers in one hop instead of two.
 >
 > Two things moved rather than died, and both are load-bearing: opening what arrived (a ref
-> is a path) and writing the conversation's brief. One thing had to be rebuilt — the
+> is a path) and writing the conversation's brief. One thing was rebuilt twice — the
 > must-relay framing of an answer the person is waiting for, which used to be structural on
-> the report path and is now the host marking a hand-down as owed. See
-> [the hand-down](#the-hand-down) below.
+> the report path, then became a host-held flag, and is now standing guidance Reaction
+> applies to the message in front of it. See [the hand-down](#the-hand-down) below.
 
 ### Cognition — minutes and beyond
 
@@ -260,17 +260,46 @@ something that fits the room it is in.
 **An answer the person is waiting for is a reply owed, not a proposal**, and that is the one
 place the previous line inverts. Everything else Cognition sends is a proposal Reaction may
 decide not to say; an answer to a question asked thirty seconds ago is not, because a
-rung entitled to drop it means the person who asked never hears back. The host is what
-knows the difference — it posted the hand-down, so it marks the answer as owed when it
-returns, and Reaction relays it in its own words rather than weighing whether to.
+rung entitled to drop it means the person who asked never hears back.
+
+**Reaction is what knows the difference, and the host does not mark it.** This corrects the
+design as first written, which gave the host the job on the grounds that it posted the
+hand-down and therefore knew a reply was outstanding. It knows less than that sentence
+implies: it knows *a* hand-down went out, never whether *this* message answers it. Reaction
+knows both halves — the request is in its own long-lived session, the message is in front of
+it — so the rule is standing guidance in `reaction.md` rather than a flag computed per
+delivery. Mail arrives as what was written, and reading it is the reader's job.
+
+**One message carries several things**, and the rule is therefore per item, not per
+delivery — which is the other reason the flag could not have worked: a boolean is one
+answer for a whole batch. Three findings in one message is ordinary, and the item most
+easily dropped is the one furthest from what the room is arguing about that minute. That
+is [gaps #29](../user-journeys/gaps.md), layer 3, observed live: a message carried three
+things and the third — a finished view nobody had been shown — went unsaid for 29 minutes.
 
 This was structural before the merge: Deliberation's answer came back on the report path,
-which the host framed. It is still structural; only the path changed.
+which the host framed. **It is no longer structural, and it was never enforceable.** The
+implementation carried a host-held `owed` boolean for one release; it set the flag on every
+turn a person spoke into, handed it to whichever message from Cognition arrived first, and
+spent it there — so a background finding could be announced as the awaited answer while the
+answer behind it arrived bare. What the flag bought at its best was one extra sentence in a
+prompt. That is guidance either way, so it belongs where the rest of the guidance lives,
+applied to the message rather than to a boolean about an earlier turn. A rule the model
+applies by reading is not a weaker version of a rule code enforces — here, code could not
+enforce anything, and the flag's only real effect was to make it look as though something did.
 
 Cognition never calls `hi_say`. Everything it wants said is a **proposal** Reaction schedules.
 Two gates keep this human-shaped: Cognition asks *"is this worth raising?"*, Reaction asks
 *"is now the moment?"* The thinking part decides it matters; the social part decides the
 timing.
+
+**"Proposal" names who controls delivery, not whether it is delivered.** Both readings ride
+on the one word and only the first is always true: Cognition never picks the moment or the
+words, and never learns whether the thing landed — which is why the ledger cannot be closed
+on the strength of having sent something ([data.md](data.md#tasks)). Reaction's gate is real
+but it is a gate on *timing and phrasing*; on an answer someone asked for it does not extend
+to "not at all". So the two questions stay as written, and Reaction's *"is now the moment?"*
+has exactly one answer it may not give to an awaited reply: never.
 
 ### Reflection — background
 

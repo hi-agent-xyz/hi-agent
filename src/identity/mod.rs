@@ -1076,6 +1076,47 @@ mod soul_tests {
         }
     }
 
+    /// **The other end of `a_hand_down_from_reaction_is_always_answered`, and it moved
+    /// here from the host.** Cognition is told to always answer a hand-down; this is the
+    /// half that makes the answer reach the person, and for one release it was a
+    /// host-held `owed` flag that wrote a must-relay sentence into the window. The flag
+    /// is gone (`docs/arch/agents.md#the-hand-down`): the host knows only that *a*
+    /// hand-down went out, never whether *this* message answers it, while Reaction holds
+    /// the request in session and the message in front of it. So the rule is prompt
+    /// guidance — which means nothing enforces it but this test, and what it guards is
+    /// that the three parts stay present: mail is *identified* (Reaction was never told
+    /// what a `(from session …)` line is), an awaited answer is *passed on*, and an
+    /// unsolicited one stays Reaction's call. Drop any one and the deletion becomes a
+    /// regression.
+    #[test]
+    fn reaction_is_told_what_mail_is_and_which_of_it_must_be_passed_on() {
+        assert!(
+            REACTION_BASE.contains("(from session"),
+            "Reaction must be able to recognize mail in its window at all"
+        );
+        assert!(
+            REACTION_BASE.contains("If it answers something they asked"),
+            "the awaited half — this is what the host's owed flag used to say"
+        );
+        assert!(
+            REACTION_BASE.contains("If nobody asked for it"),
+            "and the other half, or Reaction narrates every background finding"
+        );
+        assert!(
+            REACTION_BASE.contains("Count what came in"),
+            "one message carries several things and nothing keeps score (gaps.md layer 3)"
+        );
+        // And the same rule stated where the pressure against it lives: the brevity
+        // section ("match the detail", "count the messages too") is what was pushing
+        // three answers into two when #29 happened. Saying it only up by the mail
+        // section leaves the two passages arguing, and brevity wins an argument like
+        // that every time.
+        assert!(
+            REACTION_BASE.contains("never the number of them"),
+            "brevity must be scoped to the depth of an answer, not the count of them"
+        );
+    }
+
     #[test]
     fn reaction_has_exactly_one_timer_and_is_told_its_name() {
         // The retired clock stays retired: `alarm` was a general scheduler and its

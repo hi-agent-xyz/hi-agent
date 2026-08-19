@@ -547,11 +547,13 @@ impl Drop for WorkerRegistry {
 /// to show a view instead of narrating.
 ///
 /// This function used to have a second, must-relay shape for Deliberation's reports,
-/// because the conversation's own thinking came back on this path and Reaction,
-/// which speaks only what it chooses to, was entitled to drop it. The reading rung is Cognition now and
-/// it answers by mail, so that framing moved to where the answer actually travels
-/// ([`super::LoopInput::Mail::owed`]). The failure it guards against is unchanged; only
-/// the path is.
+/// because the conversation's own thinking came back on this path and Reaction, which
+/// speaks only what it chooses to, was entitled to drop it. The reading rung is Cognition
+/// now and it answers by mail ([`super::LoopInput::Mail`]), which the host renders
+/// unframed — **the failure it guarded against is unchanged, and nothing on any path
+/// frames a message any more.** Telling an awaited answer from an unsolicited finding is a
+/// reading of the message against the request, and Reaction is the one holding both;
+/// `reaction.md` carries the rule.
 pub(super) fn render_report(report: &WorkerReport) -> String {
     match &report.kind {
         WorkerReportKind::Done(answer) => format!(
