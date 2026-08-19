@@ -191,3 +191,60 @@ async fn appearance_survives_restart() {
         .expect("GET after restart");
     assert_eq!(after, before);
 }
+
+/// The inbound half of the view channel: the person going somewhere is a perception and
+/// **not** a write. A move must leave the appearance byte-for-byte where it was — the
+/// moment it bumps a version, a phone that went back is moving the desktop.
+#[tokio::test]
+async fn a_move_is_perceived_and_never_applied() {
+    let dir = tempdir().expect("tempdir");
+    let (base, seams) = spawn_server_at(dir.path()).await;
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
+
+    let before = get_state(&base, None, Duration::from_millis(500))
+        .await
+        .expect("state");
+
+    let client = reqwest::Client::new();
+    let moved = client
+        .post(format!("{base}/api/in/view"))
+        .json(&serde_json::json!({ "ref": "factory/drive" }))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(moved.status(), 202);
+
+    // A poll that is already in sync still parks: nothing changed for anyone else.
+    let parked = get_state(&base, Some(1), Duration::from_millis(250)).await;
+    assert!(parked.is_err(), "a move woke the appearance poll; got {parked:?}");
+    let after = get_state(&base, None, Duration::from_millis(500))
+        .await
+        .expect("state");
+    assert_eq!(after, before);
+}
+
+/// A move to nowhere is a client bug. Answering 202 to it would hide the bug behind a
+/// context line that silently never appears.
+#[tokio::test]
+async fn a_move_with_no_destination_is_refused() {
+    let dir = tempdir().expect("tempdir");
+    let (base, _seams) = spawn_server_at(dir.path()).await;
+
+    let client = reqwest::Client::new();
+    let empty = client
+        .post(format!("{base}/api/in/view"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(empty.status(), 400);
+
+    // …but coming back to live needs no destination, because it names none.
+    let live = client
+        .post(format!("{base}/api/in/view"))
+        .json(&serde_json::json!({ "live": true }))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(live.status(), 202);
+}

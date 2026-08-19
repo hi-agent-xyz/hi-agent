@@ -28,10 +28,17 @@ pub enum Channel {
     Touch,
     Smell,
     Taste,
-    /// The agent's own presentation surface — what it put on the screen. Outbound
-    /// only, and like [`Channel::File`] not a sense: the agent doesn't perceive a
+    /// The agent's own presentation surface. Outbound it is what it put on the
+    /// screen — like [`Channel::File`] not a sense: the agent doesn't perceive a
     /// view, it *shows* one. Recorded so a restart can tell what is already up
     /// (and so it doesn't show the same thing twice).
+    ///
+    /// **Inbound it is the person going to a view** — the band's history, a
+    /// bookmark, or back to live. Addressed, so it carries the owner by default
+    /// like `text` does; deliberately *not* turn-driving, because walking the band
+    /// through five tiles must not produce five turns. It is read into the next
+    /// turn's context instead, which is the moment it matters. See
+    /// `docs/arch/stage.md#where-they-went-is-reported-the-cursor-still-is-not`.
     View,
     /// The host noticing the time: today a check-in coming due, and nothing else since
     /// the voice's pulse was cut.

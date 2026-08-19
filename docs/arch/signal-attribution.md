@@ -41,9 +41,9 @@ rule — no new judgment is required at the boundary.
 
 | Class | Channels | What arrival means | Sender |
 |---|---|---|---|
-| **Addressed** | `text`, `file` | someone deliberately sent this *to the agent* | the **owner**, by default |
+| **Addressed** | `text`, `file`, `view` | someone deliberately sent this *to the agent* | the **owner**, by default |
 | **Ambient** | `audio`, `vision` | captured from wherever the agent is | a cluster, or unknown |
-| **Machine** | `clock`, `worker`, `view` | the agent's own machinery moved | **none, ever** |
+| **Machine** | `clock`, `worker` | the agent's own machinery moved | **none, ever** |
 
 The classes are not new vocabulary. `Channel`'s own definitions already draw these lines —
 `file` is *"handed"* rather than perceived, `clock` *"came from no one, which is why it gets
@@ -51,6 +51,14 @@ its own channel rather than being mixed into `text` where it would read as somet
 person said"*, `worker` is *"from another of its own minds rather than from the person"*.
 Mis-sourcing was already considered serious enough to justify a dedicated channel. This
 carries that one step further, to the signal.
+
+**`view` was a machine channel and is now an addressed one** — amended August 19, 2026,
+when the channel grew an inbound half ([`stage.md`](stage.md)). Outbound it is still the
+agent showing something, which asks no sender question at all. Inbound it is the person
+*going* to a view, on the agent's own surface, through a control nobody else can reach —
+as deliberate an act as typing, and attributed the same way: the owner, basis `owner`,
+defeated by any positive evidence. What it is not is machinery moving; nothing moved but
+the person.
 
 **Machine channels take no sender and are not a person's absence — they are a person's
 non-involvement.** A stretch made entirely of worker reports and clock wakes is not a

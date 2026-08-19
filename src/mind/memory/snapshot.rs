@@ -242,9 +242,11 @@ pub async fn shown_recently(memory: &Memory) -> String {
     };
     let mut seen: Vec<String> = Vec::new();
     for entry in &entries {
-        // `SignalOut` only: a raise is something the agent did. Nothing arrives on the
-        // view channel, so a match on the other variant would be dead code pretending to
-        // be thorough.
+        // `SignalOut` only, and now that means something: the view channel has an inbound
+        // half (the person going to a view), and this section is about what the *agent*
+        // put in front of them. Where they went of their own accord is Reaction's
+        // context to hold — `## On screen now` carries it — not a claim about what has
+        // been delivered.
         let JournalEntry::SignalOut { channel: Channel::View, body, .. } = entry else {
             continue;
         };

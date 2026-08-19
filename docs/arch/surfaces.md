@@ -36,7 +36,7 @@ tool plus a written procedure — see [`foundation.md`](foundation.md#devices).
 
 ## Channels
 
-Four in, three out. A channel is one sense or expression stream, in human vocabulary, with
+Five in, three out. A channel is one sense or expression stream, in human vocabulary, with
 zero knowledge of the wire.
 
 | Channel | Direction | Carried as |
@@ -47,11 +47,13 @@ zero knowledge of the wire.
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
 | surface (rich content) | out | the `hi_show` call, by **path ref** |
+| view | in | the person went to one of the agent's surfaces — a ref, never a window |
 | action | out | tool call — request/response |
 
-**An inbound channel also says who a signal came from.** `text` and `file` are *addressed* —
-someone sent them to the agent — so they default to the owner; `audio` and `vision` are
-*ambient*, so their sender is a recognized cluster or nobody at all. That is a property of
+**An inbound channel also says who a signal came from.** `text`, `file` and `view` are
+*addressed* — someone acted on the agent deliberately — so they default to the owner;
+`audio` and `vision` are *ambient*, so their sender is a recognized cluster or nobody at
+all. That is a property of
 how the signal arrived and never of what it says:
 [`signal-attribution.md`](signal-attribution.md).
 

@@ -575,6 +575,10 @@ pub fn build(
         // The view channel — the retained appearance, served as versioned
         // whole-state snapshots (long-poll on `?since=`).
         .route("/api/out/view", get(view::get_out_view).delete(view::clear_out_view))
+        // The inbound half of the view channel: the person went to a view. It is the
+        // one thing about the screen that does not come from the agent, and it is read
+        // into the next turn rather than driving one — see `view::post_in_view`.
+        .route("/api/in/view", post(view::post_in_view))
         // The views a person can go to by name, and the compile that lets one window
         // mount one without taking the stage away from what the agent raised.
         .route("/api/views", get(view::list_views))

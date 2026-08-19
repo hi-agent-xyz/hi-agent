@@ -263,8 +263,8 @@ fn trim(messages: &mut VecDeque<Message>) {
 /// with the live append sites or the conversation would change shape when it
 /// reloads. Three shapes get in and everything else is dropped: a human line
 /// (typed on `Text`, recognized on `Audio`), a handed `File`, and Reaction's own
-/// worded output. A check-in on `Clock`, a face seen on `Vision`, a view put up on
-/// `View` — all journaled, none of them things anybody said.
+/// worded output. A check-in on `Clock`, a face seen on `Vision`, a view put up or
+/// gone to on `View` — all journaled, none of them things anybody said.
 pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
     entries
         .into_iter()

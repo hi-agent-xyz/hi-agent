@@ -1820,7 +1820,13 @@ async fn run_reaction_turn(
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
     // last turn is gone from this list now: the agent can see what's up and dismiss by
     // real id instead of guessing from the transcript.
-    let on_screen = render_on_screen(&reaction.inner.views.on_screen().await);
+    // …and where *they* went, when that is not where the agent put them. Read from the
+    // same bus and into the same block, because it is the same subject: what is in front
+    // of the person right now.
+    let on_screen = render_on_screen(
+        &reaction.inner.views.on_screen().await,
+        reaction.inner.views.attention().await.as_ref(),
+    );
 
     // Open (or reuse) the persistent reaction session. `reaction.md` rides its
     // `baseInstructions`; the session then remembers prior turns — which is what the window
@@ -2141,6 +2147,48 @@ mod turn_context_tests {
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
+    }
+
+    /// The whole point of the inbound view channel: when the person has gone somewhere,
+    /// the turn says so, so "这个数字不对" is read against the board they are looking at
+    /// rather than the one the agent last raised.
+    #[test]
+    fn the_screen_block_says_where_the_person_went() {
+        use crate::foundation::server::view_bus::Attention;
+        let went = Attention {
+            key: "factory/drive".into(),
+            name: "factory/drive".into(),
+            at: Utc::now(),
+        };
+
+        let parked = render_on_screen(&["tasks".to_string()], Some(&went));
+        assert!(parked.contains("factory/drive"), "{parked}");
+        assert!(parked.contains("just now"), "{parked}");
+        assert!(parked.contains("not at what you have up"), "{parked}");
+
+        // Nothing raised: there is no "instead" to draw, and claiming one would be a
+        // contradiction of the line right above it.
+        let clear = render_on_screen(&[], Some(&went));
+        assert!(clear.contains("the room is clear"), "{clear}");
+        assert!(clear.contains("factory/drive"), "{clear}");
+        assert!(!clear.contains("not at what you have up"), "{clear}");
+
+        // And with nobody having gone anywhere, the block is exactly what it was.
+        assert!(!render_on_screen(&["tasks".to_string()], None).contains("The person went"));
+    }
+
+    /// The screen block is `OnChange`, so a live "40s ago" would re-send the whole thing
+    /// every turn — the repetition the memo exists to stop. Buckets move a handful of
+    /// times and then hold.
+    #[test]
+    fn the_age_is_coarse_enough_to_hold_still() {
+        use chrono::Duration;
+        assert_eq!(went_ago(Duration::seconds(40)), went_ago(Duration::seconds(95)));
+        assert_eq!(went_ago(Duration::minutes(3)), went_ago(Duration::minutes(11)));
+        assert_ne!(went_ago(Duration::seconds(40)), went_ago(Duration::minutes(3)));
+        assert_ne!(went_ago(Duration::minutes(30)), went_ago(Duration::hours(5)));
+        // A clock that stepped backwards reads as now, not as a panic.
+        assert_eq!(went_ago(Duration::seconds(-5)), "just now");
     }
 
     /// The projected state leads and the turn's delta follows, so the new signals sit
@@ -2747,7 +2795,10 @@ fn join_sections(sections: &[&str]) -> String {
 /// the screen is clear the agent needs to *know* it's clear so it stops firing blind
 /// dismisses at ids that are already gone. Kept to bare ids: the reaction shows/dismisses
 /// by id, and the id is all it needs to target one.
-fn render_on_screen(ids: &[String]) -> String {
+fn render_on_screen(
+    ids: &[String],
+    attention: Option<&crate::foundation::server::view_bus::Attention>,
+) -> String {
     use std::fmt::Write as _;
     let mut s = String::from("## On screen now\n");
     if ids.is_empty() {
@@ -2758,7 +2809,33 @@ fn render_on_screen(ids: &[String]) -> String {
         }
         s.push_str("(these are the views currently up, top-most last; dismiss one by its id)");
     }
+    if let Some(went) = attention {
+        let instead = if ids.is_empty() { "" } else { ", not at what you have up" };
+        let _ = write!(
+            s,
+            "\nThe person went to \"{}\" {} and is looking at that{instead} — what they say \
+next is most likely about it.",
+            went.name,
+            went_ago(Utc::now() - went.at),
+        );
+    }
     s
+}
+
+/// How long ago they went there, in words, and deliberately coarse.
+///
+/// The `screen` block is [`Cadence::OnChange`](snapshot::Cadence) — it is sent only when
+/// its text differs from what this thread was last told — so a live "40s ago" would make
+/// the block change every single turn and put the whole screen back in the prompt each
+/// time, which is exactly the repetition the memo exists to stop. Buckets change a handful
+/// of times and then stop, and "a while ago" is all the agent can actually act on anyway.
+fn went_ago(age: chrono::Duration) -> &'static str {
+    match age.num_minutes() {
+        ..2 => "just now",
+        2..15 => "a few minutes ago",
+        15..120 => "a while back",
+        _ => "some hours ago",
+    }
 }
 
 fn render_batch(batch: &[LoopInput]) -> String {

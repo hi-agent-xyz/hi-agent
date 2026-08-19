@@ -21,7 +21,11 @@ typed into the host's own line or controls; argued in *The keyboard follows the 
 **Amended August 19, 2026 — the conversation stands in one box:** the panel keeps the same
 corner and the same measure whether or not the agent has a view up, so the `stage`
 presentation is gone and with it the jump the person saw whenever something went up;
-argued in *One box, whatever else is on the stage*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+argued in *One box, whatever else is on the stage*. **Amended the same day — a move is
+reported, the cursor still is not:** going to a view posts on the view channel's new
+inbound half, so the agent knows where the person is looking when they speak next, while
+which entry a window is parked on stays the window's own and out of the appearance;
+argued in *Where they went is reported; the cursor still is not*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -351,6 +355,44 @@ still what a second device shows and still what it will refer to out loud.
 something is the same mistake as auto-scrolling the conversation to a new message. The
 return-to-live control carries a dot instead. If the agent happens to raise exactly what
 they went back to, they are simply live again and there is nothing to signal.
+
+### Where they went is reported; the cursor still is not
+
+Amended August 19, 2026. Those two read as one fact and are opposite in kind, which is why
+the paragraph above could be right and still leave the agent blind.
+
+*Which entry this window is parked on* is **state**, it is the window's, and reporting it
+would let a phone move the desktop. That stands exactly as written. *That the person went
+somewhere* is an **event**, and an event on the agent's own surface is something the agent
+should perceive — because the next thing they say is usually about it. "这个数字不对" is
+unreadable if the agent believes its own last raise is what is in front of them, and the
+failure is silent: it answers confidently, about the wrong board.
+
+**So a move posts, and posts as a perception.** `POST /api/in/view` is the inbound half of
+a channel that until now only went out. It carries *where they went* and never *which
+window went there*, and it changes nothing about the appearance: `GET /api/out/view` is
+what it was, no version bump, no snapshot, and a second device still shows what the agent
+raised. The report is read, not applied — the content slot is still the agent's alone, and
+this is still not a second writer of it.
+
+**It does not drive a turn.** Someone walking the band through five tiles must not produce
+five turns, and an agent that remarks on every tile you touch is unusable. The move lands
+in the log and is read into the next turn's context, which is exactly when it is needed:
+the moment the person speaks. Same shape as the frame on the stage lane — the window tells
+the backend something true about itself, and nothing happens until something else asks.
+
+**The newest move wins, across every window.** One person owns an install
+([`topology.md`](topology.md#identity)), so two windows are two of their eyes and not two
+people, and the last place they went is the best available answer to where they are
+looking. A raise onto that same destination clears it, because that is the client's own
+rule for going live again — made in the same place the raise is recorded, so the two
+cannot drift.
+
+**It goes stale, and says so instead of pretending.** A window that reloads is live again
+and never announces it, so the fact can outlive the looking. The turn therefore reads it
+with its age attached — *they went to `factory/drive` 40s ago* — which the agent can weigh,
+unlike a bare assertion about where someone is. And it is in-memory: after a restart the
+agent has no idea where anybody is looking, which is the truth.
 
 **Same destination, one entry** — the ref when there is one, the module when there isn't.
 Two raises of `factory/tasks` are one place, because both re-resolve to the same

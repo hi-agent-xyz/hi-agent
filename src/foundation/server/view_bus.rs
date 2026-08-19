@@ -49,8 +49,38 @@ use crate::types::{ViewEnvelope, ViewOp, ViewTraits};
 #[derive(Clone)]
 pub struct ViewBus {
     inner: Arc<Mutex<Appearance>>,
+    /// Where the person last went, if that is not what the agent has up.
+    ///
+    /// **Deliberately outside [`Appearance`].** Everything in there is the appearance:
+    /// it is versioned, it goes out on `GET /api/out/view`, and it is snapshotted. This
+    /// is none of those things — it is a perception the turn reads, and the moment it
+    /// lived beside the slots someone would serialize it and a phone would start moving
+    /// the desktop. Its own lock is the cheapest way to make that impossible rather
+    /// than merely discouraged. See
+    /// `docs/arch/stage.md#where-they-went-is-reported-the-cursor-still-is-not`.
+    attention: Arc<Mutex<Option<Attention>>>,
     /// The memory data dir; snapshots live under `raw/appearance/`.
     data_dir: PathBuf,
+}
+
+/// Where the person went, and when.
+///
+/// One value for the whole install, not one per window: one person owns an install
+/// (`docs/arch/topology.md`), so two windows are two of their eyes, and the newest move
+/// is the best available answer to where they are looking.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attention {
+    /// What identifies the *place*, by the same rule the history dedupes by: the
+    /// durable ref when there is one, else the compiled module. Never rendered — it
+    /// exists so a raise onto the same place can recognize itself and clear this.
+    pub key: String,
+    /// What to call the destination in a prompt — the ref when it has one, else the
+    /// id the inline view was raised under. The module hash names nothing.
+    pub name: String,
+    /// When they went there. Rendered as an age, never as a claim about now: a window
+    /// that reloaded is live again and never says so, so this fact can outlive the
+    /// looking and the turn has to be able to weigh it.
+    pub at: DateTime<Utc>,
 }
 
 /// The screen: two fixed slots, not a stack.
@@ -233,8 +263,50 @@ impl ViewBus {
         };
         Self {
             inner: Arc::new(Mutex::new(state)),
+            // In-memory only, and not restored: after a restart the agent has no idea
+            // where anybody is looking, which is the truth.
+            attention: Arc::new(Mutex::new(None)),
             data_dir: data_dir.to_path_buf(),
         }
+    }
+
+    /// The person went to `name` — the inbound half of the view channel.
+    ///
+    /// Returns whether this actually moved them, so the caller can journal a move and
+    /// stay quiet about a re-click of the tile they are already on.
+    ///
+    /// `live` says the destination is what the agent currently has up, which is not a
+    /// place to be told about: it clears the fact instead of recording one, so the
+    /// turn's context says nothing rather than saying something it would have to
+    /// qualify away.
+    pub async fn note_went_to(&self, key: String, name: String, live: bool) -> bool {
+        let mut slot = self.attention.lock().await;
+        if live {
+            return slot.take().is_some();
+        }
+        if slot.as_ref().is_some_and(|a| a.key == key) {
+            return false;
+        }
+        *slot = Some(Attention { key, name, at: Utc::now() });
+        true
+    }
+
+    /// Forget where they went, because the agent just raised that same place.
+    ///
+    /// This is the client's own rule for being live again — `ViewsProvider` drops its
+    /// cursor when the newest raise is the destination it is parked on — made here, in
+    /// the same call that records the raise, so the two cannot drift.
+    async fn caught_up_with(&self, destination: &str) {
+        let mut slot = self.attention.lock().await;
+        if slot.as_ref().is_some_and(|a| a.key == destination) {
+            *slot = None;
+        }
+    }
+
+    /// Where the person went, if they went anywhere and have not been caught up with.
+    /// Read into each turn beside [`on_screen`](Self::on_screen).
+    pub async fn attention(&self) -> Option<Attention> {
+        self.attention.lock().await.clone()
     }
 
     /// Fold one reaction-emitted envelope into the **content** slot.
@@ -265,6 +337,7 @@ impl ViewBus {
         }
         if let Some(raised) = &next {
             record_raise(&mut entry.history, raised.clone(), Utc::now());
+            self.caught_up_with(&destination_of(raised)).await;
             // Take the picture now, while this *is* the screen. Off the write path
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
@@ -569,14 +642,20 @@ fn resolve_slot(
 /// end and takes the newer timestamp, because what matters about it is when the screen
 /// last showed it.
 fn record_raise(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
-    let destination = |v: &RetainedView| {
-        v.view_ref.clone().unwrap_or_else(|| v.module_url.clone())
-    };
-    let key = destination(&view);
-    history.retain(|h| destination(&h.view) != key);
+    let key = destination_of(&view);
+    history.retain(|h| destination_of(&h.view) != key);
     history.push(HistoryEntry { view, at });
     let overflow = history.len().saturating_sub(HISTORY_MAX);
     history.drain(..overflow);
+}
+
+/// What identifies a *destination*: the durable ref when there is one, else the compiled
+/// module. Two raises of `factory/tasks` are one place because both re-resolve to the same
+/// recompiled board; two different inline views are two artifacts and both stay. The client
+/// keys its cursor by the same rule (`destinationOf` in `core/views.tsx`) and the inbound
+/// half of the view channel reports it, so all three agree on what "the same place" means.
+fn destination_of(view: &RetainedView) -> String {
+    view.view_ref.clone().unwrap_or_else(|| view.module_url.clone())
 }
 
 /// A human label for one past raise.
@@ -743,6 +822,86 @@ mod tests {
 
     fn history_ids(state: &ViewState) -> Vec<&str> {
         state.history.iter().map(|h| h.id.as_str()).collect()
+    }
+
+    /// The person going somewhere is a perception and nothing else: it must not reach
+    /// the appearance. If this ever fails, a phone that went back is moving the desktop.
+    #[tokio::test]
+    async fn a_move_changes_nothing_about_the_appearance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("a", "/m/a.mjs")).await;
+        let before = bus.wait_state(None).await;
+
+        assert!(bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
+
+        let after = bus.wait_state(None).await;
+        assert_eq!(after.version, before.version, "a move is not a state change");
+        assert_eq!(ids(&after), ids(&before));
+        assert_eq!(history_ids(&after), history_ids(&before));
+    }
+
+    /// The log records moves, so a re-click of the tile they are already on is not one.
+    #[tokio::test]
+    async fn going_where_they_already_are_is_not_a_move() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+
+        assert!(bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
+        assert!(!bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
+        assert!(bus.note_went_to("factory/tasks".into(), "factory/tasks".into(), false).await);
+        assert_eq!(bus.attention().await.unwrap().name, "factory/tasks");
+    }
+
+    /// Back on what the agent has up is not somewhere to tell it about.
+    #[tokio::test]
+    async fn coming_back_to_live_clears_the_fact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+
+        bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await;
+        assert!(bus.note_went_to(String::new(), String::new(), true).await);
+        assert!(bus.attention().await.is_none());
+        // And coming back twice is one move, like any other repeat.
+        assert!(!bus.note_went_to(String::new(), String::new(), true).await);
+    }
+
+    /// The client drops its cursor when the newest raise is where it is parked. The
+    /// server makes the same call in the same place, so the two cannot drift — otherwise
+    /// the agent would be told they are away reading something it is at that moment
+    /// showing them.
+    #[tokio::test]
+    async fn a_raise_onto_where_they_went_catches_up_with_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
+
+        // Somewhere else first: that is not where they are.
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        assert!(bus.attention().await.is_some());
+
+        bus.apply(show("drive", "/m/drive.mjs")).await;
+        assert!(bus.attention().await.is_none());
+    }
+
+    /// A named view is one destination however many times it is raised or gone to, and
+    /// an inline one is its artifact. The client keys its cursor the same way.
+    #[tokio::test]
+    async fn a_named_raise_catches_up_by_ref_not_by_module() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.note_went_to("factory/tasks".into(), "factory/tasks".into(), false).await;
+
+        // Recompiled since they went there: a different module, the same place.
+        bus.apply(ViewEnvelope {
+            id: "tasks".into(),
+            op: ViewOp::Show,
+            module_url: Some("/m/tasks-v2.mjs".into()),
+            traits: None,
+            view_ref: Some("factory/tasks".into()),
+        })
+        .await;
+        assert!(bus.attention().await.is_none());
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ import {
   subscribeViewState,
   clearViewState,
   openView,
+  reportWentTo,
   type ViewTraits,
   type WireHistoryEntry,
 } from "../channels/out/view";
@@ -51,7 +52,9 @@ interface ViewsValue {
   history: WireHistoryEntry[];
   /** The destination this window is parked on, or `null` when it is on the live one.
    * Local to this window and never reported, exactly like the conversation's scroll
-   * position: a phone that went back must not move the desktop. */
+   * position: a phone that went back must not move the desktop. **The move that put it
+   * here is reported** — that is a different fact, and the agent needs it to read what
+   * the person says next; see `reportWentTo`. */
   parked: string | null;
   /** A raise landed while this window was parked. The signal that replaces yanking. */
   liveMoved: boolean;
@@ -197,7 +200,12 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   // simply live again and there is nothing to signal.
   const liveKey = history.length > 0 ? destinationOf(history[history.length - 1]!) : null;
   const prevLiveKeyRef = useRef<string | null>(null);
+  // Read by the navigation callbacks, which must not re-create on every raise: going to
+  // the newest card is going *live*, and the report says so rather than telling the agent
+  // the person wandered off to the thing it just put up.
+  const liveKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    liveKeyRef.current = liveKey;
     const prev = prevLiveKeyRef.current;
     prevLiveKeyRef.current = liveKey;
     const p = parkedRef.current;
@@ -213,10 +221,19 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const returnToLive = useCallback(() => {
     setParked(null);
     setLiveMoved(false);
+    reportWentTo({ live: true });
   }, []);
 
   const goTo = useCallback((entry: WireHistoryEntry) => {
     const key = destinationOf(entry);
+    // Told before the mount, not after: the report is what the agent reads to know
+    // where they are, and a compile that hangs must not make it late.
+    reportWentTo({
+      viewRef: entry.view_ref,
+      moduleUrl: entry.module_url,
+      id: entry.id,
+      live: key === liveKeyRef.current,
+    });
     // An inline view has no durable name and is only ever the artifact it compiled
     // to, so it mounts straight from the record.
     if (!entry.view_ref) {
@@ -240,6 +257,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openRef = useCallback((viewRef: string) => {
+    reportWentTo({ viewRef, live: viewRef === liveKeyRef.current });
     void openView(viewRef).then(
       (opened) =>
         setParked({

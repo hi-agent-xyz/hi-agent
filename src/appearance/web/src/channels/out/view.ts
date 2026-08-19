@@ -129,6 +129,44 @@ export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
   if (!res.ok) throw new Error(`/api/views/bookmarks failed: ${res.status} ${res.statusText}`);
 }
 
+/** Where this window just went — the inbound half of the view channel.
+ *
+ * **This is not the cursor, and reporting it is not reporting the cursor.** Which entry
+ * a window is parked on stays the window's own and never leaves it: nothing here moves
+ * the stage, bumps the appearance version or reaches a second device. What goes is the
+ * *move*, as something the agent perceives, because the next thing the person says is
+ * usually about what they are looking at — an agent that thinks its own last raise is in
+ * front of them answers confidently about the wrong board.
+ *
+ * Fire-and-forget, like the stage lane: a dropped report costs the next turn one line of
+ * context, and nothing else. It does not drive a turn either, so walking the band never
+ * makes the agent pipe up.
+ */
+export function reportWentTo(dest: {
+  /** The durable ref, for a named view. */
+  viewRef?: string;
+  /** The compiled module, for an inline view that has no ref — the same fallback the
+   * history dedupes destinations by. */
+  moduleUrl?: string;
+  /** What the view was raised under, to name an inline destination in a prompt. */
+  id?: string;
+  /** They are back on what the agent has up. Clears the fact rather than recording one. */
+  live?: boolean;
+}): void {
+  void fetch(url("/api/in/view"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-HI-Surface": "1" },
+    body: JSON.stringify({
+      ref: dest.viewRef,
+      module: dest.moduleUrl,
+      id: dest.id,
+      live: dest.live ?? false,
+    }),
+  }).catch(() => {
+    /* the next turn goes without the line; nothing else depends on it */
+  });
+}
+
 export interface SubscribeViewOpts {
   signal: AbortSignal;
 }
