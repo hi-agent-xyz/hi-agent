@@ -130,7 +130,7 @@ async fn ingest_file(
         sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %err, "journal append failed; accepting file anyway");
+        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting file anyway");
     }
 
     // A handed file is a message — the same one the agent is about to react to.

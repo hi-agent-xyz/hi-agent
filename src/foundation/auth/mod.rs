@@ -518,7 +518,7 @@ impl IntoResponse for AppError {
         match self {
             AppError::User(msg) => message_page(StatusCode::BAD_REQUEST, "Sign-in problem", &msg),
             AppError::Internal(err) => {
-                tracing::error!(error = %err, "auth flow error");
+                tracing::error!(error = %format!("{err:#}"), "auth flow error");
                 message_page(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Sign-in error",

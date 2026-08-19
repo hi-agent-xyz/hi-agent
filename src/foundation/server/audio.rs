@@ -190,7 +190,7 @@ async fn voice_note(
     let embedding = match voiceprint::embed(samples).await {
         Ok(e) => e,
         Err(err) => {
-            tracing::warn!(error = %err, "voiceprint embed failed");
+            tracing::warn!(error = %format!("{err:#}"), "voiceprint embed failed");
             return None;
         }
     };
@@ -262,7 +262,7 @@ pub async fn post_audio(
     let media_path = match media::store_blob(&state.data_dir, Channel::Audio, ts, MediaSlot::InputOneOff, ext, &body).await {
         Ok(f) => f,
         Err(err) => {
-            tracing::error!(error = %err, "failed to persist incoming audio");
+            tracing::error!(error = %format!("{err:#}"), "failed to persist incoming audio");
             return (StatusCode::INTERNAL_SERVER_ERROR, "audio store failed\n").into_response();
         }
     };
@@ -289,7 +289,7 @@ pub async fn post_audio(
         Ok(t) => t,
         Err(err) => {
             crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
-            tracing::warn!(error = %err, media_path = %media_path, "STT transcribe failed");
+            tracing::warn!(error = %format!("{err:#}"), media_path = %media_path, "STT transcribe failed");
             return (
                 StatusCode::BAD_GATEWAY,
                 format!("transcription failed: {err}\n"),
@@ -657,7 +657,7 @@ pub async fn ingest_pcm_stream(
             // same budget) — raise the out-of-energy hint now, without waiting for the
             // next balance poll. No-op in BYOK / for non-402 STT failures.
             crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
-            tracing::warn!(error = %err, "audio ingest STT ended");
+            tracing::warn!(error = %format!("{err:#}"), "audio ingest STT ended");
         }
         None => tracing::warn!("audio ingest STT did not finalize in time"),
         _ => {}
@@ -715,7 +715,7 @@ async fn deliver_transcript(
         sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %err, "journal append failed; accepting signal anyway");
+        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
     }
     // Append before dispatching inward. A spoken line is a message like a typed
     // one, so it rides the text channel into the conversation (a display concern);
@@ -754,7 +754,7 @@ fn resolve_speaker(
         let embedding = match voiceprint::embed(pcm).await {
             Ok(e) => e,
             Err(err) => {
-                tracing::warn!(error = %err, "live voiceprint embed failed");
+                tracing::warn!(error = %format!("{err:#}"), "live voiceprint embed failed");
                 return;
             }
         };
@@ -762,7 +762,7 @@ fn resolve_speaker(
             Ok(subject) => {
                 names.lock().unwrap().insert(speaker_id, subject);
             }
-            Err(err) => tracing::warn!(error = %err, "live voice assign failed"),
+            Err(err) => tracing::warn!(error = %format!("{err:#}"), "live voice assign failed"),
         }
     });
 }
@@ -774,7 +774,7 @@ async fn flush_mic_minute(state: &AppState, ts: DateTime<Utc>, pcm: &[u8]) {
     if let Err(err) =
         media::store_blob(&state.data_dir, Channel::Audio, ts, MediaSlot::InputStream, "wav", &wav).await
     {
-        tracing::warn!(error = %err, "persisting mic minute failed");
+        tracing::warn!(error = %format!("{err:#}"), "persisting mic minute failed");
     }
 }
 

@@ -48,7 +48,7 @@ where
         match op().await {
             Ok(v) => return Ok(v),
             Err(e) => {
-                tracing::warn!(label, attempt, max = MAX_ATTEMPTS, error = %e, "download attempt failed");
+                tracing::warn!(label, attempt, max = MAX_ATTEMPTS, error = %format!("{e:#}"), "download attempt failed");
                 last = Some(e);
                 if attempt < MAX_ATTEMPTS {
                     tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;

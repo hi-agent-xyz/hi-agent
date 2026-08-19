@@ -118,7 +118,7 @@ pub async fn get_surfaces(State(state): State<Arc<AppState>>) -> Response {
     match surfaces::store::list(state.surfaces.data_dir()) {
         Ok(list) => axum::Json(serde_json::json!({ "surfaces": list })).into_response(),
         Err(e) => {
-            tracing::warn!(error = %e, "listing surfaces");
+            tracing::warn!(error = %format!("{e:#}"), "listing surfaces");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not read the surface list\n")
                 .into_response()
         }
@@ -139,7 +139,7 @@ pub async fn delete_surface(
         }
         Ok(false) => (StatusCode::NOT_FOUND, "no such surface\n").into_response(),
         Err(e) => {
-            tracing::warn!(error = %e, "revoking a surface");
+            tracing::warn!(error = %format!("{e:#}"), "revoking a surface");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not revoke\n").into_response()
         }
     }

@@ -419,7 +419,7 @@ async fn ensure_tokens(store: &Credentials) -> anyhow::Result<Tokens> {
                 // recovered by re-bootstrapping on the stable device_id. Because the
                 // broker keys accounts on device_id, this re-resolves the SAME account
                 // — no new account is created. Not fatal.
-                Err(e) => tracing::warn!(error = %e, "broker refresh failed; re-resolving device account (idempotent on device_id, same account)"),
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), "broker refresh failed; re-resolving device account (idempotent on device_id, same account)"),
             }
         }
     }
@@ -565,11 +565,11 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
     let tokens = match ensure_tokens(&store).await {
         Ok(t) => t,
         Err(e) => {
-            tracing::warn!(error = %e, "broker bootstrap/refresh failed; keeping cached configs");
-            record_status(data_dir, false, &e.to_string());
+            tracing::warn!(error = %format!("{e:#}"), "broker bootstrap/refresh failed; keeping cached configs");
+            record_status(data_dir, false, &format!("{e:#}"));
             if dirty {
                 if let Err(e) = store.save(data_dir) {
-                    tracing::warn!(error = %e, "failed to persist credential store");
+                    tracing::warn!(error = %format!("{e:#}"), "failed to persist credential store");
                 }
             }
             return;
@@ -583,7 +583,7 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
             tracing::info!("fetched managed configs from broker");
             store.managed = Some(m);
         }
-        Err(e) => tracing::warn!(error = %e, "configs fetch failed; keeping cached"),
+        Err(e) => tracing::warn!(error = %format!("{e:#}"), "configs fetch failed; keeping cached"),
     }
     match fetch_energy(&tokens.access_token).await {
         Ok(en) => {
@@ -593,7 +593,7 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
             crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
             store.energy = Some(en);
         }
-        Err(e) => tracing::warn!(error = %e, "energy fetch failed; keeping cached"),
+        Err(e) => tracing::warn!(error = %format!("{e:#}"), "energy fetch failed; keeping cached"),
     }
 
     // Tokens were obtained → the account exists and is healthy, even if a vendor
@@ -602,7 +602,7 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
 
     if dirty {
         if let Err(e) = store.save(data_dir) {
-            tracing::warn!(error = %e, "failed to persist credential store after broker refresh");
+            tracing::warn!(error = %format!("{e:#}"), "failed to persist credential store after broker refresh");
         }
     }
 }
@@ -625,14 +625,14 @@ pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
             crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
             store.energy = Some(en.clone());
             if let Err(e) = store.save(data_dir) {
-                tracing::debug!(error = %e, "failed to persist energy poll");
+                tracing::debug!(error = %format!("{e:#}"), "failed to persist energy poll");
             }
             // Keeps the Settings page's "last checked" fresh between full refreshes.
             record_status(data_dir, true, "");
             Some(en)
         }
         Err(e) => {
-            tracing::debug!(error = %e, "energy poll failed; keeping last value");
+            tracing::debug!(error = %format!("{e:#}"), "energy poll failed; keeping last value");
             None
         }
     }

@@ -234,7 +234,7 @@ async fn open_tts(
         }
         Err(err) => {
             crate::foundation::energy_state::note_402_error(reaction.inner.memory.data_dir(), &err);
-            tracing::warn!(error = %err, "TTS session start failed; turn is silent");
+            tracing::warn!(error = %format!("{err:#}"), "TTS session start failed; turn is silent");
         }
     }
 }

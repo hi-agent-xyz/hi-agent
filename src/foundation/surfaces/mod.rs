@@ -147,14 +147,14 @@ impl Surfaces {
             Ok(0) => {}
             Ok(_) => return None,
             Err(e) => {
-                tracing::warn!(error = %e, "could not read the surface credentials");
+                tracing::warn!(error = %format!("{e:#}"), "could not read the surface credentials");
                 return None;
             }
         }
         match self.mint("first boot") {
             Ok((_, token)) => Some(token),
             Err(e) => {
-                tracing::warn!(error = %e, "could not mint the first-boot credential");
+                tracing::warn!(error = %format!("{e:#}"), "could not mint the first-boot credential");
                 None
             }
         }

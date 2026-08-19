@@ -2272,7 +2272,7 @@ fn spawn_video_poller(
                 Ok(_) => {}
                 // A single failed poll is a network blip, not a failed generation.
                 // Only the deadline ends the wait.
-                Err(e) => tracing::warn!(error = %e, task = %handle.id, "video poll failed"),
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), task = %handle.id, "video poll failed"),
             }
             if started.elapsed() > VIDEO_POLL_DEADLINE {
                 break Err(format!(

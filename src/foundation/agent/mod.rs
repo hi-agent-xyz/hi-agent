@@ -232,7 +232,7 @@ impl AgentLayer {
                 tracing::info!(
                     role = role.as_str(),
                     thread_id = %thread,
-                    error = %err,
+                    error = %format!("{err:#}"),
                     "could not resume the previous thread; opening a fresh one"
                 );
                 process.open_thread(opts).await

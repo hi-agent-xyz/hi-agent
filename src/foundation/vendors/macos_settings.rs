@@ -270,7 +270,7 @@ define_class!(
                 };
                 match rt.block_on(crate::foundation::broker::subscribe_url(&data_dir, Some("/account"))) {
                     Ok(url) => open_url(&url),
-                    Err(e) => tracing::warn!(error = %e, "settings: could not open account page"),
+                    Err(e) => tracing::warn!(error = %format!("{e:#}"), "settings: could not open account page"),
                 }
             });
         }
@@ -361,7 +361,7 @@ impl Host {
     /// Persist a setting best-effort (a write error is logged, not surfaced).
     fn store(&self, key: &str, value: &str) {
         if let Err(e) = set_setting(&self.ivars().data_dir, key, value) {
-            tracing::error!(error = %e, key, "settings: failed to persist");
+            tracing::error!(error = %format!("{e:#}"), key, "settings: failed to persist");
         }
     }
 
@@ -371,7 +371,7 @@ impl Host {
         let mut creds = Credentials::load(data_dir);
         creds.mode = mode;
         if let Err(e) = creds.save(data_dir) {
-            tracing::error!(error = %e, ?mode, "settings: failed to switch mode");
+            tracing::error!(error = %format!("{e:#}"), ?mode, "settings: failed to switch mode");
         } else {
             crate::foundation::energy_state::restore(data_dir);
         }

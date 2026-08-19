@@ -279,7 +279,7 @@ async fn dispatch(
         Err(err) => {
             // The traffic is lost from this path, and that is survivable by design: the
             // listener's rows are still on disk and the glance-up still reads them.
-            tracing::warn!(error = %err, duty = %task.subject, "could not open a duty handler");
+            tracing::warn!(error = %format!("{err:#}"), duty = %task.subject, "could not open a duty handler");
         }
     }
 }
@@ -299,7 +299,7 @@ async fn duty_for(reaction: &Reaction, key: &str) -> Option<Task> {
             // Unreadable is not empty — but unlike the glance-up, there is nothing useful
             // to do about it here. Dropping falls back to the cadence, which is the
             // designed behaviour of a lost nudge.
-            tracing::warn!(error = %err, "duty inbox could not read the ledger");
+            tracing::warn!(error = %format!("{err:#}"), "duty inbox could not read the ledger");
             None
         }
     }

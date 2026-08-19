@@ -313,7 +313,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 {
                     energy_paused = true;
                 }
-                tracing::warn!(reflection = %id, error = %err, "reflection turn failed; mail held");
+                tracing::warn!(reflection = %id, error = %format!("{err:#}"), "reflection turn failed; mail held");
             }
         }
         registry::global().finish_turn(&id, outcome);

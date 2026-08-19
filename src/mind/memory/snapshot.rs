@@ -136,7 +136,7 @@ pub async fn window(
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
-            tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
+            tracing::warn!(error = %format!("{err:#}"), "active tasks unreadable; window goes without them");
             String::new()
         }
     };
@@ -189,7 +189,7 @@ pub async fn agent_window(
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
-            tracing::warn!(error = %err, "active tasks unreadable; window goes without them");
+            tracing::warn!(error = %format!("{err:#}"), "active tasks unreadable; window goes without them");
             String::new()
         }
     };
@@ -236,7 +236,7 @@ pub async fn shown_recently(memory: &Memory) -> String {
     let entries = match memory.journal.recent(since, RECENT_ENTRY_LIMIT).await {
         Ok(entries) => entries,
         Err(err) => {
-            tracing::warn!(error = %err, "view log unreadable; window goes without it");
+            tracing::warn!(error = %format!("{err:#}"), "view log unreadable; window goes without it");
             return String::new();
         }
     };
@@ -365,7 +365,7 @@ async fn speaking_up_unprompted(data_dir: &Path) -> String {
         }
         Ok(_) => String::new(),
         Err(err) => {
-            tracing::warn!(error = %err, "proactivity read unreadable; window goes without it");
+            tracing::warn!(error = %format!("{err:#}"), "proactivity read unreadable; window goes without it");
             String::new()
         }
     }
@@ -530,7 +530,7 @@ async fn recent_tail(memory: &Memory) -> String {
     match build(memory).await {
         Ok(snap) => snap.render_for_prompt(),
         Err(err) => {
-            tracing::warn!(error = %err, "recent tail unreadable");
+            tracing::warn!(error = %format!("{err:#}"), "recent tail unreadable");
             format!("## Recent (last {RECENT_WINDOW_MIN} minutes)\n(unavailable — I couldn't read the log just now)\n")
         }
     }

@@ -60,7 +60,7 @@ fn persist(data_dir: &Path, out: bool) {
         if out { "true" } else { "" },
     ) {
         tracing::warn!(
-            error = %err,
+            error = %format!("{err:#}"),
             out_of_energy = out,
             "failed to persist managed energy state"
         );

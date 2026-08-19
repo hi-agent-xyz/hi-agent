@@ -376,13 +376,9 @@ impl CodexProcess {
         for (key, value) in &env {
             command.env(key, value);
         }
-        // Spell the cause into the message rather than leaving it in the source chain:
-        // this error is logged as `error = %err` at the turn boundary, which prints only
-        // the outermost context, and "spawning /long/path/to/codex" with the reason
-        // missing is indistinguishable between a bad path and a permissions problem.
         let mut child: Child = command
             .spawn()
-            .map_err(|err| anyhow!("spawning {}: {err}", program.display()))?;
+            .with_context(|| format!("spawning {}", program.display()))?;
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("codex child has no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("codex child has no stdout"))?;

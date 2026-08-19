@@ -117,9 +117,9 @@ pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionId) {
         // the process group's signal — expected, not a fault. Keep it out of the
         // WARN stream so a real consolidation failure stays visible.
         if reaction.inner.shutdown.is_triggered() {
-            tracing::debug!(error = %err, "consolidation aborted by shutdown");
+            tracing::debug!(error = %format!("{err:#}"), "consolidation aborted by shutdown");
         } else {
-            tracing::warn!(error = %err, "consolidation failed");
+            tracing::warn!(error = %format!("{err:#}"), "consolidation failed");
         }
     }
 }
@@ -172,7 +172,7 @@ async fn run_consolidation(
             );
         }
         Ok(_) => {}
-        Err(err) => tracing::warn!(error = %err, "cluster forgetting sweep failed"),
+        Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster forgetting sweep failed"),
     }
 
     // The facet subject index is global — gathered once so the mind reuses a subject
@@ -508,7 +508,7 @@ async fn cluster_faces(
             match ffmpeg_frame::first_frame(bytes.into()).await {
                 Ok(frame) => frame,
                 Err(err) => {
-                    tracing::warn!(error = %err, "cluster: keyframe extraction failed");
+                    tracing::warn!(error = %format!("{err:#}"), "cluster: keyframe extraction failed");
                     continue;
                 }
             }
@@ -520,7 +520,7 @@ async fn cluster_faces(
         let faces = match face::detect_and_embed(image.clone()).await {
             Ok(f) => f,
             Err(err) => {
-                tracing::warn!(error = %err, "cluster: face detect failed");
+                tracing::warn!(error = %format!("{err:#}"), "cluster: face detect failed");
                 continue;
             }
         };
@@ -530,7 +530,7 @@ async fn cluster_faces(
             let jpg = match face::crop_to_jpeg(image.as_ref(), f.bbox, 0.3) {
                 Ok(jpg) => jpg,
                 Err(err) => {
-                    tracing::warn!(error = %err, "cluster: face crop failed");
+                    tracing::warn!(error = %format!("{err:#}"), "cluster: face crop failed");
                     continue;
                 }
             };
@@ -538,7 +538,7 @@ async fn cluster_faces(
                 Ok(id) => {
                     out.entry(i).or_default().push(id);
                 }
-                Err(err) => tracing::warn!(error = %err, "cluster: assign failed"),
+                Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: assign failed"),
             }
         }
     }
@@ -584,14 +584,14 @@ async fn cluster_voices(
             Ok(s) if !s.is_empty() => s,
             Ok(_) => continue,
             Err(err) => {
-                tracing::warn!(error = %err, "cluster: audio decode failed");
+                tracing::warn!(error = %format!("{err:#}"), "cluster: audio decode failed");
                 continue;
             }
         };
         let embedding = match voiceprint::embed(samples).await {
             Ok(e) => e,
             Err(err) => {
-                tracing::warn!(error = %err, "cluster: voiceprint embed failed");
+                tracing::warn!(error = %format!("{err:#}"), "cluster: voiceprint embed failed");
                 continue;
             }
         };
@@ -601,7 +601,7 @@ async fn cluster_voices(
             Ok(id) => {
                 out.entry(i).or_default().push(id);
             }
-            Err(err) => tracing::warn!(error = %err, "cluster: voice assign failed"),
+            Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: voice assign failed"),
         }
     }
     out

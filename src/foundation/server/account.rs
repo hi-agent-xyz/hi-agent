@@ -55,7 +55,7 @@ pub async fn get_subscribe(State(state): State<Arc<AppState>>) -> impl IntoRespo
     match crate::foundation::broker::subscribe_url(&state.data_dir, Some("/account")).await {
         Ok(url) => (StatusCode::OK, axum::Json(serde_json::json!({ "url": url, "signed_in": true }))),
         Err(e) => {
-            tracing::warn!(error = %e, "GET /api/account/subscribe: could not mint a signed-in link");
+            tracing::warn!(error = %format!("{e:#}"), "GET /api/account/subscribe: could not mint a signed-in link");
             (
                 StatusCode::OK,
                 axum::Json(serde_json::json!({
@@ -150,7 +150,7 @@ pub async fn get_link_callback(
             (StatusCode::CONFLICT, Html(link_page("Not linked", msg))).into_response()
         }
         Err(e) => {
-            tracing::warn!(error = %e, "account link: claim failed");
+            tracing::warn!(error = %format!("{e:#}"), "account link: claim failed");
             (
                 StatusCode::BAD_GATEWAY,
                 Html(link_page("Couldn’t link", "Something went wrong linking the app. Please try again from Settings.")),

@@ -73,7 +73,7 @@ pub fn install(state: Arc<AppState>) {
             };
             // Blocks on the OS run loop for the process's life.
             if let Err(e) = hotkey::listen(on_edge) {
-                tracing::warn!(error = %e, "gesture: Command-key listener unavailable; gestures disabled");
+                tracing::warn!(error = %format!("{e:#}"), "gesture: Command-key listener unavailable; gestures disabled");
             }
         });
     match spawned {
@@ -331,7 +331,7 @@ fn glance(state: &Arc<AppState>) {
                 }
             }
             Err(e) => tracing::warn!(
-                error = %e,
+                error = %format!("{e:#}"),
                 "gesture: screen capture failed (Screen Recording permission?)"
             ),
         }
@@ -392,7 +392,7 @@ fn arm_capture(state: &Arc<AppState>, session: &mut Option<MicSession>) {
             tracing::info!("press-hold attention: capturing (mic open, buffering pre-roll)");
         }
         Err(e) => tracing::warn!(
-            error = %e,
+            error = %format!("{e:#}"),
             "press-hold attention: mic capture failed (Microphone permission?)"
         ),
     }

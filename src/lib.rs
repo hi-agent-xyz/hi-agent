@@ -658,7 +658,7 @@ pub fn run_with_tray(
             let config = match build_config() {
                 Ok(config) => config,
                 Err(e) => {
-                    tracing::error!(error = ?e, "configuration error — fix it and relaunch; the menu-bar app stays up");
+                    tracing::error!(error = %format!("{e:#}"), "configuration error — fix it and relaunch; the menu-bar app stays up");
                     body::capabilities::tray::set_text("⚠ needs setup");
                     // Reveal the file to edit (best-effort; needs a window-server
                     // session, so a no-op when headless).
@@ -675,7 +675,7 @@ pub fn run_with_tray(
                 // Exit the process, which also stops the main-thread AppKit loop.
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
-                    tracing::error!(error = %e, "hi-agent server exited with error; the menu-bar app stays up");
+                    tracing::error!(error = %format!("{e:#}"), "hi-agent server exited with error; the menu-bar app stays up");
                     body::capabilities::tray::set_text("⚠ startup failed");
                     rt.block_on(server_shutdown.notified());
                     std::process::exit(0);
@@ -688,7 +688,7 @@ pub fn run_with_tray(
     // above. Returns early only if the status item can't be created — in which
     // case fall back to running headless by joining the server.
     if let Err(e) = body::capabilities::tray::run(url, tray_data_dir, shutdown) {
-        tracing::warn!(error = %e, "menu-bar item unavailable; running without it");
+        tracing::warn!(error = %format!("{e:#}"), "menu-bar item unavailable; running without it");
     }
     let _ = server.join();
     Ok(())

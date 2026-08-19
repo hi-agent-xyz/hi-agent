@@ -320,7 +320,7 @@ impl Credentials {
     pub fn load(data_dir: &Path) -> Self {
         db::load(data_dir).unwrap_or_else(|e| {
             tracing::warn!(
-                path = %path(data_dir).display(), error = %e,
+                path = %path(data_dir).display(), error = %format!("{e:#}"),
                 "config store unreadable; using defaults (re-save from Settings)"
             );
             Self::default()

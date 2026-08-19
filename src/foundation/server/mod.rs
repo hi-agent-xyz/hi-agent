@@ -477,7 +477,7 @@ pub fn build(
                 Err(err) => {
                     // The conversation starts empty and fills as it is spoken. A
                     // readable log is not worth failing a boot over.
-                    tracing::error!(error = %err, "conversation seed failed; starting empty");
+                    tracing::error!(error = %format!("{err:#}"), "conversation seed failed; starting empty");
                 }
             }
         });

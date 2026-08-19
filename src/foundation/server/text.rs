@@ -83,7 +83,7 @@ pub async fn post_text(
         sender: Some(sender.clone()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %err, "journal append failed; accepting signal anyway");
+        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
     }
 
     // The draft became a line, so they are no longer composing it. Without this the
@@ -211,7 +211,7 @@ pub async fn get_messages(
     let entries = match state.memory.journal.recent(since, JOURNAL_SCAN_MAX).await {
         Ok(entries) => entries,
         Err(err) => {
-            tracing::error!(error = %err, "scrollback read failed");
+            tracing::error!(error = %format!("{err:#}"), "scrollback read failed");
             return (StatusCode::INTERNAL_SERVER_ERROR, "journal read failed").into_response();
         }
     };

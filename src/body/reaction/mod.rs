@@ -1336,7 +1336,7 @@ async fn apply_control(
                 .spawn_with_id(reaction, id, title, task, kind, owner, resume, subject)
                 .await;
             if let Err(err) = &spawned {
-                tracing::warn!(error = %err, "failed to create a working session");
+                tracing::warn!(error = %format!("{err:#}"), "failed to create a working session");
             }
             // The caller is waiting on this to learn whether the id it was handed names
             // anything. Sent whichever way it went — a create nobody answers is the
@@ -1672,7 +1672,7 @@ async fn reaction_loop(
                 reaction.inner.observatory.set_budget(session_chars).await;
             }
             Err(err) => {
-                tracing::warn!(error = %err, "turn failed");
+                tracing::warn!(error = %format!("{err:#}"), "turn failed");
                 let managed_402 = crate::foundation::energy_state::is_402_error(&err)
                     && crate::foundation::energy_state::is_out();
                 if !managed_402 {
@@ -1879,7 +1879,7 @@ async fn run_reaction_turn(
             true
         }
         Err(err) => {
-            tracing::warn!(error = %err, "reaction turn failed");
+            tracing::warn!(error = %format!("{err:#}"), "reaction turn failed");
             let err_text = err.to_string();
             let managed_402 = crate::foundation::energy_state::is_402_error(&err)
                 && crate::foundation::energy_state::is_out();
@@ -2402,7 +2402,7 @@ async fn warm_reaction_session(
         Ok(session) => session,
         Err(err) => {
             tracing::warn!(
-                error = %err,
+                error = %format!("{err:#}"),
                 "reaction warm-up could not open a session; first turn will cold-start"
             );
             return;
@@ -2451,7 +2451,7 @@ async fn seed_session(
     let mut run = match session.prompt(seed).await {
         Ok(run) => run,
         Err(err) => {
-            tracing::warn!(error = %err, "reaction seed failed; the first turn will carry it");
+            tracing::warn!(error = %format!("{err:#}"), "reaction seed failed; the first turn will carry it");
             memo.forget();
             return;
         }
@@ -2462,7 +2462,7 @@ async fn seed_session(
         }
     }
     if let Err(err) = run.wait().await {
-        tracing::warn!(error = %err, "reaction seed did not complete; the first turn will carry it");
+        tracing::warn!(error = %format!("{err:#}"), "reaction seed did not complete; the first turn will carry it");
         memo.forget();
     }
 }
@@ -2647,7 +2647,7 @@ async fn record_out_as(
         origin: Some(Origin::Reaction),
     };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
-        tracing::error!(channel = %channel, error = %err, "journal append failed for outbound signal");
+        tracing::error!(channel = %channel, error = %format!("{err:#}"), "journal append failed for outbound signal");
     }
 }
 
@@ -2676,7 +2676,7 @@ async fn record_in(
         sender: None,
     };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
-        tracing::error!(channel = %channel, error = %err, "journal append failed for internal signal");
+        tracing::error!(channel = %channel, error = %format!("{err:#}"), "journal append failed for internal signal");
     }
 }
 
@@ -2996,7 +2996,7 @@ async fn emit_view(
         match reaction.inner.view_compiler.compile(&source).await {
             Ok(url) => Some(url),
             Err(err) => {
-                tracing::error!(id = %id, error = %err, "view compile failed; dropping view");
+                tracing::error!(id = %id, error = %format!("{err:#}"), "view compile failed; dropping view");
                 return;
             }
         }

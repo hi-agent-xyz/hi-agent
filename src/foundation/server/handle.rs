@@ -32,7 +32,7 @@ pub async fn get_handle(State(state): State<Arc<AppState>>) -> Response {
         // first run look broken on a screen whose whole job is to say what is
         // there. The reason rides along so the page can show it.
         Err(e) => {
-            tracing::debug!(error = %e, "this core has no name");
+            tracing::debug!(error = %format!("{e:#}"), "this core has no name");
             axum::Json(serde_json::json!({
                 "handles": [],
                 "limit": 0,
@@ -72,7 +72,7 @@ pub async fn post_handle(State(state): State<Arc<AppState>>, body: String) -> Re
             axum::Json(h).into_response()
         }
         Err(e) => {
-            tracing::warn!(error = %e, "claiming a handle");
+            tracing::warn!(error = %format!("{e:#}"), "claiming a handle");
             (StatusCode::CONFLICT, format!("{e}\n")).into_response()
         }
     }
@@ -99,7 +99,7 @@ pub async fn delete_handle(State(state): State<Arc<AppState>>, body: String) -> 
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
-            tracing::warn!(error = %e, "releasing a handle");
+            tracing::warn!(error = %format!("{e:#}"), "releasing a handle");
             (StatusCode::CONFLICT, format!("{e}\n")).into_response()
         }
     }

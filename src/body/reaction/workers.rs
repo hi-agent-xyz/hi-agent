@@ -407,7 +407,7 @@ impl WorkerRegistry {
                 false
             }
             Err(err) => {
-                tracing::warn!(worker = %id, error = %err, "interrupt failed");
+                tracing::warn!(worker = %id, error = %format!("{err:#}"), "interrupt failed");
                 false
             }
         }

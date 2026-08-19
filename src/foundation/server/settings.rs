@@ -291,7 +291,7 @@ fn loopback_guard(peer: &SocketAddr) -> Option<Response> {
 /// Map a config-store write failure to a `500` (the store is local; a failure here is
 /// an engine problem, not a bad request).
 fn store_error(e: anyhow::Error) -> Response {
-    tracing::warn!(error = %e, "settings: config store write failed");
+    tracing::warn!(error = %format!("{e:#}"), "settings: config store write failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({ "error": "store_write_failed" })),

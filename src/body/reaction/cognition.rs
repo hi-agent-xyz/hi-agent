@@ -382,7 +382,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                             Err(err) => {
                                 tracing::warn!(
                                     cognition = %id,
-                                    error = %err,
+                                    error = %format!("{err:#}"),
                                     "could not steer; message waits for the next turn",
                                 );
                                 arrived.push(rendered);
@@ -437,7 +437,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 }
                 tracing::warn!(
                     cognition = %id,
-                    error = %err,
+                    error = %format!("{err:#}"),
                     held = energy_paused,
                     "cognition turn failed; mail held"
                 );
@@ -485,7 +485,7 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
         // the one rung that can do something about it, not a reason to stay quiet — the
         // opposite reading is the whole failure this arm exists to fix, one level up.
         Err(err) => {
-            tracing::warn!(error = %err, "cognition could not read the ledger; waking anyway");
+            tracing::warn!(error = %format!("{err:#}"), "cognition could not read the ledger; waking anyway");
             return Some(render_pulse(
                 "I couldn't read the task ledger just now — whatever is active is not in front of me",
             ));
@@ -763,7 +763,7 @@ async fn warm_session(
         Err(err) => {
             tracing::warn!(
                 cognition = %id,
-                error = %err,
+                error = %format!("{err:#}"),
                 "cognition warm-up could not open a session; first turn will cold-start"
             );
             return;

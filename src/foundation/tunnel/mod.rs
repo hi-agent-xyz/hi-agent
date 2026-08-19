@@ -70,7 +70,7 @@ pub fn spawn(
                     backoff = REDIAL_MIN;
                 }
                 Err(e) => {
-                    tracing::warn!(handle = %handle, error = %e, backoff = ?backoff, "tunnel down");
+                    tracing::warn!(handle = %handle, error = %format!("{e:#}"), backoff = ?backoff, "tunnel down");
                     backoff = (backoff * 2).min(REDIAL_MAX);
                 }
             }
@@ -108,7 +108,7 @@ async fn hold(data_dir: &std::path::Path, router: &Router, handle: &str) -> anyh
         let router = router.clone();
         tokio::spawn(async move {
             if let Err(e) = serve_stream(stream, router).await {
-                tracing::debug!(error = %e, "a routed stream ended badly");
+                tracing::debug!(error = %format!("{e:#}"), "a routed stream ended badly");
             }
         });
     }
@@ -230,7 +230,7 @@ pub async fn set_on(data_dir: &std::path::Path, on: bool) -> anyhow::Result<()> 
             Some(first) => serve(&first.handle),
             None => tracing::info!("reachability turned on; no handle claimed yet"),
         },
-        Err(e) => tracing::info!(error = %e, "reachability turned on; no name to serve yet"),
+        Err(e) => tracing::info!(error = %format!("{e:#}"), "reachability turned on; no name to serve yet"),
     }
     Ok(())
 }
@@ -295,7 +295,7 @@ pub async fn start(data_dir: &std::path::Path, router: Router) {
             Some(first) => serve(&first.handle),
             None => tracing::info!("no handle claimed; reachable from this machine only"),
         },
-        Err(e) => tracing::debug!(error = %e, "no handle to serve (this core is local-only)"),
+        Err(e) => tracing::debug!(error = %format!("{e:#}"), "no handle to serve (this core is local-only)"),
     }
 }
 

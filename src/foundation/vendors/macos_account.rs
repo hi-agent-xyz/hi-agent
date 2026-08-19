@@ -151,7 +151,7 @@ pub fn configure_feature(mtm: MainThreadMarker, data_dir: &Path, feature: Featur
         write_fields(&mut creds, feature, &key, &base, &model);
 
         if let Err(e) = creds.save(data_dir) {
-            tracing::error!(error = %e, "account: failed to save BYOK credentials");
+            tracing::error!(error = %format!("{e:#}"), "account: failed to save BYOK credentials");
         } else {
             tracing::info!(feature = feature.title(), "account: saved BYOK credentials (restart to apply)");
         }

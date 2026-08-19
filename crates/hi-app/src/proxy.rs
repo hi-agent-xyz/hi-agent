@@ -68,7 +68,7 @@ async fn get_roster(State(app): State<Arc<App>>) -> Response {
     match roster::list(app.data_dir()) {
         Ok(entries) => axum::Json(serde_json::json!({ "roster": entries })).into_response(),
         Err(e) => {
-            tracing::warn!(error = %e, "reading the roster");
+            tracing::warn!(error = %format!("{e:#}"), "reading the roster");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not read the roster\n").into_response()
         }
     }
@@ -93,7 +93,7 @@ async fn post_roster(State(app): State<Arc<App>>, body: String) -> Response {
     match app.pair(&add.base_url, add.code.trim(), label).await {
         Ok(id) => axum::Json(serde_json::json!({ "id": id })).into_response(),
         Err(e) => {
-            tracing::warn!(error = %e, "pairing with a core");
+            tracing::warn!(error = %format!("{e:#}"), "pairing with a core");
             (StatusCode::BAD_GATEWAY, format!("{e}\n")).into_response()
         }
     }
@@ -108,7 +108,7 @@ async fn delete_roster(State(app): State<Arc<App>>, Path(id): Path<String>) -> R
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "no such entry\n").into_response(),
         Err(e) => {
-            tracing::warn!(error = %e, "forgetting a core");
+            tracing::warn!(error = %format!("{e:#}"), "forgetting a core");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not forget it\n").into_response()
         }
     }

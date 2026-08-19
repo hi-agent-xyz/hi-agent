@@ -139,16 +139,16 @@ pub async fn init_recognition() {
     match voice {
         Ok(path) => {
             if let Err(err) = voiceprint::init(path).await {
-                tracing::error!(error = %err, "voiceprint model loaded but failed to init; capability disabled");
+                tracing::error!(error = %format!("{err:#}"), "voiceprint model loaded but failed to init; capability disabled");
             }
         }
-        Err(err) => tracing::warn!(error = %err, "voiceprint model unavailable; capability disabled"),
+        Err(err) => tracing::warn!(error = %format!("{err:#}"), "voiceprint model unavailable; capability disabled"),
     }
 
     match (scrfd, arcface) {
         (Ok(s), Ok(a)) => {
             if let Err(err) = face::init(s, a).await {
-                tracing::error!(error = %err, "face models loaded but failed to init; capability disabled");
+                tracing::error!(error = %format!("{err:#}"), "face models loaded but failed to init; capability disabled");
             }
         }
         (s, a) => {

@@ -88,7 +88,7 @@ pub async fn post_vision(
     let rel = match media::store_blob(&state.data_dir, Channel::Vision, ts, MediaSlot::InputOneOff, ext, &body).await {
         Ok(rel) => rel,
         Err(err) => {
-            tracing::error!(error = %err, "failed to persist vision frame");
+            tracing::error!(error = %format!("{err:#}"), "failed to persist vision frame");
             return (StatusCode::INTERNAL_SERVER_ERROR, "vision store failed\n").into_response();
         }
     };
@@ -132,7 +132,7 @@ pub async fn post_presence(
     let faces = match face::detect_and_embed(body).await {
         Ok(f) => f,
         Err(err) => {
-            tracing::debug!(error = %err, "presence: face detect failed");
+            tracing::debug!(error = %format!("{err:#}"), "presence: face detect failed");
             return StatusCode::ACCEPTED;
         }
     };
@@ -182,7 +182,7 @@ pub async fn post_presence(
         sender: Some(Sender::unknown()),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::warn!(error = %err, "presence: journal append failed");
+        tracing::warn!(error = %format!("{err:#}"), "presence: journal append failed");
     }
 
     // The wake: journaling alone updates disk; the reaction only re-reads on a nudge.
@@ -322,7 +322,7 @@ impl FaceSource {
             FaceSource::Video(b) => match ffmpeg_frame::first_frame(b).await {
                 Ok(frame) => Some(frame),
                 Err(err) => {
-                    tracing::warn!(error = %err, "vision: keyframe extraction failed");
+                    tracing::warn!(error = %format!("{err:#}"), "vision: keyframe extraction failed");
                     None
                 }
             },
@@ -397,7 +397,7 @@ fn spawn_perceive(
             sender: Some(Sender::unknown()),
         };
         if let Err(err) = state.memory.journal.append(entry).await {
-            tracing::warn!(error = %err, "journal append failed for vision perception");
+            tracing::warn!(error = %format!("{err:#}"), "journal append failed for vision perception");
         }
     });
 }
@@ -411,7 +411,7 @@ async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
     let faces = match face::detect_and_embed(bytes).await {
         Ok(f) => f,
         Err(err) => {
-            tracing::warn!(error = %err, "face recognition failed");
+            tracing::warn!(error = %format!("{err:#}"), "face recognition failed");
             return None;
         }
     };
@@ -456,7 +456,7 @@ async fn flush_video_minute(
     let rel = match media::store_blob(&state.data_dir, Channel::Vision, ts, MediaSlot::InputStream, ext, &bytes).await {
         Ok(rel) => rel,
         Err(err) => {
-            tracing::warn!(error = %err, "persisting camera minute failed");
+            tracing::warn!(error = %format!("{err:#}"), "persisting camera minute failed");
             return;
         }
     };
