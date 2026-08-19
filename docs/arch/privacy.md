@@ -13,6 +13,10 @@ The first implementation is text-only:
 - `argus-redact-core` contributes maintained Chinese structured-ID patterns.
 - There is no local NER or OCR.
 - Hi Agent maintains policy and tests, not a private regex catalog.
+- Detectors read a byte-for-byte ASCII stand-in of the text — every non-ASCII char's bytes
+  replaced by newlines — so hit offsets still address the original. Their patterns are all
+  ASCII-structured, while `regex`'s `\b` is Unicode-aware: read raw, `他的邮箱是alice@example.com`
+  matches nothing, because `是` is a word char and there is no boundary before `alice`.
 
 ## Trust model
 

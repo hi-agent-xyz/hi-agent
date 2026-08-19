@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use argus_redact_core::{PatternConfig, builtin_patterns, match_patterns};
-use redact_core::{AnalyzerEngine, EntityType};
+use redact_core::{AnalysisResult, AnalyzerEngine, EntityType};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -66,22 +66,23 @@ impl SensitiveDataFilter {
 
         let mut candidates = self.known_secret_candidates(text)?;
         let entity_types = protected_entity_types();
-        let analysis = self
-            .engine
-            .analyze_with_entities(text, &entity_types, None)
-            .context("running maintained PII/secret detectors")?;
+        let stand_in = ascii_stand_in(text);
+        let analysis = self.analyze(stand_in.as_deref().unwrap_or(text), &entity_types)?;
         candidates.extend(
             analysis
                 .detected_entities
                 .into_iter()
                 .filter(|hit| hit.score >= SCORE_FLOOR)
-                .map(|hit| Candidate {
-                    start: hit.start,
-                    end: hit.end,
-                    entity_type: hit.entity_type.as_str().to_string(),
-                    score: hit.score,
-                    secret: is_secret_type(&hit.entity_type),
-                    existing_ref: None,
+                .map(|hit| {
+                    let (start, end) = enclosing_chars(text, hit.start, hit.end);
+                    Candidate {
+                        start,
+                        end,
+                        entity_type: hit.entity_type.as_str().to_string(),
+                        score: hit.score,
+                        secret: is_secret_type(&hit.entity_type),
+                        existing_ref: None,
+                    }
                 }),
         );
         candidates.extend(chinese_structured_candidates(text)?);
@@ -198,6 +199,22 @@ impl SensitiveDataFilter {
         Ok(())
     }
 
+    /// `redact-core` 0.10.0 slices a +/-50-*byte* context window around every
+    /// hit without checking char boundaries (`recognizers/pattern.rs:615`), so
+    /// on multi-byte text it panics instead of returning an error.
+    /// `ascii_stand_in` takes that cause away; this catches a panic anyway, so
+    /// the next upstream one cannot unwind out through the axum handler and drop
+    /// the connection instead of blocking the request the way
+    /// `docs/arch/privacy.md` says a projection failure must. Analysis reads the
+    /// engine without mutating it, so it stays usable afterwards.
+    fn analyze(&self, text: &str, entity_types: &[EntityType]) -> anyhow::Result<AnalysisResult> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.engine.analyze_with_entities(text, entity_types, None)
+        }))
+        .map_err(|_| anyhow::anyhow!("the PII/secret detector panicked on this text"))?
+        .context("running maintained PII/secret detectors")
+    }
+
     fn known_secret_candidates(&self, text: &str) -> anyhow::Result<Vec<Candidate>> {
         let mut candidates = Vec::new();
         for stored in self.store.active_values()? {
@@ -284,6 +301,48 @@ fn protected_entity_types() -> Vec<EntityType> {
 
 fn is_secret_type(entity_type: &EntityType) -> bool {
     entity_type.is_named_secret() || *entity_type == EntityType::GenericSecret
+}
+
+/// A byte-for-byte ASCII copy of `text`: every non-ASCII char's bytes become
+/// newlines, one filler byte per original byte, so a hit's offsets are still
+/// valid for `text`. Everything `redact-core` detects is ASCII-structured
+/// (emails, keys, card numbers, IPs), and Chinese structured IDs are argus's
+/// job in `chinese_structured_candidates`, so nothing is given up by scanning
+/// the stand-in — and two things are gained. The byte-window panic above cannot
+/// fire, because every byte is now a char boundary. And detection reaches PII
+/// that touches Chinese at all: `regex`'s `\b` is Unicode-aware, so `是` is a
+/// word char and `他的邮箱是alice@example.com` matched nothing before.
+/// `None` means `text` is already ASCII and can be scanned as it stands.
+fn ascii_stand_in(text: &str) -> Option<String> {
+    if text.is_ascii() {
+        return None;
+    }
+    let mut stand_in = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            stand_in.push(ch);
+        } else {
+            for _ in 0..ch.len_utf8() {
+                stand_in.push('\n');
+            }
+        }
+    }
+    Some(stand_in)
+}
+
+/// Widen a span from the stand-in — where every byte is a boundary — to whole
+/// chars of `text`. A hit that reaches into filler would otherwise slice a char
+/// in half; masking the neighbouring char is the safe direction to round.
+fn enclosing_chars(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let mut start = start.min(text.len());
+    let mut end = end.min(text.len());
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
+    (start, end)
 }
 
 fn chinese_structured_candidates(text: &str) -> anyhow::Result<Vec<Candidate>> {
@@ -450,6 +509,37 @@ mod tests {
         let projected = filter.project_text(input).unwrap();
         assert_eq!(projected.text, input);
         assert!(projected.findings.is_empty());
+    }
+
+    #[test]
+    fn long_chinese_text_projects_without_panicking() {
+        let (_dir, filter) = filter();
+        // Chinese is 3 bytes per char, so a detector that walks a +/-50-*byte*
+        // context window around a hit lands mid-char rather than on a boundary.
+        let prose = "这是一份普通的中文病历摘要，用来把敏感字段推到足够靠后的偏移量。";
+        let mut input = prose.repeat(48);
+        input.push_str("MRN: A1234567。");
+        input.push_str(&prose.repeat(4));
+        assert!(input.len() > 4_800, "the hit must sit deep inside the text");
+
+        let projected = filter.project_text(&input).unwrap();
+        assert!(!projected.text.contains("A1234567"));
+        assert!(projected.text.contains("[PII:MEDICAL_RECORD_NUMBER_1]"));
+        assert!(projected.text.contains(prose), "prose must survive intact");
+    }
+
+    #[test]
+    fn pii_touching_chinese_text_is_still_masked() {
+        let (_dir, filter) = filter();
+        // `regex`'s \b is Unicode-aware and 是 is a word char, so a detector
+        // reading the raw text finds no boundary before `alice` at all.
+        let projected = filter
+            .project_text("他的邮箱是alice@example.com，抄送bob@example.com。")
+            .unwrap();
+        assert!(!projected.text.contains("alice@example.com"));
+        assert!(!projected.text.contains("bob@example.com"));
+        assert!(projected.text.contains("[PII:EMAIL_ADDRESS_1]"));
+        assert!(projected.text.contains("[PII:EMAIL_ADDRESS_2]"));
     }
 
     #[test]

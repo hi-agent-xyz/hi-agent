@@ -134,6 +134,17 @@ suggested OpenAI rather than the weather API it was told about, a judgement avai
 path alone. What this run does *not* cover: the proxy's failure arms (a projection failure
 blocking a request, an upstream that stays down) and the low-entropy remask on a later turn.
 
+**That run was all-ASCII, and Chinese traffic panicked.** `redact-core` 0.10.0 slices a ±50-*byte*
+context window around every hit without checking char boundaries
+(`recognizers/pattern.rs:615`), so a Chinese message long enough for the window to reach past a
+detector hit unwound the axum handler rather than returning the error the blocking arm reads:
+the connection dropped with no response, the client retried, the same panic repeated. The
+detectors now scan a byte-preserving ASCII stand-in (`privacy::filter::ascii_stand_in`), which
+also closes a silent gap — PII touching Chinese was previously detected by nothing at all —
+with a `catch_unwind` behind it so the next upstream panic becomes the documented block instead
+of a dropped connection. Both are pinned by tests in `privacy/filter.rs`; **neither has been
+watched on a live Chinese turn since the fix.**
+
 **The cache-control rule, re-measured against the real edge.** A gated response carrying
 `public` was an auth bypass: one authorized fetch taught EdgeOne the body and the edge then
 served it to requests carrying nothing, with the core never seeing them. `401 MISS` where it was
