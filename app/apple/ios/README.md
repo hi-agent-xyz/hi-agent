@@ -21,6 +21,45 @@ and iPad through the same iOS target.
 Set a development team and bundle identifier in Xcode before installing on a
 device. The default bundle identifier is `com.xiaoyuanzhu.hiagent.ios`.
 
+## TestFlight
+
+`.github/workflows/ios-testflight.yml` archives and uploads the app whenever
+`main` changes the iOS app or `VERSION`. It can also be started manually. Each
+run uses `<workflow run>.<attempt>` as the App Store build number, so retries
+remain uploadable.
+
+The job expects an Apple silicon self-hosted GitHub Actions runner with the
+labels `self-hosted`, `macOS`, `ARM64`, and `macmini`. Install the current
+Xcode, select it with `xcode-select`, accept its license, run Xcode's first
+launch setup, and keep the runner updated for the action versions in the
+workflow.
+
+Create the bundle ID and app record in App Store Connect, then configure:
+
+- Repository variable `APPLE_TEAM_ID`: the 10-character Developer team ID.
+- Optional repository variable `IOS_BUNDLE_ID`: defaults to
+  `com.xiaoyuanzhu.hiagent.ios`.
+- Secret `APP_STORE_CONNECT_ISSUER_ID`: the API key issuer UUID.
+- Secret `APP_STORE_CONNECT_KEY_ID`: the API key ID.
+- Secret `APP_STORE_CONNECT_API_KEY_P8_BASE64`: the downloaded `.p8` file,
+  base64 encoded as one line.
+
+The API key must be allowed to upload the app and use cloud-managed
+distribution certificates. An Admin team key is the direct setup; a less
+privileged identity needs explicit cloud-managed certificate access.
+
+On macOS, encode the downloaded key with:
+
+```sh
+base64 < AuthKey_KEYID.p8 | tr -d '\n'
+```
+
+Xcode performs automatic provisioning and cloud signing during the job. No
+distribution certificate or provisioning profile is stored on the Mac mini.
+After Apple processes the first upload, configure TestFlight groups and export
+compliance in App Store Connect. External testers also require Apple's beta app
+review before they can install the build.
+
 ## First slice
 
 The app currently supports:

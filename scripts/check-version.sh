@@ -28,6 +28,9 @@ check "Info.plist short version" \
   "$(awk '/CFBundleShortVersionString/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' scripts/Info.plist)"
 check "Info.plist bundle version" \
   "$(awk '/CFBundleVersion/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' scripts/Info.plist)"
+check "iOS marketing version" \
+  "$(awk -F= '/MARKETING_VERSION =/ { value=$2; gsub(/[;[:space:]]/, "", value); print value }' \
+    app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj | sort -u | paste -sd, -)"
 check "web package version" \
   "$(awk -F'"' '/"version":/ { print $4; exit }' src/appearance/web/package.json)"
 check "web lock package version" \

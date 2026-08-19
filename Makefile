@@ -3,7 +3,8 @@
 # committed files that cannot read it directly at build time.
 VERSION := $(shell cat VERSION)
 VERSIONED_FILES := VERSION Cargo.toml Cargo.lock scripts/Info.plist \
-                   src/appearance/web/package.json src/appearance/web/package-lock.json
+                   src/appearance/web/package.json src/appearance/web/package-lock.json \
+                   app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj
 
 # Keep the former `VERSION=x.y.z` spelling working for callers while matching
 # Abacad's public `V=x.y.z` interface.

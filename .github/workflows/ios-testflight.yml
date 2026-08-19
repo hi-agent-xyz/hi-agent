@@ -1,0 +1,187 @@
+name: iOS TestFlight
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ios-testflight.yml"
+      - "app/apple/ios/**"
+      - "VERSION"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    name: Build and upload
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - macmini
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.xiaoyuanzhu.hiagent.ios' }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+      XCODE_PROJECT: app/apple/ios/HiAgentIOS.xcodeproj
+      XCODE_SCHEME: HiAgentIOS
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate runner and release settings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in \
+            APPLE_TEAM_ID \
+            APP_STORE_CONNECT_ISSUER_ID \
+            APP_STORE_CONNECT_KEY_ID \
+            APP_STORE_CONNECT_API_KEY_P8_BASE64
+          do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing GitHub Actions settings: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "APPLE_TEAM_ID must be a 10-character Apple Developer team ID." >&2
+            exit 1
+          fi
+
+          if [[ ! "$IOS_BUNDLE_ID" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+            echo "IOS_BUNDLE_ID is not a valid bundle identifier: $IOS_BUNDLE_ID" >&2
+            exit 1
+          fi
+
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Prepare release metadata and API key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          marketing_version="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$marketing_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must be a numeric X.Y.Z version for App Store Connect." >&2
+            exit 1
+          fi
+
+          build_number="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          work_dir="$RUNNER_TEMP/ios-testflight"
+          archive_path="$work_dir/HiAgentIOS.xcarchive"
+          export_path="$work_dir/export"
+          export_options_path="$work_dir/ExportOptions.plist"
+          result_bundle_path="$work_dir/HiAgentIOS.xcresult"
+          api_key_path="$work_dir/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+
+          rm -rf "$work_dir"
+          mkdir -p "$work_dir"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_P8_BASE64" \
+            | /usr/bin/base64 -D > "$api_key_path"
+          chmod 600 "$api_key_path"
+
+          if [[ ! -s "$api_key_path" ]]; then
+            echo "The decoded App Store Connect API key is empty." >&2
+            exit 1
+          fi
+
+          {
+            echo "MARKETING_VERSION=$marketing_version"
+            echo "BUILD_NUMBER=$build_number"
+            echo "ARCHIVE_PATH=$archive_path"
+            echo "EXPORT_PATH=$export_path"
+            echo "EXPORT_OPTIONS_PATH=$export_options_path"
+            echo "RESULT_BUNDLE_PATH=$result_bundle_path"
+            echo "ASC_API_KEY_PATH=$api_key_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Archive iPhone and iPad app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            -resultBundlePath "$RESULT_BUNDLE_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_API_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            "DEVELOPMENT_TEAM=$APPLE_TEAM_ID" \
+            "PRODUCT_BUNDLE_IDENTIFIER=$IOS_BUNDLE_ID" \
+            "MARKETING_VERSION=$MARKETING_VERSION" \
+            "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            clean archive
+
+      - name: Upload to App Store Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cp app/apple/ios/ci/ExportOptions.plist "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy \
+            -c "Add :teamID string $APPLE_TEAM_ID" \
+            "$EXPORT_OPTIONS_PATH"
+          plutil -lint "$EXPORT_OPTIONS_PATH"
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$EXPORT_OPTIONS_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_API_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
+          {
+            echo "### TestFlight upload accepted"
+            echo
+            echo "- Version: \`$MARKETING_VERSION\`"
+            echo "- Build: \`$BUILD_NUMBER\`"
+            echo "- Bundle ID: \`$IOS_BUNDLE_ID\`"
+            echo
+            echo "App Store Connect will process the build before it appears in TestFlight."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-testflight-diagnostics-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ios-testflight/HiAgentIOS.xcresult
+            ${{ runner.temp }}/ios-testflight/export
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove temporary credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${ASC_API_KEY_PATH:-}"
+          rm -rf "$RUNNER_TEMP/ios-testflight"
