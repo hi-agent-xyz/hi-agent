@@ -212,19 +212,31 @@ async fn receive_file(
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
 /// Command; see [`crate::body::gesture`]). Same `file` channel, same wake — only the
-/// framing differs: this is the user's current screen / working context, handed
-/// over for the agent to look at and help with, not a neutral document.
+/// framing differs: this is the user's current screen, handed over to look at and
+/// help with, not a neutral document.
+///
+/// **First person, because the gesture is the user's.** ⌘⌘ is a shortcut they pressed —
+/// the same act as dragging an image into the box — so writing it as their own line is a
+/// transcription of what they did, not an invention. It also matches the row the mind
+/// reads it on, `>/file …`, where `>` is their side of the conversation; a third-person
+/// `The user is showing you…` sits on that row one person out of step. What was wrong
+/// with the old framing was never the person but the content: a quoted "come and see
+/// this" they never said (which a model will read as speech and repeat), the keystroke
+/// that produced the PNG, and its byte size.
+///
+/// **One clause, and it is written for Reaction.** Cognition joins the ref to
+/// `{raw_dir}` and opens the PNG, so it needs no help knowing what it is looking at.
+/// Reaction never sees a pixel — no `{raw_dir}`, and `reaction.md` tells it "you don't
+/// read files" — so this sentence is the entire basis on which it decides to hand the
+/// turn down. "My screen right now" is decidable on that basis; a keystroke and a
+/// payload size are not.
 #[cfg(target_os = "macos")]
 pub(crate) async fn receive_screenshot(
     state: &AppState,
     bytes: &Bytes,
 ) -> Result<(), String> {
     let name = format!("screen-{}.png", Utc::now().format("%Y%m%d-%H%M%S"));
-    let body = format!(
-        "The user double-tapped Command to show you their screen — \u{201c}come and see this.\u{201d} \
-         Attached is a screenshot of what they're looking at right now ({}).",
-        human_size(bytes.len())
-    );
+    let body = "Here's my screen right now.".to_string();
     ingest_file(state, &name, "image/png", bytes, body).await
 }
 
