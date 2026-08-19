@@ -102,6 +102,17 @@ subpath prefix, emitting its own base and serving through the tunnel; `_builtin/
 roster screen at the app's own `/app`; and **the relayed page rendered in a real browser** —
 React mounting, views resolving through the prefixed import map, SSE reconnecting.
 
+**The privacy boundary, end to end on a fresh `--data-dir` (2026-08-19).** One message holding
+an `sk-proj-…` key and an email: `projected sensitive data at the external model boundary
+findings=2 secret_refs=1` on every model request of the turn, the key filed as
+`drive/accounts/secrets/openai-api-key.txt` (`0600`, exact bytes, nothing else), and an ordinary
+reply. Then *use that key against `api.openai.com/v1/models`*: the worker called the real
+endpoint through the broker with `auth_ref` and reported `HTTP 401 invalid_api_key`. **The model
+saw only the reference, and it showed** — unprompted, it flagged that the stored filename
+suggested OpenAI rather than the weather API it was told about, a judgement available from the
+path alone. What this run does *not* cover: the proxy's failure arms (a projection failure
+blocking a request, an upstream that stays down) and the low-entropy remask on a later turn.
+
 **The cache-control rule, re-measured against the real edge.** A gated response carrying
 `public` was an auth bypass: one authorized fetch taught EdgeOne the body and the edge then
 served it to requests carrying nothing, with the core never seeing them. `401 MISS` where it was
@@ -144,6 +155,18 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 - **`At(_)`** — a task's `due` is read and ordered, never fired, so a deadline is met at the next
   glance rather than on time. This is a deliberate cost, stated once in
   [`host.md#glancing-up`](arch/host.md), not a gap waiting on a commit. See *Settled* below.
+- **The retention question.** `data.md#keys-passwords-and-the-one-question` still describes the
+  one-time *this / all / none* choice; the projector files every detected secret automatically.
+  Because a prompt describing an unbuilt question teaches the agent to claim an answer was
+  applied, the prose was **removed** from `reaction.md`, `cognition.md` and
+  `drive-organizer.md` rather than left to rot, and
+  `identity::tests::prompts_are_honest_about_current_auto_retention` now pins the opposite: both
+  rungs must say retention is automatic and the choice is not implemented. Exchange-scoped
+  temporary secret files go with it.
+- **Outbound projection.** Only the *request* crosses the projector. The Responses reply and its
+  SSE stream, and exported diagnostics, are not projected — defence in depth that
+  [`privacy.md`](arch/privacy.md) names as missing, not a leak of anything the model was not
+  already sent. Nor is anything non-text: image, audio and opaque bytes are not inspected.
 
 ---
 
