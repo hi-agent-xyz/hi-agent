@@ -191,8 +191,20 @@ impl Task {
             return;
         }
         self.status = status;
+        self.stamp_transition(at);
+    }
+
+    /// Write down that this record's **current** status was reached at `at`.
+    ///
+    /// Split out of [`Self::set_status`] because the two callers know the transition in
+    /// different ways and must not disagree about what it implies. `set_status` is told —
+    /// it changes the word itself. [`reconcile`] finds out — the word was already changed
+    /// on disk by a mind that had no obligation to stamp anything, and all the pass can
+    /// say is *this differs from what it said last time*. One body, so a transition means
+    /// the same thing however it was learned.
+    fn stamp_transition(&mut self, at: DateTime<Utc>) {
         self.status_since = Some(at);
-        match status {
+        match self.status {
             TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
                 self.completed_at = None;
                 self.cancelled_at = None;
@@ -206,6 +218,46 @@ impl Task {
                 self.cancelled_at = Some(at);
             }
         }
+    }
+
+    /// Make the stamps agree with the status **without inventing an instant**.
+    ///
+    /// This is the cold path — no previous read to compare against, so *when* the status
+    /// moved is not knowable. Two of the three repairs need no clock at all:
+    ///
+    /// - An **open** record cannot carry a closing stamp. `todo`/`doing`/`serving` mean
+    ///   this has not ended, so a `completed_at` beside one is a leftover from a close
+    ///   that was undone by hand, and dropping it asserts nothing new.
+    /// - A **closed** record with a `status_since` already says when it last moved, and
+    ///   for a closed record that move *is* the close. So the closing stamp is derived
+    ///   from it rather than guessed.
+    ///
+    /// The third case — closed, and no `status_since` either — is left alone on purpose.
+    /// `now` would be a lie with a plausible face: a task finished in June would read as
+    /// finished today, and nothing downstream could tell that stamp from a real one. The
+    /// same refusal the parser already makes for `created_at`, which it will not invent.
+    /// Records in that state are the pass's to *report*, never to fill in.
+    fn derive_stamps(&mut self) -> bool {
+        let before = (self.completed_at, self.cancelled_at);
+        match self.status {
+            TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
+                self.completed_at = None;
+                self.cancelled_at = None;
+            }
+            TaskStatus::Done => {
+                self.cancelled_at = None;
+                if self.completed_at.is_none() {
+                    self.completed_at = self.status_since;
+                }
+            }
+            TaskStatus::Cancelled => {
+                self.completed_at = None;
+                if self.cancelled_at.is_none() {
+                    self.cancelled_at = self.status_since;
+                }
+            }
+        }
+        before != (self.completed_at, self.cancelled_at)
     }
 
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
@@ -264,6 +316,80 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
         candidate = format!("{base}-{n}");
     }
     anyhow::bail!("too many tasks already named like {base:?}; give this one its own title")
+}
+
+/// What each subject's status was the last time [`reconcile`] looked.
+///
+/// **In memory on purpose, and lossy on purpose.** Written down it would be a second
+/// record of what is owed, and the one thing the ledger's design refuses is a second
+/// record — a durable copy is free to disagree with the file and nothing could say which
+/// was right. Held here it can only ever be *stale*, and stale degrades to the cold path,
+/// which invents nothing. So a restart costs the pass its ability to date a transition it
+/// did not witness, and costs it nothing else.
+///
+/// Keyed by the record's own path, not by its subject: a subject is unique within one
+/// store and says nothing across two, and one process holding two stores is the ordinary
+/// case under test.
+static LAST_SEEN: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<PathBuf, TaskStatus>>,
+> = std::sync::OnceLock::new();
+
+fn last_seen() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, TaskStatus>> {
+    LAST_SEEN.get_or_init(Default::default)
+}
+
+/// Make every record's mechanical fields agree with its status, and re-emit legacy
+/// spellings in the current one. Returns how many files were rewritten.
+///
+/// **This exists because the ledger has no code on its write path and should not get
+/// one.** Every agent that may write a task has a shell, so a task is changed by editing
+/// a file — the host does not see it happen, and a verb it could be *asked* to use is a
+/// door beside an open wall, absent exactly when it is forgotten and silent about being
+/// absent. What cannot be walked around is a pass that re-reads the bytes, because it
+/// reads whatever is actually there however it got there. So the writer is left to decide
+/// the one thing that is a judgment — the status word — and everything that follows
+/// mechanically from that word is repaired here, on the read the window already does.
+///
+/// The repairs are deliberately of two grades. A transition this pass **witnessed** (the
+/// status differs from [`LAST_SEEN`]) is dated `now`, because now is when it was seen to
+/// move and that is a measurement. Everything else is [`Task::derive_stamps`], which
+/// repairs only what needs no clock. Nothing here fabricates a time.
+///
+/// Idempotent, and that is load-bearing rather than merely nice: it runs on every window
+/// build, so a pass that could not converge would rewrite the whole ledger forever and
+/// make every task look freshly touched — the exact signal `status_since` exists to keep
+/// honest. `render` is canonical, so the first pass over a hand-written store rewrites
+/// what it normalises and every pass after it writes nothing.
+pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
+    let mut rewritten = 0;
+    for mut task in scan(data_dir).await? {
+        let subject = task.subject.clone();
+        let key = facets::subject_dir(data_dir, DIMENSION, &subject);
+
+        let previous = last_seen().lock().ok().and_then(|m| m.get(&key).copied());
+        match previous {
+            Some(before) if before != task.status => task.stamp_transition(Utc::now()),
+            _ => {
+                task.derive_stamps();
+            }
+        }
+
+        // Compare rendered-against-stored rather than tracking what changed. A field this
+        // pass does not know about is still a difference `render` would erase or reorder,
+        // and the only honest question is whether the canonical form of this record is
+        // already on disk.
+        let wanted = render(data_dir, &task)?;
+        let stored = facets::read_facet(data_dir, DIMENSION, &subject).await?;
+        if stored.as_deref() != Some(wanted.as_str()) {
+            facets::update_facet(data_dir, DIMENSION, &subject, &wanted).await?;
+            rewritten += 1;
+        }
+
+        if let Ok(mut seen) = last_seen().lock() {
+            seen.insert(key, task.status);
+        }
+    }
+    Ok(rewritten)
 }
 
 /// Todo, doing and serving tasks, sorted by subject.
@@ -331,6 +457,13 @@ pub async fn projection(
     data_dir: &Path,
     working: &std::collections::HashMap<String, OnIt>,
 ) -> anyhow::Result<String> {
+    // **Repair before reading, and never fail the read for it.** A ledger that cannot be
+    // tidied is still a ledger that has to be projected — dropping the window because a
+    // stamp could not be written would turn a cosmetic fault into a missed duty, which is
+    // the one failure this whole file is built against.
+    if let Err(error) = reconcile(data_dir).await {
+        tracing::warn!(%error, "task ledger could not be reconciled; projecting it as it stands");
+    }
     Ok(render_projection(&active_tasks(data_dir).await?, Utc::now(), working))
 }
 
@@ -894,6 +1027,162 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Write a facet exactly as a hand-editing agent would — straight to the file, no
+    /// `render`, no stamps it forgot. Every `reconcile` test starts from one of these,
+    /// because a record produced by `write_task` is already canonical and would prove
+    /// nothing.
+    async fn hand_write(dir: &Path, subject: &str, frontmatter: &str, body: &str) {
+        let d = facets::subject_dir(dir, DIMENSION, subject);
+        tokio::fs::create_dir_all(&d).await.unwrap();
+        tokio::fs::write(d.join(facets::FACET_FILE), format!("---\n{frontmatter}---\n\n{body}\n"))
+            .await
+            .unwrap();
+    }
+
+    async fn stored(dir: &Path, subject: &str) -> String {
+        facets::read_facet(dir, DIMENSION, subject).await.unwrap().unwrap()
+    }
+
+    /// **The property the pass lives or dies on.** It runs on every window build, so if it
+    /// could not converge it would rewrite the whole ledger forever — and `status_since`,
+    /// the one field that says whether a task has actually moved, would be reset on every
+    /// turn by the machinery meant to keep it honest. Churn is not movement.
+    #[tokio::test]
+    async fn reconcile_converges_and_then_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "converge-a",
+            "status: done\ntitle: shipped it\nstatus_since: 2026-08-01T09:00:00+08:00\n",
+            "prose",
+        )
+        .await;
+        hand_write(dir.path(), "converge-b", "kind: wip\nstate: open\ntitle: legacy one\n", "prose").await;
+
+        assert_eq!(reconcile(dir.path()).await.unwrap(), 2, "both records were off-canonical");
+        assert_eq!(reconcile(dir.path()).await.unwrap(), 0, "a second pass must write nothing");
+        assert_eq!(reconcile(dir.path()).await.unwrap(), 0, "and stay that way");
+    }
+
+    /// A transition the pass **watched happen** is dated, because `now` is a measurement
+    /// here rather than a guess: the status was one thing last read and is another now.
+    #[tokio::test]
+    async fn a_witnessed_transition_is_stamped_now() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "witnessed", "status: doing\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        // The agent edits the file by hand and stamps nothing, which is the whole problem.
+        hand_write(dir.path(), "witnessed", "status: done\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "witnessed").await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Done);
+        let completed = task.completed_at.expect("a watched close is dated");
+        assert!((Utc::now() - completed).num_seconds().abs() < 5);
+        assert_eq!(task.status_since, Some(completed), "one moment, not two");
+    }
+
+    /// Cold — nothing to compare against — so the close is derived from the one instant the
+    /// record already carries, never from the clock.
+    #[tokio::test]
+    async fn a_cold_close_is_derived_from_status_since() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "cold-derive",
+            "status: done\ntitle: filed late\nstatus_since: 2026-06-02T11:30:00+00:00\n",
+            "prose",
+        )
+        .await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "cold-derive").await.unwrap().unwrap();
+        assert_eq!(task.completed_at, task.status_since);
+        assert_eq!(task.completed_at.unwrap().to_rfc3339(), "2026-06-02T11:30:00+00:00");
+    }
+
+    /// **The refusal.** Closed, and no instant anywhere to derive from — so the field stays
+    /// empty. `now` would read as "finished today" on a task finished in June, and nothing
+    /// downstream could tell that stamp from a real one.
+    #[tokio::test]
+    async fn a_close_with_no_instant_anywhere_is_left_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "cold-refuse", "status: done\ntitle: undated\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "cold-refuse").await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Done);
+        assert!(task.completed_at.is_none(), "an instant that is not known is not invented");
+    }
+
+    /// An open record cannot carry a closing stamp — that is a leftover from a close undone
+    /// by hand, and clearing it asserts nothing the status does not already say.
+    #[tokio::test]
+    async fn reopening_by_hand_drops_the_stale_closing_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "reopened-by-hand",
+            "status: doing\ntitle: back open\ncompleted_at: 2026-07-01T00:00:00+00:00\n",
+            "prose",
+        )
+        .await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "reopened-by-hand").await.unwrap().unwrap();
+        assert!(task.completed_at.is_none());
+        assert!(task.cancelled_at.is_none());
+    }
+
+    /// A record on the retired `kind:`/`state:` spelling is re-emitted in the current one
+    /// by being touched at all — eight of these sat in one live store, and every read was
+    /// re-interpreting them rather than fixing them.
+    #[tokio::test]
+    async fn a_legacy_record_is_re_emitted_in_the_current_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "legacy-one", "kind: wip\nstate: done\ntitle: old shape\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let raw = stored(dir.path(), "legacy-one").await;
+        assert!(raw.contains("status: done"), "{raw}");
+        assert!(!raw.contains("kind:"), "{raw}");
+        assert!(!raw.contains("state:"), "{raw}");
+    }
+
+    /// **The pass is not entitled to tidy what it does not understand.** The agent keeps its
+    /// own ledger in frontmatter keys this schema never defined, and a repair that dropped
+    /// them would destroy more than it fixed.
+    #[tokio::test]
+    async fn a_repair_keeps_frontmatter_the_schema_never_defined() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "foreign-keys",
+            "status: done\ntitle: has a ledger of its own\nreport_to: prdo8qht\nCHECK_20260818: \"still up\"\n",
+            "the body",
+        )
+        .await;
+        reconcile(dir.path()).await.unwrap();
+
+        let raw = stored(dir.path(), "foreign-keys").await;
+        assert!(raw.contains("report_to: prdo8qht"), "{raw}");
+        assert!(raw.contains("CHECK_20260818:"), "{raw}");
+        assert!(raw.contains("the body"), "{raw}");
+    }
+
+    /// The pass must never mint a creation instant a record does not have — the parser
+    /// already refuses to, and a repair that quietly supplied one would make every legacy
+    /// record look created the day it was first tidied.
+    #[tokio::test]
+    async fn a_repair_does_not_mint_a_creation_instant() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "no-birthday", "kind: wip\nstate: open\ntitle: undated\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        assert!(read_task(dir.path(), "no-birthday").await.unwrap().unwrap().created_at.is_none());
+    }
 
     /// The common case for the projection tests that predate the join: nothing registered, so
     /// every task is unattended. `doing` rows then carry "nobody on it", which is correct.
