@@ -334,6 +334,54 @@ pub async fn projection(
     Ok(render_projection(&active_tasks(data_dir).await?, Utc::now(), working))
 }
 
+/// The ledger as it is sent, paired with the form a window should compare on.
+///
+/// **A worker's activity tail is liveness, not news.** `doing` is the last thing a session
+/// was seen at — mid-shell-command, mid-edit — and it moves on every rung of every live
+/// worker, so it lands in the ledger line of every task anybody is on. Measured across one
+/// live thread of 188 turns, blanking it drops this block's distinct states from 149 to 87:
+/// two of every five re-sends of the whole ledger were saying that a worker had gone from
+/// thinking to running `ls`, and each re-send costs a permanent copy of itself in a finite
+/// window. The field earns its place in the *text* — it exists so a silent worker cannot be
+/// mistaken for a dead one ([`worker_note`]) — and that is a thing to read when you look,
+/// never a thing to be told. So it rides out and is blanked in the comparison, exactly as
+/// elapsed quantities already are by [`without_elapsed`].
+///
+/// **Rendered twice rather than stripped by pattern**, and that is the load-bearing part: a
+/// worker running a shell command puts the command in that tail, commas and all, so no
+/// regex over the finished line can tell it apart from the `last turn FAILED: …` note it
+/// must *not* blank. Suppressing it at the source is the only way to be sure which is which.
+pub async fn projection_and_comparable(
+    data_dir: &Path,
+    working: &std::collections::HashMap<String, OnIt>,
+) -> anyhow::Result<(String, String)> {
+    let active = active_tasks(data_dir).await?;
+    let now = Utc::now();
+    let sent = render_projection(&active, now, working);
+    let compared = without_elapsed(&render_projection(&active, now, &without_activity(working)));
+    Ok((sent, compared))
+}
+
+/// The same switchboard reading with every live worker's activity tail dropped.
+fn without_activity(
+    working: &std::collections::HashMap<String, OnIt>,
+) -> std::collections::HashMap<String, OnIt> {
+    working
+        .iter()
+        .map(|(subject, on_it)| {
+            let quieted = match on_it {
+                OnIt::Live(w) => {
+                    let mut w = w.clone();
+                    w.doing = None;
+                    OnIt::Live(w)
+                }
+                other => other.clone(),
+            };
+            (subject.clone(), quieted)
+        })
+        .collect()
+}
+
 fn render_projection(
     active: &[Task],
     now: DateTime<Utc>,

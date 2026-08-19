@@ -199,16 +199,27 @@ also segmenting the whole frontier.
 **Generated system prompts** — what each agent that needs state carries into every window.
 Written by an agent, injected and bounded by code; [below](#what-a-session-is-given-in-four-layers).
 
-**Proactivity** — the standing licence to speak unprompted, *per subject*: which topics the
-person welcomes an unasked word on, which they tolerate, which are unproven, which are muted.
-It is **learnt, not configured** — every unprompted word is a bet, and how it was met is the
-evidence. Reflection folds each outcome back in.
+**Proactivity** — what the agent's words have earned, *per subject*: one line saying what
+happened last time and what that means for the next. It is **learnt, not configured** — every
+word is a bet, and how it was met is the evidence. Reflection folds each outcome back in.
 
-Two properties it cannot work without. It **moves asymmetrically**: one brush-off pulls a
-subject well back, warmth earns a small slow step up — because being talked at about the
-wrong thing costs far more than a missed heads-up. And it is **short enough to read every
-time**, since it is consulted before every proactive word; a licence too long to check is a
-licence nobody checks.
+**Prose, not ratings, and that is load-bearing.** It carried a four-value standing per subject
+(`welcomed` / `tolerated` / `unproven` / `muted`) until the labels earned their removal by
+collapsing: on one live install, fourteen subjects held eleven `muted`, two `tolerated` and no
+`welcomed` at all, while the sentence beside each one stayed specific and actionable —
+*"speak at a verified result or an agreed boundary, not on a timer"*. A verdict word beside
+that sentence adds nothing the sentence does not say, and a column of them reads as a list of
+prohibitions rather than a memory. Nothing in code ever parsed them; the file is opaque prose
+to [`proactivity`](../../src/mind/memory/proactivity.rs) and always was.
+
+A subject with no line has no record, and **no record is not permission** — which is also why
+no third "unproven" value is needed: absence says it.
+
+Two properties it cannot work without. It **moves asymmetrically**: a brush-off is worth
+writing down as a limit, a single warm reception is worth writing down as one reception —
+because being talked at about the wrong thing costs far more than a missed heads-up. And it is
+**short enough to read every time**, since it is consulted before anything is said; a read too
+long to check is a read nobody checks.
 
 ### What a session is given, in four layers
 
@@ -259,6 +270,16 @@ of `hi_say` with it, and Reaction then went two and a half hours without speakin
 calling its other tools. Everything the host believed the model could see stopped being true at
 once. So the same signal that re-seeds the window is the signal that the model may no longer
 know how it speaks.
+
+**`proactivity.md` is a read on every word, not only the unasked ones.** Its standings
+stand over kinds of thing the agent says, and a reply is one of those kinds. Scoping it to
+breaking a silence put the only artifact in the system that *learns* what the agent's words
+cost on the wrong side of most of them: everything said with the floor already its own —
+replies, mid-flight progress lines, hand-backs — was ungoverned and unlearned-from, and
+prose in `factory/reaction.md` was the whole of the defence. The scope is the file's
+contract, so it is fixed in three places at once or nowhere: the heading it is projected
+under, the line telling Reflection when to regenerate it, and the `hi_update_proactivity`
+description telling it what to weigh.
 
 **Who writes a seed.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has no file
 access and cannot write its own: Reaction's seed is *consumed* by Reaction and *written by*

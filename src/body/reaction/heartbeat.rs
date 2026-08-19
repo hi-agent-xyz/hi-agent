@@ -89,7 +89,7 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
 /// text is assembled here, not written in a prompt file. Naming them lets
 /// `no_agent_facing_text_names_a_verb_without_its_prefix` read them without building a
 /// `Frontier`.
-pub(crate) const PROACTIVITY_HEADING: &str = "## Current proactivity.md (your read on speaking up unprompted — regenerate via `hi_update_proactivity` if any unprompted word of yours landed this stretch)\n";
+pub(crate) const PROACTIVITY_HEADING: &str = "## Current proactivity.md (your read on what your words have earned — regenerate via `hi_update_proactivity` if any word of yours, asked for or not, landed or fell flat this stretch)\n";
 
 /// See [`PROACTIVITY_HEADING`].
 pub(crate) const CONSOLIDATION_TOOLS: &str =

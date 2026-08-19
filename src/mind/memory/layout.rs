@@ -266,13 +266,13 @@ mod seed_migration_tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("conversation.md"), "he prefers Chinese").unwrap();
         std::fs::write(old.join("cognition.md"), "the brain's").unwrap();
-        std::fs::write(memory_dir(root).join("proactivity.md"), "- delivering — `muted`").unwrap();
+        std::fs::write(memory_dir(root).join("proactivity.md"), "- delivering unasked — fell flat twice").unwrap();
 
         migrate_seeds(root);
 
         assert_eq!(std::fs::read_to_string(reaction_seed_path(root)).unwrap(), "he prefers Chinese");
         assert_eq!(std::fs::read_to_string(rung_seed_path(root, "cognition")).unwrap(), "the brain's");
-        assert!(std::fs::read_to_string(proactivity_path(root)).unwrap().contains("muted"));
+        assert!(std::fs::read_to_string(proactivity_path(root)).unwrap().contains("fell flat"));
         assert!(!old.exists(), "the directory it left held nothing else");
     }
 

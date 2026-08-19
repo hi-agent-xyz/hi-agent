@@ -511,23 +511,40 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// onward" without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded
-/// [`REACTION_BASE`]. Two things
-/// stay in code because they are *state*, not character, and Reaction cannot fetch
-/// either: the **first-meeting** cue and the **language** preference.
+/// [`REACTION_BASE`], and **nothing is appended to it**.
+///
+/// **It used to carry two facts, and a system prompt is the one place a fact cannot
+/// live.** The first-meeting cue and the language preference are *state*, not character,
+/// and `baseInstructions` is fixed at `thread/start`: someone who changed Settings ▸
+/// Language mid-conversation went on being answered in the old one until the session
+/// rotated, because the sentence saying otherwise had been sent before they touched it.
+/// Both are ordinary blocks of the window now
+/// ([`crate::mind::memory::snapshot::window`]), where something moving is something the
+/// next turn carries. What is left is identical for every install and every thread, which
+/// is what a character is.
 pub async fn reaction_system_prompt(data_dir: &Path) -> String {
     let base = data_dir.join("prompts").join("reaction.md");
     let reaction = match tokio::fs::read_to_string(&base).await {
         Ok(s) if !s.trim().is_empty() => s,
         _ => REACTION_BASE.to_string(),
     };
-    let mut prompt = reaction.trim().to_string();
-    if is_first_meeting(data_dir) {
-        prompt.push_str(FIRST_MEETING_CUE);
-    }
-    if let Some(lang) = language_line(data_dir) {
-        prompt.push_str(&lang);
-    }
-    prompt
+    reaction.trim().to_string()
+}
+
+/// The first-meeting cue as a window block, or `""` once this pair has any history.
+///
+/// It can only be true when a thread opens — no later thread can be a first meeting — so
+/// it lands on the cold turn that opens the very first one and is absent from every thread
+/// after. That the window can never *withdraw* it mid-thread (an emptied block is skipped,
+/// not retracted) costs nothing here: the hello it is for happens in the same breath it
+/// arrives.
+pub fn first_meeting_block(data_dir: &Path) -> String {
+    if is_first_meeting(data_dir) { FIRST_MEETING_CUE.to_string() } else { String::new() }
+}
+
+/// The language preference as a window block, or `""` when nobody has set one.
+pub fn language_block(data_dir: &Path) -> String {
+    language_line(data_dir).unwrap_or_default()
 }
 
 /// One extra line on a genuine first meeting — the brand-new install where nothing has
@@ -535,7 +552,7 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
 /// episode written, a duty taken on), so it can only ever colour
 /// the very first hello, never nag. It rides on **Reaction**, because the hello and the
 /// welcome view are both Reaction's to give.
-const FIRST_MEETING_CUE: &str = "\n\nOne more thing, true only right now: this is a \
+const FIRST_MEETING_CUE: &str = "## First meeting\nTrue only right now: this is a \
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
 put the built-in welcome on screen while you speak it (`hi_show` with ref \
@@ -556,7 +573,7 @@ fn language_line(data_dir: &Path) -> Option<String> {
         .as_deref(),
     )?;
     Some(format!(
-        "\n\nSpeak with the person in {lang} by default, unless they clearly \
+        "## Language\nSpeak with the person in {lang} by default, unless they clearly \
 write to you in another language — then follow their lead."
     ))
 }
@@ -593,15 +610,14 @@ mod soul_tests {
 
     #[tokio::test]
     async fn fresh_install_gets_the_first_meeting_cue_in_reaction() {
-        // A brand-new data dir has no episodes and nothing owed — so the
-        // *Reaction's* prompt carries the one-time first-hello cue and the welcome view.
-        // It rides here rather than on an agentic seed because the hello is
-        // Reaction's to give and it cannot go and read anything.
+        // A brand-new data dir has no episodes and nothing owed, so the cue is there for
+        // the window to carry — naming the welcome view, because the hello is Reaction's
+        // to give and it cannot go and read anything.
         let dir = tempfile::tempdir().unwrap();
         assert!(is_first_meeting(dir.path()));
-        let prompt = reaction_system_prompt(dir.path()).await;
-        assert!(prompt.contains("first meeting"));
-        assert!(prompt.contains("factory/welcome"));
+        let block = first_meeting_block(dir.path());
+        assert!(block.contains("first meeting"), "{block}");
+        assert!(block.contains("factory/welcome"), "{block}");
     }
 
     #[tokio::test]
@@ -613,8 +629,25 @@ mod soul_tests {
         std::fs::create_dir_all(&episode).unwrap();
         std::fs::write(episode.join("episode.md"), "we talked about the drive view\n").unwrap();
         assert!(!is_first_meeting(dir.path()));
+        assert!(first_meeting_block(dir.path()).is_empty());
+    }
+
+    /// **The character is the same for everyone**, which is why the two facts below moved
+    /// out of it. `baseInstructions` is fixed at `thread/start`; a fact about this install
+    /// or this person's Settings is not, and one that changed mid-conversation had no way
+    /// to reach a thread that was already open.
+    #[tokio::test]
+    async fn the_system_prompt_carries_no_state() {
+        use crate::foundation::credentials::set_setting;
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
+        assert!(is_first_meeting(dir.path()));
         let prompt = reaction_system_prompt(dir.path()).await;
-        assert!(!prompt.contains("this is a brand-new install"));
+        // `reaction.md` names a brand-new install itself, in `# The first hello` — what
+        // must be absent is the *cue*, which is this heading and the line under it.
+        assert!(!prompt.contains("## First meeting"), "the cue is the window's now");
+        assert!(!prompt.contains("Speak with the person in"), "the language line is too");
+        assert_eq!(prompt, REACTION_BASE.trim(), "nothing at all is appended");
     }
 
 
@@ -625,14 +658,16 @@ mod soul_tests {
     #[tokio::test]
     async fn reaction_gets_the_language_line_too() {
         // Settings ▸ Language has to reach the rung that actually talks, and that rung
-        // cannot read a file to find it.
+        // cannot read a file to find it — so it is projected, and **a later change reaches
+        // a thread that is already open**, which is what it could not do from a system
+        // prompt fixed at `thread/start`.
         use crate::foundation::credentials::set_setting;
         let dir = tempfile::tempdir().unwrap();
-        assert!(!reaction_system_prompt(dir.path()).await.contains("Speak with the person in"));
+        assert!(language_block(dir.path()).is_empty());
         set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "zh-Hans").unwrap();
-        assert!(
-            reaction_system_prompt(dir.path()).await.contains("Speak with the person in 简体中文")
-        );
+        assert!(language_block(dir.path()).contains("Speak with the person in 简体中文"));
+        set_setting(dir.path(), crate::foundation::config::KEY_LANGUAGE, "en").unwrap();
+        assert!(language_block(dir.path()).contains("English"));
     }
 
 

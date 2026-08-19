@@ -505,18 +505,22 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             ),
             tool(
                 "hi_update_proactivity",
-                "Rewrite the agent's standing read on speaking up unprompted — the whole \
-                 `proactivity.md`, regenerated, not patched. Reach for it when an unprompted word of the \
-                 agent's landed (or fell flat) in the signals you just read: the agent spoke first, no one \
-                 asked, and how that was met is what you're folding in. Pass the COMPLETE file: a short \
-                 line per subject with where it now stands — `welcomed`, `tolerated`, `unproven`, or \
-                 `muted` — and a few words of why, grounded in what actually happened. Be quick to pull a \
-                 subject back on a brush-off or silence, slow to widen one on a single warm reception. \
-                 Keep it short and scannable — the agent reads this before every proactive word.",
+                "Rewrite the agent's standing read on what its words have earned — the whole \
+                 `proactivity.md`, regenerated, not patched. Reach for it when any word of the agent's \
+                 landed (or fell flat) in the signals you just read. That covers speaking first, and it \
+                 equally covers what it said with the floor already its own: a reply that ran long, a \
+                 mid-flight progress line, a hand-back that buried the one thing they were waiting on. \
+                 Judge each by what it changed for the person, not by whether it was true. Pass the \
+                 COMPLETE file: one short line per subject saying what happened and what it means next \
+                 time, grounded in what actually happened. No verdict word, no rating, no standing — the \
+                 sentence is the read, and a label beside it adds nothing it does not already say. Be \
+                 quick to write down a brush-off or a silence as the limit it is, slow to read a single \
+                 warm reception as more than one reception. Keep it short and scannable — the agent \
+                 reads this before it says anything.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "content": { "type": "string", "description": "The full regenerated proactivity.md (markdown): a line per subject with its standing (welcomed/tolerated/unproven/muted) and a brief, evidence-based why." },
+                        "content": { "type": "string", "description": "The full regenerated proactivity.md (markdown): one line per subject saying what happened and what it means next time, tied to what actually happened. Prose, not ratings — no standing or verdict word." },
                     },
                     "required": ["content"],
                 }),
@@ -1831,8 +1835,9 @@ async fn reflection_update_facet(data_dir: &std::path::Path, args: &Value) -> Va
 }
 
 /// `hi_update_proactivity`: regenerate the whole `proactivity.md` — the learned
-/// read on speaking up unprompted — from how the agent's own unprompted utterances
-/// landed (see [`crate::mind::memory::proactivity::write`]). Whole-file, never a patch.
+/// read on what the agent's words have earned — from how its own utterances landed,
+/// asked for or not (see [`crate::mind::memory::proactivity::write`]). Whole-file,
+/// never a patch.
 async fn reflection_update_proactivity(data_dir: &std::path::Path, args: &Value) -> Value {
     let content = args.get("content").and_then(Value::as_str).unwrap_or_default();
     if content.trim().is_empty() {

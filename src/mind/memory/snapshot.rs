@@ -133,14 +133,21 @@ pub async fn window(
     // this is the manner the situation is met in.
     let conduct = crate::mind::memory::conduct::projection(data_dir).await;
     let carried = carried_forward(&layout::reaction_seed_path(data_dir)).await;
-    let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
-        Ok(text) => text,
-        Err(err) => {
-            tracing::warn!(error = %format!("{err:#}"), "active tasks unreadable; window goes without them");
-            String::new()
-        }
-    };
-    let unprompted = speaking_up_unprompted(data_dir).await;
+    let (owed, owed_compared) =
+        match tasks::projection_and_comparable(data_dir, &working_on_tasks()).await {
+            Ok(pair) => pair,
+            Err(err) => {
+                tracing::warn!(error = %format!("{err:#}"), "active tasks unreadable; window goes without them");
+                (String::new(), String::new())
+            }
+        };
+    let words = words_earned(data_dir).await;
+    // The two facts that used to ride the system prompt. Both are *state* — one about this
+    // install, one about a setting that can change at any moment — and `baseInstructions` is
+    // fixed at `thread/start`, so a language changed mid-conversation could not reach a
+    // thread already open. Here they move like everything else that moves.
+    let meeting = crate::identity::first_meeting_block(data_dir);
+    let language = crate::identity::language_block(data_dir);
     // Who this rung may reach, by id — see [`agent_window`]. For Reaction that is
     // the brain and nothing else: work goes up.
     let reach = crate::foundation::registry::render_reachable(
@@ -155,9 +162,15 @@ pub async fn window(
         // The one block with a clock in it: `last confirmed alive 1h ago` becomes `2h ago`
         // without anything having happened, and the ledger is worth re-reading only when
         // something did.
-        Block::new("tasks", Cadence::OnChange, owed.clone())
-            .compared_as(tasks::without_elapsed(&owed)),
-        Block::new("unprompted", Cadence::OnChange, unprompted),
+        Block::new("tasks", Cadence::OnChange, owed).compared_as(owed_compared),
+        Block::new("words", Cadence::OnChange, words),
+        // **Neither of these can be withdrawn once sent, and neither needs to be.** The cue
+        // is true only until this pair has any history at all and can only be true when a
+        // thread opens, so it lands on the cold turn of the very first thread and is simply
+        // absent from every one after. A language line is replaced by the next one rather
+        // than retracted.
+        Block::new("meeting", Cadence::OnChange, meeting),
+        Block::new("language", Cadence::OnChange, language),
         Block::new("reach", Cadence::OnChange, reach),
         Block::new("recent", Cadence::ColdOnly, tail),
     ]
@@ -351,19 +364,28 @@ fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
     join
 }
 
-/// The learned read on speaking up unprompted (`proactivity.md`), projected rather
-/// than fetched.
+/// The learned read on what Reaction's words have earned (`proactivity.md`), projected
+/// rather than fetched.
 ///
-/// It is consulted **before breaking a silence**, and the only rung that can break one
-/// is Reaction — which cannot open a file. So a path to it would be a path nobody can
+/// It is consulted **before anything is said**, and the only rung that says anything is
+/// Reaction — which cannot open a file. So a path to it would be a path nobody can
 /// follow: this is the projection test (`docs/arch/data.md#what-earns-a-place`) coming
 /// out the other way from the tasks ledger. Written whole by the reflection pass
 /// ([`crate::mind::memory::proactivity`]); absent until the first reflection, which is
-/// ordinary — `reaction.md` says an unproven subject earns no licence anyway.
-async fn speaking_up_unprompted(data_dir: &Path) -> String {
+/// ordinary — `reaction.md` says a subject with no line has no record, and no record is
+/// not permission.
+///
+/// **It used to be scoped to breaking a silence, and that was the smaller half.** The
+/// heading read `## Speaking up unprompted`, the regeneration trigger fired only on an
+/// unprompted word, and the prompt pointed at it only before a guess — so the one
+/// artifact in the system that actually *learns* what the agent's words cost was blind to
+/// the ones it says with the floor already its own: every reply, every mid-flight line,
+/// every hand-back, which is most of what it ever says. A read on speaking that skips
+/// replies is a read on speaking in name only.
+async fn words_earned(data_dir: &Path) -> String {
     match crate::mind::memory::proactivity::read(data_dir).await {
         Ok(Some(body)) if !body.trim().is_empty() => {
-            format!("## Speaking up unprompted\n{}\n", body.trim())
+            format!("## What your words have earned\n{}\n", body.trim())
         }
         Ok(_) => String::new(),
         Err(err) => {

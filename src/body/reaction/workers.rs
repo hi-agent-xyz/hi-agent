@@ -529,6 +529,26 @@ pub(super) fn render_status() -> String {
     s
 }
 
+/// [`render_status`] with the `latest:` line dropped — what the window compares on.
+///
+/// **That line is the whole of this block's churn.** Across 188 turns of one live thread it
+/// was re-sent 113 times and carried 34 distinct texts; with this line removed there was
+/// exactly **one**. Every re-send was saying that Cognition, still busy on the same task,
+/// had moved from thinking to running a command, and each cost a permanent copy of the
+/// block in a finite window. Same argument as the ledger's
+/// ([`crate::mind::memory::tasks::projection_and_comparable`]): the tail is here to be read
+/// when the block arrives, never to be the reason it arrives.
+///
+/// Filtered by its own prefix rather than matched by pattern — this module writes the line,
+/// so it cannot mistake a worker's free text for structure.
+pub(super) fn without_latest(status: &str) -> String {
+    status
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("latest:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl Drop for WorkerRegistry {
     fn drop(&mut self) {
         // JoinHandle::drop detaches. A registry owns these tasks, so leaving its scope

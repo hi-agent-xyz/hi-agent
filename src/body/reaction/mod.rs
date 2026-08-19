@@ -1994,7 +1994,7 @@ async fn turn_context(
         key: "workers",
         cadence: snapshot::Cadence::OnChange,
         text: worker_status.to_string(),
-        compare_as: None,
+        compare_as: Some(workers::without_latest(worker_status)),
     });
     blocks.push(snapshot::Block {
         key: "screen",
