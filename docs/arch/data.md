@@ -238,9 +238,11 @@ A seed is true when it is sent and stale a minute later — a task opens, a view
 preference is corrected. Those reach the rung as **layer 4**, and how they are *noticed*
 matters more than it looks.
 
-**Announced events are not enough.** Cognition writes `memory/facets/tasks/<subject>/facet.md`
-and its own seed *as files*, with file access — there is no tool call for it, so the host never
-sees it happen. An announcement the writer forgets is a change Reaction never learns, and for
+**Announced events are not enough.** The ledger's writer writes
+`memory/facets/tasks/<subject>/facet.md`, and every rung writes its own seed, *as files*, with
+file access — there is no tool call for it, so the host never sees it happen. Nor should the
+fix be to require one: every agent that may write these has a shell, so a tool is a door beside
+an open wall. An announcement the writer forgets is a change Reaction never learns, and for
 the ledger that is the failure this whole design exists to prevent: *retrieval can miss, and a
 missed duty is a silently broken promise*.
 
@@ -349,6 +351,54 @@ and writes facets. What is special is the guidance attached, not the machinery.
 
 **One ledger.** Nothing else records a duty: there is no second, friendlier list of what is
 owed, because two ledgers means one of them is wrong and no way to tell which.
+
+**The ledger has one writer, and it is a worker.** Filing what is owed is its own job, and it
+is not the job of the rung that hands the work out. Cognition dispatches; a [Task
+Manager](agents.md#task-manager) files. Splitting them is not tidiness — it breaks the loop where
+whoever did the work also rules on whether it landed, and that loop has already failed in the
+open: three tickets were marked `done` on one day and audited the next *by the same rung*, which
+found that none of them had ever reached the person, reopened one, and left the other two
+sitting in `done`. A manager is not more honest than a dispatcher. It is differently placed: it
+did not do the work, so "is this finished" is a question it can only answer by looking.
+
+**What the manager decides, and what the store keeps coherent.** The manager owns the one word
+that says what is owed — `status` — and it owns the prose. It does not own the consequences of
+its own decision. `status_since`, `completed_at` and `cancelled_at` all follow mechanically
+from a status that moved, and a mind that has to remember to write them is a mind that will
+sometimes not: of sixty-two records in one live store, seven sat in `done` with no
+`completed_at`, two in `cancelled` with no `cancelled_at`, and eight had never been migrated
+off a frontmatter spelling retired months earlier. **Nothing hand-stamps a consequence of a
+decision it has already recorded.**
+
+**So the store stamps them, on the pass that is already reading.** The host re-reads the whole
+ledger every turn to diff it into the window — *[a diff cannot forget](#state-changes-are-events-derived-by-diff)* —
+and that pass holds the previous read, so a `status` that moved is something it **sees** rather
+than something it must be told. Landing the stamps there costs nothing that was not already
+being spent, and it upgrades a legacy spelling on the same touch.
+
+**Why a pass and not a verb.** A verb binds only the writes that go through it, and every agent
+that may write this ledger has a shell: a rule the shell can walk around is guidance wearing a
+rail's clothes, and its failure mode is silence — the field is simply absent, which is
+indistinguishable from a task that never moved. A pass that re-reads the bytes cannot be walked
+around, because it reads whatever is actually there, however it got there.
+
+**And the pass reports what it cannot fix.** A `verify:` filed on a `done` row, a status word
+the schema does not know, work sitting in a task directory with no record at all, a `serving`
+row retired while the machinery it names still answers its own `verify:` — the store can see
+each of these and can rule on none of them. They go into the manager's window as facts, never as
+refusals. This is the same choice `## On their screen` makes below: the thing an
+agent cannot obtain by thinking harder is the thing that has to be handed to it, and the
+judgment is left exactly where it was.
+
+**A retired duty stays under the liveness sweep.** Closing is what makes a task stop being
+read, and for a duty that is the one closure that can be wrong *while looking right*. A watcher
+was cancelled in a batch one minute after a reflection that named it as on duty; its machinery
+kept running for a day, and a failed self-heal spawned four hundred and sixty-one orphaned
+processes in twenty-five minutes without one word being said — because the `verify:` that would have caught it
+belonged to a row that closing had removed from view. **A cancel that silences the only check
+on a thing is not a cancel, it is a blindfold.** So `verify:` goes on being run for a while
+after a `serving` row closes, and a duty whose machinery still answers is reported to the
+manager as exactly that.
 
 Reflection owns `facets/` and rewrites facets whole — so the one rule that keeps this safe is
 guidance, not a rail: it may read the `tasks` dimension freely, and may notice that something

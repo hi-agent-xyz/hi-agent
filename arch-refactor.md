@@ -245,6 +245,62 @@ failure itself, which predates this and belongs to whoever owns the broker.
 
 ## Next, in dependency order
 
+### K — The task ledger gets a manager, and the store keeps its stamps · **design landed; the type is real and unexercised**
+
+**A design change, made in `docs/arch/` on 2026-08-19** — the third time that has happened, and
+noted here as the rules of this file require. Two decisions moved:
+
+1. **Cognition is no longer the ledger's writer.** A new worker type, **Task Manager**
+   ([`agents.md`](docs/arch/agents.md#task-manager)), is the only thing that may write a task's
+   `status`. Cognition keeps the noticing — the glance-up still decides the ledger is worth a
+   look — and hands the looking down. It also keeps `CreateWorker`: the manager *reports* a task
+   that needs staffing to its owner rather than dispatching, so **one dispatcher survives**.
+2. **The stamps that follow from a status change are the store's, not a mind's.**
+   `status_since` / `completed_at` / `cancelled_at` and the legacy `kind:`/`state:` spellings are
+   stamped and normalised on the diff pass that already re-reads the whole ledger every turn
+   ([`data.md`](docs/arch/data.md#tasks)). Deliberately **not** a new verb: every agent that may
+   write this ledger has a shell, so a verb is a door beside an open wall, and its failure mode
+   is an absent field — indistinguishable from a task that never moved. The pass reads whatever
+   is actually on disk, however it got there.
+
+Both were argued from one live store, and the numbers are the reason the design moved rather
+than the code being nudged into line:
+
+| | |
+|---|---|
+| records in the store | 62 (+2 task directories holding work products and **no `facet.md` at all**, so no ledger row and no projection) |
+| `done` with no `completed_at` | 7 · `cancelled` with no `cancelled_at`: 2 |
+| never migrated off `kind:`/`state:` | 8 — hence 16 records with no `created_at` and no date on their card |
+| a liveness contract filed on a non-`serving` row | 16 (11 `done`, 3 `cancelled`, 2 `todo`) — the mistake `tasks.rs`'s own module doc names and cites by subject |
+| one record whose frontmatter says `state: done` while two of its own keys say keep it open | `deck-whitespace-fix` |
+| tickets marked `done`, then audited the next day *by the same rung*, which found none had reached the person | 3 — one reopened, two left in `done` |
+| a `serving` row cancelled in a batch **60s after** a reflection naming it as on duty | `feishu-it-group-watcher` — machinery still running a day later; a failed self-heal then spawned **461 orphaned processes in 25 minutes** (463 live, 708 MB) and nothing said a word: closing had removed the only `verify:` from view |
+
+**Built:** `WorkerType::TaskManager` with `identity/workers/task-manager.md`, in `ALL` and
+`prompt_name`, labelled in the sessions view, and named in `CreateWorker`'s description.
+**895 lib + integration green, 0 warnings.** The type is real and **nothing dispatches it**:
+`identity/cognition.md` still says the filing is Cognition's, which is (4) below.
+
+The prompt is written to today's mechanism — it stamps `status_since` / `completed_at` /
+`cancelled_at` **by hand**, because (1) does not exist yet. Once it does, the stamping is
+redundant rather than wrong, and that paragraph comes out.
+
+**Build order** (nothing below is written yet):
+
+1. The diff pass stamps and normalises — smallest, benefits every existing writer immediately,
+   and independent of everything else here.
+2. `verify:` keeps running for a while after a `serving` row closes; a duty whose machinery
+   still answers is reported, not silently dropped.
+3. The pass reports what it cannot fix — misfiled `verify:`, unknown status words, a task
+   directory with no row — into the manager's window as facts, never as refusals.
+4. **`identity/cognition.md`**: the glance-up hands the filing down instead of doing it, and
+   `## You hold what is owed` stops saying Cognition is the ledger's writer. Until this lands
+   the type is dead weight. Needs the no-subject exemption in the same pass, or the manager
+   trips *not linked to any task* on itself at every glance-up.
+5. Migrate the 8 legacy records and backfill the missing stamps — mechanical once (1) exists,
+   and worth doing *after* so the pass is what does it.
+
+
 ### T — Topology: core, app, community
 
 `docs/arch/topology.md` (`530ef8a`) is design-only. The implementation plan is four

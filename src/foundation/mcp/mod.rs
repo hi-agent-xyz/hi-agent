@@ -192,7 +192,12 @@ fn create_worker_tool() -> Value {
                                     one only when *where* is what you don't know, \
                                     `person-reader` to read one person out of \
                                     the record and write their facet — the settling pass's, and \
-                                    not yours to start unless you are it.",
+                                    not yours to start unless you are it, \
+                                    `task-manager` on a glance-up to keep the ledger — it is the \
+                                    only thing that may write a task's `status`, so closing, \
+                                    reopening and standing a duty down all go through it. It \
+                                    files and reports; it delivers nothing, so anything it says \
+                                    needs doing still needs a worker from you.",
                 },
                 "subject": {
                     "type": "string",
@@ -203,7 +208,8 @@ fn create_worker_tool() -> Value {
                                     than as owed by nobody, and what lets a later glance tell a \
                                     task with someone on it from one that has quietly stalled. \
                                     Leave it out only for work that is genuinely not in the \
-                                    ledger.",
+                                    ledger — and always for a `task-manager`, which serves every \
+                                    task and so can name none.",
                 },
                 "resume": {
                     "type": "string",

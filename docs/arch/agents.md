@@ -25,7 +25,7 @@ prompt, not new machinery.
 | **One verb between agents** | `SendMessage(to, message)` — one direction, no reply, queued. Every other shape we tried (delegate, ask, surface, handoff, notify) was this verb wearing a name that described one use of it |
 | A worker replies; it does not narrate | It may message **only its owner**, and only in answer. Structural on the address, guidance on the timing |
 | **A worker keeps a current best, always showable** | The layer split only pays off if the thorough layer has something to hand up: a job that builds privately and assembles at the end leaves Reaction one answer to "show me what you have", and it is "not yet". So a deliverable is built *in place* — one artifact advanced as the work lands, with the unconfirmed parts marked in it — rather than assembled at the end. Unconditional: nothing here reads whether anyone is watching, which is the fact [`host.md`](host.md#attachment) retired the presence gate for not being derivable. If nobody asks it costs a file the worker was keeping anyway |
-| Cognition is the sole writer of the ledger | Two writers to one ledger means one of them is wrong and no way to tell which |
+| One writer to the ledger, and it is a [Task Manager](#task-manager) | Two writers to one ledger means one of them is wrong and no way to tell which. It is not Cognition, because whoever hands the work out must not also rule on whether it landed |
 | **A gap in the request is work, not a question** | Every rung, not just the Decision Maker. Waiting on the user is the worst outcome available, so an unknown gets the most defensible reading, stated out loud; asking is the fallback for when no reading is defensible *and* the gap gates the work |
 
 ### Ownership and addressing
@@ -180,9 +180,15 @@ rung used to have [Deliberation](#deliberation-was-retired-into-cognition) in fr
 absorbing the fast reads, and the argument for keeping that rung was that a brain busy with
 an errand leaves the person waiting. Staying free is now a duty rather than a rung.
 
-It is the **only** thing that creates workers, and the **only** writer of the task ledger.
-Both follow from the same idea: durable work is what it means for something to be real, and
-deciding that is judgment, not bookkeeping Reaction should do in passing.
+It is the **only** thing that creates workers. Durable work is what it means for something to
+be real, and deciding to take some on is judgment, not bookkeeping Reaction should do in
+passing.
+
+**It no longer files what it dispatches.** Writing the ledger was Cognition's for the same
+reason creating workers is, and the two turned out not to be the same reason at all: opening a
+duty is the dispatcher's call, and ruling that one *ended* is a claim about the world that the
+dispatcher is the worst-placed agent to make about its own errands. That goes to a [Task
+Manager](#task-manager); Cognition keeps the noticing and hands the looking down.
 
 **Dispatch is two verbs, not one: hand out and take back.** A worker can be *interrupted*
 mid-turn (`hi_cancel_worker` → `turn/interrupt`), and only by the rung that created it. This is
@@ -309,7 +315,7 @@ and not machinery — it is **who the work is for**:
 
 | | Work arrives from | Answers to | Owns |
 |---|---|---|---|
-| **Cognition** | a person, through the conversation | the conversation | the task ledger |
+| **Cognition** | a person, through the conversation | the conversation | what work exists — it opens duties and staffs them |
 | **Reflection** | nobody — it notices | itself | `data/` |
 
 That asymmetry is the reason Reflection needs a rung of its own rather than being a job
@@ -538,8 +544,8 @@ A worker's **type** is the `type` in [`CreateWorker(type)`](foundation.md#the-ag
 and it selects a prompt and nothing else — same session, same tools. Adding a kind is
 adding a `.md`.
 
-**A type is a role, not a field beside one.** The four rungs and the five types are one
-namespace of nine, because they are one concept: [the opening of this
+**A type is a role, not a field beside one.** The three rungs and the seven types are one
+namespace of ten, because they are one concept: [the opening of this
 document](#goal) says every agent differs only in prompt and tool surface, and a type
 differs in exactly the first of those. So the type travels with the session wherever its
 role does — which is what lets the switchboard say a live session is a *view reviewer*
@@ -552,6 +558,8 @@ rather than an anonymous worker, and `GET /api/workers` report it.
 | View Reviewer | renders it, screenshots it, and **looks at it** before it ships |
 | Decision Maker | makes the call that lets work continue without the user — below |
 | Drive Organizer | knows how `drive/` is laid out — puts a new thing where the drive is already going, says where an existing one is, straightens a corner that has drifted |
+| Person Reader | reads one person out of the record and folds it into their facet, including the `## Working with them` Reaction is projected |
+| Task Manager | keeps [the ledger](data.md#tasks) — the only thing that may write a task's `status`. It files; it never delivers — below |
 
 Workers are **volatile**: they live in process memory and die with it. Nothing durable may
 live only inside one. Recovery is therefore **reconstruction from Tasks, never continuation**
@@ -662,6 +670,36 @@ tidy has left memory aimed at nothing — worse than the mess it cleaned.
 **A handed-over file is copied, never moved.** [`surfaces.md`](surfaces.md#bulk) carries
 the reasoning at length: the log's copy fades and the drive's is permanent, and moving the
 bytes degrades the journal's own reference to a caption.
+
+### Task Manager
+
+**Filing what is owed is a job, so it gets a worker.** It was Cognition's, bundled in with
+dispatching — and bundling those two puts the ruling on whether work landed in the hands of
+whoever handed the work out. That is the loop [Tasks](data.md#tasks) records failing in the
+open. A manager is not the more honest agent; it is the differently placed one. It did not do
+the work, so *is this finished* is a question it can only answer by going and looking.
+
+**It files; it neither delivers nor dispatches.** A task it finds needing work is *reported* —
+the manager is a worker, so `CreateWorker` is not its to call and **one dispatcher survives
+intact**; it answers its owner and Cognition staffs what it names. Its own output is a filed
+ledger and nothing else. The moment it starts finishing things itself it is back inside the
+loop it exists to break, and it is a worse executor than a worker briefed on the one job.
+
+**Woken by the glance-up, not by a clock of its own.** Cognition keeps the noticing — a
+`(pulse)` is still where "the ledger is worth a look" is decided — and hands the looking down.
+What moves is the filing, never the trigger.
+
+**Volatile, and safely so.** It holds nothing: the ledger is on disk, and the pass that stamps
+what a status change implies is idempotent. A restart mid-file leaves a ledger part-updated and
+nobody on it, which is a state the next glance-up reads and continues — the ordinary shape of
+[recovery](#across-a-restart), not a special case.
+
+**The one type that names no subject.** `CreateWorker(subject)` binds a worker to a single
+ledger task, and a worker without one reads as *not linked to any task* — the line that means
+**nobody is on this, staff it**. A manager serves every task, so it can never name one, and left
+alone it would trip that alarm on itself at every glance-up. So it is subjectless by
+construction and the reachable list says so in words, rather than by an absence that means
+something else everywhere it appears.
 
 ## Delegation
 

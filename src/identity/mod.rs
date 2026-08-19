@@ -56,6 +56,7 @@ const WORKER_VIEW_REVIEWER_BASE: &str = include_str!("workers/view-reviewer.md")
 const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md");
 const WORKER_DRIVE_ORGANIZER_BASE: &str = include_str!("workers/drive-organizer.md");
 const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
+const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
 
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
 /// (`docs/arch/foundation.md#the-agent-session-registry`), and the payload of
@@ -93,6 +94,10 @@ pub enum WorkerType {
     /// including the `## Working with them` section Reaction is projected
     /// ([`crate::mind::memory::conduct`]).
     PersonReader,
+    /// Keeps the task ledger (`docs/arch/agents.md#task-manager`) — the only role that
+    /// may write a task's `status`. Split out of Cognition because the rung that hands
+    /// work out is the worst-placed one to rule that its own errand ended.
+    TaskManager,
 }
 
 impl WorkerType {
@@ -105,6 +110,7 @@ impl WorkerType {
             Self::DecisionMaker => "decision-maker",
             Self::DriveOrganizer => "drive-organizer",
             Self::PersonReader => "person-reader",
+            Self::TaskManager => "task-manager",
         }
     }
 
@@ -117,6 +123,7 @@ impl WorkerType {
         Self::DecisionMaker,
         Self::DriveOrganizer,
         Self::PersonReader,
+        Self::TaskManager,
     ];
 
     /// Parse a wire name. `None` for anything unknown — the caller turns that into a
@@ -152,6 +159,7 @@ impl WorkerType {
             Self::DecisionMaker => WORKER_DECISION_MAKER_BASE,
             Self::DriveOrganizer => WORKER_DRIVE_ORGANIZER_BASE,
             Self::PersonReader => WORKER_PERSON_READER_BASE,
+            Self::TaskManager => WORKER_TASK_MANAGER_BASE,
         }
     }
 }
@@ -162,7 +170,7 @@ impl WorkerType {
 /// `docs/arch/agents.md` opens by saying every agent here is the same thing — a general
 /// agent on a session, differing only in **system prompt** and **tool surface** — and
 /// that "a new role is a new prompt, not new machinery". This enum is that sentence as a
-/// type: nine roles today, four rungs and five worker types, and a tenth is a `.md` plus
+/// type: ten roles today, three rungs and seven worker types, and an eleventh is a `.md` plus
 /// a variant.
 ///
 /// **It replaced three enums for the one concept**, which is why the switchboard used to
@@ -208,6 +216,7 @@ impl Role {
         Self::Worker(WorkerType::DecisionMaker),
         Self::Worker(WorkerType::DriveOrganizer),
         Self::Worker(WorkerType::PersonReader),
+        Self::Worker(WorkerType::TaskManager),
     ];
 
     /// The wire name — the `X-HI-Role` header, `tools_for_role`, and the `role` field on
@@ -245,6 +254,7 @@ impl Role {
             Self::Worker(WorkerType::DecisionMaker) => "workers/decision-maker",
             Self::Worker(WorkerType::DriveOrganizer) => "workers/drive-organizer",
             Self::Worker(WorkerType::PersonReader) => "workers/person-reader",
+            Self::Worker(WorkerType::TaskManager) => "workers/task-manager",
         }
     }
 
@@ -743,7 +753,7 @@ mod soul_tests {
         }
     }
 
-    /// Eight roles — three rungs and five worker types — in one namespace, no duplicates,
+    /// Ten roles — three rungs and seven worker types — in one namespace, no duplicates,
     /// and every worker type reachable as a role. The list is what `install_prompts` and
     /// the sweeps both walk, so a variant missing from it is a prompt that is never
     /// installed and never checked.

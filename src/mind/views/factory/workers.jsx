@@ -315,6 +315,7 @@ const TYPE = {
   "decision-maker": "Decision maker",
   "drive-organizer": "Drive organizer",
   "person-reader": "Person reader",
+  "task-manager": "Task manager",
 };
 
 function label(row) {
