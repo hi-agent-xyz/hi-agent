@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var model: AppModel
-    @State private var showingPairSheet = false
 
     var body: some View {
         NavigationSplitView {
@@ -49,7 +49,7 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showingPairSheet = true
+                        model.pairingRequest = .manual
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -70,14 +70,38 @@ struct ContentView: View {
                 )
             }
         }
-        .sheet(isPresented: $showingPairSheet) {
-            PairCoreView()
+        .sheet(item: $model.pairingRequest) { request in
+            PairCoreView(request: request)
                 .environmentObject(model)
+        }
+        .alert(
+            "Could not open pairing link",
+            isPresented: Binding(
+                get: { model.pairingLinkError != nil },
+                set: { if !$0 { model.pairingLinkError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                model.pairingLinkError = nil
+            }
+        } message: {
+            Text(model.pairingLinkError ?? "")
         }
         .task {
             await model.refresh()
-            if model.entries.isEmpty {
-                showingPairSheet = true
+            if model.entries.isEmpty && model.pairingRequest == nil {
+                model.pairingRequest = .manual
+            }
+        }
+        .onOpenURL { url in
+            model.handleIncomingURL(url)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else {
+                return
+            }
+            Task {
+                await model.refresh()
             }
         }
         .onChange(of: model.selectedID) { _, selectedID in
@@ -122,64 +146,212 @@ private struct CoreRow: View {
 }
 
 private struct CoreDetailView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var network: NetworkMonitor
     let entry: RosterEntry
     @State private var session: CoreSession?
     @State private var errorMessage: String?
     @State private var isLoading = false
+    @State private var webViewState = WebViewState.loading
 
     var body: some View {
-        Group {
+        ZStack {
             if let session {
-                CoreWebView(session: session)
-                    .ignoresSafeArea(edges: .bottom)
-            } else if isLoading {
-                ProgressView("Opening \(entry.label)…")
-            } else {
-                ContentUnavailableView(
-                    "Could not open this core",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(errorMessage ?? "Try opening it again.")
-                )
-                Button("Retry") {
-                    Task { await open() }
+                CoreWebView(session: session) { event in
+                    handle(event)
                 }
-                .buttonStyle(.borderedProminent)
+                .ignoresSafeArea(edges: .bottom)
+            }
+
+            if !network.isConnected {
+                ConnectionStateView(
+                    title: "You're offline",
+                    systemImage: "wifi.slash",
+                    message: "Hi Agent will reconnect when this device is back online."
+                )
+            } else if isLoading || (session != nil && webViewState == .loading) {
+                ProgressView("Opening \(entry.label)...")
+            } else if session == nil || webViewState == .failed {
+                ConnectionStateView(
+                    title: "Could not open this core",
+                    systemImage: "wifi.exclamationmark",
+                    message: errorMessage ?? "Check the core address and try again.",
+                    retryTitle: "Retry",
+                    onRetry: {
+                        Task { await open() }
+                    },
+                    secondaryTitle: "Pair again",
+                    onSecondary: {
+                        model.pairingRequest = PairingRequest(
+                            baseURL: entry.baseURL,
+                            code: "",
+                            label: entry.label
+                        )
+                    }
+                )
             }
         }
         .navigationTitle(entry.label)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: entry.id) {
+        .task(id: "\(entry.id)-\(model.credentialRevision)") {
             await open()
+        }
+        .onChange(of: network.isConnected) { wasConnected, isConnected in
+            guard !wasConnected, isConnected else {
+                return
+            }
+            Task {
+                await open()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else {
+                return
+            }
+            Task {
+                await model.refresh(entryID: entry.id)
+                if session?.needsRenewal == true || webViewState == .failed {
+                    await open()
+                }
+            }
         }
     }
 
     private func open() async {
+        guard network.isConnected, !isLoading else {
+            return
+        }
         isLoading = true
         errorMessage = nil
+        webViewState = .loading
         defer { isLoading = false }
         do {
-            session = try await model.open(entry.id)
+            let nextSession = try await model.open(entry.id)
+            try Task.checkCancellation()
+            session = nextSession
         } catch {
+            guard !Task.isCancelled else {
+                return
+            }
             session = nil
-            errorMessage = error.localizedDescription
+            errorMessage = connectionMessage(for: error)
+            webViewState = .failed
         }
+    }
+
+    private func handle(_ event: CoreWebViewEvent) {
+        switch event {
+        case .ready:
+            errorMessage = nil
+            webViewState = .ready
+        case .sessionExpired:
+            Task {
+                await open()
+            }
+        case .failed(let error):
+            errorMessage = connectionMessage(for: error)
+            webViewState = .failed
+        }
+    }
+
+    private func connectionMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch URLError.Code(rawValue: nsError.code) {
+            case .notConnectedToInternet:
+                return "This device is offline."
+            case .timedOut:
+                return "The core took too long to respond."
+            case .cannotFindHost, .dnsLookupFailed:
+                return "The core address could not be found."
+            case .cannotConnectToHost, .networkConnectionLost:
+                return "The connection to the core was lost."
+            case .secureConnectionFailed,
+                 .serverCertificateHasBadDate,
+                 .serverCertificateUntrusted,
+                 .serverCertificateHasUnknownRoot,
+                 .serverCertificateNotYetValid:
+                return "The core's secure connection could not be verified."
+            default:
+                break
+            }
+        }
+        if let clientError = error as? CoreClientError,
+           case .rejected(let status, _) = clientError,
+           status == 401 {
+            return "This device's credential was not accepted. Pair it with the core again."
+        }
+        return error.localizedDescription
+    }
+
+    private enum WebViewState: Equatable {
+        case loading
+        case ready
+        case failed
+    }
+}
+
+private struct ConnectionStateView: View {
+    let title: String
+    let systemImage: String
+    let message: String
+    var retryTitle: String?
+    var onRetry: (() -> Void)?
+    var secondaryTitle: String?
+    var onSecondary: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 18) {
+            ContentUnavailableView(
+                title,
+                systemImage: systemImage,
+                description: Text(message)
+            )
+
+            if let retryTitle, let onRetry {
+                Button(retryTitle, action: onRetry)
+                    .buttonStyle(.borderedProminent)
+            }
+
+            if let secondaryTitle, let onSecondary {
+                Button(secondaryTitle, action: onSecondary)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
     }
 }
 
 private struct PairCoreView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
-    @State private var baseURL = ""
-    @State private var code = ""
-    @State private var label = ""
+    let request: PairingRequest
+    @State private var baseURL: String
+    @State private var code: String
+    @State private var label: String
     @State private var errorMessage: String?
     @State private var isPairing = false
+    @State private var showingScanner = false
+
+    init(request: PairingRequest) {
+        self.request = request
+        _baseURL = State(initialValue: request.baseURL)
+        _code = State(initialValue: request.code)
+        _label = State(initialValue: request.label)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
+                    Button {
+                        showingScanner = true
+                    } label: {
+                        Label("Scan QR code", systemImage: "qrcode.viewfinder")
+                    }
+
                     TextField("Core address", text: $baseURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -225,6 +397,21 @@ private struct PairCoreView: View {
                         dismiss()
                     }
                 }
+            }
+            .fullScreenCover(isPresented: $showingScanner) {
+                PairingQRScannerView { request in
+                    baseURL = request.baseURL
+                    code = request.code
+                    if !request.label.isEmpty {
+                        label = request.label
+                    }
+                }
+            }
+            .onChange(of: request.id) { _, _ in
+                baseURL = request.baseURL
+                code = request.code
+                label = request.label
+                errorMessage = nil
             }
         }
     }

@@ -153,6 +153,13 @@ async fn a_pairing_code_is_how_a_second_surface_gets_in() {
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.expect("json");
     let code = body["code"].as_str().expect("a code").to_string();
+    let app_url = url::Url::parse(body["app_url"].as_str().expect("an app pairing URL"))
+        .expect("valid app pairing URL");
+    assert_eq!(app_url.scheme(), "hiagent");
+    assert_eq!(app_url.host_str(), Some("pair"));
+    let query: std::collections::HashMap<_, _> = app_url.query_pairs().into_owned().collect();
+    assert_eq!(query.get("url").map(String::as_str), body["url"].as_str());
+    assert_eq!(query.get("code").map(String::as_str), Some(code.as_str()));
 
     // Spending it mints a real credential for the new surface to keep.
     let res = client

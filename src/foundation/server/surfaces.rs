@@ -93,8 +93,23 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
     } else {
         format!("{scheme}://{host}{prefix}")
     };
+    let app_url = pairing_app_url(&url, &code);
     tracing::info!("pairing code minted");
-    axum::Json(serde_json::json!({ "code": code, "url": url, "expires_in": 600 })).into_response()
+    axum::Json(serde_json::json!({
+        "code": code,
+        "url": url,
+        "app_url": app_url,
+        "expires_in": 600
+    }))
+    .into_response()
+}
+
+fn pairing_app_url(core_url: &str, code: &str) -> String {
+    let mut url = url::Url::parse("hiagent://pair").expect("the static pairing URL is valid");
+    url.query_pairs_mut()
+        .append_pair("url", core_url)
+        .append_pair("code", code);
+    url.to_string()
 }
 
 /// `GET /api/surfaces` — the device list. Labels, when each was added, and when
@@ -127,6 +142,29 @@ pub async fn delete_surface(
             tracing::warn!(error = %e, "revoking a surface");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not revoke\n").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod pairing_url_tests {
+    use super::pairing_app_url;
+
+    #[test]
+    fn the_app_pairing_url_round_trips_a_prefixed_core_and_code() {
+        let app_url = pairing_app_url("https://hi-agent.xyz/ana", "code-with_-symbols");
+        let parsed = url::Url::parse(&app_url).expect("app URL");
+        assert_eq!(parsed.scheme(), "hiagent");
+        assert_eq!(parsed.host_str(), Some("pair"));
+
+        let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(
+            query.get("url").map(String::as_str),
+            Some("https://hi-agent.xyz/ana")
+        );
+        assert_eq!(
+            query.get("code").map(String::as_str),
+            Some("code-with_-symbols")
+        );
     }
 }
 

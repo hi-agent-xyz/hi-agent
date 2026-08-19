@@ -26,6 +26,17 @@ The app talks directly to the selected core. It presents its credential to
 The credential never enters JavaScript, `UserDefaults`, a plist, or the
 WebView's storage.
 
+The core's `POST /api/pair` response also includes a `hiagent://pair` URL with
+the core address and one-time code. The Reach view encodes that URL into its QR
+code. iOS accepts the URL from the Camera app or scans it in-app, then shows the
+native pairing form before exchanging the code.
+
+If the web session is rejected, the shell exchanges the Keychain credential
+again and reloads with the new cookie. Foregrounding and network restoration
+also re-check the selected core. Camera and microphone capture requests are
+granted only when WebKit reports the selected core's exact scheme, host, and
+port.
+
 ## Build
 
 On macOS with Xcode installed:

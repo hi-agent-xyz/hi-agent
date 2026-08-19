@@ -41,7 +41,7 @@ const T = {
     revoking: "Revoking…",
     addDevice: "Add a device",
     pairWith: "Open your agent on the other device and enter this code. It lasts ten minutes.",
-    pairAt: "or scan, from a phone on the same network",
+    pairAt: "or scan with the Hi Agent app",
     done: "Done",
   },
   zh: {
@@ -63,7 +63,7 @@ const T = {
     revoking: "收回中…",
     addDevice: "加一台设备",
     pairWith: "在另一台设备上打开你的 agent，输入这个码。十分钟内有效。",
-    pairAt: "或者用同一网络下的手机扫一下",
+    pairAt: "或者用 Hi Agent App 扫码",
     done: "好了",
   },
 };
@@ -187,7 +187,7 @@ function stripScheme(u) {
 // ── the devices ───────────────────────────────────────────────────────────────
 
 function Devices({ list, reload }) {
-  const [pairing, setPairing] = useState(null); // {code, url}
+  const [pairing, setPairing] = useState(null); // {code, url, app_url}
   const [busy, setBusy] = useState("");
 
   async function addDevice() {
@@ -249,7 +249,7 @@ function Devices({ list, reload }) {
               <img
                 style={S.qr}
                 alt=""
-                src={url(`/api/qr?data=${encodeURIComponent(pairing.url)}`)}
+                src={url(`/api/qr?data=${encodeURIComponent(pairing.app_url || pairing.url)}`)}
               />
               <div style={S.hint}>{L.pairAt}</div>
             </>

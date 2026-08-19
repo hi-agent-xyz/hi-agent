@@ -90,4 +90,11 @@ struct CoreSession {
     let entryID: String
     let baseURL: URL
     let cookie: HTTPCookie
+
+    var needsRenewal: Bool {
+        guard let expiresAt = cookie.expiresDate else {
+            return false
+        }
+        return expiresAt.timeIntervalSinceNow < 5 * 60
+    }
 }

@@ -15,6 +15,9 @@
 	A10000000000000000000006 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ContentView.swift */; };
 	A10000000000000000000007 /* CoreWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* CoreWebView.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* Assets.xcassets */; };
+		A10000000000000000000009 /* PairingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* PairingRequest.swift */; };
+		A1000000000000000000000A /* PairingQRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* PairingQRScannerView.swift */; };
+		A1000000000000000000000B /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* NetworkMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +30,9 @@
 		B10000000000000000000007 /* CoreWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreWebView.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B1000000000000000000000A /* PairingRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingRequest.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* PairingQRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingQRScannerView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* HiAgentIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HiAgentIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -57,6 +63,8 @@
 				B10000000000000000000003 /* KeychainStore.swift */,
 				B10000000000000000000004 /* CoreClient.swift */,
 				B10000000000000000000005 /* AppModel.swift */,
+				B1000000000000000000000A /* PairingRequest.swift */,
+				B1000000000000000000000C /* NetworkMonitor.swift */,
 				E10000000000000000000004 /* Views */,
 				B10000000000000000000009 /* Assets.xcassets */,
 				B10000000000000000000008 /* Info.plist */,
@@ -77,6 +85,7 @@
 			children = (
 				B10000000000000000000006 /* ContentView.swift */,
 				B10000000000000000000007 /* CoreWebView.swift */,
+				B1000000000000000000000B /* PairingQRScannerView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -144,6 +153,9 @@
 				A10000000000000000000005 /* AppModel.swift in Sources */,
 				A10000000000000000000006 /* ContentView.swift in Sources */,
 				A10000000000000000000007 /* CoreWebView.swift in Sources */,
+				A10000000000000000000009 /* PairingRequest.swift in Sources */,
+				A1000000000000000000000A /* PairingQRScannerView.swift in Sources */,
+				A1000000000000000000000B /* NetworkMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
