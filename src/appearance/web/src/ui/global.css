@@ -300,13 +300,11 @@ button:not([data-slot]) {
   --z-view: 1;
   --z-cover: 2;
 
-  /* The conversation popover's box. Its measure is a readable line, never a column
-     of two-word wraps, and it gives way to the window on anything small enough that
-     a fixed 420px would run off the edge. Declared on the root rather than on the
-     panel because the input line is a separate fixed box that has to land under it,
-     the same width and the same right edge — one number, two surfaces. The view
-     frame is NOT among them: nothing insets past a popover, which is the whole of
-     what changed when the rail became one. */
+  /* The conversation panel's box — the one it stands in whatever else is on the
+     stage. Its measure is a readable line, never a column of two-word wraps, and
+     it gives way to the window on anything small enough that a fixed 420px would
+     run off the edge. The view frame does not inset past it: nothing does, which
+     is the whole of what changed when the rail became a popover. */
   --hi-pop-width: min(420px, calc(100vw - 40px));
   --hi-pop-right: max(20px, var(--hi-safe-right));
   /* The bottom band's rows, counted from the window's floor: the control cluster
@@ -505,53 +503,43 @@ button:not([data-slot]) {
 }
 
 /* --- The conversation ------------------------------------------------- */
-/* The lead position: the box the card stands in when nothing else is on the
-   stage. Not the card itself — that recipe is on `.hi-chat` below and is the same
-   in both placements. This is the frame, with room left around it: the paper and
-   the presence field keep breathing at its edges, which is what makes the
-   conversation read as floating in the room rather than as the wallpaper.
-
-   No z-index: it sits on the `cover` plane, after the camera and before the
-   controls in DOM order, which is all the ordering it has ever needed. */
-.hi-stage {
-  position: absolute;
-  inset: 0;
-  top: calc(var(--hi-safe-top) + 18px);
-  bottom: calc(var(--hi-safe-bottom) + 64px);
-  padding-inline: 18px;
-  display: flex;
-  justify-content: center;
-  pointer-events: auto;
-}
-
-/* The popover: the same card, in the corner, over the agent's view instead of
-   beside it. It keeps everything the lead position has — the whole scrollback,
-   the line at its foot, the scroll position — in a box that takes none of the
-   view's width, because a view is what is being read while it is up and a
-   conversation that KEEPS can wait in the corner it is opened from.
-
-   Placement only. The surface — border, glass, shadow, radius — used to be
-   declared here, which made the conversation a bounded card over a view and a
-   full-bleed column on the stage: one surface with two looks. It is on `.hi-chat`
-   now, so this rule says where the card goes and nothing about what it is.
+/* The box the card stands in — the ONE box, in every state the conversation has.
+   Not the card itself: that recipe is on `.hi-chat` below.
 
    It rises out of the controls cluster, so it is pinned to that corner rather than
    centred: the button that opens it is directly below its foot, and its right edge
    is that cluster's right edge, `--hi-pop-right` being the same 20px the controls
    sit at. Bounded in height rather than stretched to the window — a panel that
-   reaches the titlebar is a drawer, and a drawer is the shape this is not. */
-.hi-stage.hi-stage--popover {
-  inset: auto;
+   reaches the titlebar is a drawer, and a drawer is the shape this is not.
+
+   There used to be a second box here, `.hi-stage--popover`, and this rule was the
+   *lead position*: the card centred in the room at up to 880px, `inset: 0` minus
+   its margins, for as long as the agent had nothing up. The moment it did, the
+   same card jumped to this corner at half the measure and reflowed — a surface
+   someone was reading, moved and resized by something that happened elsewhere.
+   One box costs the empty room a little grandeur and buys the conversation the
+   thing a record needs most: it stays where it was put. The modifier is gone
+   rather than left always-on, so there is no second geometry to keep in step.
+
+   No z-index: it sits on the `cover` plane, after the camera and before the
+   controls in DOM order, which is all the ordering it has ever needed. */
+.hi-stage {
+  position: absolute;
   right: var(--hi-pop-right);
   bottom: var(--hi-pop-floor);
   width: var(--hi-pop-width);
   height: min(58vh, 560px, calc(100dvh - var(--hi-safe-top) - 148px));
-  padding-inline: 0;
-  animation: hi-popover-in 180ms var(--ease);
+  display: flex;
+  pointer-events: auto;
 }
 
-.hi-stage.hi-stage--popover .hi-chat {
-  width: 100%;
+/* The rise, on the shown state rather than on the element, because the element is
+   never mounted or unmounted: a keyframe attached to `.hi-stage` itself would run
+   once at page load and never again on an open. Newly matching this selector is
+   what starts it, so every open rises out of the corner and every close is
+   instant, which is what a dismissal should feel like. */
+.hi-stage[data-shown="true"] {
+  animation: hi-popover-in 180ms var(--ease);
 }
 
 /* Collapsed to the pill, or a view rendering the words itself. The chat stays
@@ -564,10 +552,9 @@ button:not([data-slot]) {
 }
 
 /* The card, and the whole of it: a title line, the messages, and the line that
-   adds to them standing in the foot. It is the same card in both placements — the
-   middle of the room and the popover's corner — because it is the same
-   conversation; only the box it stands in changes, and that is the compositor's
-   business (`.hi-stage` above).
+   adds to them standing in the foot. It fills its box, which is the same box
+   always (`.hi-stage` above) — so the card has one measure, and a line that wrapped
+   where it did keeps wrapping there when the agent puts a view up behind it.
 
    The line used to be a separately positioned box that this stylesheet held flush
    under the panel by giving it the panel's width and right edge and lifting the
@@ -578,7 +565,7 @@ button:not([data-slot]) {
 .hi-chat {
   display: flex;
   flex-direction: column;
-  width: min(880px, 100%);
+  width: 100%;
   height: 100%;
   text-align: start;
   border-radius: 18px;
@@ -596,15 +583,8 @@ button:not([data-slot]) {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
   padding: 11px 16px;
   border-bottom: 1px solid var(--line);
-}
-
-.hi-chat-mark {
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
 }
 
 .hi-chat-title {
@@ -622,14 +602,17 @@ button:not([data-slot]) {
   min-height: 0;
 }
 
-/* No safe-area inset here: both boxes the foot can sit in already carry one —
-   the panel's floor is `--hi-pop-floor` and the stage's is `.hi-stage`'s own
-   bottom — so adding it again would push the line a notch's worth off its own
-   surface. */
+/* No safe-area inset here: the box the foot sits in already carries one — the
+   panel's floor is `--hi-pop-floor` — so adding it again would push the line a
+   notch's worth off its own surface.
+
+   No rule off the top either. The line is already a bounded box of its own on the
+   card's glass (`.hi-composer` below), so a divider above it was drawing the same
+   boundary twice and cutting the card in half to do it. The messages simply run
+   into the space the line stands in, which is what they do. */
 .hi-chat-foot {
   flex-shrink: 0;
   padding: 10px 12px;
-  border-top: 1px solid var(--line);
 }
 
 /* The composer is shadcn's `InputGroup`; what is set here is the app's own
@@ -784,17 +767,11 @@ button:not([data-slot]) {
    never meet horizontally and the dock owes the right corner nothing. The camera
    pip is the one real conflict: it is 0.75 × its width tall (180-520px wide), so
    it reaches well into the dock's rows and must be stepped past — see below. */
-.hi-stage.hi-stage--captions {
-  inset: auto;
-  top: auto;
-  padding-inline: 0;
+.hi-captions {
+  position: absolute;
   bottom: calc(var(--hi-safe-bottom) + 74px);
   left: max(24px, var(--hi-safe-left) + 24px);
   right: max(24px, var(--hi-safe-right) + 24px);
-  width: auto;
-  height: auto;
-  display: block;
-  transform: none;
   pointer-events: none;
   text-align: center;
   opacity: 1;
@@ -804,11 +781,12 @@ button:not([data-slot]) {
 
 /* Spent. Fades rather than cutting, and only then goes `hidden` — the delay is
    what makes the element non-interactive and unreachable by a screen reader at
-   the end of the fade instead of at the start of it. The base `.hi-stage` hidden
-   rule above cuts straight to `hidden`, which is right for the chat (never
-   animated, mounted for its scroll position) and wrong here; this rule carries a
-   class more to overrule it. */
-.hi-stage.hi-stage--captions[data-shown="false"] {
+   the end of the fade instead of at the start of it. The conversation's own
+   hidden rule cuts straight to `hidden`, which is right there (never animated,
+   mounted for its scroll position) and wrong here — the dock used to share the
+   conversation's class and had to overrule it by specificity. It is its own
+   surface now: `.hi-captions` states nothing but its own. */
+.hi-captions[data-shown="false"] {
   opacity: 0;
   visibility: hidden;
   transition:
@@ -828,8 +806,8 @@ button:not([data-slot]) {
    dead. `visibility: hidden` at the end of the fade does the same job without the
    circle — the cost is a link that stays clickable for the 460ms it is dissolving,
    which is a link doing what it says. */
-.hi-stage.hi-stage--captions[data-shown="false"]:has(.hi-speech-link:hover),
-.hi-stage.hi-stage--captions[data-shown="false"]:has(.hi-speech-link:focus-visible) {
+.hi-captions[data-shown="false"]:has(.hi-speech-link:hover),
+.hi-captions[data-shown="false"]:has(.hi-speech-link:focus-visible) {
   opacity: 1;
   visibility: visible;
   transition: opacity 460ms var(--ease);
@@ -846,15 +824,15 @@ button:not([data-slot]) {
    Read as a gutter it stepped the words ~400px right of centre with nothing in
    the corner to step past. `CameraPreview` renders nothing without a stream, so
    the class is present exactly when the corner is actually occupied. */
-.hi-root:has(.hi-selfview--pip) .hi-stage.hi-stage--captions {
+.hi-root:has(.hi-selfview--pip) .hi-captions {
   left: clamp(220px, calc(24vw + 44px), 584px);
 }
 
-.hi-stage--captions .hi-speech {
+.hi-captions .hi-speech {
   gap: 6px;
 }
 
-.hi-stage--captions .hi-sentence {
+.hi-captions .hi-sentence {
   padding: 8px 18px;
   border-radius: 14px;
   background: var(--caption-bg);
@@ -881,12 +859,12 @@ button:not([data-slot]) {
   overflow: hidden;
 }
 
-.hi-stage--captions .hi-sentence--prev {
+.hi-captions .hi-sentence--prev {
   opacity: 0.45;
   color: var(--caption-fg);
 }
 
-.hi-stage--captions .hi-sentence--user {
+.hi-captions .hi-sentence--user {
   color: var(--caption-user);
 }
 
@@ -1231,8 +1209,8 @@ button:not([data-slot]) {
   /* Too narrow to step past the camera pip and still leave a readable measure:
      the caption takes the full width and simply sits over the pip's top edge.
      Both selectors, because the stepped-past rule outranks the plain one. */
-  .hi-stage.hi-stage--captions,
-  .hi-root:has(.hi-selfview--pip) .hi-stage.hi-stage--captions {
+  .hi-captions,
+  .hi-root:has(.hi-selfview--pip) .hi-captions {
     left: 14px;
     right: 14px;
     bottom: calc(var(--hi-safe-bottom) + 66px);
@@ -1325,17 +1303,14 @@ button:not([data-slot]) {
    captions up, shrink the type, reclaim the reserved bottom band, and tighten the
    control buttons so the whole face fits ~380x540. Wide windows are unaffected. */
 @media (max-width: 420px) {
-  /* The only `.hi-stage` override, and it moves the card's margins, never its
-     size. The lead position used to be pulled to `top: 46%` and `width: 92vw`,
-     which was right when the lead was a couple of floating sentences and wrong
-     once it became the chat — it squashed the conversation into the lower half of
-     an already small window. The lead position wants the whole frame at every
-     size; at this width the gap it leaves around the card is decoration, so it
-     narrows. The popover needs nothing: `--hi-pop-width` already resolves to the
-     window minus its margins, so it lands as a full-width sheet. */
-  .hi-stage:not(.hi-stage--popover):not(.hi-stage--captions) {
-    top: calc(var(--hi-safe-top) + 8px);
-    padding-inline: 8px;
+  /* The panel is already a full-width sheet at this width — `--hi-pop-width`
+     resolves to the window minus its margins — so all it wants here is the rest
+     of the height. On a 380x540 menu-bar popover the desktop's `58vh` leaves the
+     top half of the whole app empty; there is nothing behind it to keep in view,
+     because at this size the panel IS the face. Still one box: this is the
+     window's size deciding, never what the agent has up. */
+  .hi-stage {
+    height: calc(100dvh - var(--hi-safe-top) - var(--hi-pop-floor) - 8px);
   }
   .hi-sentence {
     font-size: clamp(15px, 5vw, 24px);
@@ -1343,7 +1318,7 @@ button:not([data-slot]) {
   .hi-sentence--user {
     font-size: clamp(14px, 4.4vw, 21px);
   }
-  .hi-stage--captions .hi-sentence {
+  .hi-captions .hi-sentence {
     font-size: clamp(14px, 4.4vw, 22px);
   }
   .hi-view-fill {

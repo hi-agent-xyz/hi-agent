@@ -49,11 +49,11 @@ import { SenderAvatar } from "./Avatar";
  * the line that adds to them open, move and go away together, which is what lets
  * one control own the whole of it — see `docs/arch/stage.md`.
  *
- * **It is a card in both of its placements** — a title line, the messages, the
- * line being written — and the compositor decides only which box the card stands
- * in: the middle of the room, or the popover's corner over a view. The card was
- * previously the popover's own surface, so the same conversation was a bounded
- * panel over a view and a full-bleed column on the stage.
+ * **It is a card, and it stands in one box** — a title line, the messages, the
+ * line being written, in the panel the compositor keeps in the same corner at the
+ * same measure whatever else is on the stage (`core/layout.ts`). It used to have
+ * two placements, the middle of the room and a corner over a view, and the agent
+ * putting something up moved and reflowed it mid-read.
  */
 
 /** A run of consecutive messages from one sender, rendered as one cluster. */
@@ -210,14 +210,19 @@ export function Chat({ messages, interim, onLoadOlder, children }: ChatProps) {
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
       <div className="hi-chat">
-        {/* One line, and it names who is on the other side of the conversation.
+        {/* One line, and it names the surface: this card is the conversation.
             Nothing else belongs in it: there is no thread to title (the record is
             one append-only list — `docs/arch/text-transcript.md`), so no "new
             chat" to offer beside it, and the agent's current state is the status
-            button's job in the controls cluster. */}
+            button's job in the controls cluster.
+
+            It used to name the other side — the app's mark and "Hi Agent" — which
+            is a messenger's habit and wrong here: there is exactly one agent, its
+            face is in the window's own title, and the card sits over the agent's
+            own views. The mark went with the name; a badge on a panel that is
+            always the same panel is decoration on a row that is already a row. */}
         <header className="hi-chat-head">
-          <img src={url("/icon.svg")} alt="" className="hi-chat-mark" />
-          <span className="hi-chat-title">Hi Agent</span>
+          <span className="hi-chat-title">Conversation</span>
         </header>
         <MessageScroller className="hi-chat-scroller">
           <ScrollbackTrigger

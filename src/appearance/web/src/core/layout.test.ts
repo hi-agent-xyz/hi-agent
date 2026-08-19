@@ -7,7 +7,6 @@ import { stage, type StageInput } from "./layout";
 
 const at = (over: Partial<StageInput> = {}): StageInput => ({
   content: false,
-  camera: false,
   ownsConversation: false,
   collapsed: false,
   ...over,
@@ -16,16 +15,24 @@ const at = (over: Partial<StageInput> = {}): StageInput => ({
 describe("stage", () => {
   it("nothing on the stage → the conversation is the face", () => {
     const s = stage(at());
-    expect(s.conversation).toBe("stage");
+    expect(s.conversation).toBe("popover");
     expect(s.demote).toBe(0);
   });
 
   // The defect this whole design exists for: a view used to collapse the
   // conversation to its newest line, and the only way back was to close the view.
-  it("a view on screen → the conversation moves over it, it does not collapse", () => {
+  it("a view on screen → the conversation stays over it, it does not collapse", () => {
     const s = stage(at({ content: true }));
     expect(s.conversation).toBe("popover");
     expect(s.demote).toBe(0.72);
+  });
+
+  // The point of the one box: the answer for the conversation does not depend on
+  // what the agent has up. It used to be `stage` on an empty room and `popover`
+  // the moment something appeared — two measures, and the switch between them
+  // landed while someone was reading.
+  it("what the agent puts up never moves the conversation", () => {
+    expect(stage(at()).conversation).toBe(stage(at({ content: true })).conversation);
   });
 
   it("the person puts it away → the pill, and the line being written goes with it", () => {
@@ -51,18 +58,15 @@ describe("stage", () => {
     expect(stage(at({ content: true, collapsed: true })).conversation).toBe("pill");
   });
 
-  // The camera is full-bleed as a backdrop, so leaving the conversation on the
-  // stage over it would cover the thing the person turned on to see.
-  it("the camera backdrop occupies the stage, so the conversation floats over it", () => {
-    const s = stage(at({ camera: true }));
-    expect(s.conversation).toBe("popover");
+  // The self-view is full-bleed as a backdrop; the conversation floats in its
+  // corner over it, which is where it floats over everything else too. Whether the
+  // camera is *on* is not an input any more — it was read only to decide that the
+  // stage was "occupied", and there is no second box left to be pushed out of.
+  it("the camera is the backdrop until a view leads, and moves nothing else", () => {
+    const s = stage(at());
     expect(s.camera).toBe("fill");
     expect(s.demote, "the camera is the person's own surface, not content").toBe(0);
-  });
-
-  it("the camera shrinks to a pip once a view leads", () => {
-    expect(stage(at({ content: true, camera: true })).camera).toBe("pip");
-    expect(stage(at({ camera: true })).camera).toBe("fill");
+    expect(stage(at({ content: true })).camera).toBe("pip");
   });
 
   it("a view that renders the words itself stands the host down", () => {
@@ -72,7 +76,7 @@ describe("stage", () => {
   });
 
   it("a view's claim on the words means nothing once it is gone", () => {
-    expect(stage(at({ ownsConversation: true })).conversation).toBe("stage");
+    expect(stage(at({ ownsConversation: true })).conversation).toBe("popover");
   });
 
   // The claim is the view's, not the person's: standing the host down is not the

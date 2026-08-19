@@ -38,8 +38,9 @@ import { ViewsBand } from "./ViewsBand";
  * top of `view` and no further.
  *
  * Placement is one job, and `composeStage` is the whole of it: it decides
- * *geometry* — panel or pill, fill or pip — and never who covers whom, which is
- * static. It also decides placement, **never lifecycle**: `<Chat>` and
+ * *geometry* — panel, pill or stood down; fill or pip — and never who covers
+ * whom, which is static. Its answer for the conversation is one box: the panel
+ * does not change measure or corner when the agent puts something up. It also decides placement, **never lifecycle**: `<Chat>` and
  * `<CameraPreview>` are mounted ONCE here, above the swappable `ViewSlot`, and
  * the pass only flips their props and classes. They must never move into
  * `ViewSlot` or a conditional branch — re-mounting `<CameraPreview>` re-acquires
@@ -73,16 +74,14 @@ export function Shell() {
   const top = views[views.length - 1];
   const layout = composeStage({
     content: views.length > 0,
-    camera: !!ch.visionStream,
     ownsConversation: top?.traits?.owns_conversation ?? false,
     collapsed: !ch.text,
   });
 
-  // The conversation is shown as itself in two of its four states; the pill is a
+  // The conversation is shown as itself in one of its three states; the pill is a
   // different rendering of the same list, and `hidden` is a view having taken the
   // words over. `<Chat>` stays mounted through all of them.
-  const chatShown = layout.conversation === "stage" || layout.conversation === "popover";
-  const popover = layout.conversation === "popover";
+  const chatShown = layout.conversation === "popover";
 
   const handoff = useHandoff({
     // Whether there is a line on screen to paste into. Since the line lives in
@@ -94,34 +93,45 @@ export function Shell() {
     pasteIntoTextInput,
   });
 
-  // A popover is dismissed by reaching past it: Escape, or a press on anything
-  // behind it. One exclusion, the controls cluster — whose toggle would otherwise
-  // close on the press and reopen on the click. The line being written needs no
-  // exclusion of its own any more: it is inside the panel, so `contains` already
-  // covers it. Escape defers to whoever already handled it, so clearing a
-  // half-typed line closes the line and leaves the conversation up.
+  // Escape puts the conversation away, in every state it is up in. It defers to
+  // whoever already handled it, so clearing a half-typed line closes the line and
+  // leaves the conversation up.
   //
-  // Escape arrives through `onHostKey` rather than a `window` listener, because a
-  // key pressed in the panel is chrome's and stops at the document — one node
-  // short of the window (`lib/keyboard.ts`). It also means a view holding the
-  // focus keeps its own Escape.
+  // Through `onHostKey` rather than a `window` listener, because a key pressed in
+  // the panel is chrome's and stops at the document — one node short of the window
+  // (`lib/keyboard.ts`). It also means a view holding the focus keeps its own
+  // Escape.
   useEffect(() => {
-    if (!popover) return;
-    const releaseKey = onHostKey((event) => {
+    if (!chatShown) return;
+    return onHostKey((event) => {
       if (event.key === "Escape" && !event.defaultPrevented) setTextChannel(false);
     });
+  }, [chatShown, setTextChannel]);
+
+  // The other dismissal: a press on what is behind the panel. Armed only while
+  // there IS something behind it — a view. With nothing on the stage the press
+  // lands on bare paper, and the room is not a thing anyone reaches past the
+  // conversation for; a click to focus the window would put the record away.
+  // (Before the panel became the conversation's only box, this was the same
+  // condition by accident: the box existed only while a view did.)
+  //
+  // Host chrome is never "behind": the controls cluster, whose toggle would
+  // otherwise close on the press and reopen on the click, and the views band that
+  // cluster opens — picking a view there is how a view gets on the stage, and
+  // putting one up must not take the conversation down with it. The line being
+  // written needs no exclusion of its own: it is inside the panel, so `contains`
+  // already covers it.
+  useEffect(() => {
+    if (!chatShown || views.length === 0) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (popoverRef.current?.contains(target as Node)) return;
-      if (target?.closest?.(".hi-channels")) return;
+      if (target?.closest?.(".hi-channels, .hi-views-band")) return;
       setTextChannel(false);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
-    return () => {
-      releaseKey();
-      window.removeEventListener("pointerdown", onPointerDown, true);
-    };
-  }, [popover, setTextChannel]);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [chatShown, views.length, setTextChannel]);
 
   // The pill shows the newest thing said, or the line currently being recognized
   // if one is in flight — the same tail the chat ends on. It is a caption, so it
@@ -164,14 +174,15 @@ export function Shell() {
       <div className="hi-plane hi-plane--cover">
         <CameraPreview stream={ch.visionStream} pip={layout.camera === "pip"} />
 
-        {/* PINNED — the conversation. One list, mounted once, drawn three ways:
-            the whole frame when nothing else is up, a popover over a view, and
-            hidden behind the pill when put away. `data-shown` is a visibility
-            flip and not a branch, so the scroller keeps its position and its
-            already-fetched scrollback across every transition. */}
+        {/* PINNED — the conversation. One list, mounted once, standing in ONE box:
+            the same panel in the same corner at the same measure whether or not
+            the agent has a view up, so nothing it shows moves the thing being
+            read. `data-shown` is a visibility flip and not a branch, so the
+            scroller keeps its position and its already-fetched scrollback across
+            every transition. */}
         <div
           ref={popoverRef}
-          className={popover ? "hi-stage hi-stage--popover" : "hi-stage"}
+          className="hi-stage"
           data-shown={chatShown ? "true" : "false"}
           aria-hidden={chatShown ? undefined : true}
         >
@@ -195,7 +206,7 @@ export function Shell() {
           // With the camera off the words then stepped past nothing and sat
           // ~400px right of centre.
           <div
-            className="hi-stage hi-stage--captions"
+            className="hi-captions"
             data-shown={captionShown ? "true" : "false"}
             aria-hidden={captionShown ? undefined : true}
           >

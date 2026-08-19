@@ -102,16 +102,24 @@ describe("the avatar column", () => {
 
 describe("the card", () => {
   // The shape borrowed from shadcn's own chat: a title line, the messages, the
-  // line being written. Same card in both placements — only the box it stands in
-  // changes, which is the compositor's business and not this component's.
-  it("names who the conversation is with, above the messages", () => {
+  // line being written. One card in one box — where that box is is the
+  // compositor's business and not this component's.
+  it("names the surface, above the messages", () => {
     const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
 
     const title = html.indexOf('class="hi-chat-head"');
     const scroller = html.indexOf('data-slot="message-scroller"');
     expect(title).toBeGreaterThanOrEqual(0);
-    expect(html).toContain("Hi Agent");
+    expect(html).toContain("Conversation");
     expect(title, "the title is the card's first row").toBeLessThan(scroller);
+  });
+
+  // It named the other side — the app's mark and "Hi Agent" — which is a
+  // messenger's habit: there is one agent, its face is the window's own title,
+  // and a badge on a panel that is always the same panel is decoration.
+  it("carries no mark beside the title", () => {
+    const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
+    expect(html).not.toContain("icon.svg");
   });
 });
 

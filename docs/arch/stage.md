@@ -18,7 +18,10 @@ screenshots*. Both are argued in *Going back to a view the agent has moved past*
 *The tile is a picture of the raise*. **Amended the same day — the keyboard follows the
 planes:** the plane the focus is in owns the keystroke, so a view can no longer take a key
 typed into the host's own line or controls; argued in *The keyboard follows the planes*.
-Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+**Amended August 19, 2026 — the conversation stands in one box:** the panel keeps the same
+corner and the same measure whether or not the agent has a view up, so the `stage`
+presentation is gone and with it the jump the person saw whenever something went up;
+argued in *One box, whatever else is on the stage*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -67,7 +70,7 @@ compiler, the module cache, or the ref resolver.
 
 | Role | Owner | How it is written | Placement |
 |---|---|---|---|
-| `conversation` | the host — always present | nothing writes it | the stage alone · a popover over content · the pill when put away |
+| `conversation` | the host — always present | nothing writes it | one popover panel, in the corner the controls hold · the pill when put away |
 | `content` | the agent | `hi_show` / `replace` / `dismiss` → `ViewBus::apply` | the stage, whole |
 | `condition` | the process | level-driven `ViewBus::reconcile` | over everything, full-bleed |
 | `self` | the person's camera channel | the channel being on | the backdrop alone · a pip otherwise |
@@ -81,16 +84,19 @@ placement is fixed and host-decided. Nothing here reopens `region` / `size`, whi
 deleted: a view is handed a frame and owns all of it. Under the amendment the frame is the
 whole stage again in every state — the conversation covers it rather than shortening it.
 
-### 3. The conversation has three presentations, one mount
+### 3. The conversation has two presentations, one mount
 
 | Presentation | When | What is on screen |
 |---|---|---|
-| **stage** | nothing in `content` | the card, centred in the room with the paper breathing at its edges — the default face |
-| **popover** | `content` is up and the person has not put it away | the chat in a fixed-measure panel over the content, rising out of the controls' corner; full scrollback, and the line being written standing in its foot |
-| **pill** | the person put the popover away | the newest line, floating over the content while it is fresh, then gone — a caption |
+| **popover** | the person has not put it away | the chat in a fixed-measure panel in the controls' corner, over the content if there is any and over the room if there is not; full scrollback, and the line being written standing in its foot |
+| **pill** | the person put the popover away | the newest line, floating over whatever is behind it while it is fresh, then gone — a caption |
+
+*Three until August 19: a **stage** presentation held the card centred in the room while
+`content` was empty, and the panel was what it became when something went up. That is the
+box that is gone — see* One box, whatever else is on the stage.
 
 `SpeechText` survives exactly here: **the pill is the conversation collapsed, not a
-separate surface.** One source, three presentations, and the person moves between them.
+separate surface.** One source, two presentations, and the person moves between them.
 
 **The input is in the conversation** — the last clause of that sentence started as *the
 input follows the conversation*, which was three placements kept in step by hand; it is
@@ -101,9 +107,10 @@ one surface now. See *The line is inside the conversation*.
 *August 17: this section replaced one called **The rail**, which specified a ~400px column
 beside the content, built and shipped that way. What it argued, and why it lost, is below.*
 
-The conversation opens as a panel over the content, pinned to the **bottom right**, rising
-out of the button that opens it. Not a column beside the content, which is what this
-document originally specified and what was built.
+The conversation opens as a panel pinned to the **bottom right**, rising out of the button
+that opens it — over the content when there is content, over the room when there is not.
+Not a column beside the content, which is what this document originally specified and what
+was built.
 
 **Why the rail lost.** The rail was priced as "the conversation narrows rather than
 degrades", and that price was right for the surface and wrong for the window. It cost the
@@ -138,6 +145,48 @@ so clearing a half-typed line closes the line and leaves the conversation up; th
 behind ignores the controls cluster, which is the panel's own button standing in its own
 box. The line needs no exclusion any more: it is inside the panel, so *behind it* already
 excludes it.
+
+**The two dismissals answer to different conditions (August 19).** Escape is live whenever
+the conversation is up — including with nothing on the stage, where it is the keyboard's way
+to the same put-away the control does. The press-behind is live only while there *is*
+something behind it: with an empty stage the press lands on bare paper, and the room is not
+a thing anyone reaches past the conversation for — a click to focus the window would put the
+record away. Until August 19 that condition came for free, because the panel only existed
+while a view did. **Host chrome is never "behind"**: the controls cluster and the views band
+it opens are both excluded, since picking a view in the band is *how a view gets on the
+stage*, and putting one up must not take the conversation down with it.
+
+## One box, whatever else is on the stage
+
+*August 19: the `stage` presentation is deleted. The panel above is where the conversation
+is, always — same corner, same measure, whether the agent has a view up or nothing at all.*
+
+Until now there were two boxes, and the pass chose between them by *what else was on
+screen*: an empty stage got the card centred in the room at up to 880px; a view or a live
+camera moved it to the corner at ~420px. The trigger for that move is the problem. **The
+person is not the one who fires it** — the agent is, by showing something — and it fires
+onto a surface they may be in the middle of reading or typing into. A slide goes up and the
+conversation halves its measure, rewraps every line, relocates its scroller and re-lays the
+line being written, all under the eye. Every account of what this surface is for says the
+opposite: it is the durable one, the one that *keeps*
+([`text-transcript.md`](text-transcript.md)), the one thing the agent must not be able to
+disturb by deciding to show something.
+
+Two boxes also cost twice everywhere else. Two geometries in the stylesheet with a
+`:not(…)` narrow-window override to keep them apart; a card sized `min(880px, 100%)` in one
+and `100%` in the other; an entrance animation that fired on a *class change*, so it played
+when a view appeared and never when someone actually opened the conversation; and a
+`camera` input to the pass that existed only to say "the room is busy, move the card".
+All of it is gone with the second box.
+
+**What the empty room loses.** Grandeur: with nothing up, the face is now paper, presence,
+and a 420px panel in the corner rather than a wide card in the middle. That is a real loss
+and it is the price. It buys a conversation that is exactly where it was left — and the
+room was never the thing that had to be defended; the record was.
+
+**What did not change:** the panel is still up by default, still carries the whole
+scrollback and the line, still dismissable, still comes back on any printable key. The pill
+is unchanged. A view that owns the conversation still stands the whole surface down.
 
 ## The pill is timed
 
@@ -212,26 +261,34 @@ is the room and a line that fades; and the button is the **text channel's**, whi
 the one control in the cluster that goes dead in the state where its channel is the whole
 face.
 
-### The conversation is a card, in both placements
+### The conversation is a card
 
 The shape is [shadcn's own chat](https://ui.shadcn.com/docs/components/base/message-scroller):
-**a card — a one-line title, the messages, the line being written.** It is the same card
-wherever the conversation is; the compositor decides only which box it stands in, the middle
-of the room or the corner over a view.
+**a card — a one-line title, the messages, the line being written.** It fills the one box
+the compositor keeps for it (*One box, whatever else is on the stage*), so the card has a
+single measure and the recipe — border, glass, shadow, radius — is stated once, on
+`.hi-chat`.
 
-That is a change to the lead position, not to the popover. The card recipe — border, glass,
-shadow, radius — was declared on `.hi-stage--popover`, so the same conversation was a
-bounded card over a view and a full-bleed column on the stage: one surface with two looks,
-and the look depended on whether the agent happened to have something up. The recipe is on
-`.hi-chat` now and the placement rules say nothing about what the card is. The lead position
-keeps a margin around it so the paper and the presence field stay visible at its edges, which
-is what makes the conversation float in the room rather than *be* the room.
+*Written August 18 as "a card in both placements", when the card had a lead position in the
+middle of the room and a popover position over a view, and the point was that the two looked
+the same. There is one placement now, which is the same point taken further.*
 
-**The title names who the conversation is with, and holds nothing else.** There is no thread
-to title — the record is one append-only list ([`text-transcript.md`](text-transcript.md)) —
-so there is no "new chat" to offer beside it either, and the agent's current state is the
-status button's job in the controls cluster. A header that repeated any of those would be
-chrome charging rent on a panel that is already bounded in height.
+**The title names the surface, and holds nothing else.** It reads *Conversation*. There is
+no thread to title — the record is one append-only list
+([`text-transcript.md`](text-transcript.md)) — so there is no "new chat" to offer beside it
+either, and the agent's current state is the status button's job in the controls cluster. A
+header that repeated any of those would be chrome charging rent on a panel that is already
+bounded in height.
+
+*It named the other side until August 19 — the app's mark and "Hi Agent" — which is a
+messenger's habit and reads wrong here. There is exactly one agent; its name is already in
+the window's title and its face is the room. A card standing over the agent's own views does
+not need to introduce it, and a mark on a panel that is always the same panel is decoration
+on a row whose whole job is to say what the panel is.*
+
+**The foot draws no rule above the line.** The line being written is already a bounded box
+on the card's glass, so a divider over it drew the same boundary twice and cut the card in
+half to do it. The messages run into the space the line stands in.
 
 **Any printable key brings it back** and seeds the first character, which is the safety net
 under all of this — the way in never depends on finding the control, so putting the
@@ -249,8 +306,8 @@ surface down.
 
 ## Who decides the presentation
 
-- **By default, nobody:** it is derived — `content` present → popover; no content → stage;
-  put away → pill.
+- **By default, nobody:** it is derived — up → the popover, wherever the person left it;
+  put away → pill; a view claiming the words → neither.
 - **The person** shows the conversation or puts it away from the text channel's control in
   the cluster — one control, in every state — and dismisses the popover with Escape or a
   press behind it.
@@ -394,26 +451,27 @@ deterministic, no solver, unit-tested in `core/layout.test.ts`):
 ```ts
 stage({
   content: boolean,          // the agent's view is up
-  camera: boolean,           // the self view is live
   ownsConversation: boolean, // the topmost content view renders the words itself
   collapsed: boolean,        // the person put the conversation away
 }): {
-  conversation: "stage" | "popover" | "pill" | "hidden";
+  conversation: "popover" | "pill" | "hidden";
   camera: "fill" | "pip";
   demote: number;            // presence fade, unchanged
 }
 ```
 
 **Nothing in the input is a measurement.** `width` left with the rail's threshold, and
-`condition` never landed — the notice is a view on the `view` plane and changes no
+`condition` never landed. `camera` left with the second box: it was read only to decide the
+stage was *occupied* and so push the conversation out of the middle of the room, and there
+is no middle of the room to be pushed out of any more — the notice is a view on the `view` plane and changes no
 geometry. What remains is what is on screen and what the person asked for, which is the
 whole of what placement depends on.
 
 **Presentation changes are a class flip, never a remount.** The rule
 [`Shell.tsx:26`](../../src/appearance/web/src/ui/Shell.tsx) already states for the camera
 now covers the chat: `<Chat>` and `<CameraPreview>` are mounted once, above `ViewSlot`, and
-the pass only changes their props and classes. Remounting the chat on a stage→popover
-transition would throw away the scroll position and every page of scrollback already
+the pass only changes their props and classes. Remounting the chat on a presentation
+change would throw away the scroll position and every page of scrollback already
 fetched through `/api/messages?before=`, which would make moving between presentations
 cost a round trip and land the person somewhere they did not ask to be. The popover is a
 class on that same element for exactly this reason — a portal or a `<dialog>` would be a
@@ -668,6 +726,10 @@ the agent can read but not act on.
   taken knowingly: a board's own right-hand column can be behind it, and the way to see it
   is the same gesture that opened the panel. The alternative was occluding nothing and
   paying a third of the window all the time.
+- **The empty room is no longer a wide card in the middle of it** — the panel keeps its
+  corner and its ~420px whether or not anything is behind it. The grandeur is the price of
+  the conversation never being moved by something the agent did (*One box, whatever else is
+  on the stage*).
 - The content view is handed the whole frame in every state, so it no longer reflows when
   the conversation opens. (Under the rail this was the opposite consequence: *"a view built
   assuming the full window reflows"*.)
@@ -735,6 +797,19 @@ Built on `design/stage`, in this order:
    claim is about event order, which a unit test of the routing cannot see: a Space typed
    into the line lands in the line and does not page the deck, and the same Space with the
    focus anywhere else still pages it.
+
+10. **One box, and the card names itself (August 19)** — `stage()` loses the `stage`
+   answer and the `camera` input; `Conversation` is three words, not four. The stylesheet
+   loses `.hi-stage--popover` (its geometry folds into `.hi-stage`, which is now the panel),
+   the `min(880px, 100%)` card width, and the narrow-viewport `:not(…)` override that
+   existed only to nudge the lead position's margins. The rise moves onto
+   `[data-shown="true"]`, so it plays on an *open* rather than on the class change that used
+   to mean "a view appeared". The captions dock stops borrowing `.hi-stage` and becomes
+   `.hi-captions`, dropping the seven declarations that undid the box it never wanted. The
+   card's title row loses the mark and reads *Conversation*; its foot loses the rule above
+   the line. Escape arms whenever the conversation is up; the press-behind keeps its old
+   condition — something actually behind the panel — and now spares the views band as well
+   as the controls cluster.
 
 **Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
 the wire vocabulary — it has no server-side existence to name, so this is naming, not

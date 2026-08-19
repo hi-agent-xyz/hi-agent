@@ -17,17 +17,21 @@
 // blacks out the feed; re-mounting the chat throws away the scroll position and
 // every page of scrollback already fetched.
 
-/** How the conversation is presented. One surface, four states — not four surfaces.
+/** How the conversation is presented. One surface, three states — not three surfaces.
  *
- * - `stage`   — it fills the frame: the default face.
- * - `popover` — a panel over the agent's view, in the corner the controls hold,
- *               carrying the full scrollback and, in its foot, the line being
- *               written.
- * - `pill`    — collapsed to the newest line, floating over the view. A caption
- *               and not a shelf: it shows while the line is worth reading and
- *               then fades, because what it holds is a copy of something the
- *               list behind it keeps. The dwell is the shell's (`ui/caption.ts`);
- *               this pass says where the pill goes, never how long it stays.
+ * - `popover` — the panel in the corner the controls hold, carrying the full
+ *               scrollback and, in its foot, the line being written. **The only
+ *               box the conversation ever stands in**, whether or not the agent
+ *               has something up: it used to fill the frame while the stage was
+ *               empty and jump to the corner the moment a view appeared, so the
+ *               agent showing a slide moved and resized the thing being read,
+ *               mid-read. One box, one measure, always.
+ * - `pill`    — collapsed to the newest line, floating over whatever is behind it.
+ *               A caption and not a shelf: it shows while the line is worth
+ *               reading and then fades, because what it holds is a copy of
+ *               something the list behind it keeps. The dwell is the shell's
+ *               (`ui/caption.ts`); this pass says where the pill goes, never how
+ *               long it stays.
  * - `hidden`  — a view is rendering the words itself.
  *
  * Putting it away puts *all* of it away, the line included, because the line is
@@ -40,7 +44,7 @@
  * of that time — overlaying on demand costs the view nothing while it is closed.
  * See `docs/arch/stage.md`.
  */
-export type Conversation = "stage" | "popover" | "pill" | "hidden";
+export type Conversation = "popover" | "pill" | "hidden";
 
 /** The self-view fills the frame when nothing else is on it, else a corner pip. */
 export type Camera = "fill" | "pip";
@@ -48,8 +52,6 @@ export type Camera = "fill" | "pip";
 export interface StageInput {
   /** The agent has a view up. */
   content: boolean;
-  /** The camera channel is live. */
-  camera: boolean;
   /** The top-most view renders the conversation itself. */
   ownsConversation: boolean;
   /** The person put the conversation away — the text channel's own on/off. A
@@ -60,6 +62,9 @@ export interface StageInput {
 
 export interface Stage {
   conversation: Conversation;
+  /** Where the self-view goes — the backdrop, or a corner pip once a view leads.
+   * Whether the camera is *on* is not an input: nothing here depends on it, and
+   * `CameraPreview` draws nothing without a stream either way. */
   camera: Camera;
   /** How far to fade the presence while something leads. */
   demote: number;
@@ -69,10 +74,19 @@ export interface Stage {
  * Arrange the stage.
  *
  * The conversation yields the *frame* to whatever the agent puts up, and never the
- * *screen*: it becomes a panel over the view rather than degrading, because it is
- * the one surface that keeps — see `docs/arch/text-transcript.md`. It collapses to
- * the pill only when the person asks, and disappears only when a view has taken
+ * *screen*: it stands in its panel over the view rather than degrading, because it
+ * is the one surface that keeps — see `docs/arch/text-transcript.md`. It collapses
+ * to the pill only when the person asks, and disappears only when a view has taken
  * over rendering the words.
+ *
+ * **What is on the stage no longer moves it.** The pass used to answer `stage` on
+ * an empty room and `popover` once a view or the camera was up — two boxes, two
+ * measures, and the switch between them happened *while someone was reading*: the
+ * agent putting a slide up pulled the conversation out from under the eye and
+ * re-laid it in a corner a third the size. Now `content` and `camera` decide only
+ * what is *behind* the panel, never where the panel is. The only inputs left that
+ * move the conversation are the person's own put-away and a view's claim on the
+ * words.
  *
  * **Asking works with nothing on the stage too**, and that is a reversal: the pass
  * used to ignore `collapsed` unless something else was up, on the reasoning that
@@ -87,22 +101,14 @@ export interface Stage {
  * window cannot be split into two usable columns — but a popover splits nothing,
  * so the same gesture works at every size and a narrow window gets the whole
  * scrollback rather than only the newest line.
- *
- * The camera counts as occupying the stage for the same reason a view does: the
- * self-view is full-bleed, so leaving the conversation on the stage over it would
- * cover the thing the person turned on to see.
  */
 export function stage(input: StageInput): Stage {
-  const occupied = input.content || input.camera;
-
   const conversation: Conversation =
     input.content && input.ownsConversation
       ? "hidden"
       : input.collapsed
         ? "pill"
-        : occupied
-          ? "popover"
-          : "stage";
+        : "popover";
 
   return {
     conversation,
