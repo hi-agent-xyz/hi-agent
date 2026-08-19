@@ -425,9 +425,15 @@ was cancelled in a batch one minute after a reflection that named it as on duty;
 kept running for a day, and a failed self-heal spawned four hundred and sixty-one orphaned
 processes in twenty-five minutes without one word being said — because the `verify:` that would have caught it
 belonged to a row that closing had removed from view. **A cancel that silences the only check
-on a thing is not a cancel, it is a blindfold.** So `verify:` goes on being run for a while
-after a `serving` row closes, and a duty whose machinery still answers is reported to the
-manager as exactly that.
+on a thing is not a cancel, it is a blindfold.**
+
+**So a recently-closed `serving` row keeps its place in the manager's window** — closed when,
+carrying a `verify:`, and not checked since. The store does not run the check and cannot: a
+`verify:` is **prose**, and deliberately so, because it has to name a *result* rather than an
+existence — *"at least one has been opened and looked at"*, *"三条齐才算活着"*. That is what
+stops *"a job with this id exists"* passing forever, and it is also what makes the field
+unrunnable by anything but a mind. So the split here is the same as everywhere else in this
+section: the store can see that nobody has looked, and says so; the looking is the manager's.
 
 Reflection owns `facets/` and rewrites facets whole — so the one rule that keeps this safe is
 guidance, not a rail: it may read the `tasks` dimension freely, and may notice that something

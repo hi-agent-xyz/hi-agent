@@ -62,12 +62,20 @@ is an absent field, indistinguishable from a task that never moved.
 
 **Still to build, in order:**
 
-1. **`verify:` outlives a closed `serving` row** — a duty whose machinery still answers is
-   reported, not silently dropped. **The most valuable thing left here**, and the one that would
-   have caught `feishu-it-group-watcher`: cancelled 60s after a reflection named it as on duty,
-   machinery still running a day later, a failed self-heal spawning **461 orphaned processes in
-   25 minutes** (708 MB) with nothing said — because closing had removed the only `verify:` from
-   view.
+1. **A recently-closed `serving` row keeps its place in the manager's window** — closed when,
+   carrying a `verify:`, not checked since. **The most valuable thing left here**, and the one
+   that would have caught `feishu-it-group-watcher`: cancelled 60s after a reflection named it
+   as on duty, machinery still running a day later, a failed self-heal spawning **461 orphaned
+   processes in 25 minutes** (708 MB) with nothing said — because closing had removed the only
+   `verify:` from view.
+
+   **Re-specified 2026-08-19, and the correction is the buildable part.** The first wording said
+   the store re-runs `verify:` after a close. It cannot. Every `verify:` in the live store is
+   prose — bilingual, multi-clause, naming a *result*: *"at least one has been OPENED and looked
+   at"*, *"三条齐才算活着"*, *"有一句这个空白到底在哪的判断"*. That is precisely what stops *"a
+   job with this id exists"* from passing forever, and precisely what makes the field unrunnable
+   by anything but a mind. So the store surfaces the staleness and the manager does the looking —
+   the same split as everywhere else here.
 2. **The pass reports what it cannot fix** — misfiled `verify:`, unknown status words, a task
    directory with no row, a closed record with no instant to date it — into the manager's window
    **as facts, never as refusals**.
@@ -79,6 +87,19 @@ is an absent field, indistinguishable from a task that never moved.
    reachable list still renders that as *not linked to any task* — the line that means "staff
    this" — so the manager trips that alarm on itself every glance-up. The prompts say to omit
    `subject`; nothing enforces it.
+5. **Nothing starts a manager.** No code path creates one, nothing checks that one ran, nothing
+   notices if none ever does — `git grep TaskManager` outside the enum returns nothing. The
+   chain is *pulse fires* (code) → *Cognition starts a manager* (prompt) → *manager files*
+   (prompt), and two of the three links are prose. Same lever as (1) and it belongs beside it:
+   the window carries *"N tasks past the idle boundary; no manager has run since X"*. Cognition
+   cannot derive that by thinking harder, which is the test for earning a place in a window.
+
+**And one floor that is not a step, recorded so it stops reading as an oversight.**
+`checked_at` — the one liveness field code reads — can only ever be written by a mind. A
+manager that stamps it after a probe that came back *down* makes a dead duty read healthy,
+which is `feishu-it-group-watcher`'s own failure mode, and no pass can tell the two apart from
+the outside. What the store can do it already does: show *when* it was last confirmed, so
+staleness is visible even when honesty is not verifiable.
 
 ---
 
