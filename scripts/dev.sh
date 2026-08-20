@@ -24,18 +24,29 @@ set -u
 
 cd "$(dirname "$0")/.."
 
-# Install web deps when they're missing or stale, the way `make build` does.
-# Without this a lockfile change (git pull, a new dependency) leaves `node_modules`
-# behind, and both vite processes die on an unresolved import from vite.config.ts —
-# a module-not-found stack trace that names the package but not the cause. `npm ci`
-# refreshes node_modules wholesale, so its mtime lands after the lockfile's and this
-# stays a no-op until the lockfile moves again.
+# Install web deps when they're missing, half-installed, or stale, the way `make
+# build` does. Without this a lockfile change (git pull, a new dependency) leaves
+# `node_modules` behind, and both vite processes die on an unresolved import from
+# vite.config.ts — a module-not-found stack trace that names the package but not the
+# cause.
+#
+# The thing tested is `node_modules/.package-lock.json` — npm's manifest of what it
+# actually installed — NOT the `node_modules` directory itself. `npm ci` deletes
+# node_modules and only then repopulates it, so a run interrupted inside that window
+# (Ctrl-C out of this very script) leaves an EMPTY directory whose mtime is newer
+# than the lockfile's. That state passes both a `-d` test and a directory mtime
+# comparison, so the next `make dev` skips the install and the two vite processes die
+# on `vite: command not found` while the Rust backend keeps serving a stale `dist/`.
+# npm writes the manifest last, after the tree is populated: absent for an empty or
+# half-written node_modules, and newer than the lockfile only for a complete install.
+# One file test, covering missing, incomplete, and stale alike.
 #
 # Deliberately before the cleanup trap is armed: cleanup() exits 0 when no server
 # ever launched, which would turn a failed install into a silent success.
-if [ ! -d src/appearance/web/node_modules ] \
-   || [ src/appearance/web/package-lock.json -nt src/appearance/web/node_modules ]; then
-  echo ">> web deps out of date — running npm ci"
+if [ ! -f src/appearance/web/node_modules/.package-lock.json ] \
+   || [ src/appearance/web/package-lock.json \
+        -nt src/appearance/web/node_modules/.package-lock.json ]; then
+  echo ">> web deps missing or out of date — running npm ci"
   ( cd src/appearance/web && npm ci ) || exit 1
 fi
 
