@@ -1238,9 +1238,9 @@ mod soul_tests {
     #[test]
     fn cognition_carries_what_deliberation_was_for() {
         assert!(
-            COGNITION_BASE.contains("A ref is an opaque handle")
+            COGNITION_BASE.contains("A ref is a handle the host resolves")
                 && COGNITION_BASE.contains("`hi_read_text_file`"),
-            "Cognition must route private refs through a host adapter"
+            "Cognition must hand a ref to the reader rather than guess at a path"
         );
         assert!(
             COGNITION_BASE.contains("{conversation_memory}"),
