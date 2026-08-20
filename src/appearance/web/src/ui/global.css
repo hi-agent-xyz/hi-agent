@@ -1412,11 +1412,13 @@ button:not([data-slot]) {
 }
 
 /* The card holds two controls — go there, and keep it — so it is a box rather than
-   a button; `.hi-views-open` is the button that fills it. */
+   a button; `.hi-views-open` is the button that fills it. The card is exactly the
+   tile: the label is written on the picture rather than in a line under it, so the
+   whole of the card's height is the thing that identifies the view. */
 .hi-views-card {
   position: relative;
   flex: 0 0 auto;
-  width: 118px;
+  width: 160px;
 }
 
 .hi-views-open {
@@ -1443,27 +1445,33 @@ button:not([data-slot]) {
    didn't render cleanly — it carries the identity mark instead, which is what the whole
    row used to be. */
 .hi-views-tile {
+  position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
-  width: 118px;
-  height: 76px;
+  width: 160px;
+  height: 90px;
   border-radius: 9px;
   border: 1px solid var(--line);
-  font-size: 15px;
+  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
+}
+
+.hi-views-mark {
+  font-size: 18px;
   font-weight: 600;
   color: rgba(0, 0, 0, 0.6);
-  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
 }
 
 /* `contain`, so the whole frame is in the tile. This was `cover` on the argument that
    the shot is the window's aspect and the tile is close enough that fitting would only
-   letterbox it — but "close" is doing all the work there and it isn't true: a 1440×788
-   window renders 1.83 into a tile of 1.55, and cover answers that by cutting 15% of the
-   width off a picture whose whole job is to be recognised. What is left after the cut
-   reads as a screenshot that got truncated, because it is one. The bands `contain`
-   leaves are a few pixels of the view's own mark, which is the ground the picture was
-   always loading over. */
+   letterbox it — and cover answered the gap by cutting 15% of the width off a picture
+   whose whole job is to be recognised, leaving something that reads as a screenshot
+   that got truncated, because it is one. The tile is now 16:9 and a 1440×788 window is
+   1.83, so on a maximised desktop the bands are a couple of pixels — but that is the
+   argument for `contain`, not against it: the shot is whatever aspect the window had,
+   a portrait phone or a half-width column included, and `contain` is a guarantee where
+   matching the aspect is only a bet. The bands it leaves are the view's own mark, which
+   is the ground the picture was always loading over. */
 .hi-views-shot {
   width: 100%;
   height: 100%;
@@ -1513,21 +1521,38 @@ button:not([data-slot]) {
   color: var(--accent);
 }
 
+/* The name, on the picture's bottom edge. A shot can end in anything — white space,
+   a dark chart, a wall of text — so the row carries its own ground: a gradient that is
+   opaque enough at the baseline to hold white type and gone by the top of the row, so
+   it reads as the picture dimming into a caption rather than a bar laid over it. The
+   type is white in both skins for the same reason: it sits on the gradient, not on the
+   surface. */
 .hi-views-title {
-  display: block;
-  padding-top: 6px;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hi-views-when {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
-  color: var(--fg-mute);
+  padding: 17px 8px 6px;
+  font-size: 12px;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.78),
+    rgba(0, 0, 0, 0.52) 36%,
+    rgba(0, 0, 0, 0.22) 68%,
+    rgba(0, 0, 0, 0)
+  );
+}
+
+.hi-views-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hi-views-pip {
@@ -1541,6 +1566,10 @@ button:not([data-slot]) {
 .hi-views-bookmarks {
   gap: 6px;
   padding: 2px 14px 12px;
+  /* Positioned for the same reason the strip above it is: opening the band scrolls the
+     chip marked *here* into view, and that sum needs the chip's offset measured against
+     this row rather than against the fixed band. */
+  position: relative;
 }
 
 /* A kept chip carries a second verb (drop it), so the chip is the frame and the
@@ -1656,9 +1685,9 @@ button:not([data-slot]) {
   }
   .hi-views-card,
   .hi-views-tile {
-    width: 104px;
+    width: 128px;
   }
   .hi-views-tile {
-    height: 68px;
+    height: 72px;
   }
 }

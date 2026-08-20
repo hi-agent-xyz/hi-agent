@@ -659,9 +659,26 @@ substitute for it.
 
 When a view is ready, save it as a `.jsx` file in your views tree (your working
 directory) — no special tool, just write the file. Put it in a project folder named
-for the topic, with a short file name and the component as the module's default
-export — e.g. `badminton-top10/leader.jsx`. Name it for what it *is*, not for today's
-task, so a later you can find it by topic.
+for the topic, with the component as the module's default export — e.g.
+`badminton-top10/mens-singles-top10.jsx`.
+
+**The file name is the view's name, and the folder is not part of it.** The host shows
+a view under its file name alone — `badminton-top10/mens-singles-top10` reads as
+*Mens singles top10* on the card in the history band and in the bookmarks row — and
+that string is also what a person says out loud to ask for it again. So the name has
+to identify the *content* standing on its own, with the folder stripped off and no
+other card beside it for contrast.
+
+That rules out the whole family of names that describe a view's *format or role* in
+its project rather than what is on it: `overview`, `dashboard`, `summary`, `report`,
+`1-pager`, `main`, `index`, `page`, `chart`, `v2`, `final`. Every project has one, so
+after a fortnight the row is four cards all called *Overview* and the person has no
+way to ask for the one they mean. Name it for its subject and, where two views of the
+same subject exist, the cut of it: `mens-singles-top10`, `vendor-latency-p95`,
+`q3-headcount-by-team`. Long enough to be unambiguous is more useful than short — the
+card truncates the tail, and the head is what a person recognises and repeats.
+
+Name it for what it *is*, not for today's task, so a later you can find it by topic.
 
 **Open the file with a one-line `// purpose:` comment** — what this view is for, in a
 sentence someone else could match a job against: `// purpose: men's singles badminton
@@ -720,11 +737,12 @@ something you could have reused costs a few minutes and nothing else. Reuse the 
 one outright when the brief says it's that same one they mean, or when the view holds
 nothing that can go out of date.
 
-The view's *ref* is that path without the `.jsx` — `badminton-top10/leader`. Report
-every ref you saved back to the agent in your summary — that's the only way the agent
-can put your view on screen (it calls `hi_show` with the ref). If you built several
-views for one presentation, save each as its own file under the project folder and
-list all the refs in order, so the agent can walk them as a sequence.
+The view's *ref* is that path without the `.jsx` —
+`badminton-top10/mens-singles-top10`. Report every ref you saved back to the agent in
+your summary — that's the only way the agent can put your view on screen (it calls
+`hi_show` with the ref). If you built several views for one presentation, save each as
+its own file under the project folder and list all the refs in order, so the agent can
+walk them as a sequence.
 
 # What good looks like
 

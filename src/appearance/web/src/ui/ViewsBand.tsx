@@ -33,23 +33,29 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * a view is remembered as a picture. But album art is square, uniform and *is* the
  * identity, while these are text-dense boards that at thumbnail size are all a grey
  * rectangle with rows — and a cover flow shows one item well and two in perspective, so
- * reading fifteen of them is a long drag. The strip keeps four to six legible at once
+ * reading fifteen of them is a long drag. The strip keeps four or five legible at once
  * and swipes on a phone, where a perspective carousel is unusable.
  *
- * **Pictures, with the mark underneath.** The tile carries a real screenshot, captured
- * server-side by the same headless browser `hi_review_view` drives, at the frame and in
- * the skin and language the window reported — a picture of the screen the person was
- * looking at, not a reconstruction. A named surface's picture is re-taken when they
- * open it, because the card leads to *today's* board and a tile promising last week's
- * would be a wrong picture of the place it goes. A capture that is still running, or a
- * view that did not render cleanly, leaves the tile on the coloured mark derived from
- * the view's identity, which is what the whole row used to be.
+ * **Pictures, with the name written on them.** The tile carries a real screenshot,
+ * captured server-side by the same headless browser `hi_review_view` drives, at the
+ * frame and in the skin and language the window reported — a picture of the screen the
+ * person was looking at, not a reconstruction. A named surface's picture is re-taken
+ * when they open it, because the card leads to *today's* board and a tile promising
+ * last week's would be a wrong picture of the place it goes. A capture that is still
+ * running, or a view that did not render cleanly, leaves the tile on the coloured mark
+ * derived from the view's identity, which is what the whole row used to be.
  *
- * **It opens on where you are.** The row can be a dozen cards long and the cursor is
- * not always at its head — a raise lands there, but a card gone back to keeps its place
- * — so opening the band scrolls the one marked *here* into view. Once, on opening: a
- * raise arriving afterwards must not drag the row out from under someone reading it,
- * which is the same refusal the return-to-live dot exists to make.
+ * The card *is* the picture: the label sits on the shot's bottom edge over a gradient
+ * rather than in a line below it, so every pixel of the card's height is the thing that
+ * identifies the view. The raise time is not printed at all — the row is already
+ * ordered by it, and nobody asks for a view by when it was put up.
+ *
+ * **It opens on where you are.** Both rows can be a dozen items long and the cursor is
+ * not always at the head of either — a raise lands there, but a card gone back to keeps
+ * its place, and a bookmark can sit anywhere in the lower row — so opening the band
+ * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
+ * opening: a raise arriving afterwards must not drag a row out from under someone
+ * reading it, which is the same refusal the return-to-live dot exists to make.
  *
  * **The inventory is re-read while the band is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually the band
@@ -65,18 +71,21 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
 
   const strip = useRef<HTMLDivElement>(null);
   const hereCard = useRef<HTMLElement>(null);
-  /** Whether opening has already placed the row. The inventory poll re-renders the band
-   * every few seconds, and re-running this would keep hauling the row back. */
-  const placed = useRef(false);
+  const chips = useRef<HTMLDivElement>(null);
+  const hereChip = useRef<HTMLElement>(null);
+  /** Whether opening has already placed each row. The inventory poll re-renders the band
+   * every few seconds, and re-running this would keep hauling a row back. One flag per
+   * row because the two are filled from different sources: the trail is in context on the
+   * first render, the bookmarks arrive with the first `listViews()`. */
+  const placedCards = useRef(false);
+  const placedChips = useRef(false);
 
-  // Before paint, so the row is simply *at* the right place rather than seen to jump
+  // Before paint, so a row is simply *at* the right place rather than seen to jump
   // there. `scrollLeft` rather than `scrollIntoView`, which would also scroll whatever
   // ancestor it decided was interesting, and would animate.
   useLayoutEffect(() => {
-    if (placed.current || !strip.current || !hereCard.current) return;
-    placed.current = true;
-    const at = scrollToShow(strip.current, hereCard.current);
-    if (at !== null) strip.current.scrollLeft = at;
+    place(strip.current, hereCard.current, placedCards);
+    place(chips.current, hereChip.current, placedChips);
   });
 
   /** Stars clicked whose write has not come back yet. A re-read that was already in
@@ -176,8 +185,10 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
                   aria-current={key === here ? "true" : undefined}
                 >
                   {/* The mark is painted whether or not there is a picture: it is the
-                      ground a shot loads over, so a tile is never a hole in the row. */}
-                  <span className="hi-views-tile" style={markStyle(key)} aria-hidden="true">
+                      ground a shot loads over, so a tile is never a hole in the row. The
+                      label rides on the tile, so the tile is not `aria-hidden` — it
+                      carries the button's whole accessible name. */}
+                  <span className="hi-views-tile" style={markStyle(key)}>
                     {shot ? (
                       <img
                         className="hi-views-shot"
@@ -186,13 +197,14 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
                         onError={() => setBroken((was) => new Set(was).add(shot))}
                       />
                     ) : (
-                      initial(entry.label)
+                      <span className="hi-views-mark" aria-hidden="true">
+                        {initial(entry.label)}
+                      </span>
                     )}
-                  </span>
-                  <span className="hi-views-title">{entry.label}</span>
-                  <span className="hi-views-when">
-                    {isLive && <span className="hi-views-pip" aria-hidden="true" />}
-                    {isLive ? "live" : shortTime(entry.at)}
+                    <span className="hi-views-title">
+                      {isLive && <span className="hi-views-pip" aria-hidden="true" />}
+                      <span className="hi-views-name">{entry.label}</span>
+                    </span>
                   </span>
                 </button>
                 {keepable && (
@@ -221,11 +233,12 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
         <span className="hi-views-heading">bookmarks</span>
         <span className="hi-views-rule" aria-hidden="true" />
       </div>
-      <div className="hi-views-bookmarks">
+      <div className="hi-views-bookmarks" ref={chips}>
         {bookmarks.map((view) => (
           <span
             className={`hi-views-chip${view.view_ref === here ? " is-here" : ""}`}
             key={view.view_ref}
+            ref={view.view_ref === here ? hereChip : undefined}
           >
             <button
               type="button"
@@ -256,6 +269,21 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
       </div>
     </div>
   );
+}
+
+/** Scroll one row so the item marked *here* is on screen, once. A row the browser has
+ * not measured yet (`clientWidth` 0 — the band is mounted, layout has not reached it)
+ * is left for a later render: `scrollToShow` on a zero-width box answers with a number,
+ * and it is the wrong one. */
+function place(
+  row: HTMLDivElement | null,
+  item: HTMLElement | null,
+  done: { current: boolean },
+): void {
+  if (done.current || !row || !item || row.clientWidth === 0) return;
+  done.current = true;
+  const at = scrollToShow(row, item);
+  if (at !== null) row.scrollLeft = at;
 }
 
 /** How often the band re-reads the inventory while it is up — long enough not to be a
@@ -303,22 +331,4 @@ function markStyle(key: string): { background: string } {
   for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   const hue = Math.abs(hash) % 360;
   return { background: `hsl(${hue} 34% 68%)` };
-}
-
-/** `14:05` today, `Mon` this week, `4 Aug` beyond — the resolution that tells the two
- * entries apart, which is all a timestamp is here for. */
-function shortTime(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    at.getFullYear() === now.getFullYear() &&
-    at.getMonth() === now.getMonth() &&
-    at.getDate() === now.getDate();
-  if (sameDay) {
-    return at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  }
-  const days = (now.getTime() - at.getTime()) / 86_400_000;
-  if (days < 7) return at.toLocaleDateString(undefined, { weekday: "short" });
-  return at.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }

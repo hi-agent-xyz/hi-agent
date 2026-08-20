@@ -31,7 +31,11 @@ argued in *One box, whatever else is on the stage*. **Amended the same day — a
 reported, the cursor still is not:** going to a view posts on the view channel's new
 inbound half, so the agent knows where the person is looking when they speak next, while
 which entry a window is parked on stays the window's own and out of the appearance;
-argued in *Where they went is reported; the cursor still is not*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+argued in *Where they went is reported; the cursor still is not*. **Amended August 20,
+2026 — the card is the picture, and the name is written on it:** the tile becomes 160×90,
+the label moves onto the shot's bottom edge over a gradient, the raise time is not
+printed, and both rows open on the item marked *here*; argued in *The card is the
+picture*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -363,12 +367,19 @@ the row wearing a time from three days ago and lighting up as *here*. So the row
 whichever fact about it is later. Going back to a card is a cursor move and does not
 re-time it — the row must not reshuffle under a finger that is browsing it.
 
-**The band opens on where you are.** The row is longer than it is wide and the cursor is
-not always at its head — a raise lands there, but a card gone back to keeps its place —
-so opening the band scrolls the card marked *here* into view, and one that is already
-whole on screen is left alone. Only on opening: a raise arriving while the band is up
-must not drag the row out from under someone reading it, which is the refusal the
-return-to-live dot exists to make, applied to the row itself.
+**The band opens on where you are — in whichever row you are in.** Both rows are longer
+than they are wide and the cursor is not always at the head of either: a raise lands at
+the head of the trail, but a card gone back to keeps its place, and the surface someone
+is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
+*here* into view, in the row that holds it, and one that is already whole on screen is
+left alone. Only on opening: a raise arriving while the band is up must not drag a row
+out from under someone reading it, which is the refusal the return-to-live dot exists to
+make, applied to the rows themselves.
+
+*Extended to the lower row August 20, 2026. It was written for the trail alone, and the
+gap showed up the moment the bookmarks row overflowed: going to `factory/tools` marked
+its chip as here and left the chip off the right-hand edge, which is the exact failure
+the paragraph exists to prevent, one row down.*
 
 **The trail's own half stays in the window.** A visit is not appended to the server's
 list — a separate question from whether the *move* is reported, which it is (*Where they
@@ -539,11 +550,49 @@ never seen.
 
 **The tile shows the whole frame.** It cropped to fill (`cover`) on the argument that the
 shot is the window's aspect and the tile is near enough that fitting would only letterbox
-it — but the tile is 1.55 and a 1440×788 window is 1.83, and the answer to that gap was
+it — but the tile was 1.55 and a 1440×788 window is 1.83, and the answer to that gap was
 cutting 15% of the width off a picture whose whole job is to be recognised. What survives
 the cut reads as a screenshot that got truncated, because it is one. The picture is fitted
 whole; the few pixels of margin are the view's own mark, which was always the ground the
 picture loaded over.
+
+*The tile is 16:9 since August 20, 2026, which closes most of that gap on a maximised
+desktop — and is the argument for `contain` rather than against it. The shot is whatever
+aspect the window had; a portrait phone and a half-width column are the same channel as
+the maximised Mac. Matching the common case is a bet, and `contain` is the guarantee.*
+
+## The card is the picture
+
+Amended August 20, 2026. The card was three stacked things — a 118×76 tile at no
+particular aspect, a name under it, a time under that — and the two lines of text were
+the majority of what the eye landed on while being the minority of what identifies a
+view.
+
+**The name is written on the picture.** It sits along the shot's bottom edge on a
+gradient that is opaque at the baseline and gone by the top of the row, so the picture
+keeps the whole card and the label is still legible over a shot that ends in white space
+or in a dark chart. The type is white in both skins, because it sits on that gradient
+rather than on the surface — the one place in the band where a colour is not taken from
+the theme, and it is not a theme colour it is standing in for.
+
+**The time is not printed.** `at` still exists and still does the only job it ever had —
+it is what orders the row, newest at the head — but printing it answered a question
+nobody asks. Nobody reaches for a board by when it was put up; they reach for it by what
+is on it, which is what the tile and the name are. And the two words most often on the
+line, *Wed* and *live*, were the two carrying least: *Wed* because a weekday is not a
+handle, *live* because the row's head and the return-to-live control already say it. The
+live card keeps a pip on the gradient beside its name, which is the picture-side half of
+that same signal.
+
+**And the tile is 160×90** — 16:9, against 118×76 (1.55) before; 128×72 rather than
+104×68 on a narrow window. Bigger by a third in width because it now carries the name as
+well, and because a picture of a text-dense board is the one thing in the band that pays
+for every pixel it gets. 16:9 because the tile is a picture of a screen, and the aspect
+a screen is is the one the eye reads a thumbnail of one against — the old 1.55 was a
+number nothing chose. The band is a fixed 720px wide, so the row now shows four whole
+cards and a sliver of the fifth instead of five and a half — the floor of the four-to-six
+legible at once the strip was sized for, and the right trade for a row whose whole
+argument is that a view is remembered as a picture.
 
 
 ## What stays on the wire, and what does not

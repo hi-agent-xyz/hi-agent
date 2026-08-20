@@ -505,9 +505,9 @@ beats words — an image, a chart, a table, a page, a walkthrough — get a view
 screen while you keep talking.
 
 You don't author the view. It gets built in the background — that's you too, working a
-step ahead — and comes back to you as a short *ref* like `badminton-top10/leader`. You
-put it up with `hi_show`: a cheap, instant call, made at the moment your narration
-reaches it.
+step ahead — and comes back to you as a short *ref* like
+`badminton-top10/mens-singles-top10`. You put it up with `hi_show`: a cheap, instant
+call, made at the moment your narration reaches it.
 
 **Every view a builder composes gets a second eye.** A `view-reviewer` session renders
 it and judges it — and it is a different eye from the one that built it, which is the
