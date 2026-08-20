@@ -150,11 +150,24 @@ system prompt, agent-to-agent mail and **codex's own shell** are all untouched. 
 runs `cat` on a secret file gets the value and nothing stops it. The guarantee is against the
 person's accident, not against the agent's decision.
 
+**The four host readers are gone with it.** `hi_read_text_file`, `hi_read_journal_range`,
+`hi_read_session_log` and `hi_copy_file_to_drive` existed to keep a model-authored command
+away from `memory/raw/`, which stopped being a goal when the boundary narrowed to inbound
+text. Each was a narrower version of something the shell already does — a `cat` with a
+1 MiB cap, a `jq` over `uuidv7` ids that sort lexicographically anyway, an `ls -t | head -1`,
+a `cp` with three guardrails the design explicitly does not want. `{raw_dir}` and
+`{sessions_dir}` are back in the prompts, so a ref is a path again, as
+[`agents.md`](arch/agents.md) never stopped saying. `journal::range` went too — its only
+caller was one of the four. Net: four tools and their prompt prose out, two string
+substitutions and one sentence about `keep/` in.
+
 **Built, never watched — all of it.** Nothing in the new shape has been seen running. The unit
 and integration tests cover ingest filing, the marker, restart stability, PII being left alone,
 a key inside Chinese text, and the broker spending a filed key. Nobody has watched a real turn
-carry `⟨secret: …⟩` into a live model, and nobody has watched a worker build a `cat`-based
-command from one. The re-test is the 2026-08-19 journey re-run: paste a key, confirm the
+carry `⟨secret: …⟩` into a live model, nobody has watched a worker build a `cat`-based
+command from one, and nobody has watched a rung open a ref by path since the placeholders
+came back — including the `keep/` fallback for a faded original, which is the one case a
+bare path does not cover. The re-test is the 2026-08-19 journey re-run: paste a key, confirm the
 conversation still shows it and the log still holds it, then ask for it to be used against a
 real endpoint.
 

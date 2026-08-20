@@ -46,7 +46,7 @@ whatever gets added next.
 - **The journal and the conversation.** `/api/out/text`, `GET /api/messages` and
   `memory/raw/` all carry exactly what was typed. The person is not the one being kept
   from their own key.
-- **Tool results.** A host reader hands back the bytes on disk.
+- **Tool results**, including `hi_http_request`'s own response.
 - **The system prompt**, and agent-to-agent mail.
 - **Codex's own shell.** A command the agent runs returns its output straight into the
   model's context without passing through hi-agent at all.
@@ -91,7 +91,7 @@ every prompt and may not touch the disk.
 
 ### HTTP
 
-`hi_http_request` takes the path as `auth_ref`. The host reads the file, injects the
+`hi_http_request` — the one tool this boundary owns — takes the path as `auth_ref`. The host reads the file, injects the
 value, follows no redirects, and returns the response as it came back.
 
 ### CLI

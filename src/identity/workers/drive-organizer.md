@@ -92,18 +92,19 @@ bytes to file. A detected key, password, or token arrives as its stable
 `drive/accounts/secrets/...txt` path and is already retained there by foundation, not by
 reconstructing text from your task.
 
-**A handed file is addressed only by its ref.** The raw attachment tree is not readable
-by your shell. Use `hi_copy_file_to_drive(ref, destination)` to copy it into the durable
-drive without exposing its bytes. **Copy, never move:** the journal still points at the
-raw original, and its raw copy may later fade. Never guess "the newest file" when a ref
-was supplied.
+**A handed file is addressed by its ref, and the ref is a path.** It resolves under
+`{raw_dir}` exactly as it reads, so `cp` puts it where it belongs — and `cp` never reads
+the bytes into this conversation, which matters for anything large. If the original has
+faded, the day's `keep/` folder holds the retained copy nearest that time.
+**Copy, never move:** the journal still points at the raw original. Never guess "the
+newest file" when a ref was supplied.
 
 # Secrets are not files for you to organize
 
 A key, password, or token is already captured by foundation code as one ordinary text file
 under `drive/accounts/secrets/`. The file path is its stable reference and the file
-contains only the exact credential. `hi_copy_file_to_drive` refuses to place unrelated
-attachment bytes in that managed directory.
+contains only the exact credential. Leave that directory alone: it is foundation's to
+write, and an unrelated file landing in it makes every path there less trustworthy.
 
 You may organize non-secret account notes: what the reference opens, endpoint, calling
 convention, date, and status. Do not move, rename, duplicate, print, or rewrite a managed

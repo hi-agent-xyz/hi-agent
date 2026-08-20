@@ -451,6 +451,16 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
     let dir = |p: PathBuf| p.display().to_string();
     let mut out = text
         .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
+        // The root a `⟨ref: <channel>/<day>/<hh>/<file>⟩` resolves against: a ref is
+        // literally that path under this directory. Without it a ref is a fragment,
+        // not a path — and "a ref is a path, and an agent that can read files can
+        // open it" (`docs/arch/agents.md`) only holds if the rung is told where refs
+        // start. The four host readers that stood in for this are gone.
+        .replace("{raw_dir}", &dir(crate::mind::memory::layout::raw_root(&base)))
+        .replace(
+            "{sessions_dir}",
+            &dir(crate::mind::memory::layout::raw_root(&base).join("sessions")),
+        )
         .replace(
             "{facets_dir}",
             &dir(crate::mind::memory::layout::facets_dir(&base)),
@@ -857,8 +867,8 @@ mod soul_tests {
 
         let organizer = role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await;
         assert!(
-            organizer.contains("hi_copy_file_to_drive"),
-            "the organizer must use the host attachment copier"
+            organizer.contains("`cp`"),
+            "the organizer must be told the ref is a path it can copy"
         );
 
         for t in WorkerType::ALL {
@@ -979,8 +989,8 @@ mod soul_tests {
     /// it matters. Pin the destinations so a prompt edit cannot quietly drop them.
     #[test]
     fn the_reader_is_sent_to_the_wire() {
-        assert!(WORKER_PERSON_READER_BASE.contains("`hi_read_journal_range`"));
-        assert!(WORKER_PERSON_READER_BASE.contains("`hi_read_session_log`"));
+        assert!(WORKER_PERSON_READER_BASE.contains("{raw_dir}"));
+        assert!(WORKER_PERSON_READER_BASE.contains("{sessions_dir}"));
         assert!(WORKER_PERSON_READER_BASE.contains("{facets_dir}"));
     }
 
@@ -1089,15 +1099,21 @@ mod soul_tests {
         assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("fade"));
     }
 
-    /// Raw refs are host handles, not paths handed to a model-controlled shell. The two
-    /// prompts that act on attachments must name the projected reader/copier and must not
-    /// point the model at the canonical raw root.
+    /// `docs/arch/agents.md`: "a ref is a path, and an agent that can read files can open
+    /// it" — which only holds if the rung is told where refs start. Nothing said it for a
+    /// while, and four host readers were built to stand in. They are gone; the placeholder
+    /// is back, and it has to survive substitution: an unexpanded `{raw_dir}` is a path to
+    /// nothing, and the rung reports the file missing rather than empty.
     #[tokio::test]
-    async fn attachment_prompts_use_host_adapters_not_raw_paths() {
-        assert!(COGNITION_BASE.contains("`hi_read_text_file`"));
-        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("`hi_copy_file_to_drive`"));
-        assert!(!COGNITION_BASE.contains("{raw_dir}"));
-        assert!(!WORKER_DRIVE_ORGANIZER_BASE.contains("{raw_dir}"));
+    async fn the_rungs_that_open_a_ref_are_told_where_refs_start() {
+        assert!(COGNITION_BASE.contains("{raw_dir}"), "cognition must name the root");
+        assert!(
+            WORKER_DRIVE_ORGANIZER_BASE.contains("{raw_dir}"),
+            "the organizer must name the root"
+        );
+        // A faded original is the one case a bare path does not cover, so both are told.
+        assert!(COGNITION_BASE.contains("keep/"));
+        assert!(WORKER_DRIVE_ORGANIZER_BASE.contains("keep/"));
 
         let dir = tempfile::tempdir().unwrap();
         let root = crate::mind::memory::layout::raw_root(&abs(dir.path())).display().to_string();
@@ -1105,7 +1121,8 @@ mod soul_tests {
             cognition_prompt(dir.path()).await,
             role_prompt(dir.path(), Role::Worker(WorkerType::DriveOrganizer)).await,
         ] {
-            assert!(!text.contains(&root), "the canonical raw root reached a model prompt");
+            assert!(!text.contains("{raw_dir}"), "an unresolved placeholder reached the rung");
+            assert!(text.contains(&root), "the substituted root must be the absolute raw root");
         }
     }
 
@@ -1238,9 +1255,8 @@ mod soul_tests {
     #[test]
     fn cognition_carries_what_deliberation_was_for() {
         assert!(
-            COGNITION_BASE.contains("A ref is a handle the host resolves")
-                && COGNITION_BASE.contains("`hi_read_text_file`"),
-            "Cognition must hand a ref to the reader rather than guess at a path"
+            COGNITION_BASE.contains("A ref is a path"),
+            "Cognition must be told that looking is opening a path, not calling a tool"
         );
         assert!(
             COGNITION_BASE.contains("{conversation_memory}"),

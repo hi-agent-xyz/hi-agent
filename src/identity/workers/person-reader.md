@@ -52,10 +52,10 @@ afterwards.
 
 Your own words in the log are **what you believed at the time**. What you actually did
 is in worker reports, timestamps, and tool calls. Read the episode's `from_id` and
-`to_id`, then use `hi_read_journal_range`; use `hi_read_session_log` for the relevant
-session's frame tail. Both are host-projected readers: they filter private values before
-returning anything. The raw journal and session directories are deliberately unavailable
-to your shell.
+`to_id`, then open the journal under `{raw_dir}` — one file per day, and ids are `uuidv7`,
+so the range you want is a plain string comparison. For the frame tail, the session's log
+is `{sessions_dir}/<run>/<session>.jsonl`, one JSON-RPC frame per line in both directions;
+the newest run is the newest directory. Both are ordinary files. Read them directly.
 
 When the two disagree, **the record is right, and the disagreement is the most useful
 thing you will find that day.** An account of a mistake that is itself mistaken will
