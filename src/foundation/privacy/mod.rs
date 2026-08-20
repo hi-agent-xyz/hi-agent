@@ -1,8 +1,29 @@
-//! The local/private side of the model boundary.
+//! Keys a person typed, kept out of the model by accident rather than by force.
 //!
-//! Raw inputs remain available to the trusted host. Before Codex sends any
-//! serialized Responses request to an external provider, the loopback proxy in
-//! this module projects PII to typed masks and secrets to ordinary drive-file references.
+//! **What this is.** Somebody pastes an API key into the conversation without
+//! thinking about it — that is the unconscious moment this exists for. The key is
+//! written to an ordinary file under `drive/accounts/secrets/`, and every prompt
+//! that enters a model session gets the file's path in its place. The agent can
+//! still use the credential (`"$(cat drive/accounts/secrets/x.txt)"`), so nothing
+//! it could do before becomes impossible.
+//!
+//! **What this is not.** It is not a vault, and no prompt may offer one. The
+//! secret is transparent to the host, to the drive, and to the person. It is
+//! transparent to the agent too, the moment the agent decides to go and read the
+//! file — which is allowed, and deliberately unguarded: an agent reading a
+//! credential it was pointed at is a decision, not an accident, and this module
+//! has no opinion about decisions. Only two seams exist:
+//!
+//! 1. **Detection**, once, on inbound human text ([`SensitiveDataFilter::file_secrets`]
+//!    from `POST /api/in/text`). Nothing else is ever scanned.
+//! 2. **Substitution**, by exact match, in [`AgentSession::prompt`] — the one
+//!    function every model turn passes through, which is what makes the journal
+//!    snapshot replaying an old message safe on the twentieth turn as well as the
+//!    first.
+//!
+//! Tool results, agent-to-agent mail, the system prompt, and codex's own shell
+//! are all untouched. The journal and the conversation keep exactly what was
+//! typed.
 
 mod filter;
 mod store;
@@ -10,13 +31,10 @@ mod store;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use filter::{PrivacyFinding, Projection, SensitiveDataFilter};
+pub use filter::{PrivacyFinding, SensitiveDataFilter};
 pub use store::{SecretMaterial, SecretStore};
 
 pub mod broker;
-pub mod proxy;
-
-pub const ENV_MODEL_PROXY_KEY: &str = "HI_AGENT_MODEL_PROXY_KEY";
 
 #[derive(Clone)]
 pub struct PrivacyBoundary {
@@ -24,7 +42,6 @@ pub struct PrivacyBoundary {
 }
 
 struct Inner {
-    token: String,
     filter: SensitiveDataFilter,
     store: SecretStore,
     http: reqwest::Client,
@@ -39,7 +56,6 @@ impl PrivacyBoundary {
             .build()?;
         Ok(Self {
             inner: Arc::new(Inner {
-                token: format!("proxy_{}", uuid::Uuid::new_v4().simple()),
                 filter,
                 store,
                 http,
@@ -58,22 +74,4 @@ impl PrivacyBoundary {
     pub fn http(&self) -> &reqwest::Client {
         &self.inner.http
     }
-
-    pub fn accepts_proxy_token(&self, token: &str) -> bool {
-        constant_time_eq(self.inner.token.as_bytes(), token.as_bytes())
-    }
-
-    pub fn child_env(&self) -> Vec<(String, String)> {
-        vec![(ENV_MODEL_PROXY_KEY.to_string(), self.inner.token.clone())]
-    }
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right)
-        .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
-        == 0
 }

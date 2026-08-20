@@ -39,7 +39,7 @@ so an upgrade replaces one and never the other.
 | Runtime | process management, the bundled toolchain |
 | Agent wire / MCP | the agent wire and the tool surface, routed by session id |
 | Gateway + vendors | model access, credentials, energy accounting |
-| Privacy projector + secret-file broker | strips private values at external-model egress; resolves drive-file references inside bound HTTP effects |
+| Secret filing + broker | files credentials a person typed and substitutes their paths on the way into a session; resolves a drive-file reference inside a bound HTTP effect |
 | Config cascade | layered configuration resolution |
 | Store I/O | the read and write paths under every part of `data/` |
 | Prompt assembly | installs `prompts/factory/` from the binary at boot; hands each rung its [seed](data.md#prompts) and truncates it, audibly, at the cap |
@@ -377,8 +377,8 @@ and how, then hands the path to a brokered tool or generates a command that read
 file at execution time without embedding or printing it.
 
 The target retention policy asks once whether handed-over credentials should be kept for
-this exchange, always, or never. That preference flow is not implemented yet; the current
-projector auto-retains detected secrets so their references remain usable across turns.
+this exchange, always, or never. That preference flow is not implemented yet; ingest
+auto-files detected secrets so their references remain usable across turns.
 
 ## Honesty about reach
 

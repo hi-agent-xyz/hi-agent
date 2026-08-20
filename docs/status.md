@@ -134,39 +134,29 @@ subpath prefix, emitting its own base and serving through the tunnel; `_builtin/
 roster screen at the app's own `/app`; and **the relayed page rendered in a real browser** —
 React mounting, views resolving through the prefixed import map, SSE reconnecting.
 
-**The privacy boundary, end to end on a fresh `--data-dir` (2026-08-19).** One message holding
-an `sk-proj-…` key and an email: `projected sensitive data at the external model boundary
-findings=2 secret_refs=1` on every model request of the turn, the key filed as
-`drive/accounts/secrets/openai-api-key.txt` (`0600`, exact bytes, nothing else), and an ordinary
-reply. Then *use that key against `api.openai.com/v1/models`*: the worker called the real
-endpoint through the broker with `auth_ref` and reported `HTTP 401 invalid_api_key`. **The model
-saw only the reference, and it showed** — unprompted, it flagged that the stored filename
-suggested OpenAI rather than the weather API it was told about, a judgement available from the
-path alone. What this run does *not* cover: the proxy's failure arms (a projection failure
-blocking a request, an upstream that stays down) and the low-entropy remask on a later turn.
+**The privacy boundary was rebuilt around a much smaller subject, and the live run above no
+longer describes it.** It was a projector on every serialized Responses request, reached by
+pointing codex's provider at a loopback proxy inside hi-agent. The subject is now *one inbound
+human message*: `POST /api/in/text` files what a person typed, and `AgentSession::prompt`
+substitutes the file's path. The proxy, the per-boot proxy token, the `shell_environment_policy`
+exclusion and the whole-request projection are **deleted**; codex talks to the provider directly
+again over `HI_AGENT_LLM_KEY`. Two defects the proxy had shipped went with it — a header
+allowlist whose effective forward set was two headers, and a `redact-core` byte-window panic on
+Chinese text that unwound out through the axum handler. The ASCII stand-in that fixed the second
+is kept, because detection still runs.
 
-**That run also went out under a header allowlist, which was wrong and is gone.** The proxy
-forwarded `Accept`, `User-Agent`, and any `openai-` / `x-stainless-` prefix — and codex sends
-neither prefix, so the effective forward set was two headers. Everything codex 0.147 uses to
-name a turn upstream (`Originator`, `Session-Id`, `Thread-Id`, `X-Client-Request-Id`,
-`X-Codex-*`, `X-Openai-Internal-*`) was dropped on the floor, unremarked in any doc. The proxy
-is now transparent on transport metadata per [`privacy.md`](arch/privacy.md) § *Transport*,
-pinned by `privacy::proxy::tests::codex_transport_metadata_reaches_the_provider` against a
-header set captured off the wire from codex 0.147.0. **Built, not watched:** the pass-through
-has not been observed against a live provider, so whether any of the restored headers changes
-upstream behaviour — the `x-openai-internal-codex-responses-lite` flag most of all — is
-unmeasured.
+What the rewrite gives up on purpose, per [`privacy.md`](arch/privacy.md): tool results, the
+system prompt, agent-to-agent mail and **codex's own shell** are all untouched. A session that
+runs `cat` on a secret file gets the value and nothing stops it. The guarantee is against the
+person's accident, not against the agent's decision.
 
-**That run was all-ASCII, and Chinese traffic panicked.** `redact-core` 0.10.0 slices a ±50-*byte*
-context window around every hit without checking char boundaries
-(`recognizers/pattern.rs:615`), so a Chinese message long enough for the window to reach past a
-detector hit unwound the axum handler rather than returning the error the blocking arm reads:
-the connection dropped with no response, the client retried, the same panic repeated. The
-detectors now scan a byte-preserving ASCII stand-in (`privacy::filter::ascii_stand_in`), which
-also closes a silent gap — PII touching Chinese was previously detected by nothing at all —
-with a `catch_unwind` behind it so the next upstream panic becomes the documented block instead
-of a dropped connection. Both are pinned by tests in `privacy/filter.rs`; **neither has been
-watched on a live Chinese turn since the fix.**
+**Built, never watched — all of it.** Nothing in the new shape has been seen running. The unit
+and integration tests cover ingest filing, the marker, restart stability, PII being left alone,
+a key inside Chinese text, and the broker spending a filed key. Nobody has watched a real turn
+carry `⟨secret: …⟩` into a live model, and nobody has watched a worker build a `cat`-based
+command from one. The re-test is the 2026-08-19 journey re-run: paste a key, confirm the
+conversation still shows it and the log still holds it, then ask for it to be used against a
+real endpoint.
 
 **The cache-control rule, re-measured against the real edge.** A gated response carrying
 `public` was an auth bypass: one authorized fetch taught EdgeOne the body and the edge then
@@ -211,17 +201,18 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
   glance rather than on time. This is a deliberate cost, stated once in
   [`host.md#glancing-up`](arch/host.md), not a gap waiting on a commit. See *Settled* below.
 - **The retention question.** `data.md#keys-passwords-and-the-one-question` still describes the
-  one-time *this / all / none* choice; the projector files every detected secret automatically.
+  one-time *this / all / none* choice; ingest files every detected secret automatically.
   Because a prompt describing an unbuilt question teaches the agent to claim an answer was
   applied, the prose was **removed** from `reaction.md`, `cognition.md` and
   `drive-organizer.md` rather than left to rot, and
   `identity::tests::prompts_are_honest_about_current_auto_retention` now pins the opposite: both
   rungs must say retention is automatic and the choice is not implemented. Exchange-scoped
   temporary secret files go with it.
-- **Outbound projection.** Only the *request* crosses the projector. The Responses reply and its
-  SSE stream, and exported diagnostics, are not projected — defence in depth that
-  [`privacy.md`](arch/privacy.md) names as missing, not a leak of anything the model was not
-  already sent. Nor is anything non-text: image, audio and opaque bytes are not inspected.
+- **Any filtering outside the two seams.** Tool results, the system prompt, mail, exported
+  diagnostics, and codex's own shell output are all unfiltered, and
+  [`privacy.md`](arch/privacy.md) says so as a scope decision rather than a gap: only text a
+  person typed is the subject. Nor is anything non-text — a key spoken aloud or inside an
+  uploaded file is not detected.
 
 ---
 

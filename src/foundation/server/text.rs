@@ -60,6 +60,30 @@ pub async fn post_text(
         len = signal.body.len(),
         "POST /api/in/text"
     );
+
+    // The one place credentials are looked for. A key somebody typed without
+    // thinking is written to `drive/accounts/secrets/`, and every model prompt
+    // gets that path in its place (`AgentSession::prompt`). Nothing below this
+    // line changes: the journal, the conversation and `/api/out/text` all carry
+    // the message exactly as it was sent — the person is not the one being kept
+    // from their own key.
+    //
+    // A scan that fails must not cost them the message. It is logged and the
+    // signal goes on, because the alternative — refusing input — is a worse
+    // failure than a key reaching the model, which is what happened before any
+    // of this existed.
+    match state.privacy.filter().file_secrets(&signal.body) {
+        Ok(filed) if !filed.is_empty() => tracing::info!(
+            count = filed.len(),
+            refs = ?filed.iter().map(|f| f.reference.as_str()).collect::<Vec<_>>(),
+            "filed credentials from an inbound message; sessions will see their paths"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::error!(
+            error = %format!("{error:#}"),
+            "secret scan failed; the message is accepted unscanned"
+        ),
+    }
     crate::foundation::channel_log::inbound(Channel::Text, &signal.body);
 
     // Minted once and used twice: the journal entry and the message in the

@@ -91,7 +91,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   ─────────────────────────────────────────────────────────────────────────────
   data/        memory (raw = the log · episodes · facets · tasks ·
                        prompts = generated, one per agent that needs state) ·
-               prompts (bundled) · private values · drive · skills · views
+               prompts (bundled) · secret files · drive · skills · views
   ─────────────────────────────────────────────────────────────────────────────
   FOUNDATION   engine   runtime · agent wire/MCP · gateway · config · store I/O · build ·
                         observatory · energy
@@ -133,11 +133,11 @@ Each is a statement we can test, and each has a real failure behind it.
 9. **Irreversible or outward-facing → ask.** No silent outward action, ever. This one is
    about reversibility, and it stands — as guidance the agent follows, not a gate the host
    enforces.
-10. **Private values stay local; models receive references.** The trusted core and its
-    local commands may know, retain, and use a key, password, or PII value, but exact bytes
-    are projected before an external model request. A retained secret is an ordinary
-    `drive/accounts/secrets/*.txt` file, and that path is the reference used by brokers
-    and local commands. See
+10. **A key someone typed reaches a session as a path.** The core, its log, its drive and
+    the person all keep the exact value; a credential found in an inbound message is
+    written to an ordinary `drive/accounts/secrets/*.txt` file, and prompts entering a
+    model session carry that path instead. Only what a person typed, and only on the way
+    in — an agent that goes and reads the file gets the value. Not a vault. See
     [`privacy.md`](privacy.md).
 11. **`data/` stays portable by habit, not by a gate at the store.** Prefer naming a file
     inside the directory relative to it — whoever reads it later is handed `{data_dir}`
@@ -163,7 +163,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
-| [`privacy.md`](privacy.md) | the local/private trust boundary, model projection, secret references and brokered use |
+| [`privacy.md`](privacy.md) | keys a person typed: where they are filed, the one seam that substitutes their paths, and what is deliberately left alone |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |
 

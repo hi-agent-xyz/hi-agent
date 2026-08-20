@@ -321,8 +321,8 @@ pub struct AppState {
     /// read-only by `GET /api/wire/frames/events` for the raw session inspector.
     pub wire_tap: WireTap,
 
-    /// The model/private boundary. The Responses proxy projects every external
-    /// model request; brokered effectors resolve opaque secret references.
+    /// Credentials a person typed. `POST /api/in/text` files them here; brokered
+    /// effectors resolve a secret reference back to its value.
     pub privacy: crate::foundation::privacy::PrivacyBoundary,
 
     /// Where blob media lives. POST /api/in/audio and POST /api/in/vision write
@@ -631,13 +631,6 @@ pub fn build(
         // The raw wire feed — every JSON-RPC frame, business-logic agnostic.
         // Backs the raw session inspector at `/inspect/sessions`.
         .route("/api/wire/frames/events", get(wire::get_wire_frames_events))
-        // Internal external-model boundary. Codex points its Responses provider
-        // here and authenticates with a per-boot token; the handler projects the
-        // complete serialized request before forwarding it upstream.
-        .route(
-            "/internal/model/v1/responses",
-            post(crate::foundation::privacy::proxy::post_responses),
-        )
         // The MCP tool endpoint a session's `mcp_servers` attach connects to. The
         // mind drives output and side-effects by calling tools here; routing is by
         // the X-HI-Role header the attach carries.

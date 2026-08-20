@@ -573,17 +573,18 @@ and it reaches Reaction the way the rest do — through the seed.
 must never cost a key filed against a *none* that went missing, so *no answer* resolves to
 *ask*, never to *file*.
 
-This preference flow is not implemented yet. The current projector auto-retains detected
-secrets as `drive/accounts/secrets/*.txt` so their references remain usable across turns.
+This preference flow is not implemented yet. Ingest auto-files detected secrets as
+`drive/accounts/secrets/*.txt` so their references remain usable across turns.
 
 **Retaining locally is not sending it to the provider.** A job months later can select the
 file by service and path. A trusted local broker can resolve the value inside an HTTP
-operation, and a local command can read the text file at execution time. The final model-egress
-projector replaces exact known values before a later request leaves Hi Agent.
+operation, and a local command can read the text file at execution time. Every prompt entering
+a session has known values replaced by their paths ([`privacy.md`](privacy.md)).
 
-**It is in the local log already, which is why the model boundary cannot be a convention.**
-The moment it was pasted it landed verbatim in `memory/raw/`. Model-driven sessions therefore
-do not read that tree directly; foundation projects a filtered view. Retention decides whether
+**It is in the local log already, and that is deliberate.** The moment it was pasted it landed
+verbatim in `memory/raw/`, and it stays there: the log is the person's record of what they
+said. The substitution is on the way into a session, not on the way into the log. Nothing stops
+a session that opens the file — see `privacy.md` § *What this is not*. Retention decides whether
 the private broker may still resolve the value after this exchange, not whether the local
 record ever received it.
 

@@ -28,6 +28,11 @@ pub struct AgentSession {
     /// interrupts a `(threadId, turnId)` pair, where ACP cancelled a whole session.
     current_turn: Arc<Mutex<Option<String>>>,
     data_dir: PathBuf,
+    /// Secrets a person typed, so [`prompt`](Self::prompt) can put their file
+    /// paths in before the text reaches the model. Held here rather than at the
+    /// six call sites because this is the only door into a session — a rung added
+    /// later gets the substitution without knowing it exists.
+    secrets: crate::foundation::privacy::SecretStore,
 }
 
 /// Why a turn stopped.
@@ -345,6 +350,7 @@ impl AgentSession {
         process: CodexProcess,
         rx: mpsc::UnboundedReceiver<Value>,
         data_dir: PathBuf,
+        secrets: crate::foundation::privacy::SecretStore,
     ) -> Self {
         Self {
             id,
@@ -352,6 +358,7 @@ impl AgentSession {
             rx: Arc::new(Mutex::new(Some(rx))),
             current_turn: Arc::new(Mutex::new(None)),
             data_dir,
+            secrets,
         }
     }
 
@@ -360,7 +367,20 @@ impl AgentSession {
     }
 
     /// Start a turn with `text` and return a streaming handle.
+    ///
+    /// **The privacy seam.** Every credential a person typed is replaced by the
+    /// path of the file holding it, immediately before the text becomes a turn.
+    /// Here rather than at the callers because `text` is assembled from several
+    /// sources that each carry human words — the live message, the journal
+    /// snapshot that will replay it on later turns, a worker brief quoting it —
+    /// and one of those is exactly the kind of thing that gets added without
+    /// remembering to mask.
+    ///
+    /// Exact match against what ingest already filed; no detector runs on this
+    /// path. An agent that decides to read a secret file is not this seam's
+    /// business, and its output does not come back through here.
     pub async fn prompt(&self, text: String) -> anyhow::Result<SessionRun> {
+        let text = self.secrets.mask_known(&text).into_owned();
         let rx = {
             let mut slot = self.rx.lock().await;
             slot.take()

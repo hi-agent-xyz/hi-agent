@@ -11,9 +11,10 @@
 //! cannot touch another, and there is no thread-id demux. The cost is a fresh
 //! subprocess spawn + `initialize` + MCP `tools/list` round-trip per session.
 //!
-//! Keeping a process per session also isolates local rollout state. The child receives
-//! only a per-boot credential for the loopback model proxy; the trusted host resolves
-//! the current upstream credential when each request crosses that proxy.
+//! Keeping a process per session also keeps the credential fresh: codex reads the
+//! upstream key from its own environment, so a key minted after boot reaches the next
+//! session simply by being spawned with it. One shared app-server would have frozen
+//! whatever key was current when the host started.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,7 +68,9 @@ impl Role {
 
 /// How to spawn one codex subprocess. Cloned per session: the pinned runtime, args,
 /// and **static** env (codex home, server URL, PATH — resolved once at startup).
-/// The upstream credential never enters this environment.
+/// The volatile upstream credential is NOT frozen here — it is re-resolved from the
+/// credential store at each [`session`](AgentLayer::session) spawn and merged onto
+/// this env, so a fresh child never carries a stale key.
 #[derive(Debug, Clone)]
 pub struct SpawnConfig {
     pub program: PathBuf,
@@ -83,15 +86,16 @@ pub struct AgentLayer {
 
 struct Inner {
     spawn: SpawnConfig,
-    /// Data dir used as the default session root and for resolving non-secret model
-    /// configuration such as the selected model.
+    /// Data dir, so each spawn can re-resolve the upstream credential from the
+    /// store ([`AgentConfig::resolve`]) rather than freeze a boot-time key. Cheap
+    /// SQLite read, dwarfed by the subprocess spawn + `initialize` it precedes.
     data_dir: PathBuf,
     /// hi-agent's own HTTP base URL (e.g. `http://127.0.0.1:12358`), used to build
     /// each session's MCP attach URL (`<base>/mcp`). The same value the child gets
     /// as `HI_AGENT_BASE_URL`.
     server_base_url: String,
-    /// Per-boot model proxy token plus the private-data projector/broker. Only the
-    /// token enters the child; the upstream LLM credential stays in the host.
+    /// Credentials a person typed, handed to each session so its prompts carry the
+    /// files' paths rather than the values. Also backs the brokered effectors.
     privacy: crate::foundation::privacy::PrivacyBoundary,
     /// Raw JSON-RPC wire tap — every session's subprocess records its frames here
     /// for the raw session inspector. Handed to each [`CodexProcess`] at spawn.
@@ -147,13 +151,13 @@ impl AgentLayer {
         // agent's own world. Workers still override with `views_dir`.
         let cwd = cwd.or_else(|| Some(self.inner.data_dir.clone()));
 
-        // The child authenticates only to the loopback privacy proxy. The upstream
-        // credential is resolved by the host proxy on each request and never enters
-        // this process environment.
+        // Merge the current upstream credential onto the static env at spawn time, so this
+        // child always carries the freshest key from the store (broker re-mint, Settings
+        // edit, mode switch) — never a stale boot-time snapshot.
         let cfg = AgentConfig::resolve(&self.inner.data_dir);
         let spawn = &self.inner.spawn;
         let mut env = spawn.env.clone();
-        env.extend(self.inner.privacy.child_env());
+        env.extend(cfg.auth_child_env());
 
         tracing::info!(role = role.as_str(), cwd = ?cwd, "spawning codex subprocess for session");
         let (process, rx) = CodexProcess::spawn(
@@ -205,7 +209,13 @@ impl AgentLayer {
             crate::foundation::registry::global().note_thread(session_id, &id);
         }
 
-        Ok(AgentSession::new(id, process, rx, self.inner.data_dir.clone()))
+        Ok(AgentSession::new(
+            id,
+            process,
+            rx,
+            self.inner.data_dir.clone(),
+            self.inner.privacy.store().clone(),
+        ))
     }
 
     /// Resume `thread`, falling back to a fresh one if it will not come back.
@@ -275,14 +285,7 @@ impl AgentLayer {
             headers.insert(HEADER_SESSION_ID.to_string(), json!(id.to_string()));
         }
 
-        let mut config = cfg.thread_config(
-            &format!(
-                "{}{}",
-                self.inner.server_base_url,
-                crate::foundation::privacy::proxy::MODEL_PROXY_BASE_PATH
-            ),
-            crate::foundation::privacy::ENV_MODEL_PROXY_KEY,
-        );
+        let mut config = cfg.thread_config();
         config.insert(
             "mcp_servers".into(),
             json!({
@@ -308,18 +311,6 @@ impl AgentLayer {
         // thread was opened unable to hear.
         let mut features = serde_json::Map::new();
         features.insert("steer".into(), json!(true));
-        // The provider reads its loopback proxy credential from the parent process
-        // environment. Model-authored commands must not inherit that token, or any
-        // other key/secret/token the host happened to launch with.
-        config.insert(
-            "shell_environment_policy".into(),
-            json!({
-                "ignore_default_excludes": false,
-                "filters": {
-                    crate::foundation::privacy::ENV_MODEL_PROXY_KEY: "exclude",
-                },
-            }),
-        );
         if role == Role::Reaction {
             let (name, profile) = reaction_permissions();
             config.insert("permissions".into(), json!({ name: profile }));
@@ -549,22 +540,6 @@ mod tests {
                 "worker",
                 "{} asked for a surface of its own",
                 t.as_str()
-            );
-        }
-    }
-
-    #[test]
-    fn model_auth_tokens_are_not_inherited_by_shell_commands() {
-        for role in Role::ALL {
-            let config = layer().thread_config(&config(), *role, Some(1.into()));
-            assert_eq!(
-                config["shell_environment_policy"]["ignore_default_excludes"],
-                false
-            );
-            assert_eq!(
-                config["shell_environment_policy"]["filters"]
-                    [crate::foundation::privacy::ENV_MODEL_PROXY_KEY],
-                "exclude"
             );
         }
     }

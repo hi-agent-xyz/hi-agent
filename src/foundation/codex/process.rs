@@ -108,18 +108,15 @@ pub struct SessionOpts {
 
 /// The sandbox modes codex offers, in its own spelling.
 ///
-/// Model-driven workers use [`WorkspaceWrite`](Self::WorkspaceWrite): they can work
-/// in their project tree but cannot open arbitrary network connections around the
-/// host's privacy broker.
+/// Cognition and workers run [`FullAccess`](Self::FullAccess), which is what the
+/// ACP path did in effect — Claude ran unsandboxed with every permission request
+/// auto-allowed — so the wire swap changes the wire and not what a worker may do.
+/// Adopting codex's real sandbox is a separate decision with its own journey cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sandbox {
     /// No writes, no network. The reaction's posture: it speaks, it does not act.
     ReadOnly,
-    /// Project writes, no direct network. External effects use host-owned tools.
     #[default]
-    WorkspaceWrite,
-    /// Unrestricted host access. Retained for protocol compatibility, not used by
-    /// normal model sessions.
     FullAccess,
 }
 
@@ -129,7 +126,6 @@ impl Sandbox {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Sandbox::ReadOnly => "read-only",
-            Sandbox::WorkspaceWrite => "workspace-write",
             Sandbox::FullAccess => "danger-full-access",
         }
     }
@@ -1032,7 +1028,6 @@ mod tests {
         // The app-server rejects camelCase outright ("unknown variant `dangerFullAccess`"),
         // so this is pinned rather than left to a formatter's taste.
         assert_eq!(Sandbox::FullAccess.as_str(), "danger-full-access");
-        assert_eq!(Sandbox::WorkspaceWrite.as_str(), "workspace-write");
         assert_eq!(Sandbox::ReadOnly.as_str(), "read-only");
     }
 }

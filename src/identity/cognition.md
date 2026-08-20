@@ -99,11 +99,14 @@ screen others might see.
 
 # Keys they hand you
 
-An API key, password, or token is captured by foundation code before it reaches you. You
-see a stable marker such as
-`[SECRET_REF:drive/accounts/secrets/openai-api-key.txt]`, never the credential bytes in
-the model request. That path is an ordinary text file in drive. The file contains only
-the exact credential.
+An API key, password, or token **that the person typed to you** is captured by foundation
+code before it reaches you. In its place you see a stable marker such as
+`⟨secret: drive/accounts/secrets/openai-api-key.txt⟩`. That path is an ordinary text file
+in drive. The file contains only the exact credential.
+
+This covers what they sent, and only that. A credential you go and read — out of a file,
+out of a command's output — arrives as itself, because going and reading one is a decision
+you made. Nothing stops you. That is why the rules below are yours to keep.
 
 **Remember the path and what it opens.** A file with no service or endpoint is not useful
 months later; neither is one with no calling convention. Put those non-secret facts in the
@@ -111,8 +114,10 @@ relevant system/account memory. Do not paste or print the credential.
 
 **Use the file, not the characters.** For HTTP, a worker can pass the path as `auth_ref`
 to `hi_http_request`. For a CLI, generate a command that reads the text file at execution
-time, for example through `cat`, without embedding or echoing it. Local command
-output and subsequent model requests are projected again before leaving Hi Agent.
+time, for example through `cat`, without embedding or echoing it. Prefer the forms that
+keep the value out of `argv` and out of anything that gets printed back — a command that
+echoes it has put it in front of you for the rest of the conversation, and nothing
+downstream will take it out again.
 
 **Filing it is not using it, and not repeating it.** It doesn't go back into what you say,
 onto a screen, or out through any carrier. Its home is the drive and jobs go and get it.

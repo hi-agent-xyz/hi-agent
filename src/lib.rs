@@ -180,9 +180,9 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // the raw session inspector.
     let wire_tap = foundation::codex::WireTap::with_durable_log(config.data_dir.clone());
 
-    // The local/private side of the external-model boundary. This owns the private
-    // secret store, the maintained detectors, a per-boot proxy token, and the HTTP
-    // client used by both the model proxy and brokered API calls.
+    // Credentials a person typed: the secret files under `drive/accounts/secrets/`,
+    // the detectors that fill them from inbound text, and the HTTP client the
+    // brokered effectors use to spend one without showing it to the model.
     let privacy = foundation::privacy::PrivacyBoundary::open(&config.data_dir)
         .context("initializing the private-data boundary")?;
 
@@ -273,8 +273,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 
     // Spawn config for the agent session layer. The subprocess itself is spawned
     // lazily, one per session (Chrome-style isolation); the pinned runtime and managed
-    // env are shared by all. The child reaches only the loopback privacy proxy; the
-    // trusted host resolves and injects the current upstream credential.
+    // env are shared by all. The child reaches the upstream LLM directly (no local
+    // proxy), over the provider its thread config names.
     let mut child_env = config.agent.child_env(config.port, &codex_home);
     // Sessions read their own prompt back from <prompts>/ at open; hand them the
     // absolute dir the same way workers already get HI_AGENT_BASE_URL.
@@ -282,14 +282,29 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         "HI_AGENT_PROMPTS_DIR".to_string(),
         prompts_dir.display().to_string(),
     ));
-    tracing::info!(
-        cwd = ?std::env::current_dir().ok(),
-        runtime_origin = runtime.origin,
-        codex_bin = %runtime.codex_bin.display(),
-        codex_home = %codex_home.display(),
-        model = ?config.agent.model,
-        "child runtime and local model proxy resolved"
-    );
+    // Diagnostic: surface exactly what differs between launchers (terminal vs. cmux
+    // etc.) — cwd, the resolved codex binary, its home, and the upstream key's
+    // fingerprint. The credential is not frozen into `child_env` (it is re-resolved per
+    // session spawn), so read it from a fresh `auth_child_env` for this snapshot.
+    {
+        let auth_env = config.agent.auth_child_env();
+        let key = auth_env
+            .iter()
+            .find(|(n, _)| n == foundation::config::ENV_LLM_KEY)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_default();
+        tracing::info!(
+            cwd = ?std::env::current_dir().ok(),
+            runtime_origin = runtime.origin,
+            codex_bin = %runtime.codex_bin.display(),
+            codex_home = %codex_home.display(),
+            upstream_base_url = %config.agent.upstream_base_url,
+            model = ?config.agent.model,
+            // A tail, not the key: enough to tell two credentials apart in a log.
+            auth_token_fp = &key[key.len().saturating_sub(20)..],
+            "child auth/runtime env resolved"
+        );
+    }
 
     let agent = foundation::agent::AgentLayer::new(
         foundation::agent::SpawnConfig {

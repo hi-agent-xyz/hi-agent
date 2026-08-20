@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::borrow::Cow;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
@@ -12,6 +13,12 @@ const SECRET_EXTENSION: &str = "txt";
 pub struct SecretStore {
     dir: PathBuf,
     write_lock: Arc<Mutex<()>>,
+    /// Every stored value, longest first, held in memory.
+    ///
+    /// [`mask_known`](Self::mask_known) runs on every prompt that enters a model
+    /// session, so it may not touch the disk: the directory is read once at
+    /// [`open`](Self::open) and again only when [`upsert_detected`] adds to it.
+    known: Arc<RwLock<Vec<StoredSecret>>>,
 }
 
 #[derive(Clone)]
@@ -38,10 +45,62 @@ impl SecretMaterial {
 
 impl SecretStore {
     pub fn open(data_dir: &Path) -> anyhow::Result<Self> {
-        Ok(Self {
+        let store = Self {
             dir: crate::mind::memory::media::drive_root(data_dir).join(DRIVE_SECRET_DIR),
             write_lock: Arc::new(Mutex::new(())),
-        })
+            known: Arc::new(RwLock::new(Vec::new())),
+        };
+        // A drive carried over from another machine already holds secret files, and
+        // the masker only ever reads this cache — so the directory is read now, not
+        // on first use.
+        store.refresh()?;
+        Ok(store)
+    }
+
+    /// Reload the cache from disk. Called at open and after each write.
+    fn refresh(&self) -> anyhow::Result<()> {
+        let mut values = self
+            .read_all()?
+            .into_iter()
+            .map(|(path, value)| {
+                Ok(StoredSecret {
+                    reference: reference_from_path(&self.dir, &path)?,
+                    value,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        // Longest first: a short secret that happens to be a substring of a longer
+        // one must not cut the longer one in half before it is matched whole.
+        values.sort_by(|a, b| b.value.len().cmp(&a.value.len()));
+        *self
+            .known
+            .write()
+            .map_err(|_| anyhow::anyhow!("secret cache lock is poisoned"))? = values;
+        Ok(())
+    }
+
+    /// Replace every known secret value in `text` with the marker naming its file.
+    ///
+    /// **Exact match only — no detectors run here.** Detection is a one-time cost
+    /// paid at ingest ([`SensitiveDataFilter::file_secrets`]); this is the hot path
+    /// every model prompt crosses, and it must stay a memory scan.
+    ///
+    /// Borrowed back unchanged when nothing matched, which is the overwhelmingly
+    /// common case: most prompts contain no secret at all.
+    pub fn mask_known<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        let Ok(known) = self.known.read() else {
+            // A poisoned cache must not become a leak: with no way to mask, refuse
+            // to hand the text on rather than pass it through whole.
+            tracing::error!("secret cache lock is poisoned; masking everything conservatively");
+            return Cow::Owned(String::new());
+        };
+        let mut out = Cow::Borrowed(text);
+        for secret in known.iter() {
+            if out.contains(&secret.value) {
+                out = Cow::Owned(out.replace(&secret.value, &marker(&secret.reference)));
+            }
+        }
+        out
     }
 
     pub fn upsert_detected(&self, value: &str, kind: &str) -> anyhow::Result<String> {
@@ -60,21 +119,19 @@ impl SecretStore {
 
         let path = self.next_path(kind, &records);
         self.write_value(&path, value)?;
-        reference_from_path(&self.dir, &path)
+        let reference = reference_from_path(&self.dir, &path)?;
+        drop(_guard);
+        self.refresh()?;
+        Ok(reference)
     }
 
+    /// Every stored secret, longest first. Reads the cache, never the disk.
     pub fn active_values(&self) -> anyhow::Result<Vec<StoredSecret>> {
-        let mut values = self
-            .read_all()?
-            .into_iter()
-            .map(|(path, value)| StoredSecret {
-                reference: reference_from_path(&self.dir, &path)
-                    .expect("secret store only returns paths inside its directory"),
-                value,
-            })
-            .collect::<Vec<_>>();
-        values.sort_by(|a, b| b.value.len().cmp(&a.value.len()));
-        Ok(values)
+        Ok(self
+            .known
+            .read()
+            .map_err(|_| anyhow::anyhow!("secret cache lock is poisoned"))?
+            .clone())
     }
 
     pub fn resolve_for_http(&self, secret_ref: &str) -> anyhow::Result<SecretMaterial> {
@@ -179,6 +236,16 @@ fn unique_suffix() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default()
+}
+
+/// What a model session sees in place of a secret it must not be handed.
+///
+/// The path is the whole point: it is an ordinary readable file, so a command the
+/// agent writes can consume the value (`"$(cat <path>)"`) without the value ever
+/// entering the conversation. The angle brackets match the `⟨ref: …⟩` form already
+/// used for media, so one convention covers both.
+pub fn marker(reference: &str) -> String {
+    format!("⟨secret: {reference}⟩")
 }
 
 fn reference_from_path(dir: &Path, path: &Path) -> anyhow::Result<String> {

@@ -154,18 +154,15 @@ pub async fn http_request(
         }
         bytes.extend_from_slice(&chunk);
     }
-    let body = String::from_utf8_lossy(&bytes).into_owned();
-    let projected = privacy.filter().project_text(&body)?;
-    let mut response = BrokerResponse {
+    // Returned as it came back. The response to a call the agent chose to make is
+    // the agent's own business — only text a person typed is filtered, and only on
+    // the way into a session.
+    Ok(BrokerResponse {
         status,
         headers,
-        body: projected.text,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
         truncated,
-    };
-    let mut json = serde_json::to_value(&response)?;
-    privacy.filter().project_json(&mut json)?;
-    response = serde_json::from_value(json)?;
-    Ok(response)
+    })
 }
 
 fn validate_url(url: &reqwest::Url) -> anyhow::Result<()> {

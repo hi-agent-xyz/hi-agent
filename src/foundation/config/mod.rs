@@ -5,9 +5,11 @@
 //! [`crate::foundation::credentials::get_setting`] directly where a data dir is in scope.
 //! Only infra vars (e.g. the server base URL) remain env-driven.
 //!
-//! The split that matters: the model and the local privacy-proxy endpoint ride the
-//! thread config, while only a per-boot proxy token and the scratch dir ride the
-//! child environment. The upstream credential stays in the trusted host.
+//! The split that matters: **everything the model wire needs rides the thread config**
+//! ([`AgentConfig::thread_config`], sent on `thread/start`), and **only the secret and
+//! the scratch dir ride the environment** ([`AgentConfig::child_env`] /
+//! [`AgentConfig::auth_child_env`]). Codex reads a key by env-var *name*, so that split
+//! falls out of the protocol rather than being a convention we impose.
 
 use std::path::Path;
 
@@ -22,6 +24,11 @@ pub const DEFAULT_AI_API_BASE: &str = "https://api.openai.com/v1";
 /// store names. Codex selects a provider by id, so the id and the block that defines it
 /// have to agree; both are produced by [`AgentConfig::thread_config`].
 const PROVIDER_ID: &str = "hi-agent-gateway";
+
+/// Env var carrying the upstream key. Codex reads the key by *name* — a provider block
+/// says `env_key = "…"` and the process env supplies the value — which is why the
+/// credential never appears in the thread config we send over the wire.
+pub const ENV_LLM_KEY: &str = "HI_AGENT_LLM_KEY";
 
 // Keys under which the cognition tunables live in the config store's `app_settings`
 // table. Shared by the readers (reaction, `resolve`) and the settings handler so the
@@ -268,18 +275,15 @@ impl AgentConfig {
     ///
     /// These ride `thread/start`'s `config` map — codex's session-flags layer, the same
     /// one `codex -c key=value` writes — so they apply per thread and leave the user's
-    /// own `config.toml` alone. The provider is always the local privacy proxy; the
-    /// upstream endpoint and credential never enter the child process.
+    /// own `config.toml` alone. Nothing is written to disk, and **the key is not in
+    /// here**: the provider block names an env var ([`ENV_LLM_KEY`]) and the value
+    /// arrives on the child's environment, so a thread config can be logged verbatim.
     ///
     /// Verified against `codex app-server` 0.144: a thread opened with these overrides
     /// and an otherwise empty `CODEX_HOME` reaches the configured endpoint. Re-checked
     /// on 0.147 at the bump — the thread still opens with this block; the endpoint leg
     /// was not re-exercised.
-    pub fn thread_config(
-        &self,
-        proxy_base_url: &str,
-        proxy_key_env: &str,
-    ) -> serde_json::Map<String, serde_json::Value> {
+    pub fn thread_config(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut config = serde_json::Map::new();
         if let Some(model) = &self.model {
             config.insert("model".into(), serde_json::json!(model));
@@ -292,14 +296,31 @@ impl AgentConfig {
             "model_providers".into(),
             serde_json::json!({
                 PROVIDER_ID: {
-                    "name": "hi-agent privacy boundary",
-                    "base_url": proxy_base_url,
-                    "env_key": proxy_key_env,
+                    "name": "hi-agent gateway",
+                    "base_url": self.upstream_base_url,
+                    "env_key": ENV_LLM_KEY,
                     "wire_api": "responses",
                 }
             }),
         );
         config
+    }
+
+    /// The **volatile** env vars — the upstream key — that the child sends to the LLM
+    /// gateway. Split out from [`child_env`](Self::child_env) because this is the only
+    /// var sourced from the credential store, and the store changes under a running app
+    /// (broker re-mint, Settings edit, mode switch). Callers re-resolve it at each
+    /// session spawn (see [`crate::foundation::agent`]) so a fresh child never carries a
+    /// stale key, rather than freezing it at boot.
+    ///
+    /// The key rides [`ENV_LLM_KEY`] and *only* there: the model provider we render into
+    /// the thread config names it via `env_key`, so codex reads the secret out of the
+    /// child's environment itself. That is the whole reason this is an env var rather
+    /// than a config field — a credential in the thread config would be a credential on
+    /// the wire, and in the frame log the wire tap keeps. The test at the bottom of this
+    /// module asserts the key never appears in that config.
+    pub fn auth_child_env(&self) -> Vec<(String, String)> {
+        vec![(ENV_LLM_KEY.to_string(), self.upstream_key.clone())]
     }
 
     /// The model the **reaction** (what reaches the person) should run: the **main,
@@ -320,8 +341,10 @@ impl AgentConfig {
     }
 
     /// Build the **static** env var pairs for the codex child process — everything fixed
-    /// for the process lifetime (the server URL, codex's home). The privacy boundary
-    /// contributes its per-boot proxy token separately.
+    /// for the process lifetime (the server URL, codex's home). The volatile upstream
+    /// credential comes from [`auth_child_env`](Self::auth_child_env), re-resolved per
+    /// spawn and merged in by the agent layer, so a fresh child never carries a stale
+    /// key.
     ///
     /// `server_port` is hi-agent's own HTTP port (handed to the child as
     /// `HI_AGENT_BASE_URL` so a session can reach the channels); `codex_home` is the
@@ -335,7 +358,8 @@ impl AgentConfig {
     /// one, so a worker sees exactly the toolchain the host actually has.
     ///
     /// Nothing about the model or provider is here any more — that all rides
-    /// [`thread_config`](Self::thread_config) on `thread/start`.
+    /// [`thread_config`](Self::thread_config) on `thread/start`. The env carries exactly
+    /// two things the wire cannot: the secret, and where codex may scribble.
     pub fn child_env(&self, server_port: u16, codex_home: &Path) -> Vec<(String, String)> {
         vec![
             (
@@ -438,19 +462,16 @@ mod tests {
             "https://gateway.example/v1".to_string(),
             "sk-secret".to_string(),
         );
-        let config = serde_json::Value::Object(cfg.thread_config(
-            "http://127.0.0.1:12358/internal/model/v1",
-            crate::foundation::privacy::ENV_MODEL_PROXY_KEY,
-        ));
+        let config = serde_json::Value::Object(cfg.thread_config());
         assert_eq!(config["model"], "gpt-5.1-codex");
         assert_eq!(config["model_reasoning_effort"], "high");
         assert_eq!(config["model_provider"], PROVIDER_ID);
         let provider = &config["model_providers"][PROVIDER_ID];
-        assert_eq!(provider["base_url"], "http://127.0.0.1:12358/internal/model/v1");
+        assert_eq!(provider["base_url"], "https://gateway.example/v1");
         assert_eq!(provider["wire_api"], "responses");
         // The provider names the key's env var; the key itself must never be in here,
         // because a thread config is logged and tapped verbatim.
-        assert_eq!(provider["env_key"], crate::foundation::privacy::ENV_MODEL_PROXY_KEY);
+        assert_eq!(provider["env_key"], ENV_LLM_KEY);
         assert!(
             !config.to_string().contains("sk-secret"),
             "the credential leaked into the thread config: {config}"
@@ -460,10 +481,7 @@ mod tests {
     #[test]
     fn thread_config_omits_what_is_unset() {
         let cfg = AgentConfig::new(None, None, None, "https://x/v1".to_string(), "k".to_string());
-        let config = cfg.thread_config(
-            "http://127.0.0.1:12358/internal/model/v1",
-            crate::foundation::privacy::ENV_MODEL_PROXY_KEY,
-        );
+        let config = cfg.thread_config();
         assert!(!config.contains_key("model"), "no model → let codex choose");
         assert!(!config.contains_key("model_reasoning_effort"));
         // The provider is not optional: without it codex would talk to OpenAI directly.
@@ -487,10 +505,9 @@ mod tests {
         // PATH is inherited, not rewritten — we no longer install an interpreter to
         // splice in front of the user's own toolchain.
         assert!(!map.contains_key("PATH"));
-        assert!(
-            !map.values().any(|value| value == "k"),
-            "the upstream credential must not enter the child environment"
-        );
+        // The volatile credential is NOT frozen into the static env — it comes from
+        // `auth_child_env`, re-resolved per session spawn.
+        assert!(!map.contains_key(ENV_LLM_KEY));
     }
 
     #[test]
@@ -514,4 +531,37 @@ mod tests {
         assert_eq!(cfg.reaction_model().as_deref(), Some("gpt-5-mini"));
     }
 
+    #[test]
+    fn resolve_reflects_the_current_stored_key() {
+        // The whole point of re-resolving per spawn: a key change written to the
+        // store (broker re-mint, Settings edit) is visible on the next resolve,
+        // without freezing anything at boot. Uses BYOK so the stored key is the
+        // effective one directly.
+        use crate::foundation::credentials::{Credentials, LlmCredentials, Mode};
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut store = Credentials {
+            mode: Mode::Byok,
+            llm: LlmCredentials {
+                api_key: "key-A".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        store.save(dir.path()).unwrap();
+        let a: std::collections::HashMap<_, _> = AgentConfig::resolve(dir.path())
+            .auth_child_env()
+            .into_iter()
+            .collect();
+        assert_eq!(a[ENV_LLM_KEY], "key-A");
+
+        // Rotate the stored key; a fresh resolve must carry the new one.
+        store.llm.api_key = "key-B".into();
+        store.save(dir.path()).unwrap();
+        let b: std::collections::HashMap<_, _> = AgentConfig::resolve(dir.path())
+            .auth_child_env()
+            .into_iter()
+            .collect();
+        assert_eq!(b[ENV_LLM_KEY], "key-B");
+    }
 }

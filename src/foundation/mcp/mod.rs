@@ -356,7 +356,7 @@ fn http_request_tool() -> Value {
     tool(
         "hi_http_request",
         "Make an HTTP API request through the trusted host. Use `auth_ref` when the \
-         conversation contains a `[SECRET_REF:drive/accounts/secrets/...txt]`; the host resolves it, \
+         conversation contains a `⟨secret: drive/accounts/secrets/...txt⟩`; the host resolves it, \
          injects it, and never returns \
          the credential. The same ref is an ordinary text file path that local CLIs can \
          consume without putting the value in the command text. Redirects are not followed. \
@@ -405,9 +405,8 @@ fn read_text_file_tool() -> Value {
     tool(
         "hi_read_text_file",
         "Read a UTF-8 text attachment or drive file through the trusted host. Pass the \
-         complete `ref` from the signal, such as `file/...`, or a `drive/...` ref. The \
-         host filters private values before returning text. Binary files, PDFs, OCR, and \
-         files over 1 MiB are deliberately unsupported.",
+         complete `ref` from the signal, such as `file/...`, or a `drive/...` ref. \
+         Binary files, PDFs, OCR, and files over 1 MiB are deliberately unsupported.",
         json!({
             "type": "object",
             "properties": {
@@ -449,10 +448,8 @@ fn copy_file_to_drive_tool() -> Value {
 fn read_journal_range_tool() -> Value {
     tool(
         "hi_read_journal_range",
-        "Read an inclusive range from the private signal journal through the trusted \
-         host. Take `from_id` and `to_id` from an episode's frontmatter. The returned \
-         JSON is recursively filtered before it reaches you; the raw journal directory \
-         is not readable by model-authored commands.",
+        "Read an inclusive range from the signal journal through the trusted host. \
+         Take `from_id` and `to_id` from an episode's frontmatter.",
         json!({
             "type": "object",
             "properties": {
@@ -479,10 +476,9 @@ fn read_journal_range_tool() -> Value {
 fn read_session_log_tool() -> Value {
     tool(
         "hi_read_session_log",
-        "Read the tail of a private Codex session frame log through the trusted host. \
-         The host selects the latest matching run when `run` is omitted and recursively \
-         filters every frame before returning it. Use this to verify what a worker or \
-         tool actually did without opening `memory/raw/sessions/`.",
+        "Read the tail of a Codex session frame log through the trusted host. The host \
+         selects the latest matching run when `run` is omitted. Use this to verify what \
+         a worker or tool actually did.",
         json!({
             "type": "object",
             "properties": {
@@ -1197,12 +1193,10 @@ async fn dispatch_tool(
         "hi_text_to_video" => return do_text_to_video(data_dir, session_id, args).await,
         "hi_image_to_video" => return do_image_to_video(data_dir, session_id, args).await,
         "hi_review_view" => return do_review_view(data_dir, args).await,
-        "hi_read_text_file" => return do_read_text_file(data_dir, privacy, args).await,
+        "hi_read_text_file" => return do_read_text_file(data_dir, args).await,
         "hi_copy_file_to_drive" => return do_copy_file_to_drive(data_dir, args).await,
-        "hi_read_journal_range" => {
-            return do_read_journal_range(data_dir, privacy, args).await;
-        }
-        "hi_read_session_log" => return do_read_session_log(data_dir, privacy, args).await,
+        "hi_read_journal_range" => return do_read_journal_range(data_dir, args).await,
+        "hi_read_session_log" => return do_read_session_log(data_dir, args).await,
         "hi_http_request" => {
             return match crate::foundation::privacy::broker::http_request(privacy, args).await {
                 Ok(response) => match serde_json::to_string_pretty(&response) {
@@ -1692,11 +1686,7 @@ async fn dispatch_tool(
 const MAX_PROJECTED_TEXT_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_SESSION_LOG_READ_BYTES: u64 = 8 * 1024 * 1024;
 
-async fn do_read_text_file(
-    data_dir: &Path,
-    privacy: &crate::foundation::privacy::PrivacyBoundary,
-    args: &Value,
-) -> Value {
+async fn do_read_text_file(data_dir: &Path, args: &Value) -> Value {
     let Some(reff) = args
         .get("ref")
         .and_then(Value::as_str)
@@ -1733,12 +1723,7 @@ async fn do_read_text_file(
             return tool_error(&format!("hi_read_text_file: reading ref failed: {error}"));
         }
     };
-    match privacy.filter().project_text(&text) {
-        Ok(projected) => tool_ok(&projected.text),
-        Err(error) => tool_error(&format!(
-            "hi_read_text_file: privacy projection failed: {error}"
-        )),
-    }
+    tool_ok(&text)
 }
 
 async fn do_copy_file_to_drive(data_dir: &Path, args: &Value) -> Value {
@@ -1854,11 +1839,7 @@ async fn create_new_drive_file(
     Ok((file, path))
 }
 
-async fn do_read_journal_range(
-    data_dir: &Path,
-    privacy: &crate::foundation::privacy::PrivacyBoundary,
-    args: &Value,
-) -> Value {
+async fn do_read_journal_range(data_dir: &Path, args: &Value) -> Value {
     let Some(from_id) = args
         .get("from_id")
         .and_then(Value::as_str)
@@ -1885,20 +1866,16 @@ async fn do_read_journal_range(
         };
     let truncated = entries.len() > limit;
     entries.truncate(limit);
-    let mut value = json!({
+    let value = json!({
         "from_id": from_id,
         "to_id": to_id,
         "entries": entries,
         "truncated": truncated,
     });
-    projected_json_tool_result(privacy, &mut value, "hi_read_journal_range")
+    encoded_tool_result(&value, "hi_read_journal_range")
 }
 
-async fn do_read_session_log(
-    data_dir: &Path,
-    privacy: &crate::foundation::privacy::PrivacyBoundary,
-    args: &Value,
-) -> Value {
+async fn do_read_session_log(data_dir: &Path, args: &Value) -> Value {
     use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
     let Some(session) = args
@@ -1968,14 +1945,14 @@ async fn do_read_session_log(
             serde_json::from_str(line).unwrap_or_else(|_| Value::String((*line).to_string()))
         })
         .collect::<Vec<_>>();
-    let mut value = json!({
+    let value = json!({
         "run": run,
         "session": session.to_string(),
         "frames": frames,
         "matching_frames": total,
         "truncated": clipped || total > limit,
     });
-    projected_json_tool_result(privacy, &mut value, "hi_read_session_log")
+    encoded_tool_result(&value, "hi_read_session_log")
 }
 
 async fn find_session_log(
@@ -2032,14 +2009,10 @@ fn is_private_run_id(run: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn projected_json_tool_result(
-    privacy: &crate::foundation::privacy::PrivacyBoundary,
-    value: &mut Value,
-    tool_name: &str,
-) -> Value {
-    if let Err(error) = privacy.filter().project_json(value) {
-        return tool_error(&format!("{tool_name}: privacy projection failed: {error}"));
-    }
+/// A tool result is **not** filtered. `docs/arch/privacy.md` scopes the boundary to
+/// text a person typed: an agent that goes and reads a credential has decided to, and
+/// the seam in `AgentSession::prompt` deliberately does not reach here.
+fn encoded_tool_result(value: &Value, tool_name: &str) -> Value {
     match serde_json::to_string_pretty(value) {
         Ok(text) => tool_ok(&text),
         Err(error) => tool_error(&format!("{tool_name}: encoding result failed: {error}")),
@@ -3292,19 +3265,25 @@ mod surface_tests {
         }
     }
 
+    /// Host readers hand back what is on disk. Filtering them would contradict the
+    /// scope in `docs/arch/privacy.md`: a session that asks for a file has decided to
+    /// look, and only text a person typed is masked, only on the way into a prompt.
     #[tokio::test]
-    async fn projected_private_readers_never_return_secret_bytes() {
+    async fn host_readers_return_file_bytes_unfiltered() {
         use chrono::Utc;
         use crate::mind::memory::layout::MediaSlot;
         use crate::types::{Channel, JournalEntry, Origin, Sender};
 
         let dir = tempfile::tempdir().unwrap();
+        // Filed as if a person had typed it: the value is on record and masked into
+        // prompts. That must not change what a reader hands back.
         let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
         let secret = [
             "sk-proj-",
             "abcdefghij_klmnopqrst-uvwxyz0123456789ABCDEFGHIJ",
         ]
         .concat();
+        privacy.filter().file_secrets(&secret).unwrap();
 
         let now = Utc::now();
         let rel = crate::mind::memory::media::store_blob(
@@ -3318,11 +3297,10 @@ mod surface_tests {
         .await
         .unwrap();
         let reff = crate::mind::memory::media::signal_ref(Channel::File, now, &rel);
-        let read = do_read_text_file(dir.path(), &privacy, &json!({ "ref": reff }))
+        let read = do_read_text_file(dir.path(), &json!({ "ref": reff }))
             .await
             .to_string();
-        assert!(!read.contains(&secret));
-        assert!(read.contains("SECRET_REF"));
+        assert!(read.contains(&secret), "the reader returns the file as it is");
 
         let journal = crate::mind::memory::journal::Journal::open(dir.path().to_path_buf())
             .await
@@ -3341,15 +3319,10 @@ mod surface_tests {
             })
             .await
             .unwrap();
-        let range = do_read_journal_range(
-            dir.path(),
-            &privacy,
-            &json!({ "from_id": first, "limit": 10 }),
-        )
-        .await
-        .to_string();
-        assert!(!range.contains(&secret));
-        assert!(range.contains("SECRET_REF"));
+        let range = do_read_journal_range(dir.path(), &json!({ "from_id": first, "limit": 10 }))
+            .await
+            .to_string();
+        assert!(range.contains(&secret), "the journal is returned as written");
 
         let run = "0123456789ab";
         let session: registry::SessionId = "general-private-reader".parse().unwrap();
@@ -3363,13 +3336,14 @@ mod surface_tests {
         .unwrap();
         let frames = do_read_session_log(
             dir.path(),
-            &privacy,
             &json!({ "session": session.to_string(), "run": run }),
         )
         .await
         .to_string();
-        assert!(!frames.contains(&secret));
-        assert!(frames.contains("SECRET_REF"));
+        assert!(frames.contains(&secret), "frames are returned verbatim");
+
+        // …while the seam a prompt actually crosses still substitutes.
+        assert!(!privacy.store().mask_known(&format!("token={secret}")).contains(&secret));
     }
 
     #[tokio::test]
