@@ -139,7 +139,14 @@ Each is a statement we can test, and each has a real failure behind it.
     `drive/accounts/secrets/*.txt` file, and that path is the reference used by brokers
     and local commands. See
     [`privacy.md`](privacy.md).
-11. **No absolute host path is persisted into `data/`.** The directory has to stay portable.
+11. **`data/` stays portable by habit, not by a gate at the store.** Prefer naming a file
+    inside the directory relative to it — whoever reads it later is handed `{data_dir}`
+    too. An absolute host path is stored as written: the prompt hands every rung its
+    directories as absolute paths on purpose, so a store that refuses one refuses what
+    the agent was just given, and that gate failed closed — a single `verify:` line
+    stopped the task ledger's reconcile pass for 61 of 68 records. The hard half is on
+    the reader: **code that resolves a stored path accepts both forms**, absolute as
+    given and relative against the data dir. See [`data.md`](data.md).
 12. **Who a signal came from is decided at the boundary, never derived from what it says** —
     and *unknown* is an answer the record keeps. A name inferred from content is
     indistinguishable from one that was verified, so the inference is not available; see

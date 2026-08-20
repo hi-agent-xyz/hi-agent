@@ -281,6 +281,12 @@ gained rows today, the file was rewritten this morning. Then a mechanism that qu
 died fails its own check on the next glance and you repair it — which is the whole reason
 you get woken.
 
+**Naming a file inside your own data directory: prefer the short form.** Write
+`drive/vocab/verify.sh`, not the absolute `{data_dir}/drive/vocab/verify.sh` you were
+handed above — whoever reads that line later holds `{data_dir}` as well and can join it,
+and the short form survives this directory being copied to another machine. Nothing
+rejects the long one; it just stops being true the day the box changes.
+
 ## Timing is yours to arrange
 
 **Nothing wakes you at a time you name.** You wake shortly after the process starts, and

@@ -298,7 +298,7 @@ pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<
 }
 
 pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
-    let content = render(data_dir, task)?;
+    let content = render(task);
     facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await
 }
 
@@ -378,7 +378,7 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         // pass does not know about is still a difference `render` would erase or reorder,
         // and the only honest question is whether the canonical form of this record is
         // already on disk.
-        let wanted = render(data_dir, &task)?;
+        let wanted = render(&task);
         let stored = facets::read_facet(data_dir, DIMENSION, &subject).await?;
         if stored.as_deref() != Some(wanted.as_str()) {
             facets::update_facet(data_dir, DIMENSION, &subject, &wanted).await?;
@@ -956,34 +956,50 @@ fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
     Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?))
 }
 
-fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
+/// The canonical text of a record — **infallible, and that is the point**.
+///
+/// It could fail on exactly one rule: a field carrying this machine's absolute data-dir
+/// path was rejected, so the directory would stay portable. The rule was right and the
+/// place was wrong, twice over. The system prompt hands every rung its directories as
+/// *absolute* paths on purpose (`{data_dir}` and friends interpolate through
+/// [`crate::identity`]'s `abs`, because the rungs do not share a working directory), so a
+/// `verify:` naming a file the agent had just been told about was refused for quoting what
+/// it was given. And because [`reconcile`] renders every record in one loop, one such
+/// record aborted the **whole pass**: on the live store 61 of 68 tasks had never been
+/// reconciled once — never stamped, never migrated off the legacy fields — behind a single
+/// `verify:` line, under a warning that did not even name the task.
+///
+/// Portability is now a habit asked for where a mind can act on it (the `verify:` section
+/// of `cognition.md`), and the hard half moved to the reader: **code that resolves a stored
+/// path takes both forms** — absolute as given, relative against the data dir. Where a path
+/// is genuinely a reference the code reads back, it is a typed one validated at parse, the
+/// way [`crate::foundation::privacy::store`] does it. Prose stays prose.
+fn render(task: &Task) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::from("---\n");
     let _ = writeln!(out, "status: {}", task.status.as_str());
-    let mut field = |key: &str, value: &str| -> anyhow::Result<()> {
-        reject_host_path(data_dir, key, value)?;
+    let mut field = |key: &str, value: &str| {
         let _ = writeln!(out, "{key}: {}", jstr(value.trim()));
-        Ok(())
     };
-    field("title", task.title.as_str())?;
+    field("title", task.title.as_str());
     if let Some(created_at) = task.created_at {
-        field("created_at", created_at.to_rfc3339().as_str())?;
+        field("created_at", created_at.to_rfc3339().as_str());
     }
     if let Some(status_since) = task.status_since {
-        field("status_since", status_since.to_rfc3339().as_str())?;
+        field("status_since", status_since.to_rfc3339().as_str());
     }
     if let Some(due_at) = task.due_at {
-        field("due_at", due_at.to_rfc3339().as_str())?;
+        field("due_at", due_at.to_rfc3339().as_str());
     }
     if let Some(checked_at) = task.checked_at {
-        field("checked_at", checked_at.to_rfc3339().as_str())?;
+        field("checked_at", checked_at.to_rfc3339().as_str());
     }
     if let Some(completed_at) = task.completed_at {
-        field("completed_at", completed_at.to_rfc3339().as_str())?;
+        field("completed_at", completed_at.to_rfc3339().as_str());
     }
     if let Some(cancelled_at) = task.cancelled_at {
-        field("cancelled_at", cancelled_at.to_rfc3339().as_str())?;
+        field("cancelled_at", cancelled_at.to_rfc3339().as_str());
     }
     for (key, value) in [
         ("verify", &task.liveness.verify),
@@ -992,7 +1008,7 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
         ("start_key", &task.liveness.start_key),
     ] {
         if let Some(value) = value {
-            field(key, value)?;
+            field(key, value);
         }
     }
     for line in &task.extra {
@@ -1001,18 +1017,7 @@ fn render(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     out.push_str("---\n\n");
     out.push_str(task.body.trim());
     out.push('\n');
-    Ok(out)
-}
-
-fn reject_host_path(data_dir: &Path, key: &str, value: &str) -> anyhow::Result<()> {
-    let dir = data_dir.to_string_lossy();
-    if data_dir.is_absolute() && !dir.is_empty() && value.contains(&*dir) {
-        anyhow::bail!(
-            "task field `{key}` carries this machine's absolute data-dir path; \
-             write it relative to the data dir so the directory stays portable"
-        );
-    }
-    Ok(())
+    out
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -1782,15 +1787,48 @@ mod tests {
         );
     }
 
+    /// **One record cannot stop the pass**, and the path it quotes is kept as written.
+    ///
+    /// The store used to refuse a field carrying this machine's absolute data-dir path, to
+    /// keep `data/` portable. Refusing it here could only ever fail closed: `reconcile`
+    /// renders every record in one loop, so the refusal aborted the loop, and every subject
+    /// sorting after that one went un-reconciled forever — 61 of 68 on the live store,
+    /// none of them stamped or migrated, all of it behind a warning that did not say which
+    /// task. The habit is asked for in `cognition.md` now, where a mind can act on it.
     #[tokio::test]
-    async fn no_absolute_host_path_is_persisted() {
+    async fn a_quoted_host_path_is_kept_and_does_not_stop_the_pass() {
         let dir = tempfile::tempdir().unwrap();
         let host = dir.path().display().to_string();
-        let mut task = task("Watch the queue", TaskStatus::Serving);
-        task.liveness.restart = Some(format!("run {host}/bin/watch"));
-        let err = write_task(dir.path(), &task).await.unwrap_err().to_string();
-        assert!(err.contains("restart"), "{err}");
-        assert!(err.contains("relative"), "{err}");
+        let verify = format!("{host}/bin/watch printed a row in the last hour");
+        hand_write(
+            dir.path(),
+            "aaa-quotes-its-host-path",
+            &format!("status: serving\ntitle: watch the queue\nverify: {}\n", jstr(&verify)),
+            "prose",
+        )
+        .await;
+        hand_write(
+            dir.path(),
+            "zzz-sorts-after-it",
+            "kind: wip\nstate: open\ntitle: the one that never got reconciled\n",
+            "prose",
+        )
+        .await;
+
+        reconcile(dir.path()).await.unwrap();
+
+        let quoting = read_task(dir.path(), "aaa-quotes-its-host-path").await.unwrap().unwrap();
+        assert_eq!(
+            quoting.liveness.verify.as_deref(),
+            Some(verify.as_str()),
+            "the path is stored exactly as the mind wrote it"
+        );
+
+        let after = read_task(dir.path(), "zzz-sorts-after-it").await.unwrap().unwrap();
+        assert_eq!(after.status, TaskStatus::Doing, "a record sorting after it is still read");
+        let text = stored(dir.path(), "zzz-sorts-after-it").await;
+        assert!(text.contains("status: doing"), "and canonicalised: {text}");
+        assert!(!text.contains("kind:"), "off the legacy fields: {text}");
     }
 
     #[test]

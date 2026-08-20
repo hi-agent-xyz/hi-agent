@@ -57,8 +57,19 @@ may write this ledger has a shell, so a verb is a door beside an open wall, and 
 is an absent field, indistinguishable from a task that never moved.
 
 **Built:** `WorkerType::TaskManager` + `identity/workers/task-manager.md` (real and unexercised);
-`tasks::reconcile`, run from `tasks::projection` — dry-run over the real 62-record store rewrote
-58 on the first pass and 0 on the second; `cognition.md` hands closing down instead of doing it.
+`tasks::reconcile`, run from `tasks::projection` — a dry run rewrote 58 records on the first pass
+and 0 on the second; `cognition.md` hands closing down instead of doing it.
+
+**Watched failing, 2026-08-19 — it had never once got past the 7th record.** `render` refused any
+field quoting this machine's absolute data-dir path, and the refusal aborted the whole loop, so
+the 61 subjects sorting after `ai-agent-book-reading-guide` were never reconciled: 18 with no
+`status_since` (so the *last moved — close it, ask once, or cancel it* line can never fire on
+them), 8 still on the legacy `kind:`/`state:` spellings. It said so once per brain turn, in a
+warning that named no task. **A dry run could not have caught it**: the check compared against
+the *running* data dir, so a store copied to another path passes clean. The refusal is deleted —
+item 2 below already said this pass reports what it cannot fix and never refuses — portability
+is guidance in `cognition.md` now, and the reader takes both path forms. **Built, not yet
+watched:** nothing has observed the next brain turn actually catch those 61 up.
 
 **Still to build, in order:**
 

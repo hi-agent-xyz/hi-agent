@@ -8,9 +8,13 @@ what it owes, what it made, and who it is.
 The binary is interchangeable. The directory is the agent.
 
 > **A thought, not yet built.** If `data/` is genuinely everything, then `jack.hi` is a
-> complete agent-for-Jack that any hi-agent binary can open and continue. One thing keeps
-> that possible and is worth protecting now: **no absolute host paths are ever persisted
-> into `data/`**. Private values travel as ordinary files under
+> complete agent-for-Jack that any hi-agent binary can open and continue. What keeps that
+> possible is asked of the mind and required of the code, in that order: **prefer paths
+> written relative to `data/`, and accept both forms when resolving one back**. Enforcing
+> it at the write was tried and withdrawn — the prompt hands every rung its directories as
+> absolute paths, so refusing one refused what the agent had just been handed, and it took
+> the task ledger's reconcile pass down with it. A habit that decays slowly beats a gate
+> that fails closed. Private values travel as ordinary files under
 > `drive/accounts/secrets/`; what does not travel is an **OS grant**, which is held by the
 > machine and re-clicked there. So opening one on a new box costs the grants back, not the
 > keys.
