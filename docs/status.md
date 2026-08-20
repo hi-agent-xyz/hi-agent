@@ -145,6 +145,18 @@ suggested OpenAI rather than the weather API it was told about, a judgement avai
 path alone. What this run does *not* cover: the proxy's failure arms (a projection failure
 blocking a request, an upstream that stays down) and the low-entropy remask on a later turn.
 
+**That run also went out under a header allowlist, which was wrong and is gone.** The proxy
+forwarded `Accept`, `User-Agent`, and any `openai-` / `x-stainless-` prefix — and codex sends
+neither prefix, so the effective forward set was two headers. Everything codex 0.147 uses to
+name a turn upstream (`Originator`, `Session-Id`, `Thread-Id`, `X-Client-Request-Id`,
+`X-Codex-*`, `X-Openai-Internal-*`) was dropped on the floor, unremarked in any doc. The proxy
+is now transparent on transport metadata per [`privacy.md`](arch/privacy.md) § *Transport*,
+pinned by `privacy::proxy::tests::codex_transport_metadata_reaches_the_provider` against a
+header set captured off the wire from codex 0.147.0. **Built, not watched:** the pass-through
+has not been observed against a live provider, so whether any of the restored headers changes
+upstream behaviour — the `x-openai-internal-codex-responses-lite` flag most of all — is
+unmeasured.
+
 **That run was all-ASCII, and Chinese traffic panicked.** `redact-core` 0.10.0 slices a ±50-*byte*
 context window around every hit without checking char boundaries
 (`recognizers/pattern.rs:615`), so a Chinese message long enough for the window to reach past a

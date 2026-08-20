@@ -67,22 +67,29 @@ pub async fn post_responses(
             .into_response();
     }
     let url = responses_url(&upstream.upstream_base_url);
-    let mut outgoing = state
-        .privacy
-        .http()
-        .post(url)
-        .bearer_auth(&upstream.upstream_key)
-        .json(&request);
-    for name in [header::ACCEPT, header::USER_AGENT] {
-        if let Some(value) = headers.get(&name) {
-            outgoing = outgoing.header(name, value);
-        }
-    }
+    // Transport metadata passes through verbatim. This proxy exists to rewrite two
+    // things — the body (the projection) and the credential — and a header it did not
+    // have to touch is a header it must not touch. The rule used to be a whitelist, and
+    // it silently ate everything codex 0.147 uses to identify a turn upstream:
+    // `Session-Id`, `Thread-Id`, `Originator`, `X-Client-Request-Id`, `X-Codex-*`, and
+    // the `X-Openai-Internal-*` feature flags. Worse, neither prefix it allowed matched
+    // anything codex actually sends (`openai-` never matches `x-openai-…`, and
+    // `x-stainless-` is a TS/Python SDK convention the Rust client has no idea about),
+    // so the effective forward set was `Accept` + `User-Agent`.
+    //
+    // Headers are *not* projected. The projector's contract is the serialized Responses
+    // request (docs/arch/privacy.md § Projection); codex's transport metadata is ids and
+    // feature flags it generated itself, never person-supplied text.
+    let mut outgoing = state.privacy.http().post(url);
     for (name, value) in &headers {
-        if name.as_str().starts_with("openai-") || name.as_str().starts_with("x-stainless-") {
+        if forwards_upstream(name.as_str()) {
             outgoing = outgoing.header(name, value);
         }
     }
+    // After the pass-through, so a forwarded `Content-Type` wins over the default; and
+    // `bearer_auth` *appends*, so it may only run with the client's own `Authorization`
+    // already excluded above.
+    let outgoing = outgoing.json(&request).bearer_auth(&upstream.upstream_key);
 
     let response = match outgoing.send().await {
         Ok(response) => response,
@@ -125,6 +132,24 @@ fn responses_url(base: &str) -> String {
     }
 }
 
+/// Whether an inbound request header rides along to the provider.
+///
+/// Everything does, except the few this proxy is obliged to own:
+///
+/// - `authorization` — the child holds only the per-boot proxy token; the upstream
+///   credential is substituted here and never enters the codex process.
+/// - `host` — the client addressed loopback; reqwest derives the real one from the URL.
+/// - `content-length` — projection changes the body's length; reqwest recomputes it.
+/// - `accept-encoding` — we decode the upstream response before restreaming it, so the
+///   content coding is negotiated between this proxy and the provider, not end to end.
+/// - hop-by-hop headers, which are per-connection by definition.
+fn forwards_upstream(name: &str) -> bool {
+    !matches!(
+        name,
+        "authorization" | "host" | "content-length" | "accept-encoding"
+    ) && !is_hop_by_hop(name)
+}
+
 fn is_hop_by_hop(name: &str) -> bool {
     matches!(
         name,
@@ -153,5 +178,40 @@ mod tests {
             responses_url("https://gateway.example/v1/responses/"),
             "https://gateway.example/v1/responses"
         );
+    }
+
+    /// The exact header set `codex 0.147.0` puts on a Responses request, captured off the
+    /// wire. Every one of these reaches the provider — the whitelist this replaced
+    /// forwarded only the first two.
+    #[test]
+    fn codex_transport_metadata_reaches_the_provider() {
+        for name in [
+            "accept",
+            "user-agent",
+            "originator",
+            "session-id",
+            "thread-id",
+            "x-client-request-id",
+            "x-codex-beta-features",
+            "x-codex-turn-metadata",
+            "x-codex-window-id",
+            "x-openai-internal-codex-responses-lite",
+            "content-type",
+        ] {
+            assert!(forwards_upstream(name), "{name} must reach the provider");
+        }
+    }
+
+    #[test]
+    fn the_proxy_keeps_only_what_it_must_rewrite() {
+        // The credential is substituted; the client's own never rides along.
+        assert!(!forwards_upstream("authorization"));
+        // Loopback host, pre-projection length, and a coding we terminate ourselves.
+        assert!(!forwards_upstream("host"));
+        assert!(!forwards_upstream("content-length"));
+        assert!(!forwards_upstream("accept-encoding"));
+        // Per-connection by definition.
+        assert!(!forwards_upstream("connection"));
+        assert!(!forwards_upstream("transfer-encoding"));
     }
 }

@@ -82,6 +82,20 @@ blocks the provider request rather than failing open.
 Known retained values are checked before detector heuristics. This remasks low-entropy
 passwords and values whose format is not recognized on later turns.
 
+### Transport
+
+The projector's subject is the serialized request body, and nothing else. The local proxy
+carrying that body upstream is otherwise transparent: every request header the agent
+runtime sets reaches the provider verbatim, and every response header comes back the same
+way. Only what the proxy is obliged to own is rewritten — the credential (the child holds
+a per-boot proxy token, never the upstream key), the `Host` and `Content-Length` the hop
+itself invalidates, the content coding the proxy terminates, and hop-by-hop headers.
+
+A header allowlist is specifically wrong here. The runtime's transport metadata is ids and
+feature flags it generated about its own turn, not person-supplied text, so it is out of
+the projector's scope; and dropping any of it degrades the provider's view of a request
+for no privacy gain, silently, in a way that shows up only as an upstream behaving oddly.
+
 ## Local use
 
 ### HTTP
