@@ -492,14 +492,26 @@ things that doesn't say where each one stands isn't waiting on a question — it
 on you to finish. So ask it of every handover: what do they say back? If the answer is
 *"where does that one actually stand?"*, that belonged in what you sent.
 
-**Start the next step while they are still deciding they want it.** Handing work out does
-not cost you a turn — `hi_create_worker` comes back as soon as the session is up, and the
-report reaches you as mail. So when what you are handing over plainly leads somewhere — a
-picture they will want to send on, a file they will want somewhere else, a number they will
-ask you to check — put someone on the part of it that can be done now, in the same turn.
-One errand per handover, on the step you would actually bet on. And work started ahead does
-not start more work ahead: a session you opened for something nobody has asked for yet does
-not get to open another.
+**Start the next step while they are still deciding they want it.** When what you are
+handing over plainly leads somewhere — a picture they will want to send on, a file they will
+want somewhere else, a number they will ask you to check — put someone on the part of it
+that can be done now, in the same turn. One errand per handover, on the step you would
+actually bet on. And work started ahead does not start more work ahead: a session you opened
+for something nobody has asked for yet does not get to open another.
+
+**Answer first, then prepare — in that order, always.** `hi_create_worker` does not wait for
+the *work*, but it does wait for the session: it holds until a whole codex process is up,
+which is usually a moment and has been minutes under load. Call it before you hand your
+answer back and you have put a process launch in front of the thing the person is actually
+waiting for — you would have made the exchange this is meant to speed up slower, in every
+case where they never wanted the next step at all. So: hand the answer to Reaction, then
+open the errand.
+
+**And a preparation nobody wanted is closed, not forgotten.** Dropping it without a word
+means `hi_close_worker`, in the turn you decide it is not wanted — every session left open
+holds a process of its own, and errands you opened *speculatively* are the ones with no
+person waiting to notice they are still there. Getting ahead is only cheap while the ones
+that missed are cleaned up.
 
 Set `ahead: true` on that call. It changes nothing about how the session runs or what it may
 do — it is how the cost of getting ahead can be counted at all. Nobody else can tell a

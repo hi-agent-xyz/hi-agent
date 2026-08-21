@@ -1083,6 +1083,30 @@ mod soul_tests {
         );
     }
 
+    /// **The two ways working ahead pays for itself with the thing it was saving.** Both are
+    /// consequences of a working session being a whole `codex app-server` process of its own
+    /// ([`crate::foundation::codex::process`]), and both invert the feature if dropped:
+    ///
+    /// - `hi_create_worker` blocks until that process is up — ten seconds here, observed at
+    ///   three minutes under load. Opening the speculative errand before handing the answer
+    ///   back puts a process launch in front of the thing the person is waiting on, on every
+    ///   handover, including the ones whose next step nobody wanted.
+    /// - Nothing reclaims a session on a timer, by decision. A preparation that misses holds
+    ///   its process until closed, and it is the one errand with no person waiting to notice
+    ///   that it wasn't — the shape the 461-orphan incident took, arrived at from the other
+    ///   side.
+    #[test]
+    fn getting_ahead_is_ordered_after_the_answer_and_closed_after_the_miss() {
+        assert!(
+            COGNITION_BASE.contains("Answer first, then prepare"),
+            "a spawn ahead of the hand-back is the latency this section exists to remove"
+        );
+        assert!(
+            COGNITION_BASE.contains("`hi_close_worker`"),
+            "an unwanted preparation must be closed, or getting ahead leaks a process per miss"
+        );
+    }
+
     /// **A preparation is offered by the voice or not at all.** Cognition holds no `hi_say`
     /// and never picks the words, so "the picture is ready" reaches the person only if
     /// Reaction is told to carry it — and it must arrive as a clause on something already

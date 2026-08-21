@@ -327,13 +327,25 @@ A readiness board that lists six items and not where each of them stands is not 
 that needs a follow-up question; it is a board that was handed over half-written. This
 costs nothing — same turn, same information, already in hand.
 
-**The free half of the likely next step is handed out in the same turn.** Handing work out
-does not cost a turn: `CreateWorker` returns as soon as the session is up, and the report
-comes back as mail that wakes this rung. So the preparation for the next step can already
-be running while the person is still deciding whether they want it. One handout per
-handover is the posture — the *likely* next step, not a fan of every step imaginable — and
-prepared work does not itself prepare: a session started for work nobody asked for may not
-start another.
+**The free half of the likely next step is handed out in the same turn.** The report comes
+back as mail that wakes this rung, so the preparation can be running while the person is
+still deciding whether they want it. One handout per handover is the posture — the *likely*
+next step, not a fan of every step imaginable — and prepared work does not itself prepare: a
+session started for work nobody asked for may not start another.
+
+**Ordered after the answer, because a spawn is not free.** `CreateWorker` does not wait for
+the work, but it does wait for the session, and a session is a whole `codex app-server`
+process of its own — bounded at ten seconds here, observed at three minutes under load.
+Opening the speculative errand *before* handing the answer back puts a process launch in
+front of the thing the person is waiting on, and does it on every handover including the
+ones whose next step is never wanted. That is the mechanism this section exists to remove,
+reintroduced one layer up. So the order is load-bearing: answer, then prepare.
+
+**And an unwanted preparation is closed, not abandoned.** Nothing reclaims a working session
+on a timer, by decision — so a preparation that misses holds a process until it is closed,
+and it is the one kind of errand with nobody waiting to notice that it wasn't. The cost
+model only works if the misses are swept: getting ahead is affordable because most of it is
+discarded, and discarded has to mean *closed*.
 
 **The boundary is the one that already governs acting alone.** Reversible and invisible →
 do it now. One-way, or visible to anyone else → carry it to the door and stop there.
