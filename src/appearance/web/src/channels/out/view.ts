@@ -34,7 +34,7 @@ export interface WireView {
   slot?: "content" | "condition";
 }
 
-/** One past raise, as the server recorded it.
+/** One past show, as the server recorded it.
  *
  * `view_ref` decides what re-opening means. A named view is re-resolved from its
  * current source, so `factory/tasks` comes back as today's board — reopen it through
@@ -46,7 +46,7 @@ export interface WireHistoryEntry {
   view_ref?: string;
   /** Derived server-side from the ref's last segment, or the id for an inline view. */
   label: string;
-  /** ISO timestamp of the raise. */
+  /** ISO timestamp of the show. */
   at: string;
   /** A picture of this entry, served from `/views/_shots/`. For a named view it is a
    * picture of the surface as it currently stands — the card leads to today's board, so
@@ -61,7 +61,7 @@ export interface WireHistoryEntry {
 export interface ViewState {
   version: number;
   views: WireView[];
-  /** The recent raises, oldest first; the last is what is on the stage now. Absent on
+  /** The recent shows, oldest first; the last is what is on the stage now. Absent on
    * a server older than the history — read as empty, which reads as "nowhere to go
    * back to", which is the truthful answer from a server that isn't recording. */
   history?: WireHistoryEntry[];
@@ -107,7 +107,7 @@ export interface OpenedView {
 
 /** Compile a named view for this window to mount.
  *
- * Deliberately does not touch the content slot: the stage stays what the agent raised,
+ * Deliberately does not touch the content slot: the stage stays what the agent showed,
  * so a second device is unaffected and the agent's "as you can see here" stays true of
  * what it put up. Where this window is looking is this window's own, like scroll
  * position. */
@@ -142,7 +142,7 @@ export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
  * a window is parked on stays the window's own and never leaves it: nothing here moves
  * the stage, bumps the appearance version or reaches a second device. What goes is the
  * *move*, as something the agent perceives, because the next thing the person says is
- * usually about what they are looking at — an agent that thinks its own last raise is in
+ * usually about what they are looking at — an agent that thinks its own last show is in
  * front of them answers confidently about the wrong board.
  *
  * Fire-and-forget, like the stage lane: a dropped report costs the next turn one line of
@@ -155,7 +155,7 @@ export function reportWentTo(dest: {
   /** The compiled module, for an inline view that has no ref — the same fallback the
    * history dedupes destinations by. */
   moduleUrl?: string;
-  /** What the view was raised under, to name an inline destination in a prompt. */
+  /** What the view was shown as, to name an inline destination in a prompt. */
   id?: string;
   /** They are back on what the agent has up. Clears the fact rather than recording one. */
   live?: boolean;

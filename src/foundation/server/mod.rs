@@ -587,7 +587,7 @@ pub fn build(
         // into the next turn rather than driving one — see `view::post_in_view`.
         .route("/api/in/view", post(view::post_in_view))
         // The views a person can go to by name, and the compile that lets one window
-        // mount one without taking the stage away from what the agent raised.
+        // mount one without taking the stage away from what the agent showed.
         .route("/api/views", get(view::list_views))
         .route("/api/views/open", post(view::open_view))
         .route("/api/views/bookmarks", post(view::bookmark_view))

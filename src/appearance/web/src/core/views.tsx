@@ -42,10 +42,10 @@ interface ViewsValue {
    * device + a refresh converge on the cleared screen; the empty state arrives
    * via the same long-poll. */
   clear: () => void;
-  /** Where this window can go back to, **newest first**: what the agent raised, plus
+  /** Where this window can go back to, **newest first**: what the agent showed, plus
    * the places this window went on its own, one entry per destination. */
   trail: WireHistoryEntry[];
-  /** The destination the agent has up now — the newest *raise*, which is not
+  /** The destination the agent has up now — the newest *show*, which is not
    * necessarily the head of the trail: a bookmark opened after it sits above it. */
   live: string | null;
   /** The destination this window is parked on, or `null` when it is on the live one.
@@ -54,7 +54,7 @@ interface ViewsValue {
    * here is reported** — that is a different fact, and the agent needs it to read what
    * the person says next; see `reportWentTo`. */
   parked: string | null;
-  /** Park on one past raise. */
+  /** Park on one past show. */
   goTo: (entry: WireHistoryEntry) => void;
   /** Park on a named view from the inventory, and put it at the head of the trail:
    * going somewhere is arriving somewhere, whether the agent took you or you went. */
@@ -98,8 +98,8 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
    *
    * Local, and dies with the window. Not because the move is a secret — it is posted as
    * a perception the moment it happens, see `reportWentTo` — but because the server's
-   * list is the record of *raises*, and its newest entry is what is on the stage:
-   * appending to it would tell the desktop the agent had raised something because a
+   * list is the record of *shows*, and its newest entry is what is on the stage:
+   * appending to it would tell the desktop the agent had shown something because a
    * phone tapped a bookmark. So that list stays what it is and this rides alongside it
    * into the row. */
   const [visits, setVisits] = useState<WireHistoryEntry[]>([]);
@@ -123,9 +123,9 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     void clearViewState();
     // Clearing is about the room, not only the server's slot. A parked window renders its
     // cursor in preference to the wire, so the control that says "the conversation takes
-    // the screen back" cleared the slot and then visibly did nothing — the past raise it
+    // the screen back" cleared the slot and then visibly did nothing — the past show it
     // was holding stayed up. Dropping the cursor is also this window's way home when there
-    // is no live card to tap: a bookmark opened on an instance that has never raised
+    // is no live card to tap: a bookmark opened on an instance that has never shown
     // anything parks with nothing in the trail to go back to.
     if (parkedRef.current) {
       setParked(null);
@@ -204,28 +204,28 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     };
   }, [woken]);
 
-  // The live destination is the newest raise, because every raise appends one.
+  // The live destination is the newest show, because every show appends one.
   const newest = history.length > 0 ? history[history.length - 1]! : null;
   const liveKey = newest ? destinationOf(newest) : null;
-  // The identity of the *raise*, not of the place it leads to. A re-raise of the same
+  // The identity of the *show*, not of the place it leads to. A re-show of the same
   // destination is still the agent putting something on the screen — the entry moves to
   // the end of the list and takes a new timestamp — and it has to take the window with it
   // just the same, which keying on the destination alone would miss.
-  const liveRaise = newest ? `${liveKey}|${newest.at}` : null;
-  // Read by the navigation callbacks, which must not re-create on every raise: going to
+  const liveShow = newest ? `${liveKey}|${newest.at}` : null;
+  // Read by the navigation callbacks, which must not re-create on every show: going to
   // the newest card is going *live*, and the report says so rather than telling the agent
   // the person wandered off to the thing it just put up.
   const liveKeyRef = useRef<string | null>(null);
   useEffect(() => {
     liveKeyRef.current = liveKey;
-    // A raise takes the window with it, wherever it had gone back to — see
+    // A show takes the window with it, wherever it had gone back to — see
     // `docs/arch/stage.md`. Dropping the cursor is the whole of it: `views` prefers the
-    // wire the moment there is nothing parked, so the raise is what is on screen.
+    // wire the moment there is nothing parked, so the show is what is on screen.
     if (parkedRef.current) setParked(null);
-    // `liveKey` is read here but must not be a dependency: it is unchanged by a re-raise
-    // of the same destination, and that is a raise the window still has to follow.
+    // `liveKey` is read here but must not be a dependency: it is unchanged by a re-show
+    // of the same destination, and that is a show the window still has to follow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveRaise]);
+  }, [liveShow]);
 
   const goTo = useCallback((entry: WireHistoryEntry) => {
     const key = destinationOf(entry);
@@ -241,8 +241,8 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     // Tapping the card marked *live* is going live, not parking on a copy of it —
     // `parked` means "somewhere other than the live one" and nothing else clears it
     // until the live destination CHANGES. Parking here looked identical on screen and
-    // then, on the next raise, the window read as away: it kept the old view and put a
-    // dot on the return control instead of following the raise it was standing on.
+    // then, on the next show, the window read as away: it kept the old view and put a
+    // dot on the return control instead of following the show it was standing on.
     if (live) {
       setParked(null);
       return;
@@ -274,7 +274,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     reportWentTo({ viewRef, live });
     // Same as `goTo`: opening the bookmark the agent already has up is being live. The
     // server holds that view on the stage, so there is nothing to resolve and nothing to
-    // add to the trail — the raise is already a card in it.
+    // add to the trail — the show is already a card in it.
     if (live) {
       setParked(null);
       return;
@@ -303,7 +303,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  // What the agent raised and where this window went, as one row. See `trailOf`.
+  // What the agent showed and where this window went, as one row. See `trailOf`.
   const trail = useMemo(() => trailOf(history, visits), [history, visits]);
 
   const value = useMemo<ViewsValue>(() => {

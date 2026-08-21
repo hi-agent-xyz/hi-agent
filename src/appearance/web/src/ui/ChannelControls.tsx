@@ -56,10 +56,10 @@ interface ChannelControlsProps {
  * and the line. What is left is what the cluster was always for — mic, speaker,
  * text, camera, one apiece.
  *
- * **Nothing here signals a raise, because a raise is not something to be signalled about.**
+ * **Nothing here signals a show, because a show is not something to be signalled about.**
  * There was a return-to-live button, and then a dot on the views control in its place, both
  * standing in for a window that had gone back and would not follow the agent onto the
- * screen. A raise takes the window with it now (`docs/arch/stage.md`), so there is nothing
+ * screen. A show takes the window with it now (`docs/arch/stage.md`), so there is nothing
  * left to stand in for: what the agent put up is what is up, and the band is where going
  * back lives.
  */

@@ -1886,7 +1886,7 @@ async fn run_reaction_turn(
                     tracing::warn!("session fault; reopening cold (vendor untouched)");
                 }
                 // Out of quota, credit, or credentials. A managed 402 has already
-                // raised the durable energy level from the common wire boundary. Apply
+                // shown the durable energy level from the common wire boundary. Apply
                 // its scheduling hold synchronously so this failed turn cannot drop its
                 // mail before the global gate task receives the edge. Other permanent
                 // failures retain their own pause reason and have no energy UI.
@@ -2134,7 +2134,7 @@ mod turn_context_tests {
 
     /// The whole point of the inbound view channel: when the person has gone somewhere,
     /// the turn says so, so "这个数字不对" is read against the board they are looking at
-    /// rather than the one the agent last raised.
+    /// rather than the one the agent last shown.
     #[test]
     fn the_screen_block_says_where_the_person_went() {
         use crate::foundation::server::view_bus::Attention;
@@ -2149,7 +2149,7 @@ mod turn_context_tests {
         assert!(parked.contains("just now"), "{parked}");
         assert!(parked.contains("not at what you have up"), "{parked}");
 
-        // Nothing raised: there is no "instead" to draw, and claiming one would be a
+        // Nothing shown: there is no "instead" to draw, and claiming one would be a
         // contradiction of the line right above it.
         let clear = render_on_screen(&[], Some(&went));
         assert!(clear.contains("the room is clear"), "{clear}");

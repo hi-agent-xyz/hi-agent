@@ -27,11 +27,11 @@
 //! because compiled views are content-addressed on disk and never collected
 //! (see [`crate::mind::views`]).
 //!
-//! The state also carries `history`: the recent raises, oldest first, so a person
-//! can go back to something the agent has moved past. It is the *record of raises*,
+//! The state also carries `history`: the recent shows, oldest first, so a person
+//! can go back to something the agent has moved past. It is the *record of shows*,
 //! not of anybody's navigation — a window's position in it is that window's own and
 //! is never reported here, exactly as scroll position is never reported for the
-//! conversation. There is one list and one cursor per window, and because a raise
+//! conversation. There is one list and one cursor per window, and because a show
 //! only ever appends, no navigation can be truncated by one arriving.
 
 use std::path::{Path, PathBuf};
@@ -72,10 +72,10 @@ pub struct ViewBus {
 pub struct Attention {
     /// What identifies the *place*, by the same rule the history dedupes by: the
     /// durable ref when there is one, else the compiled module. Never rendered — it
-    /// exists so a raise onto the same place can recognize itself and clear this.
+    /// exists so a show onto the same place can recognize itself and clear this.
     pub key: String,
     /// What to call the destination in a prompt — the ref when it has one, else the
-    /// id the inline view was raised under. The module hash names nothing.
+    /// id the inline view was shown as. The module hash names nothing.
     pub name: String,
     /// When they went there. Rendered as an age, never as a claim about now: a window
     /// that reloaded is live again and never says so, so this fact can outlive the
@@ -107,8 +107,8 @@ struct Appearance {
     content: Option<RetainedView>,
     /// The host's condition layer over the content (e.g. a vendor outage).
     condition: Option<RetainedView>,
-    /// What has been raised into `content`, oldest first — the newest entry is
-    /// what is up now. See [`record_raise`].
+    /// What has been shown into `content`, oldest first — the newest entry is
+    /// what is up now. See [`record_show`].
     history: Vec<HistoryEntry>,
     /// Bumped on every state change; the long-poll's `since` compares against it.
     version: u64,
@@ -116,14 +116,14 @@ struct Appearance {
     notify: Arc<Notify>,
 }
 
-/// How many raises the history keeps. Bounded because the point of it is reaching
+/// How many shows the history keeps. Bounded because the point of it is reaching
 /// something the agent has moved past within a working stretch, not archiving the
 /// day — the snapshots under `raw/appearance/` are the archive, and a fuller browser
 /// over them can be its own view. Bounded also keeps the state small enough that
 /// resending it whole on every version bump stays the right design.
 const HISTORY_MAX: usize = 24;
 
-/// One raise, and when it happened.
+/// One show, and when it happened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct HistoryEntry {
     view: RetainedView,
@@ -163,9 +163,9 @@ struct Snapshot {
     content: Option<RetainedView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     condition: Option<RetainedView>,
-    /// The recent raises, oldest first. `#[serde(default)]` is the back-compat
+    /// The recent shows, oldest first. `#[serde(default)]` is the back-compat
     /// lever: a snapshot written before the history existed reloads with an empty
-    /// one, which is exactly right — nothing is known to have been raised, so there
+    /// one, which is exactly right — nothing is known to have been shown, so there
     /// is nowhere to go back to until the agent shows something.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     history: Vec<HistoryEntry>,
@@ -197,7 +197,7 @@ pub struct WireView {
     pub slot: WireSlot,
 }
 
-/// One past raise as delivered to the browser.
+/// One past show as delivered to the browser.
 ///
 /// `label` is derived here rather than declared by the view, because a view declares
 /// nothing but `owns_conversation` and inventing a title field would make every
@@ -218,7 +218,7 @@ pub struct WireHistoryEntry {
     pub view_ref: Option<String>,
     pub label: String,
     pub at: DateTime<Utc>,
-    /// A picture of this raise, served from `/views/_shots/<hash>.png` — absent while
+    /// A picture of this show, served from `/views/_shots/<hash>.png` — absent while
     /// the capture is still running, and for good on a view that did not render
     /// cleanly. The tile falls back to its mark either way, so this is decoration on
     /// a record that is complete without it. See [`super::view_shots`].
@@ -239,7 +239,7 @@ pub struct WireHistoryEntry {
 pub struct ViewState {
     pub version: u64,
     pub views: Vec<WireView>,
-    /// The recent raises, oldest first. The last entry is what is on the stage now,
+    /// The recent shows, oldest first. The last entry is what is on the stage now,
     /// which is what makes "the person is at the end" mean "the person is live".
     pub history: Vec<WireHistoryEntry>,
 }
@@ -291,15 +291,15 @@ impl ViewBus {
         true
     }
 
-    /// Forget where they went, because the agent just raised something.
+    /// Forget where they went, because the agent just shown something.
     ///
-    /// This is the client's own rule for being live again — a raise takes the window with
+    /// This is the client's own rule for being live again — a show takes the window with
     /// it, whatever it had gone back to (`docs/arch/stage.md`) — made here, in the same
-    /// call that records the raise, so the two cannot drift. It used to clear only when the
-    /// raise landed on the very destination they had gone to, which was right while a
+    /// call that records the show, so the two cannot drift. It used to clear only when the
+    /// show landed on the very destination they had gone to, which was right while a
     /// parked window stayed put and is wrong now that none does: the alternative is telling
     /// the agent they are away reading something it has just taken them off.
-    async fn caught_up_by_raise(&self) {
+    async fn caught_up_by_show(&self) {
         *self.attention.lock().await = None;
     }
 
@@ -317,13 +317,13 @@ impl ViewBus {
     /// the slot when it holds the named id.
     ///
     /// Showing is therefore *how the screen changes*, not how it grows: there is no
-    /// z-order to raise into and no way for two topics to end up stacked, so the
+    /// z-order left to push onto and no way for two topics to end up stacked, so the
     /// agent walking someone through a sequence never has to dismiss between beats.
     ///
     /// A write that changes nothing is dropped, so a repeated `show` of what is
     /// already up costs no version bump, no client re-render and no snapshot.
     ///
-    /// A raise is also recorded in `history`, so the person can reach it again after
+    /// A show is also recorded in `history`, so the person can reach it again after
     /// the agent has moved on. A dismiss is not: the empty room is not somewhere to
     /// go back to, and the view it cleared is already in the list.
     pub async fn apply(&self, envelope: ViewEnvelope) {
@@ -335,9 +335,9 @@ impl ViewBus {
         if entry.content == next {
             return;
         }
-        if let Some(raised) = &next {
-            record_raise(&mut entry.history, raised.clone(), Utc::now());
-            self.caught_up_by_raise().await;
+        if let Some(shown) = &next {
+            record_show(&mut entry.history, shown.clone(), Utc::now());
+            self.caught_up_by_show().await;
             // Take the picture now, while this *is* the screen. Off the write path
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
@@ -349,16 +349,16 @@ impl ViewBus {
             // and re-taken as the board moves; an inline view is only ever the artifact
             // it compiled to, and its picture is written once. Same split the whole
             // history turns on. See [`super::view_shots`].
-            match raised.view_ref.clone() {
+            match shown.view_ref.clone() {
                 Some(view_ref) => super::view_shots::capture_ref(
                     self.data_dir.clone(),
                     view_ref,
-                    raised.module_url.clone(),
+                    shown.module_url.clone(),
                     done,
                 ),
                 None => super::view_shots::capture(
                     self.data_dir.clone(),
-                    raised.module_url.clone(),
+                    shown.module_url.clone(),
                     done,
                 ),
             }
@@ -515,7 +515,7 @@ impl ViewBus {
     ///
     /// **Bumps the version without persisting a snapshot.** The snapshots under
     /// `raw/appearance/` are the record of what was on screen, and a picture taken of
-    /// a raise that already happened changes nothing about that — writing one would
+    /// a show that already happened changes nothing about that — writing one would
     /// put a state in the appearance history identical to its predecessor and dated
     /// later, which is exactly the noise reflection has to read past. The version is
     /// only the long-poll's comparator, so it is free to run ahead of the newest
@@ -633,32 +633,32 @@ fn resolve_slot(
     }
 }
 
-/// Record one raise at the end of `history`, dropping any earlier entry for the same
+/// Record one show at the end of `history`, dropping any earlier entry for the same
 /// destination and trimming the oldest away past [`HISTORY_MAX`].
 ///
 /// **Appending is the only thing that ever happens to this list**, and that is what
 /// makes it safe for the agent and the person to share one of them. A browser's back
 /// stack destroys its forward entries when you navigate from a back position, and it
-/// can afford to because you are its only navigator; here the agent raises views too,
+/// can afford to because you are its only navigator; here the agent shows views too,
 /// and losing the entry a person was on their way back to because the agent spoke
-/// would be indefensible. So a raise never truncates, and a person's position is just
+/// would be indefensible. So a show never truncates, and a person's position is just
 /// a cursor over the list — there is no branch to destroy.
 ///
 /// **Same destination, one entry.** A destination is the `view_ref` when there is one
 /// and the `module_url` when there isn't, which is precisely the identity that decides
-/// what re-opening will render: two raises of `factory/tasks` resolve to the same
+/// what re-opening will render: two shows of `factory/tasks` resolve to the same
 /// recompiled board, so two tiles would offer one place twice. Two *different* inline
 /// views have different content hashes and both stay. The surviving entry moves to the
 /// end and takes the newer timestamp, because what matters about it is when the screen
 /// last showed it.
-/// The picture to hang on one past raise.
+/// The picture to hang on one past show.
 ///
 /// A named view's tile is its **surface** picture, not a picture of the moment it went
 /// up: re-opening `factory/tasks` deliberately re-resolves to today's board, so a tile
 /// promising last Tuesday's would be a wrong picture of the place the card leads to.
 /// An inline view has no surface to be current about and keeps its artifact's shot —
 /// and so does a named entry whose surface picture has not been taken yet, which is
-/// how every raise recorded before this split keeps the picture it already had.
+/// how every show recorded before this split keeps the picture it already had.
 fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
     view.view_ref
         .as_deref()
@@ -666,7 +666,7 @@ fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
         .or_else(|| super::view_shots::url_for(data_dir, &view.module_url))
 }
 
-fn record_raise(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
+fn record_show(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
     let key = destination_of(&view);
     history.retain(|h| destination_of(&h.view) != key);
     history.push(HistoryEntry { view, at });
@@ -675,7 +675,7 @@ fn record_raise(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTim
 }
 
 /// What identifies a *destination*: the durable ref when there is one, else the compiled
-/// module. Two raises of `factory/tasks` are one place because both re-resolve to the same
+/// module. Two shows of `factory/tasks` are one place because both re-resolve to the same
 /// recompiled board; two different inline views are two artifacts and both stay. The client
 /// keys its cursor by the same rule (`destinationOf` in `core/views.tsx`) and the inbound
 /// half of the view channel reports it, so all three agree on what "the same place" means.
@@ -683,9 +683,9 @@ fn destination_of(view: &RetainedView) -> String {
     view.view_ref.clone().unwrap_or_else(|| view.module_url.clone())
 }
 
-/// A human label for one past raise.
+/// A human label for one past show.
 ///
-/// The ref's last segment with its separators opened up and its first letter raised:
+/// The ref's last segment with its separators opened up and its first letter shown:
 /// `factory/people-review` → `People review`. An inline view has no ref and falls back
 /// to its id. Nothing here reads the view's source — the label is wanted for every
 /// entry in the state on every version bump, and a dozen file reads per long-poll
@@ -891,11 +891,11 @@ mod tests {
         assert!(!bus.note_went_to(String::new(), String::new(), true).await);
     }
 
-    /// Any raise catches up with them, not only one onto the place they went. The window
-    /// follows a raise, so a fact saying they are elsewhere is not stale — it is false, and
+    /// Any show catches up with them, not only one onto the place they went. The window
+    /// follows a show, so a fact saying they are elsewhere is not stale — it is false, and
     /// the agent would answer the wrong board confidently on the strength of it.
     #[tokio::test]
-    async fn any_raise_catches_up_with_them() {
+    async fn any_show_catches_up_with_them() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
@@ -905,7 +905,7 @@ mod tests {
         assert!(bus.attention().await.is_none());
     }
 
-    /// A dismiss is not a raise: it clears the slot rather than putting a window on
+    /// A dismiss is not a show: it clears the slot rather than putting a window on
     /// something, so there is nowhere it could have taken them and the fact stands.
     #[tokio::test]
     async fn a_dismiss_leaves_where_they_went_alone() {
@@ -967,7 +967,7 @@ mod tests {
     /// case that used to pile up — the appearance history has states fourteen
     /// views deep, every one of them an unrelated topic nobody dismissed.
     #[tokio::test]
-    async fn a_raise_the_screen_moved_past_stays_reachable_in_history() {
+    async fn a_show_the_screen_moved_past_stays_reachable_in_history() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
@@ -1011,7 +1011,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_same_named_view_raised_twice_is_one_entry_at_the_newer_position() {
+    async fn the_same_named_view_shown_twice_is_one_entry_at_the_newer_position() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
@@ -1062,21 +1062,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_raise_only_ever_appends_so_nothing_a_person_was_returning_to_is_lost() {
+    async fn a_show_only_ever_appends_so_nothing_a_person_was_returning_to_is_lost() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show("a", "/m/a.mjs")).await;
         bus.apply(show("b", "/m/b.mjs")).await;
         bus.apply(show("c", "/m/c.mjs")).await;
         // The person is parked on "a" — a cursor this bus never hears about. The
-        // agent raising "d" must not disturb anything between there and the end.
+        // agent showing "d" must not disturb anything between there and the end.
         bus.apply(show("d", "/m/d.mjs")).await;
 
         let state = bus.wait_state(None).await;
         assert_eq!(
             history_ids(&state),
             vec!["a", "b", "c", "d"],
-            "append-only: no forward entries were truncated by the new raise"
+            "append-only: no forward entries were truncated by the new show"
         );
     }
 

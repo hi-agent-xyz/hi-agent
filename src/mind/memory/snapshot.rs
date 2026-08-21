@@ -263,10 +263,10 @@ pub async fn shown_recently(memory: &Memory) -> String {
         let JournalEntry::SignalOut { channel: Channel::View, body, .. } = entry else {
             continue;
         };
-        let Some(name) = raised_name(body) else {
+        let Some(name) = shown_name(body) else {
             continue;
         };
-        // Newest-last, one entry per destination: a view raised, moved past and raised
+        // Newest-last, one entry per destination: a view shown, moved past and shown
         // again is one place they have been, not two.
         seen.retain(|s| s != &name);
         seen.push(name);
@@ -299,9 +299,9 @@ _What they have actually been shown in the last {SHOWN_WINDOW_MIN} minutes, olde
 ///
 /// The line is `showed "<id>" [<ref>] (<module>)` — see `render_view_line`. The ref is what
 /// this wants, because the ref is what a piece of work is known by everywhere else; the id
-/// is whatever Reaction called it in that moment. A dismissal is not a raise, and an
+/// is whatever Reaction called it in that moment. A dismissal is not a show, and an
 /// inline view with no ref is named by its id, which is all it has.
-fn raised_name(body: &str) -> Option<String> {
+fn shown_name(body: &str) -> Option<String> {
     let rest = body
         .strip_prefix("showed ")
         .or_else(|| body.strip_prefix("replaced "))?;
@@ -661,19 +661,19 @@ fn truncate(s: &str, max: usize) -> String {
 /// name is what the rung reading it will compare against its own record of the work.
 #[cfg(test)]
 mod shown_tests {
-    use super::raised_name;
+    use super::shown_name;
 
     /// The ref wins, because the ref is what a piece of work is known by everywhere else.
     /// The live instance really did log `showed "agent-learning"` for a view built at
     /// `agent-context-reading/path`, and no reader of that line could have connected them.
     #[test]
-    fn a_raise_is_named_by_its_ref_not_the_id_of_the_moment() {
+    fn a_show_is_named_by_its_ref_not_the_id_of_the_moment() {
         assert_eq!(
-            raised_name(r#"showed "agent-learning" [agent-context-reading/path] (/views/_compiled/ab.mjs)"#),
+            shown_name(r#"showed "agent-learning" [agent-context-reading/path] (/views/_compiled/ab.mjs)"#),
             Some("agent-context-reading/path".to_owned())
         );
         assert_eq!(
-            raised_name(r#"replaced "board" [zhao-li-kt-status/board] (/views/_compiled/cd.mjs)"#),
+            shown_name(r#"replaced "board" [zhao-li-kt-status/board] (/views/_compiled/cd.mjs)"#),
             Some("zhao-li-kt-status/board".to_owned())
         );
     }
@@ -682,7 +682,7 @@ mod shown_tests {
     #[test]
     fn a_view_with_no_ref_falls_back_to_its_id() {
         assert_eq!(
-            raised_name(r#"showed "a-quick-sketch" (/views/_compiled/ef.mjs)"#),
+            shown_name(r#"showed "a-quick-sketch" (/views/_compiled/ef.mjs)"#),
             Some("a-quick-sketch".to_owned())
         );
     }
@@ -690,16 +690,16 @@ mod shown_tests {
     /// Clearing the screen is not showing them something, and counting it as one would put
     /// a name on this list that the person never saw.
     #[test]
-    fn a_dismissal_is_not_a_raise() {
-        assert_eq!(raised_name(r#"dismissed "tasks""#), None);
+    fn a_dismissal_is_not_a_show() {
+        assert_eq!(shown_name(r#"dismissed "tasks""#), None);
     }
 
     /// Lines this does not understand are skipped rather than guessed at — every old line
     /// in the journal predates the ref and must not be read as something it is not.
     #[test]
     fn an_unparseable_line_names_nothing() {
-        assert_eq!(raised_name("showed something"), None);
-        assert_eq!(raised_name(""), None);
+        assert_eq!(shown_name("showed something"), None);
+        assert_eq!(shown_name(""), None);
     }
 }
 

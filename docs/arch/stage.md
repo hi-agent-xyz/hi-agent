@@ -12,14 +12,14 @@ messages, and the line being written, in one card that is the same in both place
 the text channel's one control moves the whole of it; argued in *The line is inside the
 conversation*. **Amended the same day — the band's lower row is bookmarks, and its tiles
 are pictures:** the row is the system views plus what the person kept, not the whole
-inventory, which reverses this document's own deferral of a pinned subset; and a raise is
+inventory, which reverses this document's own deferral of a pinned subset; and a view is
 captured by the headless renderer the moment it goes up, which reverses *marks, not
 screenshots*. Both are argued in *Going back to a view the agent has moved past* and
-*The tile is a picture of the raise*. **Amended the same day — the keyboard follows the
+*The tile is a picture of what was shown*. **Amended the same day — the keyboard follows the
 planes:** the plane the focus is in owns the keystroke, so a view can no longer take a key
 typed into the host's own line or controls; argued in *The keyboard follows the planes*.
 **Amended August 19, 2026 — the row reads newest first, and a surface's picture is of
-today:** the band's upper row is the *trail* — the agent's raises and the person's own
+today:** the band's upper row is the *trail* — the agent's shows and the person's own
 opens, one card per destination, newest at the head instead of the tail; and a named
 view's picture is filed under its ref and re-taken when someone opens it, instead of
 being written once against the artifact it first compiled to. Argued in *Going back to a
@@ -33,7 +33,7 @@ inbound half, so the agent knows where the person is looking when they speak nex
 which entry a window is parked on stays the window's own and out of the appearance;
 argued in *Where they went is reported; the cursor still is not*. **Amended August 20,
 2026 — the card is the picture, and the name is written on it:** the tile becomes 160×90,
-the label moves onto the shot's bottom edge over a gradient, the raise time is not
+the label moves onto the shot's bottom edge over a gradient, the time it went up is not
 printed, and both rows open on the item marked *here*; argued in *The card is the
 picture*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
@@ -345,7 +345,7 @@ never reported.
 
 `replace` destroys what was up, and until now the only way back was asking the agent to
 show it again — asking someone to redraw a whiteboard they just erased. The screen keeps
-a **history**: the raises, oldest first, carried in the same `GET /api/out/view` state and
+a **history**: the shows, oldest first, carried in the same `GET /api/out/view` state and
 persisted in the same snapshots. The newest entry is what is on the stage, which is what
 makes *the person is at the end* mean *the person is live*.
 
@@ -355,25 +355,25 @@ amended August 19, 2026. Two things were wrong with showing the list as it is st
 The first is the order. The row overflows within an afternoon and a strip only ever
 scrolls from its start, so oldest-first put the live view — the single entry certain to
 be wanted, and the one the cursor is on — reliably off the right-hand edge, and made
-"a re-raise moves the view to the newest end" mean "a re-raise moves it out of sight".
+"a re-show moves the view to the newest end" mean "a re-show moves it out of sight".
 The list is still stored oldest-first, because appending is the only thing that happens
 to it; the row renders it head-first.
 
 The second is what counts as a place the person has been. Opening a bookmark is arriving
 somewhere, but it left no card, so a surface the person went to had no timestamp, no
-picture, and no position — while the card for the *last raise* of that same view sat in
+picture, and no position — while the card for the *last show* of that same view sat in
 the row wearing a time from three days ago and lighting up as *here*. So the row is the
-**trail**: the server's raises and this window's own opens, one card per destination,
+**trail**: the server's shows and this window's own opens, one card per destination,
 whichever fact about it is later. Going back to a card is a cursor move and does not
 re-time it — the row must not reshuffle under a finger that is browsing it.
 
 **The band opens on where you are — in whichever row you are in.** Both rows are longer
-than they are wide and the cursor is not always at the head of either: a raise lands at
+than they are wide and the cursor is not always at the head of either: a show lands at
 the head of the trail, but a card gone back to keeps its place, and the surface someone
 is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
 *here* into view, in the row that holds it, and one that is already whole on screen is
-left alone. Only on opening: a raise arriving while the band is up must not drag a row
-out from under someone reading it. The stage does follow a raise — *A raise takes the window
+left alone. Only on opening: a show arriving while the band is up must not drag a row
+out from under someone reading it. The stage does follow a show — *A show takes the window
 with it*, above — and the row deliberately does not.
 
 *Extended to the lower row August 20, 2026. It was written for the trail alone, and the
@@ -384,32 +384,33 @@ the paragraph exists to prevent, one row down.*
 **The trail's own half stays in the window.** A visit is not appended to the server's
 list — a separate question from whether the *move* is reported, which it is (*Where they
 went is reported; the cursor still is not*, below): the newest entry in that list is what
-is on the stage, so appending to it would tell the desktop the agent had raised something
-because a phone tapped a bookmark. The server's list is the record of raises; the window merges its own
+is on the stage, so appending to it would tell the desktop the agent had shown something
+because a phone tapped a bookmark. The server's list is the record of shows; the window merges its own
 visits into the row it draws and forgets them when it closes, exactly as it forgets where
 it was parked.
 
 **One list, and appending is the only thing that happens to it.** A browser's back stack
 destroys its forward entries when you navigate from a back position, and can afford to
-because you are its only navigator. Here the agent raises views too, so losing the entry
+because you are its only navigator. Here the agent shows views too, so losing the entry
 someone was on their way back to because the agent spoke would be indefensible. The agent
 appends; the person moves a cursor. There is no branch, so nothing can be truncated, and
 the stack and the history are the same object.
 
 **The cursor is the window's, and is never reported.** Which entry a window is parked on
 is that window's own, exactly like the conversation's scroll position — a phone that went
-back must not move the desktop. The content slot stays the agent's: what it raised is
+back must not move the desktop. The content slot stays the agent's: what it showed is
 still what a second device shows and still what it will refer to out loud.
 
-**A raise takes the window with it.** Whatever the person had gone back to, the thing the
+**A show takes the window with it.** Whatever the person had gone back to, the thing the
 agent puts up is what is in front of them a moment later — on every window, parked or not.
-The cursor survives everything except a raise: they can read an old card for as long as the
+The cursor survives everything except a show: they can read an old card for as long as the
 agent is quiet, and the moment it shows something, they are looking at that.
 
-*Reversed August 21, 2026. It used to read "a raise signals; it never yanks."* The rule was
+*Reversed August 21, 2026. It used to read "a raise signals; it never yanks" — see the
+vocabulary note below for why the word changed too.* The rule was
 argued from the conversation — landing a view on someone mid-read is auto-scrolling them to
 a new message — and the analogy is what was wrong. **A message is a thing to read when you
-get to it; a raise is the agent pointing at the screen while it talks.** Speech assumes it:
+get to it; a show is the agent pointing at the screen while it talks.** Speech assumes it:
 at 12:23 the agent said *我现在放到屏幕上了* — "I've put it on the screen now" — half a
 minute after the person had gone to `factory/workers`, and the screen they were looking at
 did not change. The signal that was supposed to cover that gap (a dot, first on a control of
@@ -420,10 +421,18 @@ the agent has already made out loud.
 So the signalling apparatus is deleted rather than re-homed — the dot, `liveMoved`, and the
 CSS under them. What is left is what going back was always for: the band, the trail, and a
 cursor that holds until the agent next speaks with the screen. Two things keep the person
-from being lost when it moves: the raise's own card is at the head of the trail, and *close
+from being lost when it moves: the show's own card is at the head of the trail, and *close
 the view* still drops the cursor along with the slot.
 
-**The band's rows are the exception, and stay one.** A raise moves the stage under a parked
+*The word was **raise**, everywhere in this document and in the code under it, until
+August 21, 2026.* It named a z-ordered stack that a `show` pushed onto — the screen the
+first design had — and that stack was replaced by two fixed slots long before this. What
+was left was a private synonym: the agent's tool is `hi_show`, the wire op is `show`, the
+transcript line reads `showed "…"`, and only the layer in between called the same act a
+raise, so every reader translated on the way through. It is *show* now on both sides of
+that seam. `dismiss` is still not one — nothing goes up, so no window is taken anywhere.
+
+**The band's rows are the exception, and stay one.** A show moves the stage under a parked
 window on purpose; it must still not scroll the row of cards someone is reading with their
 finger on it. The stage follows the agent; the row follows the hand.
 
@@ -436,14 +445,14 @@ the paragraph above could be right and still leave the agent blind.
 would let a phone move the desktop. That stands exactly as written. *That the person went
 somewhere* is an **event**, and an event on the agent's own surface is something the agent
 should perceive — because the next thing they say is usually about it. "这个数字不对" is
-unreadable if the agent believes its own last raise is what is in front of them, and the
+unreadable if the agent believes its own last show is what is in front of them, and the
 failure is silent: it answers confidently, about the wrong board.
 
 **So a move posts, and posts as a perception.** `POST /api/in/view` is the inbound half of
 a channel that until now only went out. It carries *where they went* and never *which
 window went there*, and it changes nothing about the appearance: `GET /api/out/view` is
 what it was, no version bump, no snapshot, and a second device still shows what the agent
-raised. The report is read, not applied — the content slot is still the agent's alone, and
+shown. The report is read, not applied — the content slot is still the agent's alone, and
 this is still not a second writer of it.
 
 **It does not drive a turn.** Someone walking the band through five tiles must not produce
@@ -455,12 +464,12 @@ the backend something true about itself, and nothing happens until something els
 **The newest move wins, across every window.** One person owns an install
 ([`topology.md`](topology.md#identity)), so two windows are two of their eyes and not two
 people, and the last place they went is the best available answer to where they are
-looking. **Any raise clears it**, because that is the client's own rule for going live again
-— a raise takes every window with it — made in the same place the raise is recorded, so the
-two cannot drift. It used to clear only on a raise onto the very destination they had gone
+looking. **Any show clears it**, because that is the client's own rule for going live again
+— a show takes every window with it — made in the same place the show is recorded, so the
+two cannot drift. It used to clear only on a show onto the very destination they had gone
 to, which was right while a parked window stayed put: now that none does, a fact saying they
 are elsewhere is not stale but false, and the agent would answer the wrong board on the
-strength of it. A *dismiss* is not a raise and leaves it alone — it takes a window nowhere.
+strength of it. A *dismiss* is not a show and leaves it alone — it takes a window nowhere.
 
 **It goes stale, and says so instead of pretending.** A window that reloads is live again
 and never announces it, so the fact can outlive the looking. The turn therefore reads it
@@ -469,12 +478,12 @@ unlike a bare assertion about where someone is. And it is in-memory: after a res
 agent has no idea where anybody is looking, which is the truth.
 
 **Same destination, one entry** — the ref when there is one, the module when there isn't.
-Two raises of `factory/tasks` are one place, because both re-resolve to the same
+Two shows of `factory/tasks` are one place, because both re-resolve to the same
 recompiled board; two different inline views are two artifacts and both stay. This is the
 same named/inline split `refresh_sources` turns on, and it decides what re-opening means:
 a named view comes back as what it *is now*, an inline one only ever as what it *was*.
 
-**The person may go to a place; the agent decides what to raise.** A dozen views ship with
+**The person may go to a place; the agent decides what to show.** A dozen views ship with
 no way to reach any of them except asking, which is the interaction cost of a chatbot
 sitting on top of what is otherwise an app. `GET /api/views` is the inventory and
 `POST /api/views/open` compiles one for a window to mount — deliberately not a third
@@ -518,14 +527,14 @@ renders *today* rather than the record it stands in.
 
 That argument assumed the browser had to be the person's. It doesn't. `view_render`
 already drives a headless Chromium over the `/render/view` host page for
-`hi_review_view`, so a raise can be rendered **at the instant it is raised** — the same
+`hi_review_view`, so a view can be rendered **at the instant it is shown** — the same
 module, the same moment, the same frame the window reported. It is not a reconstruction
 of the past; it is a second camera on the present.
 
 Three properties keep it affordable, and each is load-bearing:
 
 - **Content-addressed.** The key is the compiled module's own hash, so an artifact
-  renders once no matter how often it is raised, and a recompile is correctly a
+  renders once no matter how often it is shown, and a recompile is correctly a
   different picture. `views/_shots/` sits beside `_compiled/` and is disposable in
   exactly the same way.
 - **One at a time.** A `show, say, show, say` walk-through would otherwise put a browser
@@ -535,8 +544,8 @@ Three properties keep it affordable, and each is load-bearing:
   — which is the whole of the old design, still there as the floor.
 
 The capture bumps the appearance version when it lands, so the picture reaches the
-windows already watching, but **writes no snapshot**: a picture of a raise that already
-happened changes nothing about what was on screen, and a state identical to its
+windows already watching, but **writes no snapshot**: a picture of something already
+shown changes nothing about what was on screen, and a state identical to its
 predecessor and dated later is exactly the noise reflection has to read past.
 
 The window reports its **skin** on the stage lane beside its frame, for the same reason
@@ -558,7 +567,7 @@ it was taken. The URL carries the file's mtime, because the
 `_shots/` route hands out a year-long immutable cache that is correct for a hash and
 would otherwise pin the first picture in the browser forever.
 
-Two paths take it, and both are the same act as the raise capture — a second camera on
+Two paths take it, and both are the same act as the capture on a show — a second camera on
 what someone is looking at right now. `POST /api/views/open` re-takes the picture of the
 view being opened. `GET /api/views` — which is read when the band opens, and only then —
 takes a **first** picture for up to three of the row's own views that have none, so the
@@ -606,7 +615,7 @@ is on it, which is what the tile and the name are. And the two words most often 
 line, *Wed* and *live*, were the two carrying least: *Wed* because a weekday is not a
 handle, *live* because the row's head already says it. The live card keeps a pip on the
 gradient beside its name, which is the picture-side half of that same signal — and now that
-a raise takes the window with it, the pip marks where the window will be the moment the
+a show takes the window with it, the pip marks where the window will be the moment the
 agent shows anything.
 
 **And the tile is 160×90** — 16:9, against 118×76 (1.55) before; 128×72 rather than

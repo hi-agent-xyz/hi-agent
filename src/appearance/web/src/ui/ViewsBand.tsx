@@ -13,7 +13,7 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * being compared. Choosing dismisses it for the same reason.
  *
  * **Two rows, because there are two ways to want a view.** The upper row is the trail:
- * where this window can go back to, **newest first** — the raises the server recorded
+ * where this window can go back to, **newest first** — the shows the server recorded
  * and the places the person opened themselves, one card per destination. Newest first
  * because the row overflows and only ever scrolls from its start, so oldest-first put
  * the live view, of all things, off the right-hand edge. The lower row is bookmarks —
@@ -47,15 +47,15 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  *
  * The card *is* the picture: the label sits on the shot's bottom edge over a gradient
  * rather than in a line below it, so every pixel of the card's height is the thing that
- * identifies the view. The raise time is not printed at all — the row is already
+ * identifies the view. The show time is not printed at all — the row is already
  * ordered by it, and nobody asks for a view by when it was put up.
  *
  * **It opens on where you are.** Both rows can be a dozen items long and the cursor is
- * not always at the head of either — a raise lands there, but a card gone back to keeps
+ * not always at the head of either — a show lands there, but a card gone back to keeps
  * its place, and a bookmark can sit anywhere in the lower row — so opening the band
  * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
- * opening: a raise arriving afterwards must not drag a row out from under someone
- * reading it. The stage does follow a raise; the row someone is reading does not.
+ * opening: a show arriving afterwards must not drag a row out from under someone
+ * reading it. The stage does follow a show; the row someone is reading does not.
  *
  * **The inventory is re-read while the band is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually the band

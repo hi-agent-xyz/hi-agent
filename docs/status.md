@@ -194,7 +194,7 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 | **The Docker shape's gate** | A published port is off-box, so an existing deployment is gated from first run. Reasoned about, not exercised |
 | **Nothing opens during the drain** — `AgentLayer::session` refuses once the shutdown signal is triggered, so no rung can mint a thread while the host is winding down | The failure it fixes was watched on 2026-08-20: a cold reopen during the drain wrote a newer `thread` row for Cognition and Reaction, and the next boot resumed those 14-record shells instead of the 34.6 MB thread the run was actually spent on. The guard itself is unit-tested only. Quit with rungs live, then confirm the last `thread` row per rung in `memory/raw/sessions/index.jsonl` is still the run's own, and that the next boot logs `resuming=2` on those same two ids |
 | **A session swap that fails or times out** | Both arms are written (keep the warm session; discard the unresponsive one) and neither has been provoked |
-| **A raise taking the window with it** | The parked window follows any raise now, including a re-raise of the same destination (the cursor drops on the newest history entry changing, not on its destination changing), and the server clears its `attention` on any raise to match. Unit tests reach the server half only: park on an older card, have something raised, and confirm the stage moves; then re-raise the same view and confirm it still moves. A dismiss deliberately moves nobody |
+| **A show taking the window with it** | The parked window follows any show now, including a re-show of the same destination (the cursor drops on the newest history entry changing, not on its destination changing), and the server clears its `attention` on any show to match. Unit tests reach the server half only: park on an older card, have something shown, and confirm the stage moves; then re-show the same view and confirm it still moves. A dismiss deliberately moves nobody |
 | **The views band opening on the bookmarks row** | The upper row's scroll-to-*here* has been watched; the lower row's is new, and its arithmetic was only checked in a standalone page carrying the real stylesheet — not in the mounted band, where the chip appears a render after the first `listViews()` answers. Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
 
 ---
@@ -270,7 +270,7 @@ violate the absolute-path invariant, and whether bulk media is still stored twic
 ## Settled — do not re-file, do not rebuild
 
 Each of these was removed or refused **on purpose**, most of them after being built and lived
-with. Re-raising one costs a round trip and buys nothing.
+with. Re-showing one costs a round trip and buys nothing.
 
 | | |
 |---|---|

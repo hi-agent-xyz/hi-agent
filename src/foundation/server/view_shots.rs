@@ -9,14 +9,14 @@
 //! That argument assumed the browser had to be the person's. It doesn't:
 //! [`view_render`](crate::body::capabilities::view_render) already drives a headless
 //! Chromium over the same `/render/view` host page, at the same frame the window
-//! reported, for `hi_review_view`. Rendering a raise the moment it is raised is the
+//! reported, for `hi_review_view`. Rendering a show the moment it is shown is the
 //! same act at the same instant on the same module — so the picture is of what the
 //! person is looking at, not of a reconstruction.
 //!
 //! Three properties make it affordable:
 //!
 //! **Content-addressed, so each artifact renders once.** The key is the compiled
-//! module's own hash. Re-raising `factory/tasks` reuses the shot; recompiling it
+//! module's own hash. Re-showing `factory/tasks` reuses the shot; recompiling it
 //! produces a new module and therefore a new one. `<data>/views/_shots/<hash>.png`
 //! sits beside `_compiled/` and is disposable in exactly the same way.
 //!
@@ -66,7 +66,7 @@ const KEEP: usize = 200;
 /// click. Fifteen minutes is where a picture stops being about the same working stretch.
 const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
-/// Renders happen one at a time. See the module docs: the alternative is a raise
+/// Renders happen one at a time. See the module docs: the alternative is a show
 /// sequence spawning a browser per beat.
 static CAPTURING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -135,7 +135,7 @@ pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
 /// Capture `module_url` in the background, then call `done` if a new shot landed.
 ///
 /// Returns immediately. `done` is how the picture reaches the people already
-/// watching: the appearance state that carried this raise was built before the shot
+/// watching: the appearance state that carried this show was built before the shot
 /// existed, so something has to bump the version once it does.
 pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send + 'static) {
     let path = shots_dir(&data_dir).join(shot_name(&module_url));
@@ -186,7 +186,7 @@ pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool
 /// Is `path` a picture we are content to keep?
 ///
 /// `stale_after: None` is write-once — any file there will do, which is what a record of
-/// a raise wants. `Some(ttl)` also requires it to be younger than `ttl`, and
+/// a show wants. `Some(ttl)` also requires it to be younger than `ttl`, and
 /// `newer_than` requires it to postdate the source it claims to be a picture of.
 fn good_enough(
     path: &Path,

@@ -73,7 +73,7 @@ pub struct ListedView {
     /// `/views/_shots/ref/<ref>.png`. Absent until one has been taken — see
     /// [`super::view_shots`] for when that is. It is what a card the person opens
     /// carries into the band's row, so a view they went to has a face even though the
-    /// agent never raised it.
+    /// agent never shown it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shot_url: Option<String>,
 }
@@ -120,7 +120,7 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
 /// This is the inventory, and it exists because a dozen views shipped with no way to
 /// reach any of them except asking the agent to show it. Asking for the drive every
 /// time is the interaction cost of a chatbot sitting on top of what is otherwise an
-/// app, and a person may go to a place even though the agent decides what to raise.
+/// app, and a person may go to a place even though the agent decides what to show.
 ///
 /// **The whole inventory is no longer the row.** The design deferred a person-owned
 /// subset on the grounds that a dozen views fit one row; what is actually in the tree
@@ -180,7 +180,7 @@ pub async fn list_views(
 async fn warm_shots(state: Arc<AppState>, refs: Vec<String>) {
     for view_ref in refs {
         if warm_one(&state, &view_ref).await {
-            // Same bump a raise's capture makes: the picture has to reach the windows
+            // Same bump a show's capture makes: the picture has to reach the windows
             // whose long-poll was answered before it existed.
             state.views.note_shot().await;
         }
@@ -335,7 +335,7 @@ pub struct OpenedView {
 /// touching the content slot**.
 ///
 /// This is the person's path onto the screen and it is deliberately not a third writer
-/// of the appearance. The slot stays the agent's — what it raised is still what a second
+/// of the appearance. The slot stays the agent's — what it showed is still what a second
 /// device shows and still what it will refer to out loud. Where *this* window is looking
 /// is this window's own business, like the conversation's scroll position, and like that
 /// it is never reported back.
@@ -344,7 +344,7 @@ pub struct OpenedView {
 /// what makes opening `factory/tasks` show today's board. An inline view has no ref and
 /// cannot be opened this way at all; the client mounts its recorded artifact directly.
 ///
-/// It also re-takes the surface's picture, which is how a view the agent never raised
+/// It also re-takes the surface's picture, which is how a view the agent never shown
 /// gets a face in the band at all, and how the shipped surfaces stop showing the board
 /// they had the first time anyone looked. Bounded by the same staleness rule every
 /// other surface capture uses, so opening the same view five times is one render.
@@ -408,7 +408,7 @@ pub struct WentToRequest {
     /// The compiled module URL, for an inline view that has no ref.
     #[serde(default)]
     pub module: Option<String>,
-    /// What the view was raised under. Only used to name an inline destination, whose
+    /// What the view was shown as. Only used to name an inline destination, whose
     /// module hash names nothing.
     #[serde(default)]
     pub id: Option<String>,
@@ -423,7 +423,7 @@ pub struct WentToRequest {
 /// The inbound half of a channel that used to only go out, and the one thing about the
 /// screen that does not come from the agent. It exists because the next thing they say is
 /// usually about what they are looking at: "这个数字不对" is unreadable if the agent
-/// believes its own last raise is in front of them, and it answers confidently about the
+/// believes its own last show is in front of them, and it answers confidently about the
 /// wrong board.
 ///
 /// **It records where they went, never which window went there.** The cursor stays the
