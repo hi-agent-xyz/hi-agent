@@ -431,41 +431,50 @@ export default function Workers() {
       <style>{CSS}</style>
 
       <div className="hi-workers__scroll">
-        <header className="hi-workers__head">
-          <h1 className="hi-workers__h1">{L.title}</h1>
-          <span className="hi-workers__count">
-            {[running ? L.runningN(running) : null, ended.length ? L.endedN(ended.length) : null]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        </header>
+        {/* What is running gets the frame — the whole of it, three sessions or thirty. The
+            band below used to ride up under a short tree and read as more of it, because a
+            card 40px under another card is the next thing in the same list to anyone who
+            has not read the headings. A screenful is the separation. */}
+        <section className="hi-workers__stage">
+          <header className="hi-workers__head">
+            <h1 className="hi-workers__h1">{L.title}</h1>
+            <span className="hi-workers__count">
+              {[running ? L.runningN(running) : null, ended.length ? L.endedN(ended.length) : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </header>
 
-        <h2 className="hi-workers__section-head">{L.live}</h2>
-        {running === 0 ? (
-          <div className="hi-workers__empty">
-            <div className="hi-workers__empty-big">{L.emptyBig}</div>
-            <div className="hi-workers__empty-sub">{L.emptySub}</div>
-          </div>
-        ) : (
-          <Canvas roots={roots} open={open} setOpen={setOpen} />
-        )}
-
-        {/* Under the tree, never beside it. A tree is as wide as the delegation happens to
-            be, and a column next to it would be squeezed by the one thing this page is for.
-            Full width, two cards deep, and it scrolls — the list is capped at 40 and every
-            one of them is the same size, so "two deep" is a height and not an estimate. */}
-        <h2 className="hi-workers__section-head hi-workers__section-head--ended">{L.endedHead}</h2>
-        {ended.length === 0 ? (
-          <div className="hi-workers__none">{L.noEnded}</div>
-        ) : (
-          <div className="hi-workers__band">
-            <div className="hi-workers__band-grid">
-              {ended.map((e) => (
-                <EndedCard key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
-              ))}
+          <h2 className="hi-workers__section-head">{L.live}</h2>
+          {running === 0 ? (
+            <div className="hi-workers__empty">
+              <div className="hi-workers__empty-big">{L.emptyBig}</div>
+              <div className="hi-workers__empty-sub">{L.emptySub}</div>
             </div>
-          </div>
-        )}
+          ) : (
+            <Canvas roots={roots} open={open} setOpen={setOpen} />
+          )}
+        </section>
+
+        {/* Under the tree, never beside it, and one scroll under it. A tree is as wide as
+            the delegation happens to be, and a column next to it would be squeezed by the
+            one thing this page is for. Full width, two cards deep, and it scrolls — the
+            list is capped at 40 and every one of them is the same size, so "two deep" is a
+            height and not an estimate. */}
+        <section className="hi-workers__after">
+          <h2 className="hi-workers__section-head hi-workers__section-head--ended">{L.endedHead}</h2>
+          {ended.length === 0 ? (
+            <div className="hi-workers__none">{L.noEnded}</div>
+          ) : (
+            <div className="hi-workers__band">
+              <div className="hi-workers__band-grid">
+                {ended.map((e) => (
+                  <EndedCard key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       </div>
 
       {open && <Session addr={open} onClose={() => setOpen(null)} />}
@@ -565,8 +574,8 @@ const SIB_GAP = 16;
 const TREE_GAP = 44;
 const ROW_GAP = 46;
 /** What a card is assumed to be tall before it has been measured — see `useHeights`. Only
- *  the first frame after a card appears uses it, and being wrong only means that card's
- *  row settles into place instead of arriving there. */
+ *  the first frame after a card appears uses it; being wrong means the drawing settles into
+ *  its card height instead of arriving at it. */
 const EST_H = 124;
 /** The arrowhead's length, taken off the end of the curve so the two do not overlap. */
 const HEAD = 9;
@@ -592,7 +601,7 @@ const HEAD = 9;
  *    per orphan. A synthetic parent is handed to the layout and dropped before anything is
  *    drawn: it is a fact about the algorithm's input, never a node on the page.
  *  - **Measured heights.** `nodeSize` is one size for every node, so d3's own `y` is
- *    discarded and each rank is placed at the tallest *measured* card in it — a card
+ *    discarded and the ranks are spaced by the tallest *measured* card on the page — a card
  *    carrying a wrapped `doing` line is half again as tall as one carrying nothing, and a
  *    layout that assumed otherwise would overlap two ranks or leave a hole between them.
  */
@@ -600,22 +609,32 @@ function layout(roots, heights, nodeW) {
   if (!roots.length) return { nodes: [], edges: [], nodeW, width: 0, height: 0 };
   const heightOf = (n) => heights[n.key] || EST_H;
 
-  // Ranks, and how tall each one has to be. Independent of the packing below — this is the
-  // vertical axis, which is entirely ours because d3 has one node size and these cards do
-  // not.
-  const rowH = [];
+  // Ranks, and how tall a card is. Independent of the packing below — this is the vertical
+  // axis, which is entirely ours because d3 has one node size and these cards do not.
+  //
+  // **One height for every card in the drawing**, not one per rank and not one per session.
+  // A card's natural height is a fact about what its session happened to be doing when the
+  // poll landed — a `doing` line that wrapped, a subject long enough to take a second line
+  // of chips — and drawn that way a rank is a row of differently-sunk cards where the size
+  // difference means nothing and reads as though it did. So the tallest measured card sets
+  // the height and every other card is drawn to it. It is a maximum and not a budget:
+  // nothing is ever clipped, and a page whose sessions all go quiet gets shorter cards on
+  // the next tick rather than keeping the tall ones.
+  let rows = 0;
+  let cardH = 0;
   const rank = (n, d) => {
     n.depth = d;
-    rowH[d] = Math.max(rowH[d] || 0, heightOf(n));
+    rows = Math.max(rows, d + 1);
+    cardH = Math.max(cardH, heightOf(n));
     for (const c of n.children) rank(c, d + 1);
   };
   for (const r of roots) rank(r, 0);
 
   const rowY = [];
   let y = 0;
-  for (let d = 0; d < rowH.length; d++) {
+  for (let d = 0; d < rows; d++) {
     rowY[d] = y;
-    y += rowH[d] + ROW_GAP;
+    y += cardH + ROW_GAP;
   }
 
   // One root, because that is what a tidy tree takes. It is dropped below, and its depth is
@@ -643,7 +662,7 @@ function layout(roots, heights, nodeW) {
     n.cx = Math.round(p.x - left + nodeW / 2);
     n.x = Math.round(p.x - left);
     n.y = rowY[n.depth];
-    n.h = heightOf(n);
+    n.h = cardH;
     n.w = nodeW;
     nodes.push(n);
     // The synthetic root is nobody's owner, so the rank above it draws no arrows.
@@ -1003,7 +1022,7 @@ function Canvas({ roots, open, setOpen }) {
               key={n.key}
               ref={bind("nodes", n.key)}
               className="hi-workers__node"
-              style={{ transform: `translate3d(${n.x}px, ${n.y}px, 0)`, opacity: n.a, width: n.w }}
+              style={{ transform: `translate3d(${n.x}px, ${n.y}px, 0)`, opacity: n.a, width: n.w, height: n.h }}
               data-gone={n.gone ? "true" : undefined}
             >
               <LiveCard nodeKey={n.key} row={n.row} measure={measure} open={open} setOpen={setOpen} />
@@ -1060,8 +1079,6 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
   return (
     <button
       type="button"
-      data-key={nodeKey}
-      ref={measure(nodeKey)}
       className="hi-workers__card"
       data-open={isOpen ? "true" : undefined}
       data-state={state}
@@ -1069,78 +1086,85 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: row.id, run: null })}
     >
-      {orphan && <span className="hi-workers__orphan">{L.orphans}</span>}
+      {/* What the card says, and the only part of it still measured. The button's height
+          comes back from the engine — one number for every card — so measuring the button
+          would be reading back the height the layout just wrote and feeding it in as the
+          content's own: the page could then only ever grow. This wrapper is never sized by
+          anything, so what it reports is what the words need. */}
+      <span className="hi-workers__body" data-key={nodeKey} ref={measure(nodeKey)}>
+        {orphan && <span className="hi-workers__orphan">{L.orphans}</span>}
 
-      {/* The card's top strip: what this is, and how it is. The two facts that are true
-          of the session as a whole, in a fixed place on every card, so a row of them
-          is scannable without reading any of the prose below. */}
-      <span className="hi-workers__top">
-        <span className={`hi-workers__dot${running ? " is-busy" : ""}`} aria-hidden />
-        <span className="hi-workers__pill">{label(row)}</span>
-        {/* The answer to the question this page exists to ask, so it takes the slot the eye
-            lands on. It reads `idle 4m`, not `5m`: `started` measures uptime, which is the
-            same number for a session quiet since breakfast and one that finished a turn two
-            seconds ago. How long it has been *like this* is the part that says whether
-            anything is wrong. */}
-        <span className="hi-workers__state">
-          {L.state[state]} {elapsed(row.state_since || row.started)}
+        {/* The card's top strip: what this is, and how it is. The two facts that are true
+            of the session as a whole, in a fixed place on every card, so a row of them
+            is scannable without reading any of the prose below. */}
+        <span className="hi-workers__top">
+          <span className={`hi-workers__dot${running ? " is-busy" : ""}`} aria-hidden />
+          <span className="hi-workers__pill">{label(row)}</span>
+          {/* The answer to the question this page exists to ask, so it takes the slot the eye
+              lands on. It reads `idle 4m`, not `5m`: `started` measures uptime, which is the
+              same number for a session quiet since breakfast and one that finished a turn two
+              seconds ago. How long it has been *like this* is the part that says whether
+              anything is wrong. */}
+          <span className="hi-workers__state">
+            {L.state[state]} {elapsed(row.state_since || row.started)}
+          </span>
         </span>
+
+        {/* Its own line, and exactly one. The server sends a headline now rather than the
+            brief a worker was sent (`Status::title`), so there is no paragraph left to fit and
+            nothing gained by giving it two lines — a tree whose titles are all one line is the
+            thing that actually scans. Anything over the cap arrives already cut with an
+            ellipsis; the CSS clamp is the backstop for a wide character set. */}
+        <span className="hi-workers__title">{row.title || L.noTitle}</span>
+
+        {/* The durable facts, and nothing that could contradict the line above. */}
+        <span className="hi-workers__meta">
+          {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
+          {row.started && <span>{L.up(elapsed(row.started))}</span>}
+          {(() => {
+            const link = taskLink(row);
+            return link ? (
+              <span className={link.warn ? "is-warn" : undefined}>{link.text}</span>
+            ) : null;
+          })()}
+          {/* Only once the owner has gone. While it is live the arrow already shows who it
+              is, and repeating it on every child is noise. */}
+          {orphan && <span className="is-warn">{L.orphanNote(row.owner)}</span>}
+        </span>
+
+        {/* Doing and said are different questions and never share a line. A card with a
+            `doing` and no `tail` is a session working in silence — which is exactly what used
+            to be indistinguishable from a dead one.
+
+            The age beside it is what separates working from hung: `$ cargo test` four minutes
+            in is a build, the same line forty minutes in is a session nothing will come back
+            from. No threshold is applied — the number is shown and the reader judges, because
+            picking the minute at which this page silently declares something dead is not a
+            call it is in a position to make. */}
+        {running && row.doing && (
+          <span className="hi-workers__doing">
+            {row.doing}
+            {row.doing_at && <span className="hi-workers__age"> · {elapsed(row.doing_at)}</span>}
+          </span>
+        )}
+
+        {/* The quiet card's half of that same slot: what a session is doing answers "is it
+            alive", and how its last turn ended answers "did it get anywhere" — one of the two
+            questions is live at a time, so they share the position and never the line.
+
+            The reason is carried whole rather than summarised: `429 Too Many Requests` and a
+            crashed subprocess call for different moves, and a card that said only "failed"
+            would send the reader into the panel every time. An unknown word from a newer
+            server prints itself rather than blanking the line. */}
+        {ended && (
+          <span className="hi-workers__ended">
+            {L.lastTurn[ended.outcome] || ended.outcome}
+            {ended.error ? `: ${ended.error}` : ""}
+            {ended.at && <span className="hi-workers__age"> · {elapsed(ended.at)}</span>}
+          </span>
+        )}
+        {row.tail && <span className="hi-workers__tail">{row.tail}</span>}
       </span>
-
-      {/* Its own line, and exactly one. The server sends a headline now rather than the
-          brief a worker was sent (`Status::title`), so there is no paragraph left to fit and
-          nothing gained by giving it two lines — a tree whose titles are all one line is the
-          thing that actually scans. Anything over the cap arrives already cut with an
-          ellipsis; the CSS clamp is the backstop for a wide character set. */}
-      <span className="hi-workers__title">{row.title || L.noTitle}</span>
-
-      {/* The durable facts, and nothing that could contradict the line above. */}
-      <span className="hi-workers__meta">
-        {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
-        {row.started && <span>{L.up(elapsed(row.started))}</span>}
-        {(() => {
-          const link = taskLink(row);
-          return link ? (
-            <span className={link.warn ? "is-warn" : undefined}>{link.text}</span>
-          ) : null;
-        })()}
-        {/* Only once the owner has gone. While it is live the arrow already shows who it
-            is, and repeating it on every child is noise. */}
-        {orphan && <span className="is-warn">{L.orphanNote(row.owner)}</span>}
-      </span>
-
-      {/* Doing and said are different questions and never share a line. A card with a
-          `doing` and no `tail` is a session working in silence — which is exactly what used
-          to be indistinguishable from a dead one.
-
-          The age beside it is what separates working from hung: `$ cargo test` four minutes
-          in is a build, the same line forty minutes in is a session nothing will come back
-          from. No threshold is applied — the number is shown and the reader judges, because
-          picking the minute at which this page silently declares something dead is not a
-          call it is in a position to make. */}
-      {running && row.doing && (
-        <span className="hi-workers__doing">
-          {row.doing}
-          {row.doing_at && <span className="hi-workers__age"> · {elapsed(row.doing_at)}</span>}
-        </span>
-      )}
-
-      {/* The quiet card's half of that same slot: what a session is doing answers "is it
-          alive", and how its last turn ended answers "did it get anywhere" — one of the two
-          questions is live at a time, so they share the position and never the line.
-
-          The reason is carried whole rather than summarised: `429 Too Many Requests` and a
-          crashed subprocess call for different moves, and a card that said only "failed"
-          would send the reader into the panel every time. An unknown word from a newer
-          server prints itself rather than blanking the line. */}
-      {ended && (
-        <span className="hi-workers__ended">
-          {L.lastTurn[ended.outcome] || ended.outcome}
-          {ended.error ? `: ${ended.error}` : ""}
-          {ended.at && <span className="hi-workers__age"> · {elapsed(ended.at)}</span>}
-        </span>
-      )}
-      {row.tail && <span className="hi-workers__tail">{row.tail}</span>}
     </button>
   );
 }
@@ -1588,18 +1612,62 @@ const CSS = `
        built to this number rather than to its own content. */
     --w-ended-h: 112px;
     --w-gap: 10px;
+    /* How far a card's lift reaches past its own box — 8px down plus half of 22px of blur.
+       Anything that clips a card has to leave this much room below it, or the shadow comes
+       out cut off square. */
+    --w-lift: 24px;
   }
 
   /* The scroller is a child, not the root: the root stays the positioning context for the
-     panel below, and a scrolling ancestor would re-anchor it. The bottom padding is the
-     strip the caption pill rises through — deliberately unpadded by the host, since
-     reserving it would cost every view a slice of frame. */
+     panel below, and a scrolling ancestor would re-anchor it. A column, so the stage inside
+     it can be told to fill one screen.
+
+     The strip the caption pill rises through — deliberately unpadded by the host, since
+     reserving it would cost every view a slice of frame — is padded onto the last section
+     rather than onto this box. Here it would come out of the stage's own 100% and leave the
+     next heading peeking 128px above the fold, which is the thing the stage exists to
+     prevent. */
   .hi-workers__scroll {
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-    padding: 28px clamp(16px, 3vw, 44px) 128px;
+    padding: 28px clamp(16px, 3vw, 44px) 0;
+  }
+
+  /* What is running, given the whole frame whether or not it needs it — and taller than the
+     frame the moment the tree is. Nothing inside it grows to fill: leftover room is left
+     over, and the tree stays where the eye already expects it, at the top. */
+  .hi-workers__stage {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: 100%;
+  }
+
+  /* A column of this height shrinks its items to fit before it lets itself grow, and the
+     tree is the item that would give — so nothing in here gives, and the stage grows past
+     the screen instead when the tree is taller than one. */
+  .hi-workers__stage > * {
+    flex: 0 0 auto;
+  }
+
+  /* Except an empty roster, which is the one thing on this page that should sit in the
+     middle of the screen it was given rather than at the top of it. */
+  .hi-workers__stage > .hi-workers__empty {
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Below the fold, and carrying the caption strip the scroller gave up. */
+  .hi-workers__after {
+    flex: 0 0 auto;
+    padding-bottom: 128px;
   }
 
   /* Wrapped in :where() so the reset carries **zero** specificity. Written bare, this
@@ -1676,7 +1744,7 @@ const CSS = `
     content: "";
     position: absolute;
     top: 0;
-    bottom: 6px;
+    bottom: var(--w-lift);
     width: 44px;
     pointer-events: none;
     opacity: 0;
@@ -1700,11 +1768,17 @@ const CSS = `
     opacity: 1;
   }
 
+  /* It clips vertically — one axis scrolls and the other cannot be visible, so this box is
+     a clip on both — and it was clipping 6px under a plot whose cards throw their shadow
+     three times that far. The cut landed square along the bottom rank and right where the
+     next heading starts, which is what made it read as the heading's doing. Padded by the
+     lift on both sides now: most of that shadow is offset downward, so the little of it
+     that rises above the top rank needs a fraction of the same room. */
   .hi-workers__canvas {
     width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 6px;
+    padding: 8px 0 var(--w-lift);
   }
 
   /* The engine's coordinate space, and the only place on the page positioned in pixels.
@@ -1768,15 +1842,30 @@ const CSS = `
      A card, not a row. The difference is not the corner radius: a row puts every field
      on one line and buys the last one out of the first one's width, which is how a
      worker's task became four words and an ellipsis. A card gives each field its own
-     line and lets the ones that are prose wrap. */
+     line and lets the ones that are prose wrap.
+
+     **Its height is the engine's, not its content's** — one number for every card in the
+     drawing, set by the tallest of them. Which is why the padding is on the body inside and
+     not here: the body is what gets measured, and an element the layout has already sized
+     cannot also be the thing that tells the layout what size to be. */
   .hi-workers__card {
     display: block;
     width: 100%;
-    padding: 13px 15px 14px;
+    height: 100%;
+    padding: 0;
+    overflow: hidden;
     background: var(--surface-strong);
     border-radius: 16px;
     box-shadow: var(--w-shadow);
     transition: background 120ms var(--ease, ease), box-shadow 120ms var(--ease, ease);
+  }
+
+  /* Everything the card says, at the height the words need. Shorter than the card it sits
+     in — every card but the tallest one has room going spare below its last line, which is
+     the price of a rank that reads as a rank. */
+  .hi-workers__body {
+    display: block;
+    padding: 13px 15px 14px;
   }
 
   .hi-workers__card:hover {
@@ -1870,21 +1959,19 @@ const CSS = `
     border: 1px solid var(--line);
   }
 
-  /* The card's title. Two lines here and one on an ended card, and the difference is the
-     width each has to work in: a card in the tree is as narrow as fitting the tree made it,
-     which is narrow enough that one line of a written headline — "what reaches the person",
-     "implement corrected KT8-059 padding" — stops in the middle of the subject. Two lines
-     holds the whole of nearly every title the server sends. An ended card is wider (the
-     band is full-frame and its cards are a grid) and is spending its height on being
-     exactly two rows deep, so there one line is both enough and all there is.
+  /* The card's title, one line — in the tree and in the band below it alike. A title that
+     wrapped no longer costs only its own card: every card in the drawing is one height now,
+     so the single longest headline on the roster would push all of them down a line, and
+     most of them would spend it on white space.
 
-     The clamp is a backstop either way: anything over the cap arrives already cut with an
-     ellipsis. The brief still exists whole — it is the session's first prompt, one click
-     away under "What happened". */
+     Anything over the cap arrives already cut with an ellipsis; the clamp is the backstop
+     for a character set that runs wider than the server counted. Either way the whole of it
+     was never here — the brief is the session's first prompt, one click away under "What
+     happened". */
   .hi-workers__title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
     margin-top: 9px;
     min-width: 0;
     font-size: 14.5px;
@@ -1896,7 +1983,6 @@ const CSS = `
   }
 
   .is-ended .hi-workers__title {
-    -webkit-line-clamp: 1;
     margin-top: 7px;
     font-size: 14px;
   }
