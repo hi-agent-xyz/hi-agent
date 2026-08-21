@@ -1041,6 +1041,87 @@ mod soul_tests {
         );
     }
 
+    /// **Working ahead may not grow a safety rule of its own.** The whole argument for
+    /// letting the brain start the next step before anyone asks for it is that the line it
+    /// already stops at — reversible and unseen, or one-way and public — is the *same* line,
+    /// applied a step earlier. A prompt that grants the getting-ahead without re-stating that
+    /// line grants a looser one by omission: rendering a picture and sending it to a
+    /// colleague are one errand to a reader who was told to prepare the next step and never
+    /// told where the next step stops.
+    ///
+    /// So both halves are pinned together. Losing either is the bug — the permission
+    /// without the boundary is the dangerous half, and the boundary without the permission
+    /// is just the prompt we already had.
+    #[test]
+    fn working_ahead_carries_the_boundary_it_borrows() {
+        assert!(
+            COGNITION_BASE.contains("# Working ahead"),
+            "Cognition must be told to spend the handover on what comes next"
+        );
+        // The permission: work handed out for a step nobody has asked for yet.
+        assert!(COGNITION_BASE.contains("still deciding they want it"));
+        // The boundary, in the same section, pointing back at the one that already exists
+        // rather than at a new one of its own.
+        assert!(
+            COGNITION_BASE.contains("Where you stop and ask"),
+            "working ahead must name the existing boundary, not imply a second one"
+        );
+        assert!(
+            COGNITION_BASE.contains("state of something is never gated"),
+            "the boundary it borrows must still be in the file"
+        );
+        // And the cache rule, which is what keeps a prepared thing from being reported as
+        // current — the `checked_at:` failure, one layer out.
+        assert!(COGNITION_BASE.contains("cache, not a fact"));
+    }
+
+    /// **A preparation is offered by the voice or not at all.** Cognition holds no `hi_say`
+    /// and never picks the words, so "the picture is ready" reaches the person only if
+    /// Reaction is told to carry it — and it must arrive as a clause on something already
+    /// being said, never as its own utterance. Both failures are silent: a brain told to
+    /// announce its preparations writes proposals nothing will speak, and a voice never told
+    /// about them drops the one sentence that turns a prepared thing into a one-word yes.
+    #[test]
+    fn a_prepared_thing_is_offered_by_the_voice_in_one_clause() {
+        assert!(
+            COGNITION_BASE.contains("The words are Reaction's"),
+            "Cognition must hand the fact up, not the phrasing"
+        );
+        assert!(
+            COGNITION_BASE.contains("gets an announcement of its own"),
+            "Cognition must be told a preparation does not get its own utterance"
+        );
+        assert!(
+            REACTION_BASE.contains("ready and waiting on a word"),
+            "Reaction must be told what to do with a preparation held at the door"
+        );
+        assert!(
+            REACTION_BASE.contains("never its own message"),
+            "the offer must ride along, or it costs more attention than it saves"
+        );
+    }
+
+    /// **The pass that learns may only read what surfaced.** Widening `proactivity.md` from
+    /// what the agent's words earned to what its unasked *work* earned is only honest for
+    /// the half that reaches the conversation: something prepared, offered, and taken or
+    /// not. Work prepared and never mentioned leaves nothing in the signals — so a pass told
+    /// to judge "how working ahead landed" without that limit will do what a model asked an
+    /// unanswerable question does, and write a standing read out of inference. That read is
+    /// then in front of the agent before every proactive word.
+    #[test]
+    fn the_standing_read_widens_only_as_far_as_the_signals_go() {
+        assert!(
+            REFLECTION_BASE.contains("worked first"),
+            "the pass must watch work offered unasked, not only words spoken unasked"
+        );
+        assert!(
+            REFLECTION_BASE.contains("leaves nothing in the signals to read"),
+            "and must be told the half it cannot see, so it does not infer one"
+        );
+        // The mechanism it writes through is unchanged; the subject is what widened.
+        assert!(REFLECTION_BASE.contains("hi_update_proactivity"));
+    }
+
     /// The two halves of the view loop both name the tool that makes them possible.
     /// Before `hi_review_view` existed, the builder's prompt pointed at `hi_look` — which
     /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
