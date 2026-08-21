@@ -193,6 +193,7 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 | **A genuinely new machine keeping its name** | Covered by `TestRegistryNameSurvivesANewMachine`, not by a live run — `device_id` is machine-derived, so two data dirs on one Mac share an account and the live run could not tell the cases apart |
 | **The Docker shape's gate** | A published port is off-box, so an existing deployment is gated from first run. Reasoned about, not exercised |
 | **A session swap that fails or times out** | Both arms are written (keep the warm session; discard the unresponsive one) and neither has been provoked |
+| **Going to the card that is already live** | It used to park on it — same pixels, but the return-to-live control appeared and the next raise put a dot on it instead of following. The client now clears its cursor there, matching what `note_went_to` already does with a `live: true` report. Unit tests do not reach `ViewsProvider`: tap the tile marked *live* in the band, confirm the return control does **not** appear, then raise something and confirm the window follows it |
 | **The views band opening on the bookmarks row** | The upper row's scroll-to-*here* has been watched; the lower row's is new, and its arithmetic was only checked in a standalone page carrying the real stylesheet — not in the mounted band, where the chip appears a render after the first `listViews()` answers. Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
 
 ---

@@ -235,14 +235,25 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
 
   const goTo = useCallback((entry: WireHistoryEntry) => {
     const key = destinationOf(entry);
+    const live = key === liveKeyRef.current;
     // Told before the mount, not after: the report is what the agent reads to know
     // where they are, and a compile that hangs must not make it late.
     reportWentTo({
       viewRef: entry.view_ref,
       moduleUrl: entry.module_url,
       id: entry.id,
-      live: key === liveKeyRef.current,
+      live,
     });
+    // Tapping the card marked *live* is going live, not parking on a copy of it —
+    // `parked` means "somewhere other than the live one" and nothing else clears it
+    // until the live destination CHANGES. Parking here looked identical on screen and
+    // then, on the next raise, the window read as away: it kept the old view and put a
+    // dot on the return control instead of following the raise it was standing on.
+    if (live) {
+      setParked(null);
+      setLiveMoved(false);
+      return;
+    }
     // An inline view has no durable name and is only ever the artifact it compiled
     // to, so it mounts straight from the record.
     if (!entry.view_ref) {
@@ -266,7 +277,16 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openRef = useCallback((viewRef: string, label: string) => {
-    reportWentTo({ viewRef, live: viewRef === liveKeyRef.current });
+    const live = viewRef === liveKeyRef.current;
+    reportWentTo({ viewRef, live });
+    // Same as `goTo`: opening the bookmark the agent already has up is being live. The
+    // server holds that view on the stage, so there is nothing to resolve and nothing to
+    // add to the trail — the raise is already a card in it.
+    if (live) {
+      setParked(null);
+      setLiveMoved(false);
+      return;
+    }
     void openView(viewRef).then(
       (opened) => {
         setParked({
