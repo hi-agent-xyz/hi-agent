@@ -310,6 +310,80 @@ but it is a gate on *timing and phrasing*; on an answer someone asked for it doe
 to "not at all". So the two questions stay as written, and Reaction's *"is now the moment?"*
 has exactly one answer it may not give to an awaited reply: never.
 
+#### Working ahead
+
+**The reversible half of the next step is done before anyone asks for it.** Every wake this
+rung has is about something that already happened — mail, a worker's report, a pulse into
+idleness. The moment that carries the most information about what comes *next* is the one
+where it is handing something over, and none of that moment was ever spent on it. So the
+person pays twice: once waiting for the handover, and again waiting for the obvious thing
+that follows it.
+
+Two shapes, and the cheaper one is not machinery at all.
+
+**The handover carries the questions it provokes.** If the next thing a reasonable person
+says is a question this rung could already have answered, the handover went out too early.
+A readiness board that lists six items and not where each of them stands is not a board
+that needs a follow-up question; it is a board that was handed over half-written. This
+costs nothing — same turn, same information, already in hand.
+
+**The free half of the likely next step is handed out in the same turn.** Handing work out
+does not cost a turn: `CreateWorker` returns as soon as the session is up, and the report
+comes back as mail that wakes this rung. So the preparation for the next step can already
+be running while the person is still deciding whether they want it. One handout per
+handover is the posture — the *likely* next step, not a fan of every step imaginable — and
+prepared work does not itself prepare: a session started for work nobody asked for may not
+start another.
+
+**The boundary is the one that already governs acting alone.** Reversible and invisible →
+do it now. One-way, or visible to anyone else → carry it to the door and stop there.
+Rendering the picture is reversible and invisible; sending it to a colleague is neither.
+Working out which chat, which credential, and proving the command runs changes nothing
+outside this machine; the message it would send does. The rule that decides what may be
+done without being asked is the same rule that decides what may be done *before* being
+asked, and being a step ahead is never a reason to relax it. There is no second safety
+concept here, and there must not be one — a separate rule for speculative work is a second
+place for the answer to drift.
+
+**Prepared work never takes the floor.** It is not announced, it does not ask, and when it
+turns out to be unwanted it is dropped without a word. The single thing that may be said is
+a clause inside a handover that was being spoken anyway — naming the follow-through, so a
+*yes* is the entire trigger and nobody spends a round trip asking for something already
+sitting ready. The words are [Reaction's](#reaction--one-generation), as all words are;
+what this rung owes the proposal is the *fact* that the next step is ready, so Reaction has
+something true to offer.
+
+**It is a cache, never a claim.** Something prepared twenty minutes ago describes the world
+of twenty minutes ago. It is re-checked at the moment of use and degrades to doing the work
+then — which is exactly the behaviour there was before, so the worst case of working ahead
+is the old speed, not a wrong answer. What must never happen is a prepared thing *reported*
+as current: that is the same failure as a `checked_at:` stamped after a probe that came back
+down, and it is worse than having prepared nothing.
+
+**What it costs is measured, not assumed.** Most of this work is discarded by design — that
+is the trade, and it is only a good one while the ratio is known. Two readers, deliberately
+different:
+
+- **The count is for the person tuning it.** The host marks the sessions started for work
+  nobody had asked for yet, so how much of the machine is being spent one step ahead is a
+  number in the [observatory](foundation.md#observatory) rather than an impression.
+- **The judgement is for the agent doing it.** Where working ahead surfaces — something
+  prepared is *offered*, and the person either takes it or moves elsewhere — that is an
+  exchange in the conversation, which is what the [reflection](#reflection--background) pass
+  reads. So it is kept in the same standing read that already learns what the agent's words
+  earn (`proactivity.md`), whose subject widens a second time: from what its words earned to
+  what its unasked *work* earned.
+
+  **The half that pass cannot see is the honest limit here.** Work prepared, never offered
+  and never wanted leaves no mark in the conversation at all — no one declined it, because
+  no one was told. That is precisely the waste worth knowing about, and nothing in the
+  transcript can report it; only the count can. Two readers is not redundancy, then: each
+  sees a half the other is blind to.
+
+Nothing here is a scheduler, a queue, or a store of prepared things. It is one rung
+spending part of a turn it was already awake for on the step after the one it was asked
+for, under the boundary it already had.
+
 ### Reflection — background
 
 **The inward brain, and the same kind of thing as Cognition.** Both are as capable as the
