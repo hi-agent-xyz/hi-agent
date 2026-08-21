@@ -373,7 +373,7 @@ the head of the trail, but a card gone back to keeps its place, and the surface 
 is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
 *here* into view, in the row that holds it, and one that is already whole on screen is
 left alone. Only on opening: a raise arriving while the band is up must not drag a row
-out from under someone reading it, which is the refusal the return-to-live dot exists to
+out from under someone reading it, which is the refusal the raise-landed dot exists to
 make, applied to the rows themselves.
 
 *Extended to the lower row August 20, 2026. It was written for the trail alone, and the
@@ -403,8 +403,22 @@ still what a second device shows and still what it will refer to out loud.
 
 **A raise signals; it never yanks.** Landing a new view on someone who went back to read
 something is the same mistake as auto-scrolling the conversation to a new message. The
-return-to-live control carries a dot instead. If the agent happens to raise exactly what
-they went back to, they are simply live again and there is nothing to signal.
+views control carries a dot instead, and the band it opens already marks the live card with
+a pip: the dot says the agent has moved on, the row says where to. If the agent happens to
+raise exactly what they went back to, they are simply live again and there is nothing to
+signal.
+
+*The dot moved onto the views control August 21, 2026, and the button under it was deleted.*
+Return-to-live was a control of its own, rendered only while parked — the single item in a
+cluster of eight that came and went — on the argument that returning is the most frequent
+act once someone has gone back, so it must not cost opening the band first. That frequency
+was assumed and never observed: seventeen days of the view channel's journal hold 102 lines
+and **not one recorded move**, so the state the button lived in had not been entered on
+purpose even once. A permanent slot in a tight row is the wrong price for that, and the
+signal was always the half that mattered. Going back is the band's job now — one press to
+open it, one to take the card wearing the pip — and *close the view* drops this window's
+cursor as well as the server's slot, which is the way home when nothing has been raised for
+the band to point at.
 
 ### Where they went is reported; the cursor still is not
 
@@ -580,9 +594,9 @@ it is what orders the row, newest at the head — but printing it answered a que
 nobody asks. Nobody reaches for a board by when it was put up; they reach for it by what
 is on it, which is what the tile and the name are. And the two words most often on the
 line, *Wed* and *live*, were the two carrying least: *Wed* because a weekday is not a
-handle, *live* because the row's head and the return-to-live control already say it. The
-live card keeps a pip on the gradient beside its name, which is the picture-side half of
-that same signal.
+handle, *live* because the row's head already says it. The live card keeps a pip on the
+gradient beside its name, and since the return-to-live control was deleted that pip is the
+whole of the signal on the row — the dot on the views control is what points at it.
 
 **And the tile is 160×90** — 16:9, against 118×76 (1.55) before; 128×72 rather than
 104×68 on a narrow window. Bigger by a third in width because it now carries the name as

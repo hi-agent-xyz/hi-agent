@@ -55,7 +55,7 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * its place, and a bookmark can sit anywhere in the lower row — so opening the band
  * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
  * opening: a raise arriving afterwards must not drag a row out from under someone
- * reading it, which is the same refusal the return-to-live dot exists to make.
+ * reading it, which is the same refusal the dot on the views control exists to make.
  *
  * **The inventory is re-read while the band is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually the band

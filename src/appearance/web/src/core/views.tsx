@@ -61,8 +61,6 @@ interface ViewsValue {
   /** Park on a named view from the inventory, and put it at the head of the trail:
    * going somewhere is arriving somewhere, whether the agent took you or you went. */
   openRef: (viewRef: string, label: string) => void;
-  /** Back to what the agent has up now. */
-  returnToLive: () => void;
 }
 
 const ViewsContext = createContext<ViewsValue>({
@@ -74,7 +72,6 @@ const ViewsContext = createContext<ViewsValue>({
   liveMoved: false,
   goTo: () => {},
   openRef: () => {},
-  returnToLive: () => {},
 });
 
 /**
@@ -128,6 +125,17 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback(() => {
     void clearViewState();
+    // Clearing is about the room, not only the server's slot. A parked window renders its
+    // cursor in preference to the wire, so the control that says "the conversation takes
+    // the screen back" cleared the slot and then visibly did nothing — the past raise it
+    // was holding stayed up. Dropping the cursor is also this window's way home when there
+    // is no live card to tap: a bookmark opened on an instance that has never raised
+    // anything parks with nothing in the trail to go back to.
+    if (parkedRef.current) {
+      setParked(null);
+      setLiveMoved(false);
+      reportWentTo({ live: true });
+    }
   }, []);
 
   useEffect(() => {
@@ -226,12 +234,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     }
     if (liveKey !== prev) setLiveMoved(true);
   }, [liveKey]);
-
-  const returnToLive = useCallback(() => {
-    setParked(null);
-    setLiveMoved(false);
-    reportWentTo({ live: true });
-  }, []);
 
   const goTo = useCallback((entry: WireHistoryEntry) => {
     const key = destinationOf(entry);
@@ -332,9 +334,8 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       liveMoved,
       goTo,
       openRef,
-      returnToLive,
     };
-  }, [wire, parked, clear, trail, liveKey, liveMoved, goTo, openRef, returnToLive]);
+  }, [wire, parked, clear, trail, liveKey, liveMoved, goTo, openRef]);
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 
