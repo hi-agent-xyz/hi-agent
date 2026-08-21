@@ -21,6 +21,25 @@ const SHARED_SPECIFIERS: Record<string, string> = {
   "src/shared/core.ts": "@hi/core",
 };
 
+// Libraries a view may import, which is a different thing from the contract above.
+// Nothing here needs to be a single instance — these are pure functions over plain
+// objects, and two copies would behave identically. They are published for the one
+// reason a view cannot get a library any other way: a view is *transformed*, never
+// bundled (`views/mod.rs`), so its bare imports survive into the compiled `.mjs` for
+// the browser to resolve, and the user's machine has no node_modules to bundle from.
+// Unmapped specifier, unresolvable module, blank view.
+//
+// Kept apart from `SHARED_SPECIFIERS` so that table keeps meaning what it says. An
+// entry there is load-bearing — React must be one instance or hooks break across the
+// view boundary — and folding a convenience into it would make the two
+// indistinguishable, so the next reader could not tell which entries may be dropped.
+//
+// The cost is real and is the bar for adding one: every entry ships in the host
+// bundle to every surface on every load, whether any view imports it or not.
+const LIBRARY_SPECIFIERS: Record<string, string> = {
+  "src/shared/d3-hierarchy.ts": "d3-hierarchy",
+};
+
 const SHADCN_SPECIFIERS: Record<string, string> = Object.fromEntries(
   [
     "accordion",
@@ -50,6 +69,7 @@ const SHADCN_SPECIFIERS: Record<string, string> = Object.fromEntries(
 
 const IMPORT_SPECIFIERS = {
   ...SHARED_SPECIFIERS,
+  ...LIBRARY_SPECIFIERS,
   ...SHADCN_SPECIFIERS,
 };
 
@@ -219,6 +239,7 @@ export default defineConfig({
         "share-jsx-runtime": r("src/shared/jsx-runtime.ts"),
         "share-motion": r("src/shared/motion.ts"),
         "share-core": r("src/shared/core.ts"),
+        "lib-d3-hierarchy": r("src/shared/d3-hierarchy.ts"),
         ...Object.fromEntries(
           Object.keys(SHADCN_SPECIFIERS).map((file) => {
             const name = file.split("/").at(-1)!.replace(/\.tsx$/, "");

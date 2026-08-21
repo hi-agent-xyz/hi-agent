@@ -85,6 +85,7 @@
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary). Polls, because
 // the whole value is that it is current.
 import { useState, useEffect, useCallback, useRef, useMemo, useReducer } from "react";
+import { hierarchy, tree } from "d3-hierarchy";
 
 const api = {
   list: () => fetch("/api/workers").then((r) => r.json()),
@@ -572,24 +573,36 @@ const HEAD = 9;
 
 /** Ownership → geometry. The whole engine; it touches no DOM and returns only numbers.
  *
- *  A tidy tree in the shape of Reingold–Tilford, adapted the one way this data needs:
- *  node heights are *measured*, not assumed, because a card carrying a wrapped `doing`
- *  line is half again as tall as one carrying nothing.
+ *  **The horizontal packing is `d3.tree()`** — Reingold–Tilford as Buchheim et al. refined
+ *  it, which is a *contour* algorithm: it carries each subtree's left and right outline and
+ *  pushes siblings apart by the least their actual shapes require, so a shallow subtree
+ *  tucks into the notch beside a deep one. What stood here before was hand-rolled and
+ *  packed by bounding box instead — every subtree reserving a rectangle as wide as its
+ *  widest rank, siblings never interlocking — which is strictly wider and never narrower.
+ *  On a roster of three rungs with four workers under one and two under another it left
+ *  422px and 548px of nothing between the top-rank cards.
  *
- *  - **Widths, bottom-up.** A subtree's band is the wider of one card and the row its
- *    children need. That single rule is what stops two subtrees overlapping no matter how
- *    lopsided the delegation gets.
- *  - **Placement, top-down.** Children are laid across their parent's band, then the parent
- *    is centred over the *centres of its first and last child* rather than over the band —
- *    an outsized first child otherwise drags its owner off the children it owns. The result
- *    is clamped back inside the band, since a parent leaning out of its own band is a
- *    parent overlapping its sibling.
- *  - **One row per depth**, at the tallest measured card in it, so the tree reads in ranks:
- *    what the system started on top, what those spawned under them, leaves at the bottom.
+ *  A view is transformed and never bundled, so importing that library at all took the host
+ *  publishing it in the page import map (`LIBRARY_SPECIFIERS` in `vite.config.ts`). That
+ *  is the whole reason the weaker version existed.
+ *
+ *  Two things d3 does not do, both kept here:
+ *
+ *  - **A forest.** `d3.tree()` takes one root and this has several — the rungs, plus a root
+ *    per orphan. A synthetic parent is handed to the layout and dropped before anything is
+ *    drawn: it is a fact about the algorithm's input, never a node on the page.
+ *  - **Measured heights.** `nodeSize` is one size for every node, so d3's own `y` is
+ *    discarded and each rank is placed at the tallest *measured* card in it — a card
+ *    carrying a wrapped `doing` line is half again as tall as one carrying nothing, and a
+ *    layout that assumed otherwise would overlap two ranks or leave a hole between them.
  */
 function layout(roots, heights, nodeW) {
+  if (!roots.length) return { nodes: [], edges: [], nodeW, width: 0, height: 0 };
   const heightOf = (n) => heights[n.key] || EST_H;
 
+  // Ranks, and how tall each one has to be. Independent of the packing below — this is the
+  // vertical axis, which is entirely ours because d3 has one node size and these cards do
+  // not.
   const rowH = [];
   const rank = (n, d) => {
     n.depth = d;
@@ -604,50 +617,46 @@ function layout(roots, heights, nodeW) {
     rowY[d] = y;
     y += rowH[d] + ROW_GAP;
   }
-  const height = Math.max(0, y - ROW_GAP);
 
-  const span = (n) =>
-    n.children.reduce((s, c) => s + c.band, 0) + SIB_GAP * Math.max(0, n.children.length - 1);
-  const band = (n) => {
-    for (const c of n.children) band(c);
-    n.band = Math.max(nodeW, span(n));
-  };
-  for (const r of roots) band(r);
+  // One root, because that is what a tidy tree takes. It is dropped below, and its depth is
+  // why every real node sits one rank higher than d3 reports.
+  const planted = hierarchy({ key: null, children: roots });
+  // `nodeSize` sets what a separation of 1 means. Siblings want a card plus `SIB_GAP`
+  // between centres; two whole trees, and two cousins under different owners, want the
+  // wider `TREE_GAP` — a gap that reads as "different owner" rather than "next along".
+  // Depth 1 is the forest's own rank, where every pair is two separate trees.
+  const step = nodeW + SIB_GAP;
+  tree()
+    .nodeSize([step, 1])
+    .separation((a, b) => (nodeW + (a.depth === 1 || a.parent !== b.parent ? TREE_GAP : SIB_GAP)) / step)(
+    planted,
+  );
+
+  // d3 centres its root on zero, so half the tree is negative until this shifts it.
+  const placed = planted.descendants().slice(1);
+  const left = Math.min(...placed.map((p) => p.x));
 
   const nodes = [];
   const edges = [];
-  const place = (n, left) => {
-    let cx;
-    if (n.children.length) {
-      let x = left + (n.band - span(n)) / 2;
-      for (const c of n.children) {
-        place(c, x);
-        x += c.band + SIB_GAP;
-      }
-      const kids = n.children;
-      cx = (kids[0].cx + kids[kids.length - 1].cx) / 2;
-      const lo = left + nodeW / 2;
-      const hi = left + n.band - nodeW / 2;
-      cx = Math.min(Math.max(cx, lo), hi);
-    } else {
-      cx = left + n.band / 2;
-    }
-    n.cx = Math.round(cx);
-    n.x = Math.round(cx - nodeW / 2);
+  for (const p of placed) {
+    const n = p.data;
+    n.cx = Math.round(p.x - left + nodeW / 2);
+    n.x = Math.round(p.x - left);
     n.y = rowY[n.depth];
     n.h = heightOf(n);
     n.w = nodeW;
     nodes.push(n);
-    for (const c of n.children) edges.push({ key: `${n.key}>${c.key}`, from: n.key, to: c.key });
-  };
-
-  let x = 0;
-  for (const r of roots) {
-    place(r, x);
-    x += r.band + TREE_GAP;
+    // The synthetic root is nobody's owner, so the rank above it draws no arrows.
+    if (p.parent !== planted) edges.push({ key: `${p.parent.data.key}>${n.key}`, from: p.parent.data.key, to: n.key });
   }
 
-  return { nodes, edges, nodeW, width: Math.max(0, x - TREE_GAP), height };
+  return {
+    nodes,
+    edges,
+    nodeW,
+    width: Math.max(...nodes.map((n) => n.x)) + nodeW,
+    height: Math.max(0, y - ROW_GAP),
+  };
 }
 
 /** The engine, run at the widest card that keeps the drawing inside `avail`.
