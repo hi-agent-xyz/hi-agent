@@ -22,15 +22,23 @@ struct PairingRequest: Identifiable, Equatable {
     let baseURL: String
     let code: String
     let label: String
+    /// Scanning is the intended path, so the sheet can be asked to arrive with
+    /// the camera already up rather than making the reader find the button.
+    let opensScanner: Bool
 
     static var manual: PairingRequest {
         PairingRequest(baseURL: "", code: "", label: "")
     }
 
-    init(baseURL: String, code: String, label: String) {
+    static var scan: PairingRequest {
+        PairingRequest(baseURL: "", code: "", label: "", opensScanner: true)
+    }
+
+    init(baseURL: String, code: String, label: String, opensScanner: Bool = false) {
         self.baseURL = baseURL
         self.code = code
         self.label = label
+        self.opensScanner = opensScanner
     }
 
     init(url: URL) throws {
@@ -57,6 +65,7 @@ struct PairingRequest: Identifiable, Equatable {
         code = rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
         label = Self.singleValue(named: "label", in: items)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        opensScanner = false
     }
 
     private static func singleValue(named name: String, in items: [URLQueryItem]) -> String? {

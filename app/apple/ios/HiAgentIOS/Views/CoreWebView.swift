@@ -10,10 +10,13 @@ enum CoreWebViewEvent {
 
 struct CoreWebView: UIViewRepresentable {
     let session: CoreSession
+    /// Bumped by the shell to ask for a reload. A face that has hung is
+    /// otherwise a dead end: the session is valid, so nothing re-opens it.
+    var reloadToken: Int = 0
     let onEvent: (CoreWebViewEvent) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onEvent: onEvent)
+        Coordinator(onEvent: onEvent, reloadToken: reloadToken)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -33,6 +36,11 @@ struct CoreWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
+        // Let the canvas show through until the face paints, so opening a core
+        // in dark appearance does not flash a white page.
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         context.coordinator.install(session, in: webView)
@@ -42,6 +50,7 @@ struct CoreWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onEvent = onEvent
         context.coordinator.install(session, in: webView)
+        context.coordinator.reloadIfRequested(reloadToken, in: webView)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -74,9 +83,20 @@ struct CoreWebView: UIViewRepresentable {
         private var session: CoreSession?
         private var installedCookieValue: String?
         private var renewalRequested = false
+        private var reloadToken: Int
 
-        init(onEvent: @escaping (CoreWebViewEvent) -> Void) {
+        init(onEvent: @escaping (CoreWebViewEvent) -> Void, reloadToken: Int = 0) {
             self.onEvent = onEvent
+            self.reloadToken = reloadToken
+        }
+
+        func reloadIfRequested(_ token: Int, in webView: WKWebView) {
+            guard token != reloadToken else {
+                return
+            }
+            reloadToken = token
+            renewalRequested = false
+            webView.reload()
         }
 
         func install(_ nextSession: CoreSession, in webView: WKWebView) {

@@ -18,6 +18,9 @@
 		A10000000000000000000009 /* PairingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* PairingRequest.swift */; };
 		A1000000000000000000000A /* PairingQRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* PairingQRScannerView.swift */; };
 		A1000000000000000000000B /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* NetworkMonitor.swift */; };
+		A1000000000000000000000C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* Theme.swift */; };
+		A1000000000000000000000D /* RosterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* RosterView.swift */; };
+		A1000000000000000000000E /* PairCoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* PairCoreView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +36,9 @@
 		B1000000000000000000000A /* PairingRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingRequest.swift; sourceTree = "<group>"; };
 		B1000000000000000000000B /* PairingQRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingQRScannerView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* RosterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* PairCoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairCoreView.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* HiAgentIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HiAgentIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -86,6 +92,9 @@
 				B10000000000000000000006 /* ContentView.swift */,
 				B10000000000000000000007 /* CoreWebView.swift */,
 				B1000000000000000000000B /* PairingQRScannerView.swift */,
+				B1000000000000000000000D /* Theme.swift */,
+				B1000000000000000000000E /* RosterView.swift */,
+				B1000000000000000000000F /* PairCoreView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -156,6 +165,9 @@
 				A10000000000000000000009 /* PairingRequest.swift in Sources */,
 				A1000000000000000000000A /* PairingQRScannerView.swift in Sources */,
 				A1000000000000000000000B /* NetworkMonitor.swift in Sources */,
+				A1000000000000000000000C /* Theme.swift in Sources */,
+				A1000000000000000000000D /* RosterView.swift in Sources */,
+				A1000000000000000000000E /* PairCoreView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

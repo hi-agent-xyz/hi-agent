@@ -16,37 +16,43 @@ struct PairingQRScannerView: View {
             Group {
                 switch cameraState {
                 case .checking:
-                    ProgressView("Preparing camera...")
+                    VStack(spacing: 14) {
+                        ProgressView()
+                        Text("Preparing camera…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .hiCanvas()
                 case .ready:
                     scanner
                 case .denied:
-                    VStack(spacing: 18) {
-                        ContentUnavailableView(
-                            "Camera access is off",
-                            systemImage: "camera.fill",
-                            description: Text("Allow camera access in Settings, or enter the pairing code manually.")
-                        )
-                        Button {
+                    StatusScreen(
+                        symbol: "camera.fill",
+                        title: "Camera access is off",
+                        message: "Allow camera access in Settings, or type the pairing code instead.",
+                        primary: .init(title: "Open Settings", action: {
                             guard let settingsURL = URL(string: UIApplication.openSettingsURLString)
                             else {
                                 return
                             }
                             openURL(settingsURL)
-                        } label: {
-                            Label("Open Settings", systemImage: "gear")
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                        }),
+                        secondary: .init(title: "Type it instead", action: { dismiss() })
+                    )
                 case .unavailable:
-                    ContentUnavailableView(
-                        "QR scanning is unavailable",
-                        systemImage: "qrcode.viewfinder",
-                        description: Text("Enter the core address and pairing code manually.")
+                    StatusScreen(
+                        symbol: "qrcode.viewfinder",
+                        title: "Scanning isn't available",
+                        message: "This device can't scan a code. Enter the core address and pairing code by hand.",
+                        primary: .init(title: "Type it instead", action: { dismiss() })
                     )
                 }
             }
             .navigationTitle("Scan pairing code")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(cameraState == .ready ? .hidden : .automatic, for: .navigationBar)
+            .toolbarColorScheme(cameraState == .ready ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -67,27 +73,42 @@ struct PairingQRScannerView: View {
             }
             .ignoresSafeArea()
 
-            VStack(spacing: 8) {
+            ScannerReticle()
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+            VStack(spacing: 10) {
                 if let scanError {
                     Label(scanError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
+                        .font(.footnote.weight(.medium))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
-                        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.red.opacity(0.85))
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
 
-                Text("Point the camera at a Hi Agent pairing QR code.")
-                    .font(.callout)
+                Text("Point the camera at the pairing code your core is showing.")
+                    .font(.subheadline)
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 18)
                     .padding(.vertical, 12)
-                    .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .environment(\.colorScheme, .dark)
+                    )
             }
-            .padding()
+            .padding(.horizontal, 24)
+            .padding(.bottom, 44)
+            .animation(.smooth(duration: 0.25), value: scanError)
         }
+        .background(Color.black)
     }
 
     private func prepareCamera() async {
@@ -130,6 +151,32 @@ struct PairingQRScannerView: View {
     }
 }
 
+/// Dims everything except the square you are meant to aim with. Without it the
+/// screen is a live camera feed with a caption — nothing says where to point.
+private struct ScannerReticle: View {
+    private let side: CGFloat = 250
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .mask {
+                    Rectangle()
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .frame(width: side, height: side)
+                                .blendMode(.destinationOut)
+                        }
+                        .compositingGroup()
+                }
+
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(.white.opacity(0.85), lineWidth: 2)
+                .frame(width: side, height: side)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 private struct PairingQRScannerController: UIViewControllerRepresentable {
     let onPayload: (String) -> Void
 
@@ -144,7 +191,9 @@ private struct PairingQRScannerController: UIViewControllerRepresentable {
             recognizesMultipleItems: false,
             isHighFrameRateTrackingEnabled: false,
             isPinchToZoomEnabled: true,
-            isGuidanceEnabled: true,
+            // The reticle is the guidance; the system's own hint text on top of
+            // it would be two sets of instructions in the same frame.
+            isGuidanceEnabled: false,
             isHighlightingEnabled: true
         )
         controller.delegate = context.coordinator
