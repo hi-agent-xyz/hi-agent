@@ -197,10 +197,21 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 | **The conversation surviving every view** | `ViewTraits` and the `.geom.json` sidecar are deleted, so `stage()` no longer has a `hidden` case at all — the popover/pill pair is the whole of it. Covered by unit tests on both sides; what none of them reaches is the outage, which is the one view that ever claimed the words. Pull the vendor credential, watch the notice come up, and confirm the conversation is still there and still typeable |
 | **A show taking the window with it** | The parked window follows any show now, including a re-show of the same destination (the cursor drops on the newest history entry changing, not on its destination changing), and the server clears its `attention` on any show to match. Unit tests reach the server half only: park on an older card, have something shown, and confirm the stage moves; then re-show the same view and confirm it still moves. A dismiss deliberately moves nobody |
 | **The views band opening on the bookmarks row** | The upper row's scroll-to-*here* has been watched; the lower row's is new, and its arithmetic was only checked in a standalone page carrying the real stylesheet — not in the mounted band, where the chip appears a render after the first `listViews()` answers. Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
+| **Working ahead** — the handover carries the questions it provokes, and the reversible half of the likely next step is handed out in the same turn ([`agents.md` § *Working ahead*](arch/agents.md)) | Journey [34](user-journeys/34-a-step-ahead.md), written to be run without leading the witness. **The one that decides it**: hand over something whose next step is outward, then say nothing, and confirm it stopped at the door. This is prompt-level throughout — the identity tests pin that the prose is present and that the permission never travels without its boundary; nothing pins that the agent acts on either |
+| **The `ahead` count** — `hi_create_worker(ahead)` → `WorkerSpawned` → `N/M errands started ahead` in the events view | It is self-reported, so it can only undercount, and a zero is two different findings wearing one number: nothing is being prepared, or nothing is marking it. Read it against the wire frames' actual `hi_create_worker` arguments on a run where working ahead plainly happened, or the count grades its own homework |
 
 ---
 
 ## No code at all
+
+- **A shelf for prepared things.** Working ahead has no store: a prepared artifact lives
+  wherever it naturally lives, the fact that it exists rides the worker's report into
+  Cognition's own session, and nothing carries it across a wake or a restart. **Deliberate,
+  not deferred** — a store, a budget, an expiry and a ready-line in the window are each
+  justified by a failure journey 34 has not shown yet, and machinery that exists before
+  anything is being lost is the pattern this whole file is a ledger of. What reopens it:
+  a run where prepared work is redone or forgotten, which is exactly what that journey's
+  reverse test looks for.
 
 - **post** — the push service, and with it waking a surface. Deliberately not next: push exists
   to wake a surface holding no channel, and a phone browser opening the relayed address needs no
