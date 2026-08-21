@@ -54,8 +54,6 @@ interface ViewsValue {
    * here is reported** — that is a different fact, and the agent needs it to read what
    * the person says next; see `reportWentTo`. */
   parked: string | null;
-  /** A raise landed while this window was parked. The signal that replaces yanking. */
-  liveMoved: boolean;
   /** Park on one past raise. */
   goTo: (entry: WireHistoryEntry) => void;
   /** Park on a named view from the inventory, and put it at the head of the trail:
@@ -69,7 +67,6 @@ const ViewsContext = createContext<ViewsValue>({
   trail: [],
   live: null,
   parked: null,
-  liveMoved: false,
   goTo: () => {},
   openRef: () => {},
 });
@@ -108,7 +105,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const [visits, setVisits] = useState<WireHistoryEntry[]>([]);
   /** Where this window is looking, when that is not the live view. */
   const [parked, setParked] = useState<{ key: string; view: ActiveView } | null>(null);
-  const [liveMoved, setLiveMoved] = useState(false);
   const parkedRef = useRef<{ key: string; view: ActiveView } | null>(null);
   useEffect(() => {
     parkedRef.current = parked;
@@ -133,7 +129,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     // anything parks with nothing in the trail to go back to.
     if (parkedRef.current) {
       setParked(null);
-      setLiveMoved(false);
       reportWentTo({ live: true });
     }
   }, []);
@@ -209,31 +204,28 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     };
   }, [woken]);
 
-  // The live destination is the newest raise, because every raise appends one. When
-  // this window is parked and that changes, the person is told rather than moved: a
-  // raise arriving must not yank the thing they went back to read out from under
-  // them, the same refusal the conversation makes by not auto-scrolling to a new
-  // message. If the agent happens to raise exactly what they went back to, they are
-  // simply live again and there is nothing to signal.
-  const liveKey = history.length > 0 ? destinationOf(history[history.length - 1]!) : null;
-  const prevLiveKeyRef = useRef<string | null>(null);
+  // The live destination is the newest raise, because every raise appends one.
+  const newest = history.length > 0 ? history[history.length - 1]! : null;
+  const liveKey = newest ? destinationOf(newest) : null;
+  // The identity of the *raise*, not of the place it leads to. A re-raise of the same
+  // destination is still the agent putting something on the screen — the entry moves to
+  // the end of the list and takes a new timestamp — and it has to take the window with it
+  // just the same, which keying on the destination alone would miss.
+  const liveRaise = newest ? `${liveKey}|${newest.at}` : null;
   // Read by the navigation callbacks, which must not re-create on every raise: going to
   // the newest card is going *live*, and the report says so rather than telling the agent
   // the person wandered off to the thing it just put up.
   const liveKeyRef = useRef<string | null>(null);
   useEffect(() => {
     liveKeyRef.current = liveKey;
-    const prev = prevLiveKeyRef.current;
-    prevLiveKeyRef.current = liveKey;
-    const p = parkedRef.current;
-    if (!p) return;
-    if (liveKey && liveKey === p.key) {
-      setParked(null);
-      setLiveMoved(false);
-      return;
-    }
-    if (liveKey !== prev) setLiveMoved(true);
-  }, [liveKey]);
+    // A raise takes the window with it, wherever it had gone back to — see
+    // `docs/arch/stage.md`. Dropping the cursor is the whole of it: `views` prefers the
+    // wire the moment there is nothing parked, so the raise is what is on screen.
+    if (parkedRef.current) setParked(null);
+    // `liveKey` is read here but must not be a dependency: it is unchanged by a re-raise
+    // of the same destination, and that is a raise the window still has to follow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRaise]);
 
   const goTo = useCallback((entry: WireHistoryEntry) => {
     const key = destinationOf(entry);
@@ -253,7 +245,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     // dot on the return control instead of following the raise it was standing on.
     if (live) {
       setParked(null);
-      setLiveMoved(false);
       return;
     }
     // An inline view has no durable name and is only ever the artifact it compiled
@@ -286,7 +277,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     // add to the trail — the raise is already a card in it.
     if (live) {
       setParked(null);
-      setLiveMoved(false);
       return;
     }
     void openView(viewRef).then(
@@ -331,11 +321,10 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       trail,
       live: liveKey,
       parked: parked?.key ?? null,
-      liveMoved,
       goTo,
       openRef,
     };
-  }, [wire, parked, clear, trail, liveKey, liveMoved, goTo, openRef]);
+  }, [wire, parked, clear, trail, liveKey, goTo, openRef]);
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 

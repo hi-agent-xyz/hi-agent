@@ -34,9 +34,6 @@ interface ChannelControlsProps {
   viewsOpen: boolean;
   /** Open/close the views band. */
   onToggleViews: () => void;
-  /** A raise landed while parked — the signal that stands in for being yanked there. It
-   * rides the views control, because the band is where going back happens. */
-  liveMoved: boolean;
 }
 
 /**
@@ -59,14 +56,12 @@ interface ChannelControlsProps {
  * and the line. What is left is what the cluster was always for — mic, speaker,
  * text, camera, one apiece.
  *
- * **Going back is the band's job, and the dot rides the control that opens it.** There was
- * a return-to-live button here, rendered only while parked, on the argument that returning
- * is the most frequent act once someone has gone back. Nothing bore that out — see the
- * amendment in `docs/arch/stage.md` — and it spent a slot in a row this tight on a state
- * that is rare by construction. The signal it existed to carry is what mattered, so that
- * stayed: a raise landing on a parked window dots the views control, and the band behind it
- * already marks the live card with a pip. The signal says the agent moved on; the row says
- * where to.
+ * **Nothing here signals a raise, because a raise is not something to be signalled about.**
+ * There was a return-to-live button, and then a dot on the views control in its place, both
+ * standing in for a window that had gone back and would not follow the agent onto the
+ * screen. A raise takes the window with it now (`docs/arch/stage.md`), so there is nothing
+ * left to stand in for: what the agent put up is what is up, and the band is where going
+ * back lives.
  */
 export function ChannelControls({
   activity,
@@ -85,7 +80,6 @@ export function ChannelControls({
   onCloseViews,
   viewsOpen,
   onToggleViews,
-  liveMoved,
 }: ChannelControlsProps) {
   return (
     <div className="hi-channels" role="group" aria-label="agent status and channels">
@@ -150,19 +144,14 @@ export function ChannelControls({
 
       <button
         type="button"
-        className={`hi-channel${viewsOpen ? " is-on" : ""}${liveMoved ? " has-dot" : ""}`}
+        className={`hi-channel${viewsOpen ? " is-on" : ""}`}
         onClick={onToggleViews}
-        title={
-          liveMoved
-            ? "views — the agent has shown something since you went back"
-            : "views — what has been shown, and where you can go"
-        }
+        title="views — what has been shown, and where you can go"
         aria-pressed={viewsOpen}
         aria-expanded={viewsOpen}
-        aria-label={liveMoved ? "views — something new has been shown" : "views"}
+        aria-label="views"
       >
         <ViewsGlyph />
-        {liveMoved && <span className="hi-channel-dot" aria-hidden="true" />}
       </button>
 
       <button

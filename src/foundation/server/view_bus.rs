@@ -291,16 +291,16 @@ impl ViewBus {
         true
     }
 
-    /// Forget where they went, because the agent just raised that same place.
+    /// Forget where they went, because the agent just raised something.
     ///
-    /// This is the client's own rule for being live again — `ViewsProvider` drops its
-    /// cursor when the newest raise is the destination it is parked on — made here, in
-    /// the same call that records the raise, so the two cannot drift.
-    async fn caught_up_with(&self, destination: &str) {
-        let mut slot = self.attention.lock().await;
-        if slot.as_ref().is_some_and(|a| a.key == destination) {
-            *slot = None;
-        }
+    /// This is the client's own rule for being live again — a raise takes the window with
+    /// it, whatever it had gone back to (`docs/arch/stage.md`) — made here, in the same
+    /// call that records the raise, so the two cannot drift. It used to clear only when the
+    /// raise landed on the very destination they had gone to, which was right while a
+    /// parked window stayed put and is wrong now that none does: the alternative is telling
+    /// the agent they are away reading something it has just taken them off.
+    async fn caught_up_by_raise(&self) {
+        *self.attention.lock().await = None;
     }
 
     /// Where the person went, if they went anywhere and have not been caught up with.
@@ -337,7 +337,7 @@ impl ViewBus {
         }
         if let Some(raised) = &next {
             record_raise(&mut entry.history, raised.clone(), Utc::now());
-            self.caught_up_with(&destination_of(raised)).await;
+            self.caught_up_by_raise().await;
             // Take the picture now, while this *is* the screen. Off the write path
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
@@ -891,42 +891,31 @@ mod tests {
         assert!(!bus.note_went_to(String::new(), String::new(), true).await);
     }
 
-    /// The client drops its cursor when the newest raise is where it is parked. The
-    /// server makes the same call in the same place, so the two cannot drift — otherwise
-    /// the agent would be told they are away reading something it is at that moment
-    /// showing them.
+    /// Any raise catches up with them, not only one onto the place they went. The window
+    /// follows a raise, so a fact saying they are elsewhere is not stale — it is false, and
+    /// the agent would answer the wrong board confidently on the strength of it.
     #[tokio::test]
-    async fn a_raise_onto_where_they_went_catches_up_with_them() {
+    async fn any_raise_catches_up_with_them() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
 
-        // Somewhere else first: that is not where they are.
+        // Somewhere else entirely: they are taken there, so the fact goes.
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
-        assert!(bus.attention().await.is_some());
-
-        bus.apply(show("drive", "/m/drive.mjs")).await;
         assert!(bus.attention().await.is_none());
     }
 
-    /// A named view is one destination however many times it is raised or gone to, and
-    /// an inline one is its artifact. The client keys its cursor the same way.
+    /// A dismiss is not a raise: it clears the slot rather than putting a window on
+    /// something, so there is nowhere it could have taken them and the fact stands.
     #[tokio::test]
-    async fn a_named_raise_catches_up_by_ref_not_by_module() {
+    async fn a_dismiss_leaves_where_they_went_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.note_went_to("factory/tasks".into(), "factory/tasks".into(), false).await;
+        bus.apply(show("tasks", "/m/tasks.mjs")).await;
+        bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
 
-        // Recompiled since they went there: a different module, the same place.
-        bus.apply(ViewEnvelope {
-            id: "tasks".into(),
-            op: ViewOp::Show,
-            module_url: Some("/m/tasks-v2.mjs".into()),
-            traits: None,
-            view_ref: Some("factory/tasks".into()),
-        })
-        .await;
-        assert!(bus.attention().await.is_none());
+        bus.apply(dismiss("tasks")).await;
+        assert!(bus.attention().await.is_some());
     }
 
     #[tokio::test]

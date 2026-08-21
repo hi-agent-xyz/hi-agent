@@ -1662,21 +1662,6 @@ button:not([data-slot]) {
 /* Return-to-live carries the dot when a raise landed while the person was away.
    The dot is the whole of the signal: the alternative is moving them off the
    thing they went back to read, which is the one thing this must never do. */
-.hi-channel.has-dot {
-  position: relative;
-}
-
-.hi-channel-dot {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent-2);
-  box-shadow: 0 0 0 2px var(--surface);
-}
-
 @media (max-width: 640px) {
   .hi-views-band {
     right: max(12px, var(--hi-safe-right));

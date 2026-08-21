@@ -55,7 +55,7 @@ export function Shell() {
   // the dismissal effect below would resubscribe its window listeners on each one.
   const { setTextChannel } = ch;
   const sendText = useSendText();
-  const { views, clear, liveMoved } = useViews();
+  const { views, clear } = useViews();
   // Whether the views band is open. A window preference like the text channel's
   // own on/off, and never server state for the same reason: it says what this
   // window is showing the person, not what the agent expressed.
@@ -239,7 +239,6 @@ export function Shell() {
           onCloseViews={clear}
           viewsOpen={bandOpen}
           onToggleViews={() => setBandOpen((open) => !open)}
-          liveMoved={liveMoved}
         />
 
         <HandoffOverlay

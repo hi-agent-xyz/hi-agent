@@ -373,8 +373,8 @@ the head of the trail, but a card gone back to keeps its place, and the surface 
 is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
 *here* into view, in the row that holds it, and one that is already whole on screen is
 left alone. Only on opening: a raise arriving while the band is up must not drag a row
-out from under someone reading it, which is the refusal the raise-landed dot exists to
-make, applied to the rows themselves.
+out from under someone reading it. The stage does follow a raise — *A raise takes the window
+with it*, above — and the row deliberately does not.
 
 *Extended to the lower row August 20, 2026. It was written for the trail alone, and the
 gap showed up the moment the bookmarks row overflowed: going to `factory/tools` marked
@@ -401,24 +401,31 @@ is that window's own, exactly like the conversation's scroll position — a phon
 back must not move the desktop. The content slot stays the agent's: what it raised is
 still what a second device shows and still what it will refer to out loud.
 
-**A raise signals; it never yanks.** Landing a new view on someone who went back to read
-something is the same mistake as auto-scrolling the conversation to a new message. The
-views control carries a dot instead, and the band it opens already marks the live card with
-a pip: the dot says the agent has moved on, the row says where to. If the agent happens to
-raise exactly what they went back to, they are simply live again and there is nothing to
-signal.
+**A raise takes the window with it.** Whatever the person had gone back to, the thing the
+agent puts up is what is in front of them a moment later — on every window, parked or not.
+The cursor survives everything except a raise: they can read an old card for as long as the
+agent is quiet, and the moment it shows something, they are looking at that.
 
-*The dot moved onto the views control August 21, 2026, and the button under it was deleted.*
-Return-to-live was a control of its own, rendered only while parked — the single item in a
-cluster of eight that came and went — on the argument that returning is the most frequent
-act once someone has gone back, so it must not cost opening the band first. That frequency
-was assumed and never observed: seventeen days of the view channel's journal hold 102 lines
-and **not one recorded move**, so the state the button lived in had not been entered on
-purpose even once. A permanent slot in a tight row is the wrong price for that, and the
-signal was always the half that mattered. Going back is the band's job now — one press to
-open it, one to take the card wearing the pip — and *close the view* drops this window's
-cursor as well as the server's slot, which is the way home when nothing has been raised for
-the band to point at.
+*Reversed August 21, 2026. It used to read "a raise signals; it never yanks."* The rule was
+argued from the conversation — landing a view on someone mid-read is auto-scrolling them to
+a new message — and the analogy is what was wrong. **A message is a thing to read when you
+get to it; a raise is the agent pointing at the screen while it talks.** Speech assumes it:
+at 12:23 the agent said *我现在放到屏幕上了* — "I've put it on the screen now" — half a
+minute after the person had gone to `factory/workers`, and the screen they were looking at
+did not change. The signal that was supposed to cover that gap (a dot, first on a control of
+its own and then on the views control) does not: it says *something happened somewhere else*
+to someone who has just been told it happened here. A dot is the wrong shape for a promise
+the agent has already made out loud.
+
+So the signalling apparatus is deleted rather than re-homed — the dot, `liveMoved`, and the
+CSS under them. What is left is what going back was always for: the band, the trail, and a
+cursor that holds until the agent next speaks with the screen. Two things keep the person
+from being lost when it moves: the raise's own card is at the head of the trail, and *close
+the view* still drops the cursor along with the slot.
+
+**The band's rows are the exception, and stay one.** A raise moves the stage under a parked
+window on purpose; it must still not scroll the row of cards someone is reading with their
+finger on it. The stage follows the agent; the row follows the hand.
 
 ### Where they went is reported; the cursor still is not
 
@@ -448,9 +455,12 @@ the backend something true about itself, and nothing happens until something els
 **The newest move wins, across every window.** One person owns an install
 ([`topology.md`](topology.md#identity)), so two windows are two of their eyes and not two
 people, and the last place they went is the best available answer to where they are
-looking. A raise onto that same destination clears it, because that is the client's own
-rule for going live again — made in the same place the raise is recorded, so the two
-cannot drift.
+looking. **Any raise clears it**, because that is the client's own rule for going live again
+— a raise takes every window with it — made in the same place the raise is recorded, so the
+two cannot drift. It used to clear only on a raise onto the very destination they had gone
+to, which was right while a parked window stayed put: now that none does, a fact saying they
+are elsewhere is not stale but false, and the agent would answer the wrong board on the
+strength of it. A *dismiss* is not a raise and leaves it alone — it takes a window nowhere.
 
 **It goes stale, and says so instead of pretending.** A window that reloads is live again
 and never announces it, so the fact can outlive the looking. The turn therefore reads it
@@ -595,8 +605,9 @@ nobody asks. Nobody reaches for a board by when it was put up; they reach for it
 is on it, which is what the tile and the name are. And the two words most often on the
 line, *Wed* and *live*, were the two carrying least: *Wed* because a weekday is not a
 handle, *live* because the row's head already says it. The live card keeps a pip on the
-gradient beside its name, and since the return-to-live control was deleted that pip is the
-whole of the signal on the row — the dot on the views control is what points at it.
+gradient beside its name, which is the picture-side half of that same signal — and now that
+a raise takes the window with it, the pip marks where the window will be the moment the
+agent shows anything.
 
 **And the tile is 160×90** — 16:9, against 118×76 (1.55) before; 128×72 rather than
 104×68 on a narrow window. Bigger by a third in width because it now carries the name as
