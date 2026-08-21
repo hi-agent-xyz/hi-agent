@@ -306,6 +306,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         );
     }
 
+    // The reaction's shutdown signal: triggered below the moment a signal / Quit is
+    // observed, so its reaction loops, reflection, and drive retries wind down instead
+    // of restarting agent sessions into a process group that's already terminating.
+    //
+    // Built here, ahead of the agent layer, because the layer holds it too: winding the
+    // loops down is the polite half, and `AgentLayer::session` refusing to open is the
+    // half that a call site cannot skip.
+    let reaction_shutdown = foundation::shutdown::Shutdown::new();
     let agent = foundation::agent::AgentLayer::new(
         foundation::agent::SpawnConfig {
             program: runtime.codex_bin.clone(),
@@ -316,6 +324,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         wire_tap,
         format!("http://127.0.0.1:{}", config.port),
         privacy,
+        reaction_shutdown.clone(),
     );
     tracing::info!("agent session layer ready (one subprocess spawns per session)");
     // A handle for shutdown: the reaction takes ownership of `agent` below, but on
@@ -352,10 +361,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         foundation::credentials::get_setting(&config.data_dir, foundation::config::KEY_LANGUAGE)
             .unwrap_or_else(|| "system".to_string()),
     );
-    // The reaction's shutdown signal: triggered below the moment a signal / Quit is
-    // observed, so its reaction loops, reflection, and drive retries wind down instead
-    // of restarting agent sessions into a process group that's already terminating.
-    let reaction_shutdown = foundation::shutdown::Shutdown::new();
     // Eager sessions attach to `/mcp` during `session/new`. The reaction starts before
     // the listener below, so retain one readiness edge that every startup warm-up can
     // await without racing the HTTP server.

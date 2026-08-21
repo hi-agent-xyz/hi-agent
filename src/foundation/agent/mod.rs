@@ -104,6 +104,10 @@ struct Inner {
     /// them all on shutdown instead of leaking orphaned children. See
     /// [`AgentLayer::shutdown`].
     registry: ProcessRegistry,
+    /// The process-wide shutdown signal, so [`AgentLayer::session`] can refuse to
+    /// open once the drain has begun — see the check there for why the funnel is
+    /// the only place this can be enforced.
+    shutdown: crate::foundation::shutdown::Shutdown,
 }
 
 impl AgentLayer {
@@ -113,6 +117,7 @@ impl AgentLayer {
         tap: WireTap,
         server_base_url: String,
         privacy: crate::foundation::privacy::PrivacyBoundary,
+        shutdown: crate::foundation::shutdown::Shutdown,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -122,6 +127,7 @@ impl AgentLayer {
                 privacy,
                 tap,
                 registry: ProcessRegistry::new(),
+                shutdown,
             }),
         }
     }
@@ -140,6 +146,30 @@ impl AgentLayer {
         session_id: Option<crate::foundation::registry::SessionId>,
         opts: SessionOpts,
     ) -> anyhow::Result<AgentSession> {
+        // **Nothing opens once the drain has begun.** The host quiesces the reaction
+        // before draining precisely so no session restarts into a process group that is
+        // already terminating (see `run_with_shutdown`), and two rungs check the signal
+        // in their own loops — but a session is opened from five call sites and the two
+        // that matter most did not, so a child spawned here outlived the reap that was
+        // supposed to take it.
+        //
+        // The cost was not the orphan. `session` is also where a thread id is minted and
+        // written to the session directory, and boot resumes **the newest thread on a
+        // rung's row**: a cold thread opened during the drain is newer than the one the
+        // rung spent the run on, so the next boot resumed an empty shell and the real
+        // thread — rollout intact on disk, simply unnamed by then — was orphaned. Seen on
+        // 2026-08-20: Cognition came back on a 14-record thread while its own 34.6 MB one
+        // sat unreferenced.
+        //
+        // Refusing here rather than at each caller is deliberate: this is the one funnel
+        // where a subprocess is spawned and a thread is recorded, so it is the only place
+        // that cannot be forgotten by a sixth call site. Callers already treat a failed
+        // open as an ordinary outcome — the rung is reopened cold next turn, and during a
+        // drain there is no next turn.
+        if self.inner.shutdown.is_triggered() {
+            anyhow::bail!("shutting down; not opening a new {} session", role.as_str());
+        }
+
         let SessionOpts { system_prompt, cwd, resume, .. } = opts;
 
         // Never let a session root at the process cwd. An unset cwd falls through to
@@ -384,6 +414,10 @@ mod tests {
     use crate::identity::WorkerType;
 
     fn layer() -> AgentLayer {
+        layer_with(crate::foundation::shutdown::Shutdown::new())
+    }
+
+    fn layer_with(shutdown: crate::foundation::shutdown::Shutdown) -> AgentLayer {
         AgentLayer::new(
             SpawnConfig {
                 program: PathBuf::from("/bin/false"),
@@ -398,6 +432,7 @@ mod tests {
                 uuid::Uuid::new_v4()
             )))
             .unwrap(),
+            shutdown,
         )
     }
 
@@ -542,5 +577,57 @@ mod tests {
                 t.as_str()
             );
         }
+    }
+
+    /// A drain must not be able to mint a thread. `session` is the only place a thread
+    /// id is recorded, and boot resumes the newest one on a rung's row — so a session
+    /// opened while the host is winding down silently becomes the next boot's resume
+    /// target, in place of the thread the rung actually spent the run on.
+    #[tokio::test]
+    async fn a_triggered_shutdown_refuses_to_open_a_session() {
+        let shutdown = crate::foundation::shutdown::Shutdown::new();
+        let layer = layer_with(shutdown.clone());
+        shutdown.trigger();
+
+        let err = layer
+            .session(Role::Cognition, Some(7.into()), SessionOpts::default())
+            .await
+            .err()
+            .expect("a session must not open once the drain has begun");
+
+        // The message, not merely the failure: `/bin/false` would fail to spawn too, and
+        // a test that cannot tell those apart would pass even if the check were deleted.
+        assert!(
+            format!("{err:#}").contains("shutting down"),
+            "the refusal must come before the spawn, not from it: {err:#}"
+        );
+    }
+
+    /// The check reads the signal live rather than a copy taken at construction, so a
+    /// layer built before the trigger still refuses after it. Every caller holds a clone
+    /// made at startup, which is exactly the case that has to work.
+    #[tokio::test]
+    async fn the_refusal_follows_a_signal_triggered_after_the_layer_was_built() {
+        let shutdown = crate::foundation::shutdown::Shutdown::new();
+        let layer = layer_with(shutdown.clone());
+        // Not triggered yet: this open gets as far as the spawn, which is the proof that
+        // nothing is refusing for an unrelated reason.
+        let before = layer
+            .session(Role::Reaction, None, SessionOpts::default())
+            .await
+            .err()
+            .expect("/bin/false cannot host a session");
+        assert!(
+            !format!("{before:#}").contains("shutting down"),
+            "nothing should be refusing before the trigger: {before:#}"
+        );
+
+        shutdown.trigger();
+        let after = layer
+            .session(Role::Reaction, None, SessionOpts::default())
+            .await
+            .err()
+            .expect("a session must not open once the drain has begun");
+        assert!(format!("{after:#}").contains("shutting down"), "{after:#}");
     }
 }
