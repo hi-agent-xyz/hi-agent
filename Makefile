@@ -38,6 +38,10 @@ run: ## run the release binary
 
 test: ## run rust + web tests
 	cargo test
+# Guarded on the runner itself, not on `node_modules/` being present: a fresh
+# worktree has no deps at all and a half-installed tree has the directory, so a
+# `test -d` here is the check that passes while the thing it guards is missing.
+	@test -x src/appearance/web/node_modules/.bin/vitest || (cd src/appearance/web && npm ci)
 	cd src/appearance/web && npm test
 
 docker: ## build the docker image
