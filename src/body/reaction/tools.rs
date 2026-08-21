@@ -83,6 +83,13 @@ pub enum LoopControl {
         owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
+        /// Whether this errand is for a step nobody has asked for yet — `agents.md`'s
+        /// *Working ahead*. Carried for the record only: nothing downstream behaves
+        /// differently, because a prepared errand is an ordinary errand that happens to be
+        /// early, and a second class of worker would be a second thing to keep correct.
+        /// See [`crate::foundation::observatory::EventKind::WorkerSpawned`] for why it can
+        /// only ever undercount.
+        ahead: bool,
         /// `Ok` once the session is registered, open and driving — the point from which
         /// its id answers. `Err` carries why it never opened, which used to reach nothing
         /// but a log line while the caller was told the errand had started.
@@ -630,6 +637,7 @@ mod tests {
                     owner: None,
                     resume: None,
                     subject: None,
+                    ahead: false,
                     ready: tokio::sync::oneshot::channel().0,
                 })
                 .await

@@ -1073,6 +1073,14 @@ mod soul_tests {
         // And the cache rule, which is what keeps a prepared thing from being reported as
         // current — the `checked_at:` failure, one layer out.
         assert!(COGNITION_BASE.contains("cache, not a fact"));
+        // The flag is model-declared and cannot be inferred, so a prompt that grants the
+        // getting-ahead without naming it leaves the observatory reading zero for a rung
+        // that is preparing constantly — which is worse than not counting, because a zero
+        // looks like an answer.
+        assert!(
+            COGNITION_BASE.contains("`ahead: true`"),
+            "Cognition must be told to mark an errand it started ahead of the asking"
+        );
     }
 
     /// **A preparation is offered by the voice or not at all.** Cognition holds no `hi_say`

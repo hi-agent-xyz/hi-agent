@@ -59,10 +59,20 @@ function summary(e: SessionEvent): ReactNode {
     case "hot_swap":
       return `${s("old_id")} → ${s("new_id")}, ${n("briefing_chars")} chars briefed`;
     case "worker_spawned":
-    case "worker_resumed":
+    case "worker_resumed": {
       // A spawn carries the errand's `title`; a resume carries the follow-up `task` it was
       // handed. History written before those were separated has the spawn under `task` too.
-      return `#${n("id")}: ${clip(s("title") || s("task"), 120)}`;
+      const line = `#${n("id")}: ${clip(s("title") || s("task"), 120)}`;
+      // Marked, not filtered: which errands were started before anyone asked is only
+      // legible next to the ones that answered a request.
+      return e.ahead === true ? (
+        <span>
+          <span className="pill" title="started before anyone asked for it">ahead</span> {line}
+        </span>
+      ) : (
+        line
+      );
+    }
     case "worker_finished":
       return `#${n("id")}: ${s("state")}, ${n("summary_chars")} chars`;
     default:
@@ -103,6 +113,13 @@ export function EventsView() {
   const kinds = [...new Set(events.map((e) => e.event))].sort();
   const shown = only ? events.filter((e) => e.event === only) : events;
 
+  // What working ahead is costing, as a ratio rather than an impression — the reader
+  // `agents.md` promises for it. It counts what was *marked*: the flag is declared by the
+  // rung that dispatched, so this is a floor. A zero means either nothing is being
+  // prepared or nothing is saying so, and the two are not distinguishable from here.
+  const spawned = events.filter((e) => e.event === "worker_spawned");
+  const ahead = spawned.filter((e) => e.ahead === true).length;
+
   return (
     <div className="wire-detail">
       <div className="detail-head">
@@ -111,6 +128,7 @@ export function EventsView() {
           <span className="muted">
             {events.length} recorded
             {only ? ` · showing ${shown.length} ${only}` : ""}
+            {spawned.length > 0 ? ` · ${ahead}/${spawned.length} errands started ahead` : ""}
           </span>
           <span className={`live-dot ${live ? "on" : ""}`} title={live ? "event stream live" : "reconnecting"} />
         </div>

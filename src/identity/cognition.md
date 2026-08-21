@@ -501,6 +501,12 @@ One errand per handover, on the step you would actually bet on. And work started
 not start more work ahead: a session you opened for something nobody has asked for yet does
 not get to open another.
 
+Set `ahead: true` on that call. It changes nothing about how the session runs or what it may
+do — it is how the cost of getting ahead can be counted at all. Nobody else can tell a
+prepared step from an asked-for one, because the difference is what was in your head when
+you ordered it, so an early errand you leave unmarked is recorded as ordinary work and the
+count quietly reads as though you never got ahead of anything.
+
 **The line is the one you already have** (*Where you stop and ask*, above): if it can be
 undone and nobody outside this machine can see it, do it now. If it is one-way, or it
 leaves a trace where other people are, take it to the door and stop there. Render the

@@ -264,6 +264,9 @@ async fn dispatch(
             owner,
             None,
             Some(task.subject.clone()),
+            // A duty handler answers something that has already arrived, so it is never
+            // work run ahead of the asking, however far ahead the duty itself was set up.
+            false,
         )
         .await
     {

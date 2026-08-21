@@ -211,6 +211,21 @@ fn create_worker_tool() -> Value {
                                     ledger — and always for a `task-manager`, which serves every \
                                     task and so can name none.",
                 },
+                "ahead": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set this when the errand is a step **nobody has asked \
+                                    for yet** — you are handing something over and putting \
+                                    someone on the likely next move now, so it is ready if \
+                                    they want it. It changes nothing about how the session \
+                                    runs or what it may do; the boundary is the same one \
+                                    that governs acting alone. What it does is make the cost \
+                                    of getting ahead countable, and nothing else can tell a \
+                                    prepared step from an asked-for one — so an errand that \
+                                    is genuinely early and unmarked reads as ordinary work, \
+                                    and the record under-reports what preparing costs. Leave \
+                                    it out for anything that answers a request already made.",
+                },
                 "resume": {
                     "type": "string",
                     "description": "Pick an errand back up where a restart cut it off, instead \
@@ -1446,6 +1461,10 @@ async fn dispatch_tool(
                 Role::Worker(kind),
                 Some(subject.as_deref().unwrap_or(title.as_str())),
             );
+            // Declared by the caller, because the caller is the only party that knows: the
+            // difference between preparing a step and answering a request is what was in
+            // the mind that ordered it, and nothing at this surface can see that.
+            let ahead = args.get("ahead").and_then(Value::as_bool).unwrap_or(false);
             let resumed = resume.is_some();
             // **Waits for the session to exist, like `hi_cancel_worker` and
             // `hi_close_worker` do.** This was the one dispatch verb that answered from the
@@ -1466,6 +1485,7 @@ async fn dispatch_tool(
                     owner: Some(owner),
                     resume,
                     subject,
+                    ahead,
                     ready,
                 })
                 .await

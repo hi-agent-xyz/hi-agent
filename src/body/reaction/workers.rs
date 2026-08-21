@@ -230,8 +230,9 @@ impl WorkerRegistry {
         owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
+        ahead: bool,
     ) -> anyhow::Result<SessionId> {
-        self.spawn_inner(reaction, id, title, task, kind, owner, resume, subject).await
+        self.spawn_inner(reaction, id, title, task, kind, owner, resume, subject, ahead).await
     }
 
     /// The one construction path for a working session: open it, record it, drive it.
@@ -254,6 +255,7 @@ impl WorkerRegistry {
         owner: Option<SessionId>,
         resume: Option<String>,
         subject: Option<String>,
+        ahead: bool,
     ) -> anyhow::Result<SessionId> {
         let resumed = resume.is_some();
         // **The brief is not the only thing a worker knows any more.** It used to be, and
@@ -297,7 +299,10 @@ impl WorkerRegistry {
             // just describes no conversation, which is the truth about it.
             // The title, not the brief: this record is read on a dashboard, and a
             // paragraph in that slot is a paragraph nobody scrolls.
-            .record(EventKind::WorkerSpawned { id: id.clone(), title: title.clone() })
+            // `ahead` rides the spawn row rather than a row of its own: how much of the
+            // machine is being spent one step ahead is a ratio against the other spawns,
+            // and a separate event would have to be joined back to them to read it.
+            .record(EventKind::WorkerSpawned { id: id.clone(), title: title.clone(), ahead })
             .await;
 
         let transcript = Arc::new(Mutex::new(String::new()));

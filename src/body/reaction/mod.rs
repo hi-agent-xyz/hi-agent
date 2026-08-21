@@ -1320,9 +1320,19 @@ async fn apply_control(
     ctl: LoopControl,
 ) {
     match ctl {
-        LoopControl::CreateWorker { id, title, task, kind, owner, resume, subject, ready } => {
+        LoopControl::CreateWorker {
+            id,
+            title,
+            task,
+            kind,
+            owner,
+            resume,
+            subject,
+            ahead,
+            ready,
+        } => {
             let spawned = workers
-                .spawn_with_id(reaction, id, title, task, kind, owner, resume, subject)
+                .spawn_with_id(reaction, id, title, task, kind, owner, resume, subject, ahead)
                 .await;
             if let Err(err) = &spawned {
                 tracing::warn!(error = %format!("{err:#}"), "failed to create a working session");

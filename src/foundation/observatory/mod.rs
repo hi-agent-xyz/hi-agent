@@ -150,7 +150,19 @@ pub enum EventKind {
     /// `title` is the errand's one line, not the brief it was sent — see
     /// [`crate::foundation::registry::Status::title`]. Rows written before the two were
     /// separated carry the same field as `task`, holding whatever the brief opened with.
-    WorkerSpawned { id: SessionId, title: String },
+    ///
+    /// `ahead` marks an errand started for something **nobody has asked for yet** —
+    /// `agents.md`'s *Working ahead*, where the reversible half of a likely next step is
+    /// prepared during the handover rather than after the request. Most of that work is
+    /// discarded by design, which is only a good trade while the ratio is visible, so it
+    /// is marked here and counted in the events view.
+    ///
+    /// **It is declared by the rung that dispatched, so it undercounts and never
+    /// overcounts.** Nothing out here can tell a prepared step from an asked-for one —
+    /// the difference is what was in the mind that ordered it — so an unset flag means
+    /// *unmarked*, not *asked for*. A zero here is therefore the weaker of the two
+    /// claims: either nothing is being prepared, or nothing is saying so.
+    WorkerSpawned { id: SessionId, title: String, ahead: bool },
     /// A warm (finished-but-idle) worker was handed a follow-up task and is running
     /// again on the same session.
     WorkerResumed { id: SessionId, task: String },
@@ -486,7 +498,12 @@ mod tests {
     #[tokio::test]
     async fn worker_lifecycle_is_history_not_voice_state() {
         let obs = Observatory::new(None);
-        obs.record(EventKind::WorkerSpawned { id: 1.into(), title: "research X".into() }).await;
+        obs.record(EventKind::WorkerSpawned {
+            id: 1.into(),
+            title: "research X".into(),
+            ahead: false,
+        })
+        .await;
         obs.record(EventKind::WorkerFinished {
             id: 1.into(),
             state: WorkerState::Done,
