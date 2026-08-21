@@ -43,8 +43,15 @@
 	<string>Hi Agent connects to cores running on devices on your local network.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>UIRequiresFullScreen</key>
 	<false/>
+	<key>UIUserInterfaceStyle</key>
+	<string>Automatic</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
