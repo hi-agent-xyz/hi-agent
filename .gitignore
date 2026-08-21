@@ -6,3 +6,4 @@ src/appearance/web/dist/
 .env
 .env.local
 .claude/
+xcuserdata/

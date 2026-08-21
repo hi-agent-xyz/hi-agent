@@ -12,8 +12,8 @@
 		A10000000000000000000003 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* KeychainStore.swift */; };
 		A10000000000000000000004 /* CoreClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* CoreClient.swift */; };
 		A10000000000000000000005 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* AppModel.swift */; };
-	A10000000000000000000006 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ContentView.swift */; };
-	A10000000000000000000007 /* CoreWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* CoreWebView.swift */; };
+		A10000000000000000000006 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ContentView.swift */; };
+		A10000000000000000000007 /* CoreWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* CoreWebView.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* Assets.xcassets */; };
 		A10000000000000000000009 /* PairingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* PairingRequest.swift */; };
 		A1000000000000000000000A /* PairingQRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* PairingQRScannerView.swift */; };
@@ -150,6 +150,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		F30000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000008 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		F30000000000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -172,17 +183,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		F30000000000000000000002 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A10000000000000000000008 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		F40000000000000000000001 /* Debug */ = {
@@ -219,7 +219,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = R3845XW5FZ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HiAgentIOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -239,7 +239,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = R3845XW5FZ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HiAgentIOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
