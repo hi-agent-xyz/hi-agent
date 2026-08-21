@@ -4,22 +4,28 @@
 // Read-only on purpose: the registry has no stop verb, and a button that pretended to kill
 // a worker would be worse than no button.
 //
-// Three things this surface has to get right, all of them lessons from gaps.md:
+// Five things this surface has to get right, all of them lessons from gaps.md:
 //
 // 1. **Structure, because a flat list hid the delegation.** Every row was a sibling, so a
 //    worker and the rung that spawned it read as peers and there was no way to see that
-//    Cognition had three sessions out. Workers nest under their owner, one indent, one
-//    level deep.
+//    Cognition had three sessions out.
 //
-//    That nest sits in one of **three columns** — the outward ladder, Reflection, and what
-//    just ended, at 4 · 4 · 2 — rather than in one long page of full-width rows. A row
-//    spent the frame's whole width on a line that was mostly empty and then bought the
-//    title out of what was left. A column-width card gives each field its own line instead.
-//    The columns fold on the frame — three, then two, then one — off a container query
-//    rather than a media query. The frame is the whole window now that the conversation
-//    is a popover over it rather than a rail beside it (`docs/arch/stage.md`), so the two
-//    measure the same thing here; the container query stays because the frame is what the
-//    layout is actually a function of, and the host is free to inset it again.
+//    That structure is now **drawn as the tree it is**: roots on top, what they spawned
+//    below them, an arrow from each owner down to each session it created. It is a real
+//    tree and not one indent's worth of nesting — a worker that creates a worker is
+//    a third row, and the picture says so.
+//
+//    It needs a layout engine, because ownership is data and no CSS box model lays out a
+//    tree of unequal subtrees. `layout()` is that engine: a tidy pass in the shape of
+//    Reingold–Tilford — bottom-up subtree widths, then a top-down placement that centres
+//    each owner over the span of its children — against measured card heights, one row per
+//    depth. It returns nothing but geometry, and everything on the canvas (card position,
+//    every arrow endpoint) is read off it, so a card and its arrow cannot disagree.
+//
+//    The cards are the width the engine gives them (`NODE_W`), the same for every session.
+//    A card gives each field its own line and lets the ones that are prose wrap; the old
+//    full-width row spent the frame on a mostly-empty line and then bought the title out
+//    of what was left, which is how a worker's task became four words and an ellipsis.
 //
 //    **And a card's title is one line, because what the server sends is now a headline.**
 //    A session used to be registered under the brief it was handed — for real work, a
@@ -33,22 +39,26 @@
 //    a watch that died thirty seconds ago looked identical to one that never existed. That is
 //    §2: the agent said "挂着呢,一直在盯" while the page showed nothing. Ended sessions are
 //    listed by recency, and one the process died underneath says so.
+//
+//    They sit in a band under the tree rather than in a column beside it, and the band is
+//    two cards deep and scrolls. A tree is as wide as the delegation happens to be; a column
+//    beside it would be squeezed by exactly the thing this page exists to show.
 // 3. **Doing, not just said.** `tail` is the session's own words, and a worker grinding
 //    through shell commands says nothing for minutes — so a blank row read as a dead one.
 //    `doing` is the other half, and the two never share a line.
-// 4. **A row has one state, and which fields are meaningful is a function of it.** The
+// 4. **A card has one state, and which fields are meaningful is a function of it.** The
 //    three above are each a field earning its place; this one is about what happens when
-//    several of them are drawn as though they were independent. They were, and the row
-//    contradicted itself three separate times — see `LiveRow`. The server now sends one
+//    several of them are drawn as though they were independent. They were, and the card
+//    contradicted itself three separate times — see `LiveCard`. The server now sends one
 //    `state` word and this file gates on it.
 // 5. **Quiet is two different endings, and the state word says neither.** `idle` is what a
 //    worker between instructions reports and what a worker whose turn died reports, because
 //    the word is folded from busy/queued and the ending was nowhere on the wire. On
 //    2026-08-18 three workers failed on a 429 inside two minutes, drew three `idle 3m` cards,
 //    and were sent "Continue now; do not leave this idle" — a recovery aimed at laziness.
-//    `last_turn` is the ending, drawn on quiet rows only, and only when it is bad news.
+//    `last_turn` is the ending, drawn on quiet cards only, and only when it is bad news.
 //
-// Clicking any row — live or ended — opens what that session did. Those frames have been
+// Clicking any card — live or ended — opens what that session did. Those frames have been
 // written for every session all along (`WireTap::with_durable_log`) and nothing could read
 // them back: the path is keyed by (run, session), ids restart at 1 each boot, and an ended
 // session was gone from the roster that knew its id. This is the reader.
@@ -62,9 +72,19 @@
 // so `curl` during a journey test sees exactly what the page sees. The verbatim log stays
 // one click away, because it is what the fold can be wrong about.
 //
+// **Nothing on the canvas is positioned by CSS, so nothing on it may be animated by CSS
+// either.** Cards are absolutely placed at the engine's coordinates and the arrows are one
+// SVG path per edge in the same coordinate space, which means a card that glides to a new
+// position while its arrow snaps is not a rough edge — it is the arrow detaching from the
+// card. So one animator (`useCanvas`) owns both: it eases every card's position and every
+// session's fade in one rAF pass and writes them straight to the DOM, recomputing each
+// arrow from the *current* card positions rather than the target ones. It runs only while
+// something is actually moving. A session appearing and a session ending are the two
+// moments this page is watched for, so they are the two it animates.
+//
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary). Polls, because
 // the whole value is that it is current.
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useReducer } from "react";
 
 const api = {
   list: () => fetch("/api/workers").then((r) => r.json()),
@@ -273,10 +293,16 @@ function words() {
 }
 const L = words();
 
-/** The ladder, top to bottom — the order `docs/arch/agents.md` gives: Reaction, the
- *  thinking behind it, the outward brain, the housekeeper. A role not named here sorts
- *  after these rather than being dropped, so a sixth rung appears instead of vanishing. */
-const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
+/** The ladder, top to bottom — the order `docs/arch/agents.md` gives: the mouth, the
+ *  outward brain, the housekeeper. A role not named here sorts after these rather than
+ *  being dropped, so a fourth rung appears instead of vanishing.
+ *
+ *  `deliberation` used to sit second and is gone from both tables. It names nothing:
+ *  `identity::Role` has no such variant, so `role` can never carry the word, and
+ *  `agents.md` records the rung as retired into Cognition. It survived here as a row in a
+ *  lookup table, which is the quiet form of the thing this repo keeps paying for — a name
+ *  for a mechanism that does not exist. */
+const LADDER = ["reaction", "cognition", "reflection"];
 
 /** What each rung and each kind of worker is **called** — `docs/arch/agents.md`, the same
  *  words as the `role` field this page reads and the `X-HI-Role` header the sessions
@@ -295,7 +321,6 @@ const LADDER = ["reaction", "deliberation", "cognition", "reflection"];
  *  object — so there is one table here rather than one per language. */
 const ROLE = {
   reaction: "Reaction",
-  deliberation: "Deliberation",
   cognition: "Cognition",
   reflection: "Reflection",
   worker: "Worker",
@@ -353,9 +378,9 @@ function taskLink(row) {
 export default function Workers() {
   const [live, setLive] = useState(null);
   const [ended, setEnded] = useState([]);
-  // The open row is held by its **address** — `{ id, run }` — not by the row object,
+  // The open card is held by its **address** — `{ id, run }` — not by the row object,
   // because the poll below replaces every row on each tick and a held object would freeze
-  // the panel on the version that was clicked. A live row passes no run; the endpoint
+  // the panel on the version that was clicked. A live card passes no run; the endpoint
   // defaults to the current one, which is the only run a live session can be in.
   const [open, setOpen] = useState(null);
 
@@ -385,7 +410,7 @@ export default function Workers() {
     };
   }, [reload]);
 
-  const groups = useMemo(() => tree(live || []), [live]);
+  const roots = useMemo(() => forest(live || []), [live]);
 
   if (live === null) {
     return (
@@ -399,7 +424,6 @@ export default function Workers() {
   }
 
   const running = live.length;
-  const [outward, inward] = split(groups);
 
   return (
     <div className="hi-workers">
@@ -415,43 +439,32 @@ export default function Workers() {
           </span>
         </header>
 
-        {/* Three columns, and a card's column is a function of what it is — see `split`.
-            Each column is its own stack, so a worker appearing under Cognition two
-            seconds from now lengthens one column instead of re-flowing the page. */}
-        <div className="hi-workers__cols">
-          <h2 className="hi-workers__section-head hi-workers__col-head--live">{L.live}</h2>
-          <h2 className="hi-workers__section-head hi-workers__col-head--ended">{L.endedHead}</h2>
-
-          {running === 0 ? (
-            <div className="hi-workers__empty">
-              <div className="hi-workers__empty-big">{L.emptyBig}</div>
-              <div className="hi-workers__empty-sub">{L.emptySub}</div>
-            </div>
-          ) : (
-            <>
-              <div className="hi-workers__col hi-workers__col--outward">
-                {outward.map((g) => (
-                  <Group key={g.key} group={g} open={open} setOpen={setOpen} />
-                ))}
-              </div>
-              <div className="hi-workers__col hi-workers__col--inward">
-                {inward.map((g) => (
-                  <Group key={g.key} group={g} open={open} setOpen={setOpen} />
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="hi-workers__col hi-workers__col--ended">
-            {ended.length === 0 ? (
-              <div className="hi-workers__none">{L.noEnded}</div>
-            ) : (
-              ended.map((e) => (
-                <EndedRow key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
-              ))
-            )}
+        <h2 className="hi-workers__section-head">{L.live}</h2>
+        {running === 0 ? (
+          <div className="hi-workers__empty">
+            <div className="hi-workers__empty-big">{L.emptyBig}</div>
+            <div className="hi-workers__empty-sub">{L.emptySub}</div>
           </div>
-        </div>
+        ) : (
+          <Canvas roots={roots} open={open} setOpen={setOpen} />
+        )}
+
+        {/* Under the tree, never beside it. A tree is as wide as the delegation happens to
+            be, and a column next to it would be squeezed by the one thing this page is for.
+            Full width, two cards deep, and it scrolls — the list is capped at 40 and every
+            one of them is the same size, so "two deep" is a height and not an estimate. */}
+        <h2 className="hi-workers__section-head hi-workers__section-head--ended">{L.endedHead}</h2>
+        {ended.length === 0 ? (
+          <div className="hi-workers__none">{L.noEnded}</div>
+        ) : (
+          <div className="hi-workers__band">
+            <div className="hi-workers__band-grid">
+              {ended.map((e) => (
+                <EndedCard key={`${e.run}:${e.session}`} row={e} open={open} setOpen={setOpen} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {open && <Session addr={open} onClose={() => setOpen(null)} />}
@@ -459,46 +472,12 @@ export default function Workers() {
   );
 }
 
-/** Which live column a group belongs in.
- *
- *  By what the rung is *for*, not by how many there are. The outward ladder — Reaction,
- *  the thinking behind it, the outward brain — is what someone opens this
- *  page to watch, so it takes the first column. Reflection is the housekeeping rung
- *  and takes the second, so its workers (an organizer, a view-builder) can never push the
- *  outward ladder down the page.
- *
- *  A rung this file has never heard of lands in the outward column rather than
- *  nowhere — the same rule `tree` follows for an unknown role, and for the same
- *  reason: a live session missing from this page is the one failure it cannot have.
- *  Orphans keep that placement too, since their warning belongs where the eye is.
- */
-const INWARD = new Set(["reflection"]);
+/* ── the tree ─────────────────────────────────────────────────────────────────
+   Three steps, kept apart on purpose: `forest` turns the flat roster into ownership,
+   `layout` turns ownership into geometry, and `Canvas` draws geometry. Only the middle
+   one knows what a pixel is, and only the last one knows what a DOM node is. */
 
-function split(groups) {
-  const outward = [];
-  const inward = [];
-  for (const g of groups) (g.owner && INWARD.has(g.owner.role) ? inward : outward).push(g);
-  return [outward, inward];
-}
-
-/** An owner and what it spawned — the unit that sits in a column. */
-function Group({ group, open, setOpen }) {
-  return (
-    <div className="hi-workers__group">
-      {group.orphaned && <div className="hi-workers__group-note">{L.orphans}</div>}
-      {group.owner && <LiveRow row={group.owner} open={open} setOpen={setOpen} />}
-      {group.children.length > 0 && (
-        <div className="hi-workers__kids" data-rooted={group.owner ? "true" : undefined}>
-          {group.children.map((c) => (
-            <LiveRow key={c.id} row={c} open={open} setOpen={setOpen} indent />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Group the live roster into owner-with-children, in ladder order.
+/** The ownership forest, from the flat roster and nothing else.
  *
  *  Keyed on the owner **id**, which is why the endpoint reports one. It used to report the
  *  owner's role *word* while the owner was live and its bare id only once the owner had
@@ -506,51 +485,530 @@ function Group({ group, open, setOpen }) {
  *  useless. That the word worked at all was a coincidence of one session per rung being
  *  live at a time; it is a label, not an address.
  *
- *  Three kinds of group come out, and the third is the one worth the code: a rung with its
- *  workers · a rung with none · workers whose owner is **not in the roster at all**, which
- *  means the owner shut down while they kept running. Those get their own labelled group,
- *  because an orphan silently reparented to the root is the dropped-report condition made
- *  invisible all over again.
+ *  Depth is whatever the data says, which today is two ranks and no more: `hi_create_worker`
+ *  is refused at dispatch to any role but `cognition` and `reflection` (`mcp::dispatch_tool`),
+ *  so a rung is the only thing that owns anything, and a worker's own fan-out is sub-agents
+ *  living inside its session that the switchboard never sees. The recursion is here anyway
+ *  because the shape belongs to `owner` and not to this file: the day a worker may dispatch,
+ *  the third rank draws itself rather than being flattened into the second — which is what
+ *  the old one-indent nesting would have done, silently, as a worker reading as a sibling of
+ *  its own owner.
+ *
+ *  Two shapes are not trees and both are drawn rather than dropped, because a live session
+ *  missing from this page is the one failure it cannot have:
+ *
+ *  - **An orphan** — a session naming an owner the roster does not have, i.e. the owner shut
+ *    down while it kept running. That is the dropped-report condition (`gaps.md` §3), so it
+ *    becomes a root that says so rather than a row silently reparented to the top.
+ *  - **A cycle** — impossible by construction and therefore worth surviving anyway. Members
+ *    of one are parented but reachable from no root, so a sweep promotes the first of them
+ *    to a root and cuts the edge that would otherwise draw it twice.
  */
-function tree(rows) {
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const kids = new Map();
+function forest(rows) {
+  const nodes = new Map(rows.map((r) => [r.id, { key: r.id, row: r, children: [], orphan: false }]));
+  const parent = new Map();
   const roots = [];
-  const orphans = [];
 
   for (const r of rows) {
-    if (!r.owner) {
-      roots.push(r);
-    } else if (byId.has(r.owner)) {
-      if (!kids.has(r.owner)) kids.set(r.owner, []);
-      kids.get(r.owner).push(r);
+    const n = nodes.get(r.id);
+    const owner = r.owner && r.owner !== r.id ? nodes.get(r.owner) : null;
+    if (owner) {
+      owner.children.push(n);
+      parent.set(n.key, owner);
     } else {
-      // Names an owner the roster does not have. Not a root — an orphan.
-      orphans.push(r);
+      n.orphan = !!r.owner;
+      roots.push(n);
     }
   }
 
-  const rank = (r) => {
-    const i = LADDER.indexOf(r.role);
+  const seen = new Set();
+  const mark = (n) => {
+    if (seen.has(n.key)) return;
+    seen.add(n.key);
+    n.children.forEach(mark);
+  };
+  roots.forEach(mark);
+  for (const n of nodes.values()) {
+    if (seen.has(n.key)) continue;
+    const p = parent.get(n.key);
+    if (p) p.children = p.children.filter((c) => c !== n);
+    n.orphan = true;
+    roots.push(n);
+    mark(n);
+  }
+
+  const rank = (n) => {
+    const i = LADDER.indexOf(n.row.role);
     return i === -1 ? LADDER.length : i;
   };
-  const byStart = (a, b) => String(a.started).localeCompare(String(b.started));
+  const byStart = (a, b) => String(a.row.started).localeCompare(String(b.row.started));
   // Ladder first, then oldest first inside a rank — a session's place must not jump around
   // between two-second polls.
   roots.sort((a, b) => rank(a) - rank(b) || byStart(a, b));
-  for (const list of kids.values()) list.sort(byStart);
+  const deep = (n) => { n.children.sort(byStart); n.children.forEach(deep); };
+  roots.forEach(deep);
+  return roots;
+}
 
-  const groups = roots.map((r) => ({ key: r.id, owner: r, children: kids.get(r.id) || [] }));
-  if (orphans.length) {
-    orphans.sort(byStart);
-    groups.push({ key: "__orphans__", owner: null, children: orphans, orphaned: true });
+/** Every card in one drawing is the same width — a tidy layout needs one number for a
+ *  node's width, and a session has no natural one. `NODE_W` is what a card wants: enough
+ *  for the field that needs the most room, a `doing` line of monospace. `MIN_NODE_W` is
+ *  the least it will take to keep the tree inside the frame, below which the canvas
+ *  scrolls instead. Narrowing is the better of the two, up to a point: a rank that runs
+ *  off the right edge hides sessions, and a card 50px narrower only wraps a line. */
+const NODE_W = 236;
+const MIN_NODE_W = 170;
+/** Between two sibling subtrees, between two whole trees, and between depth rows. The row
+ *  gap is the arrow's room: shorter and the arrowhead lands on the card above it. */
+const SIB_GAP = 16;
+const TREE_GAP = 44;
+const ROW_GAP = 46;
+/** What a card is assumed to be tall before it has been measured — see `useHeights`. Only
+ *  the first frame after a card appears uses it, and being wrong only means that card's
+ *  row settles into place instead of arriving there. */
+const EST_H = 124;
+/** The arrowhead's length, taken off the end of the curve so the two do not overlap. */
+const HEAD = 9;
+
+/** Ownership → geometry. The whole engine; it touches no DOM and returns only numbers.
+ *
+ *  A tidy tree in the shape of Reingold–Tilford, adapted the one way this data needs:
+ *  node heights are *measured*, not assumed, because a card carrying a wrapped `doing`
+ *  line is half again as tall as one carrying nothing.
+ *
+ *  - **Widths, bottom-up.** A subtree's band is the wider of one card and the row its
+ *    children need. That single rule is what stops two subtrees overlapping no matter how
+ *    lopsided the delegation gets.
+ *  - **Placement, top-down.** Children are laid across their parent's band, then the parent
+ *    is centred over the *centres of its first and last child* rather than over the band —
+ *    an outsized first child otherwise drags its owner off the children it owns. The result
+ *    is clamped back inside the band, since a parent leaning out of its own band is a
+ *    parent overlapping its sibling.
+ *  - **One row per depth**, at the tallest measured card in it, so the tree reads in ranks:
+ *    what the system started on top, what those spawned under them, leaves at the bottom.
+ */
+function layout(roots, heights, nodeW) {
+  const heightOf = (n) => heights[n.key] || EST_H;
+
+  const rowH = [];
+  const rank = (n, d) => {
+    n.depth = d;
+    rowH[d] = Math.max(rowH[d] || 0, heightOf(n));
+    for (const c of n.children) rank(c, d + 1);
+  };
+  for (const r of roots) rank(r, 0);
+
+  const rowY = [];
+  let y = 0;
+  for (let d = 0; d < rowH.length; d++) {
+    rowY[d] = y;
+    y += rowH[d] + ROW_GAP;
   }
-  return groups;
+  const height = Math.max(0, y - ROW_GAP);
+
+  const span = (n) =>
+    n.children.reduce((s, c) => s + c.band, 0) + SIB_GAP * Math.max(0, n.children.length - 1);
+  const band = (n) => {
+    for (const c of n.children) band(c);
+    n.band = Math.max(nodeW, span(n));
+  };
+  for (const r of roots) band(r);
+
+  const nodes = [];
+  const edges = [];
+  const place = (n, left) => {
+    let cx;
+    if (n.children.length) {
+      let x = left + (n.band - span(n)) / 2;
+      for (const c of n.children) {
+        place(c, x);
+        x += c.band + SIB_GAP;
+      }
+      const kids = n.children;
+      cx = (kids[0].cx + kids[kids.length - 1].cx) / 2;
+      const lo = left + nodeW / 2;
+      const hi = left + n.band - nodeW / 2;
+      cx = Math.min(Math.max(cx, lo), hi);
+    } else {
+      cx = left + n.band / 2;
+    }
+    n.cx = Math.round(cx);
+    n.x = Math.round(cx - nodeW / 2);
+    n.y = rowY[n.depth];
+    n.h = heightOf(n);
+    n.w = nodeW;
+    nodes.push(n);
+    for (const c of n.children) edges.push({ key: `${n.key}>${c.key}`, from: n.key, to: c.key });
+  };
+
+  let x = 0;
+  for (const r of roots) {
+    place(r, x);
+    x += r.band + TREE_GAP;
+  }
+
+  return { nodes, edges, nodeW, width: Math.max(0, x - TREE_GAP), height };
+}
+
+/** The engine, run at the widest card that keeps the drawing inside `avail`.
+ *
+ *  Total width is monotone in card width and very nearly proportional to it, so two or
+ *  three passes land on the answer; the loop is bounded rather than solved because the
+ *  relation is only *nearly* proportional — a subtree whose band is set by its own card
+ *  rather than by its children does not shrink with the rest.
+ *
+ *  It depends on the frame's width and not at all on the measured heights, so it cannot
+ *  oscillate with them: narrowing the cards makes them taller, and taller changes only how
+ *  far apart the ranks sit. */
+function fitted(roots, heights, avail) {
+  let w = NODE_W;
+  let plan = layout(roots, heights, w);
+  for (let i = 0; i < 5 && avail > 0 && plan.width > avail && w > MIN_NODE_W; i++) {
+    w = Math.max(MIN_NODE_W, Math.floor(w * (avail / plan.width)));
+    plan = layout(roots, heights, w);
+  }
+  return plan;
+}
+
+/** The arrow from an owner down to one session it created — drawn from where the two cards
+ *  *are*, which during a move is not where the engine put them. Leaves and re-enters
+ *  vertically, so the head always points straight down and needs no rotation. */
+function wireOf(from, to) {
+  const x1 = from.x + from.w / 2;
+  const y1 = from.y + from.h;
+  const x2 = to.x + to.w / 2;
+  const y2 = to.y - HEAD;
+  const d = Math.max(14, (y2 - y1) * 0.5);
+  return `M ${x1} ${y1} C ${x1} ${y1 + d}, ${x2} ${y2 - d}, ${x2} ${y2}`;
+}
+
+function headOf(to) {
+  const x = to.x + to.w / 2;
+  const y = to.y;
+  return `M ${x - 5} ${y - HEAD} L ${x + 5} ${y - HEAD} L ${x} ${y} Z`;
+}
+
+/** Measure every card, because the engine lays rows out at the tallest one in them and a
+ *  card's height is its content's. A `ResizeObserver` rather than a pass after each render:
+ *  a card also changes height without any data changing — a web font arriving, the frame
+ *  narrowing under a `doing` line that then wraps — and a layout that only re-measured on
+ *  poll would hold the stale row height until the next tick.
+ *
+ *  Border-box, so the transform the animator is writing onto the same element (a scale, on
+ *  the way in) cannot be read back as a height and fed to the engine. */
+function useHeights() {
+  const [heights, setHeights] = useState({});
+  const seen = useRef({});
+  const refs = useRef(new Map());
+  const ro = useRef(null);
+
+  if (ro.current === null && typeof ResizeObserver !== "undefined") {
+    ro.current = new ResizeObserver((entries) => {
+      let dirty = false;
+      for (const e of entries) {
+        const key = e.target.getAttribute("data-key");
+        if (!key) continue;
+        const h = Math.round(e.target.offsetHeight);
+        if (h > 0 && seen.current[key] !== h) {
+          seen.current[key] = h;
+          dirty = true;
+        }
+      }
+      if (dirty) setHeights({ ...seen.current });
+    });
+  }
+
+  useEffect(() => () => ro.current && ro.current.disconnect(), []);
+
+  /** One stable callback per key, cached — a fresh function each render would have React
+   *  detach and re-attach every card's ref on every poll. */
+  const measure = useCallback((key) => {
+    let fn = refs.current.get(key);
+    if (!fn) {
+      fn = (el) => {
+        if (fn.el && fn.el !== el && ro.current) ro.current.unobserve(fn.el);
+        fn.el = el || null;
+        if (el) {
+          if (ro.current) ro.current.observe(el);
+        } else {
+          refs.current.delete(key);
+          delete seen.current[key];
+        }
+      };
+      refs.current.set(key, fn);
+    }
+    return fn;
+  }, []);
+
+  return [heights, measure];
+}
+
+/** How much room the drawing has, which is the frame's width and not the window's. The two
+ *  are different by whatever the host has inset this view to, and by a scrollbar; measuring
+ *  the element is the only reading that is true of both. Zero until the first measurement,
+ *  which `fitted` reads as "no constraint yet" and draws at the width a card wants.
+ *
+ *  Hands back the element too, because the other question about this box — which way it has
+ *  tree behind it — can only be answered by reading its live scroll position. */
+function useFrame() {
+  const [avail, setAvail] = useState(0);
+  const ro = useRef(null);
+  const el = useRef(null);
+
+  const frame = useCallback((node) => {
+    if (ro.current) { ro.current.disconnect(); ro.current = null; }
+    el.current = node || null;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    setAvail(Math.round(node.clientWidth));
+    ro.current = new ResizeObserver(() => {
+      if (el.current) setAvail(Math.round(el.current.clientWidth));
+    });
+    ro.current.observe(node);
+  }, []);
+
+  useEffect(() => () => ro.current && ro.current.disconnect(), []);
+  return [avail, frame, el];
+}
+
+/** How fast a card slides to a new place, and how fast one fades in or out, as the
+ *  time constant of an exponential ease. Position is slower than opacity on purpose: a
+ *  session appearing should be *seen* appearing, and the tree it displaces should have
+ *  finished moving by the time the eye gets there. */
+const EASE_MOVE = 110;
+const EASE_FADE = 70;
+
+/** Whether the person has asked for less of this. Read once per frame rather than once per
+ *  mount, because the setting can change under a page that is already open — and the
+ *  animator is the only thing on this canvas that moves a card, so honouring it anywhere
+ *  else would honour it nowhere. */
+function stillness() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** The one animator, owning card positions and arrow geometry together.
+ *
+ *  It exists because they cannot be owned separately. A card is placed at the engine's
+ *  coordinates and an arrow is a path between two of them; hand the card's motion to CSS
+ *  and the arrow either snaps to the target while the card is still travelling — visibly
+ *  detached from the thing it points at — or has to be re-rendered every frame by React to
+ *  keep up. So one rAF pass eases both and writes both straight to the DOM: `transform` and
+ *  `opacity` on each card, `d` on each arrow, recomputed from where the cards *currently
+ *  are*. React is not re-rendered by any of it.
+ *
+ *  It also owns the leaving. A session that ends is gone from the next poll's roster, and
+ *  unmounting it there would make the one moment worth watching the one moment with no
+ *  animation at all. So the scene outlives the roster: a card whose session is gone keeps
+ *  its place and fades, and only when it is invisible does the scene drop it and ask React
+ *  for the one re-render that unmounts it.
+ *
+ *  The loop stops when nothing is moving — which is nearly always, since the roster only
+ *  changes when a session starts or ends. */
+function useCanvas(plan) {
+  const scene = useRef({ nodes: new Map(), edges: new Map(), synced: null });
+  const els = useRef({ nodes: new Map(), wires: new Map(), heads: new Map() });
+  const binders = useRef({ nodes: new Map(), wires: new Map(), heads: new Map() });
+  const raf = useRef(0);
+  const [, bump] = useReducer((n) => n + 1, 0);
+
+  // Fold the new geometry into the living scene. Done during render rather than in an
+  // effect so a session that has just appeared is drawn on this frame and not the next;
+  // idempotent per plan, so a double render costs nothing.
+  const s = scene.current;
+  if (s.synced !== plan) {
+    s.synced = plan;
+    const live = new Set();
+    for (const n of plan.nodes) {
+      live.add(n.key);
+      const cur = s.nodes.get(n.key);
+      if (cur) {
+        cur.row = n.row;
+        cur.tx = n.x;
+        cur.ty = n.y;
+        cur.h = n.h;
+        cur.w = n.w;
+        cur.gone = false;
+      } else {
+        // A new card starts *at* its place and fades up. Sliding it in from somewhere
+        // would be a claim about where it came from, and nothing here knows that.
+        s.nodes.set(n.key, { key: n.key, row: n.row, x: n.x, y: n.y, tx: n.x, ty: n.y, h: n.h, w: n.w, a: 0, gone: false });
+      }
+    }
+    for (const n of s.nodes.values()) if (!live.has(n.key)) n.gone = true;
+
+    const liveEdges = new Set();
+    for (const e of plan.edges) {
+      liveEdges.add(e.key);
+      const cur = s.edges.get(e.key);
+      if (cur) cur.gone = false;
+      else s.edges.set(e.key, { ...e, a: 0, gone: false });
+    }
+    for (const e of s.edges.values()) if (!liveEdges.has(e.key)) e.gone = true;
+  }
+
+  // Restart the loop after every render: a render is the only thing that can have given
+  // the scene something new to settle.
+  useEffect(() => {
+    if (raf.current) return undefined;
+    let last = 0;
+    const step = (t) => {
+      raf.current = 0;
+      const dt = last ? Math.min(64, t - last) : 16;
+      last = t;
+      const calm = stillness();
+      const km = calm ? 1 : 1 - Math.exp(-dt / EASE_MOVE);
+      const kf = calm ? 1 : 1 - Math.exp(-dt / EASE_FADE);
+      const sc = scene.current;
+      const dead = [];
+      let busy = false;
+      let membership = false;
+
+      for (const n of sc.nodes.values()) {
+        const ta = n.gone ? 0 : 1;
+        n.x += (n.tx - n.x) * km;
+        n.y += (n.ty - n.y) * km;
+        n.a += (ta - n.a) * kf;
+        if (Math.abs(n.tx - n.x) < 0.4) n.x = n.tx; else busy = true;
+        if (Math.abs(n.ty - n.y) < 0.4) n.y = n.ty; else busy = true;
+        if (Math.abs(ta - n.a) < 0.01) n.a = ta; else busy = true;
+        const el = els.current.nodes.get(n.key);
+        if (el) {
+          el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0) scale(${(0.94 + 0.06 * n.a).toFixed(3)})`;
+          el.style.opacity = n.a;
+        }
+        if (n.gone && n.a === 0) dead.push(n.key);
+      }
+
+      for (const e of sc.edges.values()) {
+        const from = sc.nodes.get(e.from);
+        const to = sc.nodes.get(e.to);
+        // An arrow is never more present than the fainter of the two cards it joins, so
+        // it cannot outlive either of them or arrive before both.
+        const ceiling = from && to ? Math.min(from.a, to.a) : 0;
+        const ta = Math.min(e.gone ? 0 : 1, ceiling);
+        e.a += (ta - e.a) * kf;
+        if (Math.abs(ta - e.a) < 0.01) e.a = ta; else busy = true;
+        const wire = els.current.wires.get(e.key);
+        const head = els.current.heads.get(e.key);
+        if (from && to && wire) wire.setAttribute("d", wireOf(from, to));
+        if (from && to && head) head.setAttribute("d", headOf(to));
+        if (wire) wire.style.opacity = e.a;
+        if (head) head.style.opacity = e.a;
+        if ((e.gone || !from || !to) && e.a === 0) {
+          sc.edges.delete(e.key);
+          membership = true;
+        }
+      }
+
+      // After the arrows, never before: an arrow is drawn from the two cards it joins, so
+      // a card cannot leave the scene in the frame its own arrow is still being placed.
+      for (const key of dead) {
+        sc.nodes.delete(key);
+        membership = true;
+      }
+
+      if (busy) raf.current = requestAnimationFrame(step);
+      if (membership) bump();
+    };
+    raf.current = requestAnimationFrame(step);
+    return undefined;
+  });
+
+  useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+
+  /** One stable ref callback per key per layer, for the same reason `useHeights` caches
+   *  its own: a fresh function each render detaches and re-attaches every element. */
+  const bind = useCallback((layer, key) => {
+    const store = els.current[layer];
+    const cache = binders.current[layer];
+    let fn = cache.get(key);
+    if (!fn) {
+      fn = (el) => {
+        if (el) store.set(key, el);
+        else { store.delete(key); cache.delete(key); }
+      };
+      cache.set(key, fn);
+    }
+    return fn;
+  }, []);
+
+  return [scene.current, bind];
+}
+
+/** The tree on screen: arrows underneath, cards on top, both in the engine's coordinates.
+ *
+ *  It scrolls sideways rather than folding, and that is the honest failure mode: a tree
+ *  that wrapped would be a different tree. When it fits, it centres. */
+function Canvas({ roots, open, setOpen }) {
+  const [heights, measure] = useHeights();
+  const [avail, frame, box] = useFrame();
+  const plan = useMemo(() => fitted(roots, heights, avail), [roots, heights, avail]);
+  const [scene, bind] = useCanvas(plan);
+
+  // Which way there is more tree than frame. A scroller that has run out of narrowing is
+  // hiding sessions, and on this page a session you cannot see is the failure the whole
+  // surface exists to prevent — so the edge it is hiding them past says so. macOS overlay
+  // scrollbars are invisible until you are already scrolling, which is too late to be the
+  // thing that tells you there is more.
+  //
+  // Read off the element both times, never inferred from the plan. The roster is replaced
+  // every poll, so a fade derived from "is the plan wider than the frame" would be
+  // recomputed twice a minute with no idea where the reader had scrolled to — and would put
+  // the right-hand fade back over a tree that is already scrolled to its end.
+  const [more, setMore] = useState("");
+  const sense = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setMore(left && right ? "both" : left ? "left" : right ? "right" : "");
+  }, [box]);
+  // And again whenever the drawing changes shape under it: a session ending can make a tree
+  // that overflowed fit, and nothing scrolled.
+  useEffect(sense, [sense, plan, avail]);
+
+  const nodes = [...scene.nodes.values()];
+  const edges = [...scene.edges.values()];
+  const lit = (key) => !!open && !open.run && open.id === key;
+
+  return (
+    <div className="hi-workers__reel" data-more={more || undefined}>
+      <div className="hi-workers__canvas" ref={frame} onScroll={sense}>
+        <div className="hi-workers__plot" style={{ width: plan.width, height: plan.height }}>
+          <svg
+            className="hi-workers__wires"
+            width={plan.width}
+            height={plan.height}
+            viewBox={`0 0 ${plan.width} ${plan.height}`}
+            aria-hidden="true"
+          >
+            {edges.map((e) => (
+              <g key={e.key} data-lit={lit(e.from) || lit(e.to) ? "true" : undefined}>
+                <path className="hi-workers__wire" ref={bind("wires", e.key)} d="" />
+                <path className="hi-workers__tip" ref={bind("heads", e.key)} d="" />
+              </g>
+            ))}
+          </svg>
+
+          {nodes.map((n) => (
+            <div
+              key={n.key}
+              ref={bind("nodes", n.key)}
+              className="hi-workers__node"
+              style={{ transform: `translate3d(${n.x}px, ${n.y}px, 0)`, opacity: n.a, width: n.w }}
+              data-gone={n.gone ? "true" : undefined}
+            >
+              <LiveCard nodeKey={n.key} row={n.row} measure={measure} open={open} setOpen={setOpen} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** One live session.
  *
- *  **A row has one state, and which fields are meaningful is a function of it.** That rule
+ *  **A card has one state, and which fields are meaningful is a function of it.** That rule
  *  is the whole of this component, and it is here because the page has now produced the
  *  same contradiction three times: the role pills once said `speaking`/`thinking` beside a
  *  status of `idle` (fixed by renaming them to the rung); `doing` said `thinking` beside
@@ -568,37 +1026,44 @@ function tree(rows) {
  *  turn — there is no "what it is doing" — and what a reader wants from it is `tail`, what
  *  it *said*, which is on the line below and was always there.
  */
-function LiveRow({ row, open, setOpen, indent }) {
-  // A live row is addressed by id with no run, so it cannot collide with an ended row that
+function LiveCard({ nodeKey, row, measure, open, setOpen }) {
+  // A live card is addressed by id with no run, so it cannot collide with an ended one that
   // happens to share the number — which, across runs, they routinely do.
   const isOpen = !!open && open.id === row.id && !open.run;
-  // An unknown state word from a newer server reads as idle rather than blanking the row:
+  // An unknown state word from a newer server reads as idle rather than blanking the card:
   // the roster showing a session at all is the load-bearing part.
   const state = L.state[row.state] ? row.state : "idle";
   const running = state === "running";
   // **The card's one blind spot until now: `idle` was the word for both endings.** A
-  // worker that answered its brief and one whose turn died on a 429 drew the same row with
+  // worker that answered its brief and one whose turn died on a 429 drew the same card with
   // the same clock, and the only surface that knew the difference was the message fold
   // inside the panel — which you have to open a session to reach. On 2026-08-18 that cost
   // three workers a recovery: they read as idle, and were told to stop idling.
   //
-  // Drawn on a quiet row only, for the same reason `doing` is drawn on a busy one — it is
+  // Drawn on a quiet card only, for the same reason `doing` is drawn on a busy one — it is
   // about a turn that is over, and beside `running` it describes the turn before the one in
   // flight. A clean `completed` draws nothing: the field is here for bad news.
   const ended =
     !running && row.last_turn && row.last_turn.outcome !== "completed" ? row.last_turn : null;
+  // Named rather than shown as a card hanging off nothing — an orphan silently reparented
+  // to the top of the tree is the dropped-report condition made invisible all over again.
+  const orphan = !!row.owner && !row.owner_role;
   return (
     <button
       type="button"
-      className="hi-workers__row"
-      data-indent={indent ? "true" : undefined}
+      data-key={nodeKey}
+      ref={measure(nodeKey)}
+      className="hi-workers__card"
       data-open={isOpen ? "true" : undefined}
       data-state={state}
+      data-orphan={orphan ? "true" : undefined}
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: row.id, run: null })}
     >
+      {orphan && <span className="hi-workers__orphan">{L.orphans}</span>}
+
       {/* The card's top strip: what this is, and how it is. The two facts that are true
-          of the session as a whole, in a fixed place on every card, so a column of them
+          of the session as a whole, in a fixed place on every card, so a row of them
           is scannable without reading any of the prose below. */}
       <span className="hi-workers__top">
         <span className={`hi-workers__dot${running ? " is-busy" : ""}`} aria-hidden />
@@ -615,9 +1080,9 @@ function LiveRow({ row, open, setOpen, indent }) {
 
       {/* Its own line, and exactly one. The server sends a headline now rather than the
           brief a worker was sent (`Status::title`), so there is no paragraph left to fit and
-          nothing gained by giving it two lines — a column of cards whose titles are all one
-          line is the thing that actually scans. Anything over the cap arrives already cut
-          with an ellipsis; the CSS clamp is the backstop for a wide character set. */}
+          nothing gained by giving it two lines — a tree whose titles are all one line is the
+          thing that actually scans. Anything over the cap arrives already cut with an
+          ellipsis; the CSS clamp is the backstop for a wide character set. */}
       <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
       {/* The durable facts, and nothing that could contradict the line above. */}
@@ -630,14 +1095,12 @@ function LiveRow({ row, open, setOpen, indent }) {
             <span className={link.warn ? "is-warn" : undefined}>{link.text}</span>
           ) : null;
         })()}
-        {/* Only once the owner has gone. While it is live the indent already shows who it
+        {/* Only once the owner has gone. While it is live the arrow already shows who it
             is, and repeating it on every child is noise. */}
-        {row.owner && !row.owner_role && (
-          <span className="is-warn">{L.orphanNote(row.owner)}</span>
-        )}
+        {orphan && <span className="is-warn">{L.orphanNote(row.owner)}</span>}
       </span>
 
-      {/* Doing and said are different questions and never share a line. A row with a
+      {/* Doing and said are different questions and never share a line. A card with a
           `doing` and no `tail` is a session working in silence — which is exactly what used
           to be indistinguishable from a dead one.
 
@@ -653,12 +1116,12 @@ function LiveRow({ row, open, setOpen, indent }) {
         </span>
       )}
 
-      {/* The quiet row's half of that same slot: what a session is doing answers "is it
+      {/* The quiet card's half of that same slot: what a session is doing answers "is it
           alive", and how its last turn ended answers "did it get anywhere" — one of the two
           questions is live at a time, so they share the position and never the line.
 
           The reason is carried whole rather than summarised: `429 Too Many Requests` and a
-          crashed subprocess call for different moves, and a row that said only "failed"
+          crashed subprocess call for different moves, and a card that said only "failed"
           would send the reader into the panel every time. An unknown word from a newer
           server prints itself rather than blanking the line. */}
       {ended && (
@@ -673,15 +1136,19 @@ function LiveRow({ row, open, setOpen, indent }) {
   );
 }
 
-function EndedRow({ row, open, setOpen }) {
+/** One session in the band under the tree. Every card in there is the same height, which is
+ *  what lets the band be exactly two of them deep — so this one is built to a budget rather
+ *  than to its content: a strip, a title, and one line of the facts that fit. Whatever does
+ *  not fit is a click away, same as everywhere else on this page. */
+function EndedCard({ row, open, setOpen }) {
   const lost = row.how === "restart";
   const isOpen = !!open && open.id === String(row.session) && open.run === row.run;
-  // A restart row has no end — nothing recorded one — so it is dated by its start.
+  // A restart card has no end — nothing recorded one — so it is dated by its start.
   const when = row.ended || row.started;
   return (
     <button
       type="button"
-      className="hi-workers__row is-ended"
+      className="hi-workers__card is-ended"
       data-open={isOpen ? "true" : undefined}
       aria-expanded={isOpen}
       onClick={() => setOpen(isOpen ? null : { id: String(row.session), run: row.run })}
@@ -689,18 +1156,29 @@ function EndedRow({ row, open, setOpen }) {
       <span className="hi-workers__top">
         <span className="hi-workers__dot" aria-hidden />
         <span className="hi-workers__pill">{label(row)}</span>
-        <span className="hi-workers__elapsed">
+        <span className="hi-workers__state">
           {when ? (lost ? L.cutOffAgo(elapsed(when)) : L.endedAgo(elapsed(when))) : ""}
         </span>
       </span>
 
       <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
-      <span className="hi-workers__meta">
-        {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
-        {row.started && row.ended && <span>{L.ranFor(between(row.started, row.ended))}</span>}
-        {row.subject && <span>{L.onTask(row.subject)}</span>}
-        {row.owner && <span>{L.ownedBy(row.owner)}</span>}
+      {/* One clamped run of text rather than the live card's wrapping row of chips. A
+          wrapping row is however many lines its longest item makes it — a card whose
+          subject is `kt8-067-parallel-slice-reassembly-20260820` took three where its
+          neighbour took one — and this card's height is fixed, so the difference came out
+          as lettering sliced in half along the bottom edge. Joined and clamped, what does
+          not fit ends in an ellipsis instead, which is the ordinary way to say there is
+          more and is already how the title behaves one line up. */}
+      <span className="hi-workers__meta is-run-on">
+        {[
+          typeof row.turns === "number" ? L.turns(row.turns) : null,
+          row.started && row.ended ? L.ranFor(between(row.started, row.ended)) : null,
+          row.subject ? L.onTask(row.subject) : null,
+          row.owner ? L.ownedBy(row.owner) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </span>
     </button>
   );
@@ -1096,13 +1574,11 @@ const CSS = `
     font-family: var(--font-display);
     --w-shadow: 0 1px 2px var(--shadow), 0 8px 22px var(--shadow);
     --w-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-    /* The columns below fold on the width of *this frame*, not the window's. The two
-       are different by a rail: the same 1200px window is a 1200px frame with the
-       conversation collapsed and an ~800px one with it open, and a media query cannot
-       tell those apart. It is already the containing block (position: relative), so
-       inline-size containment adds no layout the panel depends on. */
-    container-type: inline-size;
-    container-name: workers;
+    /* One ended card, and therefore the band: it is exactly two of these plus the gap
+       between them, which is only a height anyone can trust because every card in there is
+       built to this number rather than to its own content. */
+    --w-ended-h: 112px;
+    --w-gap: 10px;
   }
 
   /* The scroller is a child, not the root: the root stays the positioning context for the
@@ -1120,7 +1596,7 @@ const CSS = `
   /* Wrapped in :where() so the reset carries **zero** specificity. Written bare, this
      selector is (0,1,1) — one class plus a type — which outranks every single-class rule
      that styles a button here, and a reset that beats the components it exists to prepare
-     is not a reset. It silently ate the row's padding and surface (rows rendered as bare
+     is not a reset. It silently ate the card's padding and surface (cards rendered as bare
      text under a floating shadow, since box-shadow is the one thing it doesn't set), the
      close button's centring, and the frame head's monospace, via its font shorthand. It still
      beats the UA sheet, which loses to any author rule regardless of specificity. */
@@ -1161,27 +1637,8 @@ const CSS = `
     text-align: right;
   }
 
-  /* ── the three columns ────────────────────────────────────────────────────
-     4 · 4 · 2. The outward ladder and the housekeeping one get equal width because
-     both hold cards with a task paragraph on them; the ended column holds a title and
-     two chips, so it takes half of one of those and gives the width back.
-
-     Every item is placed explicitly — row and column — rather than flowed. With
-     auto-placement the "Just ended" heading lands wherever the item before it left
-     off, which is beside the live cards at one width and above them at another; the
-     heading of a column must sit on the column.
-
-     A short column simply ends: align-items:start so a stack of two does not
-     stretch to the height of a stack of six, and nothing re-orders when it grows. */
-  .hi-workers__cols {
-    display: grid;
-    grid-template-columns: 4fr 4fr 2fr;
-    align-items: start;
-    gap: 10px 18px;
-  }
-
   .hi-workers__section-head {
-    margin: 0 0 4px;
+    margin: 0 0 10px;
     font-size: 11.5px;
     font-weight: 700;
     letter-spacing: .08em;
@@ -1189,125 +1646,191 @@ const CSS = `
     color: var(--fg-mute);
   }
 
-  .hi-workers__col-head--live { grid-row: 1; grid-column: 1 / 3; }
-  .hi-workers__col-head--ended { grid-row: 1; grid-column: 3; }
-
-  .hi-workers__col {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-    grid-row: 2;
+  .hi-workers__section-head--ended {
+    margin-top: 26px;
   }
 
-  .hi-workers__col--outward { grid-column: 1; }
-  .hi-workers__col--inward { grid-column: 2; }
-  .hi-workers__col--ended { grid-column: 3; }
+  /* ── the tree ─────────────────────────────────────────────────────────────
+     Sideways, not folded. A tree is as wide as the delegation is, and there is no
+     honest narrower arrangement of one — wrapping a rank would draw a different tree.
+     The plot centres inside this when it fits and scrolls when it doesn't.
 
-  /* Nothing live: the answer takes both live columns rather than sitting in the
-     first one with an empty column beside it. */
-  .hi-workers__empty {
-    grid-row: 2;
-    grid-column: 1 / 3;
+     The reel around it carries the only mark of that scrolling anyone sees before they
+     scroll: a fade on whichever edge has tree behind it. */
+  .hi-workers__reel {
+    position: relative;
+    width: 100%;
   }
 
-  /* One column is not enough for three of them side by side — a card whose title is a
-     paragraph needs roughly 280px before it reads as a card at all. The ended column
-     goes under the two live ones first, since it is the one nobody opened this page
-     for; below that, everything stacks. */
-  @container workers (max-width: 900px) {
-    .hi-workers__cols { grid-template-columns: 1fr 1fr; }
-    .hi-workers__col-head--live { grid-row: 1; grid-column: 1 / 3; }
-    .hi-workers__col--outward { grid-row: 2; grid-column: 1; }
-    .hi-workers__col--inward { grid-row: 2; grid-column: 2; }
-    .hi-workers__empty { grid-row: 2; grid-column: 1 / 3; }
-    .hi-workers__col-head--ended { grid-row: 3; grid-column: 1 / 3; margin-top: 12px; }
-    .hi-workers__col--ended { grid-row: 4; grid-column: 1 / 3; }
+  .hi-workers__reel::before,
+  .hi-workers__reel::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 6px;
+    width: 44px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 160ms var(--ease, ease);
   }
 
-  @container workers (max-width: 560px) {
-    .hi-workers__cols { grid-template-columns: 1fr; }
-    .hi-workers__col-head--live,
-    .hi-workers__col--outward,
-    .hi-workers__col--inward,
-    .hi-workers__empty,
-    .hi-workers__col-head--ended,
-    .hi-workers__col--ended { grid-column: 1; }
-    .hi-workers__col-head--live { grid-row: 1; }
-    .hi-workers__col--outward { grid-row: 2; }
-    .hi-workers__empty { grid-row: 2; }
-    .hi-workers__col--inward { grid-row: 3; }
-    .hi-workers__col-head--ended { grid-row: 4; margin-top: 12px; }
-    .hi-workers__col--ended { grid-row: 5; }
+  .hi-workers__reel::before {
+    left: 0;
+    background: linear-gradient(to right, var(--paper), transparent);
   }
 
-  .hi-workers__group-note {
-    padding: 0 2px 6px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--danger);
+  .hi-workers__reel::after {
+    right: 0;
+    background: linear-gradient(to left, var(--paper), transparent);
   }
 
-  /* One indent, and a rule to carry the eye from an owner down to what it spawned. A
-     column is a third of the frame, so the inset is smaller than it would be across the
-     page and the nesting stays one level only — depth would cost width the task needs. */
-  .hi-workers__kids {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 8px;
+  .hi-workers__reel[data-more="left"]::before,
+  .hi-workers__reel[data-more="both"]::before,
+  .hi-workers__reel[data-more="right"]::after,
+  .hi-workers__reel[data-more="both"]::after {
+    opacity: 1;
   }
 
-  .hi-workers__kids[data-rooted="true"] {
-    margin-left: 10px;
-    padding-left: 10px;
-    border-left: 2px solid var(--line);
+  .hi-workers__canvas {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
   }
 
-  /* A card, not a row. The difference is not the corner radius: a row puts every field
+  /* The engine's coordinate space, and the only place on the page positioned in pixels.
+     Cards are absolute inside it and the arrows are one SVG over the same box, so the two
+     cannot drift apart. */
+  .hi-workers__plot {
+    position: relative;
+    margin: 0 auto;
+  }
+
+  .hi-workers__wires {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .hi-workers__wire {
+    fill: none;
+    stroke: var(--line-strong);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
+  /* Named tip, not head: hi-workers__head is the page's own header, and an SVG path that
+     inherited its flexbox is a shape that never draws. */
+  .hi-workers__tip {
+    fill: var(--line-strong);
+    stroke: none;
+  }
+
+  /* The open session's own arrows, so opening a card says where it sits without having to
+     re-find it in the tree. */
+  .hi-workers__wires g[data-lit="true"] .hi-workers__wire {
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+
+  .hi-workers__wires g[data-lit="true"] .hi-workers__tip {
+    fill: var(--accent);
+  }
+
+  /* Positioned by the animator, in transform — never by CSS, and never with a CSS
+     transition on top. The arrows are recomputed from these positions every frame, so a
+     transition here that the animator did not run would slide the card out from under its
+     own arrow. */
+  .hi-workers__node {
+    position: absolute;
+    top: 0;
+    left: 0;
+    will-change: transform, opacity;
+  }
+
+  /* A card on its way out is still on screen and no longer a thing to click: its session
+     is gone, and its address would read some other session under the same number. */
+  .hi-workers__node[data-gone="true"] {
+    pointer-events: none;
+  }
+
+  /* ── a card ───────────────────────────────────────────────────────────────
+     A card, not a row. The difference is not the corner radius: a row puts every field
      on one line and buys the last one out of the first one's width, which is how a
      worker's task became four words and an ellipsis. A card gives each field its own
      line and lets the ones that are prose wrap. */
-  .hi-workers__row {
+  .hi-workers__card {
     display: block;
     width: 100%;
     padding: 13px 15px 14px;
     background: var(--surface-strong);
     border-radius: 16px;
     box-shadow: var(--w-shadow);
-    transition: background 120ms var(--ease, ease);
+    transition: background 120ms var(--ease, ease), box-shadow 120ms var(--ease, ease);
   }
 
-  .hi-workers__row:hover {
+  .hi-workers__card:hover {
     background: var(--surface);
   }
 
-  .hi-workers__row[data-open="true"] {
+  .hi-workers__card[data-open="true"] {
     box-shadow: 0 0 0 2px var(--accent-line), var(--w-shadow);
   }
 
-  .hi-workers__row[data-indent="true"] {
-    border-radius: 12px;
-  }
-
-  /* An ended row is quieter than a live one by construction — flat, outlined, no lift. The
+  /* An ended card is quieter than a live one by construction — flat, outlined, no lift. The
      page should read live-first without needing a legend to say so. */
-  .hi-workers__row.is-ended {
+  .hi-workers__card.is-ended {
+    display: flex;
+    flex-direction: column;
+    height: var(--w-ended-h);
+    padding: 10px 13px 11px;
+    overflow: hidden;
     background: var(--surface);
     border: 1px solid var(--line);
+    border-radius: 13px;
     box-shadow: none;
+    animation: hi-workers-in 220ms var(--ease, ease);
   }
 
-  /* The card's top strip. Two short things at opposite ends, and it still wraps: the
-     ended column is a fifth of the frame, narrow enough that "Reflection" and
-     "ended 16h ago" do not always share a line, and wrapping is the right answer there
-     rather than shrinking either. */
+  /* Still running, owner gone — the dropped-report condition, named on the card rather
+     than left as a tree that quietly grew a second root. */
+  .hi-workers__orphan {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--danger);
+  }
+
+  /* The card's top strip. Two short things at opposite ends, and it still wraps: a card is
+     narrow enough that "Reflection" and "ended 16h ago" do not always share a line, and
+     wrapping is the right answer there rather than shrinking either. */
   .hi-workers__top {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 4px 9px;
     min-width: 0;
+  }
+
+  /* And on an ended card it may not wrap, because that card's height is fixed: a strip
+     that took a second line would push the title into the clip and leave a row of cards
+     showing the top half of their own lettering. The elapsed figure gives way instead —
+     it is the one thing on the card that is also in the tense of the heading above it. */
+  .is-ended .hi-workers__top {
+    flex-wrap: nowrap;
+  }
+
+  /* It may shrink, where the pill beside it may not: on a card whose strip cannot wrap,
+     something has to give when the two do not fit, and a role read as "Task man…" is worse
+     than a clock read as "cut off 1h a…". */
+  .is-ended .hi-workers__state {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .hi-workers__dot {
@@ -1338,16 +1861,21 @@ const CSS = `
     border: 1px solid var(--line);
   }
 
-  /* The card's title, on its own line and held to one. It used to wrap to two, because
-     what the server sent was the paragraph of instruction the worker was briefed with and
-     two lines was the least-bad amount of it to show. The server sends a written headline
-     now, so one line is the whole thing rather than a fragment of it, and a column of
-     one-line titles is what makes a stack of cards scannable. The brief still exists — it
-     is the session's first prompt, whole, one click away under "What happened". */
+  /* The card's title. Two lines here and one on an ended card, and the difference is the
+     width each has to work in: a card in the tree is as narrow as fitting the tree made it,
+     which is narrow enough that one line of a written headline — "what reaches the person",
+     "implement corrected KT8-059 padding" — stops in the middle of the subject. Two lines
+     holds the whole of nearly every title the server sends. An ended card is wider (the
+     band is full-frame and its cards are a grid) and is spending its height on being
+     exactly two rows deep, so there one line is both enough and all there is.
+
+     The clamp is a backstop either way: anything over the cap arrives already cut with an
+     ellipsis. The brief still exists whole — it is the session's first prompt, one click
+     away under "What happened". */
   .hi-workers__title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
+    -webkit-line-clamp: 2;
     margin-top: 9px;
     min-width: 0;
     font-size: 14.5px;
@@ -1358,18 +1886,14 @@ const CSS = `
     overflow-wrap: anywhere;
   }
 
-  /* Pushed to the strip's far end, opposite the pill — the same slot the live card's
-     state word holds, because they answer the same question one tense apart. */
-  .hi-workers__elapsed {
-    flex: none;
-    margin-left: auto;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--fg-mute);
+  .is-ended .hi-workers__title {
+    -webkit-line-clamp: 1;
+    margin-top: 7px;
+    font-size: 14px;
   }
 
-  /* The live card's answer. Pushed right so it stays on the card's edge when the strip
-     wraps. */
+  /* How it is, pushed to the strip's far end opposite the pill — and on an ended card, when
+     it stopped. The same slot in both tenses, because they answer the same question. */
   .hi-workers__state {
     flex: none;
     margin-left: auto;
@@ -1378,24 +1902,36 @@ const CSS = `
     color: var(--fg-mute);
   }
 
-  .hi-workers__row[data-state="running"] .hi-workers__state {
+  .hi-workers__card[data-state="running"] .hi-workers__state {
     color: var(--accent);
   }
 
   /* Work sitting in an inbox nobody has picked up. Not an error — a session mid-turn will
      take it next round — but it is the one state where a growing number means the drain
      has stopped, so it does not read as quiet. */
-  .hi-workers__row[data-state="waiting"] .hi-workers__state {
+  .hi-workers__card[data-state="waiting"] .hi-workers__state {
     color: var(--accent-2);
   }
 
   .hi-workers__meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 4px 12px;
     margin-top: 7px;
     font-size: 12px;
     color: var(--fg-mute);
+  }
+
+  /* The ended card's meta: one clamped run of text, not a wrapping row of chips, so its
+     height is two lines whatever it says. See the note beside it in EndedCard. */
+  .hi-workers__meta.is-run-on {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    margin-top: 6px;
+    line-height: 1.45;
+    overflow: hidden;
+    overflow-wrap: anywhere;
   }
 
   .hi-workers__meta .is-warn {
@@ -1404,9 +1940,9 @@ const CSS = `
   }
 
   /* Monospace, because it is nearly always a command or a tool name and proportional type
-     makes those hard to scan. Two lines, not one: a card is a third of the frame wide, and
-     one line of mono at this size stops inside the shell invocation — before the command
-     it is running, which is the only part worth reading. The panel still has the whole. */
+     makes those hard to scan. Two lines, not one: a card is a fixed width, and one line of
+     mono at this size stops inside the shell invocation — before the command it is running,
+     which is the only part worth reading. The panel still has the whole. */
   .hi-workers__doing {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -1442,19 +1978,50 @@ const CSS = `
     color: var(--fg-mute);
   }
 
-  /* What it said, clamped to three lines. On one line in a column this wide it was
-     about six words — not enough to tell two sessions apart, which is the only thing
-     this line is here to do. */
+  /* What it said, clamped to two lines. On one line at this width it was about six words —
+     not enough to tell two sessions apart, which is the only thing this line is here to
+     do. Two rather than three, because every extra line a card can grow is a line the whole
+     rank below it moves down. */
   .hi-workers__tail {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     margin-top: 7px;
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--fg-dim);
     overflow: hidden;
     overflow-wrap: anywhere;
+  }
+
+  /* ── what just ended ──────────────────────────────────────────────────────
+     Full width under the tree, exactly two cards deep, and it scrolls. The depth is a
+     promise the card height keeps: every card in here is --w-ended-h tall, so two rows
+     is a number rather than an estimate. It contains its own overscroll, since the page
+     itself scrolls and reaching the end of this band must not carry on into that. */
+  .hi-workers__band {
+    width: 100%;
+    max-height: calc(var(--w-ended-h) * 2 + var(--w-gap));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .hi-workers__band-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+    grid-auto-rows: var(--w-ended-h);
+    gap: var(--w-gap);
+  }
+
+  /* A card arriving, in the band and nowhere else — the tree's own arrivals are the
+     animator's, since a card there also has to displace its neighbours. */
+  @keyframes hi-workers-in {
+    from { opacity: 0; transform: scale(.96); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hi-workers__card.is-ended { animation: none; }
   }
 
   .hi-workers__empty {
