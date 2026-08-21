@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
 use crate::mind::memory::layout;
-use crate::types::{ViewEnvelope, ViewOp, ViewTraits};
+use crate::types::{ViewEnvelope, ViewOp};
 
 /// Retained appearance state. Cloneable handle over shared
 /// state.
@@ -134,11 +134,6 @@ struct HistoryEntry {
 struct RetainedView {
     id: String,
     module_url: String,
-    /// What the view declared about itself. `#[serde(default)]` is the back-compat
-    /// lever: snapshots written before this field existed reload as `None` →
-    /// host-owned captions.
-    #[serde(default)]
-    traits: Option<ViewTraits>,
     /// The view's durable name — see [`ViewEnvelope::view_ref`]. A snapshot records
     /// it so [`ViewBus::refresh_sources`] can recompile the view on the next boot
     /// instead of resurrecting the module it happened to compile to. `None` for an
@@ -191,17 +186,13 @@ pub enum WireSlot {
 pub struct WireView {
     pub id: String,
     pub module_url: String,
-    /// What the view declared about itself; absent = host-owned captions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traits: Option<ViewTraits>,
     pub slot: WireSlot,
 }
 
 /// One past show as delivered to the browser.
 ///
 /// `label` is derived here rather than declared by the view, because a view declares
-/// nothing but `owns_conversation` and inventing a title field would make every
-/// existing view untitled. The ref's last segment is the honest name — it is what the
+/// nothing at all and inventing a title field would make every existing view untitled. The ref's last segment is the honest name — it is what the
 /// agent typed to show it and what the file is called — and an inline view falls back
 /// to its id, the way a browser falls back to a URL for a page with no `<title>`.
 ///
@@ -401,9 +392,8 @@ impl ViewBus {
             return;
         };
 
-        let (source, traits) = match crate::mind::views::resolve_ref(&self.data_dir, &view_ref).await
-        {
-            Ok(resolved) => resolved,
+        let source = match crate::mind::views::resolve_ref(&self.data_dir, &view_ref).await {
+            Ok(source) => source,
             Err(error) => {
                 tracing::warn!(
                     id = %view.id, view_ref = %view_ref, %error,
@@ -426,7 +416,6 @@ impl ViewBus {
         let next = RetainedView {
             id: view.id.clone(),
             module_url,
-            traits,
             view_ref: Some(view_ref),
         };
 
@@ -567,7 +556,6 @@ impl ViewBus {
                     .map(|(slot, v)| WireView {
                         id: v.id.clone(),
                         module_url: v.module_url.clone(),
-                        traits: v.traits,
                         slot,
                     })
                     .collect(),
@@ -626,7 +614,6 @@ fn resolve_slot(
             Some(Some(RetainedView {
                 id: envelope.id,
                 module_url,
-                traits: envelope.traits,
                 view_ref: envelope.view_ref,
             }))
         }
@@ -826,8 +813,7 @@ mod tests {
             id: id.into(),
             op: ViewOp::Show,
             module_url: Some(url.into()),
-            traits: None,
-            view_ref: None,
+                view_ref: None,
         }
     }
 
@@ -836,8 +822,7 @@ mod tests {
             id: id.into(),
             op: ViewOp::Dismiss,
             module_url: None,
-            traits: None,
-            view_ref: None,
+                view_ref: None,
         }
     }
 
@@ -1153,8 +1138,7 @@ mod tests {
                 id: "deck".into(),
                 op: ViewOp::Replace,
                 module_url: Some("/m/v2.mjs".into()),
-                traits: None,
-                view_ref: None,
+                        view_ref: None,
             },
         )
         .await;
@@ -1370,42 +1354,9 @@ mod tests {
         let bus = ViewBus::load(tmp.path());
         let state = bus.wait_state(None).await;
         assert_eq!(state.version, 3423);
+        // The retired `geometry` keys are simply unknown fields now, and a view
+        // declares nothing at all — see the trait's deletion in `docs/arch/stage.md`.
         assert_eq!(ids(&state), vec!["bj01"]);
-        assert!(
-            state.views[0].traits.is_none(),
-            "retired geometry keys are ignored"
-        );
-    }
-
-    #[tokio::test]
-    async fn apply_carries_traits_through_wire_and_reload() {
-        let tmp = tempfile::tempdir().unwrap();
-        let traits = ViewTraits {
-            owns_conversation: true,
-        };
-
-        let version = {
-            let bus = ViewBus::load(tmp.path());
-            bus.apply(
-                ViewEnvelope {
-                    id: "g".into(),
-                    op: ViewOp::Show,
-                    module_url: Some("/m/g.mjs".into()),
-                    traits: Some(traits),
-                    view_ref: None,
-                },
-            )
-            .await;
-            let state = bus.wait_state(None).await;
-            assert_eq!(state.views[0].traits, Some(traits));
-            state.version
-        };
-
-        // Traits ride the snapshot, so they survive a restart.
-        let bus = ViewBus::load(tmp.path());
-        let state = bus.wait_state(None).await;
-        assert_eq!(state.version, version);
-        assert_eq!(state.views[0].traits, Some(traits));
     }
 
     #[tokio::test]
@@ -1457,8 +1408,7 @@ mod tests {
             id: id.into(),
             op: ViewOp::Show,
             module_url: Some(url.into()),
-            traits: None,
-            view_ref: Some(view_ref.into()),
+                view_ref: Some(view_ref.into()),
         }
     }
 

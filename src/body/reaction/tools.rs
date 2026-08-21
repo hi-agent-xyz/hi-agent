@@ -19,7 +19,6 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::time::Instant;
 
 use crate::foundation::registry::SessionId;
-use crate::types::ViewTraits;
 
 use super::sequencer::Beat;
 
@@ -458,10 +457,9 @@ impl ToolSink {
 
     /// Show a view (the `show` tool): queue it onto the sequencer, which
     /// paces it to the surrounding narration. `op` is `show`/`replace`/`dismiss`;
-    /// `id` may be omitted (one is synthesized). `traits` is what the view declared
-    /// about itself (or `None` — host-owned captions). `view_ref` is the ref the
-    /// source was read from, carried so the restore can recompile it (`None` for an
-    /// inline-source view).
+    /// `id` may be omitted (one is synthesized). `view_ref` is the ref the source was
+    /// read from, carried so the restore can recompile it (`None` for an inline-source
+    /// view).
     ///
     /// Unlike speech this is never gated: a view is retained state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
@@ -471,14 +469,13 @@ impl ToolSink {
         id: Option<String>,
         op: String,
         source: String,
-        traits: Option<ViewTraits>,
         view_ref: Option<String>,
     ) -> anyhow::Result<()> {
         self.mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?
             .beats
-            .send(Beat::Show { id, op, source, traits, view_ref })
+            .send(Beat::Show { id, op, source, view_ref })
             .await
             .map_err(|_| anyhow::anyhow!("sequencer gone; show dropped"))
     }

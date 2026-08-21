@@ -7,7 +7,6 @@ import { stage, type StageInput } from "./layout";
 
 const at = (over: Partial<StageInput> = {}): StageInput => ({
   content: false,
-  ownsConversation: false,
   collapsed: false,
   ...over,
 });
@@ -69,21 +68,12 @@ describe("stage", () => {
     expect(stage(at({ content: true })).camera).toBe("pip");
   });
 
-  it("a view that renders the words itself stands the host down", () => {
-    // Including the line: a view that owns the conversation owns the writing of
-    // it too, and a host line floating over one would be a second place to type.
-    expect(stage(at({ content: true, ownsConversation: true })).conversation).toBe("hidden");
-  });
-
-  it("a view's claim on the words means nothing once it is gone", () => {
-    expect(stage(at({ ownsConversation: true })).conversation).toBe("popover");
-  });
-
-  // The claim is the view's, not the person's: standing the host down is not the
-  // same as being asked for the room, and it outranks it while the view is up.
-  it("a view's claim outranks the person's put-away", () => {
-    expect(stage(at({ content: true, ownsConversation: true, collapsed: true })).conversation).toBe(
-      "hidden",
-    );
+  it("nothing a view does can take the conversation away", () => {
+    // A view used to be able to stand the host down by declaring `owns_conversation`,
+    // and the only one that ever did rendered a fixed outage message rather than the
+    // words — so the claim took the record and the input line away at the moment they
+    // were most needed. The claim is gone; the host always draws them.
+    expect(stage(at({ content: true })).conversation).toBe("popover");
+    expect(stage(at({ content: true, collapsed: true })).conversation).toBe("pill");
   });
 });

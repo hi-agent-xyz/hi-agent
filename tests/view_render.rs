@@ -382,7 +382,6 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
                 id: "spending".to_string(),
                 op: hi_agent::types::ViewOp::Show,
                 module_url: Some(module_url.clone()),
-                traits: None,
                 view_ref: None,
             },
         })
@@ -455,7 +454,6 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
                 id: "spending".to_string(),
                 op: hi_agent::types::ViewOp::Show,
                 module_url: Some(module_url.clone()),
-                traits: None,
                 view_ref: Some("notes/spending".to_string()),
             },
         })

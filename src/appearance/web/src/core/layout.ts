@@ -32,7 +32,6 @@
  *               something the list behind it keeps. The dwell is the shell's
  *               (`ui/caption.ts`); this pass says where the pill goes, never how
  *               long it stays.
- * - `hidden`  — a view is rendering the words itself.
  *
  * Putting it away puts *all* of it away, the line included, because the line is
  * inside it (`ui/Composer.tsx`). That is what lets one control own the surface —
@@ -44,7 +43,7 @@
  * of that time — overlaying on demand costs the view nothing while it is closed.
  * See `docs/arch/stage.md`.
  */
-export type Conversation = "popover" | "pill" | "hidden";
+export type Conversation = "popover" | "pill";
 
 /** The self-view fills the frame when nothing else is on it, else a corner pip. */
 export type Camera = "fill" | "pip";
@@ -52,8 +51,6 @@ export type Camera = "fill" | "pip";
 export interface StageInput {
   /** The agent has a view up. */
   content: boolean;
-  /** The top-most view renders the conversation itself. */
-  ownsConversation: boolean;
   /** The person put the conversation away — the text channel's own on/off. A
    * window preference, never server state, so a phone cannot collapse a
    * desktop's. */
@@ -103,12 +100,11 @@ export interface Stage {
  * scrollback rather than only the newest line.
  */
 export function stage(input: StageInput): Stage {
-  const conversation: Conversation =
-    input.content && input.ownsConversation
-      ? "hidden"
-      : input.collapsed
-        ? "pill"
-        : "popover";
+  // The host always draws the conversation. A view used to be able to stand it down by
+  // declaring `owns_conversation`, and the one view that ever did was the outage notice,
+  // which renders a fixed message rather than the words — so the claim took away the
+  // record and the line at the moment the person most needed both. See `docs/arch/stage.md`.
+  const conversation: Conversation = input.collapsed ? "pill" : "popover";
 
   return {
     conversation,

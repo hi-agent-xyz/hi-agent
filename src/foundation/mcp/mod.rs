@@ -1532,24 +1532,24 @@ async fn dispatch_tool(
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();
             // A view is normally shown by ref (one a worker built); resolve it to
             // source HERE, server-side, so the JSX never enters the mind's context.
-            // Inline `source` stays as a trivial-one-off escape hatch. The ref may
-            // carry a `.geom.json` sidecar — what the builder declared about it.
-            // There is no placement to override here any more: views are full-bleed,
-            // one at a time, so the mind decides *what* is on screen and never where.
+            // Inline `source` stays as a trivial-one-off escape hatch. A view declares
+            // nothing about itself: it is full-bleed, one at a time, and the host owns
+            // the conversation over it, so the mind decides *what* is on screen and
+            // never where, nor what surrounds it.
             // The ref travels on with the view: it is the view's durable name, and
             // the compiled module URL it resolves to is a disposable content hash
             // that goes stale the moment the source is edited or the binary reseeds
             // `factory/`. Restoring the screen after a restart needs the name.
-            let (view_ref, source, traits) = match arg_opt("ref") {
+            let (view_ref, source) = match arg_opt("ref") {
                 Some(r) if !r.trim().is_empty() => {
                     match crate::mind::views::resolve_ref(data_dir, &r).await {
-                        Ok((source, traits)) => (Some(r.trim().to_string()), source, traits),
+                        Ok(source) => (Some(r.trim().to_string()), source),
                         Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
                     }
                 }
-                _ => (None, arg_str("source"), None),
+                _ => (None, arg_str("source")),
             };
-            sink.show(arg_opt("id"), op, source, traits, view_ref)
+            sink.show(arg_opt("id"), op, source, view_ref)
                 .await
                 .map(|()| "shown".to_string())
         }
@@ -1605,14 +1605,14 @@ async fn do_look() -> Value {
 ///
 /// **The review frame IS the stage frame** — full-bleed, the only frame there is — so
 /// a review renders the thing exactly the way `hi_show` will put it up. This used to be a
-/// negotiation between the caller's override and the sidecar's declared region, and
+/// negotiation between the caller's override and a region declared in a sidecar, and
 /// getting it wrong failed a view for a defect the review itself introduced.
 async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     let view_ref = args.get("ref").and_then(Value::as_str).unwrap_or_default().trim().to_string();
     if view_ref.is_empty() {
         return tool_error("hi_review_view requires a `ref`");
     }
-    let (source, traits) = match crate::mind::views::resolve_ref(data_dir, &view_ref).await {
+    let source = match crate::mind::views::resolve_ref(data_dir, &view_ref).await {
         Ok(v) => v,
         Err(e) => return tool_error(&e),
     };
@@ -1629,13 +1629,12 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
     // Every view renders full-bleed, so there is no placement to resolve or override:
     // the review page shows the view at exactly the frame it will occupy on the stage.
     // That equivalence is the whole point of the review — it used to be conditional on
-    // the reviewer and the sidecar agreeing about a region.
+    // the reviewer and a sidecar agreeing about a region.
     //
     // Size is the half of that equivalence placement never covered. `RenderRequest::new`
     // takes the frame the window last reported, so "exactly the frame" now means the
     // person's actual window rather than a constant that matched none of them.
-    let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url)
-        .with_conversation(traits.is_some_and(|t| t.owns_conversation));
+    let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url);
 
     // An explicit size is a deliberate second look at another frame, so it overrides one
     // axis at a time: asking for a narrower width alone should not also snap the height

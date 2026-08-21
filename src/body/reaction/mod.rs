@@ -102,7 +102,7 @@ use crate::foundation::registry;
 use crate::foundation::shutdown::Shutdown;
 use crate::mind::memory::{Memory, snapshot};
 use crate::foundation::observatory::{EventKind, Observatory};
-use crate::types::{Channel, JournalEntry, Origin, Signal, ViewEnvelope, ViewOp, ViewTraits};
+use crate::types::{Channel, JournalEntry, Origin, Signal, ViewEnvelope, ViewOp};
 use bytes::Bytes;
 use uuid::Uuid;
 
@@ -920,10 +920,6 @@ pub async fn start(
                 .await
                 .context("compiling the built-in out-of-energy view")?,
         ),
-        // Declares nothing. The notice takes the agent's plane; the conversation
-        // opens over it, so the person keeps the record of what was said and the
-        // line to answer on. See `docs/arch/stage.md`.
-        traits: None,
         // No ref on purpose. A ref exists so a *restored* view can be recompiled from
         // its source, and the condition slot is never restored from one: it is
         // host-owned and re-derived here, from the embedded source, on every boot —
@@ -1100,7 +1096,6 @@ impl Reaction {
                 id: crate::mind::views::factory::OUT_OF_ENERGY_VIEW_ID.to_string(),
                 op: ViewOp::Dismiss,
                 module_url: None,
-                traits: None,
                 view_ref: None,
             }
         };
@@ -2743,8 +2738,8 @@ async fn perform(
                 let _ = tx.send(sentence).await;
             }
         }
-        interleave::Emit::Show { id, op, source, traits, view_ref } => {
-            emit_view(reaction, id, op, source, traits, view_ref).await
+        interleave::Emit::Show { id, op, source, view_ref } => {
+            emit_view(reaction, id, op, source, view_ref).await
         }
     }
 }
@@ -3032,7 +3027,6 @@ async fn emit_view(
     id: String,
     op: ViewOp,
     source: String,
-    traits: Option<ViewTraits>,
     view_ref: Option<String>,
 ) {
     let module_url = if op == ViewOp::Dismiss {
@@ -3064,7 +3058,7 @@ async fn emit_view(
         .inner
         .out
         .send(OutboundSignal::View {
-            envelope: ViewEnvelope { id, op, module_url, traits, view_ref },
+            envelope: ViewEnvelope { id, op, module_url, view_ref },
         })
         .await;
 }

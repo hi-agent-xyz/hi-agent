@@ -193,7 +193,7 @@ async fn warm_one(state: &Arc<AppState>, view_ref: &str) -> bool {
     let Some(render) = crate::mind::views::render_context() else {
         return false;
     };
-    let Ok((source, _)) = crate::mind::views::resolve_ref(&state.data_dir, view_ref).await else {
+    let Ok(source) = crate::mind::views::resolve_ref(&state.data_dir, view_ref).await else {
         return false;
     };
     let Ok(module_url) = render.compiler.compile(&source).await else {
@@ -327,8 +327,6 @@ pub struct OpenViewRequest {
 pub struct OpenedView {
     pub id: String,
     pub module_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traits: Option<crate::types::ViewTraits>,
 }
 
 /// `POST /api/views/open` — compile a named view so this window can mount it, **without
@@ -363,8 +361,8 @@ pub async fn open_view(
         )
             .into_response();
     };
-    let (source, traits) = match crate::mind::views::resolve_ref(&state.data_dir, &view_ref).await {
-        Ok(resolved) => resolved,
+    let source = match crate::mind::views::resolve_ref(&state.data_dir, &view_ref).await {
+        Ok(source) => source,
         Err(error) => {
             return (axum::http::StatusCode::NOT_FOUND, error).into_response();
         }
@@ -384,11 +382,7 @@ pub async fn open_view(
                     tokio::spawn(async move { bus.note_shot().await });
                 },
             );
-            axum::Json(OpenedView {
-                id: view_ref,
-                module_url,
-                traits,
-            })
+            axum::Json(OpenedView { id: view_ref, module_url })
             .into_response()
         }
         Err(error) => (

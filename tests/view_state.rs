@@ -54,7 +54,6 @@ async fn emit_view(
                 id: id.to_string(),
                 op,
                 module_url: url.map(str::to_string),
-                traits: None,
                 view_ref: None,
             },
         })

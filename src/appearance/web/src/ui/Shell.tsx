@@ -71,16 +71,13 @@ export function Shell() {
     setPastedInputText({ id: pasteIdRef.current, text });
   }, []);
 
-  const top = views[views.length - 1];
   const layout = composeStage({
     content: views.length > 0,
-    ownsConversation: top?.traits?.owns_conversation ?? false,
     collapsed: !ch.text,
   });
 
-  // The conversation is shown as itself in one of its three states; the pill is a
-  // different rendering of the same list, and `hidden` is a view having taken the
-  // words over. `<Chat>` stays mounted through all of them.
+  // The conversation is shown as itself in one of its two states; the pill is a
+  // different rendering of the same list. `<Chat>` stays mounted through both.
   const chatShown = layout.conversation === "popover";
 
   const handoff = useHandoff({
@@ -191,7 +188,7 @@ export function Shell() {
               onSend={sendText}
               shown={chatShown}
               pastedText={pastedInputText}
-              onOpen={layout.conversation === "hidden" ? null : openConversation}
+              onOpen={openConversation}
             />
           </Chat>
         </div>

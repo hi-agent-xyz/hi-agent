@@ -8,15 +8,6 @@ import { url } from "../../lib/base";
 // a server restart all converge on the same screen — the server retains and
 // persists the state; the client just mirrors the latest snapshot.
 
-/** What a view declared about itself, carried verbatim from the Rust
- * `ViewTraits`. Views are full-bleed and one at a time, so there is no placement
- * to declare — this is all that's left. Field names match the wire. */
-export interface ViewTraits {
-  /** This view renders the live words itself; the host's caption pills stand
-   * down. Absent reads as `false` — the safe default. */
-  owns_conversation?: boolean;
-}
-
 /** One active layer in the conversation's appearance, in z-order (first = bottom).
  *
  * At most two arrive: the agent's content view, and the host's condition layer
@@ -26,8 +17,6 @@ export interface WireView {
   id: string;
   /** URL of the compiled ESM module to import and mount under `id`. */
   module_url: string;
-  /** What the view declared; absent = host-owned captions. */
-  traits?: ViewTraits;
   /** Which server slot this layer came out of. A window showing a past view puts it in
    * place of `content` and keeps `condition` over it — an outage still covers whatever
    * the person went back to. Absent on a server older than the field. */
@@ -102,7 +91,6 @@ export async function listViews(): Promise<ListedView[]> {
 export interface OpenedView {
   id: string;
   module_url: string;
-  traits?: ViewTraits;
 }
 
 /** Compile a named view for this window to mount.

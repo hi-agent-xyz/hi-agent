@@ -13,7 +13,6 @@ import {
   clearViewState,
   openView,
   reportWentTo,
-  type ViewTraits,
   type WireHistoryEntry,
 } from "../channels/out/view";
 import { destinationOf, trailOf } from "./trail";
@@ -33,7 +32,6 @@ const VOICE_GATE_FALLBACK_MS = 1000;
 export interface ActiveView {
   id: string;
   moduleUrl: string;
-  traits?: ViewTraits;
 }
 
 interface ViewsValue {
@@ -91,7 +89,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   /** The live layers, in wire order (= z-order), each tagged with the slot it came
    * out of so a parked window can keep the condition layer over what it went back to. */
   const [wire, setWire] = useState<
-    { id: string; moduleUrl: string; traits?: ViewTraits; slot?: string }[]
+    { id: string; moduleUrl: string; slot?: string }[]
   >([]);
   const [history, setHistory] = useState<WireHistoryEntry[]>([]);
   /** Places this window went that the agent did not take it to — a bookmark opened.
@@ -185,7 +183,6 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
               state.views.map((v) => ({
                 id: v.id,
                 moduleUrl: v.module_url,
-                traits: v.traits,
                 slot: v.slot,
               })),
             );
@@ -259,7 +256,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       (opened) =>
         setParked({
           key,
-          view: { id: opened.id, moduleUrl: opened.module_url, traits: opened.traits },
+          view: { id: opened.id, moduleUrl: opened.module_url },
         }),
       () =>
         // Source gone, or no longer compiling. The artifact it was shown as is still
@@ -283,7 +280,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
       (opened) => {
         setParked({
           key: viewRef,
-          view: { id: opened.id, moduleUrl: opened.module_url, traits: opened.traits },
+          view: { id: opened.id, moduleUrl: opened.module_url },
         });
         // Only on arrival: a request that failed is not a place anyone went.
         setVisits((was) => [
@@ -307,11 +304,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const trail = useMemo(() => trailOf(history, visits), [history, visits]);
 
   const value = useMemo<ViewsValue>(() => {
-    const bare = ({ id, moduleUrl, traits }: (typeof wire)[number]): ActiveView => ({
-      id,
-      moduleUrl,
-      traits,
-    });
+    const bare = ({ id, moduleUrl }: (typeof wire)[number]): ActiveView => ({ id, moduleUrl });
     const views = parked
       ? [parked.view, ...wire.filter((v) => v.slot === "condition").map(bare)]
       : wire.map(bare);

@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::body::capabilities::tts::{self, TtsStream};
 use crate::foundation::segment::{Segmenter, Terminator};
-use crate::types::{Channel, ViewOp, ViewTraits};
+use crate::types::{Channel, ViewOp};
 
 use super::{OutboundSignal, Reaction, interleave};
 
@@ -46,7 +46,6 @@ pub(super) enum Beat {
         id: Option<String>,
         op: String,
         source: String,
-        traits: Option<ViewTraits>,
         view_ref: Option<String>,
     },
     TurnEnd {
@@ -137,7 +136,6 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 id,
                 op,
                 source,
-                traits,
                 view_ref,
             } => {
                 let (id, op) = resolve_view(id, &op);
@@ -147,9 +145,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 if reaction.inner.floor.should_skip(turn).await {
                     continue;
                 }
-                for emit in
-                    interleave::view_emits(&mut splitter, id, op, source, traits, view_ref)
-                {
+                for emit in interleave::view_emits(&mut splitter, id, op, source, view_ref) {
                     super::perform(emit, &synth_tx, &reaction).await;
                 }
             }

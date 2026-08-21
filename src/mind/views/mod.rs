@@ -78,7 +78,7 @@ pub fn valid_ref(view_ref: &str) -> bool {
         })
 }
 
-/// Read a view ref's source and what it declared about itself.
+/// Read a view ref's source.
 ///
 /// This is the one place a ref becomes source, because two callers now need it and
 /// they are on opposite sides of the view's life: `show` resolves a ref the agent
@@ -86,12 +86,10 @@ pub fn valid_ref(view_ref: &str) -> bool {
 /// Both must read the same file by the same rules, or a view would come back as
 /// something the tool would refuse to put up.
 ///
-/// Views are full-bleed, so `owns_conversation` is the only thing left to declare and a
-/// missing or unparseable sidecar is not an error — it just means host-owned captions.
-pub async fn resolve_ref(
-    data_dir: &Path,
-    view_ref: &str,
-) -> Result<(String, Option<crate::types::ViewTraits>), String> {
+/// A view declares nothing about itself any more: it is full-bleed, one at a time, and
+/// the host owns the conversation over it. The `.geom.json` sidecar that carried the last
+/// trait is gone with it — see `docs/arch/stage.md`.
+pub async fn resolve_ref(data_dir: &Path, view_ref: &str) -> Result<String, String> {
     let view_ref = view_ref.trim();
     if !valid_ref(view_ref) {
         return Err(format!("invalid ref `{view_ref}` (names and `/` only, no dots)"));
@@ -110,11 +108,7 @@ pub async fn resolve_ref(
     let source = tokio::fs::read_to_string(views.join(format!("{view_ref}.jsx")))
         .await
         .map_err(|e| format!("no such view ({e})"))?;
-    let traits = match tokio::fs::read(views.join(format!("{view_ref}.geom.json"))).await {
-        Ok(bytes) => serde_json::from_slice::<crate::types::ViewTraits>(&bytes).ok(),
-        Err(_) => None,
-    };
-    Ok((source, traits))
+    Ok(source)
 }
 
 /// Compiles agent view source to a served ESM module URL. Cheap to clone.
@@ -250,31 +244,15 @@ mod view_ref_tests {
         let proj = dir.path().join("views").join("deck");
         tokio::fs::create_dir_all(&proj).await.unwrap();
         tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        let (source, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
+        let source = resolve_ref(dir.path(), "deck/leader").await.unwrap();
         assert_eq!(source, "export default () => 1");
-        // No sidecar written → host-owned captions.
-        assert!(traits.is_none());
     }
 
+    /// A `.geom.json` beside a view is a file from a design this one replaced: first
+    /// placement, then the one trait that outlived it. Nothing reads either any more, so
+    /// a sidecar still sitting on disk must be exactly as inert as any other stray file.
     #[tokio::test]
-    async fn resolve_reads_traits_sidecar() {
-        let dir = tempfile::tempdir().unwrap();
-        let proj = dir.path().join("views").join("deck");
-        tokio::fs::create_dir_all(&proj).await.unwrap();
-        tokio::fs::write(proj.join("leader.jsx"), "export default () => 1").await.unwrap();
-        tokio::fs::write(proj.join("leader.geom.json"), r#"{"owns_conversation":true}"#)
-            .await
-            .unwrap();
-        let (_, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
-        assert!(traits.expect("sidecar traits").owns_conversation);
-    }
-
-    /// Sidecars written under the old placement schema are still on disk in every
-    /// existing workshop. They must degrade to the default rather than failing the
-    /// show: the unknown `region`/`size` keys are ignored and `owns_conversation` — the
-    /// one field that survived — is read straight through.
-    #[tokio::test]
-    async fn resolve_ignores_retired_placement_keys() {
+    async fn a_leftover_sidecar_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let proj = dir.path().join("views").join("deck");
         tokio::fs::create_dir_all(&proj).await.unwrap();
@@ -285,8 +263,7 @@ mod view_ref_tests {
         )
         .await
         .unwrap();
-        let (_, traits) = resolve_ref(dir.path(), "deck/leader").await.unwrap();
-        assert!(traits.expect("sidecar traits").owns_conversation);
+        assert_eq!(resolve_ref(dir.path(), "deck/leader").await.unwrap(), "export default () => 1");
     }
 
     #[tokio::test]
@@ -400,7 +377,7 @@ mod alias_tests {
             .await
             .unwrap();
 
-        let (source, _) = resolve_ref(dir.path(), "_builtin/welcome").await.unwrap();
+        let source = resolve_ref(dir.path(), "_builtin/welcome").await.unwrap();
         assert!(source.contains("export default"));
 
         // And the new spelling, which is the one everything should be using.

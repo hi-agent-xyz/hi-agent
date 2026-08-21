@@ -11,7 +11,7 @@
 use std::time::Instant;
 
 use crate::foundation::segment::{Segmenter, Terminator};
-use crate::types::{ViewOp, ViewTraits};
+use crate::types::ViewOp;
 
 /// One release action the policy decides on. `Speak` goes to TTS only (the raw
 /// chunk is mirrored to /thought separately by the sequencer); `Show` is
@@ -23,7 +23,6 @@ pub(super) enum Emit {
         id: String,
         op: ViewOp,
         source: String,
-        traits: Option<ViewTraits>,
         view_ref: Option<String>,
     },
 }
@@ -47,14 +46,13 @@ pub(super) fn view_emits(
     id: String,
     op: ViewOp,
     source: String,
-    traits: Option<ViewTraits>,
     view_ref: Option<String>,
 ) -> Vec<Emit> {
     let mut out = Vec::new();
     if let Some(tail) = splitter.flush() {
         out.push(Emit::Speak(tail));
     }
-    out.push(Emit::Show { id, op, source, traits, view_ref });
+    out.push(Emit::Show { id, op, source, view_ref });
     out
 }
 
@@ -81,10 +79,9 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = Vec::new();
-        let declared = Some(ViewTraits { owns_conversation: true });
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), declared, None));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None));
         emits.extend(speak_emits("Narrate one. ", &mut sp, now));
-        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None, None));
+        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None));
         emits.extend(speak_emits("Narrate two. ", &mut sp, now));
         if let Some(tail) = sp.flush() {
             emits.push(Emit::Speak(tail));
@@ -93,16 +90,6 @@ mod release_tests {
             trace(&emits),
             vec!["show:c1", "speak:Narrate one.", "show:c2", "speak:Narrate two."]
         );
-        // What the view declared rides the emit untouched (and a view that
-        // declared nothing stays None — host-owned captions).
-        let traits_of = |want: &str| {
-            emits.iter().find_map(|e| match e {
-                Emit::Show { id, traits, .. } if id == want => Some(*traits),
-                _ => None,
-            })
-        };
-        assert_eq!(traits_of("a"), Some(declared));
-        assert_eq!(traits_of("b"), Some(None));
     }
 
     #[test]
@@ -112,7 +99,7 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = speak_emits("partial no period", &mut sp, now);
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None, None));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None));
         assert_eq!(trace(&emits), vec!["speak:partial no period", "show:c1"]);
     }
 }

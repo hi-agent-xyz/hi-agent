@@ -315,23 +315,47 @@ not dismissal.
 
 **A view that owns the conversation owns the writing of it too.** `owns_conversation` used
 to leave the host's line floating over the view; a view rendering the words and a host line
-under it are two places to type into one conversation. The trait now stands the whole
-surface down.
+under it are two places to type into one conversation. The trait stood the whole surface
+down — until it was deleted outright; see *Nothing a view declares can take the
+conversation away*, below.
 
 ## Who decides the presentation
 
 - **By default, nobody:** it is derived — up → the popover, wherever the person left it;
-  put away → pill; a view claiming the words → neither.
+  put away → pill. There is no third case.
 - **The person** shows the conversation or puts it away from the text channel's control in
   the cluster — one control, in every state — and dismisses the popover with Escape or a
   press behind it.
 - **The agent cannot.** It has no tool for it and gains none. The one thing that must
   never disappear because the agent decided so is the record of what it said.
-- **A view may stand the host down** by declaring `owns_conversation` — it renders the
-  words itself, so the host shows neither popover nor pill. This is today's `owns_captions`
-  under the vocabulary the rest of this document uses; the rename carries a
-  `#[serde(default)]` so snapshots written under the old name reload as `None`, which
-  reads as host-owned, which is the safe default it already was.
+- **A view may not.** It could once, by declaring `owns_conversation`; that is gone.
+
+### Nothing a view declares can take the conversation away
+
+Amended August 21, 2026 — `ViewTraits`, the `.geom.json` sidecar, the wire's `traits`
+field and the render page's `owns_conversation` parameter are all deleted.
+
+The trait said: *this view renders the words itself, so the host draws neither popover nor
+pill.* Reasonable, and it had exactly one user in the system's whole life — the outage
+notice — which renders a fixed bilingual message and not the conversation at all. Under the
+trait's own meaning the claim was false, and it survived because in the caption-band era it
+was merely cosmetic. What it would do now is take the record and the input line off the
+screen at the moment the person most needs to read what happened and answer.
+
+No agent-authored view ever declared it: 52 sidecars on disk at the time of writing, 51 of
+them carrying nothing but the `region`/`size` keys placement left behind, and one carrying
+the outage's claim. So the mechanism was maintained for a single wrong use.
+
+**The rule that replaces it is simpler than the trait was, and is the same rule the agent
+already lives under**: the conversation is the person's, and nothing the agent does — no
+tool, no view, no declaration — removes it. A view that wants to render the words may still
+call `useSpeech()`; it will simply be drawing them under a panel that is also drawing them,
+which is a composition mistake it can see in its own review, not a way to blank the room.
+
+With it goes the last thing a view could declare about itself, so a view is now exactly one
+`.jsx` file under a ref: no sidecar, no placement, no traits on the wire, nothing to get
+wrong by omission. Sidecars still on disk are inert — a test says so — and the installer
+stopped writing them a release ago.
 
 **The collapse is a property of the window, not of the conversation, and it is not
 server state.** Every other thing on the stage is backend-owned so that a second device
@@ -963,6 +987,8 @@ Built on `design/stage`, in this order:
 5. **Traits** — `owns_captions` → `owns_conversation` through `types::ViewTraits`, the
    render URL, the sidecar contract and `channels/out/view.ts`, with `#[serde(alias)]` so
    sidecars and snapshots already on disk keep loading. The outage view's sidecar deleted.
+   *(Undone August 21, 2026: the trait itself is deleted — see* Nothing a view declares can
+   take the conversation away*.)*
 6. **Controls** — the conversation toggle in `ChannelControls`, shown only when there is a
    rail to collapse; the reset button retitled from "back to the calm room" to what it now
    does, which is close the view.

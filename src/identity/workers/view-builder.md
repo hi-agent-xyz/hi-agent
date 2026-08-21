@@ -613,26 +613,16 @@ the page is already at a root — so it is never wrong to use and only sometimes
 leave out. Your `fetch` calls need no such care: the host has already put the prefix on
 those.
 
-**The conversation shares the screen with you.** While your view is on stage the host
-keeps the whole conversation up beside it — normally a column down the left of the
-window, and a small pill floating bottom-centre if the person has collapsed that column
-or the window is too narrow for two things. You never render either. Your view is handed
-a frame that is already inset past whichever it is, so there is nothing to do about the
-column; just leave the bottom strip quiet rather than running a line of text through it,
-because that is where the pill lands.
+**The conversation shares the screen with you, and it is not yours to move.** Your view
+gets the whole frame, and the host draws the conversation over it — a panel while it is
+open, a small pill floating bottom-centre once the person puts it away. You never render
+either, and nothing you can write takes them off the screen: the record of what was said
+and the line to answer on belong to the person, not to the composition. So leave the
+bottom strip quiet rather than running a line of text through it, because that is where
+the pill lands, and expect the panel to cover part of what you drew while it is up.
 
-If you'd rather fold the words into the composition yourself, render them with
-`useSpeech()` from `@hi/core` and say so in a small `<name>.geom.json` beside your
-saved view (same base name as the `.jsx`):
-
-```
-{ "owns_conversation": true }
-```
-
-That is the *only* thing a sidecar declares, and the only reason to write one — no
-sidecar is the normal case, and it is the right one almost always. With
-`owns_conversation` the host draws neither the column nor the pill, so only declare it if
-you actually render the words; otherwise the person's speech goes invisible.
+Your view declares nothing about itself — no sidecar, no placement, no claim on the
+words. One `.jsx` file under its ref is the whole of what you save.
 
 **It's theirs the moment they reach for it.** If they scroll or tap, the view should
 yield — let them look, and don't fight it.

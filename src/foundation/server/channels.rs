@@ -235,7 +235,6 @@ mod tests {
                 id: "tasks".into(),
                 op: ViewOp::Show,
                 module_url: Some("/views/tasks.mjs".into()),
-                traits: None,
                 view_ref: Some("factory/tasks".into()),
             },
         };

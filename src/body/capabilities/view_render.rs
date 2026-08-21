@@ -147,6 +147,10 @@ pub fn stage_frame() -> Viewport {
 const DEFAULT_SETTLE: Duration = Duration::from_secs(15);
 
 /// What to render.
+///
+/// A view declares nothing about itself — it is full-bleed, one at a time, and the host
+/// owns the conversation over it — so there is nothing here but where to get the module
+/// and what frame to put it in.
 #[derive(Debug, Clone)]
 pub struct RenderRequest {
     /// Base URL of the running hi-agent server, e.g. `http://127.0.0.1:12358`.
@@ -155,11 +159,6 @@ pub struct RenderRequest {
     /// The compiled module's served URL — `/views/_compiled/<hash>.mjs`, as
     /// returned by [`crate::mind::views::ViewCompiler::compile`].
     pub module_url: String,
-    /// Whether this view renders the conversation's live words itself, so the
-    /// review page's caption pills stand down — the view's one declared trait.
-    /// There is no placement to pass: the stage frame is full-bleed and the review
-    /// renders into that same frame, always.
-    pub owns_conversation: bool,
     /// Force the light or dark skin; `None` uses the page default (light).
     pub theme: Option<String>,
     /// Force the language a bundled view selects its copy with (`en`, `zh-Hans`, …),
@@ -198,18 +197,10 @@ impl RenderRequest {
         Self {
             base_url: base_url.into(),
             module_url: module_url.into(),
-            owns_conversation: false,
             theme: None,
             lang: None,
             viewport: stage_frame(),
         }
-    }
-
-    /// Render with the view owning the live words (its `.geom.json` said so), so
-    /// the page's own caption pills stand down and don't double up.
-    pub fn with_conversation(mut self, owns_conversation: bool) -> Self {
-        self.owns_conversation = owns_conversation;
-        self
     }
 
     /// The `/render/view` URL this request loads.
@@ -225,9 +216,6 @@ impl RenderRequest {
             self.base_url.trim_end_matches('/'),
             urlencode(&self.module_url)
         );
-        if self.owns_conversation {
-            url.push_str("&owns_conversation=1");
-        }
         for (key, value) in [("theme", self.theme.as_deref()), ("lang", self.lang.as_deref())] {
             if let Some(v) = value {
                 url.push_str(&format!("&{key}={}", urlencode(v)));
@@ -442,23 +430,16 @@ mod tests {
     }
 
     #[test]
-    fn page_url_carries_the_module_and_declared_traits() {
-        let req = RenderRequest::new("http://127.0.0.1:12358/", "/views/_compiled/ab12.mjs")
-            .with_conversation(true);
+    fn page_url_carries_the_module_and_the_frame() {
+        let req = RenderRequest::new("http://127.0.0.1:12358/", "/views/_compiled/ab12.mjs");
         let url = req.page_url();
         assert!(url.starts_with("http://127.0.0.1:12358/render/view?"), "{url}");
         assert!(url.contains("module=%2Fviews%2F_compiled%2Fab12.mjs"), "{url}");
-        assert!(url.contains("&owns_conversation=1"), "{url}");
         assert!(url.contains("&chrome=titlebar"), "the review reserves the titlebar: {url}");
         assert!(!url.contains("theme="), "an unset theme is not sent: {url}");
-        // No placement on the wire: the review frame is the stage frame.
+        // A view declares nothing: no placement, and no claim on the conversation.
         assert!(!url.contains("region="), "{url}");
         assert!(!url.contains("size="), "{url}");
-    }
-
-    #[test]
-    fn page_url_omits_captions_when_the_host_owns_them() {
-        let url = RenderRequest::new("http://h:1", "/m.mjs").page_url();
         assert!(!url.contains("owns_conversation"), "{url}");
     }
 

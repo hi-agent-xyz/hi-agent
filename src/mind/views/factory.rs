@@ -64,8 +64,8 @@ const PEOPLE_REVIEW: &str = include_str!("factory/people-review.jsx");
 /// The first-hello a brand-new person meets — a first *impression*, not a tutorial.
 /// The agent puts it on screen (ref `factory/welcome`) the once, on a genuine first
 /// meeting (see [`crate::identity::reaction_system_prompt`] + `reaction.md`), while it speaks the
-/// same idea in its own voice. Ships with a `.geom.json` sidecar and owns the canvas
-/// like every other bundled system surface.
+/// same idea in its own voice, and owns the canvas like every other bundled system
+/// surface.
 const WELCOME: &str = include_str!("factory/welcome.jsx");
 /// The real, sealed "hi" mark (red h + blue i, white die-cut, soft shadow) the welcome
 /// poster shows — the exact app icon, served from the views tree at
@@ -226,10 +226,8 @@ mod tests {
         install_factory_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("factory");
         // The first-hello view and its mark land, so `show` with ref
-        // `factory/welcome` resolves. No sidecar: it gets the full canvas like
-        // everything else, and it does not render the words itself.
+        // `factory/welcome` resolves.
         assert!(builtin.join("welcome.jsx").is_file());
-        assert!(!builtin.join("welcome.geom.json").exists());
         assert!(builtin.join("hi-mark.svg").is_file());
         // Reseeding is idempotent (overwrite, not append) — a second boot is clean.
         install_factory_views(dir.path()).unwrap();
@@ -363,45 +361,6 @@ mod tests {
 
         // And the one this was written for: the welcome poster's mark.
         assert!(WELCOME.contains(r#"url("/views/factory/hi-mark.svg")"#));
-    }
-
-    /// Full-bleed is the frame every view gets, so owning the canvas is no longer
-    /// something a view declares — and a sidecar that exists only to say "fill" is
-    /// a file that can be forgotten. What this keeps is that none of them carries
-    /// one: any sidecar left behind here would be a placement the host no longer reads.
-    #[test]
-    fn no_bundled_view_declares_a_placement() {
-        let dir = tempfile::tempdir().unwrap();
-        install_factory_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("factory");
-        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome"];
-        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
-        for name in names {
-            assert!(
-                !builtin.join(format!("{name}.geom.json")).exists(),
-                "{name} must not carry a sidecar"
-            );
-        }
-    }
-
-    /// No bundled view declares a trait any more — the outage notice was the last
-    /// one, and it claimed `owns_captions` while rendering a fixed message rather
-    /// than the conversation. An outage is a condition of the agent's half of the
-    /// screen; it must not take down the record of what was said or the input line
-    /// to answer with (`docs/arch/stage.md`). The sidecar mechanism stays for
-    /// agent-authored views, which is where a real claim can come from.
-    #[test]
-    fn no_bundled_view_declares_traits_and_the_outage_cannot_hide_the_conversation() {
-        let dir = tempfile::tempdir().unwrap();
-        install_factory_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("factory");
-        let sidecars: Vec<String> = std::fs::read_dir(&builtin)
-            .unwrap()
-            .flatten()
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|name| name.ends_with(".geom.json"))
-            .collect();
-        assert!(sidecars.is_empty(), "bundled views declare nothing: {sidecars:?}");
     }
 
     /// The Tools surface has to have a word for every rung the endpoint serves. A role
