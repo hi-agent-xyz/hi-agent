@@ -2446,7 +2446,19 @@ async fn warm_reaction_session(
     // `thread/start`, so the character is in place the moment the session exists. Layer 2
     // is this next line — what it *knows* coming in, handed over before anyone has said
     // anything to it.
-    seed_session(reaction, &session, reaction_id, memo).await;
+    //
+    // **Skipped on a resumed thread, because that thread already lived it.** The seed opens
+    // "Nobody has spoken yet" and then re-hands the transcript tail, the ledger and the
+    // roster — to a mind that has been continuous across four runs and holds all of it. Said
+    // to a rung that remembers the conversation, the first sentence is simply false, and the
+    // rest is twenty thousand characters of duplicate. What the resumed session is missing is
+    // only what changed while the process was down, and it gets that the ordinary way: the
+    // window is re-projected into its first real turn, off a memo left deliberately cold
+    // here.
+    match session.resumed() {
+        true => tracing::info!("reaction resumed its thread; no seed (it was there)"),
+        false => seed_session(reaction, &session, reaction_id, memo).await,
+    }
     tracing::info!("reaction session warmed");
     *held = Some(session);
 }

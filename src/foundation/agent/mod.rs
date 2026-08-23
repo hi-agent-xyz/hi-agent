@@ -16,6 +16,7 @@
 //! session simply by being spawned with it. One shared app-server would have frozen
 //! whatever key was current when the host started.
 
+use anyhow::Context as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -213,27 +214,35 @@ impl AgentLayer {
             resume: None,
         };
 
-        // **The resume policy is these two lookups, and they answer different questions.**
+        // **The resume policy is these two lookups, and the difference between them is what
+        // happens when the resume fails.**
+        //
+        // `resume` is the *caller's*, and the one caller is the boot pass putting back an
+        // errand a stop interrupted ([`crate::body::reaction::reopen_interrupted`]). It is
+        // checked first because an explicit request outranks a policy, and **it does not fall
+        // back**: an errand that opens cold cannot tell it opened cold, so it would take the
+        // `(restart)` note — "check what your last steps actually did" — into a session that
+        // has never done anything, while its owner and the ledger both record an errand that
+        // came back. `agents.md` rules that out; the error travels instead, and the pass turns
+        // it into a task line saying the restart took this one.
         //
         // `take_resumable` is the *host's* rule: which rungs come back after a restart,
         // decided by what `attach_index` seeded — the resident ones, per `agents.md` — so no
-        // rung can be given a different rule by accident. A worker is never in that map.
-        //
-        // `resume` is the *caller's*, and a worker is the only session that ever carries one:
-        // Cognition taking up an errand the last restart killed, naming the thread the boot
-        // glance offered it. That is the "picking a dead errand back up is Cognition's call"
-        // half of `agents.md`, which until now had the thread recorded and no way to ask for
-        // it. It is checked first because an explicit request outranks a policy, and the two
-        // cannot collide in practice: nothing puts a worker in the map.
-        //
-        // Taking rather than reading is what makes a bad thread survivable: the slot is
-        // empty for every later open in this run, so the session that replaces a wedged one
-        // is always cold. An offered worker thread needs no such guard — the offer is a
-        // snapshot of the previous run and this run never adds to it.
-        let id = match resume.or_else(|| crate::foundation::registry::global().take_resumable(role))
-        {
-            Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
-            None => process.open_thread(opts).await?,
+        // rung can be given a different rule by accident. A worker is never in that map. That
+        // one *does* fall back, because a rung's worth does not depend on its memory, and
+        // taking rather than reading is what makes a bad thread survivable: the slot is empty
+        // for every later open in this run, so the session replacing a wedged one is cold.
+        let (id, resumed) = match resume {
+            Some(thread) => (
+                process.resume_thread(&thread, opts).await.with_context(|| {
+                    format!("the errand's thread ({thread}) would not reopen")
+                })?,
+                true,
+            ),
+            None => match crate::foundation::registry::global().take_resumable(role) {
+                Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
+                None => (process.open_thread(opts).await?, false),
+            },
         };
         if let Some(session_id) = session_id.as_ref() {
             crate::foundation::registry::global().note_thread(session_id, &id);
@@ -245,10 +254,14 @@ impl AgentLayer {
             rx,
             self.inner.data_dir.clone(),
             self.inner.privacy.store().clone(),
+            resumed,
         ))
     }
 
-    /// Resume `thread`, falling back to a fresh one if it will not come back.
+    /// Resume a **rung's** `thread`, falling back to a fresh one if it will not come back.
+    ///
+    /// Only the rung path reaches here; an errand's resume has no fallback, for the reason
+    /// [`AgentLayer::session`] gives where it branches.
     ///
     /// **A failed resume is a cold open, never a failed session.** The reasons it can fail
     /// are all ordinary: the thread never took a turn so has no rollout (a boot where
@@ -265,11 +278,11 @@ impl AgentLayer {
         thread: &str,
         role: Role,
         opts: SessionOpts,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<(String, bool)> {
         match process.resume_thread(thread, opts.clone()).await {
             Ok(id) => {
                 tracing::info!(role = role.as_str(), thread_id = %id, "resumed the previous run's thread");
-                Ok(id)
+                Ok((id, true))
             }
             Err(err) => {
                 tracing::info!(
@@ -278,7 +291,11 @@ impl AgentLayer {
                     error = %format!("{err:#}"),
                     "could not resume the previous thread; opening a fresh one"
                 );
-                process.open_thread(opts).await
+                // `false`, and the caller has to be able to see it: what a rung is handed as
+                // its first message depends on whether the thread remembers, and a fallback
+                // that reported itself as a resume would be the same lie an errand's resume
+                // is forbidden from telling.
+                process.open_thread(opts).await.map(|id| (id, false))
             }
         }
     }

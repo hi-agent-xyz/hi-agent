@@ -33,6 +33,15 @@ pub struct AgentSession {
     /// six call sites because this is the only door into a session — a rung added
     /// later gets the substitution without knowing it exists.
     secrets: crate::foundation::privacy::SecretStore,
+    /// Whether this session picked up a thread that already existed, rather than opening one.
+    ///
+    /// **Read by whoever hands the session its first message**, because that message is the
+    /// one thing a resume changes: an opened thread knows nothing and has to be told what it
+    /// is coming into; a resumed one already holds it, and being told again is at best a
+    /// duplicate and at worst a contradiction. Reaction's seed opens "Nobody has spoken yet",
+    /// which was said to a thread carrying 144 turns of conversation on every boot for as long
+    /// as rungs have resumed.
+    resumed: bool,
 }
 
 /// Why a turn stopped.
@@ -351,6 +360,7 @@ impl AgentSession {
         rx: mpsc::UnboundedReceiver<Value>,
         data_dir: PathBuf,
         secrets: crate::foundation::privacy::SecretStore,
+        resumed: bool,
     ) -> Self {
         Self {
             id,
@@ -359,11 +369,17 @@ impl AgentSession {
             current_turn: Arc::new(Mutex::new(None)),
             data_dir,
             secrets,
+            resumed,
         }
     }
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Whether this session came back on a thread that already existed — see the field.
+    pub fn resumed(&self) -> bool {
+        self.resumed
     }
 
     /// Start a turn with `text` and return a streaming handle.
