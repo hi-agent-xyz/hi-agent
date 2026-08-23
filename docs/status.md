@@ -208,6 +208,19 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 
 ## No code at all
 
+- **Reopening an interrupted errand.** [`agents.md#across-a-restart`](arch/agents.md) now says the
+  host reopens any worker a stop caught mid-turn — same thread, same slug, same owner — and that
+  the *offer* it replaces (a list of dead errands in the boot glance, claimed with
+  `CreateWorker(resume:)`) is deleted. **Decided 2026-08-24, no code yet.** What is in the tree is
+  still the offer, and the offer only recognises errands from a run that *crashed*: a clean quit
+  calls `close_all`, every live worker is recorded `Closed`, and `index::lost_workers` — which
+  keeps only `EndedHow::Restart` rows — hands Cognition nothing. Measured on this box: the stop at
+  2026-08-21T08:30:45 closed 16 live workers, 4 of them mid-turn (`turn/started` with no
+  `turn/completed` in their frame logs), including a KUT deploy on gz-02; the next boot logged
+  `offering=0` and Cognition re-derived one of them from the ledger by hand. Three of the four
+  carried a `subject`, so those tasks also sat `doing` with no cause attached —
+  `Registry::lost_subjects` reads the same empty list.
+
 - **A shelf for prepared things.** Working ahead has no store: a prepared artifact lives
   wherever it naturally lives, the fact that it exists rides the worker's report into
   Cognition's own session, and nothing carries it across a wake or a restart. **Deliberate,
@@ -278,8 +291,10 @@ violate the absolute-path invariant, and whether bulk media is still stored twic
 - **`journal.recent()` runs per turn**, parsing the day's jsonl. Caching deliberately not added.
 - **Replay** — the frame log now has readers (`GET /api/workers/{id}/frames`,
   `raw/sessions/index.jsonl`, and `cognition.md` tells the agent where its own stream is), so the
-  substrate has a consumer. What is still undecided is when, if ever, to reach for the wire's own
-  `thread/resume`; threads open `ephemeral: true` today, deliberately.
+  substrate has a consumer. The undecided half is gone: threads open `ephemeral: false`
+  ([`codex/process.rs`](../src/foundation/codex/process.rs)) and `thread/resume` is how Reaction
+  and Cognition come back at boot. What replay would still add is reading a *finished* session's
+  frames, which nothing does.
 
 ---
 

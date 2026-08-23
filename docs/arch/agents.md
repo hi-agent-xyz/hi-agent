@@ -234,14 +234,18 @@ finished, blocked, or dropped — but it is not a state a task may sit in silent
 **The minute after a boot is the one time that sentence needs its cause attached.** The
 switchboard is empty by construction at boot, so every `doing` task reads "nobody on it" at
 once. True — and the reading it invites, that the work was dropped, is wrong: the process died
-holding it, those errands' minds are sitting on the offer, and Cognition needs a turn to read
-the glance and put people back on things. That turn was measured at around eighty seconds, and
-it was long enough for Reaction to report five running tasks as merely open. So the offer is
-not only a list Cognition picks from — it is what the ledger consults to say *why* nobody is on
-a task. A subject still on it reads "nobody on it — the restart cut its worker off, and its
-thread is still on the boot offer": the phrase intact, the cause named, and the cheap move
-named with it. When the errand is picked up or the task moves, the entry drains and the line
-goes back to the bare phrase, which by then means what it says.
+holding those errands, and their sessions are being reopened. That window used to be measured
+in Cognition's first turn — around eighty seconds, long enough for Reaction to report five
+running tasks as merely open — and it is now the length of the resume itself, which needs no
+model turn at all. A subject whose worker is still coming back reads "nobody on it — the
+restart cut its worker off and it is being reopened", and the line goes back to the bare phrase
+the moment that session registers, which by then means what it says.
+
+**An errand that could not be reopened keeps the cause permanently.** A resume that fails is the
+one case where the restart really did take the worker, and the task's line says exactly that
+rather than decaying into an ordinary-looking "nobody on it" — which is indistinguishable from
+work in hand, to the person, to Reaction, and to the rung that wrote it an hour later. Dropping
+an errand is a fine outcome; dropping one silently is the bug this exists against.
 
 "Nobody on it" is said only where nobody is a problem, which is `doing`. An unattended `todo` is
 what a `todo` is, and a `serving` duty is between handler bursts for most of its life, so
@@ -552,52 +556,66 @@ until something resumes from it, and a rule is smaller than a table.
 |---|---|
 | **Reaction**, **Cognition** | resumed from the previous run's thread |
 | **Reflection** | never — a dead pass is re-driven by the frontier cursor, which already points where it stopped |
-| Workers | **not** automatically; the thread is kept and offered, and Cognition decides per errand |
+| Workers | only the ones a stop **interrupted**, reopened by the host on their own thread and under their own slug — no decision, no offer |
 
-**Workers are kept, not resumed.** An errand's thread is full of tool calls whose effects already
-landed, and forty minutes later most errands are stale — which is a judgment, not a rule code can
-apply. So the session directory carries the dead worker's thread id, and the boot glance offers
-it: Cognition reads "this errand died mid-flight, here is its mind" and picks the one worth
-finishing. Resuming one is then the same act as resuming a rung. What this replaces is the
-worker losing its context entirely and being recovered only if a task facet happened to exist.
+**An interrupted errand comes back by itself.** A worker that was *mid-turn* when the host stopped
+— a turn started and never finished, or mail sitting unread in its inbox — is reopened at boot on
+its own thread, under its own slug, owned by the same rung. Nothing decides whether to: it was in
+flight, and the process ending is not a reason for the work to have ended. A worker that had
+already reported and was merely never closed is **not** brought back — there is nothing to finish,
+and a warm session nobody has briefed costs a subprocess to hold for as long as it is held.
 
-**The offer is taken with `CreateWorker(resume:)`, and only ever from the offer.** The handle is
-the thread id, and the host refuses one it did not just offer — a resume is the one argument a
-caller cannot derive from the work in front of it, and an unchecked thread id would fall back to
-a cold open that the caller believes carries context. **Taken is literal — the check and the
-discard are one act**, so a thread leaves the offer the moment it is claimed. Reading it and
-removing it later leaves a window where two calls both pass, and what comes out is two sessions
-opened from one dead errand's mind, each registered as owning the task. This is the take-once
-rule the rungs' resume slot already expresses, and it carries the same consequence: a resume
-that fails downstream retries as a cold open, never as a second claim on the same mind.
-Resuming yields a *new* session: new id, new registration, same prompt. Only where its mind starts differs, because to everything
-downstream — ownership, addressing, reporting — this is a session that began now.
+**The host does this and Cognition is not asked, because the judgment needs the work.** "Is this
+half-done state still worth finishing" is a question about what already landed: whether the tool
+call went out, whether the file was written, whether the deploy took. The session that was doing
+it holds every one of those in its own thread. Cognition holds a title, a subject and a timestamp.
+Handing the decision to the party with less information — while the party with more sits dead on
+disk, one `thread/resume` away — is what the *offer* did, and what this replaces. The offer was a
+list of dead errands appended to the boot glance, from which Cognition picked with
+`CreateWorker(resume:)`; it is deleted, along with the take-once bookkeeping that kept two callers
+from claiming one mind, because nothing claims a mind any more.
 
-**Only the previous run's errands are offered, so the offer ages out by itself.** The directory
-is append-only and unpruned, so any wider filter would re-offer a three-week-old errand at every
-boot until it read as furniture. One restart is the window. Consumption *is* tracked, but only
-within a run — the entry leaves when its thread is taken or a live worker registers under its
-subject — and that lives in memory and dies with the process, so the boot filter cannot lean on
-it.
+**The slug survives, and that is what a slug is for.** A resumed errand keeps the address it had:
+same roster row, same ledger subject, same owner, same name in another rung's `reachable` line.
+Nothing downstream has to be told a restart happened. This inverts the rule it replaces — a
+claimed offer minted a *new* session, reasoning that to everything downstream the errand began
+now. That followed from the offer's own shape, not from anything true about the errand: a list of
+dead threads had no way to hand the old address back. The host reopening the session in place
+does, and the errand is the same errand.
 
-**What the offer is against is not lost context — it is the silent drop.** An errand resumed and
-an errand judged stale are equally fine outcomes; a task left `doing` with nobody on it is not,
-because it is indistinguishable from a task being worked on — to the person, to Reaction, and
-to the rung that wrote it an hour later. So the offer names the alternative rather than leaving
-it implied, and asks for the disposition in the ledger either way. And since an entry leaves
-only when the errand is picked up or the task moves, one still on the offer an hour into the run
-*is* the silent drop — no longer decaying into an ordinary-looking "nobody on it", but saying on
-the task's own line that a restart took its worker and nothing ever replaced it.
+**The host has no brief, so what it hands over is the restart itself.** Cognition wrote the brief
+the first time and there is nobody to write a second one. So the opening prompt carries the fact
+and stops: the host restarted, this much time has passed, and the errand's own last actions may or
+may not have taken effect — establish what actually landed before doing anything further, and say
+so if the answer is that the work is now stale. Judging it stale is a fine outcome. Redoing
+something that already happened is not, and neither is dropping it without looking.
+
+**A resume that cannot happen must not arrive looking like one.** `thread/resume` fails for
+ordinary reasons — the rollout was pruned, `CODEX_HOME` moved, the thread never took a turn and so
+has no rollout at all. A **rung** falls back to a cold open, because a rung's worth does not depend
+on its memory. An **errand must not**: a cold session handed "check what landed before continuing"
+does not know what it was doing, and every party downstream would believe a context exists that
+does not — which is the same failure as a confabulated thread id, arriving by a different door. So
+a failed resume means the errand does not come back at all, and its owner is told so, carrying
+what the directory still knows: title, subject, when it started. The ledger row is then a task
+with nobody on it *and a reason attached*, which is something a rung can act on.
+
+**Only the previous run's errands, so this ages out by itself.** The directory is append-only and
+unpruned, so any wider window would reopen a three-week-old errand at every boot. One restart is
+the window, and an errand that survives a second stop without being finished is one nobody is
+finishing.
 
 **A resumed thread is re-handed its prompt.** `baseInstructions` is passed on resume exactly as
 on open, so a thread resumed by a newer binary runs that binary's prompt — the rungs' prompts are
 reinstalled from the bundle every boot, and an upgrade is the most common reason to restart.
 Without this the oldest threads would be the ones running the most stale instructions.
 
-**A resume that fails is a cold open, and so is the turn after it.** Discarding a wedged session
-is the existing rule; this extends it to the one new way a session can arrive broken. It is what
-keeps "turn it off and on again" working: a thread poisoned badly enough to take the process down
-does not get to take the next one down too.
+**A rung whose resume fails opens cold, and so does the turn after it.** Discarding a wedged
+session is the existing rule; this extends it to the one new way a session can arrive broken. It
+is what keeps "turn it off and on again" working: a thread poisoned badly enough to take the
+process down does not get to take the next one down too. An **errand** is the exception, and for
+the reason above — a cold open it cannot tell apart from a resume is worse for it than not coming
+back.
 
 Three facts about the wire this rests on, verified against the 0.147 pin rather than its docs:
 `thread/resume` accepts fresh `baseInstructions`; a resumed thread appends to its original
