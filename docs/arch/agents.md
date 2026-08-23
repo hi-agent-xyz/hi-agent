@@ -560,14 +560,25 @@ until something resumes from it, and a rule is smaller than a table.
 |---|---|
 | **Reaction**, **Cognition** | resumed from the previous run's thread |
 | **Reflection** | never — a dead pass is re-driven by the frontier cursor, which already points where it stopped |
-| Workers | only the ones a stop **interrupted**, reopened by the host on their own thread and under their own slug — no decision, no offer |
+| Workers | every one **the host ended** — reopened on its own thread, under its own slug, with its inbox — because the host ending a session is not the owner finishing with it |
 
-**An interrupted errand comes back by itself.** A worker that was *mid-turn* when the host stopped
-— a turn started and never finished, or mail sitting unread in its inbox — is reopened at boot on
-its own thread, under its own slug, owned by the same rung. Nothing decides whether to: it was in
-flight, and the process ending is not a reason for the work to have ended. A worker that had
-already reported and was merely never closed is **not** brought back — there is nothing to finish,
-and a warm session nobody has briefed costs a subprocess to hold for as long as it is held.
+**A session the host ended comes back; a session its owner ended does not.** That is the whole
+rule, and it falls out of the lifetime a worker already has: a working session lives until its
+owner calls `CloseWorker` — no timer, no idle-out, nothing else ends one. So a worker still on
+the switchboard when the process stopped is a worker its owner had not finished with, and the
+host closing it on the way down is the host overriding that. Reopening it puts the decision back
+where it lives. A worker the owner *had* closed stays closed, because that was a decision, not
+an interruption.
+
+**Which means "was it working?" is the wrong question, and it was the first one asked here.** An
+earlier draft reopened only the errands caught *mid-turn* — the reasoning being that a worker
+which had reported has nothing left to finish, so reopening it spends a subprocess on nobody.
+True about the *work* and false about the *session*: what a warm idle worker holds is not an
+unfinished task, it is a place its owner can send the next instruction to, with everything it
+already learned still in it. Dropping twelve of those (the count from one real stop, out of
+sixteen) does not lose work — it loses every follow-up that would have been a sentence, and
+makes each one a fresh session with a brief written from memory. Mid-turn still matters, but for
+what the session is *handed*, not for whether it exists.
 
 **The host does this and Cognition is not asked, because the judgment needs the work.** "Is this
 half-done state still worth finishing" is a question about what already landed: whether the tool
@@ -587,12 +598,32 @@ now. That followed from the offer's own shape, not from anything true about the 
 dead threads had no way to hand the old address back. The host reopening the session in place
 does, and the errand is the same errand.
 
-**The host has no brief, so what it hands over is the restart itself.** Cognition wrote the brief
-the first time and there is nobody to write a second one. So the opening prompt carries the fact
-and stops: the host restarted, this much time has passed, and the errand's own last actions may or
-may not have taken effect — establish what actually landed before doing anything further, and say
-so if the answer is that the work is now stale. Judging it stale is a fine outcome. Redoing
-something that already happened is not, and neither is dropping it without looking.
+**What a reopened session is handed depends on what it was doing, and one of the two answers is
+nothing at all.**
+
+- **Caught mid-turn** — a turn started and never finished. The host has no brief to give it
+  (Cognition wrote the first one and there is nobody to write a second), so the opening prompt
+  carries the fact and stops: the host restarted, this much time has passed, and its own last
+  actions may or may not have taken effect — establish what actually landed before doing anything
+  further, and say so if the work is now stale. Judging it stale is a fine outcome. Redoing
+  something that already happened is not, and neither is dropping it without looking.
+- **Idle, waiting on its owner** — it is handed **no prompt**, and goes straight back to waiting
+  for mail. It was not doing anything; a "the host restarted" turn would be a model turn spent
+  on nothing, and the one thing worse than that is a session inventing work to justify having
+  been woken. Its owner does not have to know it went away.
+
+**Its inbox comes back with it.** Mail delivered and not yet read is *not* lost to the stop — it
+is restored to the reopened session ahead of anything else, because the sender was told
+`Delivered` and a mailbox that quietly drops what it accepted is worse than one that refuses.
+What rides in front of restored mail is a single host line saying how long the gap was, so an
+instruction written before the restart is not read as though it arrived just now.
+
+**A task held for energy is held where the restart can see it.** A worker whose turn hits a
+402 does not fail — the drive loop keeps that exact task and reruns it when the balance says
+`Resume`. Held in a local, that task is invisible to everything: the session reads as idle, so
+a stop would reopen it with no prompt and no mail, and it would wait forever for an instruction
+it was already holding. So the hold is recorded on the switchboard, and a reopened session is
+re-handed it.
 
 **A resume that cannot happen must not arrive looking like one.** `thread/resume` fails for
 ordinary reasons — the rollout was pruned, `CODEX_HOME` moved, the thread never took a turn and so

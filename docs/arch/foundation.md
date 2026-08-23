@@ -266,6 +266,27 @@ Three properties, and each answers a specific failure:
 - **It is a directory, not a second switchboard.** Every row in it has ended. Nothing routes
   through it, which is why it can hold ids at all (see above).
 
+**Mail is durable beside it, in `raw/sessions/mail.jsonl`, and for two readers rather than
+one.** Every delivered message appends a `sent` line; every `take_pending` that drains an
+inbox appends a `read` line. That is enough to answer both questions the in-memory ring could
+not survive a restart to answer:
+
+- **What have these two been saying to each other?** The ring
+  ([`registry::mail`](../../src/foundation/registry/mail.rs)) is seeded from the tail at boot,
+  so the arrow between two cards on the sessions page opens a real exchange instead of an
+  empty one. Before this, a restart emptied the ring — which was harmless only for as long as
+  the restart also emptied the roster it drew arrows between. It no longer does: a reopened
+  errand and its owner are both back on the page, so an arrow between two sessions that have
+  been talking for an hour would open onto nothing.
+- **What was delivered and never read?** `sent` minus `read`, per session, from the previous
+  run. Those messages are restored to a reopened session's inbox rather than dropped, because
+  the sender was told `Delivered` — see [`agents.md#across-a-restart`](agents.md). A mailbox
+  that quietly discards what it accepted is worse than one that refuses.
+
+Same shape and same limits as the index it sits beside: append-only, unpruned, folded from a
+bounded tail, and evidence first — losing it costs history and a restored inbox, never a
+running agent.
+
 The live roster (`GET /api/workers`) and the ended list (`GET /api/workers/ended`) stay
 **separate endpoints**. Everything on the first is live by construction; merging the two would
 mean a caller could no longer tell *running* from *ran*, which is the confusion the directory
