@@ -644,6 +644,7 @@ mod tests {
 
     fn lost(title: &str, thread: &str) -> registry::index::Ended {
         registry::index::Ended {
+            interrupted: true,
             run: "run-prev".into(),
             session: 5.into(),
             role: "worker".into(),

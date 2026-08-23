@@ -132,6 +132,12 @@ pub enum Record {
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<SessionId>,
         turns: u64,
+        /// Whether this session still had work in hand when it stopped — see
+        /// [`Ended::interrupted`]. Absent on rows written before it was recorded, which
+        /// read as `false`: the sessions those rows describe are long past being resumable
+        /// anyway, so guessing `true` for them would only reopen furniture.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        interrupted: bool,
     },
 }
 
@@ -195,6 +201,26 @@ pub struct Ended {
     /// resumes; a worker's is what the boot glance offers Cognition.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
+    /// Whether work was still in hand when this session ended — a turn running, or mail it
+    /// never got to read.
+    ///
+    /// **This is the whole difference between an errand a stop cut off and one that was
+    /// merely never closed.** A worker holds its subprocess until its owner says
+    /// `hi_close_worker`, so most of what is alive at a stop has already reported and has
+    /// nothing to finish; the 2026-08-21 quit closed sixteen workers of which four were
+    /// mid-turn. Reopening all sixteen would spend twelve subprocesses on sessions nobody
+    /// is going to brief.
+    ///
+    /// Read from the switchboard at [`Registry::unregister`](super::Registry::unregister),
+    /// which is the last moment anyone knows. It is `true` for **every**
+    /// [`EndedHow::Restart`] row, because a crash records nothing and the alternative to
+    /// guessing is dropping work that was in flight — the direction of the error is chosen,
+    /// not overlooked.
+    ///
+    /// One case it still misses: a worker holding a task after a 402, whose retry lives in
+    /// the drive loop's own `next_task` and is invisible here. It reads as idle and will not
+    /// be reopened.
+    pub interrupted: bool,
 }
 
 impl Ended {
@@ -424,6 +450,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                 title,
                 owner,
                 turns,
+                interrupted,
             } => {
                 closed.insert((run.clone(), session.clone()));
                 ends.push(Ended {
@@ -439,6 +466,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     how: EndedHow::Closed,
                     turns: Some(turns),
                     thread: None,
+                    interrupted,
                 });
             }
             Record::Thread { run, session, thread_id, .. } => {
@@ -463,6 +491,9 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     how: EndedHow::Restart,
                     turns: None,
                     thread: None,
+                    // Nothing recorded what this one was doing, because recording it is
+                    // exactly what a crash skips — see [`Ended::interrupted`].
+                    interrupted: true,
                 });
             }
         }
@@ -505,6 +536,7 @@ pub fn ended_now(
     turns: u64,
     started: DateTime<Utc>,
     thread: Option<String>,
+    interrupted: bool,
 ) -> Ended {
     Ended {
         run: run.to_string(),
@@ -519,6 +551,7 @@ pub fn ended_now(
         how: EndedHow::Closed,
         turns: Some(turns),
         thread,
+        interrupted,
     }
 }
 
@@ -535,6 +568,7 @@ pub fn closed_record(ended: &Ended) -> Record {
         title: ended.title.clone(),
         owner: ended.owner.clone(),
         turns: ended.turns.unwrap_or(0),
+        interrupted: ended.interrupted,
     }
 }
 
@@ -668,7 +702,7 @@ mod tests {
     /// some boots and not others.
     #[test]
     fn a_thread_binds_to_its_row_in_either_order() {
-        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 3, ts(1), None));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 3, ts(1), None, false));
         let thread = thread_record("run-a", &7.into(), "th-cognition", ts(2));
 
         for text in [
@@ -726,7 +760,7 @@ mod tests {
         for (session, at) in [(1u64, ts(1)), (2, ts(20)), (3, ts(10))] {
             let session = &SessionId::from(session);
             text.push_str(&line(&closed_record(&{
-                let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None);
+                let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None, false);
                 e.ended = Some(at);
                 e
             })));
@@ -761,8 +795,7 @@ mod tests {
             None,
             2,
             ts(1),
-            None,
-        ))));
+            None, false))));
         text.push_str(&line(&thread_record("run-a", &4.into(), "th-4", ts(2))));
 
         let offered = lost_workers(&fold(&text, "run-b"));
@@ -818,7 +851,7 @@ mod tests {
     /// than resumed as an empty one — an upgrade's first boot is exactly this case.
     #[test]
     fn a_row_without_a_thread_is_not_resumable() {
-        let closed = closed_record(&ended_now("run-a", &1.into(), Role::Reaction, None, "", None, 4, ts(1), None));
+        let closed = closed_record(&ended_now("run-a", &1.into(), Role::Reaction, None, "", None, 4, ts(1), None, false));
         let plan = resumable(&fold(&line(&closed), "run-b"));
         assert!(plan.is_empty());
     }
@@ -833,7 +866,7 @@ mod tests {
         started: DateTime<Utc>,
         ended: DateTime<Utc>,
     ) -> Record {
-        let mut row = ended_now(run, &SessionId::from(session), role, None, "", None, 1, started, None);
+        let mut row = ended_now(run, &SessionId::from(session), role, None, "", None, 1, started, None, false);
         row.ended = Some(ended);
         closed_record(&row)
     }
@@ -851,8 +884,7 @@ mod tests {
             Some("workers-view"),
             4,
             ts(10),
-            None,
-        ));
+            None, false));
         let ends = fold(&line(&closed), "run-b");
         assert_eq!(ends.len(), 1);
         let e = &ends[0];
@@ -892,7 +924,7 @@ mod tests {
     #[test]
     fn an_opened_that_later_closed_is_one_closed_row() {
         let opened = opened_record("run-a", &7.into(), Role::Cognition, None, "", None, ts(1));
-        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 12, ts(1), None));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 12, ts(1), None, false));
         let ends = fold(&format!("{}{}", line(&opened), line(&closed)), "run-b");
         assert_eq!(ends.len(), 1, "one session, one row");
         assert_eq!(ends[0].how, EndedHow::Closed);
@@ -939,7 +971,7 @@ mod tests {
     /// the window still renders. One corrupt line must not blank the page.
     #[test]
     fn a_partial_or_corrupt_line_is_skipped_not_fatal() {
-        let good = closed_record(&ended_now("run-a", &5.into(), Role::Cognition, None, "", None, 1, ts(1), None));
+        let good = closed_record(&ended_now("run-a", &5.into(), Role::Cognition, None, "", None, 1, ts(1), None, false));
         let text = format!("run\":\"run-a\",\"session\":4}}\n{}not json\n\n", line(&good));
         let ends = fold(&text, "run-b");
         assert_eq!(ends.len(), 1);
@@ -986,8 +1018,7 @@ mod tests {
             None,
             2,
             ts(3),
-            None,
-        )));
+            None, false)));
 
         writer.flush().await;
 
@@ -1018,7 +1049,7 @@ mod tests {
         let mut text = String::new();
         for i in 1..=(RECENT_CAP as u64 + 20) {
             let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
-            let mut e = ended_now("run-a", &SessionId::from(i), Role::Cognition, None, "", None, 1, at, None);
+            let mut e = ended_now("run-a", &SessionId::from(i), Role::Cognition, None, "", None, 1, at, None, false);
             e.ended = Some(at);
             text.push_str(&line(&closed_record(&e)));
         }

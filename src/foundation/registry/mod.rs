@@ -967,6 +967,11 @@ impl Registry {
                 e.turns,
                 e.started,
                 e.thread.clone(),
+                // The last moment anyone knows whether this session still had work in
+                // hand. Mail counts alongside a running turn: a worker that was sent
+                // something and stopped before reading it is owed a turn it never took,
+                // and its sender was told `Delivered` — see [`index::Ended::interrupted`].
+                e.busy || !e.inbox.pending.is_empty(),
             ))
         } else {
             None
@@ -1538,6 +1543,50 @@ mod tests {
         assert_eq!(total, mail::KEPT, "the oldest are dropped, not accumulated");
         assert_eq!(tail.len(), 3);
         assert_eq!(tail[2].text, format!("message {}", mail::KEPT + 9));
+    }
+
+    /// What separates an errand a stop cut off from one that was merely never closed.
+    ///
+    /// Both are alive on the switchboard at the same moment and both get a `closed` row; only
+    /// the first has anything left to finish. Nothing recorded the difference until now, so a
+    /// boot could not tell four cut-off errands from twelve that had already reported — see
+    /// [`index::Ended::interrupted`].
+    #[test]
+    fn a_close_records_whether_work_was_still_in_hand() {
+        let r = reg();
+        let mid_turn = mint();
+        let unread_mail = mint();
+        let reported = mint();
+        let owner = mint();
+        for (id, title) in [
+            (&mid_turn, "deploying"),
+            (&unread_mail, "waiting on a follow-up"),
+            (&reported, "done and never closed"),
+        ] {
+            r.register(
+                id.clone(),
+                Role::Worker(WorkerType::General),
+                Some(owner.clone()),
+                title.to_string(),
+                None,
+            );
+        }
+
+        r.start_turn(&mid_turn);
+        r.send(&owner, &unread_mail, "one more thing".into());
+        r.start_turn(&reported);
+        r.finish_turn(&reported, TurnOutcome::Completed);
+
+        r.close_all();
+
+        let by_title: std::collections::HashMap<_, _> = r
+            .recent_ended(10)
+            .into_iter()
+            .map(|e| (e.title.clone().unwrap_or_default(), e.interrupted))
+            .collect();
+        assert_eq!(by_title["deploying"], true, "a turn was running");
+        assert_eq!(by_title["waiting on a follow-up"], true, "it was owed a turn it never took");
+        assert_eq!(by_title["done and never closed"], false, "it had reported");
     }
 
     /// The offer survives the trip through `attach_index`, and survives this run's own

@@ -1933,6 +1933,7 @@ mod tests {
             owner: None,
         };
         let closed = Record::Closed {
+            interrupted: false,
             run: "old-run".into(),
             session: "worker-a".parse().unwrap(),
             subject: None,
