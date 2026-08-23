@@ -5,10 +5,31 @@
 //! the facts; a second counters database would be free to drift from every one of them.
 //! The response carries coverage alongside totals so legacy cumulative token records and
 //! unreadable lines are visible rather than silently presented as exact.
+//!
+//! Derived on read only pays if the read is proportional to what was asked for, and one
+//! input grows without bound: the frame logs, which keep every JSON-RPC line in both
+//! directions forever. Three things keep the scan proportional.
+//!
+//! 1. **A log older than the range is never opened.** A log's mtime is its last frame, so
+//!    `mtime < from` means none of its frames are in the window. Skipped logs are counted
+//!    in [`Coverage::frame_logs_out_of_window`] rather than silently dropped. `range=all`
+//!    has no `from` and so still reads everything — that is what it asks for.
+//! 2. **One cheap pass per line, not two full ones.** The scan wants a handful of fields,
+//!    not the folded message. Deltas — most of every log, and the reason a log gets large
+//!    — are recognised by method and dropped without their payload being parsed at all.
+//! 3. **Logs are scanned concurrently**, on the blocking pool, and merged. The work is
+//!    JSON parsing rather than I/O wait, so the useful width is the machine's cores.
+//!
+//! What it counts is [`crate::foundation::codex::messages::fold`]'s reading of the same
+//! log minus the text: one message per item id, kind from the first frame carrying that
+//! id and status from the last. Both readings must agree about what an item *is*, which
+//! is why [`messages::kind_of`] is shared rather than copied.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -19,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::foundation::broker::KEY_BROKER_CHECKED_AT;
+use crate::foundation::codex::messages;
 use crate::foundation::credentials::{Credentials, Mode, get_setting};
 use crate::foundation::registry::{self, index::Record};
 use crate::foundation::server::{AppState, tools};
@@ -100,6 +122,9 @@ struct Coverage {
     session_index_records: usize,
     session_index_unreadable: usize,
     frame_logs: usize,
+    /// Of those, the ones whose last frame predates the range and so were never opened.
+    /// Zero for `range=all`, which asks for everything.
+    frame_logs_out_of_window: usize,
     frame_logs_unreadable: usize,
     unreadable_frames: usize,
     journal_entries: usize,
@@ -319,13 +344,58 @@ struct FrameAggregation {
     tool_roles: HashMap<String, u64>,
     tool_worker_types: HashMap<String, u64>,
     tool_statuses: HashMap<String, u64>,
-    token_sessions: HashSet<(String, String)>,
-    token_turns: HashSet<(String, String, u64)>,
+    /// Sessions that reported token usage in the window, and the turns inside them. Plain
+    /// counts rather than sets of keys: a session's frames live in exactly one file, so a
+    /// per-file count of distinct turns needs no cross-file de-duplication.
+    token_sessions: usize,
+    token_turns: usize,
     token_updates: usize,
     estimated_token_updates: usize,
     frame_logs: usize,
+    frame_logs_out_of_window: usize,
     frame_logs_unreadable: usize,
     unreadable_frames: usize,
+}
+
+impl FrameAggregation {
+    fn absorb(&mut self, other: Self) {
+        Usage {
+            total: other.tokens.total,
+            input: other.tokens.input,
+            output: other.tokens.output,
+            cached_input: other.tokens.cached_input,
+            reasoning_output: other.tokens.reasoning_output,
+        }
+        .add_to(&mut self.tokens);
+        self.tools.calls += other.tools.calls;
+        self.tools.failed_calls += other.tools.failed_calls;
+        self.tools.commands += other.tools.commands;
+        self.tools.edits += other.tools.edits;
+        self.tools.web_searches += other.tools.web_searches;
+        self.tools.context_compactions += other.tools.context_compactions;
+        for (name, (count, failed)) in other.tool_names {
+            let entry = self.tool_names.entry(name).or_insert((0, 0));
+            entry.0 += count;
+            entry.1 += failed;
+        }
+        for (name, count) in other.tool_roles {
+            *self.tool_roles.entry(name).or_default() += count;
+        }
+        for (name, count) in other.tool_worker_types {
+            *self.tool_worker_types.entry(name).or_default() += count;
+        }
+        for (name, count) in other.tool_statuses {
+            *self.tool_statuses.entry(name).or_default() += count;
+        }
+        self.token_sessions += other.token_sessions;
+        self.token_turns += other.token_turns;
+        self.token_updates += other.token_updates;
+        self.estimated_token_updates += other.estimated_token_updates;
+        self.frame_logs += other.frame_logs;
+        self.frame_logs_out_of_window += other.frame_logs_out_of_window;
+        self.frame_logs_unreadable += other.frame_logs_unreadable;
+        self.unreadable_frames += other.unreadable_frames;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -448,10 +518,11 @@ async fn build_stats(state: &AppState, range: Range, now: DateTime<Utc>) -> Stat
     summary.tokens = frame_aggregation.tokens;
     summary.tools = frame_aggregation.tools;
     coverage.frame_logs = frame_aggregation.frame_logs;
+    coverage.frame_logs_out_of_window = frame_aggregation.frame_logs_out_of_window;
     coverage.frame_logs_unreadable = frame_aggregation.frame_logs_unreadable;
     coverage.unreadable_frames = frame_aggregation.unreadable_frames;
-    coverage.token_sessions = frame_aggregation.token_sessions.len();
-    coverage.token_turns = frame_aggregation.token_turns.len();
+    coverage.token_sessions = frame_aggregation.token_sessions;
+    coverage.token_turns = frame_aggregation.token_turns;
     coverage.token_updates = frame_aggregation.token_updates;
     coverage.estimated_token_updates = frame_aggregation.estimated_token_updates;
     coverage.legacy_estimated = frame_aggregation.estimated_token_updates > 0;
@@ -756,6 +827,31 @@ fn finish_session_breakdowns(rows: HashMap<String, SessionBreakdown>) -> Vec<Ses
     rows
 }
 
+/// One session's frame log, named before anything is read.
+struct FrameLog {
+    path: PathBuf,
+    /// Role and worker type from the session index, when the index knows this session.
+    /// `None` falls back to the `role` the log's own first frame carries.
+    meta: Option<(String, Option<String>)>,
+}
+
+/// What one frame log contributed, kept apart so logs can be scanned concurrently.
+#[derive(Debug, Default)]
+struct FrameScan {
+    agg: FrameAggregation,
+    series: BTreeMap<NaiveDate, DailyPoint>,
+    earliest: Option<DateTime<Utc>>,
+}
+
+/// How many logs to have in flight. Each is a `spawn_blocking` doing JSON parsing rather
+/// than waiting on I/O, so the useful width is the machine's parallelism — and the cap
+/// bounds how many whole logs are resident at once.
+fn scan_width() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .clamp(2, 16)
+}
+
 async fn aggregate_frames(
     data_dir: &Path,
     window: &Window,
@@ -763,6 +859,8 @@ async fn aggregate_frames(
     series: &mut BTreeMap<NaiveDate, DailyPoint>,
     earliest: &mut Option<DateTime<Utc>>,
 ) -> FrameAggregation {
+    use futures::stream::StreamExt as _;
+
     let root = layout::raw_root(data_dir).join(layout::SESSIONS_DIR);
     let mut out = FrameAggregation::default();
     let mut runs = match tokio::fs::read_dir(&root).await {
@@ -773,6 +871,11 @@ async fn aggregate_frames(
             return out;
         }
     };
+    // A log's mtime is when its last frame was appended, so a log that stopped before the
+    // window began holds nothing the window wants. Cheaper than opening it to find out,
+    // and the whole reason a 7-day question does not cost a year of frames.
+    let cutoff = window.from.map(SystemTime::from);
+    let mut pending: Vec<FrameLog> = Vec::new();
     while let Ok(Some(run_entry)) = runs.next_entry().await {
         let Ok(file_type) = run_entry.file_type().await else {
             continue;
@@ -790,102 +893,272 @@ async fn aggregate_frames(
             let Some(session) = name.strip_suffix(".jsonl").map(str::to_string) else {
                 continue;
             };
-            let Ok(file_type) = log.file_type().await else {
+            let Ok(metadata) = log.metadata().await else {
                 continue;
             };
-            if !file_type.is_file() {
+            if !metadata.is_file() {
                 continue;
             }
             out.frame_logs += 1;
-            let text = match tokio::fs::read_to_string(log.path()).await {
-                Ok(text) => text,
-                Err(error) => {
-                    out.frame_logs_unreadable += 1;
-                    tracing::warn!(error = %error, path = %log.path().display(), "stats could not read a session log");
-                    continue;
-                }
-            };
-            let fallback_role = frame_role(&text);
-            let (role, worker_type) = session_meta
-                .get(&(run.clone(), session.clone()))
-                .cloned()
-                .unwrap_or_else(|| (fallback_role.unwrap_or_else(|| "unknown".to_string()), None));
-            aggregate_frame_text(
-                &run,
-                &session,
-                &role,
-                worker_type.as_deref(),
-                &text,
-                window,
-                &mut out,
-                series,
-                earliest,
-            );
+            let last_written = metadata.modified().ok();
+            if let (Some(cutoff), Some(last_written)) = (cutoff, last_written)
+                && last_written < cutoff
+            {
+                out.frame_logs_out_of_window += 1;
+                continue;
+            }
+            pending.push(FrameLog {
+                meta: session_meta.get(&(run.clone(), session)).cloned(),
+                path: log.path(),
+            });
+        }
+    }
+
+    let scans = futures::stream::iter(pending)
+        .map(|log| {
+            let window = window.clone();
+            async move {
+                tokio::task::spawn_blocking(move || scan_frame_log(&log, &window))
+                    .await
+                    .unwrap_or_default()
+            }
+        })
+        .buffer_unordered(scan_width())
+        .collect::<Vec<FrameScan>>()
+        .await;
+    for scan in scans {
+        out.absorb(scan.agg);
+        for (date, point) in scan.series {
+            let into = series.entry(date).or_insert_with(|| DailyPoint {
+                date: date.to_string(),
+                ..DailyPoint::default()
+            });
+            merge_point(into, &point);
+        }
+        if let Some(at) = scan.earliest {
+            note_earliest(earliest, at);
         }
     }
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-fn aggregate_frame_text(
-    run: &str,
-    session: &str,
-    role: &str,
-    worker_type: Option<&str>,
+fn merge_point(into: &mut DailyPoint, from: &DailyPoint) {
+    into.tokens = into.tokens.saturating_add(from.tokens);
+    into.turns += from.turns;
+    into.sessions += from.sessions;
+    into.tool_calls += from.tool_calls;
+    into.user_messages += from.user_messages;
+    into.agent_replies += from.agent_replies;
+    into.task_completions += from.task_completions;
+}
+
+/// The envelope the tap writes around each wire line, read for the four fields the scan
+/// wants. Everything else in the frame is skipped by the deserializer rather than built
+/// into a tree, which is most of why a pass over a large log is cheap.
+///
+/// `ts`, `dir` and `role` borrow out of the line: the tap writes an RFC3339 stamp, a
+/// direction word and a role word, none of which can contain a JSON escape. `raw` is a
+/// JSON document inside a JSON string, so it always has escapes and always allocates —
+/// which is fine, since anything that reads it needs it unescaped anyway.
+#[derive(Deserialize)]
+struct FrameEnvelope<'a> {
+    #[serde(default, borrow)]
+    ts: Option<&'a str>,
+    #[serde(default, borrow)]
+    dir: Option<&'a str>,
+    #[serde(default, borrow)]
+    role: Option<&'a str>,
+    #[serde(default, borrow)]
+    raw: Option<Cow<'a, str>>,
+}
+
+/// A wire line read for its method alone, to decide whether it is worth parsing properly.
+#[derive(Deserialize)]
+struct WireMethod<'a> {
+    #[serde(default, borrow)]
+    method: Option<Cow<'a, str>>,
+}
+
+/// One item, accumulated across the frames that carry its id — the same message
+/// [`messages::fold`] would produce, reduced to what a count needs.
+struct ItemTally {
+    kind: &'static str,
+    at: Option<DateTime<Utc>>,
+    status: Option<String>,
+    tool: Option<String>,
+    errored: bool,
+}
+
+fn scan_frame_log(log: &FrameLog, window: &Window) -> FrameScan {
+    let mut scan = FrameScan::default();
+    let text = match std::fs::read_to_string(&log.path) {
+        Ok(text) => text,
+        Err(error) => {
+            scan.agg.frame_logs_unreadable = 1;
+            tracing::warn!(error = %error, path = %log.path.display(), "stats could not read a session log");
+            return scan;
+        }
+    };
+    scan_frame_text(log.meta.clone(), &text, window, &mut scan);
+    scan
+}
+
+fn scan_frame_text(
+    meta: Option<(String, Option<String>)>,
     text: &str,
     window: &Window,
-    out: &mut FrameAggregation,
-    series: &mut BTreeMap<NaiveDate, DailyPoint>,
-    earliest: &mut Option<DateTime<Utc>>,
+    scan: &mut FrameScan,
 ) {
-    let folded = crate::foundation::codex::messages::fold(text);
-    out.unreadable_frames = out.unreadable_frames.saturating_add(folded.unreadable);
-    for turn in folded.turns {
-        let Some(at) = turn.started.as_deref().and_then(parse_ts) else {
+    let out = &mut scan.agg;
+    let mut items: HashMap<String, ItemTally> = HashMap::new();
+    let mut turn = 0u64;
+    let mut token_turns: HashSet<u64> = HashSet::new();
+    let mut previous_total: Option<Usage> = None;
+    let mut role = meta.as_ref().map(|(role, _)| role.clone());
+    let worker_type = meta.and_then(|(_, worker_type)| worker_type);
+    let mut first_ts_seen = false;
+
+    for (index, line) in text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        let Ok(envelope) = serde_json::from_str::<FrameEnvelope>(line) else {
+            out.unreadable_frames += 1;
             continue;
         };
-        note_earliest(earliest, at);
-        if window.includes(at) {
-            point(series, at).turns += 1;
+        let at = envelope.ts.and_then(parse_ts);
+        // Frames are appended in order, so the first datable one is this log's earliest —
+        // one parse rather than one per frame.
+        if !first_ts_seen && let Some(at) = at {
+            first_ts_seen = true;
+            scan.earliest = Some(scan.earliest.map_or(at, |current| current.min(at)));
+        }
+        if role.is_none() {
+            role = envelope.role.map(str::to_string);
+        }
+        // stderr is not JSON-RPC — it is whatever the subprocess printed. `fold` reads it
+        // as a message; nothing here counts one, and it is not unreadable either.
+        if envelope.dir == Some("stderr") {
+            continue;
+        }
+        let raw = envelope.raw.as_deref().unwrap_or_default();
+        let Ok(wire) = serde_json::from_str::<WireMethod>(raw) else {
+            out.unreadable_frames += 1;
+            continue;
+        };
+        match wire.method.as_deref().unwrap_or_default() {
+            "turn/started" => {
+                turn += 1;
+                if let Some(at) = at
+                    && window.includes(at)
+                {
+                    point(&mut scan.series, at).turns += 1;
+                }
+            }
+            "thread/tokenUsage/updated" => {
+                let Ok(body) = serde_json::from_str::<Value>(raw) else {
+                    continue;
+                };
+                let params = body.get("params").unwrap_or(&Value::Null);
+                let usage_root = params
+                    .get("tokenUsage")
+                    .or_else(|| params.get("usage"))
+                    .unwrap_or(params);
+                let total = usage_root.get("total").and_then(parse_usage);
+                let exact = usage_root.get("last").and_then(parse_usage).or_else(|| {
+                    (usage_root.get("inputTokens").is_some()
+                        || usage_root.get("outputTokens").is_some())
+                    .then(|| parse_usage(usage_root))
+                    .flatten()
+                });
+                let (usage, estimated) = match (exact, total) {
+                    (Some(usage), _) => (usage, false),
+                    (None, Some(total)) => {
+                        let delta =
+                            previous_total.map_or(total, |before| total.positive_delta(before));
+                        (delta, true)
+                    }
+                    (None, None) => continue,
+                };
+                if let Some(total) = total {
+                    previous_total = Some(total);
+                }
+                let Some(at) = at else { continue };
+                if !window.includes(at) {
+                    continue;
+                }
+                usage.add_to(&mut out.tokens);
+                let daily = point(&mut scan.series, at);
+                daily.tokens = daily.tokens.saturating_add(usage.total);
+                token_turns.insert(turn);
+                out.token_updates += 1;
+                if estimated {
+                    out.estimated_token_updates += 1;
+                }
+            }
+            "item/started" | "item/updated" | "item/completed" => {
+                let Ok(body) = serde_json::from_str::<Value>(raw) else {
+                    continue;
+                };
+                let Some(item) = body.get("params").and_then(|params| params.get("item")) else {
+                    continue;
+                };
+                // An item with no id cannot be folded onto later, so it is keyed by the
+                // frame it arrived on — one message, never merged, exactly as `fold` does.
+                let key = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("seq:{index}"));
+                let tally = items.entry(key).or_insert_with(|| ItemTally {
+                    kind: messages::kind_of(item),
+                    at,
+                    status: None,
+                    tool: None,
+                    errored: false,
+                });
+                if let Some(status) = item.get("status").and_then(Value::as_str) {
+                    tally.status = Some(status.to_string());
+                }
+                if let Some(tool) = item.get("tool").and_then(Value::as_str) {
+                    tally.tool = Some(tool.to_string());
+                }
+                tally.errored |= item.get("error").is_some_and(|error| !error.is_null());
+            }
+            // Deltas and protocol housekeeping. A delta's payload is never parsed: it is
+            // a fragment of an item whose own frames already say everything a count needs,
+            // and there are more of them than of everything else put together.
+            _ => {}
         }
     }
-    for message in folded.messages {
-        let Some(at) = message.ts.as_deref().and_then(parse_ts) else {
-            continue;
-        };
-        note_earliest(earliest, at);
+
+    let role = role.unwrap_or_else(|| "unknown".to_string());
+    for tally in items.into_values() {
+        let Some(at) = tally.at else { continue };
         if !window.includes(at) {
             continue;
         }
-        match message.kind {
+        match tally.kind {
             "tool" => {
                 out.tools.calls += 1;
-                point(series, at).tool_calls += 1;
-                let name = message
-                    .body
-                    .get("tool")
-                    .and_then(Value::as_str)
+                point(&mut scan.series, at).tool_calls += 1;
+                let name = tally
+                    .tool
                     .filter(|name| !name.trim().is_empty())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let failed = message.status.as_deref() == Some("failed")
-                    || message
-                        .body
-                        .get("error")
-                        .is_some_and(|error| !error.is_null());
+                    .unwrap_or_else(|| "unknown".to_string());
+                let failed = tally.status.as_deref() == Some("failed") || tally.errored;
                 if failed {
                     out.tools.failed_calls += 1;
                 }
                 let entry = out.tool_names.entry(name).or_insert((0, 0));
                 entry.0 += 1;
                 entry.1 += u64::from(failed);
-                *out.tool_roles.entry(role.to_string()).or_default() += 1;
-                if let Some(worker_type) = worker_type {
-                    *out.tool_worker_types
-                        .entry(worker_type.to_string())
-                        .or_default() += 1;
+                *out.tool_roles.entry(role.clone()).or_default() += 1;
+                if let Some(worker_type) = &worker_type {
+                    *out.tool_worker_types.entry(worker_type.clone()).or_default() += 1;
                 }
-                let status = message.status.as_deref().unwrap_or("unknown").to_string();
+                let status = tally.status.unwrap_or_else(|| "unknown".to_string());
                 *out.tool_statuses.entry(status).or_default() += 1;
             }
             "command" => out.tools.commands += 1,
@@ -895,76 +1168,8 @@ fn aggregate_frame_text(
             _ => {}
         }
     }
-
-    let mut previous_total: Option<Usage> = None;
-    let mut turn = 0u64;
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(envelope) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        let raw = envelope
-            .get("raw")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let Ok(body) = serde_json::from_str::<Value>(raw) else {
-            continue;
-        };
-        let method = body
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if method == "turn/started" {
-            turn += 1;
-            continue;
-        }
-        if method != "thread/tokenUsage/updated" {
-            continue;
-        }
-        let params = body.get("params").unwrap_or(&Value::Null);
-        let usage_root = params
-            .get("tokenUsage")
-            .or_else(|| params.get("usage"))
-            .unwrap_or(params);
-        let total = usage_root.get("total").and_then(parse_usage);
-        let exact = usage_root.get("last").and_then(parse_usage).or_else(|| {
-            (usage_root.get("inputTokens").is_some() || usage_root.get("outputTokens").is_some())
-                .then(|| parse_usage(usage_root))
-                .flatten()
-        });
-        let (usage, estimated) = match (exact, total) {
-            (Some(usage), _) => (usage, false),
-            (None, Some(total)) => {
-                let delta = previous_total.map_or(total, |before| total.positive_delta(before));
-                (delta, true)
-            }
-            (None, None) => continue,
-        };
-        if let Some(total) = total {
-            previous_total = Some(total);
-        }
-        let Some(at) = envelope
-            .get("ts")
-            .and_then(Value::as_str)
-            .and_then(parse_ts)
-        else {
-            continue;
-        };
-        note_earliest(earliest, at);
-        if !window.includes(at) {
-            continue;
-        }
-        usage.add_to(&mut out.tokens);
-        let daily = point(series, at);
-        daily.tokens = daily.tokens.saturating_add(usage.total);
-        out.token_sessions
-            .insert((run.to_string(), session.to_string()));
-        out.token_turns
-            .insert((run.to_string(), session.to_string(), turn));
-        out.token_updates += 1;
-        if estimated {
-            out.estimated_token_updates += 1;
-        }
-    }
+    out.token_turns = token_turns.len();
+    out.token_sessions = usize::from(!token_turns.is_empty());
 }
 
 fn parse_usage(value: &Value) -> Option<Usage> {
@@ -988,16 +1193,6 @@ fn parse_usage(value: &Value) -> Option<Usage> {
 fn number(value: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_u64))
-}
-
-fn frame_role(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let frame = serde_json::from_str::<Value>(line).ok()?;
-        frame
-            .get("role")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    })
 }
 
 fn apply_journal(
@@ -1444,6 +1639,14 @@ mod tests {
         .to_string()
     }
 
+    /// One log's worth of frames, scanned the way [`aggregate_frames`] scans each file —
+    /// with no session index, so the role comes from the frames themselves.
+    fn scan(text: &str, window: &Window) -> FrameScan {
+        let mut scan = FrameScan::default();
+        scan_frame_text(None, text, window, &mut scan);
+        scan
+    }
+
     #[test]
     fn ranges_are_calendar_days_and_invalid_values_are_rejected() {
         let now = at(18, 14);
@@ -1490,24 +1693,16 @@ mod tests {
             from: None,
             to: at(18, 0),
         };
-        let mut out = FrameAggregation::default();
-        let mut series = BTreeMap::new();
-        let mut earliest = None;
-        aggregate_frame_text(
-            "run",
-            "worker",
-            "worker",
-            Some("general"),
-            &text,
-            &window,
-            &mut out,
-            &mut series,
-            &mut earliest,
+        let scan = scan(&text, &window);
+        assert_eq!(
+            scan.agg.tokens.total, 250,
+            "100 + (250 - 100), never 100 + 250"
         );
-        assert_eq!(out.tokens.total, 250, "100 + (250 - 100), never 100 + 250");
-        assert_eq!(out.tokens.input, 200);
-        assert_eq!(out.tokens.output, 50);
-        assert_eq!(out.estimated_token_updates, 2);
+        assert_eq!(scan.agg.tokens.input, 200);
+        assert_eq!(scan.agg.tokens.output, 50);
+        assert_eq!(scan.agg.estimated_token_updates, 2);
+        assert_eq!(scan.agg.token_turns, 2, "one per turn that reported usage");
+        assert_eq!(scan.agg.token_sessions, 1);
     }
 
     #[test]
@@ -1525,20 +1720,204 @@ mod tests {
             from: None,
             to: at(18, 0),
         };
-        let mut out = FrameAggregation::default();
-        aggregate_frame_text(
-            "run",
-            "worker",
-            "worker",
-            None,
-            &text,
+        let scan = scan(&text, &window);
+        assert_eq!(scan.agg.tokens.total, 100);
+        assert_eq!(scan.agg.estimated_token_updates, 0);
+    }
+
+    /// The claim the whole scan rests on: it counts exactly what folding the same log and
+    /// counting the messages would count. Asserted against [`messages::fold`] itself over
+    /// a log carrying every shape that behaves differently — a streamed item, an item with
+    /// no id, an item completed twice, stderr (a message to `fold`, nothing to count), and
+    /// two lines that are not readable as frames at all.
+    #[test]
+    fn the_scan_counts_what_folding_the_same_log_would_count() {
+        let item = |id: Option<&str>, kind: &str, status: &str| {
+            let mut item = json!({"type": kind, "status": status});
+            if let Some(id) = id {
+                item["id"] = id.into();
+            }
+            if kind == "mcpToolCall" {
+                item["tool"] = "hi_recall".into();
+            }
+            item
+        };
+        let mut lines = vec![
+            frame(
+                1,
+                at(17, 10),
+                json!({"method":"turn/started","params":{"turn":{}}}),
+            ),
+            frame(2, at(17, 10), json!({"method":"item/started","params":{"item": item(Some("a"), "mcpToolCall", "inProgress")}})),
+            frame(3, at(17, 10), json!({"method":"item/agentMessage/delta","params":{"itemId":"a","delta":"frag"}})),
+            frame(4, at(17, 10), json!({"method":"item/completed","params":{"item": item(Some("a"), "mcpToolCall", "completed")}})),
+            frame(5, at(17, 10), json!({"method":"item/completed","params":{"item": item(Some("a"), "mcpToolCall", "completed")}})),
+            frame(6, at(17, 11), json!({"method":"item/completed","params":{"item": item(None, "commandExecution", "completed")}})),
+            frame(7, at(17, 11), json!({"method":"item/completed","params":{"item": item(None, "commandExecution", "failed")}})),
+            frame(8, at(17, 11), json!({"method":"item/completed","params":{"item": item(Some("b"), "webSearch", "completed")}})),
+            frame(9, at(17, 12), json!({"method":"item/completed","params":{"item": item(Some("c"), "fileChange", "completed")}})),
+            frame(10, at(17, 12), json!({"method":"item/completed","params":{"item": item(Some("d"), "contextCompaction", "completed")}})),
+            frame(11, at(17, 12), json!({"method":"item/completed","params":{"item": item(Some("e"), "agentMessage", "completed")}})),
+            "{ not json at all".to_string(),
+        ];
+        // A frame whose `raw` is not JSON-RPC, which is what stderr is — and the same
+        // shape with a direction that says it is not stderr, which is unreadable.
+        lines.push(
+            json!({"seq": 12, "ts": at(17, 12).to_rfc3339(), "role": "worker", "dir": "stderr", "raw": "thread 'main' panicked"})
+                .to_string(),
+        );
+        lines.push(
+            json!({"seq": 13, "ts": at(17, 12).to_rfc3339(), "role": "worker", "dir": "recv", "raw": "not json either"})
+                .to_string(),
+        );
+        let text = lines.join("\n");
+        let window = Window {
+            range: Range::All,
+            from: None,
+            to: at(18, 0),
+        };
+        let scan = scan(&text, &window);
+
+        // What the old reading was: fold the log, then count the messages by kind.
+        let folded = messages::fold(&text);
+        let count = |kind: &str| {
+            folded
+                .messages
+                .iter()
+                .filter(|message| message.kind == kind)
+                .count() as u64
+        };
+        assert_eq!(scan.agg.tools.calls, count("tool"));
+        assert_eq!(scan.agg.tools.commands, count("command"));
+        assert_eq!(scan.agg.tools.edits, count("edit"));
+        assert_eq!(scan.agg.tools.web_searches, count("search"));
+        assert_eq!(scan.agg.tools.context_compactions, count("compaction"));
+        assert_eq!(scan.agg.unreadable_frames, folded.unreadable);
+        assert_eq!(
+            scan.series.values().map(|point| point.turns).sum::<u64>(),
+            folded.turns.len() as u64
+        );
+        // …and the counts are the ones a person would arrive at by hand.
+        assert_eq!(scan.agg.tools.calls, 1, "one id, five frames, one call");
+        assert_eq!(scan.agg.tools.commands, 2, "no id means never merged");
+        assert_eq!(scan.agg.unreadable_frames, 2, "stderr is not unreadable");
+    }
+
+    /// The scan is `fold`'s reading minus the text, so the two must agree on how many
+    /// items happened and what each one was — including that a streamed item whose
+    /// fragments span hundreds of frames is one call, not hundreds.
+    #[test]
+    fn a_streamed_tool_call_counts_once_and_carries_its_name() {
+        let item = |status: &str, error: Value| {
+            json!({"id":"tc-1","type":"mcpToolCall","server":"hi","tool":"hi_say","status":status,"error":error})
+        };
+        let text = [
+            frame(
+                1,
+                at(17, 10),
+                json!({"method":"turn/started","params":{"turn":{}}}),
+            ),
+            frame(
+                2,
+                at(17, 10),
+                json!({"method":"item/started","params":{"item": item("inProgress", Value::Null)}}),
+            ),
+            frame(
+                3,
+                at(17, 10),
+                json!({"method":"item/agentMessage/delta","params":{"itemId":"tc-1","delta":"…"}}),
+            ),
+            frame(
+                4,
+                at(17, 10),
+                json!({"method":"item/completed","params":{"item": item("failed", json!("boom"))}}),
+            ),
+            frame(
+                5,
+                at(17, 11),
+                json!({"method":"item/completed","params":{"item":{"id":"cmd-1","type":"commandExecution","status":"completed"}}}),
+            ),
+        ]
+        .join("\n");
+        let window = Window {
+            range: Range::All,
+            from: None,
+            to: at(18, 0),
+        };
+        let scan = scan(&text, &window);
+        assert_eq!(scan.agg.tools.calls, 1, "one item id is one call");
+        assert_eq!(scan.agg.tools.failed_calls, 1);
+        assert_eq!(scan.agg.tools.commands, 1);
+        assert_eq!(scan.agg.tool_names.get("hi_say").copied(), Some((1, 1)));
+        assert_eq!(scan.agg.tool_roles.get("worker").copied(), Some(1));
+        assert_eq!(
+            messages::fold(&text)
+                .messages
+                .iter()
+                .filter(|message| message.kind == "tool")
+                .count(),
+            1,
+            "and `fold` reads the same log the same way"
+        );
+    }
+
+    /// A log whose last frame predates the range is not opened at all — the reason a
+    /// short range no longer costs the whole history.
+    #[tokio::test]
+    async fn a_log_older_than_the_range_is_skipped_and_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = layout::raw_root(dir.path())
+            .join(layout::SESSIONS_DIR)
+            .join("run-1");
+        std::fs::create_dir_all(&run).unwrap();
+        let text = frame(
+            1,
+            at(1, 10),
+            json!({"method":"thread/tokenUsage/updated","params":{"tokenUsage":{
+                "last":{"inputTokens":80,"outputTokens":20,"totalTokens":100}
+            }}}),
+        );
+        let path = run.join("worker-a.jsonl");
+        std::fs::write(&path, format!("{text}\n")).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::from(at(1, 11)))
+            .unwrap();
+
+        let window = Window {
+            range: Range::Days(7, "7d"),
+            from: Some(at(17, 0)),
+            to: at(18, 0),
+        };
+        let out = aggregate_frames(
+            dir.path(),
             &window,
-            &mut out,
+            &HashMap::new(),
             &mut BTreeMap::new(),
             &mut None,
-        );
+        )
+        .await;
+        assert_eq!(out.frame_logs, 1);
+        assert_eq!(out.frame_logs_out_of_window, 1);
+        assert_eq!(out.token_updates, 0, "never opened, so nothing was read");
+
+        let all = Window {
+            range: Range::All,
+            from: None,
+            to: at(18, 0),
+        };
+        let out = aggregate_frames(
+            dir.path(),
+            &all,
+            &HashMap::new(),
+            &mut BTreeMap::new(),
+            &mut None,
+        )
+        .await;
+        assert_eq!(out.frame_logs_out_of_window, 0, "`all` skips nothing");
         assert_eq!(out.tokens.total, 100);
-        assert_eq!(out.estimated_token_updates, 0);
     }
 
     #[test]

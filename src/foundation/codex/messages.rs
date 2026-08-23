@@ -325,7 +325,11 @@ fn append_delta(
 /// Translated rather than passed through, because the wire names a payload and a reader
 /// names an act: `commandExecution` is *it ran something*, `mcpToolCall` is *it used a
 /// tool*. An unknown type keeps the wire's own word (see [`absorb`]).
-fn kind_of(item: &Value) -> &'static str {
+///
+/// Shared with the stats scan ([`crate::foundation::server::stats`]), which counts the
+/// same items without folding their text. Two copies of this vocabulary would be free to
+/// disagree about what happened.
+pub fn kind_of(item: &Value) -> &'static str {
     match item.get("type").and_then(Value::as_str).unwrap_or_default() {
         "userMessage" => "user",
         "agentMessage" => "agent",
