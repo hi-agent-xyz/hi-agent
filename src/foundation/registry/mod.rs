@@ -925,19 +925,26 @@ impl Registry {
         self.reopening.lock().unwrap().retain(|end| &end.session != slug);
     }
 
-    /// Record that `slug`'s thread would not reopen, moving it to the list that says so.
+    /// Record that this errand's thread would not reopen, moving it to the list that says so.
     ///
     /// **This is the one case where the restart really did take the worker**, so the entry
     /// does not simply disappear: `agents.md` rules that an errand which cannot be resumed
     /// must not come back as a cold session pretending otherwise, which leaves a task with
     /// nobody on it — and a task in `doing` with nobody on it is indistinguishable from one
     /// being worked on unless something says why. [`Registry::lost_subjects`] is what says it.
-    pub fn could_not_reopen(&self, slug: &SessionSlug) {
-        let mut reopening = self.reopening.lock().unwrap();
-        if let Some(at) = reopening.iter().position(|end| &end.session == slug) {
-            let end = reopening.remove(at);
-            self.unreopened.lock().unwrap().push(end);
+    ///
+    /// **Takes the row, and records it whether or not it is still on `reopening`.** A session
+    /// registers before it opens, and registering under a subject drains that subject's entry
+    /// — so an errand whose *open* then fails has already left the list, and a version of this
+    /// that only moved entries it could still find would silently drop exactly the case that
+    /// must never be silent.
+    pub fn could_not_reopen(&self, end: index::Ended) {
+        self.reopening.lock().unwrap().retain(|other| other.session != end.session);
+        let mut unreopened = self.unreopened.lock().unwrap();
+        if unreopened.iter().any(|other| other.session == end.session) {
+            return;
         }
+        unreopened.push(end);
     }
 
     /// The ledger subjects whose worker is on its way back, for the projection to say so
@@ -1739,20 +1746,46 @@ mod tests {
         assert!(r.lost_subjects().is_empty(), "coming back is not being lost");
 
         let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
-        r.could_not_reopen(&4.into());
+        let errand = r.reopen_pending().into_iter().next().unwrap();
+        r.could_not_reopen(errand);
         assert!(r.reopen_pending().is_empty(), "no longer owed a session");
         assert!(r.reopening_subjects().is_empty(), "and no longer said to be coming back");
         assert!(r.lost_subjects().contains("kt8-046"), "the restart took this one");
     }
 
-    /// A slug nothing is owed for changes nothing — the pass reports per errand, and a report
-    /// about a session that already came back must not invent a loss.
+    /// **A failure recorded after the entry has already drained still lands.** The session
+    /// registers before it opens, and registering under the subject drains that subject's
+    /// entry — so the row this is called with is routinely one `reopen_pending` no longer
+    /// holds, and a version that only moved what it could still find would drop the one case
+    /// the whole list exists to make visible.
     #[tokio::test]
-    async fn a_report_about_an_unknown_errand_is_ignored() {
+    async fn a_failure_after_the_entry_drained_is_still_recorded() {
         let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
-        r.could_not_reopen(&99.into());
-        assert!(r.lost_subjects().is_empty());
-        assert_eq!(r.reopen_pending().len(), 1, "the real one is untouched");
+        let errand = r.reopen_pending().into_iter().next().unwrap();
+
+        // What `open_working_session` does before the open it is about to fail.
+        r.register(
+            errand.session.clone(),
+            Role::Worker(WorkerType::General),
+            Some(3.into()),
+            "finish the KT8-046 build".into(),
+            Some("kt8-046".into()),
+        );
+        assert!(r.reopen_pending().is_empty(), "the register drained it");
+
+        r.unregister(&errand.session);
+        r.could_not_reopen(errand);
+        assert!(r.lost_subjects().contains("kt8-046"), "and the loss is still said out loud");
+    }
+
+    /// Reported twice — a retry, or two paths reporting one failure — is still one loss.
+    #[tokio::test]
+    async fn a_loss_reported_twice_is_recorded_once() {
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        let errand = r.reopen_pending().into_iter().next().unwrap();
+        r.could_not_reopen(errand.clone());
+        r.could_not_reopen(errand);
+        assert_eq!(r.lost_subjects().len(), 1);
     }
 
     /// **Putting somebody on the task is the other way an errand stops being owed.** The

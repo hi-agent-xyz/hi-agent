@@ -1192,7 +1192,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
         let Some(thread) = end.thread.clone() else {
             // `interrupted_workers` filters these out; belt and braces, because arriving here
             // would mean opening a cold session that believes it remembers something.
-            unreachable(&slug, "no thread on the row");
+            could_not_put_back(&end, "no thread on the row");
             continue;
         };
         let kind = end
@@ -1201,15 +1201,15 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             .and_then(WorkerType::parse)
             .unwrap_or_default();
         let Some(owner) = end.owner.clone() else {
-            unreachable(&slug, "no owner on the row");
+            could_not_put_back(&end, "no owner on the row");
             continue;
         };
         let Some(owner_role) = super::tools::ToolOwner::from_role(Some(owner.as_str())) else {
-            unreachable(&slug, "its owner is not a standing rung");
+            could_not_put_back(&end, "its owner is not a standing rung");
             continue;
         };
         let Some(sink) = tools.get(owner_role).await else {
-            unreachable(&slug, "its owning loop is not up");
+            could_not_put_back(&end, "its owning loop is not up");
             continue;
         };
 
@@ -1230,7 +1230,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             ready,
         };
         if sink.control.send(control).await.is_err() {
-            unreachable(&slug, "its owning loop stopped listening");
+            could_not_put_back(&end, "its owning loop stopped listening");
             continue;
         }
         match registered.await {
@@ -1240,8 +1240,8 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             }
             // The session did not open. `open_working_session` already unregistered it, so
             // there is nothing running that errand and the ledger has to say so.
-            Ok(Err(err)) => unreachable(&slug, &err),
-            Err(_) => unreachable(&slug, "its owning loop gave no answer"),
+            Ok(Err(err)) => could_not_put_back(&end, &err),
+            Err(_) => could_not_put_back(&end, "its owning loop gave no answer"),
         }
     }
 }
@@ -1253,10 +1253,15 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
 /// by subject — so an errand with no subject, which is every `task-manager`, would leave no
 /// trace at all. The post reaches the owner's inbox on its next turn whether or not the errand
 /// was ever tied to a task.
-fn unreachable(slug: &SessionSlug, why: &str) {
-    let pending = registry::global().reopen_pending();
-    let Some(end) = pending.into_iter().find(|end| &end.session == slug) else { return };
-    registry::global().could_not_reopen(slug);
+///
+/// **It takes the row rather than looking it up, and that is the whole correctness of it.**
+/// `open_working_session` registers the session *before* opening it, and registering under a
+/// subject drains that subject's reopen entry — so by the time an open fails, the list this
+/// would have searched no longer holds the errand that just failed, and the one case the
+/// design says must never be silent would be exactly the silent one.
+fn could_not_put_back(end: &registry::index::Ended, why: &str) {
+    let slug = &end.session;
+    registry::global().could_not_reopen(end.clone());
     tracing::warn!(session = %slug, reason = %why, "an interrupted errand could not be reopened");
 
     let Some(owner) = end.owner.as_ref() else { return };
