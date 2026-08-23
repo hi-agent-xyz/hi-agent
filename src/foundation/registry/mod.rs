@@ -14,7 +14,7 @@
 //! Nothing in this module talks to the agent wire or to a model. It owns addresses, mailboxes and
 //! metadata; who drains a mailbox and what they do with it belongs to the caller.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
@@ -271,6 +271,7 @@ fn headline(text: &str, max: usize) -> String {
 }
 
 pub mod index;
+pub mod mail;
 
 /// The process's registry. One switchboard, as the design says.
 pub fn global() -> &'static Registry {
@@ -714,6 +715,13 @@ pub struct Registry {
     /// here is asked only about tasks that are active and `doing`, so an entry for a task
     /// that left `doing` is already unreachable.
     lost: Mutex<Vec<index::Ended>>,
+    /// What one session said to another, newest last, capped at [`mail::KEPT`].
+    ///
+    /// [`Registry::send`] used to leave no trace a reader could reach: the text went into a
+    /// mailbox, out again into a prompt, and after that existed only as a tool call in one
+    /// frame log and a paragraph in another. See [`mail`] for why this is in memory and
+    /// what it is not.
+    traffic: Mutex<VecDeque<mail::Sent>>,
 }
 
 impl Default for Registry {
@@ -726,6 +734,7 @@ impl Default for Registry {
             recent: Mutex::new(Vec::new()),
             resumable: Mutex::new(HashMap::new()),
             lost: Mutex::new(Vec::new()),
+            traffic: Mutex::new(VecDeque::new()),
         }
     }
 }
@@ -1008,12 +1017,34 @@ impl Registry {
                 return Delivery::Unknown;
             }
             entry.note_state_change(entry.is_quiet());
+            // Recorded before the text is moved into the mailbox, and only on this path:
+            // the two `return`s above never reached one, and a refusal is the sender's
+            // mistake rather than something these two said to each other.
+            mail::push(
+                &mut self.traffic.lock().unwrap(),
+                mail::Sent::new(from.clone(), to.clone(), &message),
+            );
             entry.inbox.pending.push(Message { from: Some(from.clone()), text: message });
             entry.notify.notify_one();
             Delivery::Delivered
         };
         self.note_activity();
         delivery
+    }
+
+    /// Everything `a` and `b` have said to each other that is still in the ring, oldest
+    /// first — both directions, because an arrow joins two sessions and half a conversation
+    /// is not one.
+    ///
+    /// Returns the **tail** when there is more than `limit`, together with the total, for
+    /// the same reason every other reader here does: the end of an exchange is what someone
+    /// opening it came for.
+    pub fn traffic_between(&self, a: &SessionId, b: &SessionId, limit: usize) -> (Vec<mail::Sent>, usize) {
+        let ring = self.traffic.lock().unwrap();
+        let all: Vec<mail::Sent> = ring.iter().filter(|m| m.between(a, b)).cloned().collect();
+        let total = all.len();
+        let tail = all[total.saturating_sub(limit)..].to_vec();
+        (tail, total)
     }
 
     /// Who `asker` may reach right now, as `(label, id)` — the projection that replaced
@@ -1428,6 +1459,85 @@ mod tests {
 
     fn reg() -> Registry {
         Registry::new()
+    }
+
+    /// The arrow between two cards reads this, so it has to carry both directions and
+    /// nothing from anybody else.
+    #[test]
+    fn traffic_between_two_sessions_is_both_directions_and_only_theirs() {
+        let r = reg();
+        let cognition = mint();
+        let reaction = mint();
+        let bystander = mint();
+        for (id, role) in [
+            (&cognition, Role::Cognition),
+            (&reaction, Role::Reaction),
+            (&bystander, Role::Reflection),
+        ] {
+            r.register(id.clone(), role, None, "standing".into(), None);
+        }
+
+        r.send(&reaction, &cognition, "someone is asking about the deploy".into());
+        r.send(&cognition, &reaction, "tell them it is out".into());
+        r.send(&bystander, &reaction, "the ledger is filed".into());
+
+        let (between, total) = r.traffic_between(&reaction, &cognition, 50);
+        assert_eq!(total, 2, "the bystander's message is not theirs");
+        assert_eq!(between.len(), 2);
+        // Oldest first: this is read as a conversation, not as a feed.
+        assert_eq!(between[0].from, reaction);
+        assert_eq!(between[0].text, "someone is asking about the deploy");
+        assert_eq!(between[1].from, cognition);
+
+        // Unordered — the same exchange, asked the other way round.
+        let (flipped, _) = r.traffic_between(&cognition, &reaction, 50);
+        assert_eq!(flipped.len(), 2);
+    }
+
+    /// A refused send never reached a mailbox, so it is not something these two said to
+    /// each other — it is a mistake, and it belongs in the sender's own transcript.
+    #[test]
+    fn only_delivered_mail_is_recorded() {
+        let r = reg();
+        let owner = mint();
+        let worker = mint();
+        let stranger = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the shared brain".into(), None);
+        r.register(
+            worker.clone(),
+            Role::Worker(WorkerType::General),
+            Some(owner.clone()),
+            "audit the runtimes".into(),
+            None,
+        );
+        r.register(stranger.clone(), Role::Reaction, None, "what reaches the person".into(), None);
+
+        assert_eq!(r.send(&worker, &stranger, "hello".into()), Delivery::NotPermitted);
+        assert_eq!(r.send(&owner, &mint(), "anyone there".into()), Delivery::Unknown);
+        assert_eq!(r.send(&worker, &owner, "done".into()), Delivery::Delivered);
+
+        assert_eq!(r.traffic_between(&worker, &stranger, 50).1, 0);
+        assert_eq!(r.traffic_between(&worker, &owner, 50).1, 1);
+    }
+
+    /// The ring is a working set and not the record: it drops the oldest rather than
+    /// growing, and a reader asking for less than it holds gets the *end* of the exchange.
+    #[test]
+    fn the_ring_keeps_the_tail() {
+        let r = reg();
+        let a = mint();
+        let b = mint();
+        r.register(a.clone(), Role::Cognition, None, "the shared brain".into(), None);
+        r.register(b.clone(), Role::Reaction, None, "what reaches the person".into(), None);
+
+        for n in 0..(mail::KEPT + 10) {
+            r.send(&a, &b, format!("message {n}"));
+        }
+
+        let (tail, total) = r.traffic_between(&a, &b, 3);
+        assert_eq!(total, mail::KEPT, "the oldest are dropped, not accumulated");
+        assert_eq!(tail.len(), 3);
+        assert_eq!(tail[2].text, format!("message {}", mail::KEPT + 9));
     }
 
     /// The offer survives the trip through `attach_index`, and survives this run's own

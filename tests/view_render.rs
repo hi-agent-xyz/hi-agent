@@ -169,12 +169,19 @@ fn esbuild_probe() -> Option<PathBuf> {
         }
     }
 
+    // The standalone view-tool install, which is what `ensure_view_esbuild` provisions
+    // whenever `codex` came from PATH: `view-tool/esbuild-<version>-<os>-<arch>/bin/esbuild`.
+    // Only the `node_modules` shape below was looked for, and nothing has written that shape
+    // since the tool stopped being installed as an npm tree — so on a dev box, which is
+    // exactly the box that has a system codex, every test in this file skipped and reported
+    // `ok`. That is the second time this probe has gone stale behind the thing it probes.
     let view_tool = cache.join("view-tool");
     if let Ok(entries) = std::fs::read_dir(&view_tool) {
         for entry in entries.flatten() {
-            let bin = entry.path().join("node_modules").join(&bin_rel);
-            if bin.exists() {
-                return Some(bin);
+            for bin in [entry.path().join("bin/esbuild"), entry.path().join("node_modules").join(&bin_rel)] {
+                if bin.exists() {
+                    return Some(bin);
+                }
             }
         }
     }

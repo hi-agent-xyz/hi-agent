@@ -15,17 +15,26 @@
 //    tree and not one indent's worth of nesting — a worker that creates a worker is
 //    a third row, and the picture says so.
 //
+//    **Ownership is not the only edge, and drawing only it left the two rungs that talk
+//    most looking unrelated.** Reaction creates nothing: what it has to hand on goes *up*
+//    to Cognition by `hi_send_message`, so on a page that drew delegation and nothing else
+//    it stood as a root with an empty space beside it. `links()` draws that standing line
+//    across the top rank, read off the roster the same way the switchboard reads it.
+//
 //    It needs a layout engine, because ownership is data and no CSS box model lays out a
 //    tree of unequal subtrees. `layout()` is that engine: a tidy pass in the shape of
 //    Reingold–Tilford — bottom-up subtree widths, then a top-down placement that centres
-//    each owner over the span of its children — against measured card heights, one row per
-//    depth. It returns nothing but geometry, and everything on the canvas (card position,
-//    every arrow endpoint) is read off it, so a card and its arrow cannot disagree.
+//    each owner over the span of its children — one row per depth. It returns nothing but
+//    geometry, and everything on the canvas (card position, every arrow endpoint) is read
+//    off it, so a card and its arrow cannot disagree.
 //
-//    The cards are the width the engine gives them (`NODE_W`), the same for every session.
-//    A card gives each field its own line and lets the ones that are prose wrap; the old
-//    full-width row spent the frame on a mostly-empty line and then bought the title out
-//    of what was left, which is how a worker's task became four words and an ellipsis.
+//    The cards are the size the engine gives them — `NODE_W` by `NODE_H`, the same for
+//    every session — and **both are constants**. The height used to be the tallest
+//    *measured* card, which made every card's height a fact about whatever the busiest
+//    session happened to be doing when the poll landed: one `doing` line wrapping to two
+//    pushed six cards and a whole rank down 17px, two seconds later and back again. The
+//    words are fitted to the card now and every field that can run long is clamped, so
+//    nothing on this page reflows while it is being read.
 //
 //    **And a card's title is one line, because what the server sends is now a headline.**
 //    A session used to be registered under the brief it was handed — for real work, a
@@ -57,6 +66,13 @@
 //    2026-08-18 three workers failed on a 429 inside two minutes, drew three `idle 3m` cards,
 //    and were sent "Continue now; do not leave this idle" — a recovery aimed at laziness.
 //    `last_turn` is the ending, drawn on quiet cards only, and only when it is bad news.
+//
+// **Clicking an arrow opens what crossed it** — every message between those two sessions,
+// both directions, oldest first (`Channel`, `GET /api/workers/mail`). That traffic is the
+// part of this page that is actually *happening*, and until the switchboard started keeping
+// a ring of it, it was readable nowhere: `Registry::send` put the text in a mailbox, the
+// mailbox put it in the recipient's next prompt, and what was left was a tool call in one
+// frame log and a paragraph of prompt in another, to be matched by eye.
 //
 // Clicking any card — live or ended — opens what that session did. Those frames have been
 // written for every session all along (`WireTap::with_durable_log`) and nothing could read
@@ -95,6 +111,9 @@ const api = {
   // folding is the server's so both readings are the same everywhere.
   messages: (id, run) => fetch(`/api/workers/${enc(id)}/messages${runQ(run)}`).then((r) => r.json()),
   frames: (id, run) => fetch(`/api/workers/${enc(id)}/frames${runQ(run)}`).then((r) => r.json()),
+  // What two sessions have said to each other — the switchboard's own record of it, which
+  // is neither session's transcript. This is what an arrow opens; see `Channel`.
+  mail: (a, b) => fetch(`/api/workers/mail?a=${enc(a)}&b=${enc(b)}`).then((r) => r.json()),
 };
 
 const enc = encodeURIComponent;
@@ -169,6 +188,15 @@ const T = {
     // The session panel: the fold first, the record behind it.
     transcript: "What happened",
     frames: "Wire log",
+    mailTitle: "What they said to each other",
+    mailOf: (n) => `${n} messages`,
+    mailTruncated: (shown, total) => `${total} in all — the last ${shown}`,
+    noMail: "Nothing has crossed between these two.",
+    noMailNote: "The switchboard keeps this run's traffic only, and only the most recent of it.",
+    mailFailed: "That exchange could not be read.",
+    mailClipped: "clipped — the whole of it is in the receiving session's own log",
+    ago: (t) => `${t} ago`,
+    pair: (a, b) => `${a} ↔ ${b}`,
     messagesOf: (n) => `${n} messages`,
     messagesTruncated: (shown, total) => `last ${shown} of ${total}`,
     noMessages: "Nothing in this session's log reads as a message.",
@@ -240,6 +268,15 @@ const T = {
     noEnded: "还没有结束的会话。",
     transcript: "做了什么",
     frames: "原始帧",
+    mailTitle: "他们互相说了什么",
+    mailOf: (n) => `${n} 条`,
+    mailTruncated: (shown, total) => `共 ${total} 条,这是最后 ${shown} 条`,
+    noMail: "这两个之间还没有过消息。",
+    noMailNote: "总机只留这次运行的,而且只留最近的一段。",
+    mailFailed: "读不到他们之间的消息。",
+    mailClipped: "截断了 —— 全文在收信那个会话自己的日志里",
+    ago: (t) => `${t}前`,
+    pair: (a, b) => `${a} ↔ ${b}`,
     messagesOf: (n) => `${n} 条`,
     messagesTruncated: (shown, total) => `共 ${total} 条,这是最后 ${shown} 条`,
     noMessages: "这个会话的日志里没有能读成消息的东西。",
@@ -379,10 +416,15 @@ function taskLink(row) {
 export default function Workers() {
   const [live, setLive] = useState(null);
   const [ended, setEnded] = useState([]);
-  // The open card is held by its **address** — `{ id, run }` — not by the row object,
-  // because the poll below replaces every row on each tick and a held object would freeze
-  // the panel on the version that was clicked. A live card passes no run; the endpoint
-  // defaults to the current one, which is the only run a live session can be in.
+  // What is open, held by its **address** and never by the row or edge object, because the
+  // poll below replaces every row on each tick and a held object would freeze the panel on
+  // the version that was clicked.
+  //
+  // Two things on this page open: a session — `{ kind: "session", id, run }`, where a live
+  // card passes no run because the endpoint defaults to the current one, the only run a
+  // live session can be in — and a channel, `{ kind: "channel", a, b }`, the arrow between
+  // two of them. The `kind` is what keeps a card and an arrow that happen to share a
+  // session id from reading as each other.
   const [open, setOpen] = useState(null);
 
   const reload = useCallback(async () => {
@@ -477,7 +519,8 @@ export default function Workers() {
         </section>
       </div>
 
-      {open && <Session addr={open} onClose={() => setOpen(null)} />}
+      {open?.kind === "session" && <Session addr={open} onClose={() => setOpen(null)} />}
+      {open?.kind === "channel" && <Channel pair={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -560,23 +603,44 @@ function forest(rows) {
   return roots;
 }
 
-/** Every card in one drawing is the same width — a tidy layout needs one number for a
+/** Every card in one drawing is the same size — a tidy layout needs one number for a
  *  node's width, and a session has no natural one. `NODE_W` is what a card wants: enough
  *  for the field that needs the most room, a `doing` line of monospace. `MIN_NODE_W` is
  *  the least it will take to keep the tree inside the frame, below which the canvas
  *  scrolls instead. Narrowing is the better of the two, up to a point: a rank that runs
- *  off the right edge hides sessions, and a card 50px narrower only wraps a line. */
-const NODE_W = 236;
-const MIN_NODE_W = 170;
+ *  off the right edge hides sessions, and a narrower card only reaches its ellipsis sooner
+ *  — which is now the whole cost of narrowing, since a card can no longer answer a wrap by
+ *  getting taller. */
+const NODE_W = 272;
+const MIN_NODE_W = 190;
+/** And the height — **a constant, not a measurement**, which is the point of it.
+ *
+ *  It was the tallest *measured* card on the page, which made every card's height a fact
+ *  about whatever the busiest session happened to be doing when the poll landed: one
+ *  `doing` line wrapping to two pushed all six cards down 17px, and the rank below them
+ *  with it, two seconds later and back again. A roster that reflows while you are reading
+ *  it is the same failure as a title that jumps — the page moves for a reason that is not
+ *  the reader's.
+ *
+ *  So the card is one size for the whole of its life and the words are fitted to it, not
+ *  the other way round. **Nothing is ever cut mid-line**: every field that can run long is
+ *  clamped to a fixed number of lines, and this number is their sum — 27 padding · 20 strip
+ *  · 29 title · 42 meta (2 lines) · 42 doing-or-ended (2) · 45 tail (2) = 205, plus a pixel
+ *  against rounding. A card not saying all of that leaves the room empty at the bottom,
+ *  which is the price of a rank that reads as a rank; whatever a clamp cut is one click
+ *  away, same as everywhere else on this page.
+ *
+ *  The one field that gives way instead of being drawn is the tail, and only on an orphan
+ *  card, where the banner saying the owner is gone takes its lines — see `LiveCard`.
+ *
+ *  Keep it in step with the CSS if either changes: raise a clamp without raising this and
+ *  the extra line is clipped instead of drawn. */
+const NODE_H = 206;
 /** Between two sibling subtrees, between two whole trees, and between depth rows. The row
  *  gap is the arrow's room: shorter and the arrowhead lands on the card above it. */
 const SIB_GAP = 16;
 const TREE_GAP = 44;
 const ROW_GAP = 46;
-/** What a card is assumed to be tall before it has been measured — see `useHeights`. Only
- *  the first frame after a card appears uses it; being wrong means the drawing settles into
- *  its card height instead of arriving at it. */
-const EST_H = 124;
 /** The arrowhead's length, taken off the end of the curve so the two do not overlap. */
 const HEAD = 9;
 
@@ -600,32 +664,17 @@ const HEAD = 9;
  *  - **A forest.** `d3.tree()` takes one root and this has several — the rungs, plus a root
  *    per orphan. A synthetic parent is handed to the layout and dropped before anything is
  *    drawn: it is a fact about the algorithm's input, never a node on the page.
- *  - **Measured heights.** `nodeSize` is one size for every node, so d3's own `y` is
- *    discarded and the ranks are spaced by the tallest *measured* card on the page — a card
- *    carrying a wrapped `doing` line is half again as tall as one carrying nothing, and a
- *    layout that assumed otherwise would overlap two ranks or leave a hole between them.
+ *  - **Ranks in pixels.** `nodeSize`'s second number is a depth step and these cards are
+ *    laid out in `y`, so d3's own `y` is discarded and the ranks are spaced by [`NODE_H`].
+ *    That used to be the tallest measured card and is now a constant — see the note there.
  */
-function layout(roots, heights, nodeW) {
+function layout(roots, nodeW) {
   if (!roots.length) return { nodes: [], edges: [], nodeW, width: 0, height: 0 };
-  const heightOf = (n) => heights[n.key] || EST_H;
 
-  // Ranks, and how tall a card is. Independent of the packing below — this is the vertical
-  // axis, which is entirely ours because d3 has one node size and these cards do not.
-  //
-  // **One height for every card in the drawing**, not one per rank and not one per session.
-  // A card's natural height is a fact about what its session happened to be doing when the
-  // poll landed — a `doing` line that wrapped, a subject long enough to take a second line
-  // of chips — and drawn that way a rank is a row of differently-sunk cards where the size
-  // difference means nothing and reads as though it did. So the tallest measured card sets
-  // the height and every other card is drawn to it. It is a maximum and not a budget:
-  // nothing is ever clipped, and a page whose sessions all go quiet gets shorter cards on
-  // the next tick rather than keeping the tall ones.
   let rows = 0;
-  let cardH = 0;
   const rank = (n, d) => {
     n.depth = d;
     rows = Math.max(rows, d + 1);
-    cardH = Math.max(cardH, heightOf(n));
     for (const c of n.children) rank(c, d + 1);
   };
   for (const r of roots) rank(r, 0);
@@ -634,7 +683,7 @@ function layout(roots, heights, nodeW) {
   let y = 0;
   for (let d = 0; d < rows; d++) {
     rowY[d] = y;
-    y += cardH + ROW_GAP;
+    y += NODE_H + ROW_GAP;
   }
 
   // One root, because that is what a tidy tree takes. It is dropped below, and its depth is
@@ -662,12 +711,16 @@ function layout(roots, heights, nodeW) {
     n.cx = Math.round(p.x - left + nodeW / 2);
     n.x = Math.round(p.x - left);
     n.y = rowY[n.depth];
-    n.h = cardH;
+    n.h = NODE_H;
     n.w = nodeW;
     nodes.push(n);
     // The synthetic root is nobody's owner, so the rank above it draws no arrows.
-    if (p.parent !== planted) edges.push({ key: `${p.parent.data.key}>${n.key}`, from: p.parent.data.key, to: n.key });
+    if (p.parent !== planted) {
+      edges.push({ key: `${p.parent.data.key}>${n.key}`, from: p.parent.data.key, to: n.key, kind: "own" });
+    }
   }
+
+  for (const e of links(nodes)) edges.push(e);
 
   return {
     nodes,
@@ -678,30 +731,71 @@ function layout(roots, heights, nodeW) {
   };
 }
 
+/** The edges that are not ownership: the standing line from Reaction across to Cognition.
+ *
+ *  **Ownership was the only thing this canvas could draw, and it is not the only thing that
+ *  connects two sessions.** Reaction creates nothing — it hands *up*, and everything the
+ *  person says that is worth thinking about reaches Cognition through
+ *  `hi_send_message`, not through `hi_create_worker`. So the two rungs that talk most drew
+ *  as two unrelated roots with nothing between them, and the page's answer to "who is this
+ *  Cognition session working for" was silence.
+ *
+ *  It is read off the roster rather than assumed, because the switchboard's own answer is
+ *  read off the roster too: `Registry::reachable` offers Reaction the live Cognition and
+ *  nobody else, so the line exists exactly while both rungs are up. Drawn one per pair, in
+ *  case a run ever holds more than one of either — the rungs are singletons today and
+ *  nothing here needs them to be.
+ *
+ *  One direction, because that is what was asked for and it is the direction work travels.
+ *  What the arrow *opens* is both directions: an exchange read from one end is not one. */
+function links(nodes) {
+  const rung = (role) => nodes.filter((n) => n.depth === 0 && n.row.role === role);
+  const out = [];
+  for (const from of rung("reaction")) {
+    for (const to of rung("cognition")) {
+      out.push({ key: `${from.key}~${to.key}`, from: from.key, to: to.key, kind: "link" });
+    }
+  }
+  return out;
+}
+
 /** The engine, run at the widest card that keeps the drawing inside `avail`.
  *
  *  Total width is monotone in card width and very nearly proportional to it, so two or
  *  three passes land on the answer; the loop is bounded rather than solved because the
  *  relation is only *nearly* proportional — a subtree whose band is set by its own card
- *  rather than by its children does not shrink with the rest.
- *
- *  It depends on the frame's width and not at all on the measured heights, so it cannot
- *  oscillate with them: narrowing the cards makes them taller, and taller changes only how
- *  far apart the ranks sit. */
-function fitted(roots, heights, avail) {
+ *  rather than by its children does not shrink with the rest. */
+function fitted(roots, avail) {
   let w = NODE_W;
-  let plan = layout(roots, heights, w);
+  let plan = layout(roots, w);
   for (let i = 0; i < 5 && avail > 0 && plan.width > avail && w > MIN_NODE_W; i++) {
     w = Math.max(MIN_NODE_W, Math.floor(w * (avail / plan.width)));
-    plan = layout(roots, heights, w);
+    plan = layout(roots, w);
   }
   return plan;
 }
 
-/** The arrow from an owner down to one session it created — drawn from where the two cards
- *  *are*, which during a move is not where the engine put them. Leaves and re-enters
- *  vertically, so the head always points straight down and needs no rotation. */
-function wireOf(from, to) {
+/** The line between two cards, drawn from where the two *are* — which during a move is not
+ *  where the engine put them.
+ *
+ *  Two shapes, because there are two kinds of edge and one shape cannot say both. An
+ *  **ownership** arrow leaves the bottom of the owner and enters the top of what it
+ *  created, vertically at both ends, so the head always points straight down; a **link**
+ *  between two rungs sitting side by side leaves one card's side and enters the other's,
+ *  horizontally at both ends. Drawing the second as the first would send an arrow out of
+ *  Reaction's floor, around, and into Cognition's ceiling — a picture of delegation, which
+ *  is exactly the thing that edge is not. */
+function wireOf(from, to, kind) {
+  if (kind === "link") {
+    const rightward = to.x >= from.x;
+    const x1 = rightward ? from.x + from.w : from.x;
+    const x2 = rightward ? to.x - HEAD : to.x + to.w + HEAD;
+    const y1 = from.y + from.h / 2;
+    const y2 = to.y + to.h / 2;
+    const d = Math.max(10, Math.abs(x2 - x1) * 0.4);
+    const bend = rightward ? d : -d;
+    return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+  }
   const x1 = from.x + from.w / 2;
   const y1 = from.y + from.h;
   const x2 = to.x + to.w / 2;
@@ -710,65 +804,17 @@ function wireOf(from, to) {
   return `M ${x1} ${y1} C ${x1} ${y1 + d}, ${x2} ${y2 - d}, ${x2} ${y2}`;
 }
 
-function headOf(to) {
+function headOf(from, to, kind) {
+  if (kind === "link") {
+    const rightward = to.x >= from.x;
+    const tip = rightward ? to.x : to.x + to.w;
+    const back = rightward ? tip - HEAD : tip + HEAD;
+    const y = to.y + to.h / 2;
+    return `M ${back} ${y - 5} L ${back} ${y + 5} L ${tip} ${y} Z`;
+  }
   const x = to.x + to.w / 2;
   const y = to.y;
   return `M ${x - 5} ${y - HEAD} L ${x + 5} ${y - HEAD} L ${x} ${y} Z`;
-}
-
-/** Measure every card, because the engine lays rows out at the tallest one in them and a
- *  card's height is its content's. A `ResizeObserver` rather than a pass after each render:
- *  a card also changes height without any data changing — a web font arriving, the frame
- *  narrowing under a `doing` line that then wraps — and a layout that only re-measured on
- *  poll would hold the stale row height until the next tick.
- *
- *  Border-box, so the transform the animator is writing onto the same element (a scale, on
- *  the way in) cannot be read back as a height and fed to the engine. */
-function useHeights() {
-  const [heights, setHeights] = useState({});
-  const seen = useRef({});
-  const refs = useRef(new Map());
-  const ro = useRef(null);
-
-  if (ro.current === null && typeof ResizeObserver !== "undefined") {
-    ro.current = new ResizeObserver((entries) => {
-      let dirty = false;
-      for (const e of entries) {
-        const key = e.target.getAttribute("data-key");
-        if (!key) continue;
-        const h = Math.round(e.target.offsetHeight);
-        if (h > 0 && seen.current[key] !== h) {
-          seen.current[key] = h;
-          dirty = true;
-        }
-      }
-      if (dirty) setHeights({ ...seen.current });
-    });
-  }
-
-  useEffect(() => () => ro.current && ro.current.disconnect(), []);
-
-  /** One stable callback per key, cached — a fresh function each render would have React
-   *  detach and re-attach every card's ref on every poll. */
-  const measure = useCallback((key) => {
-    let fn = refs.current.get(key);
-    if (!fn) {
-      fn = (el) => {
-        if (fn.el && fn.el !== el && ro.current) ro.current.unobserve(fn.el);
-        fn.el = el || null;
-        if (el) {
-          if (ro.current) ro.current.observe(el);
-        } else {
-          refs.current.delete(key);
-          delete seen.current[key];
-        }
-      };
-      refs.current.set(key, fn);
-    }
-    return fn;
-  }, []);
-
-  return [heights, measure];
 }
 
 /** How much room the drawing has, which is the frame's width and not the window's. The two
@@ -833,8 +879,12 @@ function stillness() {
  *  changes when a session starts or ends. */
 function useCanvas(plan) {
   const scene = useRef({ nodes: new Map(), edges: new Map(), synced: null });
-  const els = useRef({ nodes: new Map(), wires: new Map(), heads: new Map() });
-  const binders = useRef({ nodes: new Map(), wires: new Map(), heads: new Map() });
+  // `hits` is the wire's clickable twin — same path, drawn fat and invisible, so an arrow
+  // can be aimed at with a mouse rather than requiring the reader to hit 1.5px of stroke.
+  // It is bound and moved here with the other two because it is the same geometry: a hit
+  // area that lagged the line it belongs to would be a click that lands on nothing.
+  const els = useRef({ nodes: new Map(), wires: new Map(), heads: new Map(), hits: new Map() });
+  const binders = useRef({ nodes: new Map(), wires: new Map(), heads: new Map(), hits: new Map() });
   const raf = useRef(0);
   const [, bump] = useReducer((n) => n + 1, 0);
 
@@ -867,7 +917,7 @@ function useCanvas(plan) {
     for (const e of plan.edges) {
       liveEdges.add(e.key);
       const cur = s.edges.get(e.key);
-      if (cur) cur.gone = false;
+      if (cur) { cur.kind = e.kind; cur.gone = false; }
       else s.edges.set(e.key, { ...e, a: 0, gone: false });
     }
     for (const e of s.edges.values()) if (!liveEdges.has(e.key)) e.gone = true;
@@ -917,10 +967,18 @@ function useCanvas(plan) {
         if (Math.abs(ta - e.a) < 0.01) e.a = ta; else busy = true;
         const wire = els.current.wires.get(e.key);
         const head = els.current.heads.get(e.key);
-        if (from && to && wire) wire.setAttribute("d", wireOf(from, to));
-        if (from && to && head) head.setAttribute("d", headOf(to));
+        const hit = els.current.hits.get(e.key);
+        if (from && to) {
+          const d = wireOf(from, to, e.kind);
+          if (wire) wire.setAttribute("d", d);
+          if (hit) hit.setAttribute("d", d);
+          if (head) head.setAttribute("d", headOf(from, to, e.kind));
+        }
         if (wire) wire.style.opacity = e.a;
         if (head) head.style.opacity = e.a;
+        // The hit area follows the line's own fade, so an arrow on its way out stops being
+        // clickable at the same moment it stops being visible.
+        if (hit) hit.style.pointerEvents = e.a > 0.9 ? "stroke" : "none";
         if ((e.gone || !from || !to) && e.a === 0) {
           sc.edges.delete(e.key);
           membership = true;
@@ -943,8 +1001,8 @@ function useCanvas(plan) {
 
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
 
-  /** One stable ref callback per key per layer, for the same reason `useHeights` caches
-   *  its own: a fresh function each render detaches and re-attaches every element. */
+  /** One stable ref callback per key per layer: a fresh function each render would have
+   *  React detach and re-attach every element on every poll. */
   const bind = useCallback((layer, key) => {
     const store = els.current[layer];
     const cache = binders.current[layer];
@@ -967,9 +1025,8 @@ function useCanvas(plan) {
  *  It scrolls sideways rather than folding, and that is the honest failure mode: a tree
  *  that wrapped would be a different tree. When it fits, it centres. */
 function Canvas({ roots, open, setOpen }) {
-  const [heights, measure] = useHeights();
   const [avail, frame, box] = useFrame();
-  const plan = useMemo(() => fitted(roots, heights, avail), [roots, heights, avail]);
+  const plan = useMemo(() => fitted(roots, avail), [roots, avail]);
   const [scene, bind] = useCanvas(plan);
 
   // Which way there is more tree than frame. A scroller that has run out of narrowing is
@@ -996,25 +1053,53 @@ function Canvas({ roots, open, setOpen }) {
 
   const nodes = [...scene.nodes.values()];
   const edges = [...scene.edges.values()];
-  const lit = (key) => !!open && !open.run && open.id === key;
+  // An open session lights its own arrows, so opening a card says where it sits without
+  // having to re-find it in the tree; an open channel lights the one arrow it is.
+  const litSession = (key) => open?.kind === "session" && !open.run && open.id === key;
+  const litEdge = (e) =>
+    (open?.kind === "channel" && open.a === e.from && open.b === e.to) ||
+    litSession(e.from) ||
+    litSession(e.to);
 
   return (
     <div className="hi-workers__reel" data-more={more || undefined}>
       <div className="hi-workers__canvas" ref={frame} onScroll={sense}>
         <div className="hi-workers__plot" style={{ width: plan.width, height: plan.height }}>
+          {/* Not `aria-hidden` any more: every arrow is a control now — it opens what the
+              two sessions it joins have said to each other — and a control a screen reader
+              cannot reach is a control half the readers of this page do not have. The wire
+              and its head stay decorative; the fat invisible twin under them is the one
+              thing here that is focusable. */}
           <svg
             className="hi-workers__wires"
             width={plan.width}
             height={plan.height}
             viewBox={`0 0 ${plan.width} ${plan.height}`}
-            aria-hidden="true"
           >
-            {edges.map((e) => (
-              <g key={e.key} data-lit={lit(e.from) || lit(e.to) ? "true" : undefined}>
-                <path className="hi-workers__wire" ref={bind("wires", e.key)} d="" />
-                <path className="hi-workers__tip" ref={bind("heads", e.key)} d="" />
-              </g>
-            ))}
+            {edges.map((e) => {
+              const on = open?.kind === "channel" && open.a === e.from && open.b === e.to;
+              return (
+                <g key={e.key} data-lit={litEdge(e) ? "true" : undefined}>
+                  <path className="hi-workers__wire" ref={bind("wires", e.key)} d="" aria-hidden="true" />
+                  <path className="hi-workers__tip" ref={bind("heads", e.key)} d="" aria-hidden="true" />
+                  <path
+                    className="hi-workers__hit"
+                    ref={bind("hits", e.key)}
+                    d=""
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${L.mailTitle}: ${L.pair(e.from, e.to)}`}
+                    aria-expanded={on}
+                    onClick={() => setOpen(on ? null : { kind: "channel", a: e.from, b: e.to })}
+                    onKeyDown={(ev) => {
+                      if (ev.key !== "Enter" && ev.key !== " ") return;
+                      ev.preventDefault();
+                      setOpen(on ? null : { kind: "channel", a: e.from, b: e.to });
+                    }}
+                  />
+                </g>
+              );
+            })}
           </svg>
 
           {nodes.map((n) => (
@@ -1025,7 +1110,7 @@ function Canvas({ roots, open, setOpen }) {
               style={{ transform: `translate3d(${n.x}px, ${n.y}px, 0)`, opacity: n.a, width: n.w, height: n.h }}
               data-gone={n.gone ? "true" : undefined}
             >
-              <LiveCard nodeKey={n.key} row={n.row} measure={measure} open={open} setOpen={setOpen} />
+              <LiveCard row={n.row} open={open} setOpen={setOpen} />
             </div>
           ))}
         </div>
@@ -1054,10 +1139,10 @@ function Canvas({ roots, open, setOpen }) {
  *  turn — there is no "what it is doing" — and what a reader wants from it is `tail`, what
  *  it *said*, which is on the line below and was always there.
  */
-function LiveCard({ nodeKey, row, measure, open, setOpen }) {
+function LiveCard({ row, open, setOpen }) {
   // A live card is addressed by id with no run, so it cannot collide with an ended one that
   // happens to share the number — which, across runs, they routinely do.
-  const isOpen = !!open && open.id === row.id && !open.run;
+  const isOpen = open?.kind === "session" && open.id === row.id && !open.run;
   // An unknown state word from a newer server reads as idle rather than blanking the card:
   // the roster showing a session at all is the load-bearing part.
   const state = L.state[row.state] ? row.state : "idle";
@@ -1084,14 +1169,14 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
       data-state={state}
       data-orphan={orphan ? "true" : undefined}
       aria-expanded={isOpen}
-      onClick={() => setOpen(isOpen ? null : { id: row.id, run: null })}
+      onClick={() => setOpen(isOpen ? null : { kind: "session", id: row.id, run: null })}
     >
-      {/* What the card says, and the only part of it still measured. The button's height
-          comes back from the engine — one number for every card — so measuring the button
-          would be reading back the height the layout just wrote and feeding it in as the
-          content's own: the page could then only ever grow. This wrapper is never sized by
-          anything, so what it reports is what the words need. */}
-      <span className="hi-workers__body" data-key={nodeKey} ref={measure(nodeKey)}>
+      {/* What the card says, inside a card whose height is a constant (`NODE_H`). Nothing
+          here is measured any more and nothing here may grow: every field below that can
+          run long is clamped to a fixed number of lines, and their sum is what that
+          constant is. A field given one more line without the constant being raised is a
+          field clipped rather than drawn. */}
+      <span className="hi-workers__body">
         {orphan && <span className="hi-workers__orphan">{L.orphans}</span>}
 
         {/* The card's top strip: what this is, and how it is. The two facts that are true
@@ -1117,19 +1202,22 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
             ellipsis; the CSS clamp is the backstop for a wide character set. */}
         <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
-        {/* The durable facts, and nothing that could contradict the line above. */}
+        {/* The durable facts, and nothing that could contradict the line above.
+
+            **One clamped run of text, not a wrapping row of chips** — the same thing the
+            ended card learned, and now for a harder reason. A wrapping row is however many
+            lines its longest item makes it: `on kt8-070-approach-a-implementation-20260823`
+            takes two by itself and pushes the row to three. That used to cost the card 17px
+            of height, which every other card on the page then had to match; the card is a
+            fixed height now, so it would cost the *tail* its last line instead, cut through
+            the middle of the lettering. Clamped, what does not fit ends in an ellipsis. */}
         <span className="hi-workers__meta">
-          {typeof row.turns === "number" && <span>{L.turns(row.turns)}</span>}
-          {row.started && <span>{L.up(elapsed(row.started))}</span>}
-          {(() => {
-            const link = taskLink(row);
-            return link ? (
-              <span className={link.warn ? "is-warn" : undefined}>{link.text}</span>
-            ) : null;
-          })()}
-          {/* Only once the owner has gone. While it is live the arrow already shows who it
-              is, and repeating it on every child is noise. */}
-          {orphan && <span className="is-warn">{L.orphanNote(row.owner)}</span>}
+          {chips(row, orphan).map((c, i) => (
+            <span key={i} className={c.warn ? "is-warn" : undefined}>
+              {i > 0 && <span className="hi-workers__sep"> · </span>}
+              {c.text}
+            </span>
+          ))}
         </span>
 
         {/* Doing and said are different questions and never share a line. A card with a
@@ -1163,10 +1251,30 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
             {ended.at && <span className="hi-workers__age"> · {elapsed(ended.at)}</span>}
           </span>
         )}
-        {row.tail && <span className="hi-workers__tail">{row.tail}</span>}
+        {/* **Not on an orphan card**, and that is the one place a field gives way rather
+            than being drawn. The banner at the top of this card takes two lines of the same
+            fixed height, and something has to yield them: between "the session that started
+            this one is gone" and "here is the last thing it said", the first is why anyone
+            is looking at this card. What it said is one click away, whole. */}
+        {!orphan && row.tail && <span className="hi-workers__tail">{row.tail}</span>}
       </span>
     </button>
   );
+}
+
+/** The card's meta line, as the pieces it is joined from. Kept beside `taskLink` rather
+ *  than inline in the card, because "what the durable facts are" and "how they are drawn as
+ *  one clamped line" are two different questions and the second one changed twice. */
+function chips(row, orphan) {
+  const out = [];
+  if (typeof row.turns === "number") out.push({ text: L.turns(row.turns) });
+  if (row.started) out.push({ text: L.up(elapsed(row.started)) });
+  const link = taskLink(row);
+  if (link) out.push({ text: link.text, warn: link.warn });
+  // Only once the owner has gone. While it is live the arrow already shows who it is, and
+  // repeating it on every child is noise.
+  if (orphan) out.push({ text: L.orphanNote(row.owner), warn: true });
+  return out;
 }
 
 /** One session in the band under the tree. Every card in there is the same height, which is
@@ -1175,7 +1283,7 @@ function LiveCard({ nodeKey, row, measure, open, setOpen }) {
  *  not fit is a click away, same as everywhere else on this page. */
 function EndedCard({ row, open, setOpen }) {
   const lost = row.how === "restart";
-  const isOpen = !!open && open.id === String(row.session) && open.run === row.run;
+  const isOpen = open?.kind === "session" && open.id === String(row.session) && open.run === row.run;
   // A restart card has no end — nothing recorded one — so it is dated by its start.
   const when = row.ended || row.started;
   return (
@@ -1184,7 +1292,7 @@ function EndedCard({ row, open, setOpen }) {
       className="hi-workers__card is-ended"
       data-open={isOpen ? "true" : undefined}
       aria-expanded={isOpen}
-      onClick={() => setOpen(isOpen ? null : { id: String(row.session), run: row.run })}
+      onClick={() => setOpen(isOpen ? null : { kind: "session", id: String(row.session), run: row.run })}
     >
       <span className="hi-workers__top">
         <span className="hi-workers__dot" aria-hidden />
@@ -1196,14 +1304,17 @@ function EndedCard({ row, open, setOpen }) {
 
       <span className="hi-workers__title">{row.title || L.noTitle}</span>
 
-      {/* One clamped run of text rather than the live card's wrapping row of chips. A
-          wrapping row is however many lines its longest item makes it — a card whose
-          subject is `kt8-067-parallel-slice-reassembly-20260820` took three where its
-          neighbour took one — and this card's height is fixed, so the difference came out
-          as lettering sliced in half along the bottom edge. Joined and clamped, what does
-          not fit ends in an ellipsis instead, which is the ordinary way to say there is
-          more and is already how the title behaves one line up. */}
-      <span className="hi-workers__meta is-run-on">
+      {/* One clamped run of text rather than a wrapping row of chips. A wrapping row is
+          however many lines its longest item makes it — a card whose subject is
+          `kt8-067-parallel-slice-reassembly-20260820` took three where its neighbour took
+          one — and this card's height is fixed, so the difference came out as lettering
+          sliced in half along the bottom edge. Joined and clamped, what does not fit ends
+          in an ellipsis instead, which is the ordinary way to say there is more and is
+          already how the title behaves one line up.
+
+          The live card learned the same thing the day its height became fixed too, so this
+          is one rule in one place now rather than this card's own. */}
+      <span className="hi-workers__meta">
         {[
           typeof row.turns === "number" ? L.turns(row.turns) : null,
           row.started && row.ended ? L.ranFor(between(row.started, row.ended)) : null,
@@ -1214,6 +1325,113 @@ function EndedCard({ row, open, setOpen }) {
           .join(" · ")}
       </span>
     </button>
+  );
+}
+
+/** The zoom-in on an **arrow**: everything two sessions have said to each other.
+ *
+ *  The arrow used to be a picture of a fact with nothing behind it. Ownership was drawn and
+ *  the traffic was not, and the traffic is the part that is *happening* — a worker reporting
+ *  back, a rung handing work down, Reaction passing something up to the shared brain. All of
+ *  it went through one verb (`Registry::send`), and none of it was readable anywhere: the
+ *  text went into a mailbox, out again into the recipient's next prompt, and survived only
+ *  as an `hi_send_message` call in one frame log and a paragraph of prompt in another. To
+ *  read an exchange you opened two transcripts and matched text by eye.
+ *
+ *  **Both directions, oldest first**, because half of an exchange is not one — which is why
+ *  the endpoint takes its two ids unordered.
+ *
+ *  It polls on the same clock as the roster. An arrow is the one thing on this page most
+ *  likely to be watched *while* something crosses it, and a panel that answered once and
+ *  then went stale would be the wrong half of live.
+ */
+function Channel({ pair, onClose }) {
+  const [state, setState] = useState({ status: "loading" });
+  const panel = useRef(null);
+
+  useEffect(() => {
+    panel.current?.focus();
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    let alive = true;
+    setState({ status: "loading" });
+    const read = () =>
+      api
+        .mail(pair.a, pair.b)
+        // A failed poll keeps the last good reading rather than blanking it, same rule as
+        // the roster: what is on screen was true a moment ago, which is strictly better
+        // than an empty panel produced by one 500.
+        .then((d) => alive && setState({ status: "ok", ...d }))
+        .catch(() => alive && setState((prev) => (prev.status === "ok" ? prev : { status: "failed" })));
+    read();
+    const t = setInterval(() => { if (!document.hidden) read(); }, POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, [pair.a, pair.b]);
+
+  const messages = state.messages || [];
+  const count =
+    state.status === "ok" && messages.length
+      ? state.truncated
+        ? L.mailTruncated(messages.length, state.total)
+        : L.mailOf(state.total)
+      : null;
+
+  return (
+    <div className="hi-workers__scrim" onClick={onClose}>
+      <div
+        ref={panel}
+        className="hi-workers__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={L.mailTitle}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="hi-workers__panel-head">
+          <div className="hi-workers__panel-title">
+            <span className="hi-workers__panel-name">{L.mailTitle}</span>
+            <span className="hi-workers__panel-sub">
+              {[L.pair(pair.a, pair.b), count].filter(Boolean).join(" · ")}
+            </span>
+          </div>
+          <button type="button" className="hi-workers__close" aria-label={L.close} onClick={onClose}>
+            ×
+          </button>
+        </div>
+
+        <div className="hi-workers__panel-body">
+          {state.status === "loading" && <div className="hi-workers__none">{L.loading}</div>}
+          {state.status === "failed" && <div className="hi-workers__none">{L.mailFailed}</div>}
+          {state.status === "ok" &&
+            (messages.length === 0 ? (
+              <div className="hi-workers__empty">
+                <div className="hi-workers__empty-big">{L.noMail}</div>
+                {/* Nothing sent and nothing *kept* are different answers, and a reader who
+                    takes the second for the first concludes two sessions are out of touch
+                    when they have been talking all morning. */}
+                <div className="hi-workers__empty-sub">{L.noMailNote}</div>
+              </div>
+            ) : (
+              messages.map((m, i) => (
+                <div className="hi-workers__mail" key={`${m.at}:${i}`}>
+                  <div className="hi-workers__mail-head">
+                    <span className="hi-workers__mail-who">{m.from}</span>
+                    <span className="hi-workers__mail-arrow" aria-hidden="true">→</span>
+                    <span className="hi-workers__mail-who">{m.to}</span>
+                    <span className="hi-workers__mail-when">{L.ago(elapsed(m.at))}</span>
+                  </div>
+                  <pre className="hi-workers__mail-text">{m.text}</pre>
+                  {m.clipped && <div className="hi-workers__mail-clip">{L.mailClipped}</div>}
+                </div>
+              ))
+            ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1789,6 +2007,9 @@ const CSS = `
     margin: 0 auto;
   }
 
+  /* The layer takes no clicks; the hit path inside each arrow does, and the animator is
+     what turns that on. A layer that took them would put an invisible sheet over every card
+     on the canvas. */
   .hi-workers__wires {
     position: absolute;
     inset: 0;
@@ -1801,6 +2022,34 @@ const CSS = `
     stroke: var(--line-strong);
     stroke-width: 1.5;
     stroke-linecap: round;
+    transition: stroke 120ms var(--ease, ease), stroke-width 120ms var(--ease, ease);
+  }
+
+  /* The arrow's clickable twin: the same path, drawn fat and invisible. A 1.5px stroke is
+     not a target — and the alternative, a rectangle over the gap between two cards, would
+     swallow clicks meant for the canvas everywhere the curve is not. pointer-events is
+     set by the animator rather than here, so an arrow fading out stops taking clicks at
+     the moment it stops being visible. */
+  .hi-workers__hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 18;
+    stroke-linecap: round;
+    cursor: pointer;
+  }
+
+  .hi-workers__wires g:hover .hi-workers__wire {
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+
+  .hi-workers__wires g:hover .hi-workers__tip {
+    fill: var(--accent);
+  }
+
+  .hi-workers__hit:focus-visible {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 2px;
   }
 
   /* Named tip, not head: hi-workers__head is the page's own header, and an SVG path that
@@ -1848,8 +2097,16 @@ const CSS = `
      drawing, set by the tallest of them. Which is why the padding is on the body inside and
      not here: the body is what gets measured, and an element the layout has already sized
      cannot also be the thing that tells the layout what size to be. */
+  /* A **flex column, not a block**, and that is not cosmetic: a button centres its content
+     vertically, and it did so here the whole time — invisibly, while the card was only ever
+     as tall as its own words. The moment the height became a constant it started showing,
+     as a rank whose pills each sat at a different y depending on how much that session
+     happened to be saying. Which is the exact thing one height was for. */
   .hi-workers__card {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     width: 100%;
     height: 100%;
     padding: 0;
@@ -1860,9 +2117,13 @@ const CSS = `
     transition: background 120ms var(--ease, ease), box-shadow 120ms var(--ease, ease);
   }
 
-  /* Everything the card says, at the height the words need. Shorter than the card it sits
-     in — every card but the tallest one has room going spare below its last line, which is
-     the price of a rank that reads as a rank. */
+  /* Everything the card says, inside a card that is NODE_H tall whatever it says. Room
+     goes spare below the last line of most of them, and that is the price of a rank that
+     reads as a rank rather than as a row of differently-sunk cards.
+
+     Every clamp below is load-bearing: their sum plus this padding *is* NODE_H, so a
+     clamp raised here without that constant raised with it is a line clipped instead of
+     drawn. */
   .hi-workers__body {
     display: block;
     padding: 13px 15px 14px;
@@ -2008,25 +2269,25 @@ const CSS = `
     color: var(--accent-2);
   }
 
+  /* One clamped run of text in both cards, live and ended, and never a wrapping row of
+     chips: a row is however many lines its longest item makes it, and both cards are now a
+     fixed height. Two lines, and what does not fit ends in an ellipsis. */
   .hi-workers__meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-    margin-top: 7px;
-    font-size: 12px;
-    color: var(--fg-mute);
-  }
-
-  /* The ended card's meta: one clamped run of text, not a wrapping row of chips, so its
-     height is two lines whatever it says. See the note beside it in EndedCard. */
-  .hi-workers__meta.is-run-on {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    margin-top: 6px;
+    margin-top: 7px;
+    font-size: 12px;
     line-height: 1.45;
+    color: var(--fg-mute);
     overflow: hidden;
     overflow-wrap: anywhere;
+  }
+
+  /* Dimmer than either side of it: it is punctuation, and at this size a full-strength
+     middot reads as a bullet and turns one line into a list. */
+  .hi-workers__sep {
+    color: var(--line-strong);
   }
 
   .hi-workers__meta .is-warn {
@@ -2190,6 +2451,64 @@ const CSS = `
 
   .hi-workers__panel-sub {
     font-size: 12px;
+    color: var(--fg-mute);
+  }
+
+  /* The channel panel's heading. The session panel has two readings and puts tabs here
+     instead; this one has a single answer, so it says what the answer is. */
+  .hi-workers__panel-name {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  /* ── one message across the switchboard ───────────────────────────────────
+     Read as a conversation and not as a log: who to whom on top, the text whole
+     underneath. Nothing here collapses — a message *is* its text, and there is no second
+     thing behind it the way a command has its output. */
+  .hi-workers__mail {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hi-workers__mail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 7px;
+    font-size: 12px;
+    color: var(--fg-mute);
+  }
+
+  .hi-workers__mail-who {
+    font-family: var(--w-mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--fg-dim);
+  }
+
+  .hi-workers__mail-arrow {
+    color: var(--accent);
+  }
+
+  .hi-workers__mail-when {
+    margin-left: auto;
+  }
+
+  /* Pre-wrapped, because a message is prose the sender laid out — a worker's report comes
+     back as paragraphs and a list, and reflowing it into one block is the sender being
+     edited by the reader. */
+  .hi-workers__mail-text {
+    margin: 6px 0 0;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-workers__mail-clip {
+    margin-top: 6px;
+    font-size: 11.5px;
     color: var(--fg-mute);
   }
 

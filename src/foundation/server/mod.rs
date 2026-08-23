@@ -667,6 +667,7 @@ pub fn build(
         // them adjacent and in this order stops a later reader from reading `ended` as an
         // id-shaped route.
         .route("/api/workers/ended", get(workers::get_ended))
+        .route("/api/workers/mail", get(workers::get_mail))
         .route("/api/workers/{id}", get(workers::get_worker))
         .route("/api/workers/{id}/frames", get(workers::get_frames))
         .route("/api/workers/{id}/messages", get(workers::get_messages))

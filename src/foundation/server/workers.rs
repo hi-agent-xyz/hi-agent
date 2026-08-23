@@ -32,6 +32,7 @@
 //! - `GET /api/workers/ended` — sessions that are no longer live, most recent first.
 //! - `GET /api/workers/{id}/frames` — one session's verbatim wire log, live or ended.
 //! - `GET /api/workers/{id}/messages` — the same log folded into what happened.
+//! - `GET /api/workers/mail?a=&b=` — what two live sessions have said to each other.
 //!
 //! **The live roster and the ended list stay separate endpoints on purpose.** Everything on
 //! `GET /api/workers` is live by construction, which is the property this whole module
@@ -334,6 +335,73 @@ pub async fn get_messages(
         // a fold that failed rather than as a session that did nothing.
         "frames": folded.frames,
         "unreadable": folded.unreadable,
+    }))
+    .into_response()
+}
+
+/// How many switchboard messages `mail` returns without asking, and the ceiling.
+///
+/// A pair's whole exchange is what the arrow is for, and the ring behind it holds
+/// [`registry::mail::KEPT`] messages in all — so the default is "all of it, nearly always"
+/// and the cap is a backstop rather than a paging scheme.
+const DEFAULT_MAIL: usize = 100;
+
+#[derive(Deserialize)]
+pub struct MailQuery {
+    a: String,
+    b: String,
+    limit: Option<usize>,
+}
+
+/// One switchboard message, as the arrow between two cards reads it.
+#[derive(Serialize)]
+struct MailDto {
+    /// RFC3339, whole seconds, UTC — the same clock every other row on this page carries.
+    at: String,
+    from: String,
+    to: String,
+    text: String,
+    /// Whether `text` is the whole of what was sent. See [`registry::mail::TEXT_CHARS`]:
+    /// a long report is clipped in the ring, and a reader must not take the clip for the
+    /// end of the message.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    clipped: bool,
+}
+
+/// `GET /api/workers/mail?a=<id>&b=<id>&limit=N` — what two sessions have said to each
+/// other, both directions, oldest first.
+///
+/// The one agent-to-agent verb is [`registry::Registry::send`], and its traffic was
+/// unreadable from outside until now: the text went into a mailbox, out into a prompt, and
+/// survived only as a tool call in the sender's frame log and a paragraph in the
+/// recipient's. Pairing those two by eye was the only way to see an exchange — which is
+/// what this replaces, and what the clickable arrow on the sessions page opens.
+///
+/// Unordered in its arguments: an arrow joins two sessions, and half a conversation is not
+/// one. Both ids are parsed rather than trusted, for the same reason every other id on this
+/// module is — they are agent-written strings arriving in a query.
+pub async fn get_mail(Query(q): Query<MailQuery>) -> Response {
+    let (Ok(a), Ok(b)) = (q.a.trim().parse::<SessionId>(), q.b.trim().parse::<SessionId>()) else {
+        return err("a session id is letters, digits and dashes");
+    };
+    let limit = q.limit.unwrap_or(DEFAULT_MAIL).clamp(1, registry::mail::KEPT);
+    let (sent, total) = registry::global().traffic_between(&a, &b, limit);
+    let messages: Vec<MailDto> = sent
+        .into_iter()
+        .map(|m| MailDto {
+            at: m.at.to_rfc3339_opts(SecondsFormat::Secs, true),
+            from: m.from.to_string(),
+            to: m.to.to_string(),
+            text: m.text,
+            clipped: m.clipped,
+        })
+        .collect();
+    Json(serde_json::json!({
+        "a": a.to_string(),
+        "b": b.to_string(),
+        "messages": messages,
+        "truncated": total > limit,
+        "total": total,
     }))
     .into_response()
 }
