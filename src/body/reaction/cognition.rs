@@ -9,7 +9,7 @@
 //! "a new role is a new prompt, not new machinery". This module is the four things a
 //! prompt cannot be:
 //!
-//! 1. **An address.** An address is a session id, and its own is minted fresh each boot —
+//! 1. **An address.** An address is a session slug, and its own is minted fresh each boot —
 //!    so it registers once, for the life of the process, and the host projects that id
 //!    into the window of everyone allowed to reach it ([`registry::Registry::reachable`]).
 //! 2. **A drain.** Every live agent is driven by something. Reaction has its reaction loop,
@@ -25,7 +25,7 @@
 //!
 //! The address is registered **once, for the life of the process**; the agent session is
 //! opened once and **held across wakes**, replaced only when it breaks. Two different lifetimes for two different things: an address
-//! must be stable (nothing durable may hold a session id, and a prompt certainly cannot),
+//! must be stable (nothing durable may hold a session slug, and a prompt certainly cannot),
 //! while a session is *replaceable* — `docs/arch/host.md`: *"No session is a source of
 //! truth — continuity lives in `data/`."*
 //!
@@ -493,7 +493,7 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
     };
 
     if first {
-        // Cognition can send only to live session ids. Stand Reaction up before
+        // Cognition can send only to live session slugs. Stand Reaction up before
         // building this turn's window so every owed user-facing delivery has
         // somewhere to land after a restart. `ensure_up` registers the address
         // synchronously; its warm-up may continue while mail queues behind it.
@@ -578,7 +578,7 @@ mod tests {
 /// turn path cold-opens later.
 async fn warm_session(
     reaction: &Reaction,
-    id: &registry::SessionId,
+    id: &registry::SessionSlug,
     held: &mut Option<Arc<AgentSession>>,
 ) {
     if held.is_some() {
@@ -611,7 +611,7 @@ async fn warm_session(
 
 async fn open_session(
     reaction: &Reaction,
-    id: registry::SessionId,
+    id: registry::SessionSlug,
 ) -> anyhow::Result<Arc<AgentSession>> {
     let data_dir = reaction.inner.memory.data_dir();
     let system_prompt = crate::identity::cognition_prompt(data_dir).await;
@@ -680,7 +680,7 @@ fn from_reaction(m: &registry::Message) -> bool {
 /// sixteen minutes is what that costs; steering needs a handle from outside the future.
 async fn ensure_session(
     reaction: &Reaction,
-    id: registry::SessionId,
+    id: registry::SessionSlug,
     held: &mut Option<Arc<AgentSession>>,
 ) -> anyhow::Result<Arc<AgentSession>> {
     if let Some(existing) = held.as_ref() {
@@ -693,7 +693,7 @@ async fn ensure_session(
 
 async fn turn(
     reaction: &Reaction,
-    id: &registry::SessionId,
+    id: &registry::SessionSlug,
     pending: &[String],
     session: Arc<AgentSession>,
 ) -> anyhow::Result<()> {

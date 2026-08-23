@@ -11,7 +11,7 @@
 //! - **Where are that session's frames?** [`WireTap`](crate::foundation::codex::WireTap)
 //!   has kept every JSON-RPC line per session since it was given a data dir, under
 //!   [`session_frames_path`](crate::mind::memory::layout::session_frames_path). Nothing
-//!   read them back, and nothing could: the path is keyed by `(run, session)`, session ids
+//!   read them back, and nothing could: the path is keyed by `(run, session)`, session slugs
 //!   restart at 1 every boot ([`crate::foundation::run`]), and a session that has ended is
 //!   gone from the switchboard — so the id needed to name its own frame log died with it.
 //!   **The frames outlived the session; the index did not exist.**
@@ -48,7 +48,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::SessionId;
+use super::SessionSlug;
 use crate::identity::Role;
 use crate::mind::memory::layout;
 
@@ -74,7 +74,7 @@ pub enum Record {
     /// A session joined the switchboard. Written from `register`.
     Opened {
         run: String,
-        session: SessionId,
+        session: SessionSlug,
         /// The ledger subject this session serves — see [`Ended::subject`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -92,7 +92,7 @@ pub enum Record {
         #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
     },
     /// The codex thread behind a session, once it exists. Written from
     /// [`Registry::note_thread`](super::Registry::note_thread).
@@ -109,7 +109,7 @@ pub enum Record {
     /// lands is its choice and `(run, session)` cannot address it. Recorded, never derived.
     Thread {
         run: String,
-        session: SessionId,
+        session: SessionSlug,
         at: DateTime<Utc>,
         thread_id: String,
     },
@@ -117,7 +117,7 @@ pub enum Record {
     /// purpose — see the module doc.
     Closed {
         run: String,
-        session: SessionId,
+        session: SessionSlug,
         /// The ledger subject this session served — see [`Ended::subject`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
@@ -130,7 +130,7 @@ pub enum Record {
         #[serde(alias = "task", skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         turns: u64,
         /// Whether this session still had work in hand when it stopped — see
         /// [`Ended::interrupted`]. Absent on rows written before it was recorded, which
@@ -144,7 +144,7 @@ pub enum Record {
 impl Record {
     /// Only for the writer's error log — a record that would not serialize still has to be
     /// reportable as *which* one.
-    fn session(&self) -> SessionId {
+    fn session(&self) -> SessionSlug {
         match self {
             Record::Opened { session, .. }
             | Record::Closed { session, .. }
@@ -167,10 +167,10 @@ pub enum EndedHow {
 /// One session that is no longer live, as a reader reads it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Ended {
-    /// Which run it belonged to. Required to address its frame log, because session ids
+    /// Which run it belonged to. Required to address its frame log, because session slugs
     /// repeat every boot — the rungs always, a worker whenever the same errand comes round.
     pub run: String,
-    pub session: SessionId,
+    pub session: SessionSlug,
     pub role: String,
     #[serde(rename = "type")]
     pub worker_type: Option<String>,
@@ -185,7 +185,7 @@ pub struct Ended {
     /// to. Recorded on the way *in*, because the way out is what a crash skips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    pub owner: Option<SessionId>,
+    pub owner: Option<SessionSlug>,
     pub started: Option<DateTime<Utc>>,
     /// When it closed. `None` for a [`EndedHow::Restart`] row — nothing recorded an end,
     /// which is the whole point of that variant; the reader orders those by `started`.
@@ -424,12 +424,12 @@ async fn read_tail(path: &Path, limit: u64) -> std::io::Result<String> {
 fn fold(text: &str, current_run: &str) -> Vec<Ended> {
     let mut ends: Vec<Ended> = Vec::new();
     let mut opened: Vec<Ended> = Vec::new();
-    let mut closed: HashSet<(String, SessionId)> = HashSet::new();
+    let mut closed: HashSet<(String, SessionSlug)> = HashSet::new();
     // Threads are folded in a second pass rather than as they arrive: a `thread` line
     // always follows its `opened` (the thread cannot exist before the session that opens
     // it) but may precede or follow the `closed`, and a tail-read can begin between any
     // two of the three. Collecting first and attaching after makes the order irrelevant.
-    let mut threads: std::collections::HashMap<(String, SessionId), String> =
+    let mut threads: std::collections::HashMap<(String, SessionSlug), String> =
         std::collections::HashMap::new();
 
     for line in text.lines() {
@@ -528,9 +528,9 @@ pub fn push_recent(recent: &mut Vec<Ended>, ended: Ended) {
 /// Build the [`Ended`] row for a session leaving the switchboard.
 pub fn ended_now(
     run: &str,
-    session: &SessionId,
+    session: &SessionSlug,
     role: Role,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
     title: &str,
     subject: Option<&str>,
     turns: u64,
@@ -575,9 +575,9 @@ pub fn closed_record(ended: &Ended) -> Record {
 /// The `opened` record for a session joining the switchboard.
 pub fn opened_record(
     run: &str,
-    session: &SessionId,
+    session: &SessionSlug,
     role: Role,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
     title: &str,
     subject: Option<&str>,
     at: DateTime<Utc>,
@@ -597,7 +597,7 @@ pub fn opened_record(
 /// The `thread` record binding a session to the codex thread it opened.
 pub fn thread_record(
     run: &str,
-    session: &SessionId,
+    session: &SessionSlug,
     thread_id: &str,
     at: DateTime<Utc>,
 ) -> Record {
@@ -748,7 +748,7 @@ mod tests {
             (3, Role::Reflection),
             (4, Role::Worker(WorkerType::General)),
         ] {
-            let session = &SessionId::from(session);
+            let session = &SessionSlug::from(session);
             text.push_str(&line(&opened_record("run-a", session, role, None, "", None, ts(1))));
             text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), ts(1))));
         }
@@ -766,7 +766,7 @@ mod tests {
     fn a_rung_resumes_its_latest_thread() {
         let mut text = String::new();
         for (session, at) in [(1u64, ts(1)), (2, ts(20)), (3, ts(10))] {
-            let session = &SessionId::from(session);
+            let session = &SessionSlug::from(session);
             text.push_str(&line(&closed_record(&{
                 let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None, false);
                 e.ended = Some(at);
@@ -789,7 +789,7 @@ mod tests {
             (2, Role::Cognition),
             (3, Role::Worker(WorkerType::General)),
         ] {
-            let session = &SessionId::from(session);
+            let session = &SessionSlug::from(session);
             text.push_str(&line(&opened_record("run-a", session, role, None, "errand", Some("chase-harbor"), ts(1))));
             text.push_str(&line(&thread_record("run-a", session, &format!("th-{session}"), ts(1))));
         }
@@ -873,7 +873,7 @@ mod tests {
         started: DateTime<Utc>,
         ended: DateTime<Utc>,
     ) -> Record {
-        let mut row = ended_now(run, &SessionId::from(session), role, None, "", None, 1, started, None, false);
+        let mut row = ended_now(run, &SessionSlug::from(session), role, None, "", None, 1, started, None, false);
         row.ended = Some(ended);
         closed_record(&row)
     }
@@ -946,7 +946,7 @@ mod tests {
         assert!(fold(&line(&opened), "run-a").is_empty());
     }
 
-    /// Same session id, two runs — the case the run id exists for. Both rows survive and
+    /// Same session slug, two runs — the case the run id exists for. Both rows survive and
     /// neither is confused for the other.
     #[test]
     fn the_same_session_id_in_two_runs_is_two_sessions() {
@@ -1056,7 +1056,7 @@ mod tests {
         let mut text = String::new();
         for i in 1..=(RECENT_CAP as u64 + 20) {
             let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
-            let mut e = ended_now("run-a", &SessionId::from(i), Role::Cognition, None, "", None, 1, at, None, false);
+            let mut e = ended_now("run-a", &SessionSlug::from(i), Role::Cognition, None, "", None, 1, at, None, false);
             e.ended = Some(at);
             text.push_str(&line(&closed_record(&e)));
         }

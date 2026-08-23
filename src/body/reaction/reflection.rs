@@ -369,7 +369,7 @@ async fn serving_control<T>(
 /// rather than a frontier.
 async fn turn(
     reaction: &Reaction,
-    id: registry::SessionId,
+    id: registry::SessionSlug,
     pending: &[String],
 ) -> anyhow::Result<()> {
     use std::sync::Arc;

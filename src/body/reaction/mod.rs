@@ -890,7 +890,7 @@ struct ReactionInner {
 }
 
 struct LoopHandle {
-    id: registry::SessionId,
+    id: registry::SessionSlug,
     inbound: mpsc::Sender<LoopInput>,
 }
 
@@ -1177,7 +1177,7 @@ impl Reaction {
         let _ = self.get_or_create_loop().await;
     }
 
-    async fn get_or_create_loop(&self) -> (registry::SessionId, mpsc::Sender<LoopInput>) {
+    async fn get_or_create_loop(&self) -> (registry::SessionSlug, mpsc::Sender<LoopInput>) {
         let mut slot = self.inner.loop_handle.lock().await;
         if let Some(handle) = slot.as_ref() {
             return (handle.id.clone(), handle.inbound.clone());
@@ -1752,7 +1752,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 /// The one thing about mail the host still decides, and it is deliberately the dumbest
 /// possible question: *did the brain write?* — not *is this the answer?* The second used
 /// to be a host-held flag and could never be answered from here (see [`LoopInput::Mail`]);
-/// the first is a session id comparison and discharges a promise made about work being
+/// the first is a session slug comparison and discharges a promise made about work being
 /// under way ([`tools::NextWord`]), which is the only caller.
 fn mail_from_cognition(input: &LoopInput) -> bool {
     let LoopInput::Mail { mail } = input else { return false };
@@ -1781,7 +1781,7 @@ async fn run_reaction_turn(
     batch: &[LoopInput],
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     speaking: &Speaking,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
@@ -1986,7 +1986,7 @@ async fn run_reaction_turn(
 /// they are small; what stops happening is the repetition.
 async fn turn_context(
     memory: &Memory,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     memo: &mut WindowMemo,
     worker_status: &str,
     on_screen: &str,
@@ -2391,7 +2391,7 @@ async fn hand_down_to_cognition(reaction: &Reaction, task: String) {
 /// pause without replacing a session that is already live.
 async fn warm_sessions(
     reaction: &Reaction,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
 ) -> bool {
@@ -2419,7 +2419,7 @@ async fn warm_sessions(
 /// first real turn cold-opens normally.
 async fn warm_reaction_session(
     reaction: &Reaction,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     held: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
 ) {
@@ -2481,7 +2481,7 @@ async fn warm_reaction_session(
 async fn seed_session(
     reaction: &Reaction,
     session: &AgentSession,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     memo: &mut WindowMemo,
 ) {
     memo.forget();
@@ -2542,12 +2542,12 @@ async fn record_reaction_session_closed(
 ///
 /// `reaction_id` is the loop's own switchboard registration — the *same* id across every
 /// reopen, because the conversation has one Reaction however many subprocesses
-/// have hosted it. Passing it is what puts `X-HI-Session-Id` on the session's MCP
+/// have hosted it. Passing it is what puts `X-HI-Session-Slug` on the session's MCP
 /// attach; without it Reaction held a mailbox it had no identity to send from, and
 /// `send_message` answered "this session has none" to the one rung that talks most.
 async fn open_reaction_session(
     reaction: &Reaction,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
 ) -> anyhow::Result<Arc<AgentSession>> {
     let session = Arc::new(
         reaction
@@ -2602,7 +2602,7 @@ struct Drove {
 /// (a gateway 402/429, a transport reset) to the caller's classifier.
 async fn drive_reaction(
     session: &AgentSession,
-    reaction_id: &registry::SessionId,
+    reaction_id: &registry::SessionSlug,
     context: String,
 ) -> anyhow::Result<Drove> {
     let mut run = session.prompt(context).await?;
@@ -3179,7 +3179,7 @@ mod hand_down_tests {
     use super::*;
     use crate::foundation::registry::Message;
 
-    fn mail(text: &str, from: Option<registry::SessionId>) -> Message {
+    fn mail(text: &str, from: Option<registry::SessionSlug>) -> Message {
         Message { from, text: text.to_string() }
     }
 

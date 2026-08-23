@@ -26,7 +26,7 @@
 
 use chrono::{DateTime, Utc};
 
-use super::SessionId;
+use super::SessionSlug;
 
 /// How many delivered messages the ring keeps, process-wide.
 ///
@@ -46,15 +46,15 @@ pub const TEXT_CHARS: usize = 4_000;
 #[derive(Debug, Clone)]
 pub struct Sent {
     pub at: DateTime<Utc>,
-    pub from: SessionId,
-    pub to: SessionId,
+    pub from: SessionSlug,
+    pub to: SessionSlug,
     pub text: String,
     /// Whether `text` is the whole of what was sent, or the first [`TEXT_CHARS`] of it.
     pub clipped: bool,
 }
 
 impl Sent {
-    pub fn new(from: SessionId, to: SessionId, text: &str) -> Self {
+    pub fn new(from: SessionSlug, to: SessionSlug, text: &str) -> Self {
         let kept: String = text.chars().take(TEXT_CHARS).collect();
         let clipped = kept.len() < text.len();
         Self { at: Utc::now(), from, to, text: kept, clipped }
@@ -66,7 +66,7 @@ impl Sent {
     /// end only is not a conversation. `a == b` matches nothing — a session cannot
     /// `send` to itself through the switchboard, and answering as though it could would
     /// draw its own mail as a dialogue.
-    pub fn between(&self, a: &SessionId, b: &SessionId) -> bool {
+    pub fn between(&self, a: &SessionSlug, b: &SessionSlug) -> bool {
         a != b && ((&self.from == a && &self.to == b) || (&self.from == b && &self.to == a))
     }
 }

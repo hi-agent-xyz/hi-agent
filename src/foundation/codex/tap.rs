@@ -55,13 +55,13 @@ pub struct RawFrame {
     /// session, so the inspector groups a session's frames by this — including the
     /// `initialize`/`session/new` frames that precede (and so carry no) `sessionId`.
     pub conn: u64,
-    /// hi-agent's own session id for that connection, when it has one.
+    /// hi-agent's own session slug for that connection, when it has one.
     ///
     /// Distinct from [`thread_id`](Self::thread_id), which is the *protocol's* id
     /// parsed off the line and absent during the handshake. This one is minted by the
     /// host before the subprocess starts, so it names every frame including the first —
     /// which is what makes a durable per-session file possible at all.
-    pub agent_session: Option<crate::foundation::registry::SessionId>,
+    pub agent_session: Option<crate::foundation::registry::SessionSlug>,
     /// The rung this subprocess hosts (`reaction`, `cognition`, `worker`, …).
     pub role: String,
     pub dir: Dir,
@@ -142,7 +142,7 @@ impl WireTap {
     pub fn record(
         &self,
         conn: u64,
-        agent_session: Option<&crate::foundation::registry::SessionId>,
+        agent_session: Option<&crate::foundation::registry::SessionSlug>,
         role: &str,
         dir: Dir,
         line: &str,
@@ -247,7 +247,7 @@ async fn write_frames(data_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<RawFram
             batch.push(more);
         }
 
-        let mut by_session: BTreeMap<crate::foundation::registry::SessionId, String> = BTreeMap::new();
+        let mut by_session: BTreeMap<crate::foundation::registry::SessionSlug, String> = BTreeMap::new();
         for frame in batch.drain(..) {
             let Some(session) = frame.agent_session.clone() else { continue };
             match serde_json::to_string(&frame) {
@@ -342,7 +342,7 @@ mod tests {
         assert!(other_body.contains("initialize"), "the handshake is kept too: {other_body}");
     }
 
-    /// A connection with no agent session id has nothing durable to be filed as. It must
+    /// A connection with no agent session slug has nothing durable to be filed as. It must
     /// still reach the inspector, and must not invent a bucket on disk.
     #[tokio::test]
     async fn a_frame_with_no_session_is_seen_but_not_filed() {

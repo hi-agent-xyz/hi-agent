@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
-use crate::foundation::registry::SessionId;
+use crate::foundation::registry::SessionSlug;
 use crate::identity::Role;
 
 /// How many recent events the in-memory ring retains for SSE replay-on-connect.
@@ -162,11 +162,11 @@ pub enum EventKind {
     /// the difference is what was in the mind that ordered it — so an unset flag means
     /// *unmarked*, not *asked for*. A zero here is therefore the weaker of the two
     /// claims: either nothing is being prepared, or nothing is saying so.
-    WorkerSpawned { id: SessionId, title: String, ahead: bool },
+    WorkerSpawned { id: SessionSlug, title: String, ahead: bool },
     /// A warm (finished-but-idle) worker was handed a follow-up task and is running
     /// again on the same session.
-    WorkerResumed { id: SessionId, task: String },
-    WorkerFinished { id: SessionId, state: WorkerState, summary_chars: usize },
+    WorkerResumed { id: SessionSlug, task: String },
+    WorkerFinished { id: SessionSlug, state: WorkerState, summary_chars: usize },
     /// One agent-to-agent edge: the one verb crossing, and what became of it.
     ///
     /// Recorded for **both** directions of host mediation. `from: Some(id)` is one agent
@@ -176,15 +176,15 @@ pub enum EventKind {
     /// carries on [`crate::foundation::registry::Message`], mirrored rather than
     /// reinterpreted.
     ///
-    /// `to` is a session id, which is now the only kind of address there is — so an edge
+    /// `to` is a session slug, which is now the only kind of address there is — so an edge
     /// names both its ends without anything having to be resolved after the fact.
     ///
     /// The full `message` travels, like `TurnStarted { input }` and
     /// `TurnFinished { reply }`. An edge you can see the existence but not the content
     /// of does not answer the question you opened the inspector to ask.
     MessageSent {
-        from: Option<SessionId>,
-        to: SessionId,
+        from: Option<SessionSlug>,
+        to: SessionSlug,
         delivery: crate::foundation::registry::Delivery,
         message: String,
     },

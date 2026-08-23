@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
-use crate::foundation::registry::SessionId;
+use crate::foundation::registry::SessionSlug;
 use crate::types::Channel;
 
 /// Where a signal's media bytes sit within its channel-day folder. Input is the
@@ -159,7 +159,7 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
 /// does. Without the run, today's `cognition` and tomorrow's are one file, and a record
 /// that silently merges two different agents is worse than no record.
 ///
-/// **`session` is a [`SessionId`](crate::foundation::registry::SessionId), and that type is
+/// **`session` is a [`SessionSlug`](crate::foundation::registry::SessionSlug), and that type is
 /// what keeps this a filename rather than a path.** It admits letters, digits and `-` and
 /// nothing else, so no value of it can climb out of the run directory. This function must
 /// not be handed a bare `&str` — the reason `GET /api/workers/{id}/frames` is safe is that
@@ -167,7 +167,7 @@ pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
 ///
 /// Under `raw/` because foundation holds that pen and the rule there is *written before
 /// anything reacts to it*.
-pub fn session_frames_path(data_dir: &Path, run: &str, session: &SessionId) -> PathBuf {
+pub fn session_frames_path(data_dir: &Path, run: &str, session: &SessionSlug) -> PathBuf {
     raw_root(data_dir).join(SESSIONS_DIR).join(run).join(format!("{session}.jsonl"))
 }
 

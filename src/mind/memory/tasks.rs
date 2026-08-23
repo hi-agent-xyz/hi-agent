@@ -409,7 +409,7 @@ pub async fn active_tasks(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
 /// by construction after a restart: it would still name a session that no longer exists.
 #[derive(Debug, Clone)]
 pub struct WorkingOnIt {
-    pub session: crate::foundation::registry::SessionId,
+    pub session: crate::foundation::registry::SessionSlug,
     pub busy: bool,
     /// The last thing it was seen doing, already clipped by the registry.
     pub doing: Option<String>,

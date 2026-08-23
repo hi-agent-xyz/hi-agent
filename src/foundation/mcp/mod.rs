@@ -5,12 +5,12 @@
 //! "Streamable HTTP" transport to serve tools: a JSON-RPC *request* gets a single
 //! `application/json` response, a *notification* gets `202 Accepted`, and the GET
 //! SSE stream is declined (`405`) since we never push server-initiated messages.
-//! No MCP transport session ids — each agent session opens its own connection and
-//! identifies its role and agent-session id on every call via headers, so the
+//! No MCP transport session slugs — each agent session opens its own connection and
+//! identifies its role and agent-session slug on every call via headers, so the
 //! transport stays stateless here.
 //!
 //! This module is transport-free: it turns a parsed JSON-RPC message plus the
-//! routing identity (role/session id from headers) into an [`McpReply`]. The
+//! routing identity (role/session slug from headers) into an [`McpReply`]. The
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
 //! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
@@ -116,7 +116,7 @@ fn send_message_tool() -> Value {
         "Send a message to another agent session. One direction — it does not wait for a \
          reply, and the return value only tells you whether it was delivered. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
-         message so it knows where to reach you. `to` is always a **session id**. The three \
+         message so it knows where to reach you. `to` is always a **session slug**. The three \
          standing rungs are `reaction` (what reaches the person), `cognition` (the brain) and `reflection` \
          — one of each, always those names. A worker's id comes back from \
          `hi_create_worker` and looks like `view-builder-kyoto-trip`; a message you received \
@@ -127,7 +127,7 @@ fn send_message_tool() -> Value {
             "properties": {
                 "to": {
                     "type": "string",
-                    "description": "A session id: `reaction`, `cognition`, `reflection`, or a worker's.",
+                    "description": "A session slug: `reaction`, `cognition`, `reflection`, or a worker's.",
                 },
                 "message": { "type": "string", "description": "What you want them to know, in plain words." },
             },
@@ -139,7 +139,7 @@ fn send_message_tool() -> Value {
 fn create_worker_tool() -> Value {
     tool(
         "hi_create_worker",
-        "Start a working session to carry out a job, and get back its session id. This call \
+        "Start a working session to carry out a job, and get back its session slug. This call \
          returns once the session is actually up, so the id it gives you answers \
          immediately — if it says the session never opened, nothing is running that errand \
          and it is yours to place elsewhere. It runs \
@@ -253,7 +253,7 @@ fn cancel_worker_tool() -> Value {
          work, cancel and then `hi_send_message` the new instruction to the same id.",
         json!({
             "type": "object",
-            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "properties": { "id": { "type": "string", "description": "The session slug." } },
             "required": ["id"],
         }),
     )
@@ -277,7 +277,7 @@ fn close_worker_tool() -> Value {
          finish and report before the session closes.",
         json!({
             "type": "object",
-            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "properties": { "id": { "type": "string", "description": "The session slug." } },
             "required": ["id"],
         }),
     )
@@ -291,7 +291,7 @@ fn session_status_tool() -> Value {
          it deliberately carries none of the session's actual output.",
         json!({
             "type": "object",
-            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "properties": { "id": { "type": "string", "description": "The session slug." } },
             "required": ["id"],
         }),
     )
@@ -306,7 +306,7 @@ fn session_messages_tool() -> Value {
          check.",
         json!({
             "type": "object",
-            "properties": { "id": { "type": "string", "description": "The session id." } },
+            "properties": { "id": { "type": "string", "description": "The session slug." } },
             "required": ["id"],
         }),
     )
@@ -950,7 +950,7 @@ fn show_tool() -> Value {
     )
 }
 
-/// Handle one parsed JSON-RPC message. `role` and `session_id` come from the
+/// Handle one parsed JSON-RPC message. `role` and `slug` come from the
 /// request headers; `registry` routes loop-owned tool calls by role.
 pub async fn handle(
     registry: &ToolRegistry,
@@ -959,7 +959,7 @@ pub async fn handle(
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
     role: Option<&str>,
-    session_id: Option<crate::foundation::registry::SessionId>,
+    slug: Option<crate::foundation::registry::SessionSlug>,
     msg: &Value,
 ) -> McpReply {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -999,7 +999,7 @@ pub async fn handle(
                     privacy,
                     video_partial,
                     observatory,
-                    session_id,
+                    slug,
                     role,
                     name,
                     &args,
@@ -1023,7 +1023,7 @@ async fn dispatch_tool(
     privacy: &crate::foundation::privacy::PrivacyBoundary,
     video_partial: &Mutex<Option<PartialMinute>>,
     observatory: &Observatory,
-    session_id: Option<crate::foundation::registry::SessionId>,
+    slug: Option<crate::foundation::registry::SessionSlug>,
     role: Option<&str>,
     name: &str,
     args: &Value,
@@ -1078,8 +1078,8 @@ async fn dispatch_tool(
         // clip to this session when it lands.
         "hi_text_to_image" => return do_text_to_image(data_dir, args).await,
         "hi_image_to_image" => return do_image_to_image(data_dir, args).await,
-        "hi_text_to_video" => return do_text_to_video(data_dir, session_id, args).await,
-        "hi_image_to_video" => return do_image_to_video(data_dir, session_id, args).await,
+        "hi_text_to_video" => return do_text_to_video(data_dir, slug, args).await,
+        "hi_image_to_video" => return do_image_to_video(data_dir, slug, args).await,
         "hi_review_view" => return do_review_view(data_dir, args).await,
         "hi_http_request" => {
             return match crate::foundation::privacy::broker::http_request(privacy, args).await {
@@ -1107,7 +1107,7 @@ async fn dispatch_tool(
     // to, but could not send.
     match name {
         "hi_send_message" => {
-            let Some(from) = session_id else {
+            let Some(from) = slug else {
                 return tool_error("hi_send_message needs a session identity; this session has none");
             };
             let to = arg_str("to");
@@ -1115,9 +1115,9 @@ async fn dispatch_tool(
             if to.trim().is_empty() || message.trim().is_empty() {
                 return tool_error("hi_send_message requires `to` and a non-empty `message`");
             }
-            let Ok(target) = to.trim().parse::<registry::SessionId>() else {
+            let Ok(target) = to.trim().parse::<registry::SessionSlug>() else {
                 return tool_error(&format!(
-                    "`{}` is not a session id. An address is a name — `cognition`, \
+                    "`{}` is not a session slug. An address is a name — `cognition`, \
                      `reaction`, `reflection`, or a worker's, which comes back from \
                      `hi_create_worker`. Everyone you can reach is listed in your window \
                      with theirs.",
@@ -1149,7 +1149,7 @@ async fn dispatch_tool(
             };
         }
         "hi_session_status" => {
-            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionSlug>().ok() else {
                 return tool_error("hi_session_status requires a session `id`");
             };
             let Some(st) = registry::global().status(&id) else {
@@ -1205,10 +1205,10 @@ async fn dispatch_tool(
                     role.unwrap_or("<none>")
                 ));
             }
-            let Some(caller) = session_id else {
+            let Some(caller) = slug else {
                 return tool_error("hi_close_worker needs a session identity; this session has none");
             };
-            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionSlug>().ok() else {
                 return tool_error("hi_close_worker requires a session `id`");
             };
             let Some(st) = registry::global().status(&id) else {
@@ -1262,10 +1262,10 @@ async fn dispatch_tool(
                     role.unwrap_or("<none>")
                 ));
             }
-            let Some(caller) = session_id else {
+            let Some(caller) = slug else {
                 return tool_error("hi_cancel_worker needs a session identity; this session has none");
             };
-            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionSlug>().ok() else {
                 return tool_error("hi_cancel_worker requires a session `id`");
             };
             let Some(st) = registry::global().status(&id) else {
@@ -1321,7 +1321,7 @@ async fn dispatch_tool(
             };
         }
         "hi_session_messages" => {
-            let Some(id) = arg_str("id").trim().parse::<registry::SessionId>().ok() else {
+            let Some(id) = arg_str("id").trim().parse::<registry::SessionSlug>().ok() else {
                 return tool_error("hi_session_messages requires a session `id`");
             };
             return match registry::global().messages(&id) {
@@ -1338,7 +1338,7 @@ async fn dispatch_tool(
             //
             // Structural, not just absent from the advertised surface — the same reason
             // `hi_say`/`hi_show` are checked above. Until now this was enforced only by
-            // accident: Reaction had no `X-HI-Session-Id`, so the identity check below
+            // accident: Reaction had no `X-HI-Session-Slug`, so the identity check below
             // rejected it. That fence is gone as of this commit, so the real one goes in.
             if !matches!(role, Some("reflection") | Some("cognition")) {
                 return tool_error(&format!(
@@ -1346,7 +1346,7 @@ async fn dispatch_tool(
                     role.unwrap_or("<none>")
                 ));
             }
-            let Some(owner) = session_id else {
+            let Some(owner) = slug else {
                 return tool_error("hi_create_worker needs a session identity; this session has none");
             };
             let task = arg_str("task");
@@ -1405,7 +1405,7 @@ async fn dispatch_tool(
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
             // The id is minted **here**, before the session exists, and handed back in
-            // this reply — the contract is `CreateWorker → a session id`, and a caller
+            // this reply — the contract is `CreateWorker → a session slug`, and a caller
             // that cannot name what it made cannot brief it, ask after it, or read it.
             // Minting early is the same trick the whole session layer already uses: the
             // tool surface identifies its caller by a header, so an id has to exist
@@ -2322,7 +2322,7 @@ const VIDEO_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 /// message would.
 fn spawn_video_poller(
     data_dir: PathBuf,
-    session_id: Option<crate::foundation::registry::SessionId>,
+    session: Option<crate::foundation::registry::SessionSlug>,
     handle: video_gen::VideoHandle,
     task: &'static str,
     slug: String,
@@ -2365,7 +2365,7 @@ fn spawn_video_poller(
 
         // No session to tell, or it has ended: the artifact is still on disk, and
         // saying so in the log beats pretending the work was never done.
-        let Some(to) = session_id else {
+        let Some(to) = session else {
             tracing::info!(outcome = %message, "video generation finished with nobody to tell");
             return;
         };
@@ -2390,7 +2390,7 @@ async fn land_clip(data_dir: &Path, url: &str, slug: &str) -> anyhow::Result<Str
     Ok(reff)
 }
 
-async fn do_text_to_video(data_dir: &Path, session_id: Option<crate::foundation::registry::SessionId>, args: &Value) -> Value {
+async fn do_text_to_video(data_dir: &Path, session: Option<crate::foundation::registry::SessionSlug>, args: &Value) -> Value {
     let Some(prompt) =
         args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
@@ -2401,7 +2401,7 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<crate::foundation:
             let id = handle.id.clone();
             spawn_video_poller(
                 data_dir.to_path_buf(),
-                session_id,
+                session,
                 handle,
                 "hi_text_to_video",
                 prompt.to_string(),
@@ -2416,7 +2416,7 @@ async fn do_text_to_video(data_dir: &Path, session_id: Option<crate::foundation:
     }
 }
 
-async fn do_image_to_video(data_dir: &Path, session_id: Option<crate::foundation::registry::SessionId>, args: &Value) -> Value {
+async fn do_image_to_video(data_dir: &Path, session: Option<crate::foundation::registry::SessionSlug>, args: &Value) -> Value {
     let Some(reff) = args.get("ref").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
     else {
         return tool_error("hi_image_to_video needs `ref` — the ⟨ref: …⟩ of the still to animate");
@@ -2433,7 +2433,7 @@ async fn do_image_to_video(data_dir: &Path, session_id: Option<crate::foundation
             let slug = if prompt.trim().is_empty() { "animated".to_string() } else { prompt.to_string() };
             spawn_video_poller(
                 data_dir.to_path_buf(),
-                session_id,
+                session,
                 handle,
                 "hi_image_to_video",
                 slug,
@@ -2611,7 +2611,7 @@ mod surface_tests {
     /// inside one thread, plus a developer message telling the model it is `/root` in a
     /// team of agents. While our verb was also called `send_message`, 28 inter-rung
     /// messages across all four roles reached codex's router instead of ours; it answered
-    /// `live agent path `/root/2` not found` — a bare session id resolving as a relative
+    /// `live agent path `/root/2` not found` — a bare session slug resolving as a relative
     /// task name over there — and nothing was delivered. Two-thirds of them were never
     /// re-sent in that turn.
     ///
@@ -2970,8 +2970,8 @@ mod surface_tests {
     /// Surface membership is a context optimization, not a rail — so the rungs that
     /// must not dispatch are refused at *dispatch*, whatever their model emits.
     ///
-    /// This was enforced only by accident until Reaction was given a session id: the
-    /// identity check rejected it for having no `X-HI-Session-Id`, which reads as a
+    /// This was enforced only by accident until Reaction was given a session slug: the
+    /// identity check rejected it for having no `X-HI-Session-Slug`, which reads as a
     /// guard and is not one. A rung with an identity and no advertised `hi_create_worker`
     /// could call it anyway.
     #[tokio::test]

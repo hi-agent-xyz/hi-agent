@@ -12,7 +12,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::{self, Stream};
 use serde::Serialize;
 
-use crate::foundation::registry::{self, SessionId, Status};
+use crate::foundation::registry::{self, SessionSlug, Status};
 use crate::identity::Role;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -53,9 +53,9 @@ pub async fn get_activity() -> Sse<impl Stream<Item = Result<Event, Infallible>>
 }
 
 fn project(statuses: &[Status]) -> AgentActivity {
-    let by_id: HashMap<&SessionId, &Status> =
+    let by_id: HashMap<&SessionSlug, &Status> =
         statuses.iter().map(|status| (&status.id, status)).collect();
-    let delegated_roots: HashSet<&SessionId> = statuses
+    let delegated_roots: HashSet<&SessionSlug> = statuses
         .iter()
         .filter(|status| status.role == Role::Cognition)
         .map(|status| &status.id)
@@ -89,9 +89,9 @@ fn project(statuses: &[Status]) -> AgentActivity {
 }
 
 fn owner_chain_reaches<'a>(
-    mut owner: Option<&'a SessionId>,
-    roots: &HashSet<&SessionId>,
-    statuses: &HashMap<&SessionId, &'a Status>,
+    mut owner: Option<&'a SessionSlug>,
+    roots: &HashSet<&SessionSlug>,
+    statuses: &HashMap<&SessionSlug, &'a Status>,
 ) -> bool {
     let mut seen = HashSet::new();
     while let Some(id) = owner {
@@ -113,9 +113,9 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     fn status(
-        id: SessionId,
+        id: SessionSlug,
         role: Role,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         busy: bool,
         queued: bool,
     ) -> Status {

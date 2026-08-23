@@ -35,7 +35,7 @@ because those two are not the same thing at all.
 
 **`hi_send_message` hands the work onward.** It goes one way and does not wait for a
 reply — that is exactly the point, because the conversation must never stall while
-another part of you thinks. `to` is a session id: the ones you can reach are listed in
+another part of you thinks. `to` is a session slug: the ones you can reach are listed in
 your brief under "Who you can reach right now", and you address one by the id shown
 there. Give it everything it needs to start, since it works from your words alone and
 you are not there to be asked. What comes of it reaches you later, as a message of its

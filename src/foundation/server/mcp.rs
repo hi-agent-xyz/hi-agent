@@ -2,7 +2,7 @@
 //!
 //! Binds the MCP "Streamable HTTP" transport to the reaction's tool carrier
 //! ([`crate::foundation::mcp`]). A POST carries one JSON-RPC message; we route by the
-//! `X-HI-Role`/`X-HI-Session-Id` headers a session's MCP attach sets
+//! `X-HI-Role`/`X-HI-Session-Slug` headers a session's MCP attach sets
 //! (see `agent::AgentLayer::session`). A request gets a single `application/json`
 //! response; a notification gets `202`. We push no server-initiated messages, so
 //! the optional GET SSE stream is declined with `405`.
@@ -16,7 +16,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use serde_json::Value;
 
-use crate::foundation::config::{HEADER_ROLE, HEADER_SESSION_ID};
+use crate::foundation::config::{HEADER_ROLE, HEADER_SESSION_SLUG};
 use crate::foundation::mcp::{self, McpReply};
 use crate::foundation::server::AppState;
 
@@ -34,8 +34,8 @@ pub async fn post_mcp(
             .map(str::to_owned)
     };
     let role = header(HEADER_ROLE);
-    let session_id = header(HEADER_SESSION_ID)
-        .and_then(|v| v.parse::<crate::foundation::registry::SessionId>().ok());
+    let slug = header(HEADER_SESSION_SLUG)
+        .and_then(|v| v.parse::<crate::foundation::registry::SessionSlug>().ok());
 
     let msg: Value = match serde_json::from_slice(body.as_ref()) {
         Ok(v) => v,
@@ -52,7 +52,7 @@ pub async fn post_mcp(
         &state.video_in_partial,
         &state.observatory,
         role.as_deref(),
-        session_id,
+        slug,
         &msg,
     )
     .await

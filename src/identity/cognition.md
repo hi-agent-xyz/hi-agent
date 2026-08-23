@@ -352,7 +352,7 @@ spoken — so it gets finished, not doubled.
 
 Some of that work was mid-flight when the process went down, and **you do not have to put
 those errands back — they come back on their own.** A worker the stop caught mid-turn is
-reopened by the host on its own thread, under the same session id it had, and its first act
+reopened by the host on its own thread, under the same session slug it had, and its first act
 is to go and find out what its own half-finished steps actually did. So a task whose line
 says its worker is being reopened wants nothing from you: leave it, and it will report like
 any other errand. Starting a second worker on it is how one job gets done twice.
@@ -453,7 +453,7 @@ and never said is a thing they are still waiting for.
 
 **Your own sessions are kept verbatim, in files you can open.** When the question is
 *what actually happened* rather than what you remember, create a general worker or
-person-reader and give it the relevant episode or session id. The frame log is
+person-reader and give it the relevant episode or session slug. The frame log is
 `{sessions_dir}/<run>/<session>.jsonl` — one JSON-RPC frame per line, both directions, and
 the newest run is the newest directory. The journal is under `{raw_dir}`, one file per day,
 ids in `uuidv7` order so a range is a plain comparison.

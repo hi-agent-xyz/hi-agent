@@ -181,9 +181,9 @@ pub mod tunables {
 /// HTTP headers a session's MCP attach carries on every tool call. Set when the
 /// session is opened (see `agent::AgentLayer::session`) and read by the MCP
 /// handler (see `crate::foundation::mcp`). The role selects the tool surface and
-/// owning loop; the session id names the caller.
+/// owning loop; the session slug names the caller.
 pub const HEADER_ROLE: &str = "X-HI-Role";
-pub const HEADER_SESSION_ID: &str = "X-HI-Session-Id";
+pub const HEADER_SESSION_SLUG: &str = "X-HI-Session-Slug";
 
 /// Cognition parameters, resolved from the credential store. The upstream credential
 /// never lives in git and never rides the thread config — only the env var that names it.

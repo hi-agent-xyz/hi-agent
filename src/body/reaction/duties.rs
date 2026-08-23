@@ -129,7 +129,7 @@ async fn run(reaction: Reaction, mut rx: mpsc::Receiver<DutyDelivery>) {
     let mut workers = workers::WorkerRegistry::new(report_tx);
     // key → the session currently handling it. In memory only, and re-derived from the
     // ledger whenever it turns out to be wrong.
-    let mut bound: HashMap<String, registry::SessionId> = HashMap::new();
+    let mut bound: HashMap<String, registry::SessionSlug> = HashMap::new();
     let mut pending: HashMap<String, Pending> = HashMap::new();
     let mut last_dispatch: HashMap<String, Instant> = HashMap::new();
 
@@ -209,7 +209,7 @@ async fn sleep_until_opt(at: Option<Instant>) {
 async fn dispatch(
     reaction: &Reaction,
     workers: &mut workers::WorkerRegistry,
-    bound: &mut HashMap<String, registry::SessionId>,
+    bound: &mut HashMap<String, registry::SessionSlug>,
     key: &str,
     batch: Pending,
 ) {

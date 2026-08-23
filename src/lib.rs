@@ -188,7 +188,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 
     // The session directory — what ran and where its frames are. The tap above has always
     // kept the frames; nothing could address them once a session left the switchboard,
-    // because session ids restart at 1 each run. Attaching this also seeds the
+    // because session slugs restart at 1 each run. Attaching this also seeds the
     // recent-ends list from previous runs, which is what makes a worker the process died
     // underneath visible instead of simply absent.
     foundation::registry::global().attach_index(config.data_dir.clone()).await;

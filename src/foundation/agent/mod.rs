@@ -24,7 +24,7 @@ use serde_json::json;
 
 use crate::foundation::codex::process::Sandbox;
 use crate::foundation::codex::{AgentSession, CodexProcess, ProcessRegistry, SessionOpts, WireTap};
-use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SESSION_ID};
+use crate::foundation::config::{AgentConfig, HEADER_ROLE, HEADER_SESSION_SLUG};
 use crate::identity::Role;
 
 const REACTION_PERMISSION_PROFILE: &str = "hi-agent-reaction";
@@ -135,7 +135,7 @@ impl AgentLayer {
 
     /// Spawn a dedicated subprocess and open its single thread.
     ///
-    /// `role` selects the tool surface the session gets; `session_id` (workers and
+    /// `role` selects the tool surface the session gets; `slug` (workers and
     /// anything else the host has minted an id for) names which session a tool call
     /// comes from. The thread attaches hi-agent's `/mcp` endpoint tagged with both via
     /// HTTP headers, so the server can route its tool calls. The returned handle owns
@@ -144,7 +144,7 @@ impl AgentLayer {
     pub async fn session(
         &self,
         role: Role,
-        session_id: Option<crate::foundation::registry::SessionId>,
+        slug: Option<crate::foundation::registry::SessionSlug>,
         opts: SessionOpts,
     ) -> anyhow::Result<AgentSession> {
         // **Nothing opens once the drain has begun.** The host quiesces the reaction
@@ -199,7 +199,7 @@ impl AgentLayer {
             role.as_str().to_string(),
             // hi-agent's own session id, not the protocol's: it exists before the
             // subprocess does, which is exactly what a durable per-session record needs.
-            session_id.clone(),
+            slug.clone(),
             &self.inner.registry,
         )
         .await?;
@@ -209,7 +209,7 @@ impl AgentLayer {
             cwd,
             sandbox: role.sandbox(),
             permission_profile: permission_profile(role),
-            config: self.thread_config(&cfg, role, session_id.clone()),
+            config: self.thread_config(&cfg, role, slug.clone()),
             // Consumed above; it is this function's parameter, not the wire's.
             resume: None,
         };
@@ -244,8 +244,8 @@ impl AgentLayer {
                 None => (process.open_thread(opts).await?, false),
             },
         };
-        if let Some(session_id) = session_id.as_ref() {
-            crate::foundation::registry::global().note_thread(session_id, &id);
+        if let Some(slug) = slug.as_ref() {
+            crate::foundation::registry::global().note_thread(slug, &id);
         }
 
         Ok(AgentSession::new(
@@ -324,12 +324,12 @@ impl AgentLayer {
         &self,
         cfg: &AgentConfig,
         role: Role,
-        session_id: Option<crate::foundation::registry::SessionId>,
+        slug: Option<crate::foundation::registry::SessionSlug>,
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut headers = serde_json::Map::new();
         headers.insert(HEADER_ROLE.to_string(), json!(role.as_str()));
-        if let Some(id) = session_id {
-            headers.insert(HEADER_SESSION_ID.to_string(), json!(id.to_string()));
+        if let Some(id) = slug {
+            headers.insert(HEADER_SESSION_SLUG.to_string(), json!(id.to_string()));
         }
 
         let mut config = cfg.thread_config();
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(server["url"], "http://127.0.0.1:12358/mcp");
         assert_eq!(server["http_headers"][HEADER_ROLE], "worker");
         // Stringified: HTTP header values are text, and codex forwards them verbatim.
-        assert_eq!(server["http_headers"][HEADER_SESSION_ID], "42");
+        assert_eq!(server["http_headers"][HEADER_SESSION_SLUG], "42");
     }
 
     #[test]
@@ -479,7 +479,7 @@ mod tests {
         let headers = &config["mcp_servers"]["hi-agent"]["http_headers"];
         assert_eq!(headers[HEADER_ROLE], "reaction");
         assert!(
-            headers.get(HEADER_SESSION_ID).is_none(),
+            headers.get(HEADER_SESSION_SLUG).is_none(),
             "an absent id must not become the string \"None\""
         );
     }

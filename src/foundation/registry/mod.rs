@@ -25,6 +25,23 @@ use tokio::sync::{watch, Notify};
 
 /// Handle for one agent session, unique within a run.
 ///
+/// **This is hi-agent's own name for a session, and it is not the codex thread id.** The two
+/// sit side by side on every row of the session directory and answer different questions, and
+/// while this type was called `SessionId` a reader could not tell them apart:
+///
+/// - the **slug** is an *address* — who mail goes to, who owns whom, what a roster row is
+///   called, what `hi_send_message` takes. It is ours, it is minted here, and it is unique
+///   only within a run.
+/// - the **thread id** is a *mind* — codex's uuid for the rollout under `CODEX_HOME`, the only
+///   handle `thread/resume` accepts, and stable for the life of the thread however many
+///   processes have hosted it. It is recorded, never derived ([`index::Record::Thread`]).
+///
+/// A slug reappearing across runs is therefore not continuity: `reaction` is `reaction` every
+/// boot because the slug *is* the role name, and a worker slug is rebuilt from the same
+/// subject, so the same errand tends to come back looking identically named whether or not
+/// anything was resumed. Only the thread says whether the mind survived. The directory keys
+/// frames by `(run, slug)` for exactly this reason.
+///
 /// **A slug, not an ordinal**
 /// ([`docs/arch/foundation.md`](../../../docs/arch/foundation.md#the-agent-session-registry)).
 /// The three rungs are singletons and carry the name they already have everywhere else in
@@ -48,15 +65,15 @@ use tokio::sync::{watch, Notify};
 /// `send_message` resolved as `/root/2`, was refused by a router we do not own, and raised
 /// nothing on our side. Between 2026-08-10 and 08-14 that dropped 33 inter-rung messages.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub struct SessionId(String);
+pub struct SessionSlug(String);
 
-impl SessionId {
+impl SessionSlug {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl std::fmt::Display for SessionId {
+impl std::fmt::Display for SessionSlug {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
@@ -68,7 +85,7 @@ pub struct NotASessionId;
 
 impl std::fmt::Display for NotASessionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("not a session id")
+        f.write_str("not a session slug")
     }
 }
 
@@ -83,12 +100,12 @@ impl std::error::Error for NotASessionId {}
 /// or a `.` is a different thing entirely and is refused here.
 ///
 /// **That strictness is load-bearing, and it is the reason this is not `Infallible`.** A
-/// session id is a path component: `raw/sessions/<run>/<id>.jsonl` is built from one, and
+/// session slug is a path component: `raw/sessions/<run>/<id>.jsonl` is built from one, and
 /// `GET /api/workers/{id}/frames` hands the value straight from the URL to that builder.
 /// While ids were integers, `parse::<u64>()` *was* the traversal guard, silently and by
 /// luck. Widening the type to a string without keeping a guard would have re-opened it —
 /// `..%2F..%2Fetc%2Fpasswd` parses fine as a slug-shaped string otherwise.
-impl std::str::FromStr for SessionId {
+impl std::str::FromStr for SessionSlug {
     type Err = NotASessionId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -98,7 +115,7 @@ impl std::str::FromStr for SessionId {
     }
 }
 
-/// An ordinal as a session id — **tests only**, and deliberately not available outside them.
+/// An ordinal as a session slug — **tests only**, and deliberately not available outside them.
 ///
 /// Most of what the switchboard is tested for is plumbing: that mail reaches the right
 /// mailbox, that a worker may address only its owner, that a roster comes back in creation
@@ -110,13 +127,13 @@ impl std::str::FromStr for SessionId {
 /// and that is what keeps ids unique within a run and free of route-shadowing literals. A
 /// second constructor on the shipping surface would be a second answer to both.
 #[cfg(test)]
-impl From<u64> for SessionId {
+impl From<u64> for SessionSlug {
     fn from(n: u64) -> Self {
         Self(n.to_string())
     }
 }
 
-impl serde::Serialize for SessionId {
+impl serde::Serialize for SessionSlug {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.0)
     }
@@ -126,22 +143,22 @@ impl serde::Serialize for SessionId {
 /// `raw/sessions/index.jsonl` is append-only and never rewritten. A number deserializes to
 /// its own decimal spelling — it addresses nothing live, which is correct, and it still
 /// names the session in the record it came from, which is all a closed row is for.
-impl<'de> serde::Deserialize<'de> for SessionId {
+impl<'de> serde::Deserialize<'de> for SessionSlug {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
         impl serde::de::Visitor<'_> for V {
-            type Value = SessionId;
+            type Value = SessionSlug;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a session id: a slug, or a number from a pre-slug run")
+                f.write_str("a session slug: a slug, or a number from a pre-slug run")
             }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SessionId, E> {
-                Ok(SessionId(v.to_string()))
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SessionSlug, E> {
+                Ok(SessionSlug(v.to_string()))
             }
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<SessionId, E> {
-                Ok(SessionId(v.to_string()))
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<SessionSlug, E> {
+                Ok(SessionSlug(v.to_string()))
             }
-            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<SessionId, E> {
-                Ok(SessionId(v.to_string()))
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<SessionSlug, E> {
+                Ok(SessionSlug(v.to_string()))
             }
         }
         d.deserialize_any(V)
@@ -165,18 +182,18 @@ static USED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 /// `hint` is what the worker slug is built from: the ledger subject when the errand serves a
 /// task, else its title. Ignored for a rung, which is a singleton and has only one name it
 /// could have.
-pub fn mint(role: Role, hint: Option<&str>) -> SessionId {
+pub fn mint(role: Role, hint: Option<&str>) -> SessionSlug {
     let base = slug_for(role, hint);
 
     let mut guard = USED.lock().unwrap();
     let used = guard.get_or_insert_with(HashSet::new);
     if used.insert(base.clone()) {
-        return SessionId(base);
+        return SessionSlug(base);
     }
     for n in 2u32.. {
         let candidate = format!("{base}-{n}");
         if used.insert(candidate.clone()) {
-            return SessionId(candidate);
+            return SessionSlug(candidate);
         }
     }
     unreachable!("u32 worth of one slug")
@@ -374,10 +391,10 @@ pub struct TurnEnd {
 /// context.
 #[derive(Debug, Clone)]
 pub struct Status {
-    pub id: SessionId,
+    pub id: SessionSlug,
     pub role: Role,
     /// The session that created this one and to which its work answers.
-    pub owner: Option<SessionId>,
+    pub owner: Option<SessionSlug>,
     /// What it is working on, as **one line a person can read**: a headline, written by
     /// whoever asked for the work.
     ///
@@ -464,7 +481,7 @@ pub struct Message {
     /// agent. A follow-up the reaction loop hands down is not a message from a colleague,
     /// and rendering it with a return address would put a second voice in a room that
     /// has only one.
-    pub from: Option<SessionId>,
+    pub from: Option<SessionSlug>,
     pub text: String,
 }
 
@@ -518,7 +535,7 @@ fn link_note(e: &Entry) -> String {
     }
 }
 
-pub fn render_reachable(who: &[(String, SessionId)]) -> String {
+pub fn render_reachable(who: &[(String, SessionSlug)]) -> String {
     if who.is_empty() {
         return String::new();
     }
@@ -551,7 +568,7 @@ struct Inbox {
 
 struct Entry {
     role: Role,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
     /// One line for a reader — see [`Status::title`]. Already flattened and capped.
     title: String,
     /// The ledger subject this session serves — see [`Status::subject`].
@@ -583,7 +600,7 @@ impl Entry {
     /// callers ([`Registry::status`], [`Registry::session_of_role`],
     /// [`Registry::statuses`]) and they were three copies of the same nine-field literal —
     /// so a field added to `Status` had three chances to be forgotten in one.
-    fn status(&self, id: SessionId) -> Status {
+    fn status(&self, id: SessionSlug) -> Status {
         Status {
             id,
             role: self.role,
@@ -630,14 +647,14 @@ impl Entry {
 /// remember every exit, hold this: the exits are then not something anyone has to get
 /// right again, including whoever adds the next one.
 pub struct Registration {
-    id: SessionId,
+    id: SessionSlug,
     /// Woken when mail lands. Cloneable and outlives nothing — dropping the handle is
     /// what closes the registration, not dropping this.
     pub mail: std::sync::Arc<Notify>,
 }
 
 impl Registration {
-    pub fn id(&self) -> SessionId {
+    pub fn id(&self) -> SessionSlug {
         self.id.clone()
     }
 }
@@ -652,9 +669,9 @@ impl Drop for Registration {
 /// is dropped. The scope-bound form of [`Registry::register`]; prefer it for anything
 /// whose lifetime is a scope rather than a task.
 pub fn register_scoped(
-    id: SessionId,
+    id: SessionSlug,
     role: Role,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
     title: String,
 ) -> Registration {
     // Rungs only — the scope-bound form is for sessions whose lifetime is a scope, and a
@@ -668,7 +685,7 @@ pub fn register_scoped(
 
 /// The switchboard. One per process.
 pub struct Registry {
-    sessions: Mutex<HashMap<SessionId, Entry>>,
+    sessions: Mutex<HashMap<SessionSlug, Entry>>,
     activity: watch::Sender<u64>,
     /// The durable session directory, once [`Registry::attach_index`] has been called at
     /// boot. Absent in tests and anywhere without a data dir, in which case the switchboard
@@ -764,9 +781,9 @@ impl Registry {
     /// callers and only one roster.
     pub fn register(
         &self,
-        id: SessionId,
+        id: SessionSlug,
         role: Role,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         title: String,
         subject: Option<String>,
     ) -> std::sync::Arc<Notify> {
@@ -868,7 +885,7 @@ impl Registry {
     /// Called once per session, right after `thread/start` answers. A session that never
     /// gets one (the spawn failed, the process died first) simply has no thread on its row,
     /// which reads as "there is no mind to go back to" rather than as missing data.
-    pub fn note_thread(&self, id: &SessionId, thread_id: &str) {
+    pub fn note_thread(&self, id: &SessionSlug, thread_id: &str) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.thread = Some(thread_id.to_string());
         }
@@ -904,7 +921,7 @@ impl Registry {
     /// **Slug, not thread.** A reopened errand keeps the address it had — same roster row,
     /// same subject, same owner — so the slug is what identifies it on both sides of the
     /// restart, and matching on the thread would work only until an errand came back cold.
-    pub fn reopened(&self, slug: &SessionId) {
+    pub fn reopened(&self, slug: &SessionSlug) {
         self.reopening.lock().unwrap().retain(|end| &end.session != slug);
     }
 
@@ -915,7 +932,7 @@ impl Registry {
     /// must not come back as a cold session pretending otherwise, which leaves a task with
     /// nobody on it — and a task in `doing` with nobody on it is indistinguishable from one
     /// being worked on unless something says why. [`Registry::lost_subjects`] is what says it.
-    pub fn could_not_reopen(&self, slug: &SessionId) {
+    pub fn could_not_reopen(&self, slug: &SessionSlug) {
         let mut reopening = self.reopening.lock().unwrap();
         if let Some(at) = reopening.iter().position(|end| &end.session == slug) {
             let end = reopening.remove(at);
@@ -947,9 +964,9 @@ impl Registry {
     /// Ids are collected before unregistering because [`Registry::unregister`] takes the
     /// same lock a snapshot would still be holding.
     pub fn close_all(&self) {
-        let ids: Vec<SessionId> = {
+        let ids: Vec<SessionSlug> = {
             let map = self.sessions.lock().unwrap();
-            let mut rows: Vec<(DateTime<Utc>, SessionId)> =
+            let mut rows: Vec<(DateTime<Utc>, SessionSlug)> =
                 map.iter().map(|(id, e)| (e.started, id.clone())).collect();
             // Oldest first, which is what sorting on the ordinal used to mean. A slug
             // sorts alphabetically and would close a worker before the rung that owns it.
@@ -985,7 +1002,7 @@ impl Registry {
     /// Drop a session. Anything still in its inbox goes with it — undelivered is the
     /// honest outcome, and the sender was told `Delivered` about a mailbox, never about
     /// an outcome.
-    pub fn unregister(&self, id: &SessionId) {
+    pub fn unregister(&self, id: &SessionSlug) {
         let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(id) {
             e.inbox.closed = true;
             Some(index::ended_now(
@@ -1025,7 +1042,7 @@ impl Registry {
     ///
     /// One direction, no reply. The return value says whether it reached a mailbox — a
     /// reply, if there is one, arrives later as its own `send` in the other direction.
-    /// **`to` is a session id, and that is the only address there is.**
+    /// **`to` is a session slug, and that is the only address there is.**
     ///
     /// A worker's id comes back from `CreateWorker`; a standing rung's is projected into
     /// the window of whoever may reach it ([`Registry::reachable`]). What this replaced —
@@ -1034,7 +1051,7 @@ impl Registry {
     /// retrieval, and a retrieval that misses is indistinguishable from nobody being
     /// there. Being told who is live, every turn, is strictly more information than being
     /// allowed to guess, and it turns this from a scan into a map lookup.
-    pub fn send(&self, from: &SessionId, to: &SessionId, message: String) -> Delivery {
+    pub fn send(&self, from: &SessionSlug, to: &SessionSlug, message: String) -> Delivery {
         let delivery = {
             let mut map = self.sessions.lock().unwrap();
 
@@ -1075,7 +1092,7 @@ impl Registry {
     /// Returns the **tail** when there is more than `limit`, together with the total, for
     /// the same reason every other reader here does: the end of an exchange is what someone
     /// opening it came for.
-    pub fn traffic_between(&self, a: &SessionId, b: &SessionId, limit: usize) -> (Vec<mail::Sent>, usize) {
+    pub fn traffic_between(&self, a: &SessionSlug, b: &SessionSlug, limit: usize) -> (Vec<mail::Sent>, usize) {
         let ring = self.traffic.lock().unwrap();
         let all: Vec<mail::Sent> = ring.iter().filter(|m| m.between(a, b)).cloned().collect();
         let total = all.len();
@@ -1095,11 +1112,11 @@ impl Registry {
     /// Rebuilt every turn by the caller. There is no cache and should not be: the answer
     /// is only true for as long as those sessions are up, and a stale id is worse than no
     /// id — it sends somewhere real.
-    pub fn reachable(&self, asker: &SessionId) -> Vec<(String, SessionId)> {
+    pub fn reachable(&self, asker: &SessionSlug) -> Vec<(String, SessionSlug)> {
         let map = self.sessions.lock().unwrap();
         let Some(me) = map.get(asker) else { return Vec::new() };
 
-        let mut out: Vec<(String, SessionId)> = Vec::new();
+        let mut out: Vec<(String, SessionSlug)> = Vec::new();
         match me.role {
             // Its owner, which the routing rule already limits it to.
             Role::Worker(_) => {
@@ -1151,7 +1168,7 @@ impl Registry {
     /// Asked only of the kinds that serve the ledger — same rule as [`link_note`], because a
     /// disagreement between the two would mean a rung told there is an unlabelled worker and
     /// shown a roster where none is marked.
-    pub fn has_unlinked_worker(&self, asker: &SessionId) -> bool {
+    pub fn has_unlinked_worker(&self, asker: &SessionSlug) -> bool {
         self.sessions.lock().unwrap().values().any(|e| {
             e.owner.as_ref() == Some(asker)
                 && e.subject.is_none()
@@ -1167,7 +1184,7 @@ impl Registry {
     /// reaches a warm session, and it answers the one question the caller actually has:
     /// is that session still able to take work, or has it closed and does this need a
     /// fresh one?
-    pub fn post(&self, id: &SessionId, text: String) -> Delivery {
+    pub fn post(&self, id: &SessionSlug, text: String) -> Delivery {
         let delivery = {
             let mut map = self.sessions.lock().unwrap();
             let Some(entry) = map.get_mut(id) else {
@@ -1190,7 +1207,7 @@ impl Registry {
     /// `take_pending` already performs this transition for mailbox-driven turns.
     /// Directly-driven turns (Reaction's queue and a worker's initial task) use this
     /// method so every status reader observes the same lifecycle.
-    pub fn start_turn(&self, id: &SessionId) {
+    pub fn start_turn(&self, id: &SessionSlug) {
         let changed = {
             let mut map = self.sessions.lock().unwrap();
             let Some(entry) = map.get_mut(id) else {
@@ -1212,7 +1229,7 @@ impl Registry {
 
     /// Take everything queued for `id`, if anything is. Marks the session busy — it is
     /// about to take a turn, and an agent with a turn in flight is not idle.
-    pub fn take_pending(&self, id: &SessionId) -> Option<Vec<Message>> {
+    pub fn take_pending(&self, id: &SessionSlug) -> Option<Vec<Message>> {
         let batch = {
             let mut map = self.sessions.lock().unwrap();
             let entry = map.get_mut(id)?;
@@ -1237,7 +1254,7 @@ impl Registry {
     /// Reaction folds this mailbox into its separate input queue, then starts one
     /// combined turn after the settle window. Marking a turn here would create a
     /// false busy/idle edge before that real turn begins.
-    pub fn drain_pending(&self, id: &SessionId) -> Option<Vec<Message>> {
+    pub fn drain_pending(&self, id: &SessionSlug) -> Option<Vec<Message>> {
         let batch = {
             let mut map = self.sessions.lock().unwrap();
             let entry = map.get_mut(id)?;
@@ -1268,7 +1285,7 @@ impl Registry {
     /// rather than sleeping through it.
     ///
     /// Returns whether there was a live session to close.
-    pub fn close_inbox(&self, id: &SessionId) -> bool {
+    pub fn close_inbox(&self, id: &SessionSlug) -> bool {
         let notify = {
             let mut map = self.sessions.lock().unwrap();
             let Some(entry) = map.get_mut(id) else {
@@ -1286,7 +1303,7 @@ impl Registry {
     ///
     /// A session that has left the switchboard answers `true` for the same reason a closed
     /// one does: there is nothing more coming, which is the only question the caller has.
-    pub fn inbox_closed(&self, id: &SessionId) -> bool {
+    pub fn inbox_closed(&self, id: &SessionSlug) -> bool {
         self.sessions
             .lock()
             .unwrap()
@@ -1297,7 +1314,7 @@ impl Registry {
 
     /// The handle woken when mail lands for `id`, for a loop that wants to wait on its
     /// own inbox without polling. Same `Notify` [`register`](Self::register) returned.
-    pub fn notifier(&self, id: &SessionId) -> Option<std::sync::Arc<Notify>> {
+    pub fn notifier(&self, id: &SessionSlug) -> Option<std::sync::Arc<Notify>> {
         self.sessions.lock().unwrap().get(id).map(|e| e.notify.clone())
     }
 
@@ -1308,7 +1325,7 @@ impl Registry {
     /// caller here already holds the answer — it is the `Result` it just matched on — and
     /// the one that genuinely has none is undoing a `start_turn` for a turn that never
     /// ran, which is [`abandon_turn`](Self::abandon_turn) and says so.
-    pub fn finish_turn(&self, id: &SessionId, outcome: TurnOutcome) {
+    pub fn finish_turn(&self, id: &SessionSlug, outcome: TurnOutcome) {
         let outcome = match outcome {
             TurnOutcome::Failed(err) => TurnOutcome::Failed(headline(&err, OUTCOME_LINE_CHARS)),
             other => other,
@@ -1341,7 +1358,7 @@ impl Registry {
     /// Distinct from [`finish_turn`](Self::finish_turn) because there is no ending to
     /// record: writing `completed` here would report a turn that never happened as a
     /// success, and `failed` would raise an alarm about a turn nothing attempted.
-    pub fn abandon_turn(&self, id: &SessionId) {
+    pub fn abandon_turn(&self, id: &SessionSlug) {
         let changed = {
             let mut map = self.sessions.lock().unwrap();
             if let Some(e) = map.get_mut(id) {
@@ -1364,14 +1381,14 @@ impl Registry {
     /// switchboard entry must be able to move from a startup placeholder to the work it
     /// was actually handed. Capped like the registration path — a caller replacing a title
     /// is the same kind of caller that wrote the first one.
-    pub fn set_title(&self, id: &SessionId, title: String) {
+    pub fn set_title(&self, id: &SessionSlug, title: String) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.title = headline(&title, TITLE_CHARS);
         }
     }
 
     /// Append to a session's visible output, keeping only the recent tail.
-    pub fn record_output(&self, id: &SessionId, chunk: &str) {
+    pub fn record_output(&self, id: &SessionSlug, chunk: &str) {
         if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
             e.output.push_str(chunk);
             let n = e.output.chars().count();
@@ -1386,7 +1403,7 @@ impl Registry {
     /// One line, replaced rather than appended: this answers "is it alive and on what",
     /// which only the newest answer serves. Long lines are cut, because the caller is
     /// summarizing a tool call and a shell command can be a screenful.
-    pub fn record_activity(&self, id: &SessionId, what: &str) {
+    pub fn record_activity(&self, id: &SessionSlug, what: &str) {
         let what = what.trim();
         if what.is_empty() {
             return;
@@ -1403,13 +1420,13 @@ impl Registry {
 
     /// What a session has recently said. Costs context — which is exactly why it is a
     /// different call from [`status`](Self::status).
-    pub fn messages(&self, id: &SessionId) -> Option<String> {
+    pub fn messages(&self, id: &SessionSlug) -> Option<String> {
         let map = self.sessions.lock().unwrap();
         map.get(id).map(|e| e.output.clone())
     }
 
     /// Metadata for one session. Cheap by construction — no content crosses.
-    pub fn status(&self, id: &SessionId) -> Option<Status> {
+    pub fn status(&self, id: &SessionSlug) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
         Some(map.get(id)?.status(id.clone()))
     }
@@ -1446,9 +1463,9 @@ impl Registry {
     }
 
     /// Every session `owner` created, oldest first.
-    pub fn children(&self, owner: &SessionId) -> Vec<SessionId> {
+    pub fn children(&self, owner: &SessionSlug) -> Vec<SessionSlug> {
         let map = self.sessions.lock().unwrap();
-        let mut rows: Vec<(DateTime<Utc>, SessionId)> = map
+        let mut rows: Vec<(DateTime<Utc>, SessionSlug)> = map
             .iter()
             .filter(|(_, e)| e.owner.as_ref() == Some(owner))
             .map(|(id, e)| (e.started, id.clone()))
@@ -1462,7 +1479,7 @@ impl Registry {
     /// **An agent with live children is not idle.** Reaping an owner out from under
     /// running work is what creates orphans; the fix is to not call it idle in the first
     /// place, so whatever decides to close a session asks this first.
-    pub fn has_live_children(&self, id: &SessionId) -> bool {
+    pub fn has_live_children(&self, id: &SessionSlug) -> bool {
         let map = self.sessions.lock().unwrap();
         map.values().any(|e| e.owner.as_ref() == Some(id))
     }
@@ -1477,7 +1494,7 @@ mod tests {
     use super::*;
     use crate::identity::WorkerType;
 
-    /// A distinct session id, shadowing [`super::mint`] for the tests below.
+    /// A distinct session slug, shadowing [`super::mint`] for the tests below.
     ///
     /// These tests are about the switchboard's *plumbing* — mail reaching one mailbox and
     /// not another, a worker refused when it addresses anyone but its owner, a roster
@@ -1488,9 +1505,9 @@ mod tests {
     /// Naming it `mint` on purpose: the call sites read the same as before the ids became
     /// slugs, so nothing about *those* tests appears to have changed — because nothing did.
     /// Slug-shaped ids get their own tests in [`slug_tests`], where the shape is the point.
-    fn mint() -> SessionId {
+    fn mint() -> SessionSlug {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        SessionId::from(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        SessionSlug::from(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
     fn reg() -> Registry {
@@ -1966,7 +1983,7 @@ mod tests {
         r.register(w.clone(), Role::Worker(WorkerType::General), Some(cog.clone()), "file the receipts".into(), None);
 
         let who = r.reachable(&cog);
-        let ids: Vec<SessionId> = who.iter().map(|(_, id)| id.clone()).collect();
+        let ids: Vec<SessionSlug> = who.iter().map(|(_, id)| id.clone()).collect();
         assert!(ids.contains(&rx), "Reaction: {who:?}");
         assert!(ids.contains(&w), "its own worker: {who:?}");
         assert!(!ids.contains(&other), "someone else's worker is not offered: {who:?}");
@@ -2000,7 +2017,7 @@ mod tests {
         );
 
         let who = r.reachable(&cog);
-        let line = |id: SessionId| {
+        let line = |id: SessionSlug| {
             who.iter().find(|(_, i)| *i == id).map(|(l, _)| l.clone()).expect("offered")
         };
         assert!(line(linked.clone()).contains("ktv-doubao-ref-only"), "{:?}", line(linked));
@@ -2435,7 +2452,7 @@ trace {}", "x".repeat(400))));
 
     #[test]
     fn ids_are_unique_process_wide() {
-        let ids: Vec<SessionId> = (0..50).map(|_| mint()).collect();
+        let ids: Vec<SessionSlug> = (0..50).map(|_| mint()).collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
         sorted.dedup();
@@ -2443,7 +2460,7 @@ trace {}", "x".repeat(400))));
     }
 }
 
-/// What a session id is *called*, which is the whole of what changed here.
+/// What a session slug is *called*, which is the whole of what changed here.
 ///
 /// These use the real [`super::mint`] rather than the tests' ordinal shorthand, because the
 /// shape it produces is the property under test.
@@ -2558,7 +2575,7 @@ mod slug_tests {
         }
     }
 
-    /// **The parse is the path guard, and that is why it can fail.** A session id is a path
+    /// **The parse is the path guard, and that is why it can fail.** A session slug is a path
     /// component — `raw/sessions/<run>/<id>.jsonl` — and `GET /api/workers/{id}/frames`
     /// hands the value straight from the URL to that builder. While ids were integers
     /// `parse::<u64>()` was the traversal guard by luck; widening to a string without
@@ -2566,7 +2583,7 @@ mod slug_tests {
     #[test]
     fn an_address_that_is_a_path_is_refused() {
         for bad in ["../../etc/passwd", "..", "a/b", "a.b", "", "   ", "has space", "semi;colon"] {
-            assert!(bad.parse::<SessionId>().is_err(), "`{bad}` must not parse");
+            assert!(bad.parse::<SessionSlug>().is_err(), "`{bad}` must not parse");
         }
     }
 
@@ -2574,7 +2591,7 @@ mod slug_tests {
     /// roster: `Cognition ` is unambiguous and refusing it teaches nothing.
     #[test]
     fn an_address_is_read_case_and_space_insensitively() {
-        assert_eq!("  Cognition\n".parse::<SessionId>().unwrap().as_str(), "cognition");
+        assert_eq!("  Cognition\n".parse::<SessionSlug>().unwrap().as_str(), "cognition");
     }
 
     /// A well-formed id that names nothing is **not** a parse error — it is a lookup miss,
@@ -2582,7 +2599,7 @@ mod slug_tests {
     /// that distinction would turn a cold rung into a spelling complaint.
     #[test]
     fn a_wellformed_id_parses_even_when_nothing_answers_to_it() {
-        assert!("nobody-is-called-this".parse::<SessionId>().is_ok());
+        assert!("nobody-is-called-this".parse::<SessionSlug>().is_ok());
     }
 
     /// **Old rows carry a number**, from every run before ids became slugs, and
@@ -2592,9 +2609,9 @@ mod slug_tests {
     /// is for.
     #[test]
     fn a_pre_slug_numeric_row_still_reads() {
-        let from_number: SessionId = serde_json::from_str("7").unwrap();
+        let from_number: SessionSlug = serde_json::from_str("7").unwrap();
         assert_eq!(from_number.as_str(), "7");
-        let from_slug: SessionId = serde_json::from_str("\"cognition\"").unwrap();
+        let from_slug: SessionSlug = serde_json::from_str("\"cognition\"").unwrap();
         assert_eq!(from_slug.as_str(), "cognition");
         assert_eq!(serde_json::to_string(&from_slug).unwrap(), "\"cognition\"");
     }

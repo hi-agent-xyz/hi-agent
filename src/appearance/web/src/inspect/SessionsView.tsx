@@ -119,7 +119,7 @@ interface Group {
   conn: number;
   role: string; // which rung this subprocess hosts — stamped on every frame
   agentSession: string | null; // hi-agent's own id (a slug), present from the first frame
-  sessionId: string | null; // adopted from the thread/start response; null until then
+  threadId: string | null; // the codex thread, adopted from the thread/start response; null until then
   frames: RawFrame[];
 }
 
@@ -132,7 +132,7 @@ function roleClass(role: string): string {
 
 // Fold the flat frame stream into per-connection groups, preserving first-seen
 // order. Every frame of one subprocess shares its `conn`, so the handshake frames
-// group with their session; the sessionId is adopted as soon as a frame reveals
+// group with their session; the threadId is adopted as soon as a frame reveals
 // it. Knows nothing about the reaction — pure wire.
 function group(frames: RawFrame[]): Group[] {
   const map = new Map<number, Group>();
@@ -144,12 +144,12 @@ function group(frames: RawFrame[]): Group[] {
         conn: f.conn,
         role: f.role,
         agentSession: f.agent_session,
-        sessionId: f.thread_id,
+        threadId: f.thread_id,
         frames: [],
       };
       map.set(f.conn, g);
     }
-    if (!g.sessionId && f.thread_id) g.sessionId = f.thread_id;
+    if (!g.threadId && f.thread_id) g.threadId = f.thread_id;
     if (g.agentSession == null && f.agent_session != null) g.agentSession = f.agent_session;
     g.frames.push(f);
   }
@@ -199,7 +199,7 @@ export function SessionsView() {
                 <span className={`skind ${roleClass(g.role)}`}>{g.role || "?"}</span>
                 <span className="nm">
                   {sessionLabel(g)}
-                  {g.sessionId ? <span className="muted"> · {g.sessionId.slice(0, 12)}</span> : null}
+                  {g.threadId ? <span className="muted"> · {g.threadId.slice(0, 12)}</span> : null}
                 </span>
                 <span className="badges">
                   <span className="mini">{g.frames.length}</span>
@@ -235,7 +235,7 @@ function FrameLog({ group: g }: { group: Group }) {
         <b>{g.role || "session"}</b>
         <span className="muted">
           {g.agentSession != null ? <> · session <code>{g.agentSession}</code></> : <> · opening…</>}
-          {g.sessionId ? <> · thread <code>{g.sessionId}</code></> : null} · {g.frames.length} frames
+          {g.threadId ? <> · thread <code>{g.threadId}</code></> : null} · {g.frames.length} frames
         </span>
       </div>
 

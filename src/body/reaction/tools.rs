@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, mpsc};
 // there. `tokio::time::Instant` is also what a paused test clock advances.
 use tokio::time::Instant;
 
-use crate::foundation::registry::SessionId;
+use crate::foundation::registry::SessionSlug;
 
 use super::sequencer::Beat;
 
@@ -76,11 +76,11 @@ pub enum LoopControl {
     /// been told it was gone. A create that has not registered yet is indistinguishable
     /// from a create that never happened, so the caller has to wait for the difference.
     CreateWorker {
-        id: SessionId,
+        id: SessionSlug,
         title: String,
         task: String,
         kind: crate::identity::WorkerType,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
         /// Whether this errand is for a step nobody has asked for yet — `agents.md`'s
@@ -107,7 +107,7 @@ pub enum LoopControl {
     /// means there was nothing to cut — already finished, or already gone — and no report
     /// will arrive. A caller that cannot tell them apart can only guess, and the guess it
     /// would make ("stopped") is the one that reproduces the bug this tool was added for.
-    CancelWorker { id: SessionId, reply: tokio::sync::oneshot::Sender<bool> },
+    CancelWorker { id: SessionSlug, reply: tokio::sync::oneshot::Sender<bool> },
     /// End a working session for good (the `close_worker` tool).
     ///
     /// The third verb of dispatch, and the one that had no caller: `CreateWorker` hands
@@ -119,7 +119,7 @@ pub enum LoopControl {
     /// Carries a **reply** for the same reason `CancelWorker` does: "I closed it" and "it
     /// was already gone" are different facts about what is still running, and a caller
     /// that cannot tell them apart cannot keep an honest roster.
-    CloseWorker { id: SessionId, reply: tokio::sync::oneshot::Sender<bool> },
+    CloseWorker { id: SessionSlug, reply: tokio::sync::oneshot::Sender<bool> },
 }
 
 /// The handle the MCP handler dispatches to. Cheap to clone. Carries two

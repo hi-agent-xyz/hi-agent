@@ -5,7 +5,7 @@
 //! *voiceless capability within the conversation*: it has the full substrate — the
 //! conversation's memory, tools, code execution, and its own sub-agents — but holds no
 //! `hi_say`. Those sub-agents live *inside* its session and are invisible here:
-//! they get no hi-agent session id, no address, and no registry entry, which is
+//! they get no session slug, no address, and no registry entry, which is
 //! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
 //! cannot emit on the reaction's expression channels (thought, audio, view). Holding
 //! no voice is what preserves single-voice coherence: only the reaction expresses
@@ -48,7 +48,7 @@ use crate::identity::{Role, WorkerType};
 use super::{LoopInput, Reaction};
 
 use crate::foundation::registry;
-use crate::foundation::registry::{SessionId, TurnOutcome};
+use crate::foundation::registry::{SessionSlug, TurnOutcome};
 
 // A working session used to close itself after fifteen idle minutes. That timer was
 // written for a narrower world than the one it ended up policing: it meant "this errand is
@@ -91,7 +91,7 @@ use crate::foundation::registry::{SessionId, TurnOutcome};
 /// queue as a `LoopInput::Worker`, so it waits its turn and never interrupts
 /// live speech.
 pub(super) struct WorkerReport {
-    pub(super) id: SessionId,
+    pub(super) id: SessionSlug,
     /// **The errand's title, not the prompt it was driven with.** These are not the same
     /// string and the difference is most of the report: the opening prompt is the brief
     /// *after* the host put the standing record for the systems it touches in front of it
@@ -110,7 +110,7 @@ pub(super) struct WorkerReport {
     /// The session this report is *for*. `None` means the reaction loop — the report
     /// becomes a signal Reaction may speak to. `Some` means it travels up to the
     /// session that asked for the work, and the conversation never sees it.
-    pub(super) owner: Option<SessionId>,
+    pub(super) owner: Option<SessionSlug>,
 }
 
 pub(super) enum WorkerReportKind {
@@ -163,7 +163,7 @@ struct Worker {
 /// switchboard already is the process-wide session pool. Do not "move the pool";
 /// delete it, whenever the code next comes through here.**
 ///
-/// There is no pool to move: `registry::global()` is already keyed by `SessionId`,
+/// There is no pool to move: `registry::global()` is already keyed by `SessionSlug`,
 /// process-wide, and holds `task`, `busy`, `owner` and a bounded output tail.
 /// Everything in `Worker` except the `JoinHandle` is a second copy of that, and
 /// the copies can disagree.
@@ -192,7 +192,7 @@ pub(super) struct WorkerRegistry {
     /// A clone of the conversation's queue sender, handed to each worker's drive task so
     /// its reports land back in the same loop.
     inbound: mpsc::Sender<LoopInput>,
-    workers: HashMap<SessionId, Worker>,
+    workers: HashMap<SessionSlug, Worker>,
 }
 
 impl WorkerRegistry {
@@ -223,15 +223,15 @@ impl WorkerRegistry {
     pub(super) async fn spawn_with_id(
         &mut self,
         reaction: &Reaction,
-        id: SessionId,
+        id: SessionSlug,
         title: String,
         task: String,
         kind: WorkerType,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
         ahead: bool,
-    ) -> anyhow::Result<SessionId> {
+    ) -> anyhow::Result<SessionSlug> {
         self.spawn_inner(reaction, id, title, task, kind, owner, resume, subject, ahead).await
     }
 
@@ -248,15 +248,15 @@ impl WorkerRegistry {
     async fn spawn_inner(
         &mut self,
         reaction: &Reaction,
-        id: SessionId,
+        id: SessionSlug,
         title: String,
         task: String,
         kind: WorkerType,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
         ahead: bool,
-    ) -> anyhow::Result<SessionId> {
+    ) -> anyhow::Result<SessionSlug> {
         let resumed = resume.is_some();
         // **The brief is not the only thing a worker knows any more.** It used to be, and
         // `cognition.md` still says so out loud — "it starts knowing nothing but what you
@@ -340,10 +340,10 @@ impl WorkerRegistry {
     async fn open_working_session(
         &self,
         reaction: &Reaction,
-        id: SessionId,
+        id: SessionSlug,
         title: &str,
         kind: WorkerType,
-        owner: Option<SessionId>,
+        owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
     ) -> anyhow::Result<(Arc<AgentSession>, Arc<Notify>)> {
@@ -411,7 +411,7 @@ impl WorkerRegistry {
     /// never happened. A session sitting idle takes the cancel silently and reports
     /// nothing back, so a caller told "stopping it" would wait for a report that is never
     /// coming.
-    pub(super) async fn interrupt(&self, id: SessionId) -> bool {
+    pub(super) async fn interrupt(&self, id: SessionSlug) -> bool {
         let Some(w) = self.workers.get(&id) else {
             tracing::info!(worker = %id, "nothing to interrupt; worker is gone");
             return false;
@@ -452,7 +452,7 @@ impl WorkerRegistry {
     ///
     /// Returns whether there was a live session to close, so a caller is never told it
     /// ended something that had already gone.
-    pub(super) fn close(&self, id: SessionId) -> bool {
+    pub(super) fn close(&self, id: SessionSlug) -> bool {
         let closed = registry::global().close_inbox(&id);
         if closed {
             tracing::info!(worker = %id, "closing working session");
@@ -494,7 +494,7 @@ impl WorkerRegistry {
     ///
     /// Returns the outcome rather than a bool so the caller can *record* the edge; a
     /// `Delivery` collapsed to `false` loses which way it failed.
-    pub(super) fn deliver_to(&mut self, id: SessionId, text: String) -> registry::Delivery {
+    pub(super) fn deliver_to(&mut self, id: SessionSlug, text: String) -> registry::Delivery {
         registry::global().post(&id, text)
     }
 
@@ -647,7 +647,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 /// wedged Cognition came back, and the roster showed five identical "ended 7m ago" cards.
 /// A worker is the thing that knows it has ended, so it is the thing that says so.
 async fn drive_worker(
-    id: SessionId,
+    id: SessionSlug,
     title: String,
     initial_task: Option<String>,
     session: Arc<AgentSession>,
@@ -656,7 +656,7 @@ async fn drive_worker(
     observatory: Observatory,
     mail: Arc<Notify>,
     busy: Arc<AtomicBool>,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
 ) {
     // Wrapped so *every* way out of the drive loop unregisters, including ones added
     // later. The one exit this cannot cover is an abort, and [`Drop`] holds that case.
@@ -667,7 +667,7 @@ async fn drive_worker(
 
 #[allow(clippy::too_many_arguments)]
 async fn drive(
-    id: &SessionId,
+    id: &SessionSlug,
     // The errand's name, carried the whole way down so every report this loop posts can
     // say what it was without quoting the prompt it ran. A follow-up turn is driven by a
     // mail message, so the prompt is not even the brief by then — the title is the only
@@ -680,7 +680,7 @@ async fn drive(
     observatory: Observatory,
     mail: Arc<Notify>,
     busy: Arc<AtomicBool>,
-    owner: Option<SessionId>,
+    owner: Option<SessionSlug>,
 ) {
     let mut next_task = initial_task;
     let mut energy = crate::foundation::energy_state::subscribe();
@@ -826,7 +826,7 @@ async fn wait_for_energy_resume(
 /// Everything waiting is taken together and rendered with its sender, because a
 /// worker may only answer *whoever asked*, and it cannot answer an address it was
 /// never given.
-async fn wait_for_mail(id: &SessionId, mail: &Notify) -> Option<String> {
+async fn wait_for_mail(id: &SessionSlug, mail: &Notify) -> Option<String> {
     loop {
         if let Some(batch) = registry::global().take_pending(id) {
             return Some(registry::render(&batch));
@@ -846,7 +846,7 @@ async fn wait_for_mail(id: &SessionId, mail: &Notify) -> Option<String> {
 /// transcript, and return the full reply as the task's result. Anything the worker
 /// wants to raise mid-flight it sends to its owner with the one verb, out of band.
 async fn run_worker(
-    id: SessionId,
+    id: SessionSlug,
     task: &str,
     session: &AgentSession,
     transcript: &Arc<Mutex<String>>,
@@ -867,7 +867,7 @@ async fn run_worker(
                 // This is also the *only* live-progress mirror now: the observatory's
                 // Reaction-specific worker tail is gone, because a worker's
                 // progress belongs to its owner. Whoever asked for the work can read it
-                // here, keyed by the session id they were handed.
+                // here, keyed by the session slug they were handed.
                 registry::global().record_output(&id, &text);
             }
             // Thoughts, tool calls, and unmodelled events don't enter the
@@ -1023,7 +1023,7 @@ mod lifetime_tests {
     /// some other test in this binary happened to register there — and `send` refuses a
     /// worker addressing anyone but its own owner, so borrowing an id silently turns into
     /// `NotPermitted`.
-    fn worker() -> (SessionId, SessionId, Arc<Notify>) {
+    fn worker() -> (SessionSlug, SessionSlug, Arc<Notify>) {
         let owner = registry::mint(Role::Cognition, None);
         registry::global().register(
             owner.clone(),
@@ -1044,7 +1044,7 @@ mod lifetime_tests {
         (owner, id, mail)
     }
 
-    fn done(owner: SessionId, id: SessionId) {
+    fn done(owner: SessionSlug, id: SessionSlug) {
         registry::global().unregister(&id);
         registry::global().unregister(&owner);
     }
@@ -1253,7 +1253,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
 /// by subject — so an errand with no subject, which is every `task-manager`, would leave no
 /// trace at all. The post reaches the owner's inbox on its next turn whether or not the errand
 /// was ever tied to a task.
-fn unreachable(slug: &SessionId, why: &str) {
+fn unreachable(slug: &SessionSlug, why: &str) {
     let pending = registry::global().reopen_pending();
     let Some(end) = pending.into_iter().find(|end| &end.session == slug) else { return };
     registry::global().could_not_reopen(slug);

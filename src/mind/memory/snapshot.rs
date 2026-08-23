@@ -126,7 +126,7 @@ impl Block {
 /// nothing happened.
 pub async fn window(
     memory: &Memory,
-    id: &crate::foundation::registry::SessionId,
+    id: &crate::foundation::registry::SessionSlug,
 ) -> Vec<Block> {
     let data_dir = memory.data_dir();
     // First, because it is the standing one: everything after it is the situation, and
@@ -195,7 +195,7 @@ pub async fn window(
 pub async fn agent_window(
     memory: &Memory,
     agent: &str,
-    id: &crate::foundation::registry::SessionId,
+    id: &crate::foundation::registry::SessionSlug,
 ) -> String {
     let data_dir = memory.data_dir();
     let carried = carried_forward(&layout::rung_seed_path(data_dir, agent)).await;

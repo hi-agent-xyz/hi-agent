@@ -37,7 +37,7 @@ so an upgrade replaces one and never the other.
 | | |
 |---|---|
 | Runtime | process management, the bundled toolchain |
-| Agent wire / MCP | the agent wire and the tool surface, routed by session id |
+| Agent wire / MCP | the agent wire and the tool surface, routed by session slug |
 | Gateway + vendors | model access, credentials, energy accounting |
 | Secret filing + broker | files credentials a person typed and substitutes their paths on the way into a session; resolves a drive-file reference inside a bound HTTP effect |
 | Config cascade | layered configuration resolution |
@@ -137,7 +137,7 @@ derived from the other — a cut paragraph is exactly the summary nobody would h
 **`from` is stamped by the registry, never passed by the caller.** The host knows who is
 calling; letting an agent name itself is letting it impersonate.
 
-**An address is a session id. Nothing else.** One form, for every hop: a worker's id comes
+**An address is a session slug. Nothing else.** One form, for every hop: a worker's id comes
 back from `CreateWorker`, and the ids of the standing rungs are **projected** into the
 window of whoever may reach them, the same way open tasks are.
 
@@ -148,7 +148,7 @@ hopes something is behind it. Retrieval can miss, and here a miss is indistingui
 turn, so a rung that is cold is visible as cold *before* a message is sent at it, and the
 registry goes back to being a map lookup rather than a search.
 
-**A session id is a slug, not an ordinal.** The three standing rungs are singletons, and
+**A session slug is a slug, not an ordinal.** The three standing rungs are singletons, and
 their ids are the names they already have everywhere else in this design: `reaction`,
 `cognition`, `reflection`. A worker's is `<type>-<task>` — `view-builder-kyoto-trip`,
 `person-reader-alice` — falling back to its title when the errand serves no ledger task.

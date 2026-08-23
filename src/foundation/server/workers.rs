@@ -47,7 +47,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 
-use crate::foundation::registry::{self, SessionId, Status, TurnEnd};
+use crate::foundation::registry::{self, SessionSlug, Status, TurnEnd};
 
 /// One live session, as the review view reads it.
 ///
@@ -189,8 +189,8 @@ pub async fn get_workers() -> Response {
 /// session's own text output), split into lines with the blanks dropped. It is a live
 /// tail and not an archive: the durable copy is the log.
 pub async fn get_worker(Path(id): Path<String>) -> Response {
-    let Ok(id) = id.trim().parse::<SessionId>() else {
-        return err("a session id is letters, digits and dashes");
+    let Ok(id) = id.trim().parse::<SessionSlug>() else {
+        return err("a session slug is letters, digits and dashes");
     };
     let Some(st) = registry::global().status(&id) else {
         return (
@@ -381,8 +381,8 @@ struct MailDto {
 /// one. Both ids are parsed rather than trusted, for the same reason every other id on this
 /// module is — they are agent-written strings arriving in a query.
 pub async fn get_mail(Query(q): Query<MailQuery>) -> Response {
-    let (Ok(a), Ok(b)) = (q.a.trim().parse::<SessionId>(), q.b.trim().parse::<SessionId>()) else {
-        return err("a session id is letters, digits and dashes");
+    let (Ok(a), Ok(b)) = (q.a.trim().parse::<SessionSlug>(), q.b.trim().parse::<SessionSlug>()) else {
+        return err("a session slug is letters, digits and dashes");
     };
     let limit = q.limit.unwrap_or(DEFAULT_MAIL).clamp(1, registry::mail::KEPT);
     let (sent, total) = registry::global().traffic_between(&a, &b, limit);
@@ -415,8 +415,8 @@ async fn read_log(
     id: &str,
     run: Option<String>,
 ) -> Result<(String, Option<String>), Response> {
-    let Ok(session) = id.trim().parse::<SessionId>() else {
-        return Err(err("a session id is letters, digits and dashes"));
+    let Ok(session) = id.trim().parse::<SessionSlug>() else {
+        return Err(err("a session slug is letters, digits and dashes"));
     };
     let run = run.unwrap_or_else(|| crate::foundation::run::id().to_string());
     // `run` lands in a path segment, so it is checked rather than trusted: a run id is
@@ -488,7 +488,7 @@ fn sort_live(rows: &mut [Status]) {
 }
 
 /// The session's retained output as non-blank lines, oldest first.
-fn message_lines(id: &SessionId) -> Vec<String> {
+fn message_lines(id: &SessionSlug) -> Vec<String> {
     registry::global()
         .messages(id)
         .map(|text| {
@@ -503,7 +503,7 @@ fn message_lines(id: &SessionId) -> Vec<String> {
 
 /// The last non-blank line of a session's output — cheap, because the registry already
 /// keeps only a bounded tail.
-fn tail(id: &SessionId) -> Option<String> {
+fn tail(id: &SessionSlug) -> Option<String> {
     message_lines(id).pop()
 }
 
@@ -564,7 +564,7 @@ fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
 ///
 /// A local `role_name` match used to stand where `Role::as_str` is called — a fourth
 /// spelling of the same five strings, kept in step with the header by comment alone.
-fn owner_role(owner: Option<&SessionId>) -> Option<&'static str> {
+fn owner_role(owner: Option<&SessionSlug>) -> Option<&'static str> {
     registry::global().status(owner?).map(|st| st.role.as_str())
 }
 
@@ -587,19 +587,19 @@ mod tests {
     /// removed that if the parse had been allowed to accept anything.
     ///
     /// Asserted at the parse rather than over HTTP because the parse *is* the guard: no
-    /// caller can build a `SessionId` another way, so a value that reaches
+    /// caller can build a `SessionSlug` another way, so a value that reaches
     /// `session_frames_path` has already passed here.
     #[test]
     fn neither_half_of_a_frames_path_accepts_a_traversal() {
         for bad in ["../../../etc/passwd", "..", "a/b", "%2e%2e", ".", "a.jsonl"] {
-            assert!(bad.parse::<SessionId>().is_err(), "session `{bad}` must be refused");
+            assert!(bad.parse::<SessionSlug>().is_err(), "session `{bad}` must be refused");
             assert!(!is_run_id(bad), "run `{bad}` must be refused");
         }
-        assert!("view-builder-kyoto-trip".parse::<SessionId>().is_ok());
+        assert!("view-builder-kyoto-trip".parse::<SessionSlug>().is_ok());
         assert!(is_run_id("0123456789ab"));
     }
 
-    fn status(id: SessionId, busy: bool, minute: u32) -> Status {
+    fn status(id: SessionSlug, busy: bool, minute: u32) -> Status {
         Status {
             id,
             role: Role::Worker(WorkerType::General),
@@ -775,7 +775,7 @@ mod tests {
         assert_eq!(owner_role(None), None);
     }
 
-    fn status_owned_by(owner: SessionId) -> Status {
+    fn status_owned_by(owner: SessionSlug) -> Status {
         let mut st = status(99.into(), true, 0);
         st.owner = Some(owner);
         st

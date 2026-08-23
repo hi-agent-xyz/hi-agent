@@ -30,12 +30,16 @@ prompt, not new machinery.
 
 ### Ownership and addressing
 
-Every agent session has a process-wide id — one namespace for every rung and every worker,
-so any session can name any other without ambiguity.
+Every agent session has a process-wide **slug** — one namespace for every rung and every
+worker, so any session can name any other without ambiguity.
 
-It is a locally minted id rather than the underlying agent-protocol session id, and that
-is forced rather than chosen: the tool surface identifies its caller by a header set when
-the session opens, so the identifier must exist before the protocol assigns one.
+It is minted here rather than taken from the agent protocol, and that is forced rather than
+chosen: the tool surface identifies its caller by a header set when the session opens, so the
+identifier must exist before the protocol assigns one. **The slug is not the codex thread
+id**, and the two are worth keeping apart in every sentence that touches a restart: the slug
+is an address, minted per run and reused freely; the thread is the mind, and the only handle
+`thread/resume` accepts. A slug that reappears after a restart says nothing about whether the
+session behind it remembers anything.
 
 A worker records the session that created it. Its report is delivered to that session,
 which reads it on its next prompt. If the owner has shut down, the report falls back to
@@ -47,7 +51,7 @@ Two things follow, and both are load-bearing:
 - **An agent that owns live children is not idle.** Idle-reaping an owner out from under
   running work is what creates orphans; the fix is to not call it idle. Shutdown is
   graceful: finish or hand off, then close.
-- **A session id addresses a live agent; a task subject addresses work.** A worker's session
+- **A session slug addresses a live agent; a task subject addresses work.** A worker's session
   dies with the process, so nothing durable may reference one — and its slug repeating after a
   restart makes that sharper, not safer, because the same string then resolves to a different
   session serving the same task. Recovery reconstructs from [Tasks](data.md#tasks), never from
@@ -678,7 +682,7 @@ intent; Reaction articulates it.
 
 **A worker fans out with sub-agents, not with `CreateWorker`.** It may spin up as many
 sub-agents as the job wants, using its harness's own facility for that — and they are
-**invisible here**: no session id, no address, no registry entry, no report of their own.
+**invisible here**: no session slug, no address, no registry entry, no report of their own.
 They live and die inside the one worker session, which stays the single thing that is
 accountable and the single thing that reports. So `CreateWorker` remains Cognition's and
 Reflection's, and "one dispatcher" survives intact: nothing another rung can see was
