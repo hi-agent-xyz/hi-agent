@@ -138,6 +138,9 @@ pub enum Record {
         /// anyway, so guessing `true` for them would only reopen furniture.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interrupted: bool,
+        /// How many delivered messages it never got to read — see [`Ended::unread`].
+        #[serde(default, skip_serializing_if = "is_zero")]
+        unread: u32,
     },
 }
 
@@ -221,6 +224,26 @@ pub struct Ended {
     /// the drive loop's own `next_task` and is invisible here. It reads as idle and will not
     /// be reopened.
     pub interrupted: bool,
+    /// How many messages had been delivered to it and not yet read when it stopped.
+    ///
+    /// **The mail itself does not survive, and this is what says so out loud.**
+    /// [`Registry::unregister`](super::Registry::unregister) drops the inbox with the entry —
+    /// undelivered is the honest outcome, and the sender was told `Delivered` about a mailbox
+    /// and never about an outcome. Reopening the session does not bring those messages back:
+    /// they never reached its thread, because a message only enters a prompt when
+    /// `take_pending` renders it.
+    ///
+    /// So the fact travels to the one party that still holds the text — the sender — and it
+    /// decides whether the instruction still applies forty minutes later. Re-posting it here
+    /// would put a pre-restart instruction in front of a session whose whole first act is to
+    /// find out what has changed since.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unread: u32,
+}
+
+/// `skip_serializing_if` for a count that is almost always zero.
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl Ended {
@@ -451,6 +474,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                 owner,
                 turns,
                 interrupted,
+                unread,
             } => {
                 closed.insert((run.clone(), session.clone()));
                 ends.push(Ended {
@@ -467,6 +491,7 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     turns: Some(turns),
                     thread: None,
                     interrupted,
+                    unread,
                 });
             }
             Record::Thread { run, session, thread_id, .. } => {
@@ -494,6 +519,9 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
                     // Nothing recorded what this one was doing, because recording it is
                     // exactly what a crash skips — see [`Ended::interrupted`].
                     interrupted: true,
+                    // And nothing recorded what was in its inbox either. Zero is not a claim
+                    // that it was empty; it is the absence of a count.
+                    unread: 0,
                 });
             }
         }
@@ -537,6 +565,7 @@ pub fn ended_now(
     started: DateTime<Utc>,
     thread: Option<String>,
     interrupted: bool,
+    unread: u32,
 ) -> Ended {
     Ended {
         run: run.to_string(),
@@ -552,6 +581,7 @@ pub fn ended_now(
         turns: Some(turns),
         thread,
         interrupted,
+        unread,
     }
 }
 
@@ -569,6 +599,7 @@ pub fn closed_record(ended: &Ended) -> Record {
         owner: ended.owner.clone(),
         turns: ended.turns.unwrap_or(0),
         interrupted: ended.interrupted,
+        unread: ended.unread,
     }
 }
 
@@ -710,7 +741,7 @@ mod tests {
     /// some boots and not others.
     #[test]
     fn a_thread_binds_to_its_row_in_either_order() {
-        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 3, ts(1), None, false));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 3, ts(1), None, false, 0));
         let thread = thread_record("run-a", &7.into(), "th-cognition", ts(2));
 
         for text in [
@@ -768,7 +799,7 @@ mod tests {
         for (session, at) in [(1u64, ts(1)), (2, ts(20)), (3, ts(10))] {
             let session = &SessionSlug::from(session);
             text.push_str(&line(&closed_record(&{
-                let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None, false);
+                let mut e = ended_now("run-a", session, Role::Cognition, None, "", None, 1, at, None, false, 0);
                 e.ended = Some(at);
                 e
             })));
@@ -803,7 +834,7 @@ mod tests {
             None,
             2,
             ts(1),
-            None, false))));
+            None, false, 0))));
         text.push_str(&line(&thread_record("run-a", &4.into(), "th-4", ts(2))));
 
         let putting_back = interrupted_workers(&fold(&text, "run-b"));
@@ -858,7 +889,7 @@ mod tests {
     /// than resumed as an empty one — an upgrade's first boot is exactly this case.
     #[test]
     fn a_row_without_a_thread_is_not_resumable() {
-        let closed = closed_record(&ended_now("run-a", &1.into(), Role::Reaction, None, "", None, 4, ts(1), None, false));
+        let closed = closed_record(&ended_now("run-a", &1.into(), Role::Reaction, None, "", None, 4, ts(1), None, false, 0));
         let plan = resumable(&fold(&line(&closed), "run-b"));
         assert!(plan.is_empty());
     }
@@ -873,7 +904,7 @@ mod tests {
         started: DateTime<Utc>,
         ended: DateTime<Utc>,
     ) -> Record {
-        let mut row = ended_now(run, &SessionSlug::from(session), role, None, "", None, 1, started, None, false);
+        let mut row = ended_now(run, &SessionSlug::from(session), role, None, "", None, 1, started, None, false, 0);
         row.ended = Some(ended);
         closed_record(&row)
     }
@@ -891,7 +922,7 @@ mod tests {
             Some("workers-view"),
             4,
             ts(10),
-            None, false));
+            None, false, 0));
         let ends = fold(&line(&closed), "run-b");
         assert_eq!(ends.len(), 1);
         let e = &ends[0];
@@ -931,7 +962,7 @@ mod tests {
     #[test]
     fn an_opened_that_later_closed_is_one_closed_row() {
         let opened = opened_record("run-a", &7.into(), Role::Cognition, None, "", None, ts(1));
-        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 12, ts(1), None, false));
+        let closed = closed_record(&ended_now("run-a", &7.into(), Role::Cognition, None, "", None, 12, ts(1), None, false, 0));
         let ends = fold(&format!("{}{}", line(&opened), line(&closed)), "run-b");
         assert_eq!(ends.len(), 1, "one session, one row");
         assert_eq!(ends[0].how, EndedHow::Closed);
@@ -978,7 +1009,7 @@ mod tests {
     /// the window still renders. One corrupt line must not blank the page.
     #[test]
     fn a_partial_or_corrupt_line_is_skipped_not_fatal() {
-        let good = closed_record(&ended_now("run-a", &5.into(), Role::Cognition, None, "", None, 1, ts(1), None, false));
+        let good = closed_record(&ended_now("run-a", &5.into(), Role::Cognition, None, "", None, 1, ts(1), None, false, 0));
         let text = format!("run\":\"run-a\",\"session\":4}}\n{}not json\n\n", line(&good));
         let ends = fold(&text, "run-b");
         assert_eq!(ends.len(), 1);
@@ -1025,7 +1056,7 @@ mod tests {
             None,
             2,
             ts(3),
-            None, false)));
+            None, false, 0)));
 
         writer.flush().await;
 
@@ -1056,7 +1087,7 @@ mod tests {
         let mut text = String::new();
         for i in 1..=(RECENT_CAP as u64 + 20) {
             let at = Utc.timestamp_opt(1_800_000_000 + i as i64 * 60, 0).unwrap();
-            let mut e = ended_now("run-a", &SessionSlug::from(i), Role::Cognition, None, "", None, 1, at, None, false);
+            let mut e = ended_now("run-a", &SessionSlug::from(i), Role::Cognition, None, "", None, 1, at, None, false, 0);
             e.ended = Some(at);
             text.push_str(&line(&closed_record(&e)));
         }

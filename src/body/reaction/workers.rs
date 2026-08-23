@@ -1237,6 +1237,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             Ok(Ok(())) => {
                 registry::global().reopened(&slug);
                 tracing::info!(session = %slug, owner = %owner, "errand reopened on its own thread");
+                tell_the_sender_about_unread(&end, &owner);
             }
             // The session did not open. `open_working_session` already unregistered it, so
             // there is nothing running that errand and the ledger has to say so.
@@ -1244,6 +1245,37 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             Err(_) => could_not_put_back(&end, "its owning loop gave no answer"),
         }
     }
+}
+
+/// Tell the owner about mail its errand never read, because the mail itself does not come back.
+///
+/// **The session is restored; its inbox is not.** `unregister` drops pending messages with the
+/// entry, and they never reached the thread — a message enters a prompt only when
+/// `take_pending` renders it — so the reopened session has no idea it was sent anything. The
+/// realistic shape is an owner following up on a worker that was mid-turn when the stop landed.
+///
+/// It goes to the **sender** rather than being re-posted to the errand, and that is the same
+/// rule the rest of this file runs on: the party holding the context decides. The owner still
+/// has the text in its own thread and knows what it was for; forty minutes on it can tell
+/// whether the instruction still applies, where re-posting would drop a pre-restart order in
+/// front of a session whose whole first act is to find out what changed.
+fn tell_the_sender_about_unread(end: &registry::index::Ended, owner: &SessionSlug) {
+    if end.unread == 0 {
+        return;
+    }
+    let n = end.unread;
+    let title = end.title.as_deref().unwrap_or("(nothing recorded)");
+    let plural = if n == 1 { "message" } else { "messages" };
+    registry::global().post(
+        owner,
+        format!(
+            "\"{title}\" (session `{}`) is back on its own thread after the restart, but {n} \
+             {plural} delivered to it before the stop went with its inbox — it never read \
+             them and does not know they existed. If that still applies, send it again; if the \
+             restart has made it moot, it needs nothing.",
+            end.session
+        ),
+    );
 }
 
 /// Record that an errand did not come back, and tell the rung that was running it.

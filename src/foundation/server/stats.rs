@@ -1934,6 +1934,7 @@ mod tests {
         };
         let closed = Record::Closed {
             interrupted: false,
+            unread: 0,
             run: "old-run".into(),
             session: "worker-a".parse().unwrap(),
             subject: None,

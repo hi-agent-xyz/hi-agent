@@ -16,8 +16,17 @@
 //! **In memory, capped, and not the record.** Same split the roster already makes against
 //! the frame log ([`super::Registry::recent`]): the durable copy is the wire log, which is
 //! verbatim and unpruned, and this is the working set a page poll can afford to read. A
-//! restart empties it — and empties the roster it draws arrows between at the same time,
-//! so there is no arrow left pointing at a history this could have kept.
+//! restart empties it.
+//!
+//! It used to empty the roster it draws arrows between at the same instant, so there was no
+//! arrow left pointing at a history this could have kept. **That is no longer true.** An
+//! errand a stop interrupted is reopened under its own slug and its own owner
+//! ([`crate::body::reaction::reopen_interrupted`]), so the arrow between those two cards is
+//! back on the page with nothing behind it, and clicking it opens an empty exchange for a
+//! pair that has been talking for an hour. What it costs is a reader's confidence in the
+//! page, not a message — both sides still hold the exchange in their own threads, and the
+//! wire log has every frame of it. Restoring the ring from the frame logs at boot is the fix
+//! and is not built.
 //!
 //! Nothing refused is recorded. `NotPermitted` and `Unknown` never reached a mailbox, so
 //! they are not communication between the two sessions; they are a sender's mistake, and

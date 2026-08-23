@@ -1027,6 +1027,10 @@ impl Registry {
                 // something and stopped before reading it is owed a turn it never took,
                 // and its sender was told `Delivered` — see [`index::Ended::interrupted`].
                 e.busy || !e.inbox.pending.is_empty(),
+                // Counted, because reopening the session does not bring the mail back — the
+                // line below drops it with the entry, and it never reached the thread. See
+                // [`index::Ended::unread`] for who is told instead.
+                e.inbox.pending.len() as u32,
             ))
         } else {
             None
@@ -1751,6 +1755,66 @@ mod tests {
         assert!(r.reopen_pending().is_empty(), "no longer owed a session");
         assert!(r.reopening_subjects().is_empty(), "and no longer said to be coming back");
         assert!(r.lost_subjects().contains("kt8-046"), "the restart took this one");
+    }
+
+    /// **Unread mail marks an errand interrupted and is counted, because it does not come
+    /// back.** The inbox goes with the entry and never reached the thread, so the reopened
+    /// session has no idea it was sent anything — the count is what lets the boot pass tell
+    /// the sender, which is the party still holding the text.
+    #[test]
+    fn mail_never_read_is_counted_on_the_way_out() {
+        let r = reg();
+        let owner = mint();
+        let worker = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the shared brain".into(), None);
+        r.register(
+            worker.clone(),
+            Role::Worker(WorkerType::General),
+            Some(owner.clone()),
+            "deploying".into(),
+            None,
+        );
+        r.start_turn(&worker);
+        assert_eq!(r.send(&owner, &worker, "one more thing".into()), Delivery::Delivered);
+        assert_eq!(r.send(&owner, &worker, "and another".into()), Delivery::Delivered);
+
+        r.close_all();
+
+        let row = r
+            .recent_ended(10)
+            .into_iter()
+            .find(|e| e.title.as_deref() == Some("deploying"))
+            .expect("the errand's row");
+        assert!(row.interrupted, "mid-turn with mail waiting");
+        assert_eq!(row.unread, 2, "both, and neither of them survives the close");
+    }
+
+    /// Mail that *was* read is not owed to anybody: it reached the session's thread, so the
+    /// reopened session already holds it and telling the sender again would be noise.
+    #[test]
+    fn mail_that_was_read_is_not_counted() {
+        let r = reg();
+        let owner = mint();
+        let worker = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the shared brain".into(), None);
+        r.register(
+            worker.clone(),
+            Role::Worker(WorkerType::General),
+            Some(owner.clone()),
+            "deploying".into(),
+            None,
+        );
+        r.send(&owner, &worker, "one more thing".into());
+        r.take_pending(&worker).expect("delivered");
+
+        r.close_all();
+
+        let row = r
+            .recent_ended(10)
+            .into_iter()
+            .find(|e| e.title.as_deref() == Some("deploying"))
+            .expect("the errand's row");
+        assert_eq!(row.unread, 0);
     }
 
     /// **A failure recorded after the entry has already drained still lands.** The session
