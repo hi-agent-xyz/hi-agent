@@ -259,7 +259,7 @@ async fn dispatch(
             reaction,
             id.clone(),
             task.title.clone(),
-            brief,
+            Some(brief),
             WorkerType::General,
             owner,
             None,

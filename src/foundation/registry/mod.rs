@@ -288,6 +288,7 @@ fn headline(text: &str, max: usize) -> String {
 }
 
 pub mod index;
+pub mod jsonl;
 pub mod mail;
 
 /// The process's registry. One switchboard, as the design says.
@@ -574,6 +575,10 @@ struct Entry {
     /// The ledger subject this session serves — see [`Status::subject`].
     subject: Option<String>,
     busy: bool,
+    /// A task this session is holding for energy, kept where a stop can see it — see
+    /// [`index::Ended::held`]. Set when the drive loop parks on a 402 and cleared when that
+    /// task is run, so it is `Some` only while nothing else knows the work exists.
+    held: Option<String>,
     turns: u64,
     started: DateTime<Utc>,
     /// When `busy`, or the emptiness of `inbox.pending`, last changed — see
@@ -691,6 +696,18 @@ pub struct Registry {
     /// boot. Absent in tests and anywhere without a data dir, in which case the switchboard
     /// behaves exactly as it did before — live-only, nothing kept.
     index: std::sync::OnceLock<index::Writer>,
+    /// The durable mail log, once [`Registry::attach_index`] has been called at boot — see
+    /// [`mail`]. Absent in every test registry, so writing is always conditional.
+    mail_log: std::sync::OnceLock<jsonl::Writer>,
+    /// Whether the host is on its way down, set the moment a stop is requested.
+    ///
+    /// **It has to be set at the *request*, not at [`Registry::close_all`].** The shutdown
+    /// path reaps the codex children before it closes the switchboard, so a worker whose
+    /// subprocess is killed unwinds and unregisters itself first — and a flag set later would
+    /// record that as its owner finishing with it, which is the one thing it was not. From the
+    /// moment a stop is requested, anything that unregisters is ending because the host is
+    /// going down. See [`index::Ended::by_host`].
+    stopping: std::sync::atomic::AtomicBool,
     /// Sessions that are no longer live, newest first — seeded from the directory at boot
     /// and appended to as sessions close.
     ///
@@ -710,11 +727,11 @@ pub struct Registry {
     /// crashed the host is resumed exactly once before the next boot starts fresh.
     resumable: Mutex<HashMap<String, String>>,
     /// The errands the last stop interrupted and this run has not put back yet — see
-    /// [`index::interrupted_workers`] for which ones qualify.
+    /// [`index::reopenable_workers`] for which ones qualify.
     ///
     /// Seeded at [`Registry::attach_index`] rather than derived from `recent` on demand,
     /// because `recent` grows this run's own ends as sessions close and
-    /// [`index::interrupted_workers`] reads the head of the list to decide which run "the
+    /// [`index::reopenable_workers`] reads the head of the list to decide which run "the
     /// previous one" was. A read taken after the first session closes would answer about this
     /// run and find nothing.
     ///
@@ -750,6 +767,11 @@ pub struct Registry {
     /// frame log and a paragraph in another. See [`mail`] for why this is in memory and
     /// what it is not.
     traffic: Mutex<VecDeque<mail::Sent>>,
+    /// What the previous run had delivered to each session and never drained, seeded at boot
+    /// from the mail log — see [`mail::Seeded::undelivered`]. Emptied as sessions are
+    /// reopened; whatever is left belongs to sessions nothing reopened, and is simply not
+    /// delivered, which is what `unregister` already promised about a mailbox.
+    undelivered: Mutex<HashMap<SessionSlug, Vec<Message>>>,
 }
 
 impl Default for Registry {
@@ -759,11 +781,14 @@ impl Default for Registry {
             sessions: Mutex::new(HashMap::new()),
             activity,
             index: std::sync::OnceLock::new(),
+            mail_log: std::sync::OnceLock::new(),
+            stopping: std::sync::atomic::AtomicBool::new(false),
             recent: Mutex::new(Vec::new()),
             resumable: Mutex::new(HashMap::new()),
             reopening: Mutex::new(Vec::new()),
             unreopened: Mutex::new(Vec::new()),
             traffic: Mutex::new(VecDeque::new()),
+            undelivered: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -801,6 +826,7 @@ impl Registry {
                     title: title.clone(),
                     subject: subject.clone(),
                     busy: false,
+                    held: None,
                     turns: 0,
                     started,
                     // A fresh session is idle, and has been since it existed.
@@ -827,7 +853,7 @@ impl Registry {
         // what a crash skips. An `opened` with no `closed` is how a restart-killed session
         // becomes visible at all — see [`index::EndedHow::Restart`].
         if let Some(writer) = self.index.get() {
-            writer.write(index::opened_record(
+            writer.write(&index::opened_record(
                 crate::foundation::run::id(),
                 &id,
                 role,
@@ -849,33 +875,46 @@ impl Registry {
     pub async fn attach_index(&self, data_dir: std::path::PathBuf) {
         let run = crate::foundation::run::id();
         let seeded = index::seed(&data_dir, run).await;
-        if self.index.set(index::Writer::start(data_dir)).is_err() {
+        if self.index.set(index::Writer::start(index::index_path(&data_dir), "the session index")).is_err() {
             tracing::warn!("the session index is already attached; ignoring");
             return;
         }
+        // The mail log rides the same call, because it answers the same boot: the ring the
+        // sessions page draws arrows from, and the inbox a reopened session is owed.
+        let seeded_mail = mail::seed(&data_dir, run).await;
+        let carried = seeded_mail.ring.len();
+        let owed: usize = seeded_mail.undelivered.values().map(Vec::len).sum();
+        *self.traffic.lock().unwrap() = seeded_mail.ring;
+        *self.undelivered.lock().unwrap() = seeded_mail.undelivered;
+        let _ = self.mail_log.set(jsonl::Writer::start(mail::mail_path(&data_dir), "the mail log"));
         let found = seeded.len();
         let lost = seeded.iter().filter(|e| e.how == index::EndedHow::Restart).count();
         let resumable = index::resumable(&seeded);
         let resuming = resumable.len();
-        // Before `recent` takes the list: `interrupted_workers` reads its head to decide which
+        // Before `recent` takes the list: `reopenable_workers` reads its head to decide which
         // run was the previous one, and this run's first close would move that head.
-        let interrupted = index::interrupted_workers(&seeded);
-        let reopening = interrupted.len();
-        *self.reopening.lock().unwrap() = interrupted;
+        let reopenable = index::reopenable_workers(&seeded);
+        let reopening = reopenable.len();
+        *self.reopening.lock().unwrap() = reopenable;
         *self.resumable.lock().unwrap() = resumable;
         *self.recent.lock().unwrap() = seeded;
         // Worth a line at boot: `lost` is the count of sessions a previous run died
         // underneath, which nothing used to be able to say out loud. `resuming` is how many
         // resident rungs are picking their previous thread back up — zero on a fresh
         // install, and zero for any rung whose last run predates thread recording.
-        // `reopening` is how many errands the last stop caught mid-turn, every one of which
-        // the host puts back on its own thread — see [`index::interrupted_workers`].
+        // `reopening` is how many errands the host ended out from under their owners, every
+        // one of which it puts back on its own thread — see [`index::reopenable_workers`].
         tracing::info!(
             run,
             recent = found,
             lost,
             resuming,
             reopening,
+            // `carried` is how much of the previous runs' exchange the sessions page can still
+            // draw; `owed` is mail that reached a mailbox and nobody ever took out, waiting
+            // for its session to be reopened.
+            exchange = carried,
+            owed,
             "session directory attached"
         );
     }
@@ -890,7 +929,7 @@ impl Registry {
             e.thread = Some(thread_id.to_string());
         }
         if let Some(writer) = self.index.get() {
-            writer.write(index::thread_record(
+            writer.write(&index::thread_record(
                 crate::foundation::run::id(),
                 id,
                 thread_id,
@@ -907,7 +946,7 @@ impl Registry {
     }
 
     /// The errands this boot still owes a session, newest first — see
-    /// [`index::interrupted_workers`].
+    /// [`index::reopenable_workers`].
     ///
     /// The one caller is the boot pass that reopens them. It is a snapshot: entries leave the
     /// list as that pass reports what happened to each, so calling this twice is how a second
@@ -989,6 +1028,44 @@ impl Registry {
         }
     }
 
+    /// Say that the host is stopping, so every session that ends from here on is recorded as
+    /// the host's doing rather than its owner's — see [`Registry::stopping`](#structfield.stopping).
+    pub fn note_stopping(&self) {
+        self.stopping.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Park `task` on `id`, or clear it with `None`.
+    ///
+    /// The one caller is the drive loop holding a task through a 402. Recorded on the
+    /// switchboard rather than kept in that loop's own local, because a local is invisible to
+    /// a stop: the session reads as idle, comes back with nothing to do, and waits forever on
+    /// an instruction it was already holding. See [`index::Ended::held`].
+    pub fn hold(&self, id: &SessionSlug, task: Option<String>) {
+        if let Some(entry) = self.sessions.lock().unwrap().get_mut(id) {
+            entry.held = task;
+        }
+    }
+
+    /// Append one line to the durable mail log, if this registry has one.
+    ///
+    /// A test registry never attaches, and neither does a boot before `attach_index` — both
+    /// are the same "no file, carry on" case rather than an error, for the reason
+    /// [`jsonl`] gives: this is evidence, and evidence must not be able to stop a message.
+    fn record_mail(&self, record: &mail::Record) {
+        if let Some(writer) = self.mail_log.get() {
+            writer.write(record);
+        }
+    }
+
+    /// The mail a reopened session is owed, taken so a second reopen cannot double-deliver.
+    ///
+    /// Taken rather than read, for the same reason [`Registry::resumable`] is: what makes a
+    /// bad row survivable is that the slot is empty afterwards. A message delivered twice is
+    /// an instruction carried out twice.
+    pub fn take_undelivered(&self, id: &SessionSlug) -> Vec<Message> {
+        self.undelivered.lock().unwrap().remove(id).unwrap_or_default()
+    }
+
     /// Wait until every record queued for the session directory has reached the disk.
     ///
     /// Pairs with [`close_all`](Self::close_all) on the shutdown path — see
@@ -996,6 +1073,11 @@ impl Registry {
     /// signature on a clean exit. A no-op when no index is attached.
     pub async fn flush_index(&self) {
         if let Some(writer) = self.index.get() {
+            writer.flush().await;
+        }
+        // The mail log has the same one moment that has to be durable: a message delivered in
+        // the last second before a stop is one its recipient will be owed on the way back up.
+        if let Some(writer) = self.mail_log.get() {
             writer.flush().await;
         }
     }
@@ -1011,6 +1093,9 @@ impl Registry {
     /// an outcome.
     pub fn unregister(&self, id: &SessionSlug) {
         let removed = if let Some(mut e) = self.sessions.lock().unwrap().remove(id) {
+            // Read *before* the line below sets it: an inbox already closed was closed by this
+            // session's owner, and that stays an owner's decision however the host is doing.
+            let owner_closed = e.inbox.closed;
             e.inbox.closed = true;
             Some(index::ended_now(
                 crate::foundation::run::id(),
@@ -1027,10 +1112,10 @@ impl Registry {
                 // something and stopped before reading it is owed a turn it never took,
                 // and its sender was told `Delivered` — see [`index::Ended::interrupted`].
                 e.busy || !e.inbox.pending.is_empty(),
-                // Counted, because reopening the session does not bring the mail back — the
-                // line below drops it with the entry, and it never reached the thread. See
-                // [`index::Ended::unread`] for who is told instead.
-                e.inbox.pending.len() as u32,
+                // Whether this session ended because the host did, which is what decides
+                // whether it comes back — see [`index::Ended::by_host`].
+                self.stopping.load(std::sync::atomic::Ordering::Relaxed) && !owner_closed,
+                e.held.clone(),
             ))
         } else {
             None
@@ -1039,7 +1124,7 @@ impl Registry {
             // The file and the in-memory list get the same row. The list is what a poll
             // reads; the file is what survives this process.
             if let Some(writer) = self.index.get() {
-                writer.write(index::closed_record(&ended));
+                writer.write(&index::closed_record(&ended));
             }
             index::push_recent(&mut self.recent.lock().unwrap(), ended);
             self.note_activity();
@@ -1088,6 +1173,7 @@ impl Registry {
                 &mut self.traffic.lock().unwrap(),
                 mail::Sent::new(from.clone(), to.clone(), &message),
             );
+            self.record_mail(&mail::sent_record(Some(from), to, &message));
             entry.inbox.pending.push(Message { from: Some(from.clone()), text: message });
             entry.notify.notify_one();
             Delivery::Delivered
@@ -1205,6 +1291,9 @@ impl Registry {
                 return Delivery::Unknown;
             }
             entry.note_state_change(entry.is_quiet());
+            // Not on the ring — an arrow joins two sessions and this has one end — but on the
+            // durable log, because an unread host post is as owed as any other.
+            self.record_mail(&mail::sent_record(None, id, &text));
             entry.inbox.pending.push(Message { from: None, text });
             entry.notify.notify_one();
             Delivery::Delivered
@@ -1256,6 +1345,7 @@ impl Registry {
             }
             std::mem::take(&mut entry.inbox.pending)
         };
+        self.record_mail(&mail::read_record(id, batch.len() as u32));
         self.note_activity();
         Some(batch)
     }
@@ -1276,6 +1366,7 @@ impl Registry {
             entry.note_state_change(!entry.busy);
             std::mem::take(&mut entry.inbox.pending)
         };
+        self.record_mail(&mail::read_record(id, batch.len() as u32));
         self.note_activity();
         Some(batch)
     }
@@ -1652,7 +1743,7 @@ mod tests {
     /// sessions closing on top of it.
     ///
     /// The ordering inside `attach_index` is the part worth pinning:
-    /// [`index::interrupted_workers`] reads the head of the ends list to decide which run was
+    /// [`index::reopenable_workers`] reads the head of the ends list to decide which run was
     /// the previous one, and `recent` grows this run's ends as sessions close. Snapshot it
     /// after `recent` takes the list — or derive it on demand — and the first session to close
     /// moves that head to *this* run, where nothing was interrupted, and the list silently
@@ -1757,64 +1848,73 @@ mod tests {
         assert!(r.lost_subjects().contains("kt8-046"), "the restart took this one");
     }
 
-    /// **Unread mail marks an errand interrupted and is counted, because it does not come
-    /// back.** The inbox goes with the entry and never reached the thread, so the reopened
-    /// session has no idea it was sent anything — the count is what lets the boot pass tell
-    /// the sender, which is the party still holding the text.
+    /// **Who ended a session is what decides whether it comes back**, and it is not the same
+    /// question as whether it was working. A worker its owner closed had a decision made about
+    /// it; one the host closed on the way down did not.
     #[test]
-    fn mail_never_read_is_counted_on_the_way_out() {
+    fn a_close_records_who_ended_it() {
         let r = reg();
         let owner = mint();
-        let worker = mint();
+        let finished = mint();
+        let waiting = mint();
         r.register(owner.clone(), Role::Cognition, None, "the shared brain".into(), None);
-        r.register(
-            worker.clone(),
-            Role::Worker(WorkerType::General),
-            Some(owner.clone()),
-            "deploying".into(),
-            None,
-        );
-        r.start_turn(&worker);
-        assert_eq!(r.send(&owner, &worker, "one more thing".into()), Delivery::Delivered);
-        assert_eq!(r.send(&owner, &worker, "and another".into()), Delivery::Delivered);
+        for (id, title) in [(&finished, "done with"), (&waiting, "still wanted")] {
+            r.register(
+                id.clone(),
+                Role::Worker(WorkerType::General),
+                Some(owner.clone()),
+                title.to_string(),
+                None,
+            );
+        }
 
+        // Its owner finished with this one before the stop.
+        r.close_inbox(&finished);
+        r.unregister(&finished);
+
+        r.note_stopping();
         r.close_all();
 
-        let row = r
+        let by_title: std::collections::HashMap<_, _> = r
             .recent_ended(10)
             .into_iter()
-            .find(|e| e.title.as_deref() == Some("deploying"))
-            .expect("the errand's row");
-        assert!(row.interrupted, "mid-turn with mail waiting");
-        assert_eq!(row.unread, 2, "both, and neither of them survives the close");
+            .map(|e| (e.title.clone().unwrap_or_default(), e.by_host))
+            .collect();
+        assert_eq!(by_title["done with"], false, "its owner had closed it");
+        assert_eq!(by_title["still wanted"], true, "the host closed it out from under its owner");
     }
 
-    /// Mail that *was* read is not owed to anybody: it reached the session's thread, so the
-    /// reopened session already holds it and telling the sender again would be noise.
+    /// A task held for energy lives on the switchboard, so a stop can see it. Held only in the
+    /// drive loop's local, a reopened session reads as idle, is handed nothing, and waits
+    /// forever on an instruction it was already holding.
     #[test]
-    fn mail_that_was_read_is_not_counted() {
+    fn a_held_task_survives_the_close() {
         let r = reg();
-        let owner = mint();
-        let worker = mint();
-        r.register(owner.clone(), Role::Cognition, None, "the shared brain".into(), None);
-        r.register(
-            worker.clone(),
-            Role::Worker(WorkerType::General),
-            Some(owner.clone()),
-            "deploying".into(),
-            None,
-        );
-        r.send(&owner, &worker, "one more thing".into());
-        r.take_pending(&worker).expect("delivered");
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, "deploying".into(), None);
+        r.hold(&id, Some("rerun the deploy".into()));
 
+        r.note_stopping();
         r.close_all();
 
-        let row = r
-            .recent_ended(10)
-            .into_iter()
-            .find(|e| e.title.as_deref() == Some("deploying"))
-            .expect("the errand's row");
-        assert_eq!(row.unread, 0);
+        let row = r.recent_ended(5).into_iter().next().expect("its row");
+        assert_eq!(row.held.as_deref(), Some("rerun the deploy"));
+    }
+
+    /// And running it clears the hold — a `held` left behind is re-handed to a session that is
+    /// already doing it.
+    #[test]
+    fn running_the_held_task_clears_it() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, "deploying".into(), None);
+        r.hold(&id, Some("rerun the deploy".into()));
+        r.hold(&id, None);
+
+        r.note_stopping();
+        r.close_all();
+
+        assert!(r.recent_ended(5).into_iter().next().expect("its row").held.is_none());
     }
 
     /// **A failure recorded after the entry has already drained still lands.** The session

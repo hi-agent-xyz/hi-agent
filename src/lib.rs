@@ -557,6 +557,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             // window it must not restart a session or open a reflection pass, or a
             // freshly spawned child would race the reap below and outlive us.
             reaction_shutdown.trigger();
+            // And from this moment every session that ends is ending because *we* are, which
+            // is what decides whether it is put back on the next boot. Set here rather than
+            // at `close_all` because the reap below unwinds drive tasks that unregister
+            // themselves first — see [`registry::Registry::stopping`].
+            foundation::registry::global().note_stopping();
             tracing::info!(grace = ?SHUTDOWN_GRACE, "shutdown requested; draining in-flight requests");
             match tokio::time::timeout(SHUTDOWN_GRACE, &mut server).await {
                 Ok(Ok(Ok(()))) => tracing::info!("HTTP server drained cleanly"),
@@ -574,6 +579,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // (an HTTP error, not a signal) — idempotent, and it stops the reaction from
     // respawning sessions while we reap. No-op on the shutdown path (already fired).
     reaction_shutdown.trigger();
+    foundation::registry::global().note_stopping();
 
     // Let the off-box acceptor finish its own drain, bounded by the same grace. It
     // holds the identical long-lived connections (SSE, the long-polls), so an

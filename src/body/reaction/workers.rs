@@ -225,7 +225,7 @@ impl WorkerRegistry {
         reaction: &Reaction,
         id: SessionSlug,
         title: String,
-        task: String,
+        task: Option<String>,
         kind: WorkerType,
         owner: Option<SessionSlug>,
         resume: Option<String>,
@@ -250,7 +250,7 @@ impl WorkerRegistry {
         reaction: &Reaction,
         id: SessionSlug,
         title: String,
-        task: String,
+        task: Option<String>,
         kind: WorkerType,
         owner: Option<SessionSlug>,
         resume: Option<String>,
@@ -270,22 +270,28 @@ impl WorkerRegistry {
         // So the standing record for the systems this task touches goes in front of the
         // brief ([`snapshot::work_record`]). Only on the **opening** prompt: a follow-up
         // lands in a session that has already read it.
-        let opening = match subject.as_deref() {
-            Some(subject) => {
+        //
+        // `None` means there is no opening turn at all — a session the host is putting back
+        // that was only ever waiting. It gets no record and no brief because it is being
+        // asked nothing; the record rides the *next* thing its owner sends, which is the
+        // moment there is again something to look it up for.
+        let opening = match (task.clone(), subject.as_deref()) {
+            (None, _) => None,
+            (Some(task), Some(subject)) => {
                 let record =
                     snapshot::work_record(reaction.inner.memory.data_dir(), subject).await;
-                match record.is_empty() {
-                    true => task.clone(),
+                Some(match record.is_empty() {
+                    true => task,
                     // Labelled, because a record and an instruction read differently and
                     // must not blur: one is what is known, the other is what is asked.
                     false => format!("{record}\n\n## What you are asked to do\n{task}"),
-                }
+                })
             }
             // No subject means no task to look the record up by. That is a real gap and it
             // is `create_worker`'s to close — the tool's `subject` is how a worker is
             // linked to the work at all, and an unlinked worker is already reported as a
             // problem on the ledger.
-            None => task.clone(),
+            (Some(task), None) => Some(task),
         };
         let (session, mail) = self
             .open_working_session(reaction, id.clone(), &title, kind, owner.clone(), resume, subject)
@@ -313,7 +319,7 @@ impl WorkerRegistry {
         let drive = tokio::spawn(drive_worker(
             id.clone(),
             title.clone(),
-            Some(opening),
+            opening,
             session,
             transcript.clone(),
             self.inbound.clone(),
@@ -708,6 +714,9 @@ async fn drive(
             return;
         }
         busy.store(true, Ordering::Relaxed);
+        // Running it is what ends the hold: from here the task is the turn, and a `held` left
+        // behind would be re-handed to a session that is already doing it.
+        registry::global().hold(id, None);
         registry::global().start_turn(id);
         // Paired with the "turn done" line below. Without both, a reader of the log
         // cannot tell a working session that is still building from one that finished
@@ -734,6 +743,11 @@ async fn drive(
                 // truest thing the roster can say about why this session is quiet. It is
                 // overwritten by the outcome of the rerun the moment energy comes back.
                 registry::global().finish_turn(id, TurnOutcome::Failed(err.to_string()));
+                // **And the task goes somewhere a stop can see it.** Held only in the local
+                // below, it is invisible to everything: the session reads as idle, so a
+                // restart brings it back with nothing to do and it waits forever on an
+                // instruction it was already holding. See [`registry::Registry::hold`].
+                registry::global().hold(id, Some(task.clone()));
                 energy_paused = true;
                 next_task = Some(task);
                 continue;
@@ -1214,11 +1228,29 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
         };
 
         let title = end.title.clone().unwrap_or_else(|| slug.to_string());
+        let gap = gap_line(end.ended);
+        // **What it is handed, and one of the answers is nothing at all.**
+        //
+        // A session caught mid-turn is the only one with a question to answer — whether its
+        // own half-finished steps landed — and the note is what sends it to find out. A
+        // session that was merely *waiting* had no question: it was parked on its owner's
+        // next instruction, and a "the host restarted" turn would be a model turn spent on
+        // nothing, with a session inventing work to justify it as the failure mode. It goes
+        // back to waiting, which is exactly where it was.
+        //
+        // The one middle case is a task held through a 402: idle, but holding work nothing
+        // else knows about — so it is re-handed, with the gap said out loud.
+        let handed = match (end.interrupted, end.held.clone()) {
+            (true, _) => Some(restart_note(&title, end.started)),
+            (false, Some(held)) => Some(format!("{gap}\n\nYou were holding this when it \
+                stopped, waiting for energy to come back. Here it is again:\n\n{held}")),
+            (false, None) => None,
+        };
         let (ready, registered) = tokio::sync::oneshot::channel();
         let control = super::LoopControl::CreateWorker {
             id: slug.clone(),
             title: title.clone(),
-            task: restart_note(&title, end.started),
+            task: handed.clone(),
             kind,
             owner: Some(owner.clone()),
             resume: Some(thread),
@@ -1236,8 +1268,13 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
         match registered.await {
             Ok(Ok(())) => {
                 registry::global().reopened(&slug);
-                tracing::info!(session = %slug, owner = %owner, "errand reopened on its own thread");
-                tell_the_sender_about_unread(&end, &owner);
+                restore_inbox(&slug, gap);
+                tracing::info!(
+                    session = %slug,
+                    owner = %owner,
+                    handed = match handed { Some(_) => "a turn", None => "nothing" },
+                    "errand reopened on its own thread"
+                );
             }
             // The session did not open. `open_working_session` already unregistered it, so
             // there is nothing running that errand and the ledger has to say so.
@@ -1245,37 +1282,6 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             Err(_) => could_not_put_back(&end, "its owning loop gave no answer"),
         }
     }
-}
-
-/// Tell the owner about mail its errand never read, because the mail itself does not come back.
-///
-/// **The session is restored; its inbox is not.** `unregister` drops pending messages with the
-/// entry, and they never reached the thread — a message enters a prompt only when
-/// `take_pending` renders it — so the reopened session has no idea it was sent anything. The
-/// realistic shape is an owner following up on a worker that was mid-turn when the stop landed.
-///
-/// It goes to the **sender** rather than being re-posted to the errand, and that is the same
-/// rule the rest of this file runs on: the party holding the context decides. The owner still
-/// has the text in its own thread and knows what it was for; forty minutes on it can tell
-/// whether the instruction still applies, where re-posting would drop a pre-restart order in
-/// front of a session whose whole first act is to find out what changed.
-fn tell_the_sender_about_unread(end: &registry::index::Ended, owner: &SessionSlug) {
-    if end.unread == 0 {
-        return;
-    }
-    let n = end.unread;
-    let title = end.title.as_deref().unwrap_or("(nothing recorded)");
-    let plural = if n == 1 { "message" } else { "messages" };
-    registry::global().post(
-        owner,
-        format!(
-            "\"{title}\" (session `{}`) is back on its own thread after the restart, but {n} \
-             {plural} delivered to it before the stop went with its inbox — it never read \
-             them and does not know they existed. If that still applies, send it again; if the \
-             restart has made it moot, it needs nothing.",
-            end.session
-        ),
-    );
 }
 
 /// Record that an errand did not come back, and tell the rung that was running it.
@@ -1308,6 +1314,52 @@ fn could_not_put_back(end: &registry::index::Ended, why: &str) {
     }
     note.push('.');
     registry::global().post(owner, note);
+}
+
+/// Put back the mail this session was delivered and never read, ahead of anything else.
+///
+/// **The sender was told `Delivered`.** A mailbox that quietly discards what it accepted is
+/// worse than one that refuses, and until the mail log existed that is what a stop did with
+/// every unread message. They are re-posted in the order they arrived, behind one host line
+/// saying how long the gap was — an instruction written before a restart must not be read as
+/// though it had just arrived.
+///
+/// Taken from the registry, not read, so a second pass cannot deliver the same instruction
+/// twice.
+fn restore_inbox(slug: &SessionSlug, gap: String) {
+    let owed = registry::global().take_undelivered(slug);
+    if owed.is_empty() {
+        return;
+    }
+    let n = owed.len();
+    registry::global().post(
+        slug,
+        format!(
+            "{gap} What follows had been delivered to you before the stop and you had not read \
+             it yet, so it is being handed over now rather than dropped. Judge it against what \
+             is true now, not against when it was written."
+        ),
+    );
+    for message in owed {
+        match message.from {
+            Some(from) => registry::global().post(slug, format!("from {from}: {}", message.text)),
+            None => registry::global().post(slug, message.text),
+        };
+    }
+    tracing::info!(session = %slug, messages = n, "restored an inbox the stop would have dropped");
+}
+
+/// How long the host was away, said the way every other elapsed quantity here is said.
+fn gap_line(ended: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match ended {
+        Some(at) => format!(
+            "(restart) The host process stopped {} and has just come back up.",
+            crate::mind::memory::tasks::ago(chrono::Utc::now(), at)
+        ),
+        // A crash records no end. "Some time" is the honest answer, and inventing a number
+        // from the session's *start* would report the errand's age as the outage's length.
+        None => "(restart) The host process stopped and has just come back up.".to_string(),
+    }
 }
 
 /// The one thing the host can tell a reopened errand: that it was interrupted.

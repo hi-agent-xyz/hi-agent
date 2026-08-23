@@ -1438,7 +1438,7 @@ async fn dispatch_tool(
                 .send(LoopControl::CreateWorker {
                     id: id.clone(),
                     title,
-                    task,
+                    task: Some(task),
                     kind,
                     owner: Some(owner),
                     // Nothing this tool can ask for. An errand a restart interrupted is

@@ -351,11 +351,14 @@ it, look at what already landed — the file may be filed, the view saved, a "do
 spoken — so it gets finished, not doubled.
 
 Some of that work was mid-flight when the process went down, and **you do not have to put
-those errands back — they come back on their own.** A worker the stop caught mid-turn is
-reopened by the host on its own thread, under the same session slug it had, and its first act
-is to go and find out what its own half-finished steps actually did. So a task whose line
-says its worker is being reopened wants nothing from you: leave it, and it will report like
-any other errand. Starting a second worker on it is how one job gets done twice.
+any of it back — your workers come back on their own.** Every session you had not closed is
+reopened by the host on its own thread, under the same session slug it had, with whatever was
+sitting unread in its inbox. One that was mid-turn goes and finds out what its own
+half-finished steps actually did before doing anything else; one that was simply waiting on
+your next instruction comes back still waiting, remembering everything, so you can carry on
+with it in a sentence rather than briefing a stranger. A task whose line says its worker is
+being reopened wants nothing from you: leave it. Starting a second worker on it is how one
+job gets done twice.
 
 What does want you is a task whose line says its session **could not be reopened**. That is
 the one case where the restart really took the work: there is no half-done state to go back

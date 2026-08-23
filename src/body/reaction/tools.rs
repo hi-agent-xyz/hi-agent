@@ -78,7 +78,11 @@ pub enum LoopControl {
     CreateWorker {
         id: SessionSlug,
         title: String,
-        task: String,
+        /// The brief, and `None` for the one caller that has none: the boot pass reopening a
+        /// session that was *waiting* when the host stopped ([`super::reopen_interrupted`]).
+        /// It was parked on its owner's next instruction and still is, so it comes back and
+        /// goes straight back to waiting — a turn handed to it would be one spent on nothing.
+        task: Option<String>,
         kind: crate::identity::WorkerType,
         owner: Option<SessionSlug>,
         resume: Option<String>,
@@ -632,7 +636,7 @@ mod tests {
                 .send(LoopControl::CreateWorker {
                     id: id.parse().unwrap(),
                     title: format!("errand-{id}"),
-                    task: format!("task-{id}"),
+                    task: Some(format!("task-{id}")),
                     kind: crate::identity::WorkerType::default(),
                     owner: None,
                     resume: None,
