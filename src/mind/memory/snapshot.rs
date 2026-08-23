@@ -322,13 +322,13 @@ fn shown_name(body: &str) -> Option<String> {
 /// be stale: after a restart the switchboard is empty, so every `doing` task reads *nobody on
 /// it*, which is exactly true.
 ///
-/// **True is not the whole answer, though, and the gap between them is a whole minute long.**
-/// The switchboard being empty right after a boot says nothing about whether the work was
-/// abandoned or whether the process simply died holding it, and the second is the common
-/// case — Cognition needs an LLM turn to read the boot offer and put people back on things.
-/// So the restart's own casualties are laid down first, from the offer, and the live join
-/// goes on top: a subject that has been restaffed is live, and one that has not says why it
-/// is not ([`tasks::OnIt::CutOff`]).
+/// **True is not the whole answer, though.** The switchboard being empty right after a boot
+/// says nothing about whether the work was abandoned or whether the process simply died
+/// holding it, and the second is the common case — the host is reopening those errands as this
+/// is read. So the restart's own casualties are laid down first and the live join goes on top:
+/// a subject whose worker is back is live, one whose worker is still coming says so
+/// ([`tasks::OnIt::Reopening`]), and one whose thread would not reopen says *that*
+/// ([`tasks::OnIt::Lost`]), which is the only one of the three that needs anybody to act.
 ///
 /// The order is also the tie-break, and it is deliberately this way round. Registering a live
 /// worker is what drains the cut-off entry, so the two sets are disjoint except during that
@@ -340,10 +340,13 @@ fn shown_name(body: &str) -> Option<String> {
 fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
     let registry = crate::foundation::registry::global();
     let mut join: std::collections::HashMap<String, tasks::OnIt> = registry
-        .lost_subjects()
+        .reopening_subjects()
         .into_iter()
-        .map(|subject| (subject, tasks::OnIt::CutOff))
+        .map(|subject| (subject, tasks::OnIt::Reopening))
         .collect();
+    // After, not before: an errand moves from one list to the other when its resume fails,
+    // and the failure is the answer that has to survive the merge.
+    join.extend(registry.lost_subjects().into_iter().map(|subject| (subject, tasks::OnIt::Lost)));
     join.extend(registry.statuses().into_iter().filter(|st| st.role.is_worker()).filter_map(
         |st| {
             let subject = st.subject.clone()?;

@@ -187,6 +187,7 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 
 | | The re-test |
 |---|---|
+| **Reopening an interrupted errand** — the host puts back every worker a stop caught mid-turn, on its own thread and under its own slug, with a `(restart)` note telling it to establish what actually landed before acting ([`agents.md#across-a-restart`](arch/agents.md)) | Replaces the *offer*, which only ever fired on a crash: a clean quit calls `close_all`, every live worker was recorded `Closed`, and the next boot offered nothing. Measured before the change — the 2026-08-21T08:30:45 quit closed 16 live workers, 4 of them mid-turn (including a KUT deploy on gz-02), and the next boot logged `offering=0`. Unit tests reach the marker, the filter, the two ledger lines and the note's wording; **nothing has watched a single errand actually come back.** The re-test: with a worker mid-turn, quit, restart, and confirm `reopening=N` at boot, `errand reopened on its own thread` per errand, that the session keeps its old slug, and — the part that matters — that its first turn goes and checks what its own last steps did instead of redoing them. Then force the failure half: quit mid-turn, delete that thread's rollout from `data/codex-home/sessions/`, restart, and confirm the errand does **not** come back, that its owner is posted the reason, and that its task line says `could not be reopened` |
 | **The switchboard's traffic ring** — every delivered `Registry::send` kept in memory (`registry::mail`, 300 messages, 4k chars each) and read back per pair by `GET /api/workers/mail?a=&b=`, which is what an arrow on the Sessions page opens | Real, and exercised only from a test's own registry: the endpoint was driven end to end against a live server (both directions, a third session's mail correctly absent) but the sends were the test's, not an agent's. What no run has covered is the ring under a **working** agent — whether 300 is a useful window or an afternoon's traffic evicts the morning's, and whether a worker's report routinely runs past the 4k clip. Nothing refused is recorded and nothing host-posted is (`Registry::post` has no sender, so no arrow could show it) — both deliberate, both unverified against what a reader actually goes looking for |
 | **The floor** — the mouth refuses a turn whose room isn't the voice's to take (their voice sounding; a line went unheard), with a three-refusal backstop | A real partial stream. Both conditions are unit-tested; curl cannot drive a partial |
 | **The check-in** — `say(text, back_in)` arms a wake, with a floor under an open-ended silence | One errand that takes >5 minutes: hand it over, **don't ask**, watch for `check-in fired` in `server.log`, and judge whether what gets spoken is progress or "still working on it" |
@@ -207,19 +208,6 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 ---
 
 ## No code at all
-
-- **Reopening an interrupted errand.** [`agents.md#across-a-restart`](arch/agents.md) now says the
-  host reopens any worker a stop caught mid-turn — same thread, same slug, same owner — and that
-  the *offer* it replaces (a list of dead errands in the boot glance, claimed with
-  `CreateWorker(resume:)`) is deleted. **Decided 2026-08-24, no code yet.** What is in the tree is
-  still the offer, and the offer only recognises errands from a run that *crashed*: a clean quit
-  calls `close_all`, every live worker is recorded `Closed`, and `index::lost_workers` — which
-  keeps only `EndedHow::Restart` rows — hands Cognition nothing. Measured on this box: the stop at
-  2026-08-21T08:30:45 closed 16 live workers, 4 of them mid-turn (`turn/started` with no
-  `turn/completed` in their frame logs), including a KUT deploy on gz-02; the next boot logged
-  `offering=0` and Cognition re-derived one of them from the ledger by hand. Three of the four
-  carried a `subject`, so those tasks also sat `doing` with no cause attached —
-  `Registry::lost_subjects` reads the same empty list.
 
 - **A shelf for prepared things.** Working ahead has no store: a prepared artifact lives
   wherever it naturally lives, the fact that it exists rides the worker's report into

@@ -435,24 +435,30 @@ pub struct WorkingOnIt {
 pub enum OnIt {
     /// A session is registered under this subject right now.
     Live(WorkingOnIt),
-    /// The last restart killed its worker and nothing has picked the errand back up.
+    /// The last stop cut its worker off mid-turn and the host is putting it back.
     ///
-    /// Worth distinguishing from a plain absence because the two call for different moves.
-    /// An errand nobody ever started has to be started; this one has a **mind still on the
-    /// boot offer** ([`crate::foundation::registry::Registry::lost_workers`]), so the cheap
-    /// answer is to resume it. It also stops the ledger from reporting the first minute of
-    /// every restart as though the work had been abandoned.
-    CutOff,
+    /// Distinguished from a plain absence because the two call for different moves — and from
+    /// [`OnIt::Lost`] because this one calls for **no move at all**. It exists to stop the
+    /// ledger from reporting the seconds after every restart as though the work had been
+    /// abandoned, and it clears itself the moment that session registers.
+    Reopening,
+    /// The last stop cut its worker off and its thread would not reopen.
+    ///
+    /// The one case where the restart really did take the work: there is no mind to go back
+    /// to, so the errand has to be started again or written off, and either is a decision
+    /// somebody has to make. Left unsaid it decays into an ordinary-looking "nobody on it",
+    /// which reads exactly like a task being worked on.
+    Lost,
 }
 
 /// The active ledger as the agent reads it, annotated with who is on each task.
 ///
 /// `working` is keyed by task subject. An empty map means nobody is on anything, and every
 /// `doing` task then reads as having nobody on it — the state this whole annotation exists to
-/// make visible. Immediately after a restart that is *true but not the whole answer*, which
-/// is what [`OnIt::CutOff`] carries: the switchboard is empty because the process died, not
-/// because the work was abandoned, and the difference is the difference between an alarm and
-/// a resume.
+/// make visible. Immediately after a restart that is *true but not the whole answer*, which is
+/// what [`OnIt::Reopening`] carries: the switchboard is empty because the process died, not
+/// because the work was abandoned, and the difference is the difference between an alarm and a
+/// session that is already coming back.
 pub async fn projection(
     data_dir: &Path,
     working: &std::collections::HashMap<String, OnIt>,
@@ -694,13 +700,18 @@ fn worker_note(task: &Task, on_it: Option<&OnIt>, now: DateTime<Utc>) -> Option<
             }
             Some(note)
         }
-        Some(OnIt::CutOff) if task.status == TaskStatus::Doing => Some(
-            "nobody on it — the restart cut its worker off, and its thread is still on the \
-             boot offer"
+        Some(OnIt::Reopening) if task.status == TaskStatus::Doing => Some(
+            "nobody on it this second — the restart cut its worker off and it is being \
+             reopened on its own thread"
+                .to_owned(),
+        ),
+        Some(OnIt::Lost) if task.status == TaskStatus::Doing => Some(
+            "nobody on it — the restart cut its worker off and its session could not be \
+             reopened, so this needs somebody put on it or writing off"
                 .to_owned(),
         ),
         // Same rule as below: said only where nobody is a problem.
-        Some(OnIt::CutOff) => None,
+        Some(OnIt::Reopening) | Some(OnIt::Lost) => None,
         None if task.status == TaskStatus::Doing => Some("nobody on it".to_owned()),
         None => None,
     }
@@ -711,7 +722,8 @@ fn ago_short(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     ago(now, then).trim_end_matches(" ago").to_owned()
 }
 
-fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+/// How long ago, in the one spelling every ledger line and prompt uses.
+pub(crate) fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     let mins = (now - then).num_minutes();
     match mins {
         m if m < 1 => "just now".to_owned(),
@@ -1227,8 +1239,12 @@ mod tests {
         std::collections::HashMap::from([(task.subject.clone(), OnIt::Live(w))])
     }
 
-    fn cut_off(task: &Task) -> std::collections::HashMap<String, OnIt> {
-        std::collections::HashMap::from([(task.subject.clone(), OnIt::CutOff)])
+    fn reopening(task: &Task) -> std::collections::HashMap<String, OnIt> {
+        std::collections::HashMap::from([(task.subject.clone(), OnIt::Reopening)])
+    }
+
+    fn lost(task: &Task) -> std::collections::HashMap<String, OnIt> {
+        std::collections::HashMap::from([(task.subject.clone(), OnIt::Lost)])
     }
 
     /// **The line this whole join exists for.** `doing` claims work is in flight; when the
@@ -1251,10 +1267,23 @@ mod tests {
     #[test]
     fn a_task_the_restart_unstaffed_says_what_happened_to_it() {
         let owed = task("Ship the multilingual fix", TaskStatus::Doing);
-        let text = render_projection(std::slice::from_ref(&owed), now(), &cut_off(&owed));
+        let text = render_projection(std::slice::from_ref(&owed), now(), &reopening(&owed));
         assert!(text.contains("nobody on it"), "the phrase is not softened: {text}");
         assert!(text.contains("restart cut its worker off"), "{text}");
-        assert!(text.contains("boot offer"), "there is a mind to resume, and that is the move: {text}");
+        assert!(text.contains("being reopened"), "and that nothing is wanted from the reader: {text}");
+    }
+
+    /// **The two restart lines must not read alike, because only one of them wants a move.**
+    /// A worker on its way back wants nothing; a thread that would not reopen is work that has
+    /// to be started again or written off. Reading the second as the first is how a task sits
+    /// in `doing` forever waiting for a session that is never coming.
+    #[test]
+    fn an_errand_that_could_not_be_reopened_asks_for_a_decision() {
+        let owed = task("Ship the multilingual fix", TaskStatus::Doing);
+        let text = render_projection(std::slice::from_ref(&owed), now(), &lost(&owed));
+        assert!(text.contains("nobody on it"), "{text}");
+        assert!(text.contains("could not be reopened"), "{text}");
+        assert!(!text.contains("being reopened"), "nothing is coming back: {text}");
     }
 
     /// And it is the same rule as the bare phrase about *where* it may be said. A `todo` or a
@@ -1264,9 +1293,11 @@ mod tests {
     fn a_cut_off_todo_or_duty_is_still_not_flagged() {
         for status in [TaskStatus::Todo, TaskStatus::Serving] {
             let owed = task("Watch the ops group", status);
-            let text = render_projection(std::slice::from_ref(&owed), now(), &cut_off(&owed));
-            assert!(!text.contains("nobody on it"), "{status:?}: {text}");
-            assert!(!text.contains("restart"), "{status:?}: {text}");
+            for join in [reopening(&owed), lost(&owed)] {
+                let text = render_projection(std::slice::from_ref(&owed), now(), &join);
+                assert!(!text.contains("nobody on it"), "{status:?}: {text}");
+                assert!(!text.contains("restart"), "{status:?}: {text}");
+            }
         }
     }
 

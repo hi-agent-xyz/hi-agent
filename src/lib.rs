@@ -374,7 +374,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         seams.out_tx,
         observatory,
         view_compiler,
-        tool_registry,
+        tool_registry.clone(),
         floor,
         attachments,
         seams.state.views.clone(),
@@ -384,6 +384,13 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     )
     .await?;
     tracing::info!("reaction started");
+
+    // Put back whatever the last stop caught mid-turn. Spawned rather than awaited: each
+    // errand costs a codex subprocess and the boot has a listener to bind, and nothing here
+    // is waiting on the answer — the ledger already reports those tasks as being reopened,
+    // and each one clears that line itself by registering. See
+    // [`body::reaction::reopen_interrupted`].
+    tokio::spawn(body::reaction::reopen_interrupted(tool_registry));
 
     // Arm the "come and see this" gesture: a double-tap of Command hands the agent
     // a screenshot of the current screen as a file (macOS only, best-effort — needs

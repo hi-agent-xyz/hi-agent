@@ -88,6 +88,7 @@ mod workers;
 pub use duties::DutyDelivery;
 pub use floor::{Busy, Floor};
 pub use outbound::OutboundSignal;
+pub use workers::reopen_interrupted;
 pub use tools::{LoopControl, Said, Spoken, ToolOwner, ToolRegistry, ToolSink};
 
 use chrono::Utc;

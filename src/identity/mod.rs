@@ -1526,6 +1526,34 @@ mod soul_tests {
         );
     }
 
+    /// **No prompt may name the offer, because there is no offer.** `hi_create_worker` lost
+    /// its `resume` argument when the host started reopening interrupted errands itself
+    /// (`agents.md#across-a-restart`), and a prompt that still describes taking a thread off a
+    /// boot list teaches Cognition to call a tool with an argument the schema rejects — the
+    /// same failure mode as a described-and-absent mechanism anywhere else here.
+    #[test]
+    fn no_prompt_offers_a_thread_to_resume() {
+        for (name, text) in [
+            ("reaction", REACTION_BASE),
+            ("cognition", COGNITION_BASE),
+            ("reflection", REFLECTION_BASE),
+        ] {
+            assert!(
+                !text.contains("boot offer") && !text.contains("Errands the restart cut off"),
+                "{name}.md still describes the offer"
+            );
+            assert!(
+                !text.contains("`resume`"),
+                "{name}.md still names a create_worker argument that no longer exists"
+            );
+        }
+        assert!(
+            COGNITION_BASE.contains("reopened by the host"),
+            "Cognition has to know its errands come back on their own, or it starts a second \
+             worker on a task that already has one"
+        );
+    }
+
     /// The model keeps the operational context that makes a file reference useful, while
     /// the drive organizer preserves the stable path.
     #[test]

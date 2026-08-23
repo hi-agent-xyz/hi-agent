@@ -226,16 +226,6 @@ fn create_worker_tool() -> Value {
                                     and the record under-reports what preparing costs. Leave \
                                     it out for anything that answers a request already made.",
                 },
-                "resume": {
-                    "type": "string",
-                    "description": "Pick an errand back up where a restart cut it off, instead \
-                                    of starting cold. Only a thread from the offer in your first \
-                                    pulse after the host starts — anything else is refused. The \
-                                    session opens remembering what that one was doing, so `task` \
-                                    should say what has changed and what is left, not restate \
-                                    the job. Leave it out for new work, and for an errand stale \
-                                    enough that its half-done state is a liability.",
-                },
             },
             "required": ["title", "task"],
         }),
@@ -1396,37 +1386,6 @@ async fn dispatch_tool(
                     }
                 },
             };
-            // **Only a thread the boot glance actually offered.** A resume is the one
-            // argument here whose value the model cannot derive from the task in front of
-            // it — it has to come off the offer — and a thread id is exactly the shape of
-            // thing that gets confabulated. Left unchecked it would still "work": the agent
-            // layer falls back to a cold open when a resume fails, so an invented id would
-            // produce a fresh session the caller believes carries context it has never
-            // seen. Refusing is the difference between resuming and being told you did.
-            let resume = match args.get("resume").and_then(|v| v.as_str()) {
-                None => None,
-                Some(thread) if thread.trim().is_empty() => None,
-                Some(thread) => {
-                    // **Taken, not checked.** Reading the offer here and discarding the
-                    // entry later leaves a window where two calls both pass, and what comes
-                    // out is two sessions resumed from one dead errand's mind, each
-                    // registered as owning it — see [`registry::Registry::take_lost_thread`].
-                    if !registry::global().take_lost_thread(thread) {
-                        let left = registry::global().lost_workers().len();
-                        return tool_error(&format!(
-                            "no errand from the last run is on thread `{thread}` — `resume` \
-                             takes a thread from the boot glance's offer, and takes it once, \
-                             so a thread already picked up this run is no longer on it; \
-                             there {}",
-                            match left {
-                                0 => "is nothing left on the offer".to_string(),
-                                n => format!("are {n} still on it"),
-                            }
-                        ));
-                    }
-                    Some(thread.to_string())
-                }
-            };
             // A worker must run in the standing loop that created it. Role-specific
             // slots keep Cognition and Reflection from replacing each other's route.
             let owner_role = ToolOwner::from_role(role).expect("role guard above");
@@ -1465,7 +1424,6 @@ async fn dispatch_tool(
             // difference between preparing a step and answering a request is what was in
             // the mind that ordered it, and nothing at this surface can see that.
             let ahead = args.get("ahead").and_then(Value::as_bool).unwrap_or(false);
-            let resumed = resume.is_some();
             // **Waits for the session to exist, like `hi_cancel_worker` and
             // `hi_close_worker` do.** This was the one dispatch verb that answered from the
             // send: the message went into a buffered channel, the reply said `starting`, and
@@ -1483,7 +1441,10 @@ async fn dispatch_tool(
                     task,
                     kind,
                     owner: Some(owner),
-                    resume,
+                    // Nothing this tool can ask for. An errand a restart interrupted is
+                    // reopened by the host on its own thread before anyone is asked — see
+                    // [`crate::body::reaction::workers::reopen_interrupted`].
+                    resume: None,
                     subject,
                     ahead,
                     ready,
@@ -1493,11 +1454,6 @@ async fn dispatch_tool(
                 return tool_error(&err.to_string());
             }
             return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, registered).await {
-                Ok(Ok(Ok(()))) if resumed => tool_ok(&format!(
-                    "session {id} is up, resumed from the errand's own thread — it opens \
-                     knowing what that session knew, so brief it on what has *changed*, not \
-                     on the job from scratch"
-                )),
                 Ok(Ok(Ok(()))) => tool_ok(&format!(
                     "session {id} is up; brief it with hi_send_message, check it with \
                      hi_session_status"

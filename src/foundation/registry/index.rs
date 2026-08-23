@@ -622,34 +622,42 @@ const RESUMED_AT_BOOT: [Role; 2] = [Role::Reaction, Role::Cognition];
 
 /// The errands the last restart killed — what the boot glance offers Cognition.
 ///
-/// The counterpart to [`resumable`], and deliberately not the same shape. A resident rung's
-/// thread is resumed *by the host*, because "the last one" needs no judgment. A worker's is
-/// only ever **offered**: forty minutes on, most errands are stale, and whether a dead one is
-/// still worth finishing is a judgment `agents.md` gives to Cognition rather than to a list in
-/// code. So this answers "which errands died mid-flight, and where are their minds" and stops
-/// there.
+/// The counterpart to [`resumable`], and now the same shape: both answer "which sessions come
+/// back", and neither asks anyone. A rung's thread is taken because "the last one" needs no
+/// judgment; an errand's is taken because the judgment it needs — is this half-done state still
+/// worth finishing — is a question about what already landed, and the only party holding that
+/// is the session that was doing it. `agents.md` used to give the call to Cognition, which
+/// holds a title, a subject and a timestamp; the session holding the answer was dead on disk
+/// one `thread/resume` away.
+///
+/// **Interrupted, not merely alive.** A worker holds its subprocess until its owner closes it,
+/// so most of what a stop catches has already reported and has nothing to finish — sixteen live
+/// at the 2026-08-21 quit, four of them mid-turn. Reopening the other twelve would spend a
+/// subprocess each on sessions nobody is going to brief. [`Ended::interrupted`] is the bit that
+/// tells them apart, and a crash row carries it by construction.
 ///
 /// **Only the previous run's, and that is the whole staleness rule.** The directory is
-/// append-only and unpruned, so a filter of "every worker that ever died" would re-offer a
-/// three-week-old errand at every boot until someone noticed — an offer nothing consumes has
-/// to age out by itself. The run of the newest end row is the run before this one, and an
-/// errand that did not die in it is not what the person just restarted out from under.
+/// append-only and unpruned, so a filter of "every worker that ever died" would reopen a
+/// three-week-old errand at every boot. The run of the newest end row is the run before this
+/// one, and an errand that did not die in it is not what the person just restarted out from
+/// under.
 ///
-/// Call with the ends **as seeded at boot**, before this run appends any of its own; a row
-/// from the current run at the head would silence the offer entirely. [`Registry::attach_index`]
+/// Call with the ends **as seeded at boot**, before this run appends any of its own; a row from
+/// the current run at the head would empty the list entirely. [`Registry::attach_index`]
 /// snapshots it there for exactly that reason.
 ///
-/// A lost worker with no thread is dropped rather than listed: without one there is no mind to
-/// offer, and an offer that cannot be taken is worse than silence — Cognition would spend a
-/// turn discovering that the one thing it was told to consider does not exist.
-pub fn lost_workers(ends: &[Ended]) -> Vec<Ended> {
+/// An errand with no thread is dropped rather than listed: there is no mind to reopen, and a
+/// cold session it cannot tell apart from a resumed one is the one outcome `agents.md` rules
+/// out — it would be handed "check what landed before continuing" knowing nothing about what it
+/// was doing.
+pub fn interrupted_workers(ends: &[Ended]) -> Vec<Ended> {
     let Some(previous_run) = ends.first().map(|end| end.run.clone()) else {
         return Vec::new();
     };
     ends.iter()
         .filter(|end| end.run == previous_run)
         .filter(|end| is_worker_row(end))
-        .filter(|end| end.how == EndedHow::Restart && end.thread.is_some())
+        .filter(|end| end.interrupted && end.thread.is_some())
         .cloned()
         .collect()
 }
@@ -798,17 +806,15 @@ mod tests {
             None, false))));
         text.push_str(&line(&thread_record("run-a", &4.into(), "th-4", ts(2))));
 
-        let offered = lost_workers(&fold(&text, "run-b"));
-        let threads: Vec<_> = offered.iter().filter_map(|e| e.thread.as_deref()).collect();
+        let putting_back = interrupted_workers(&fold(&text, "run-b"));
+        let threads: Vec<_> = putting_back.iter().filter_map(|e| e.thread.as_deref()).collect();
         assert_eq!(threads, vec!["th-3"], "only the errand the restart cut off");
     }
 
-    /// **The staleness rule, and the one that keeps the offer from becoming wallpaper.** The
-    /// directory is append-only and unpruned, so without this an errand killed three weeks ago
-    /// would be re-offered at every boot forever — and an offer nothing consumes has to age out
-    /// by itself.
+    /// **The staleness rule.** The directory is append-only and unpruned, so without this an
+    /// errand killed three weeks ago would be reopened at every boot forever.
     #[test]
-    fn only_the_previous_runs_errands_are_offered() {
+    fn only_the_previous_runs_errands_are_reopened() {
         let mut text = String::new();
         // An older run's lost errand…
         text.push_str(&line(&opened_record(
@@ -833,18 +839,19 @@ mod tests {
         )));
         text.push_str(&line(&thread_record("run-prev", &2.into(), "th-current", ts(30))));
 
-        let offered = lost_workers(&fold(&text, "run-now"));
-        let threads: Vec<_> = offered.iter().filter_map(|e| e.thread.as_deref()).collect();
+        let putting_back = interrupted_workers(&fold(&text, "run-now"));
+        let threads: Vec<_> = putting_back.iter().filter_map(|e| e.thread.as_deref()).collect();
         assert_eq!(threads, vec!["th-current"], "the run before this one, and no further back");
     }
 
-    /// An errand with no thread is not offered at all. Without one there is no mind to go
-    /// back to, and an offer that cannot be taken costs a turn to discover that.
+    /// An errand with no thread is not reopened at all. Without one there is no mind to go
+    /// back to, and a cold session it cannot tell apart from a resumed one is the one outcome
+    /// `agents.md` rules out.
     #[test]
-    fn an_errand_without_a_thread_is_not_offered() {
+    fn an_errand_without_a_thread_is_not_reopened() {
         let opened =
             opened_record("run-a", &1.into(), Role::Worker(WorkerType::General), None, "errand", None, ts(1));
-        assert!(lost_workers(&fold(&line(&opened), "run-b")).is_empty());
+        assert!(interrupted_workers(&fold(&line(&opened), "run-b")).is_empty());
     }
 
     /// A row from before threads were recorded has no thread, and must be skipped rather

@@ -692,29 +692,40 @@ pub struct Registry {
     /// break a turn cannot be handed back to the session replacing it, and a thread that
     /// crashed the host is resumed exactly once before the next boot starts fresh.
     resumable: Mutex<HashMap<String, String>>,
-    /// The errands the last restart killed, for the boot glance to offer Cognition.
+    /// The errands the last stop interrupted and this run has not put back yet — see
+    /// [`index::interrupted_workers`] for which ones qualify.
     ///
     /// Seeded at [`Registry::attach_index`] rather than derived from `recent` on demand,
     /// because `recent` grows this run's own ends as sessions close and
-    /// [`index::lost_workers`] reads the head of the list to decide which run "the previous
-    /// one" was. A read taken after the first session closes would answer about this run and
-    /// find nothing.
+    /// [`index::interrupted_workers`] reads the head of the list to decide which run "the
+    /// previous one" was. A read taken after the first session closes would answer about this
+    /// run and find nothing.
     ///
-    /// **Outstanding rather than a snapshot: an entry leaves when it stops being owed.** It
-    /// was read and never taken while the only reader was the one-shot boot note, and a
-    /// second reader is what made that wrong. The ledger now consults it to say *why* a
-    /// `doing` task has nobody on it, and a list frozen at boot answers that with the state
-    /// of the boot for the rest of the run: a task restaffed forty minutes ago still reads as
-    /// cut off. The direction that actually cost something is the other one — a thread
-    /// already resumed stays on the offer, so the same dead errand can be picked up twice and
-    /// two sessions each believe they own it.
+    /// **Outstanding rather than a snapshot: an entry leaves when it stops being owed.** Two
+    /// readers depend on that. [`Registry::reopen_pending`] hands the list to the boot pass
+    /// that actually reopens them, and the ledger consults
+    /// [`Registry::reopening_subjects`] to say *why* a `doing` task has nobody on it in the
+    /// seconds before its worker is back. A list frozen at boot answers the second question
+    /// with the state of the boot for the rest of the run: a task restaffed forty minutes ago
+    /// still reads as cut off.
     ///
-    /// It drains at the two points an errand stops being owed: its thread is taken
-    /// ([`Registry::take_lost_thread`]), or a live worker registers under its subject
-    /// ([`Registry::register`]). A task *closed* without either needs no drain — every reader
-    /// here is asked only about tasks that are active and `doing`, so an entry for a task
-    /// that left `doing` is already unreachable.
-    lost: Mutex<Vec<index::Ended>>,
+    /// It drains at the three points an errand stops being owed: its session comes back
+    /// ([`Registry::reopened`]), its resume fails and it moves to `unreopened`
+    /// ([`Registry::could_not_reopen`]), or a live worker registers under its subject
+    /// ([`Registry::register`]) — somebody is on that task either way. A task *closed*
+    /// without any of those needs no drain: every reader here is asked only about tasks that
+    /// are active and `doing`, so an entry for a task that left `doing` is already
+    /// unreachable.
+    reopening: Mutex<Vec<index::Ended>>,
+    /// The errands whose thread would not reopen, which is the one case where the restart
+    /// really did take the worker.
+    ///
+    /// Kept apart from `reopening` because the two say opposite things to a reader: one is a
+    /// worker on its way back, the other is work that needs somebody put on it. This list
+    /// never drains — a failed resume does not get retried, for the reason
+    /// [`Registry::resumable`] gives about wedged threads — so what it holds is exactly the
+    /// errands this boot could not save, for as long as the run lasts.
+    unreopened: Mutex<Vec<index::Ended>>,
     /// What one session said to another, newest last, capped at [`mail::KEPT`].
     ///
     /// [`Registry::send`] used to leave no trace a reader could reach: the text went into a
@@ -733,7 +744,8 @@ impl Default for Registry {
             index: std::sync::OnceLock::new(),
             recent: Mutex::new(Vec::new()),
             resumable: Mutex::new(HashMap::new()),
-            lost: Mutex::new(Vec::new()),
+            reopening: Mutex::new(Vec::new()),
+            unreopened: Mutex::new(Vec::new()),
             traffic: Mutex::new(VecDeque::new()),
         }
     }
@@ -786,12 +798,13 @@ impl Registry {
                 },
             );
         }
-        // **A live worker under this subject ends that errand's claim on the offer.** The
-        // task has somebody on it now, whether this session resumed the dead thread or
-        // started cold, and an entry left behind would go on explaining an absence that is
-        // over — see [`Registry::lost`](#structfield.lost).
+        // **A live worker under this subject ends that errand's claim on being reopened.**
+        // The task has somebody on it now, whether this is the reopened session itself or a
+        // fresh one Cognition put on the task in the meantime, and an entry left behind
+        // would go on explaining an absence that is over — see
+        // [`Registry::reopening`](#structfield.reopening).
         if let Some(subject) = subject.as_deref() {
-            self.lost.lock().unwrap().retain(|end| end.subject.as_deref() != Some(subject));
+            self.reopening.lock().unwrap().retain(|end| end.subject.as_deref() != Some(subject));
         }
         // Recorded on the way in, not only on the way out, because the way out is exactly
         // what a crash skips. An `opened` with no `closed` is how a restart-killed session
@@ -827,25 +840,25 @@ impl Registry {
         let lost = seeded.iter().filter(|e| e.how == index::EndedHow::Restart).count();
         let resumable = index::resumable(&seeded);
         let resuming = resumable.len();
-        // Before `recent` takes the list: `lost_workers` reads its head to decide which run
-        // was the previous one, and this run's first close would move that head.
-        let offered = index::lost_workers(&seeded);
-        let offering = offered.len();
-        *self.lost.lock().unwrap() = offered;
+        // Before `recent` takes the list: `interrupted_workers` reads its head to decide which
+        // run was the previous one, and this run's first close would move that head.
+        let interrupted = index::interrupted_workers(&seeded);
+        let reopening = interrupted.len();
+        *self.reopening.lock().unwrap() = interrupted;
         *self.resumable.lock().unwrap() = resumable;
         *self.recent.lock().unwrap() = seeded;
         // Worth a line at boot: `lost` is the count of sessions a previous run died
         // underneath, which nothing used to be able to say out loud. `resuming` is how many
         // resident rungs are picking their previous thread back up — zero on a fresh
-        // install, and zero for any rung whose last run predates thread recording. `offering`
-        // is the subset of `lost` that is a worker with a thread, which the boot glance hands
-        // to Cognition to pick from — never resumed by the host, only offered.
+        // install, and zero for any rung whose last run predates thread recording.
+        // `reopening` is how many errands the last stop caught mid-turn, every one of which
+        // the host puts back on its own thread — see [`index::interrupted_workers`].
         tracing::info!(
             run,
             recent = found,
             lost,
             resuming,
-            offering,
+            reopening,
             "session directory attached"
         );
     }
@@ -876,33 +889,51 @@ impl Registry {
         self.resumable.lock().unwrap().remove(role.as_str())
     }
 
-    /// The errands the last restart killed, newest first — see [`index::lost_workers`].
+    /// The errands this boot still owes a session, newest first — see
+    /// [`index::interrupted_workers`].
     ///
-    /// Offered, not resumed: the caller is the boot glance, and what it does with these is
-    /// put them in front of Cognition.
-    pub fn lost_workers(&self) -> Vec<index::Ended> {
-        self.lost.lock().unwrap().clone()
+    /// The one caller is the boot pass that reopens them. It is a snapshot: entries leave the
+    /// list as that pass reports what happened to each, so calling this twice is how a second
+    /// pass would reopen the same errand twice.
+    pub fn reopen_pending(&self) -> Vec<index::Ended> {
+        self.reopening.lock().unwrap().clone()
     }
 
-    /// Take the offer for `thread`, leaving nothing behind — `true` if it was on the offer.
+    /// Record that `slug`'s errand is back on its own thread, and take it off the list.
     ///
-    /// **The check and the discard are one act.** Validating with a read and removing later
-    /// leaves a window where two callers both pass, and what comes out the other side is two
-    /// sessions resumed from one dead errand's mind, each registered as owning it. Taking is
-    /// also why a resume that fails downstream gets no second go at the thread: the rule
-    /// [`Registry::resumable`](#structfield.resumable) already states, for the reason it
-    /// states it — a retry is a cold open, never a second claim on the same mind.
-    pub fn take_lost_thread(&self, thread: &str) -> bool {
-        let mut lost = self.lost.lock().unwrap();
-        let before = lost.len();
-        lost.retain(|end| end.thread.as_deref() != Some(thread));
-        before != lost.len()
+    /// **Slug, not thread.** A reopened errand keeps the address it had — same roster row,
+    /// same subject, same owner — so the slug is what identifies it on both sides of the
+    /// restart, and matching on the thread would work only until an errand came back cold.
+    pub fn reopened(&self, slug: &SessionId) {
+        self.reopening.lock().unwrap().retain(|end| &end.session != slug);
     }
 
-    /// The ledger subjects whose worker the last restart killed and nothing has picked back
-    /// up, for the projection to say so — see [`crate::mind::memory::tasks::OnIt`].
+    /// Record that `slug`'s thread would not reopen, moving it to the list that says so.
+    ///
+    /// **This is the one case where the restart really did take the worker**, so the entry
+    /// does not simply disappear: `agents.md` rules that an errand which cannot be resumed
+    /// must not come back as a cold session pretending otherwise, which leaves a task with
+    /// nobody on it — and a task in `doing` with nobody on it is indistinguishable from one
+    /// being worked on unless something says why. [`Registry::lost_subjects`] is what says it.
+    pub fn could_not_reopen(&self, slug: &SessionId) {
+        let mut reopening = self.reopening.lock().unwrap();
+        if let Some(at) = reopening.iter().position(|end| &end.session == slug) {
+            let end = reopening.remove(at);
+            self.unreopened.lock().unwrap().push(end);
+        }
+    }
+
+    /// The ledger subjects whose worker is on its way back, for the projection to say so
+    /// rather than report the first seconds of every restart as abandoned work — see
+    /// [`crate::mind::memory::tasks::OnIt::Reopening`].
+    pub fn reopening_subjects(&self) -> std::collections::HashSet<String> {
+        self.reopening.lock().unwrap().iter().filter_map(|end| end.subject.clone()).collect()
+    }
+
+    /// The ledger subjects whose worker the last stop took and could not be brought back —
+    /// see [`crate::mind::memory::tasks::OnIt::Lost`].
     pub fn lost_subjects(&self) -> std::collections::HashSet<String> {
-        self.lost.lock().unwrap().iter().filter_map(|end| end.subject.clone()).collect()
+        self.unreopened.lock().unwrap().iter().filter_map(|end| end.subject.clone()).collect()
     }
 
     /// Unregister every live session, in id order.
@@ -1589,17 +1620,18 @@ mod tests {
         assert_eq!(by_title["done and never closed"], false, "it had reported");
     }
 
-    /// The offer survives the trip through `attach_index`, and survives this run's own
+    /// The reopen list survives the trip through `attach_index`, and survives this run's own
     /// sessions closing on top of it.
     ///
-    /// The ordering inside `attach_index` is the part worth pinning: [`index::lost_workers`]
-    /// reads the head of the ends list to decide which run was the previous one, and `recent`
-    /// grows this run's ends as sessions close. Snapshot it after `recent` takes the list — or
-    /// derive it on demand — and the first session to close moves that head to *this* run,
-    /// where there are no lost errands, and the offer silently empties. Which is exactly the
-    /// shape of bug that only shows up on a boot where something closed early.
+    /// The ordering inside `attach_index` is the part worth pinning:
+    /// [`index::interrupted_workers`] reads the head of the ends list to decide which run was
+    /// the previous one, and `recent` grows this run's ends as sessions close. Snapshot it
+    /// after `recent` takes the list — or derive it on demand — and the first session to close
+    /// moves that head to *this* run, where nothing was interrupted, and the list silently
+    /// empties. Which is exactly the shape of bug that only shows up on a boot where something
+    /// closed early.
     #[tokio::test]
-    async fn the_offer_is_snapshotted_at_boot_and_outlives_this_runs_own_ends() {
+    async fn the_reopen_list_is_snapshotted_at_boot_and_outlives_this_runs_own_ends() {
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().to_path_buf();
         let path = index::index_path(&data_dir);
@@ -1626,10 +1658,10 @@ mod tests {
         let r = reg();
         r.attach_index(data_dir).await;
 
-        let offered = r.lost_workers();
-        assert_eq!(offered.len(), 1, "the previous run's unfinished errand");
-        assert_eq!(offered[0].thread.as_deref(), Some("th-errand"));
-        assert_eq!(offered[0].title.as_deref(), Some("chase the deploy"));
+        let pending = r.reopen_pending();
+        assert_eq!(pending.len(), 1, "the previous run's unfinished errand");
+        assert_eq!(pending[0].thread.as_deref(), Some("th-errand"));
+        assert_eq!(pending[0].title.as_deref(), Some("chase the deploy"));
 
         // Now let this run close a session of its own, which pushes onto `recent`.
         let id = mint();
@@ -1637,13 +1669,13 @@ mod tests {
         r.unregister(&id);
 
         assert_eq!(
-            r.lost_workers().len(),
+            r.reopen_pending().len(),
             1,
-            "a close in this run must not empty the offer"
+            "a close in this run must not empty the list"
         );
     }
 
-    /// Seed a registry whose previous run died holding one errand on `th-errand`.
+    /// Seed a registry whose previous run died holding one errand, mid-turn, on `th-errand`.
     async fn boot_with_a_lost_errand(subject: Option<&str>) -> (tempfile::TempDir, Registry) {
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().to_path_buf();
@@ -1671,25 +1703,39 @@ mod tests {
         (dir, r)
     }
 
-    /// **The offer is taken, and taking it is the check.** Before this it was read with an
-    /// `any()` and left in place, so nothing stopped the same dead errand being resumed
-    /// twice — two sessions opening from one mind, each registered as owning the task, and
-    /// the ledger naming whichever the join happened to iterate last.
+    /// An errand that comes back leaves the list; one whose thread would not reopen moves to
+    /// the list that says the restart really did take it.
+    ///
+    /// **They are separate lists because they ask opposite things of a reader.** One is a
+    /// worker on its way back and wants nothing done; the other is work that needs somebody
+    /// put on it, and a task in `doing` with nobody on it is indistinguishable from one being
+    /// worked on unless something says which of the two it is.
     #[tokio::test]
-    async fn a_lost_thread_is_offered_exactly_once() {
-        let (_dir, r) = boot_with_a_lost_errand(None).await;
-        assert!(r.take_lost_thread("th-errand"), "the offer this boot made");
-        assert!(!r.take_lost_thread("th-errand"), "the second claim on the same mind");
-        assert!(r.lost_workers().is_empty(), "taken means gone from the offer");
+    async fn reopening_drains_the_list_and_failing_moves_it() {
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        assert_eq!(r.reopening_subjects().len(), 1, "owed a session, and not yet lost");
+        assert!(r.lost_subjects().is_empty());
+
+        r.reopened(&4.into());
+        assert!(r.reopen_pending().is_empty(), "it is back; nothing is owed");
+        assert!(r.reopening_subjects().is_empty());
+        assert!(r.lost_subjects().is_empty(), "coming back is not being lost");
+
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        r.could_not_reopen(&4.into());
+        assert!(r.reopen_pending().is_empty(), "no longer owed a session");
+        assert!(r.reopening_subjects().is_empty(), "and no longer said to be coming back");
+        assert!(r.lost_subjects().contains("kt8-046"), "the restart took this one");
     }
 
-    /// A thread nobody offered is refused, which is the older half of the same rule: a resume
-    /// argument is the one value a caller cannot derive from the work in front of it.
+    /// A slug nothing is owed for changes nothing — the pass reports per errand, and a report
+    /// about a session that already came back must not invent a loss.
     #[tokio::test]
-    async fn a_thread_that_was_never_offered_is_not_taken() {
-        let (_dir, r) = boot_with_a_lost_errand(None).await;
-        assert!(!r.take_lost_thread("th-confabulated"));
-        assert_eq!(r.lost_workers().len(), 1, "and a refused take leaves the offer alone");
+    async fn a_report_about_an_unknown_errand_is_ignored() {
+        let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
+        r.could_not_reopen(&99.into());
+        assert!(r.lost_subjects().is_empty());
+        assert_eq!(r.reopen_pending().len(), 1, "the real one is untouched");
     }
 
     /// **Putting somebody on the task is the other way an errand stops being owed.** The
@@ -1699,7 +1745,7 @@ mod tests {
     #[tokio::test]
     async fn a_live_worker_under_the_subject_drains_the_entry() {
         let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
-        assert!(r.lost_subjects().contains("kt8-046"), "cut off, and nothing on it yet");
+        assert!(r.reopening_subjects().contains("kt8-046"), "cut off, and not back yet");
 
         let id = mint();
         r.register(
@@ -1710,17 +1756,17 @@ mod tests {
             Some("kt8-046".into()),
         );
 
-        assert!(r.lost_subjects().is_empty(), "restaffed, whether it resumed or started cold");
-        assert!(r.lost_workers().is_empty(), "and its thread is no longer on the offer");
+        assert!(r.reopening_subjects().is_empty(), "restaffed, whether by the reopen or cold");
+        assert!(r.reopen_pending().is_empty(), "and nothing is owed a session any more");
     }
 
-    /// A rung registers with no subject and must not touch the offer — the drain is keyed by
+    /// A rung registers with no subject and must not drain the list — the drain is keyed by
     /// the ledger subject, and everything without one is nothing to do with it.
     #[tokio::test]
     async fn a_session_with_no_subject_drains_nothing() {
         let (_dir, r) = boot_with_a_lost_errand(Some("kt8-046")).await;
         r.register(mint(), Role::Cognition, None, "the shared brain".into(), None);
-        assert!(r.lost_subjects().contains("kt8-046"));
+        assert!(r.reopening_subjects().contains("kt8-046"));
     }
 
     #[test]

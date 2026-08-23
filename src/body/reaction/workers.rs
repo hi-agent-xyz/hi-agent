@@ -1123,3 +1123,174 @@ mod lifetime_tests {
         assert!(!reg.close("nobody-here".parse().unwrap()), "nothing was there to close");
     }
 }
+
+#[cfg(test)]
+mod reopen_tests {
+    use super::*;
+
+    /// The one prompt the host writes itself, and the two things it must not do: imply the
+    /// work should carry on from where it stopped, or read as a fresh brief.
+    ///
+    /// A resumed errand's own last tool call may have landed, half-landed, or never gone out,
+    /// and it is the only party that can find out which. The failure this is against is the
+    /// cheap one — a `deploy` re-run because its session came back believing it had not
+    /// happened yet.
+    #[test]
+    fn the_restart_note_sends_it_to_check_before_it_acts() {
+        let note = restart_note(
+            "deploy KUT on gz-02 with Caddy",
+            Some(chrono::Utc::now() - chrono::Duration::minutes(40)),
+        );
+        assert!(note.starts_with("(restart) "), "{note}");
+        assert!(note.contains("deploy KUT on gz-02 with Caddy"), "it says which errand: {note}");
+        assert!(note.contains("40m ago"), "and how long ago it started: {note}");
+        assert!(note.contains("may have landed"), "the half-landed case is named: {note}");
+        assert!(note.contains("Do not redo a step that already took"), "{note}");
+        assert!(note.contains("report that instead"), "dropping it stays open: {note}");
+    }
+
+    /// A row with no start time still produces a usable note rather than a wrong number. The
+    /// directory has carried `started` since it existed, but a row folded from a truncated
+    /// tail-read can arrive without one.
+    #[test]
+    fn a_row_with_no_start_time_still_reads() {
+        let note = restart_note("finish the build", None);
+        assert!(note.contains("some time ago"), "{note}");
+        assert!(!note.contains("None"), "{note}");
+    }
+}
+
+/// Put back every errand the last stop caught mid-turn — same thread, same slug, same owner.
+///
+/// **The host does this, and nothing is asked first.** What this replaces is the *offer*: a
+/// list of dead errands written into Cognition's first pulse, from which it picked with
+/// `CreateWorker(resume:)`. The judgment that list asked for — is this half-done state still
+/// worth finishing — is a question about what already landed, and the party holding the answer
+/// is the session that was doing the work, not the rung reading a title, a subject and a
+/// timestamp off a list. So the session comes back and answers it from the inside. See
+/// [`agents.md#across-a-restart`](../../../../docs/arch/agents.md).
+///
+/// Runs once, at boot, after the loops are up — it dispatches through the owning loop exactly
+/// as the tool does, so an errand whose owner has no sink yet cannot be put back at all.
+///
+/// Sequential rather than concurrent, and that is the cheap correctness: each reopen spawns a
+/// codex subprocess and waits for the session to register, so a run that lost six errands
+/// spends six spawns in a row instead of six at once on a machine that is also standing up
+/// three rungs. Nothing downstream is waiting on this — the ledger already says these tasks
+/// are being reopened.
+pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
+    let pending = registry::global().reopen_pending();
+    if pending.is_empty() {
+        return;
+    }
+    tracing::info!(errands = pending.len(), "reopening the errands the last stop interrupted");
+
+    for end in pending {
+        let slug = end.session.clone();
+        // Everything below is read off the row the dead session wrote on its way in, which is
+        // why the row carries them: the switchboard's copy died with the process.
+        let Some(thread) = end.thread.clone() else {
+            // `interrupted_workers` filters these out; belt and braces, because arriving here
+            // would mean opening a cold session that believes it remembers something.
+            unreachable(&slug, "no thread on the row");
+            continue;
+        };
+        let kind = end
+            .worker_type
+            .as_deref()
+            .and_then(WorkerType::parse)
+            .unwrap_or_default();
+        let Some(owner) = end.owner.clone() else {
+            unreachable(&slug, "no owner on the row");
+            continue;
+        };
+        let Some(owner_role) = super::tools::ToolOwner::from_role(Some(owner.as_str())) else {
+            unreachable(&slug, "its owner is not a standing rung");
+            continue;
+        };
+        let Some(sink) = tools.get(owner_role).await else {
+            unreachable(&slug, "its owning loop is not up");
+            continue;
+        };
+
+        let title = end.title.clone().unwrap_or_else(|| slug.to_string());
+        let (ready, registered) = tokio::sync::oneshot::channel();
+        let control = super::LoopControl::CreateWorker {
+            id: slug.clone(),
+            title: title.clone(),
+            task: restart_note(&title, end.started),
+            kind,
+            owner: Some(owner.clone()),
+            resume: Some(thread),
+            subject: end.subject.clone(),
+            // Whatever this errand was, it was asked for before the restart. `ahead` counts
+            // work nobody has asked for yet, and putting a session back is not a second act
+            // of getting ahead.
+            ahead: false,
+            ready,
+        };
+        if sink.control.send(control).await.is_err() {
+            unreachable(&slug, "its owning loop stopped listening");
+            continue;
+        }
+        match registered.await {
+            Ok(Ok(())) => {
+                registry::global().reopened(&slug);
+                tracing::info!(session = %slug, owner = %owner, "errand reopened on its own thread");
+            }
+            // The session did not open. `open_working_session` already unregistered it, so
+            // there is nothing running that errand and the ledger has to say so.
+            Ok(Err(err)) => unreachable(&slug, &err),
+            Err(_) => unreachable(&slug, "its owning loop gave no answer"),
+        }
+    }
+}
+
+/// Record that an errand did not come back, and tell the rung that was running it.
+///
+/// **Both, because neither alone reaches anybody in time.** The ledger line
+/// ([`crate::mind::memory::tasks::OnIt::Lost`]) is what a later glance reads, and it is keyed
+/// by subject — so an errand with no subject, which is every `task-manager`, would leave no
+/// trace at all. The post reaches the owner's inbox on its next turn whether or not the errand
+/// was ever tied to a task.
+fn unreachable(slug: &SessionId, why: &str) {
+    let pending = registry::global().reopen_pending();
+    let Some(end) = pending.into_iter().find(|end| &end.session == slug) else { return };
+    registry::global().could_not_reopen(slug);
+    tracing::warn!(session = %slug, reason = %why, "an interrupted errand could not be reopened");
+
+    let Some(owner) = end.owner.as_ref() else { return };
+    let title = end.title.as_deref().unwrap_or("(nothing recorded)");
+    let mut note = format!(
+        "An errand the restart cut off could not be put back: \"{title}\" (session `{slug}`), \
+         because {why}. Its thread is gone, so there is no half-done state to go back to — \
+         start it again from what the record holds, or write it off"
+    );
+    if let Some(subject) = end.subject.as_deref() {
+        let _ = write!(note, ", and either way say which in task `{subject}`");
+    }
+    note.push('.');
+    registry::global().post(owner, note);
+}
+
+/// The one thing the host can tell a reopened errand: that it was interrupted.
+///
+/// Cognition wrote the brief the first time and there is nobody to write a second one, so this
+/// carries the fact and stops. What it must not do is imply the work should carry on from
+/// where it stopped — the session's own last tool call may have landed, may have half-landed,
+/// or may never have gone out, and it is the only party that can find out which.
+fn restart_note(title: &str, started: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    let ago = started
+        .map(|at| crate::mind::memory::tasks::ago(chrono::Utc::now(), at))
+        .unwrap_or_else(|| "some time ago".to_string());
+    format!(
+        "(restart) The host process stopped while you were mid-turn on this errand — \"{title}\" \
+         — and has just come back up. You started it {ago}. Nothing has been done about it \
+         since.\n\nYour own last actions may have landed, half-landed, or never gone out at \
+         all, and you are the only one who can tell which. So before doing anything further, \
+         go and establish what is actually true now: check the files, the processes, the \
+         endpoints, whatever your last steps touched. Then either carry on from what you \
+         find, or — if the state has moved far enough that finishing this no longer makes \
+         sense — say so and report that instead. Do not redo a step that already took."
+    )
+}
