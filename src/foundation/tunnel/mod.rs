@@ -82,7 +82,7 @@ pub fn spawn(
 
 /// Dial once and serve until the connection ends.
 async fn hold(data_dir: &std::path::Path, router: &Router, handle: &str) -> anyhow::Result<()> {
-    let token = community::account_token(data_dir)?;
+    let token = community::account_token(data_dir).await?;
     let url = tunnel_url(&community::base_url(), handle);
 
     let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(

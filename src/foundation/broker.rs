@@ -10,6 +10,7 @@
 //! `bearer`) is future work; today an anonymous device account is always minted.
 
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -26,6 +27,17 @@ const DEFAULT_BROKER_URL: &str = "https://hi-agent.xyz";
 /// can move without redirecting credential and energy traffic.
 const ENV_PUBLIC_URL: &str = "HI_AGENT_PUBLIC_URL";
 const DEFAULT_PUBLIC_URL: &str = "https://hi-agent.xyz";
+/// Renew before the bearer is close enough to expiry that a tunnel dial or
+/// registry request could lose the race against it.
+const ACCOUNT_TOKEN_MIN_VALIDITY: chrono::Duration = chrono::Duration::minutes(5);
+
+/// Refresh tokens rotate. Every path that can exchange or replace one must be
+/// serialized so two concurrent callers cannot persist different generations.
+static TOKEN_REFRESH: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn token_refresh_lock() -> &'static tokio::sync::Mutex<()> {
+    TOKEN_REFRESH.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 /// `app_settings` keys recording the outcome of the last broker sync, so the
 /// Settings page can show a real state (connecting / connected / problem) instead
@@ -279,6 +291,15 @@ fn tokens_from(t: TokenDto) -> Tokens {
     }
 }
 
+fn fresh_access_token(tokens: &Tokens, min_validity: chrono::Duration) -> Option<String> {
+    let access = tokens.access_token.trim();
+    if access.is_empty() {
+        return None;
+    }
+    let expires = chrono::DateTime::parse_from_rfc3339(tokens.access_expires_at.trim()).ok()?;
+    (expires > chrono::Utc::now() + min_validity).then(|| access.to_string())
+}
+
 /// POST /api/agent/bootstrap — free device → account tokens (auto-creates the
 /// account at the broker on first contact).
 async fn bootstrap(device_id: &str) -> anyhow::Result<Tokens> {
@@ -362,20 +383,13 @@ struct WebTicketDto {
 /// Mint a one-time web-handoff ticket and return the browser URL that lands the
 /// user on the site **already signed in as this device account**
 /// (`<site><path>?ticket=…`). The tray's "Subscribe" and the out-of-energy view
-/// pass `prefer_path = Some("/account")`. Xiaoyuanzhu
-/// mode only — it needs the bootstrapped access token; errors if bootstrap hasn't
-/// produced one yet (the caller surfaces that, e.g. "try again in a moment"). The
+/// pass `prefer_path = Some("/account")`. It uses the same renewable account
+/// token as the registry and relay, independent of model-provider mode. The
 /// ticket is a URL-safe JWT (base64url + dots), so no query-encoding is needed.
 pub async fn subscribe_url(data_dir: &Path, prefer_path: Option<&str>) -> anyhow::Result<String> {
-    let store = Credentials::load(data_dir);
-    let access = store
-        .tokens
-        .as_ref()
-        .map(|t| t.access_token.trim().to_string())
-        .unwrap_or_default();
-    if access.is_empty() {
-        anyhow::bail!("no broker access token yet (account bootstrap hasn't completed)");
-    }
+    let access = account_token(data_dir)
+        .await
+        .context("ensuring an account token before web handoff")?;
     let url = format!("{}/api/agent/web-ticket", base_url());
     let resp = http()?
         .post(&url)
@@ -405,10 +419,10 @@ pub async fn subscribe_url(data_dir: &Path, prefer_path: Option<&str>) -> anyhow
     ))
 }
 
-/// Get a usable access token: refresh if we hold a refresh token, else bootstrap.
-/// On a failed refresh, re-bootstraps on the **stable device_id** — which the broker
-/// resolves back to the *same* device account (it dedupes on device_id), not a new
-/// one. So this recovers the existing account; it never mints a fresh identity.
+/// Exchange or recover the account token pair. The caller must hold
+/// [`token_refresh_lock`] because the broker rotates refresh tokens. On a failed
+/// refresh, re-bootstrap on the stable `device_id`, which resolves to the same
+/// device account.
 async fn ensure_tokens(store: &Credentials) -> anyhow::Result<Tokens> {
     if let Some(t) = &store.tokens {
         if !t.refresh_token.trim().is_empty() {
@@ -423,7 +437,50 @@ async fn ensure_tokens(store: &Credentials) -> anyhow::Result<Tokens> {
             }
         }
     }
+    anyhow::ensure!(
+        !store.device_id.trim().is_empty(),
+        "cannot recover the account token without a stable device id"
+    );
     bootstrap(&store.device_id).await
+}
+
+/// Return an account bearer suitable for registry and relay traffic.
+///
+/// This lifecycle is independent of provider mode: switching to BYOK changes
+/// model credentials, not the account that owns a handle. A usable cached token
+/// is returned directly; an expired one is refreshed and persisted. Re-bootstrap
+/// is only attempted when this install already has a stable device relationship,
+/// so a fresh unregistered install still gets the actionable "sign in" error.
+pub async fn account_token(data_dir: &Path) -> anyhow::Result<String> {
+    let _guard = token_refresh_lock().lock().await;
+    let mut store = Credentials::load(data_dir);
+
+    if let Some(access) = store
+        .tokens
+        .as_ref()
+        .and_then(|tokens| fresh_access_token(tokens, ACCOUNT_TOKEN_MIN_VALIDITY))
+    {
+        return Ok(access);
+    }
+
+    let has_tokens = store.tokens.as_ref().is_some_and(|tokens| {
+        !tokens.access_token.trim().is_empty() || !tokens.refresh_token.trim().is_empty()
+    });
+    anyhow::ensure!(
+        has_tokens || !store.device_id.trim().is_empty(),
+        "no account yet — sign in, then claim a name"
+    );
+
+    let tokens = ensure_tokens(&store)
+        .await
+        .context("renewing the account token")?;
+    let access = tokens.access_token.trim().to_string();
+    anyhow::ensure!(!access.is_empty(), "broker returned an empty account token");
+    store.tokens = Some(tokens);
+    store
+        .save(data_dir)
+        .context("saving the renewed account token")?;
+    Ok(access)
 }
 
 /// The signed-in account's identity in a claim response.
@@ -475,47 +532,82 @@ pub enum ClaimOutcome {
 /// energy under the new tokens. A 409 comes back as [`ClaimOutcome::Conflict`] for
 /// the caller to explain rather than an error. Xiaoyuanzhu mode only.
 pub async fn claim_device(data_dir: &Path, ticket: &str) -> anyhow::Result<ClaimOutcome> {
-    let mut store = Credentials::load(data_dir);
-    if store.mode == Mode::Byok {
-        anyhow::bail!("account linking is only available in xiaoyuanzhu mode");
-    }
-    // The claim is authed as the device's current account — make sure we hold a
-    // usable access token (bootstrap on first run), and persist it before the call.
-    let tokens = ensure_tokens(&store).await.context("ensuring a device token before claim")?;
-    store.tokens = Some(tokens.clone());
-    let _ = store.save(data_dir);
+    let email = {
+        let _guard = token_refresh_lock().lock().await;
+        let mut store = Credentials::load(data_dir);
+        if store.mode == Mode::Byok {
+            anyhow::bail!("account linking is only available in xiaoyuanzhu mode");
+        }
+        if store.device_id.trim().is_empty() {
+            store.device_id = crate::foundation::machine_id::derive()
+                .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        }
 
-    let url = format!("{}/api/agent/claim", base_url());
-    let resp = http()?
-        .post(&url)
-        .bearer_auth(&tokens.access_token)
-        .json(&serde_json::json!({ "ticket": ticket }))
-        .send()
-        .await
-        .with_context(|| format!("calling {url}"))?;
-    let status = resp.status();
-    if status.as_u16() == 409 {
-        let code = resp.json::<ErrorDto>().await.map(|e| e.error).unwrap_or_default();
-        return Ok(ClaimOutcome::Conflict { code });
-    }
-    if !status.is_success() {
-        anyhow::bail!("claim {url} returned {status}: {}", resp.text().await.unwrap_or_default());
-    }
-    let dto: ClaimDto = resp.json().await.context("parsing claim response")?;
+        // The claim is authed as the device's current account. Keep this whole
+        // adoption under the refresh lock: success replaces the account token
+        // pair, so an hourly refresh must not overwrite it with the old account.
+        let tokens = if let Some(access) = store
+            .tokens
+            .as_ref()
+            .and_then(|tokens| fresh_access_token(tokens, ACCOUNT_TOKEN_MIN_VALIDITY))
+        {
+            let mut tokens = store.tokens.clone().unwrap_or_default();
+            tokens.access_token = access;
+            tokens
+        } else {
+            ensure_tokens(&store)
+                .await
+                .context("ensuring a device token before claim")?
+        };
+        store.tokens = Some(tokens.clone());
+        store
+            .save(data_dir)
+            .context("saving the device token before claim")?;
 
-    // Swap in the adopted account's tokens + identity.
-    store.tokens = Some(tokens_from(TokenDto {
-        access_token: dto.access_token,
-        refresh_token: dto.refresh_token,
-        expires_in: dto.expires_in,
-    }));
-    let email = dto.identity.email.clone();
-    store.identity = if email.trim().is_empty() {
-        None
-    } else {
-        Some(Identity { email: email.clone(), name: dto.identity.name, tier: dto.identity.tier })
+        let url = format!("{}/api/agent/claim", base_url());
+        let resp = http()?
+            .post(&url)
+            .bearer_auth(&tokens.access_token)
+            .json(&serde_json::json!({ "ticket": ticket }))
+            .send()
+            .await
+            .with_context(|| format!("calling {url}"))?;
+        let status = resp.status();
+        if status.as_u16() == 409 {
+            let code = resp
+                .json::<ErrorDto>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_default();
+            return Ok(ClaimOutcome::Conflict { code });
+        }
+        if !status.is_success() {
+            anyhow::bail!(
+                "claim {url} returned {status}: {}",
+                resp.text().await.unwrap_or_default()
+            );
+        }
+        let dto: ClaimDto = resp.json().await.context("parsing claim response")?;
+
+        // Swap in the adopted account's tokens + identity.
+        store.tokens = Some(tokens_from(TokenDto {
+            access_token: dto.access_token,
+            refresh_token: dto.refresh_token,
+            expires_in: dto.expires_in,
+        }));
+        let email = dto.identity.email.clone();
+        store.identity = if email.trim().is_empty() {
+            None
+        } else {
+            Some(Identity {
+                email: email.clone(),
+                name: dto.identity.name,
+                tier: dto.identity.tier,
+            })
+        };
+        store.save(data_dir).context("saving claimed account")?;
+        email
     };
-    store.save(data_dir).context("saving claimed account")?;
 
     // Pull the adopted account's configs + energy under its new tokens. `refresh`
     // reloads the store (keeping the identity we just wrote) and persists again.
@@ -543,68 +635,101 @@ fn record_status(data_dir: &Path, ok: bool, error: &str) {
 /// wired; today an anonymous device account is always minted. v1 runs at startup
 /// and on mode-select; a periodic loop is wired in `lib.rs`.
 pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
-    let mut store = Credentials::load(data_dir);
-    match store.mode {
-        Mode::Byok => return,
-        Mode::Xiaoyuanzhu => {}
-    }
     let _ = bearer; // reserved for signed-in (`sub`-tier) bootstrap; unused today.
 
-    let mut dirty = false;
-    if store.device_id.trim().is_empty() {
-        // First need: prefer a machine-derived id so the account survives an app
-        // uninstall / data-dir wipe (the broker keys one account per device_id).
-        // Fall back to a random UUID only when no platform source is readable. An
-        // install that already holds a device_id keeps it — we never re-derive out
-        // from under a live account. See `foundation::machine_id`.
-        store.device_id = crate::foundation::machine_id::derive()
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-        dirty = true;
-    }
+    let tokens = {
+        let _guard = token_refresh_lock().lock().await;
+        let mut store = Credentials::load(data_dir);
+        match store.mode {
+            Mode::Byok => return,
+            Mode::Xiaoyuanzhu => {}
+        }
 
-    let tokens = match ensure_tokens(&store).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(error = %format!("{e:#}"), "broker bootstrap/refresh failed; keeping cached configs");
-            record_status(data_dir, false, &format!("{e:#}"));
-            if dirty {
+        if store.device_id.trim().is_empty() {
+            // First need: prefer a machine-derived id so the account survives an app
+            // uninstall / data-dir wipe (the broker keys one account per device_id).
+            // Fall back to a random UUID only when no platform source is readable. An
+            // install that already holds a device_id keeps it — we never re-derive out
+            // from under a live account. See `foundation::machine_id`.
+            store.device_id = crate::foundation::machine_id::derive()
+                .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        }
+
+        let tokens = match ensure_tokens(&store).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "broker bootstrap/refresh failed; keeping cached configs");
+                record_status(data_dir, false, &format!("{e:#}"));
                 if let Err(e) = store.save(data_dir) {
                     tracing::warn!(error = %format!("{e:#}"), "failed to persist credential store");
                 }
+                return;
             }
-            return;
+        };
+        store.tokens = Some(tokens.clone());
+        if let Err(e) = store.save(data_dir) {
+            tracing::warn!(error = %format!("{e:#}"), "failed to persist renewed account tokens");
         }
+        tokens
     };
-    store.tokens = Some(tokens.clone());
-    dirty = true;
 
+    let mut managed = None;
+    let mut energy = None;
     match fetch_configs(&tokens.access_token).await {
         Ok(m) => {
             tracing::info!("fetched managed configs from broker");
-            store.managed = Some(m);
+            managed = Some(m);
         }
         Err(e) => tracing::warn!(error = %format!("{e:#}"), "configs fetch failed; keeping cached"),
     }
     match fetch_energy(&tokens.access_token).await {
         Ok(en) => {
             tracing::info!(tier = %en.tier, remaining = en.remaining, total = en.total, "energy refreshed");
-            // Balance is recovery-only. Calls run until a managed provider actually
-            // returns 402; a later positive balance emits Resume.
-            crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
-            store.energy = Some(en);
+            energy = Some(en);
         }
         Err(e) => tracing::warn!(error = %format!("{e:#}"), "energy fetch failed; keeping cached"),
+    }
+
+    let applied_energy = {
+        // Reload under the token lock after the network calls so an account
+        // adoption or settings write that completed meanwhile is preserved.
+        // If the account token changed, these responses belong to the previous
+        // account and must be discarded.
+        let _guard = token_refresh_lock().lock().await;
+        let mut store = Credentials::load(data_dir);
+        let current_access = store
+            .tokens
+            .as_ref()
+            .map(|t| t.access_token.trim())
+            .unwrap_or_default();
+        if current_access == tokens.access_token.trim() {
+            if let Some(m) = managed {
+                store.managed = Some(m);
+            }
+            if let Some(en) = energy.as_ref() {
+                store.energy = Some(en.clone());
+            }
+            match store.save(data_dir) {
+                Ok(()) => energy,
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "failed to persist credential store after broker refresh");
+                    None
+                }
+            }
+        } else {
+            tracing::debug!("discarding broker data fetched before the account changed");
+            None
+        }
+    };
+    if let Some(en) = applied_energy {
+        // Balance is recovery-only. Calls run until a managed provider actually
+        // returns 402; a later positive balance emits Resume.
+        crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
     }
 
     // Tokens were obtained → the account exists and is healthy, even if a vendor
     // sub-fetch above degraded. Record success so the UI leaves "connecting".
     record_status(data_dir, true, "");
-
-    if dirty {
-        if let Err(e) = store.save(data_dir) {
-            tracing::warn!(error = %format!("{e:#}"), "failed to persist credential store after broker refresh");
-        }
-    }
 }
 
 /// Lightweight energy poll that hands back the fresh balance: re-fetch with the
@@ -613,20 +738,45 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
 /// place). The account endpoint uses this to refresh the ground-truth balance; the
 /// reconciliation inside this function emits Resume when energy returns.
 pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
-    let mut store = Credentials::load(data_dir);
-    if store.mode == Mode::Byok {
+    if Credentials::load(data_dir).mode == Mode::Byok {
         return None;
     }
-    let tokens = store.tokens.clone()?;
-    match fetch_energy(&tokens.access_token).await {
+    let access = match account_token(data_dir).await {
+        Ok(access) => access,
+        Err(e) => {
+            tracing::debug!(error = %format!("{e:#}"), "energy poll could not renew the account token");
+            return None;
+        }
+    };
+    match fetch_energy(&access).await {
         Ok(en) => {
             // The periodic poll and the UI's explicit refresh both look only for
             // recovery; a positive balance emits Resume after an observed 402.
-            crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
-            store.energy = Some(en.clone());
-            if let Err(e) = store.save(data_dir) {
-                tracing::debug!(error = %format!("{e:#}"), "failed to persist energy poll");
+            let persisted = {
+                let _guard = token_refresh_lock().lock().await;
+                let mut store = Credentials::load(data_dir);
+                let current_access = store
+                    .tokens
+                    .as_ref()
+                    .map(|t| t.access_token.trim())
+                    .unwrap_or_default();
+                if current_access != access.as_str() {
+                    false
+                } else {
+                    store.energy = Some(en.clone());
+                    match store.save(data_dir) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::debug!(error = %format!("{e:#}"), "failed to persist energy poll");
+                            false
+                        }
+                    }
+                }
+            };
+            if !persisted {
+                return None;
             }
+            crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
             // Keeps the Settings page's "last checked" fresh between full refreshes.
             record_status(data_dir, true, "");
             Some(en)
@@ -747,5 +897,29 @@ mod tests {
         let managed = managed_from(&configs);
         assert_eq!(managed.llm.wire, "");
         assert_eq!(managed.llm.api_key, "");
+    }
+
+    #[test]
+    fn account_access_token_is_reused_only_with_a_safety_window() {
+        let tokens = |expires_at: chrono::DateTime<chrono::Utc>| Tokens {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            access_expires_at: expires_at.to_rfc3339(),
+        };
+
+        assert!(
+            fresh_access_token(
+                &tokens(chrono::Utc::now() + chrono::Duration::minutes(10)),
+                ACCOUNT_TOKEN_MIN_VALIDITY,
+            )
+            .is_some()
+        );
+        assert!(
+            fresh_access_token(
+                &tokens(chrono::Utc::now() + chrono::Duration::minutes(1)),
+                ACCOUNT_TOKEN_MIN_VALIDITY,
+            )
+            .is_none()
+        );
     }
 }

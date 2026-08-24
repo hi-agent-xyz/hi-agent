@@ -33,7 +33,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::foundation::credentials;
+use crate::foundation::broker;
 
 /// Where the community lives. Overridable for a test deployment; there is no
 /// per-service address because the four services share one origin today.
@@ -86,14 +86,8 @@ pub fn base_url() -> String {
 /// rather than what failed: a name needs an account, and an anonymous one is not
 /// enough (the registry decides that half, and its refusal comes through
 /// verbatim).
-pub(crate) fn account_token(data_dir: &Path) -> anyhow::Result<String> {
-    let token = credentials::Credentials::load(data_dir)
-        .tokens
-        .as_ref()
-        .map(|t| t.access_token.trim().to_string())
-        .unwrap_or_default();
-    anyhow::ensure!(!token.is_empty(), "no account yet — sign in, then claim a name");
-    Ok(token)
+pub(crate) async fn account_token(data_dir: &Path) -> anyhow::Result<String> {
+    broker::account_token(data_dir).await
 }
 
 /// Claim `handle`, or claim another one. Permanent: nothing expires and nothing
@@ -102,7 +96,7 @@ pub async fn claim(data_dir: &Path, handle: &str) -> anyhow::Result<Handle> {
     let url = format!("{}/api/registry/handle", base_url());
     let res = reqwest::Client::new()
         .post(&url)
-        .bearer_auth(account_token(data_dir)?)
+        .bearer_auth(account_token(data_dir).await?)
         .json(&serde_json::json!({ "handle": handle }))
         .send()
         .await
@@ -114,7 +108,7 @@ pub async fn claim(data_dir: &Path, handle: &str) -> anyhow::Result<Handle> {
 pub async fn release(data_dir: &Path, handle: &str) -> anyhow::Result<()> {
     let res = reqwest::Client::new()
         .delete(format!("{}/api/registry/handle", base_url()))
-        .bearer_auth(account_token(data_dir)?)
+        .bearer_auth(account_token(data_dir).await?)
         .json(&serde_json::json!({ "handle": handle }))
         .send()
         .await
@@ -131,7 +125,7 @@ pub async fn release(data_dir: &Path, handle: &str) -> anyhow::Result<()> {
 pub async fn current(data_dir: &Path) -> anyhow::Result<Handles> {
     let res = reqwest::Client::new()
         .get(format!("{}/api/registry/handle", base_url()))
-        .bearer_auth(account_token(data_dir)?)
+        .bearer_auth(account_token(data_dir).await?)
         .send()
         .await
         .context("reaching the registry")?;
@@ -195,11 +189,11 @@ mod tests {
         assert!(detail(html, reqwest::StatusCode::INTERNAL_SERVER_ERROR).contains("500"));
     }
 
-    #[test]
-    fn claiming_without_an_account_says_what_to_do() {
+    #[tokio::test]
+    async fn claiming_without_an_account_says_what_to_do() {
         let dir = std::env::temp_dir().join(format!("hi-community-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let err = account_token(&dir).unwrap_err().to_string();
+        let err = account_token(&dir).await.unwrap_err().to_string();
         assert!(err.contains("sign in"), "{err}");
     }
 }
