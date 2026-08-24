@@ -374,16 +374,7 @@ mod tests {
     async fn consolidate_today(dir: &Path) {
         let j = Journal::open(dir.to_path_buf()).await.unwrap();
         for _ in 0..3 {
-            j.append(JournalEntry::SignalIn {
-                id: Uuid::now_v7().to_string(),
-                ts: Utc::now(),
-                channel: Channel::Text,
-                body: "x".into(),
-                stream: None,
-                media: None,
-                origin: None,
-                sender: None,
-            })
+            j.append(crate::mind::memory::journal::legacy_signal_in(Uuid::now_v7().to_string(), Utc::now(), Channel::Text, "x".to_string(), None, None, None, None))
             .await
             .unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;

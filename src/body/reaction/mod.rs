@@ -756,7 +756,12 @@ const LOOP_QUEUE_CAPACITY: usize = 64;
 /// the queue by the worker's drive task. Neither interrupts live speech — both
 /// wait their turn and are settled into one batch.
 enum LoopInput {
-    Human(Signal),
+    /// Somebody said something. Carries the [`crate::types::Message`] the boundary
+    /// minted, so what Reaction concludes can name what it concluded about.
+    Message(crate::types::Message),
+    /// Something was perceived — a face, a room going quiet, the person walking the
+    /// view band. It reaches the mind and joins a turn, and nobody said it.
+    Observed(Signal),
     Worker(workers::WorkerReport),
     /// Reaction's own check-in coming due — it said they'd hear back by now, or it
     /// left a silence open-ended while its thinking ran and the host put a floor under
@@ -897,7 +902,7 @@ struct LoopHandle {
 pub async fn start(
     memory: Memory,
     agent: AgentLayer,
-    mut inbound_rx: mpsc::Receiver<Signal>,
+    mut inbound_rx: mpsc::Receiver<crate::types::Inbound>,
     mut warm_rx: mpsc::Receiver<()>,
     duty_rx: mpsc::Receiver<DutyDelivery>,
     out: mpsc::Sender<OutboundSignal>,
@@ -1141,7 +1146,7 @@ impl Reaction {
         }
     }
 
-    async fn deliver(&self, signal: Signal) {
+    async fn deliver(&self, input: crate::types::Inbound) {
         // Mark activity and poke the consolidated reflection clock, so a conversation
         // going active after a long quiet gets its first pass without waiting out the
         // backed-off gap.
@@ -1164,7 +1169,11 @@ impl Reaction {
         // until the turn that needs the fact is already over. A reply produced after
         // this point is out of date, and [`floor::Floor::may_speak`] refuses it.
         self.inner.floor.note_heard();
-        if let Err(err) = sender.send(LoopInput::Human(signal)).await {
+        let queued = match input {
+            crate::types::Inbound::Message(m) => LoopInput::Message(m),
+            crate::types::Inbound::Observed(s) => LoopInput::Observed(s),
+        };
+        if let Err(err) = sender.send(queued).await {
             registry::global().abandon_turn(&reaction_id);
             tracing::error!(error = %err, "reaction inbound channel closed; dropping signal");
         }
@@ -1599,7 +1608,7 @@ async fn reaction_loop(
 
         // Why this turn is running, read before the batch is cleared — it decides how
         // the check-in floor paces itself below.
-        let by_human = batch.iter().any(|i| matches!(i, LoopInput::Human(_)));
+        let by_human = batch.iter().any(|i| matches!(i, LoopInput::Message(_) | LoopInput::Observed(_)));
         let by_floor = batch
             .iter()
             .any(|i| matches!(i, LoopInput::CheckIn { owed } if !owed.promised));
@@ -1734,14 +1743,45 @@ async fn reaction_loop(
 /// Render just the human requests in a batch (skipping worker reports and the host's own
 /// wakes) — the text handed down to Cognition as the turn's task. Skipping reports is what
 /// keeps it from re-ingesting its own prior output (a feedback loop).
+/// One message as the mind reads it: `text`/`audio`/`file`, the words, and who —
+/// **rendered here from the fields rather than read out of the words**. The
+/// `⟨voice: …⟩` and `⟨ref: …⟩` markers a carrier used to spell into the body are
+/// written at this seam now, so the stored message stays what was actually said and
+/// the prompt still says who said it. See `docs/arch/message.md`.
+fn render_message_line(m: &crate::types::Message) -> String {
+    use crate::mind::memory::snapshot::{Speaker, transcript_line};
+    use crate::types::Content;
+    let kind = match &m.content {
+        Content::Text(_) => "text",
+        Content::Speech { .. } => "audio",
+        Content::File(_) => "file",
+    };
+    let said = match &m.content {
+        Content::Text(t) => t.clone(),
+        Content::Speech { text, .. } => text.clone(),
+        Content::File(f) => format!("handed you a file: {} ({}) ⟨ref: {}⟩", f.name, f.mime, f.reff),
+    };
+    let said = match m.from.sender().and_then(|s| s.subject.as_deref()) {
+        Some(who) => format!("⟨voice: {who}⟩ {said}"),
+        None => said,
+    };
+    transcript_line(Speaker::Them, kind, &said)
+}
+
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
     use std::fmt::Write as _;
     let mut s = String::new();
     for input in batch {
-        if let LoopInput::Human(sig) = input {
-            let chan = sig.channel.with_stream(sig.stream.as_deref());
-            let _ = writeln!(s, "{}", transcript_line(Speaker::Them, &chan, &sig.body));
+        match input {
+            LoopInput::Message(m) => {
+                let _ = writeln!(s, "{}", render_message_line(m));
+            }
+            LoopInput::Observed(sig) => {
+                let chan = sig.channel.with_stream(sig.stream.as_deref());
+                let _ = writeln!(s, "{}", transcript_line(Speaker::Them, &chan, &sig.body));
+            }
+            _ => {}
         }
     }
     s
@@ -2089,16 +2129,7 @@ mod turn_context_tests {
     async fn heard(memory: &Memory, body: &str) {
         memory
             .journal
-            .append(JournalEntry::SignalIn {
-                id: uuid::Uuid::now_v7().to_string(),
-                ts: chrono::Utc::now(),
-                channel: Channel::Text,
-                body: body.to_string(),
-                stream: None,
-                media: None,
-                origin: None,
-                sender: None,
-            })
+            .append(crate::mind::memory::journal::legacy_signal_in(uuid::Uuid::now_v7().to_string(), chrono::Utc::now(), Channel::Text, body.to_string(), None, None, None, None))
             .await
             .unwrap();
     }
@@ -2671,30 +2702,19 @@ fn is_compaction(frame: &serde_json::Value) -> bool {
 /// Best-effort, like every other append site: a failed write is logged and the
 /// reply still goes out; the log is not allowed to swallow a turn.
 async fn record_out(reaction: &Reaction, channel: Channel, body: String) {
-    record_out_as(reaction, channel, body, Uuid::now_v7().to_string(), Utc::now()).await;
-}
-
-/// [`record_out`] under a key the caller already holds — used when the same
-/// emission also becomes a message in the conversation and the two must agree.
-async fn record_out_as(
-    reaction: &Reaction,
-    channel: Channel,
-    body: String,
-    id: String,
-    ts: chrono::DateTime<Utc>,
-) {
-    let entry = JournalEntry::SignalOut {
-        id,
-        ts,
-        channel,
-        body,
-        media: None,
-        origin: Some(Origin::Reaction),
+    let id = Uuid::now_v7().to_string();
+    let ts = Utc::now();
+    // A view going up is presentation — replayed to restore the screen. Everything
+    // else leaving here is the machinery reporting on itself.
+    let entry = match channel {
+        Channel::View => JournalEntry::Presentation { id, ts, body },
+        _ => JournalEntry::Internal { id, ts, channel, body, origin: Some(Origin::Reaction) },
     };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(channel = %channel, error = %format!("{err:#}"), "journal append failed for outbound signal");
     }
 }
+
 
 /// Append one turn-driving signal that reached the mind without crossing a wire —
 /// a check-in coming due, a worker's report, mail. Without these the log shows a turn's
@@ -2706,19 +2726,17 @@ async fn record_in(
     origin: Origin,
     body: String,
 ) {
-    let entry = JournalEntry::SignalIn {
+    // **Internal, and that is the whole point** — `clock` and `worker` are the agent's
+    // own machinery moving, not a person doing something. The kind says there was
+    // nobody, rather than a sender field left empty for a reader to misread as "we
+    // don't know who", which is why a stretch of pure clock and worker traffic must
+    // teach the record nothing about anyone.
+    let entry = JournalEntry::Internal {
         id: Uuid::now_v7().to_string(),
         ts: Utc::now(),
         channel,
         body,
-        stream: None,
-        media: None,
         origin: Some(origin),
-        // **Machine channels take no sender at all** — `clock` and `worker` are the
-        // agent's own machinery moving, not a person doing something. `None` here is
-        // not "we don't know who": it is "there was nobody", which is why a stretch of
-        // pure clock and worker traffic must teach the record nothing about anyone.
-        sender: None,
     };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(channel = %channel, error = %format!("{err:#}"), "journal append failed for internal signal");
@@ -2736,14 +2754,17 @@ async fn record_in(
 /// reaction, and `say` already holds the whole text, so there is no window in which
 /// a crash could lose words the agent had already sent.
 async fn emit_message(reaction: &Reaction, text: String) {
-    let id = Uuid::now_v7().to_string();
-    let ts = Utc::now();
-    record_out_as(reaction, Channel::Text, text.clone(), id.clone(), ts).await;
-    let _ = reaction
-        .inner
-        .out
-        .send(OutboundSignal::Text { id, ts, text })
-        .await;
+    let message = crate::types::Message {
+        id: Uuid::now_v7().to_string(),
+        ts: Utc::now(),
+        from: crate::types::Author::Agent,
+        content: crate::types::Content::Text(text),
+    };
+    let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
+    if let Err(err) = reaction.inner.memory.journal.append(entry).await {
+        tracing::error!(error = %format!("{err:#}"), "journal append failed for outbound message");
+    }
+    let _ = reaction.inner.out.send(OutboundSignal::Say { message }).await;
 }
 
 /// Carry one release action to its wire carrier: speech to TTS, a view to
@@ -2840,7 +2861,10 @@ fn render_batch(batch: &[LoopInput]) -> String {
     let mut s = String::new();
     for input in batch {
         match input {
-            LoopInput::Human(sig) => {
+            LoopInput::Message(m) => {
+                let _ = writeln!(s, "{}", render_message_line(m));
+            }
+            LoopInput::Observed(sig) => {
                 use crate::mind::memory::snapshot::{Speaker, transcript_line};
                 let chan = sig.channel.with_stream(sig.stream.as_deref());
                 let _ = writeln!(s, "{}", transcript_line(Speaker::Them, &chan, &sig.body));
@@ -2911,7 +2935,7 @@ fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
 /// of the signal.
 fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
     match input {
-        LoopInput::Human(_) => None,
+        LoopInput::Message(_) | LoopInput::Observed(_) => None,
         LoopInput::Worker(report) => Some((
             Channel::Worker,
             Origin::Worker,

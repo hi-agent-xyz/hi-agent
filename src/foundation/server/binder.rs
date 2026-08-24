@@ -17,7 +17,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::body::reaction::OutboundSignal;
 use crate::foundation::server::{
-    AudioEvent, Message, OutputEcho, Role, Transcript, ViewBus, ViewEvent,
+    AudioEvent, OutputEcho, Role, Transcript, ViewBus, ViewEvent, Wire,
 };
 use crate::types::Channel;
 
@@ -37,24 +37,15 @@ pub(crate) async fn bind_outbound(
             // /out/text is the conversation: one whole message, appended. There is
             // no turn boundary to respect and no earlier state to supersede, so a
             // reply that crossed with a new human line simply lands after it.
-            OutboundSignal::Text { id, ts, text: said } => {
+            OutboundSignal::Say { message } => {
                 // Echo a live copy for the inspector alongside the append.
                 let _ = output_echo.send(OutputEcho {
                     channel: Channel::Text,
-                    text: said.clone(),
+                    text: message.content.text().unwrap_or_default().to_owned(),
                     is_final: true,
-                    ts,
+                    ts: message.ts,
                 });
-                transcript.append(Message {
-                    id,
-                    ts,
-                    role: Role::Agent,
-                    text: said,
-                    attachment: None,
-                    // No sender: attribution answers which *person* a signal came
-                    // from, and the agent is not one of the people it keeps.
-                    sender: None,
-                });
+                transcript.append(Wire::from(message));
             }
             // Observability only — the conversation has no use for it.
             OutboundSignal::TextEnd => {

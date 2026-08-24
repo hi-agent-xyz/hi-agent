@@ -10,7 +10,7 @@ use std::time::Duration;
 use hi_agent::mind::memory::Memory;
 use hi_agent::foundation::surfaces::{Acceptor, accepted_on};
 use hi_agent::foundation::server::{self, ServerSeams};
-use hi_agent::types::{Channel, JournalEntry};
+use hi_agent::types::{Channel, Content, JournalEntry};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 
@@ -116,8 +116,8 @@ async fn post_thought_accepts_and_journals() {
     let entries = read_journal(dir.path());
     assert_eq!(entries.len(), 1, "expected one journal entry, got {entries:?}");
     match &entries[0] {
-        JournalEntry::SignalIn { body, .. } => {
-            assert_eq!(body, "hi");
+        JournalEntry::Message { message, .. } => {
+            assert_eq!(message.content.text(), Some("hi"));
         }
         other => panic!("expected SignalIn, got {other:?}"),
     }
@@ -152,17 +152,23 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     let mut bodies = entries
         .iter()
         .map(|entry| match entry {
-            JournalEntry::SignalIn { channel, body, media, .. } => {
+            JournalEntry::Message { channel, message } => {
                 assert_eq!(*channel, Channel::File);
-                assert!(media.is_some(), "file handoff carries its stored blob");
-                body.as_str()
+                let Content::File(f) = &message.content else {
+                    panic!("a file handoff is file content, got {message:?}");
+                };
+                assert!(!f.reff.is_empty(), "file handoff carries its stored blob");
+                (f.name.as_str(), f.reff.as_str())
             }
-            other => panic!("expected SignalIn, got {other:?}"),
+            other => panic!("expected a message, got {other:?}"),
         })
         .collect::<Vec<_>>();
     bodies.sort_unstable();
-    assert!(bodies[0].contains("notes.txt"));
-    assert!(bodies[1].contains("scan.pdf"));
+    // The name a person chose and the locator for the bytes are two fields now, and
+    // neither is recovered from prose: the blob sits on a timestamp grid, so the ref
+    // never contained the filename in the first place.
+    assert_eq!(bodies[0].0, "notes.txt");
+    assert_eq!(bodies[1].0, "scan.pdf");
 
     // The locator, checked by *opening* it. `docs/arch/agents.md` retires the
     // perception tool on the grounds that a handed file arrives as a ref and a ref
@@ -172,12 +178,9 @@ async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     // The ref names its own channel, so it joins onto the *raw root* — a reader that
     // has to supply the channel is the thing the grammar removed.
     let raw = dir.path().join("memory").join("raw");
-    for body in &bodies {
-        let reff = body
-            .split_once("⟨ref: ")
-            .and_then(|(_, rest)| rest.split_once('⟩'))
-            .map(|(reff, _)| reff)
-            .unwrap_or_else(|| panic!("handed file carries no ref: {body}"));
+    // The ref is a field on the file's content now, not a marker fished back out of
+    // prose — which is the whole of what `docs/arch/message.md` moved.
+    for (_, reff) in &bodies {
         assert!(reff.starts_with("file/"), "a handed file's ref must name its channel: {reff}");
         let path = raw.join(reff);
         assert!(path.is_file(), "the ref must resolve under {raw:?}: {reff}");
@@ -243,7 +246,7 @@ async fn post_vision_journals_and_persists() {
     }
     assert_eq!(entries.len(), 1, "vision still should journal one entry, got {entries:?}");
     match &entries[0] {
-        JournalEntry::SignalIn { channel, body, media, .. } => {
+        JournalEntry::Observation { channel, body, media, .. } => {
             assert_eq!(*channel, Channel::Vision);
             assert!(!body.is_empty(), "vision signal carries a caption (placeholder when no provider)");
             let media = media.as_ref().expect("vision signal carries media");

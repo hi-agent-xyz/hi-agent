@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, observe, transcript};
 use crate::mind::memory::journal;
-use crate::types::{Channel, JournalEntry, Origin, Sender, Signal};
+use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Message, Sender};
 use futures::stream::unfold;
 
 pub async fn post_text(
@@ -48,16 +48,14 @@ pub async fn post_text(
         }
     };
 
-    let signal = Signal {
-        channel: Channel::Text,
-        body: body_str,
-        stream,
-        ts: Utc::now(),
-    };
+    let ts = Utc::now();
+    // A typed line has no capture source to tell apart, so the stream header stops
+    // here rather than riding along on a message that has no use for it.
+    let _ = stream;
 
     tracing::info!(
         auth = ?auth,
-        len = signal.body.len(),
+        len = body_str.len(),
         "POST /api/in/text"
     );
 
@@ -72,7 +70,7 @@ pub async fn post_text(
     // signal goes on, because the alternative — refusing input — is a worse
     // failure than a key reaching the model, which is what happened before any
     // of this existed.
-    match state.privacy.filter().file_secrets(&signal.body) {
+    match state.privacy.filter().file_secrets(&body_str) {
         Ok(filed) if !filed.is_empty() => tracing::info!(
             count = filed.len(),
             refs = ?filed.iter().map(|f| f.reference.as_str()).collect::<Vec<_>>(),
@@ -84,42 +82,36 @@ pub async fn post_text(
             "secret scan failed; the message is accepted unscanned"
         ),
     }
-    crate::foundation::channel_log::inbound(Channel::Text, &signal.body);
+    crate::foundation::channel_log::inbound(Channel::Text, &body_str);
 
-    // Minted once and used twice: the journal entry and the message in the
-    // conversation are the same thing under the same key, which is what lets the
-    // list be rebuilt from the log without a merge.
-    let id = Uuid::now_v7().to_string();
     // Addressed: somebody typed this *to* the agent, so absent evidence otherwise it
     // is the owner. Labelled `owner` rather than written bare, so a later pass can
     // tell the default from a recognition — see `docs/arch/signal-attribution.md`.
     // Decided once and handed to both the journal and the conversation, so the face
     // beside the message and the name in the log are one answer, not two.
     let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
-    let entry = JournalEntry::SignalIn {
-        id: id.clone(),
-        ts: signal.ts,
-        channel: signal.channel,
-        body: signal.body.clone(),
-        stream: signal.stream.clone(),
-        media: None,
-        origin: Some(Origin::Human),
-        sender: Some(sender.clone()),
+    // Minted once and used three times: the journal entry, the conversation and
+    // Reaction are the same value under the same key, which is what lets the list be
+    // rebuilt from the log without a merge — and what gives Reaction something to
+    // name when it concludes anything about this line.
+    let message = Message {
+        id: Uuid::now_v7().to_string(),
+        ts,
+        from: Author::Person(sender),
+        content: Content::Text(body_str),
     };
+    let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
     }
 
-    // The draft became a line, so they are no longer composing it. Without this the
-    // keystroke stamp would outlive the send by its whole window and refuse the
-    // reply to this very line — see [`crate::body::reaction::Floor::note_sent`].
     state.floor.note_sent().await;
 
     // Append to the conversation and echo to live observers before dispatching
     // inward.
-    state.note_message(Channel::Text, id, signal.ts, &signal.body, None, Some(sender));
+    state.note_message(Channel::Text, message.clone());
 
-    if let Err(err) = state.inbound.send(signal).await {
+    if let Err(err) = state.inbound.send(Inbound::Message(message)).await {
         tracing::error!(error = %err, "inbound channel closed");
         return (StatusCode::SERVICE_UNAVAILABLE, "inbound channel closed").into_response();
     }

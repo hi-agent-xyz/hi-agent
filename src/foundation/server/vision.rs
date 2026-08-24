@@ -52,7 +52,7 @@ use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::{AppState, FacePresence, PartialMinute, VideoInEvent, VideoSource};
-use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
+use crate::types::{Channel, Inbound, JournalEntry, Media, Origin, Sender, Signal};
 
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";
@@ -169,14 +169,13 @@ pub async fn post_presence(
     let body_text = presence_body(&appeared, &left);
     crate::foundation::channel_log::inbound(Channel::Vision, &body_text);
 
-    let entry = JournalEntry::SignalIn {
+    let entry = JournalEntry::Observation {
         id: Uuid::now_v7().to_string(),
         ts: now,
         channel: Channel::Vision,
         body: body_text.clone(),
         stream: Some(PRESENCE_STREAM.to_string()),
         media: None,
-        origin: Some(Origin::Human),
         // Ambient, like audio: a camera sees whoever is in frame. Face clustering
         // names them or nothing does.
         sender: Some(Sender::unknown()),
@@ -192,7 +191,7 @@ pub async fn post_presence(
         stream: Some(PRESENCE_STREAM.to_string()),
         ts: now,
     };
-    if let Err(err) = state.inbound.send(signal).await {
+    if let Err(err) = state.inbound.send(Inbound::Observed(signal)).await {
         tracing::error!(error = %err, "presence: inbound channel closed");
     }
 
@@ -385,14 +384,13 @@ fn spawn_perceive(
             },
         };
 
-        let entry = JournalEntry::SignalIn {
+        let entry = JournalEntry::Observation {
             id: Uuid::now_v7().to_string(),
             ts,
             channel: Channel::Vision,
             body,
             stream: None,
             media: Some(Media { file: blob_rel, mime, duration_ms, width: None, height: None }),
-            origin: Some(Origin::Human),
             // Ambient. "Someone's on camera" is precisely a person we cannot name.
             sender: Some(Sender::unknown()),
         };

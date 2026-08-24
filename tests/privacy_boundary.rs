@@ -109,8 +109,15 @@ async fn a_typed_key_is_filed_while_the_conversation_keeps_it_verbatim() {
     // …and the person's own record of what they said is untouched. Both of these
     // would have been masked by an egress filter; neither may be here.
     let mut inbound_rx = seams.inbound_rx;
-    let signal = inbound_rx.recv().await.expect("the signal reaches the mind");
-    assert_eq!(signal.body, typed, "the mind receives the message verbatim");
+    let inbound = inbound_rx.recv().await.expect("the signal reaches the mind");
+    let hi_agent::types::Inbound::Message(message) = inbound else {
+        panic!("a typed line reaches the mind as a message");
+    };
+    assert_eq!(
+        message.content.text(),
+        Some(typed.as_str()),
+        "the mind receives the message verbatim"
+    );
 
     let journalled = raw_journal_text(&hi_agent::mind::memory::layout::raw_root(dir.path()));
     assert!(

@@ -23,14 +23,10 @@ use crate::types::ViewEnvelope;
 pub enum OutboundSignal {
     /// One thing the agent said — a whole `say` call, which is a whole message.
     ///
-    /// `id` and `ts` are the ones it was journaled under, carried here so the
-    /// message in the conversation and the entry in the log share a key. Nothing
-    /// downstream mints its own.
-    Text {
-        id: String,
-        ts: chrono::DateTime<chrono::Utc>,
-        text: String,
-    },
+    /// Carries the [`crate::types::Message`] itself, journaled under the same value,
+    /// so the message in the conversation and the entry in the log are one thing and
+    /// nothing downstream mints its own id.
+    Say { message: crate::types::Message },
     /// The end of an utterance, for the observability tap only. The conversation
     /// needs no such boundary: a message is complete when it is appended.
     TextEnd,

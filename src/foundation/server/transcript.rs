@@ -83,27 +83,53 @@ pub struct Attachment {
     pub mime: String,
 }
 
-/// One message in the conversation.
+/// One message **as a surface receives it** — the presentation of a
+/// [`crate::types::Message`], not a second copy of one.
+///
+/// [`crate::types::Message`] is the fact, minted once at the boundary and
+/// journaled; this is how it is drawn. The split is the one `docs/arch/message.md` allows: one value, two
+/// renderings (this, and the line the prompt builder writes for the mind). It is
+/// derived here rather than stored beside the message, so a window and the journal
+/// cannot come to disagree.
+///
+/// The field names are the ones surfaces already read — `role`, `text`,
+/// `attachment` — so the shape a window parses did not change when the shape the
+/// system stores did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Message {
-    /// The journal entry's uuidv7 — time-sortable, durable, and the citation key.
+pub struct Wire {
     pub id: String,
     pub ts: DateTime<Utc>,
     pub role: Role,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachment: Option<Attachment>,
-    /// Which person sent this, exactly as the boundary decided it — see
-    /// [`crate::types::Sender`] and `docs/arch/signal-attribution.md`. Carried here
-    /// rather than re-derived, so the face beside a message and the name in the
-    /// journal are one decision made once.
-    ///
-    /// **Absent is a real answer**: the agent's own messages have no sender at all,
-    /// and a voice in the room nobody recognized has one that names nobody. Neither
-    /// gets a face, and neither is a gap to fill in.
+    /// Which person sent this, exactly as the boundary decided it. **Absent is a
+    /// real answer**: the agent's own messages have no sender, and a voice nobody
+    /// recognized has one that names nobody. Neither is a gap to fill in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Sender>,
 }
+
+impl std::convert::From<crate::types::Message> for Wire {
+    fn from(m: crate::types::Message) -> Self {
+        let crate::types::Message { id, ts, from, content } = m;
+        let role = if from.is_agent() { Role::Agent } else { Role::User };
+        let sender = from.sender().cloned();
+        // A file's name *is* its text here: it is what a person calls the thing in
+        // the conversation, and drawing a nameless thumbnail was the gap that made
+        // the name a field in the first place.
+        let (text, attachment) = match content {
+            crate::types::Content::Text(t) => (t, None),
+            crate::types::Content::Speech { text, .. } => (text, None),
+            crate::types::Content::File(f) => (
+                f.name,
+                Some(Attachment { reff: f.reff, mime: f.mime }),
+            ),
+        };
+        Wire { id, ts, role, text, attachment, sender }
+    }
+}
+
 
 /// One line on `GET /api/out/text`.
 ///
@@ -114,17 +140,17 @@ pub struct Message {
 #[serde(rename_all = "snake_case")]
 pub enum Frame {
     Reset {
-        messages: Vec<Message>,
+        messages: Vec<Wire>,
         interim: Option<String>,
     },
-    Append(Message),
+    Append(Wire),
     /// The rolling recognition partial, or `None` for its expiry. Not a message —
     /// it is a preview of one, shown pending at the tail until the line settles.
     Interim(Option<String>),
 }
 
 struct Inner {
-    messages: VecDeque<Message>,
+    messages: VecDeque<Wire>,
     interim: Option<String>,
 }
 
@@ -155,7 +181,7 @@ impl Transcript {
     /// there and tells every live subscriber to reset — a conversation appearing
     /// under someone mid-session would be a bug, but it costs nothing to be correct
     /// about it, and the same path serves a future rebuild.
-    pub fn seed(&self, messages: Vec<Message>) {
+    pub fn seed(&self, messages: Vec<Wire>) {
         let frame = {
             let mut inner = self.inner.lock().expect("transcript mutex poisoned");
             inner.messages = messages.into_iter().collect();
@@ -170,7 +196,7 @@ impl Transcript {
 
     /// Append one message and publish it. The settled line also clears any interim,
     /// which is the same event: the preview became the message.
-    pub fn append(&self, message: Message) {
+    pub fn append(&self, message: Wire) {
         let frames = {
             let mut inner = self.inner.lock().expect("transcript mutex poisoned");
             let cleared = inner.interim.take().is_some();
@@ -250,7 +276,7 @@ impl Default for Transcript {
     }
 }
 
-fn trim(messages: &mut VecDeque<Message>) {
+fn trim(messages: &mut VecDeque<Wire>) {
     while messages.len() > LIVE_WINDOW {
         messages.pop_front();
     }
@@ -265,54 +291,12 @@ fn trim(messages: &mut VecDeque<Message>) {
 /// (typed on `Text`, recognized on `Audio`), a handed `File`, and Reaction's own
 /// worded output. A check-in on `Clock`, a face seen on `Vision`, a view put up or
 /// gone to on `View` — all journaled, none of them things anybody said.
-pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Message> {
+pub fn from_journal(entries: Vec<JournalEntry>) -> Vec<Wire> {
     entries
         .into_iter()
         .filter_map(|entry| match entry {
-            JournalEntry::SignalIn { id, ts, channel, body, media, origin, sender, .. } => {
-                // An absent origin is a journal line older than the field; every one
-                // of those on an input channel was a person.
-                if !matches!(origin, None | Some(Origin::Human)) {
-                    return None;
-                }
-                let sender = recover_voice_sender(sender, &body);
-                match channel {
-                    Channel::Text | Channel::Audio => Some(Message {
-                        id,
-                        ts,
-                        role: Role::User,
-                        text: display_text(&body),
-                        attachment: None,
-                        sender,
-                    }),
-                    Channel::File => {
-                        let attachment = media.map(|m| Attachment {
-                            reff: media_mod::signal_ref(Channel::File, ts, &m.file),
-                            mime: m.mime,
-                        });
-                        Some(Message {
-                            id,
-                            ts,
-                            role: Role::User,
-                            text: display_text(&body),
-                            attachment,
-                            sender,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-            JournalEntry::SignalOut { id, ts, channel, body, .. } => match channel {
-                Channel::Text => Some(Message {
-                    id,
-                    ts,
-                    role: Role::Agent,
-                    text: body,
-                    attachment: None,
-                    sender: None,
-                }),
-                _ => None,
-            },
+            JournalEntry::Message { message, .. } => Some(Wire::from(message)),
+            _ => None,
         })
         .filter(|m| !m.text.trim().is_empty() || m.attachment.is_some())
         .collect()
@@ -391,7 +375,7 @@ fn voice_marker_subject(body: &str) -> Option<String> {
 /// now a face beside the message was also a tag in the middle of the sentence.
 ///
 /// The person loses nothing: they know what they sent, they know who was talking,
-/// and what the recognition concluded is [`Message::sender`] now — a field, where a
+/// and what the recognition concluded is [`Wire::sender`] now — a field, where a
 /// window can draw it as a face and a later pass can still defeat it.
 pub fn display_text(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
@@ -425,8 +409,8 @@ pub fn display_text(body: &str) -> String {
 mod tests {
     use super::*;
 
-    fn msg(id: &str, role: Role, text: &str) -> Message {
-        Message {
+    fn msg(id: &str, role: Role, text: &str) -> Wire {
+        Wire {
             id: id.to_owned(),
             ts: Utc::now(),
             role,
@@ -575,27 +559,11 @@ mod tests {
         origin: Option<Origin>,
         sender: Option<Sender>,
     ) -> JournalEntry {
-        JournalEntry::SignalIn {
-            id: id.to_owned(),
-            ts: Utc::now(),
-            channel,
-            body: body.to_owned(),
-            stream: None,
-            media: None,
-            origin,
-            sender,
-        }
+        crate::mind::memory::journal::legacy_signal_in((id.to_owned()).to_string(), Utc::now(), channel, body.to_owned(), None, None, origin, sender)
     }
 
     fn sig_out(id: &str, channel: Channel, body: &str) -> JournalEntry {
-        JournalEntry::SignalOut {
-            id: id.to_owned(),
-            ts: Utc::now(),
-            channel,
-            body: body.to_owned(),
-            media: None,
-            origin: Some(Origin::Reaction),
-        }
+        crate::mind::memory::journal::legacy_signal_out((id.to_owned()).to_string(), Utc::now(), channel, body.to_owned(), None, Some(Origin::Reaction))
     }
 
     #[test]
@@ -640,27 +608,20 @@ mod tests {
     }
 
     #[test]
-    fn a_handed_file_keeps_its_framing_and_loses_its_locator() {
-        let entry = JournalEntry::SignalIn {
-            id: "1".into(),
-            ts: Utc::now(),
-            channel: Channel::File,
-            body: "The user handed you a file: passport.jpg ⟨ref: file/2026-08-11/09/31-04.jpg⟩"
-                .into(),
-            stream: None,
-            media: Some(crate::types::Media {
+    fn a_handed_file_is_named_by_its_name_not_its_framing() {
+        let entry = crate::mind::memory::journal::legacy_signal_in("1".into(), Utc::now(), Channel::File, "The user handed you a file: passport.jpg ⟨ref: file/2026-08-11/09/31-04.jpg⟩".to_string(), None, Some(crate::types::Media {
                 file: "09/31-04.jpg".into(),
                 mime: "image/jpeg".into(),
                 duration_ms: None,
                 width: None,
                 height: None,
-            }),
-            origin: Some(Origin::Human),
-            sender: None,
-        };
+            }), Some(Origin::Human), None);
         let msgs = from_journal(vec![entry]);
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].text, "The user handed you a file: passport.jpg");
+        // The framing prose is gone: the name is a field now, and what a surface
+        // draws under the thumbnail is that name — not the sentence a carrier wrote
+        // for the mind, and not the locator that sat behind it.
+        assert_eq!(msgs[0].text, "passport.jpg");
         let att = msgs[0].attachment.as_ref().expect("the file rides along");
         assert_eq!(att.mime, "image/jpeg");
         assert!(att.reff.ends_with("09/31-04.jpg"), "ref: {}", att.reff);
@@ -772,26 +733,20 @@ mod tests {
     /// A file with no text left after stripping is still a message — the file *is*
     /// the message. Only a line with neither text nor file is dropped.
     #[test]
-    fn a_bare_file_survives_an_empty_text() {
-        let entry = JournalEntry::SignalIn {
-            id: "1".into(),
-            ts: Utc::now(),
-            channel: Channel::File,
-            body: "⟨ref: file/2026-08-11/09/31-04.jpg⟩".into(),
-            stream: None,
-            media: Some(crate::types::Media {
+    fn a_bare_file_falls_back_to_the_blobs_own_name() {
+        let entry = crate::mind::memory::journal::legacy_signal_in("1".into(), Utc::now(), Channel::File, "⟨ref: file/2026-08-11/09/31-04.jpg⟩".to_string(), None, Some(crate::types::Media {
                 file: "09/31-04.jpg".into(),
                 mime: "image/jpeg".into(),
                 duration_ms: None,
                 width: None,
                 height: None,
-            }),
-            origin: Some(Origin::Human),
-            sender: None,
-        };
+            }), Some(Origin::Human), None);
         let msgs = from_journal(vec![entry]);
         assert_eq!(msgs.len(), 1);
-        assert!(msgs[0].text.is_empty());
+        // A file handed over with nothing said still names itself — falling back to
+        // the stored blob when the carrier wrote no name is a real answer, and it is
+        // what keeps the message from rendering as a nameless square.
+        assert_eq!(msgs[0].text, "31-04.jpg");
         assert!(msgs[0].attachment.is_some());
     }
 }

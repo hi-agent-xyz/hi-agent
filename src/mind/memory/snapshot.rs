@@ -34,7 +34,7 @@ use std::path::Path;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::mind::memory::{Memory, layout, tasks};
-use crate::types::{Channel, JournalEntry};
+use crate::types::{Channel, JournalEntry, Origin};
 
 pub const RECENT_WINDOW_MIN: i64 = 30;
 pub const RECENT_ENTRY_LIMIT: usize = 200;
@@ -260,7 +260,7 @@ pub async fn shown_recently(memory: &Memory) -> String {
         // put in front of them. Where they went of their own accord is Reaction's
         // context to hold — `## On screen now` carries it — not a claim about what has
         // been delivered.
-        let JournalEntry::SignalOut { channel: Channel::View, body, .. } = entry else {
+        let JournalEntry::Presentation { body, .. } = entry else {
             continue;
         };
         let Some(name) = shown_name(body) else {
@@ -611,12 +611,31 @@ impl Snapshot {
 }
 
 fn render_entry(e: &JournalEntry) -> String {
+    use crate::mind::memory::journal::{entry_body, entry_channel};
     match e {
-        JournalEntry::SignalIn { channel, body, stream, .. } => {
+        JournalEntry::Message { message, .. } if message.from.is_agent() => {
+            transcript_line(Speaker::You, Channel::Text.as_str(), &truncate(entry_body(e), 200))
+        }
+        JournalEntry::Message { .. } => {
+            transcript_line(Speaker::Them, entry_channel(e).as_str(), &truncate(entry_body(e), 200))
+        }
+        JournalEntry::Presentation { body, .. } => {
+            transcript_line(Speaker::You, Channel::View.as_str(), &truncate(body, 200))
+        }
+        JournalEntry::Observation { channel, body, stream, .. } => {
             transcript_line(Speaker::Them, &channel.with_stream(stream.as_deref()), &truncate(body, 200))
         }
-        JournalEntry::SignalOut { channel, body, .. } => {
-            transcript_line(Speaker::You, channel.as_str(), &truncate(body, 200))
+        // Machinery the agent's own rungs emitted is the agent's side of the row; a
+        // worker reporting back is something that reached it. Rendering both as
+        // inbound is how "spoke the reply aloud" showed up as the person talking.
+        JournalEntry::Internal { channel, body, origin, .. } => {
+            let who = match origin {
+                // Only what a rung *emitted* is the agent's side. A deadline coming
+                // due is `Host`, and it arrives at the agent like an utterance does.
+                Some(Origin::Reaction) => Speaker::You,
+                _ => Speaker::Them,
+            };
+            transcript_line(who, channel.as_str(), &truncate(body, 200))
         }
     }
 }
@@ -715,16 +734,7 @@ mod window_tests {
     async fn heard(memory: &Memory, body: &str) {
         memory
             .journal
-            .append(JournalEntry::SignalIn {
-                id: uuid::Uuid::now_v7().to_string(),
-                ts: Utc::now(),
-                channel: Channel::Text,
-                body: body.to_string(),
-                stream: None,
-                media: None,
-                origin: None,
-                sender: None,
-            })
+            .append(crate::mind::memory::journal::legacy_signal_in(uuid::Uuid::now_v7().to_string(), Utc::now(), Channel::Text, body.to_string(), None, None, None, None))
             .await
             .unwrap();
     }

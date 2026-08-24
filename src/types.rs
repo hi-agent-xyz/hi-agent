@@ -242,7 +242,7 @@ impl Sender {
 /// plus enough metadata that a reader needn't open the bytes to know what they
 /// are. The signal's `body` stays the text surface (an STT transcript, a
 /// caption).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Media {
     /// Path relative to the signal's channel-date folder, e.g. `09/16-45.mp3`
     /// (a one-off) or `output/09/11.mp3` (a streamed output minute).
@@ -257,40 +257,215 @@ pub struct Media {
 }
 
 // -----------------------------------------------------------------------------
+// Message — one thing said between a person and the agent
+// -----------------------------------------------------------------------------
+
+/// One message in the conversation, in the one shape every part of the system
+/// uses. **Minted once at the boundary and never rebuilt**: the ingress hands the
+/// same value to the journal, to Reaction, and to the conversation, so the live
+/// list and the one a restart replays cannot disagree.
+///
+/// Four fields, and the ones that used to be here and are not are the point.
+/// `channel` moved to the journal envelope ([`JournalEntry::Message`]) because its
+/// only remaining jobs were storage routing and per-sense fading; `role` collapsed
+/// into [`Author`]; relevance is an [`Appraisal`] *about* a message rather than a
+/// mutable field on one. See [`docs/arch/message.md`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Message {
+    /// Stable, time-sortable id (uuidv7): the cursor, the citation key, and what an
+    /// [`Appraisal`] names when it says what it is about.
+    pub id: String,
+    pub ts: DateTime<Utc>,
+    pub from: Author,
+    pub content: Content,
+}
+
+/// Which end of the conversation a message came from.
+///
+/// **Total — every message answers it.** The pair this replaces (`role` beside an
+/// optional sender) admitted `role: Agent` with a person attached, which is
+/// nonsense, while collapsing the one case that *is* meaningful — a person nobody
+/// placed — into the same absence the agent's own messages used.
+///
+/// Named `Author` rather than `From` only because `From` is in the prelude; the
+/// field is `from`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Author {
+    /// The agent itself. Carries no [`Sender`]: attribution answers which *person*
+    /// something came from, and the agent is not one of the people it keeps.
+    Agent,
+    /// A person — named, or a cluster we can tell apart, or nobody we can place.
+    /// `Person(Sender { subject: None, basis: Unknown })` is **a complete answer,
+    /// not a degraded one** (`docs/arch/signal-attribution.md`).
+    Person(Sender),
+}
+
+impl Author {
+    /// The [`Sender`] behind a person's message, or `None` for the agent's own.
+    pub fn sender(&self) -> Option<&Sender> {
+        match self {
+            Author::Agent => None,
+            Author::Person(s) => Some(s),
+        }
+    }
+
+    pub fn is_agent(&self) -> bool {
+        matches!(self, Author::Agent)
+    }
+}
+
+/// What was communicated. **One per message** — a caption and its photo are two
+/// messages, ordered, which the turn queue's settle window puts in one turn.
+///
+/// `Text` and `Speech` are different facts, not a formatting distinction: typed
+/// text is exactly what somebody wrote, a transcript is a machine's best guess at
+/// what somebody said and it can be wrong. That distinction is the entire
+/// remaining job of the `channel` field this replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Content {
+    /// Typed — what they wrote.
+    Text(String),
+    /// Recognized — the best guess at what they said. Never paired with
+    /// [`Author::Agent`]: for the agent, text is the source and synthesis is a
+    /// rendering of it, so its spoken audio is not a message.
+    ///
+    /// **The recording is part of this content, not an attachment to it.** A spoken
+    /// message *is* audio and `text` is the derived view of it, so the two travel as
+    /// one value — which is also what keeps a clip reachable for replay and for
+    /// keepsakes when a day is faded. `None` when the words arrived without bytes
+    /// kept (a live partial that settled, a transcript posted on its own).
+    Speech {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio: Option<Media>,
+    },
+    /// Handed over, in either direction.
+    File(FileRef),
+}
+
+impl Content {
+    /// The words, for a reader that does not care how they arrived. `None` for a
+    /// file, which has none — its name is [`FileRef::name`].
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Content::Text(t) | Content::Speech { text: t, .. } => Some(t),
+            Content::File(_) => None,
+        }
+    }
+
+    /// The bytes behind this content, if any were kept — a spoken clip or a handed
+    /// file. What [`crate::mind::memory::decay`] fades and what a replay reaches for.
+    pub fn media_file(&self) -> Option<&str> {
+        match self {
+            Content::Speech { audio: Some(m), .. } => Some(&m.file),
+            Content::File(f) => Some(&f.reff),
+            _ => None,
+        }
+    }
+}
+
+/// A file in the conversation: where the bytes are, what they are, and what a
+/// person calls it.
+///
+/// **The name is a field.** It used to be deliberately absent, on the ground that
+/// it was already inside the message text and a second copy would let the live path
+/// and the journal-seeded path disagree. Both halves of that reason are gone: a
+/// file message has no prose to hide a name in, and one canonical [`Message`] is
+/// what removes the disagreement. Both consumers need it — the renderer draws it
+/// under the thumbnail, the prompt builder writes "they handed you passport.jpg".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileRef {
+    /// [`crate::mind::memory::media::signal_ref`] — channel-qualified, so it is a
+    /// path rather than a path plus a guess. `GET /api/media/<ref>`.
+    #[serde(rename = "ref")]
+    pub reff: String,
+    pub mime: String,
+    pub name: String,
+}
+
+/// What crosses the boundary inward, on its way to Reaction.
+///
+/// Two kinds, because they are two kinds: somebody said something, or something was
+/// perceived. Both reach the mind and both can drive a turn — a face appearing is
+/// context for the next thing said — but only one of them is conversation, and
+/// keeping them apart here is what stops a camera frame from needing a `Sender` and
+/// a channel filter to be told from a sentence.
+#[derive(Debug, Clone)]
+pub enum Inbound {
+    Message(Message),
+    Observed(Signal),
+}
+
+// -----------------------------------------------------------------------------
+// Appraisal — Reaction's judgement about a message
+// -----------------------------------------------------------------------------
+
+/// What Reaction concluded about a message, keyed to the message it concluded it
+/// about.
+///
+/// **Separate from [`Message`] because a message is immutable.** Relevance is
+/// computed after the message is journaled, so storing it on the message would mean
+/// a field authoritative in memory and always null on disk, rebuilt at read time by
+/// folding update records — the live-versus-replay divergence coming back through
+/// the one mutable field. It is a judgement *about* a message, in the same category
+/// as an observation, and it lives alongside rather than inside.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Appraisal {
+    pub message_id: String,
+    pub ts: DateTime<Utc>,
+    pub relevance: f32,
+}
+
+// -----------------------------------------------------------------------------
 // JournalEntry — the discriminated union written to the day-log
 // -----------------------------------------------------------------------------
 
+/// One line in a channel-day log. **Four kinds, and only one of them is
+/// conversation** — the split is what stopped a view, a face and a check-in from
+/// being told apart by filtering on a channel field the message no longer carries.
+///
+/// Lines written before this shape (`signal_in` / `signal_out`) are read through
+/// [`crate::mind::memory::journal::StoredLine`] and classified on their way in.
+/// Nothing is rewritten on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum JournalEntry {
-    SignalIn {
-        /// Stable, time-sortable id (uuidv7): the cursor + citation key, and the
-        /// stem of any co-located media blob (`audio-<id>.mp3`).
+    /// Human ↔ agent communication. `channel` is the storage routing key — which
+    /// day-log this line lives in, and which subtree [`crate::mind::memory::decay`]
+    /// fades as a unit — and is deliberately *not* part of the [`Message`].
+    Message { channel: Channel, message: Message },
+    /// A view put up, replaced or dismissed. Replayed to restore the screen after a
+    /// restart, which is why it is neither conversation nor machinery. Always on
+    /// [`Channel::View`].
+    Presentation { id: String, ts: DateTime<Utc>, body: String },
+    /// Ambient perception — a face seen, a room gone quiet, the person walking the
+    /// view band. Nobody said anything.
+    Observation {
         id: String,
         ts: DateTime<Utc>,
         channel: Channel,
         body: String,
-        /// Named stream this signal arrived on, or absent for the default stream.
+        /// Named stream this arrived on (`webcam`, `headset`), or absent for the
+        /// default. Carried so concurrent sources of one channel stay apart.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stream: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         media: Option<Media>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        origin: Option<Origin>,
-        /// Which person this came from — see [`Sender`]. Absent on machine channels,
-        /// and absent on every entry written before attribution existed: **those read
-        /// as unattributed and are never backfilled**, because who sent them is not
-        /// recoverable and inventing it is the failure this field exists to stop.
+        /// Who was perceived, when that was decided at the boundary. Absent is a
+        /// real answer and is **never backfilled** from content.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sender: Option<Sender>,
     },
-    SignalOut {
+    /// The machinery: a check-in coming due, a worker's report, mail between rungs.
+    /// Journaled because without it the log shows a turn's output with nothing that
+    /// could have caused it, and a restart cannot tell the turn happened at all.
+    Internal {
         id: String,
         ts: DateTime<Utc>,
         channel: Channel,
         body: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        media: Option<Media>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Origin>,
     },
@@ -351,12 +526,12 @@ mod sender_tests {
         let line = r#"{"kind":"signal_in","id":"019ffabf-32e6-7c92-bbbe-9216732ef264",
             "ts":"2026-08-13T10:51:02.246936Z","channel":"text",
             "body":"show me the sessions view","origin":"human"}"#;
-        let entry: JournalEntry = serde_json::from_str(line).expect("old lines still parse");
-        let JournalEntry::SignalIn { sender, body, .. } = entry else {
-            panic!("expected a signal_in");
+        let entry = crate::mind::memory::journal::classify_line(line).expect("old lines still parse");
+        let JournalEntry::Message { message, .. } = entry else {
+            panic!("a typed line is a message, whenever it was written");
         };
-        assert!(sender.is_none(), "an old line names nobody");
-        assert!(body.contains("sessions"));
+        assert!(message.from.sender().is_none_or(|s| s.subject.is_none()), "an old line names nobody");
+        assert_eq!(message.content.text(), Some("show me the sessions view"));
     }
 
     /// The absent field must stay absent on the way back out, so a machine-channel
@@ -364,16 +539,7 @@ mod sender_tests {
     /// gaining a null that later code could misread as a person.
     #[test]
     fn no_sender_serializes_to_no_field() {
-        let entry = JournalEntry::SignalIn {
-            id: "1".into(),
-            ts: Utc::now(),
-            channel: Channel::Clock,
-            body: "check-in due".into(),
-            stream: None,
-            media: None,
-            origin: Some(Origin::Host),
-            sender: None,
-        };
+        let entry = crate::mind::memory::journal::legacy_signal_in("1".into(), Utc::now(), Channel::Clock, "check-in due".to_string(), None, None, Some(Origin::Host), None);
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("sender"), "{json}");
     }

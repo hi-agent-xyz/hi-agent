@@ -163,19 +163,19 @@ async fn agent_says(seams: &ServerSeams, memory: &Memory, text: &str) {
     let ts = Utc::now();
     memory
         .journal
-        .append(hi_agent::types::JournalEntry::SignalOut {
-            id: id.clone(),
-            ts,
-            channel: hi_agent::types::Channel::Text,
-            body: text.to_owned(),
-            media: None,
-            origin: Some(hi_agent::types::Origin::Reaction),
-        })
+        .append(hi_agent::mind::memory::journal::legacy_signal_out(id.clone(), ts, hi_agent::types::Channel::Text, text.to_owned(), None, Some(hi_agent::types::Origin::Reaction)))
         .await
         .expect("journal the message");
     seams
         .out_tx
-        .send(OutboundSignal::Text { id, ts, text: text.to_owned() })
+        .send(OutboundSignal::Say {
+            message: hi_agent::types::Message {
+                id,
+                ts,
+                from: hi_agent::types::Author::Agent,
+                content: hi_agent::types::Content::Text(text.to_owned()),
+            },
+        })
         .await
         .expect("outbound seam");
 }

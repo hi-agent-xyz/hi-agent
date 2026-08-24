@@ -70,7 +70,7 @@ use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
 use crate::foundation::segment::{Segmenter, Speech};
-use crate::types::{Channel, JournalEntry, Media, Origin, Sender, SenderBasis, Signal};
+use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Media, Message, Origin, Sender, SenderBasis, Signal};
 use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";
@@ -687,12 +687,6 @@ async fn deliver_transcript(
         Some((ts, id, media)) => (ts, id, Some(media)),
         None => (Utc::now(), Uuid::now_v7().to_string(), None),
     };
-    let signal = Signal {
-        channel: Channel::Audio,
-        body: text.to_owned(),
-        stream: stream.clone(),
-        ts,
-    };
     crate::foundation::channel_log::inbound(Channel::Audio, text);
     // **Ambient — never the owner default.** A microphone picks up whoever is in
     // range: the person, someone else in the room, a television. Only voiceprint
@@ -704,24 +698,22 @@ async fn deliver_transcript(
         Some(subject) => Sender { subject: Some(subject.clone()), basis: SenderBasis::Cluster },
         None => Sender::unknown(),
     };
-    let entry = JournalEntry::SignalIn {
-        id: id.clone(),
+    let _ = &stream;
+    let message = Message {
+        id,
         ts,
-        channel: Channel::Audio,
-        body: text.to_owned(),
-        stream,
-        media,
-        origin: Some(Origin::Human),
-        sender: Some(sender.clone()),
+        from: Author::Person(sender),
+        content: Content::Speech { text: text.to_owned(), audio: media },
     };
+    let entry = JournalEntry::Message { channel: Channel::Audio, message: message.clone() };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
     }
     // Append before dispatching inward. A spoken line is a message like a typed
     // one, so it rides the text channel into the conversation (a display concern);
     // the journal above keeps it on `Audio`, where it was actually heard.
-    state.note_message(Channel::Text, id, ts, text, None, Some(sender));
-    if let Err(err) = state.inbound.send(signal).await {
+    state.note_message(Channel::Text, message.clone());
+    if let Err(err) = state.inbound.send(Inbound::Message(message)).await {
         tracing::error!(error = %err, "inbound channel closed");
         return false;
     }

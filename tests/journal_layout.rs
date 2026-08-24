@@ -10,33 +10,15 @@ use hi_agent::types::{Channel, JournalEntry, Media, Origin};
 use tempfile::tempdir;
 
 fn signal_in(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str, media: Option<Media>) -> JournalEntry {
-    JournalEntry::SignalIn {
-        id: id.into(),
-        ts,
-        channel,
-        body: body.into(),
-        stream: None,
-        media,
-        origin: Some(Origin::Human),
-        sender: None,
-    }
+    hi_agent::mind::memory::journal::legacy_signal_in(id.into(), ts, channel, body.into(), None, media, Some(Origin::Human), None)
 }
 
 fn signal_out(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str) -> JournalEntry {
-    JournalEntry::SignalOut {
-        id: id.into(),
-        ts,
-        channel,
-        body: body.into(),
-        media: None,
-        origin: Some(Origin::Reaction),
-    }
+    hi_agent::mind::memory::journal::legacy_signal_out(id.into(), ts, channel, body.into(), None, Some(Origin::Reaction))
 }
 
 fn id_of(e: &JournalEntry) -> &str {
-    match e {
-        JournalEntry::SignalIn { id, .. } | JournalEntry::SignalOut { id, .. } => id,
-    }
+    hi_agent::mind::memory::journal::entry_id(e)
 }
 
 #[tokio::test]
@@ -94,13 +76,20 @@ async fn legacy_reactor_origin_loads_as_reaction() {
         .unwrap();
     assert_eq!(got.len(), 1, "legacy row is not skipped");
     match &got[0] {
-        JournalEntry::SignalOut { origin, .. } => assert_eq!(*origin, Some(Origin::Reaction)),
-        JournalEntry::SignalIn { .. } => panic!("expected outbound legacy row"),
+        JournalEntry::Message { message, .. } => {
+            assert!(message.from.is_agent(), "the legacy outbound row is the agent's own")
+        }
+        other => panic!("expected the outbound legacy row, got {other:?}"),
     }
 
+    // Re-serialized under the shape the system stores now: which *mind* produced a
+    // line is no longer a field on a message, because a message has two ends and
+    // `from` names the one that matters. The alias it was testing still does its job
+    // one layer up — the legacy `reactor` line above loaded at all, and loaded as the
+    // agent's own rather than as somebody's words.
     let encoded = serde_json::to_string(&got[0]).unwrap();
-    assert!(encoded.contains(r#""origin":"reaction""#));
-    assert!(!encoded.contains(r#""origin":"reactor""#));
+    assert!(encoded.contains(r#""from":"agent""#), "{encoded}");
+    assert!(!encoded.contains("reactor"), "{encoded}");
 }
 
 #[tokio::test]

@@ -476,14 +476,15 @@ pub async fn post_in_view(
     // through a control nobody else can reach. Labelled `owner` rather than written
     // bare — see `docs/arch/signal-attribution.md`.
     let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
-    let entry = JournalEntry::SignalIn {
+    // Perception, not conversation: the person walking the band is something the
+    // agent noticed them do, read into the next turn's context rather than answered.
+    let entry = JournalEntry::Observation {
         id: Uuid::now_v7().to_string(),
         ts,
         channel: Channel::View,
         body: line.clone(),
         stream: None,
         media: None,
-        origin: Some(Origin::Human),
         sender: Some(sender),
     };
     if let Err(err) = state.memory.journal.append(entry).await {

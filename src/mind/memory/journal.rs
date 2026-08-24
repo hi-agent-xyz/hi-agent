@@ -23,7 +23,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::types::{Channel, JournalEntry};
+use crate::types::{
+    Author, Channel, Content, FileRef, JournalEntry, Message, Origin, Sender, SenderBasis,
+};
 
 use super::layout;
 
@@ -140,30 +142,345 @@ pub fn uuidv7_ts(id: &str) -> Option<DateTime<Utc>> {
 
 pub fn entry_ts(entry: &JournalEntry) -> DateTime<Utc> {
     match entry {
-        JournalEntry::SignalIn { ts, .. } | JournalEntry::SignalOut { ts, .. } => *ts,
+        JournalEntry::Message { message, .. } => message.ts,
+        JournalEntry::Presentation { ts, .. }
+        | JournalEntry::Observation { ts, .. }
+        | JournalEntry::Internal { ts, .. } => *ts,
     }
 }
 
+/// Which day-log this line lives in. For a message this is the envelope's routing
+/// key, not a field of the [`crate::types::Message`] — see `docs/arch/message.md`.
+/// A presentation is always the view channel; it carries no field because there is
+/// nothing else it could be.
 pub fn entry_channel(entry: &JournalEntry) -> Channel {
     match entry {
-        JournalEntry::SignalIn { channel, .. } | JournalEntry::SignalOut { channel, .. } => *channel,
+        JournalEntry::Message { channel, .. }
+        | JournalEntry::Observation { channel, .. }
+        | JournalEntry::Internal { channel, .. } => *channel,
+        JournalEntry::Presentation { .. } => Channel::View,
     }
 }
 
 pub fn entry_id(entry: &JournalEntry) -> &str {
     match entry {
-        JournalEntry::SignalIn { id, .. } | JournalEntry::SignalOut { id, .. } => id,
+        JournalEntry::Message { message, .. } => &message.id,
+        JournalEntry::Presentation { id, .. }
+        | JournalEntry::Observation { id, .. }
+        | JournalEntry::Internal { id, .. } => id,
     }
 }
 
-/// Who an inbound signal came from, or `None` — for an outbound signal (the agent
-/// itself), for a machine channel where there was no person, and for every entry
-/// written before attribution existed. See [`crate::types::Sender`].
+/// Which person this line came from, or `None` — for the agent's own messages, for
+/// machinery where there was no person, and for every entry written before
+/// attribution existed. See [`crate::types::Sender`].
 pub fn entry_sender(entry: &JournalEntry) -> Option<&crate::types::Sender> {
     match entry {
-        JournalEntry::SignalIn { sender, .. } => sender.as_ref(),
-        JournalEntry::SignalOut { .. } => None,
+        JournalEntry::Message { message, .. } => message.from.sender(),
+        JournalEntry::Observation { sender, .. } => sender.as_ref(),
+        JournalEntry::Presentation { .. } | JournalEntry::Internal { .. } => None,
     }
+}
+
+/// The words in an entry, whatever kind it is. A file message has none — its name
+/// is [`crate::types::FileRef::name`] — so this is empty rather than invented.
+pub fn entry_body(entry: &JournalEntry) -> &str {
+    match entry {
+        JournalEntry::Message { message, .. } => message.content.text().unwrap_or_default(),
+        JournalEntry::Presentation { body, .. }
+        | JournalEntry::Observation { body, .. }
+        | JournalEntry::Internal { body, .. } => body,
+    }
+}
+
+/// The stored bytes behind an entry, when it kept any: a spoken clip or a camera
+/// minute. A handed file keeps its own resolved ref instead — see
+/// [`entry_media_ref`].
+pub fn entry_media(entry: &JournalEntry) -> Option<&crate::types::Media> {
+    match entry {
+        JournalEntry::Message { message, .. } => match &message.content {
+            Content::Speech { audio, .. } => audio.as_ref(),
+            _ => None,
+        },
+        JournalEntry::Observation { media, .. } => media.as_ref(),
+        _ => None,
+    }
+}
+
+/// An entry's media ref in the one grammar every reader resolves
+/// ([`super::media::signal_ref`]), or `None` when it kept no bytes.
+pub fn entry_media_ref(entry: &JournalEntry) -> Option<String> {
+    if let JournalEntry::Message { message, .. } = entry
+        && let Content::File(f) = &message.content
+    {
+        return Some(f.reff.clone());
+    }
+    let m = entry_media(entry)?;
+    Some(super::media::signal_ref(entry_channel(entry), entry_ts(entry), &m.file))
+}
+
+/// What those bytes are, for a reader deciding whether to look at them.
+pub fn entry_mime(entry: &JournalEntry) -> Option<&str> {
+    if let JournalEntry::Message { message, .. } = entry
+        && let Content::File(f) = &message.content
+    {
+        return Some(&f.mime);
+    }
+    entry_media(entry).map(|m| m.mime.as_str())
+}
+
+// -----------------------------------------------------------------------------
+// Reading lines written before the four-kind split
+// -----------------------------------------------------------------------------
+
+/// A line as it may appear on disk: the shape written now, or the `signal_in` /
+/// `signal_out` pair written before [`JournalEntry`] split into four kinds.
+///
+/// **Nothing on disk is rewritten.** Old lines are classified on the way in and the
+/// file keeps whatever it already said, which is the same rule attribution follows:
+/// the record is what happened, and a migration that edits it is a migration that
+/// can be wrong about it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredLine {
+    Current(JournalEntry),
+    Legacy(LegacyEntry),
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LegacyEntry {
+    SignalIn {
+        id: String,
+        ts: DateTime<Utc>,
+        channel: Channel,
+        body: String,
+        #[serde(default)]
+        stream: Option<String>,
+        #[serde(default)]
+        media: Option<crate::types::Media>,
+        #[serde(default)]
+        origin: Option<Origin>,
+        #[serde(default)]
+        sender: Option<Sender>,
+    },
+    SignalOut {
+        id: String,
+        ts: DateTime<Utc>,
+        channel: Channel,
+        body: String,
+        #[serde(default)]
+        #[allow(dead_code)]
+        media: Option<crate::types::Media>,
+        #[serde(default)]
+        origin: Option<Origin>,
+    },
+}
+
+/// Build an entry from the field set an old `signal_in` line carried, classified by
+/// the same rule [`LegacyEntry::classify`] applies on read. Fixtures and callers
+/// written against the pre-split shape go through here rather than each deciding
+/// for themselves what kind a channel implies.
+/// Parse one journal line — written now or before the four-kind split — into the
+/// kind it is. The read path's own entry point, exposed so a test can assert what a
+/// line on disk becomes without going through a file.
+pub fn classify_line(line: &str) -> Option<JournalEntry> {
+    match serde_json::from_str::<StoredLine>(line).ok()? {
+        StoredLine::Current(e) => Some(e),
+        StoredLine::Legacy(old) => Some(old.classify()),
+    }
+}
+
+pub fn legacy_signal_in(
+    id: String,
+    ts: DateTime<Utc>,
+    channel: Channel,
+    body: String,
+    stream: Option<String>,
+    media: Option<crate::types::Media>,
+    origin: Option<Origin>,
+    sender: Option<Sender>,
+) -> JournalEntry {
+    LegacyEntry::SignalIn { id, ts, channel, body, stream, media, origin, sender }.classify()
+}
+
+/// The same, for an old `signal_out` line.
+pub fn legacy_signal_out(
+    id: String,
+    ts: DateTime<Utc>,
+    channel: Channel,
+    body: String,
+    media: Option<crate::types::Media>,
+    origin: Option<Origin>,
+) -> JournalEntry {
+    LegacyEntry::SignalOut { id, ts, channel, body, media, origin }.classify()
+}
+
+impl LegacyEntry {
+    /// Sort one old line into the kind it always was.
+    ///
+    /// The channel is what decides, because before the split it was the only thing
+    /// that could: `transcript::from_journal` picked conversation out of the log by
+    /// matching exactly `Text`, `Audio` and `File` inbound and `Text` outbound, and
+    /// this reproduces that judgement rather than inventing a new one.
+    fn classify(self) -> JournalEntry {
+        match self {
+            LegacyEntry::SignalIn { id, ts, channel, body, stream, media, origin, sender } => {
+                // An absent origin is a line older than the field, and on an input
+                // channel every one of those was a person. Anything explicitly not
+                // human is machinery whatever channel it rode in on.
+                if !matches!(origin, None | Some(Origin::Human)) {
+                    return JournalEntry::Internal { id, ts, channel, body, origin };
+                }
+                let from = Author::Person(recover_voice_sender(sender.clone(), &body));
+                match channel {
+                    Channel::Text => JournalEntry::Message {
+                        channel,
+                        message: Message { id, ts, from, content: Content::Text(strip_markers(&body)) },
+                    },
+                    Channel::Audio => JournalEntry::Message {
+                        channel,
+                        message: Message { id, ts, from, content: Content::Speech { text: strip_markers(&body), audio: media } },
+                    },
+                    // A file line without media is a framing with nothing behind it —
+                    // it was never renderable and is not a message now.
+                    Channel::File => match media {
+                        Some(m) => {
+                            let reff = super::media::signal_ref(Channel::File, ts, &m.file);
+                            let name = recover_file_name(&body, &m.file);
+                            JournalEntry::Message {
+                                channel,
+                                message: Message {
+                                    id,
+                                    ts,
+                                    from,
+                                    content: Content::File(FileRef { reff, mime: m.mime, name }),
+                                },
+                            }
+                        }
+                        None => JournalEntry::Observation {
+                            id,
+                            ts,
+                            channel,
+                            body,
+                            stream,
+                            media: None,
+                            sender,
+                        },
+                    },
+                    Channel::Clock | Channel::Worker => {
+                        JournalEntry::Internal { id, ts, channel, body, origin }
+                    }
+                    _ => JournalEntry::Observation { id, ts, channel, body, stream, media, sender },
+                }
+            }
+            LegacyEntry::SignalOut { id, ts, channel, body, origin, .. } => match channel {
+                Channel::Text => JournalEntry::Message {
+                    channel,
+                    message: Message {
+                        id,
+                        ts,
+                        from: Author::Agent,
+                        content: Content::Text(body),
+                    },
+                },
+                Channel::View => JournalEntry::Presentation { id, ts, body },
+                _ => JournalEntry::Internal { id, ts, channel, body, origin },
+            },
+        }
+    }
+}
+
+/// Take the sender back out of a carrier's own `⟨voice: …⟩` marker.
+///
+/// **A recovery, not a backfill, and the difference is where the name came from.**
+/// `signal-attribution.md` forbids deriving a sender from *content* and accepts that
+/// old signals are unattributed — because who sent them is not recoverable and
+/// inventing it is the failure that document exists to stop. Here it *is*
+/// recoverable, verbatim: the voiceprint matched at the boundary and the carrier
+/// wrote its conclusion down. It wrote it into the body because at the time the body
+/// was the only place there was; reading it back is finding the boundary's own record
+/// where the boundary happened to put it.
+///
+/// The `⟨…⟩` grammar is what makes this safe rather than a parse of prose: only
+/// carriers write it and a person cannot type it. Nothing is read out of what
+/// anybody *said*.
+///
+/// Deliberately partial. The live mic wrote the tag only when the **speaker
+/// changed**, so within one person's run only the first line carries it and the rest
+/// stay unattributed. Carrying a name forward across untagged lines would mean
+/// assuming the speaker did not change, and an assumption is exactly what may not be
+/// written into this field.
+fn recover_voice_sender(sender: Option<Sender>, body: &str) -> Sender {
+    // Defer only to a sender that actually names somebody. The hardcoded
+    // `Sender::unknown()` the old audio path wrote is *present* without being
+    // grounded, and treating its presence as an answer is how a name that had been
+    // visible for months became a silhouette.
+    if let Some(s) = sender
+        && s.subject.is_some()
+    {
+        return s;
+    }
+    // `⟨voice: 老王 ~0.82⟩` — the score is the carrier's confidence, not part of
+    // anybody's name, and writing it into `subject` would open a facet called
+    // "老王 ~0.82" that no later match ever joins.
+    match marker_value(body, "voice: ").map(|v| v.split(" ~").next().unwrap_or(v).trim()) {
+        Some(name) if !name.is_empty() => Sender {
+            subject: Some(name.to_owned()),
+            basis: SenderBasis::Cluster,
+        },
+        _ => Sender { subject: None, basis: SenderBasis::Unknown },
+    }
+}
+
+/// The file's name as the carrier wrote it: `The user handed you a file: passport.jpg
+/// (image/jpeg, 240 KB).` — the one framing `files.rs` has ever used. Falls back to
+/// the stored blob's own basename, which is a real name for the bytes even though it
+/// is not the one the person chose.
+fn recover_file_name(body: &str, blob_rel: &str) -> String {
+    let body = strip_markers(body);
+    if let Some(rest) = body.split("file: ").nth(1) {
+        let name = rest.split(" (").next().unwrap_or("").trim().trim_end_matches('.');
+        if !name.is_empty() {
+            return name.to_owned();
+        }
+    }
+    blob_rel.rsplit('/').next().unwrap_or(blob_rel).to_owned()
+}
+
+/// Strip every `⟨…⟩` marker a carrier wrote for the mind. Under
+/// `docs/arch/message.md` nothing writes them any more — carriers set the field —
+/// so this runs only over lines old enough to still carry them.
+fn strip_markers(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut depth = 0usize;
+    for ch in body.chars() {
+        match ch {
+            '⟨' => depth += 1,
+            '⟩' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out.trim().to_owned()
+}
+
+/// The text of the first `⟨<prefix>…⟩` marker in `body`, if there is one.
+///
+/// Scans **every** marker, not just the leading one: a carrier may have written a
+/// locator and a voice tag on the same line, in either order, and reading only the
+/// first is how the speaker went missing from a line that plainly named them.
+fn marker_value<'a>(body: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut rest = body;
+    while let Some(start) = rest.find('⟨') {
+        rest = &rest[start + '⟨'.len_utf8()..];
+        let end = rest.find('⟩')?;
+        if let Some(v) = rest[..end].strip_prefix(prefix) {
+            return Some(v);
+        }
+        rest = &rest[end + '⟩'.len_utf8()..];
+    }
+    None
 }
 
 /// Walk every channel folder under `raw/`, appending parsed entries. Each
@@ -245,8 +562,9 @@ async fn read_log_into(path: &Path, out: &mut Vec<JournalEntry>) -> anyhow::Resu
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<JournalEntry>(trimmed) {
-            Ok(entry) => out.push(entry),
+        match serde_json::from_str::<StoredLine>(trimmed) {
+            Ok(StoredLine::Current(entry)) => out.push(entry),
+            Ok(StoredLine::Legacy(old)) => out.push(old.classify()),
             Err(err) => {
                 tracing::warn!(error = %err, line = %trimmed, "skipping malformed journal line");
             }
@@ -260,16 +578,7 @@ mod after_cursor_tests {
     use super::*;
 
     async fn append_text(j: &Journal, id: &str, ts: DateTime<Utc>) {
-        j.append(JournalEntry::SignalIn {
-            id: id.to_string(),
-            ts,
-            channel: Channel::Text,
-            body: "x".into(),
-            stream: None,
-            media: None,
-            origin: None,
-            sender: None,
-        })
+        j.append(crate::mind::memory::journal::legacy_signal_in(id.to_string(), ts, Channel::Text, "x".to_string(), None, None, None, None))
         .await
         .unwrap();
     }

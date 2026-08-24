@@ -1211,7 +1211,15 @@ fn apply_journal(
             continue;
         }
         match entry {
-            JournalEntry::SignalIn { channel, .. } => {
+            // The agent's own messages are replies; a person's are counted by how they
+            // arrived, which is the envelope's channel.
+            JournalEntry::Message { channel, message } if message.from.is_agent() => {
+                let _ = channel;
+                summary.agent_text_replies += 1;
+                active_days.insert(at.date_naive());
+                point(series, at).agent_replies += 1;
+            }
+            JournalEntry::Message { channel, .. } => {
                 let human = match channel {
                     Channel::Text => {
                         summary.human_text_messages += 1;
@@ -1234,15 +1242,9 @@ fn apply_journal(
                     point(series, at).user_messages += 1;
                 }
             }
-            JournalEntry::SignalOut {
-                channel: Channel::Text,
-                ..
-            } => {
-                summary.agent_text_replies += 1;
-                active_days.insert(at.date_naive());
-                point(series, at).agent_replies += 1;
-            }
-            JournalEntry::SignalOut { .. } => {}
+            JournalEntry::Presentation { .. }
+            | JournalEntry::Observation { .. }
+            | JournalEntry::Internal { .. } => {}
         }
     }
     human_times.sort();
@@ -1961,16 +1963,7 @@ mod tests {
 
     #[test]
     fn conversation_windows_split_after_thirty_minutes() {
-        let entry = |id: &str, ts| JournalEntry::SignalIn {
-            id: id.into(),
-            ts,
-            channel: Channel::Text,
-            body: "hi".into(),
-            stream: None,
-            media: None,
-            origin: None,
-            sender: None,
-        };
+        let entry = |id: &str, ts| crate::mind::memory::journal::legacy_signal_in(id.into(), ts, Channel::Text, "hi".to_string(), None, None, None, None);
         let entries = vec![
             entry("1", at(17, 9)),
             entry("2", at(17, 9) + Duration::minutes(30)),

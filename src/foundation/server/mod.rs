@@ -55,7 +55,7 @@ pub mod vision;
 pub mod wire;
 pub mod workers;
 
-pub use transcript::{Attachment, Frame, Message, Role, Transcript};
+pub use transcript::{Attachment, Frame, Role, Transcript, Wire};
 pub use view_bus::ViewBus;
 
 /// Outbound synthesized-audio event. One turn's speech is a continuous stream:
@@ -227,7 +227,7 @@ pub struct FacePresence {
 /// Shared state passed to every handler via `axum::extract::State`.
 pub struct AppState {
     /// Inbound signals from every channel POST. The reaction consumes these.
-    pub inbound: mpsc::Sender<Signal>,
+    pub inbound: mpsc::Sender<crate::types::Inbound>,
 
     /// Traffic a listener hands in for a standing duty (`POST /api/in/duty/{key}`).
     ///
@@ -383,29 +383,12 @@ impl AppState {
     /// just wrote to the journal, handed over rather than decided again here, so the
     /// live conversation and the one a restart rebuilds cannot disagree about who
     /// was talking.
-    pub fn note_message(
-        &self,
-        channel: Channel,
-        id: String,
-        ts: DateTime<Utc>,
-        text: &str,
-        attachment: Option<Attachment>,
-        sender: Option<crate::types::Sender>,
-    ) {
-        self.transcript.append(Message {
-            id,
-            ts,
-            role: Role::User,
-            text: transcript::display_text(text),
-            attachment,
-            sender,
-        });
-        let _ = self.input_echo.send(InputEcho {
-            channel,
-            text: text.to_owned(),
-            is_final: true,
-            ts,
-        });
+    pub fn note_message(&self, channel: Channel, message: crate::types::Message) {
+        let wire = transcript::Wire::from(message);
+        let text = wire.text.clone();
+        let ts = wire.ts;
+        self.transcript.append(wire);
+        let _ = self.input_echo.send(InputEcho { channel, text, is_final: true, ts });
     }
 
     /// A rolling recognition partial: a preview of a message, not a message.
@@ -456,7 +439,7 @@ pub fn build(
     // HTTP front owns end to end — the gate below is the only thing that reads it
     // on the hot path, and `AppState` is how the four routes reach it.
     let surface_reach = Arc::new(crate::foundation::surfaces::Surfaces::new(data_dir.clone()));
-    let (inbound_tx, inbound_rx) = mpsc::channel::<Signal>(1024);
+    let (inbound_tx, inbound_rx) = mpsc::channel::<crate::types::Inbound>(1024);
     // Duty deliveries. Bounded like every other seam, and dropped rather than awaited
     // when full — the door never holds a listener open (see `server::duty`).
     let (duty_tx, duty_rx) =
@@ -763,7 +746,7 @@ pub fn build(
 /// a non-HTTP producer — the come-and-see-this gesture — can inject inbound
 /// signals through the same path as a channel POST.
 pub struct ServerSeams {
-    pub inbound_rx: mpsc::Receiver<Signal>,
+    pub inbound_rx: mpsc::Receiver<crate::types::Inbound>,
     pub duty_rx: mpsc::Receiver<crate::body::reaction::DutyDelivery>,
     pub warm_rx: mpsc::Receiver<()>,
     pub transcript: Transcript,

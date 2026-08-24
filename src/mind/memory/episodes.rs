@@ -346,16 +346,7 @@ mod reflection_tests {
         let mut ids = Vec::new();
         for _ in 0..n {
             let id = Uuid::now_v7().to_string();
-            j.append(JournalEntry::SignalIn {
-                id: id.clone(),
-                ts: Utc::now(),
-                channel: Channel::Text,
-                body: "x".into(),
-                stream: None,
-                media: None,
-                origin: None,
-                sender: None,
-            })
+            j.append(crate::mind::memory::journal::legacy_signal_in((id.clone()).to_string(), Utc::now(), Channel::Text, "x".to_string(), None, None, None, None))
             .await
             .unwrap();
             ids.push(id);

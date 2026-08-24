@@ -55,7 +55,7 @@ use crate::foundation::pcm;
 use crate::mind::memory::{decay, episodes, facets, layout, people_vectors};
 use crate::foundation::observatory::EventKind;
 use crate::foundation::registry;
-use crate::types::{Channel, JournalEntry};
+use crate::types::{Channel, JournalEntry, Origin};
 use crate::foundation::vendors::ffmpeg_frame;
 
 use super::Reaction;
@@ -358,12 +358,31 @@ fn human_bytes(n: u64) -> String {
 /// the speaker glyph and channel formatting match what the reaction sees.
 fn render_signal(e: &JournalEntry) -> String {
     use crate::mind::memory::snapshot::{Speaker, transcript_line};
+    use crate::mind::memory::journal::{entry_body, entry_channel};
     match e {
-        JournalEntry::SignalIn { channel, body, stream, .. } => {
+        JournalEntry::Message { message, .. } if message.from.is_agent() => {
+            transcript_line(Speaker::You, Channel::Text.as_str(), entry_body(e))
+        }
+        JournalEntry::Message { .. } => {
+            transcript_line(Speaker::Them, entry_channel(e).as_str(), entry_body(e))
+        }
+        JournalEntry::Presentation { body, .. } => {
+            transcript_line(Speaker::You, Channel::View.as_str(), body.as_str())
+        }
+        JournalEntry::Observation { channel, body, stream, .. } => {
             transcript_line(Speaker::Them, &channel.with_stream(stream.as_deref()), body.as_str())
         }
-        JournalEntry::SignalOut { channel, body, .. } => {
-            transcript_line(Speaker::You, channel.as_str(), body.as_str())
+        // Machinery the agent's own rungs emitted is the agent's side of the row; a
+        // worker reporting back is something that reached it. Rendering both as
+        // inbound is how "spoke the reply aloud" showed up as the person talking.
+        JournalEntry::Internal { channel, body, origin, .. } => {
+            let who = match origin {
+                // Only what a rung *emitted* is the agent's side. A deadline coming
+                // due is `Host`, and it arrives at the agent like an utterance does.
+                Some(Origin::Reaction) => Speaker::You,
+                _ => Speaker::Them,
+            };
+            transcript_line(who, channel.as_str(), body.as_str())
         }
     }
 }
@@ -371,7 +390,7 @@ fn render_signal(e: &JournalEntry) -> String {
 /// Whether a frontier signal carries a still image — so the prompt can mark it
 /// `⟨image⟩` even when face clustering found nothing or is unconfigured.
 fn is_image(e: &JournalEntry) -> bool {
-    matches!(e, JournalEntry::SignalIn { media: Some(m), .. } if m.mime.starts_with("image/"))
+    crate::mind::memory::journal::entry_mime(e).is_some_and(|m| m.starts_with("image/"))
 }
 
 /// The ref for a still-image signal, in the grammar `image-text-to-text` resolves —
@@ -383,13 +402,10 @@ fn is_image(e: &JournalEntry) -> bool {
 /// every channel, so the handed passport and the camera still both come through here;
 /// while the ref omitted its channel, only the camera's resolved.
 fn still_ref(e: &JournalEntry) -> Option<String> {
-    let JournalEntry::SignalIn { ts, channel, media: Some(m), .. } = e else {
-        return None;
-    };
-    if !m.mime.starts_with("image/") {
+    if !crate::mind::memory::journal::entry_mime(e)?.starts_with("image/") {
         return None;
     }
-    Some(crate::mind::memory::media::signal_ref(*channel, *ts, &m.file))
+    crate::mind::memory::journal::entry_media_ref(e)
 }
 
 /// How far a voice turn's window is padded, in seconds, when matching co-present
@@ -421,13 +437,13 @@ fn cooccurring_faces(
     let faces_at: Vec<(DateTime<Utc>, DateTime<Utc>, &[String])> = face_ids
         .iter()
         .filter_map(|(&i, ids)| {
-            let JournalEntry::SignalIn { ts, media, .. } = tail.get(i)? else {
-                return None;
-            };
+            let e = tail.get(i)?;
             if ids.is_empty() {
                 return None;
             }
-            Some((*ts, *ts + media_dur(media.as_ref()), ids.as_slice()))
+            let ts = crate::mind::memory::journal::entry_ts(e);
+            let media = crate::mind::memory::journal::entry_media(e);
+            Some((ts, ts + media_dur(media), ids.as_slice()))
         })
         .collect();
     if faces_at.is_empty() {
@@ -436,11 +452,13 @@ fn cooccurring_faces(
 
     let mut out: HashMap<usize, Vec<String>> = HashMap::new();
     for (j, e) in tail.iter().enumerate() {
-        let JournalEntry::SignalIn { channel: Channel::Audio, ts, media, .. } = e else {
+        if crate::mind::memory::journal::entry_channel(e) != Channel::Audio {
             continue;
-        };
-        let win_start = *ts - tol;
-        let win_end = *ts + media_dur(media.as_ref()) + tol;
+        }
+        let ts = crate::mind::memory::journal::entry_ts(e);
+        let media = crate::mind::memory::journal::entry_media(e);
+        let win_start = ts - tol;
+        let win_end = ts + media_dur(media) + tol;
         let mut seen: Vec<String> = Vec::new();
         for (f_start, f_end, ids) in &faces_at {
             // Two intervals overlap iff each starts no later than the other ends.
@@ -485,10 +503,14 @@ async fn cluster_faces(
         return out;
     }
     for (i, e) in tail.iter().enumerate() {
-        let JournalEntry::SignalIn { channel: Channel::Vision, media: Some(m), ts, .. } = e
-        else {
+        if crate::mind::memory::journal::entry_channel(e) != Channel::Vision {
+            continue;
+        }
+        let Some(m) = crate::mind::memory::journal::entry_media(e) else {
             continue;
         };
+        let ts_val = crate::mind::memory::journal::entry_ts(e);
+        let ts = &ts_val;
         let is_image = m.mime.starts_with("image/");
         let is_video = m.mime.starts_with("video/");
         if !is_image && !is_video {
@@ -561,10 +583,15 @@ async fn cluster_voices(
         return out;
     }
     for (i, e) in tail.iter().enumerate() {
-        let JournalEntry::SignalIn { channel: Channel::Audio, media: Some(m), ts, body, .. } = e
-        else {
+        if crate::mind::memory::journal::entry_channel(e) != Channel::Audio {
+            continue;
+        }
+        let Some(m) = crate::mind::memory::journal::entry_media(e) else {
             continue;
         };
+        let ts_val = crate::mind::memory::journal::entry_ts(e);
+        let ts = &ts_val;
+        let body = crate::mind::memory::journal::entry_body(e);
         // A diarized, multi-speaker clip ("说话人0：…") is not one voice; embedding
         // the blend into a single sample would contaminate a cluster. Mirror the
         // hear-time guard in `voice_note` and skip it — the labeled transcript
@@ -620,16 +647,7 @@ mod frontier_tests {
     use super::*;
 
     fn on(channel: Channel) -> JournalEntry {
-        JournalEntry::SignalIn {
-            id: "x".into(),
-            ts: Utc::now(),
-            channel,
-            body: String::new(),
-            stream: None,
-            media: None,
-            origin: None,
-            sender: None,
-        }
+        crate::mind::memory::journal::legacy_signal_in("x".into(), Utc::now(), channel, String::new(), None, None, None, None)
     }
 
     #[test]
@@ -657,16 +675,7 @@ mod frontier_tests {
     use crate::types::Sender;
 
     fn from(channel: Channel, body: &str, sender: Option<Sender>) -> JournalEntry {
-        JournalEntry::SignalIn {
-            id: "x".into(),
-            ts: Utc::now(),
-            channel,
-            body: body.into(),
-            stream: None,
-            media: None,
-            origin: None,
-            sender,
-        }
+        crate::mind::memory::journal::legacy_signal_in("x".into(), Utc::now(), channel, body.into(), None, None, None, sender)
     }
 
     fn frontier_of(tail: Vec<JournalEntry>) -> String {
@@ -751,41 +760,23 @@ mod cooccur_tests {
     }
 
     fn vision(ts: DateTime<Utc>, dur_ms: Option<u64>) -> JournalEntry {
-        JournalEntry::SignalIn {
-            id: "v".into(),
-            ts,
-            channel: Channel::Vision,
-            body: String::new(),
-            stream: None,
-            media: Some(Media {
+        crate::mind::memory::journal::legacy_signal_in("v".into(), ts, Channel::Vision, String::new(), None, Some(Media {
                 file: "f".into(),
                 mime: "image/jpeg".into(),
                 duration_ms: dur_ms,
                 width: None,
                 height: None,
-            }),
-            origin: None,
-            sender: None,
-        }
+            }), None, None)
     }
 
     fn audio(ts: DateTime<Utc>, dur_ms: Option<u64>) -> JournalEntry {
-        JournalEntry::SignalIn {
-            id: "a".into(),
-            ts,
-            channel: Channel::Audio,
-            body: "hi".into(),
-            stream: None,
-            media: dur_ms.map(|ms| Media {
+        crate::mind::memory::journal::legacy_signal_in("a".into(), ts, Channel::Audio, "hi".to_string(), None, dur_ms.map(|ms| Media {
                 file: "f".into(),
                 mime: "audio/mp3".into(),
                 duration_ms: Some(ms),
                 width: None,
                 height: None,
-            }),
-            origin: None,
-            sender: None,
-        }
+            }), None, None)
     }
 
     fn faces(pairs: &[(usize, &str)]) -> HashMap<usize, Vec<String>> {

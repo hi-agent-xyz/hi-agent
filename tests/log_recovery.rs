@@ -21,27 +21,11 @@ fn signal_in(
     ts: DateTime<Utc>,
     body: &str,
 ) -> JournalEntry {
-    JournalEntry::SignalIn {
-        id: id.into(),
-        ts,
-        channel,
-        body: body.into(),
-        stream: None,
-        media: None,
-        origin: Some(origin),
-        sender: None,
-    }
+    hi_agent::mind::memory::journal::legacy_signal_in(id.into(), ts, channel, body.into(), None, None, Some(origin), None)
 }
 
 fn signal_out(id: &str, channel: Channel, ts: DateTime<Utc>, body: &str) -> JournalEntry {
-    JournalEntry::SignalOut {
-        id: id.into(),
-        ts,
-        channel,
-        body: body.into(),
-        media: None,
-        origin: Some(Origin::Reaction),
-    }
+    hi_agent::mind::memory::journal::legacy_signal_out(id.into(), ts, channel, body.into(), None, Some(Origin::Reaction))
 }
 
 /// The position of `needle` in `haystack`, failing the test with the whole

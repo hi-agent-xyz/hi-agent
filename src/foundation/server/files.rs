@@ -34,7 +34,7 @@ use uuid::Uuid;
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::foundation::server::AppState;
-use crate::types::{Channel, JournalEntry, Media, Origin, Sender, Signal};
+use crate::types::{Author, Channel, Content, FileRef, Inbound, JournalEntry, Message, Sender};
 
 /// How long a minted phone-upload token stays valid. Long enough to pick up your
 /// phone and scan; short enough that a leaked QR doesn't linger.
@@ -75,6 +75,49 @@ impl UploadResult {
 // Core: receive one handed file
 // -----------------------------------------------------------------------------
 
+/// A filesystem-safe lowercase extension for the stored blob, from the original
+/// filename when it has one, else mapped from the mime, else `bin`.
+/// The inverse of [`ext_for`], for serving bytes back. Deliberately a short list
+/// rather than a mime database: the only extensions this route can ever see are the
+/// ones `ext_for` wrote, and anything it doesn't recognize is safest served as
+/// opaque bytes the browser will not try to execute.
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+fn ext_for(name: &str, mime: &str) -> String {
+    if let Some(dot) = name.rfind('.') {
+        let raw = &name[dot + 1..];
+        let ext: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase();
+        if !ext.is_empty() && ext.len() <= 8 {
+            return ext;
+        }
+    }
+    match mime.split(';').next().unwrap_or("").trim() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "application/pdf" => "pdf",
+        "text/plain" => "txt",
+        _ => "bin",
+    }
+    .to_string()
+}
+
 /// Store one handed file under the `file` channel and deliver it as an inbound
 /// signal that wakes the reaction. `body` is the text surface the mind reacts to
 /// (it never sees the bytes); the blob path rides the journal entry's `media`.
@@ -101,65 +144,63 @@ async fn ingest_file(
     name: &str,
     mime: &str,
     bytes: &Bytes,
-    body: String,
+    note: Option<String>,
 ) -> Result<(), String> {
     let ts = Utc::now();
     let ext = ext_for(name, mime);
     let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, &ext, bytes)
         .await
         .map_err(|e| format!("store file: {e}"))?;
-    let body = format!("{body} {}", file_ref(ts, &rel));
-
-    crate::foundation::channel_log::inbound(Channel::File, &body);
-
-    let id = Uuid::now_v7().to_string();
     let reff = media::signal_ref(Channel::File, ts, &rel);
+
+    crate::foundation::channel_log::inbound(Channel::File, name);
+
     // Addressed, like text: a file is *handed over*, and the hander is the owner
     // unless something says otherwise. `Channel::File`'s own definition already
-    // promised "the signal says who handed over what"; this is that field — decided
-    // once and handed to both the journal and the conversation.
+    // promised "the signal says who handed over what"; this is that field.
     let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
-    let entry = JournalEntry::SignalIn {
-        id: id.clone(),
-        ts,
-        channel: Channel::File,
-        body: body.clone(),
-        stream: None,
-        media: Some(Media { file: rel, mime: mime.to_string(), duration_ms: None, width: None, height: None }),
-        origin: Some(Origin::Human),
-        sender: Some(sender.clone()),
-    };
-    if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting file anyway");
-    }
 
-    // A handed file is a message — the same one the agent is about to react to.
-    // The locator is stripped from the text and carried as the attachment, so the
-    // person sees what they sent rather than where it was filed.
-    state.note_message(
-        Channel::File,
-        id,
+    // **One arrival, one message per thing communicated.** A note the person
+    // effectively said — the screen gesture's own first-person line — is its own
+    // message and comes first; the file is its own. Nothing frames the file in prose
+    // any more: its name is a field, and the sentence the mind reads is rendered from
+    // that field rather than stored in the words.
+    let mut messages = Vec::new();
+    if let Some(note) = note {
+        messages.push(Message {
+            id: Uuid::now_v7().to_string(),
+            ts,
+            from: Author::Person(sender.clone()),
+            content: Content::Text(note),
+        });
+    }
+    messages.push(Message {
+        id: Uuid::now_v7().to_string(),
         ts,
-        &body,
-        Some(crate::foundation::server::Attachment { reff, mime: mime.to_string() }),
-        Some(sender),
-    );
-    state
-        .inbound
-        .send(Signal { channel: Channel::File, body, stream: None, ts })
-        .await
-        .map_err(|_| "inbound channel closed".to_string())?;
+        from: Author::Person(sender),
+        content: Content::File(FileRef { reff, mime: mime.to_string(), name: name.to_string() }),
+    });
+
+    // Journaled first, all of them, so durability precedes reaction — and then
+    // enqueued back to back with nothing awaited between, which is what keeps the
+    // settle window from splitting one arrival across two turns.
+    for message in &messages {
+        let entry = JournalEntry::Message { channel: Channel::File, message: message.clone() };
+        if let Err(err) = state.memory.journal.append(entry).await {
+            tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting file anyway");
+        }
+    }
+    for message in messages {
+        state.note_message(Channel::File, message.clone());
+        state
+            .inbound
+            .send(Inbound::Message(message))
+            .await
+            .map_err(|_| "inbound channel closed".to_string())?;
+    }
     Ok(())
 }
 
-/// The locator, in the one grammar every channel uses. Kept beside the store call
-/// rather than at the framing sites so a new door onto this channel cannot forget it.
-fn file_ref(ts: chrono::DateTime<Utc>, rel: &str) -> String {
-    format!("⟨ref: {}⟩", media::signal_ref(Channel::File, ts, rel))
-}
-
-/// `GET /api/media/{*ref}` — the bytes behind a message's attachment.
-///
 /// A photo the person handed over is part of what they said, so the face has to be
 /// able to show it rather than a grey placeholder naming a path. The ref is the
 /// same channel-qualified locator the journal and the agent use, resolved through
@@ -206,8 +247,7 @@ async fn receive_file(
     mime: &str,
     bytes: &Bytes,
 ) -> Result<(), String> {
-    let body = format!("The user handed you a file: {name} ({mime}, {}).", human_size(bytes.len()));
-    ingest_file(state, name, mime, bytes, body).await
+    ingest_file(state, name, mime, bytes, None).await
 }
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
@@ -236,8 +276,7 @@ pub(crate) async fn receive_screenshot(
     bytes: &Bytes,
 ) -> Result<(), String> {
     let name = format!("screen-{}.png", Utc::now().format("%Y%m%d-%H%M%S"));
-    let body = "Here's my screen right now.".to_string();
-    ingest_file(state, &name, "image/png", bytes, body).await
+    ingest_file(state, &name, "image/png", bytes, Some("Here's my screen right now.".to_string())).await
 }
 
 /// Drain a multipart body, storing every file part. A failed file does not hide
@@ -419,55 +458,6 @@ fn prune_expired(map: &mut std::collections::HashMap<String, Handoff>) {
 /// The inverse of [`ext_for`], for serving bytes back. Deliberately a short list
 /// rather than a mime database: the only extensions this route can ever see are the
 /// ones `ext_for` wrote, and anything it doesn't recognize is safest served as
-/// opaque bytes the browser will not try to execute.
-fn mime_for_ext(ext: &str) -> &'static str {
-    match ext {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "heic" => "image/heic",
-        "pdf" => "application/pdf",
-        "txt" | "md" => "text/plain; charset=utf-8",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        _ => "application/octet-stream",
-    }
-}
-
-fn ext_for(name: &str, mime: &str) -> String {
-    if let Some(dot) = name.rfind('.') {
-        let raw = &name[dot + 1..];
-        let ext: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase();
-        if !ext.is_empty() && ext.len() <= 8 {
-            return ext;
-        }
-    }
-    match mime.split(';').next().unwrap_or("").trim() {
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "application/pdf" => "pdf",
-        "text/plain" => "txt",
-        _ => "bin",
-    }
-    .to_string()
-}
-
-fn human_size(n: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = 1024 * 1024;
-    if n >= MB {
-        format!("{:.1} MB", n as f64 / MB as f64)
-    } else if n >= KB {
-        format!("{:.0} KB", n as f64 / KB as f64)
-    } else {
-        format!("{n} B")
-    }
-}
 
 // -----------------------------------------------------------------------------
 // Phone pages (self-contained, no shared assets)
