@@ -47,8 +47,10 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  *
  * The card *is* the picture: the label sits on the shot's bottom edge over a gradient
  * rather than in a line below it, so every pixel of the card's height is the thing that
- * identifies the view. The show time is not printed at all — the row is already
- * ordered by it, and nobody asks for a view by when it was put up.
+ * identifies the view, and nothing is drawn around it — where this window is now is
+ * marked by tinting that caption, not by a ring, because a frame around a screenshot
+ * reads as part of the screenshot. The show time is not printed at all — the row is
+ * already ordered by it, and nobody asks for a view by when it was put up.
  *
  * **It opens on where you are.** Both rows can be a dozen items long and the cursor is
  * not always at the head of either — a show lands there, but a card gone back to keeps

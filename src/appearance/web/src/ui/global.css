@@ -1452,8 +1452,6 @@ button:not([data-slot]) {
   width: 160px;
   height: 90px;
   border-radius: 9px;
-  border: 1px solid var(--line);
-  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
 }
 
 .hi-views-mark {
@@ -1479,9 +1477,26 @@ button:not([data-slot]) {
   display: block;
 }
 
-.hi-views-card.is-here .hi-views-tile {
-  border-color: transparent;
-  box-shadow: 0 0 0 2px var(--accent);
+/* Where this window is now. Marked inside the picture, not around it: this was a 2px
+   accent ring over a 1px line, so a row of screenshots read as a row of framed
+   screenshots and the current one as a doubly framed one. The card is the picture now,
+   full bleed to its own corners — so the mark rides the caption it already has: the
+   accent tints the caption's ground and the name goes semibold, which is visible
+   scanning the row without drawing an edge anywhere. */
+.hi-views-card.is-here .hi-views-title {
+  background:
+    linear-gradient(to top, var(--accent-line), rgba(0, 0, 0, 0) 72%),
+    linear-gradient(
+      to top,
+      rgba(0, 0, 0, 0.78),
+      rgba(0, 0, 0, 0.52) 36%,
+      rgba(0, 0, 0, 0.22) 68%,
+      rgba(0, 0, 0, 0)
+    );
+}
+
+.hi-views-card.is-here .hi-views-name {
+  font-weight: 600;
 }
 
 /* Keeping a view is a second verb on the card, so it sits *on* the picture rather
