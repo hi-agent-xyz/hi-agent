@@ -272,9 +272,23 @@ the process starts, then on the pulse cadence while anything is owed.
 
 #### The hand-down
 
+**What goes down is the request, not Reaction's reading of it.** Reaction holds the
+conversation and can look nothing up; Cognition holds the records and never heard the person
+speak. So a name in the person's words — a ticket, a file, a person, "the second one" —
+crosses as *their* words, and what Reaction believes it refers to crosses beside it, marked
+as a belief. A resolution written in place of the name is indistinguishable downstream from
+a name the person actually gave, so nothing ever verifies it: observed live on 2026-08-24, a
+bare "056" went down already bound to a commit, and the rung holding the ledger read only
+what that binding pointed at — correct work, for two ledger rows, on the wrong one.
+
 Answers travel back the way they came: what Reaction handed down is answered to Reaction.
 Cognition's results arrive **unframed** — Reaction is what turns "the build failed" into
 something that fits the room it is in.
+
+**What comes back is substance, not the agent's own housekeeping.** A gate verdict, a retry,
+a contrast ratio, a check about to run — none of that crosses either. Reaction cannot tell an
+internal step from a finding, and is told that an answer which arrived is owed; so anything
+handed up wearing a finding's clothes gets spoken.
 
 **An answer the person is waiting for is a reply owed, not a proposal**, and that is the one
 place the previous line inverts. Everything else Cognition sends is a proposal Reaction may
