@@ -166,6 +166,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`privacy.md`](privacy.md) | keys a person typed: where they are filed, the one seam that substitutes their paths, and what is deliberately left alone |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |
 | [`foundation.md`](foundation.md) | what the agent stands on — the engine, plus the tools it reaches with (devices included) |
+| [`tools.md`](tools.md) | how a capability is written down and found again — the note, the derived registry, the kit, the Tool Manager |
 
 Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
 [`../data-dir-layout.md`](../data-dir-layout.md) (the concrete tree),
