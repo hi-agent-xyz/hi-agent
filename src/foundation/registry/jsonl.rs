@@ -42,13 +42,19 @@ impl Writer {
     /// Queue one record, serialized here rather than in the append task.
     ///
     /// Serializing on the caller's thread is what keeps the failure *nameable*: in the loop
-    /// all that is left is a value nobody can describe, while here the caller still has the
-    /// record and the type. It is a small struct either way.
-    pub fn write<R: Serialize>(&self, record: &R) {
+    /// all that is left is a value nobody can describe, while here the record is still whole
+    /// and goes into the log line beside the error — which is what the `Debug` bound is for.
+    /// It is a small struct either way.
+    pub fn write<R: Serialize + std::fmt::Debug>(&self, record: &R) {
         let line = match serde_json::to_string(record) {
             Ok(line) => line,
             Err(err) => {
-                tracing::error!(error = %err, what = self.what, "a record would not serialize");
+                tracing::error!(
+                    error = %err,
+                    what = self.what,
+                    record = ?record,
+                    "a record would not serialize"
+                );
                 return;
             }
         };

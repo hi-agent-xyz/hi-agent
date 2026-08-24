@@ -147,18 +147,6 @@ pub enum Record {
     },
 }
 
-impl Record {
-    /// Only for the writer's error log — a record that would not serialize still has to be
-    /// reportable as *which* one.
-    fn session(&self) -> SessionSlug {
-        match self {
-            Record::Opened { session, .. }
-            | Record::Closed { session, .. }
-            | Record::Thread { session, .. } => session.clone(),
-        }
-    }
-}
-
 /// How a session stopped running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
