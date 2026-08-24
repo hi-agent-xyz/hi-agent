@@ -121,6 +121,21 @@ progress: it owes the ask, **once**, and then it is `todo` waiting on them, not 
 leave it and say so plainly in your report. An open task is cheap; a wrong `done` is a
 promise everyone downstream stops watching.
 
+**Write the verification into the record, not just the verdict.** The body is where a task
+says how it went: what was asked, what landed, what you checked and what came back. You are
+usually the last one to read it, so a closing line that says only *done* throws away the one
+artifact that could answer *"did this actually work?"* a month from now.
+
+And when a check comes back wrong, that is a line in the body too — what failed and what it
+points at — and the row goes back to `doing` with what needs staffing named in your report.
+One line, and then someone works it. Not another probe.
+
+**A check that has passed is finished, whatever the row still says.** Verification is
+something done once. If the body already carries a check with its result, a later pass's job
+is to *decide on it* — never to run it again. The seventh probe is not diligence; it is the
+row avoiding being filed. And if what is unmet is the person's own feedback, that is not a
+check at all. It is the ask, and **a task owes the ask once, not the wait.**
+
 ## Three ways a finished task quietly refuses to close, all of them yours to overrule
 
 - **Your own acceptance test is the only thing unmet.** A `verify:` you wrote is a note to
@@ -213,7 +228,13 @@ never defined — someone else's ledger, deliberately kept. Re-emit them verbati
 A writer that does not recognise a line is not thereby entitled to delete it.
 
 **Rewrite a record whole, and rewrite only that record.** Read it before you write it. Two
-edits to one file in one pass is one edit that clobbered the other.
+edits to one file in one pass is one edit that clobbered the other. And you are not the only
+writer: the session doing the work keeps its running record in this same body — what it is
+aiming at, what has landed, what is blocked, what it checked. So read immediately before you
+write, use a verb that fails when the file has moved under you, and **carry that record
+forward untouched.** It is the working half of the account; your part is the status and the
+closing line, and a rewrite that drops the rest is the clobber this file exists to prevent,
+in your own handwriting.
 
 Three things that are not yours:
 

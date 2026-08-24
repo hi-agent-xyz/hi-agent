@@ -105,6 +105,28 @@ watched:** nothing has observed the next brain turn actually catch those 61 up.
    the window carries *"N tasks past the idle boundary; no manager has run since X"*. Cognition
    cannot derive that by thinking harder, which is the test for earning a place in a window.
 
+**The task body grew a running record, 2026-08-23 — guidance only, and unexercised.** The
+ledger body now carries three writers' parts: Cognition writes what would make it right at
+open, the worker writes how it is going (landed / blocked / checked), the manager writes the
+status and the closing line and carries the rest forward. Nothing renders differently to build
+it — `task.body` was already served (`server/tasks.rs`) and already rendered as prose in the
+board's detail panel (`views/factory/tasks.jsx`), so the sections appear on screen the moment a
+mind writes them, and nowhere before that. **Nothing has been watched writing them.**
+
+**And the shared-folder collision is answered in prose, on purpose.** Two sessions wrote the
+same path under one task; the loser's briefing was replaced whole and the winner's file was then
+read by the loser as its own, with no error and no copy. The scan that found it: 1,635 facet
+writes over 578 paths, 95 written by more than one session, 148 whole-file shell overwrites,
+two confirmed silent losses in a week — a **floor**, since it can only resolve literal paths and
+cannot see through 326 `write_text(…)` calls or 575 `tee`s. `facets.rs`'s *last-writer-wins, and
+that is fine* was correct about `facet.md` and silently general about its siblings; that comment
+is now scoped, and `general.md` carries the write-verb rule (`apply_patch` checks, a heredoc
+does not). **No mechanism was added and none is planned here** — the rejected `deliverable:
+<ref>` gate is the precedent: a guard on a field an agent must remember to fill is *silently*
+absent when it forgets, which reads exactly like a clean delivery. What that leaves standing:
+**a loss that happens anyway is still undetectable and unrecoverable.** Prompt moves the verb;
+it cannot keep the bytes.
+
 **And one floor that is not a step, recorded so it stops reading as an oversight.**
 `checked_at` — the one liveness field code reads — can only ever be written by a mind. A
 manager that stamps it after a probe that came back *down* makes a dead duty read healthy,

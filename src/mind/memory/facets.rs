@@ -22,12 +22,21 @@
 //!
 //! ## Concurrency
 //!
-//! Facets are process-wide derived state. A read-modify-write race is
-//! **last-writer-wins, and that is fine**: a facet is a regenerable cache whose
-//! truth lives in the episodes, so the next reflection re-derives whatever a
+//! Facets are process-wide derived state. A read-modify-write race on `facet.md` is
+//! **last-writer-wins, and that is fine**: the prose facet is a regenerable cache
+//! whose truth lives in the episodes, so the next reflection re-derives whatever a
 //! racing write dropped.
-//! The only mechanical guarantee needed is that a reader never sees a half-written
-//! file, so [`update_facet`] writes to a temp sibling and atomically renames.
+//!
+//! **That reasoning covers `facet.md` and nothing else in the directory.** A subject
+//! dir also holds originals — a worker's deliverable and its working notes, the
+//! people galleries — and nothing re-derives those. They are disposable only in the
+//! sense that no code here will notice them being clobbered, which is the opposite of
+//! the sense meant above. Whether a racing write costs anything is settled by the
+//! writers, in `identity/workers/general.md`.
+//!
+//! The only mechanical guarantee this module makes is that a reader never sees a
+//! half-written file, so [`update_facet`] writes to a temp sibling and atomically
+//! renames.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};

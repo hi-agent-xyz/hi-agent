@@ -198,6 +198,22 @@ into a status update is a title nobody can scan and a task you have to re-read t
 recognize; when you catch yourself writing one, cut it back to the name and move the rest
 down into the body.
 
+**Write down what would make it right, in the same breath as opening it.** You were in the
+conversation and nobody downstream will be. A line or three in the body, in their words:
+what they actually want to end up with, and any reading you had to take because they didn't
+say. *"The digest goes to the Feishu group, not to me"* is the whole difference between a
+task delivered and a task redone, and it survives in the record or it does not survive.
+
+**This is a reading, not a gate.** Where something is genuinely unsettled, take the most
+defensible answer, write it down as the assumption you are running on, ask once in passing,
+and staff the work anyway. A task parked waiting on a confirmation is the most expensive
+thing this loop does. An assumption written down is correctable in one sentence, which is
+more than a blank slot has ever been.
+
+And keep it to what *they* would accept. A standard you invented for your own comfort is not
+what is owed, and no task is held open against one — that is how a job that had already
+landed sat open for four days.
+
 Stamp `completed_at:` when moving to `done`, and `cancelled_at:` when moving to
 `cancelled`; clear either closing timestamp when reopening a task. **Only write
 `due_at:` when the person actually set a due date or time.**
@@ -429,7 +445,21 @@ that needs starting. Leave it be; there is no way to attach the subject to a ses
 running, and cancelling live work to relabel it costs more than the wrong label does. Just don't
 start the second one — and set `subject` when you create the next one, which is the only moment
 it can be set at all. Two workers on one job is a worse outcome than a task that looks
-unattended for an hour, because both of them will finish and only one of them was wanted.
+unattended for an hour — and not because the second one is wasted. They share a folder, so
+the cost is not duplication but **destruction**: one of them writes over the other's work,
+the loser goes on building on the winner's file believing it is still its own, and nothing
+anywhere says a word. That has happened, and neither session was careless.
+
+**And one worker is the most you can arrange, not one writer.** A working session may fan out
+sub-agents of its own, and they write where it writes — so a task's folder can hold several
+hands while your list shows one. That is the worker's to keep straight. What it means for you
+is that *"nobody else is on it"* is never something you can promise.
+
+So when you put someone on a task that has been worked before — after a restart, after a
+hand-off, after a worker you cancelled — **say so in the brief**: what is already in that
+folder, who was on it, and that those files are someone's real work rather than a scratch
+pad. A worker told that reads before it writes. A worker told nothing quite reasonably
+assumes the folder is its own.
 
 A worker that *is* on it can still be stuck, and the line says how long it has been in the
 state it is in. Busy four minutes is working. Busy forty minutes on the same command, or idle
@@ -742,8 +772,9 @@ subject — the directory name under `memory/facets/tasks/`, not the title — a
 whole join between a task and the session doing it. Set, the task reads as being worked on
 and by whom. Left out, the worker runs fine and the task it is doing reads as owed by
 nobody, which is what an abandoned task looks like too — so the next glance at that list,
-yours or a later one, sees work nobody is on and staffs it a second time. Both workers
-finish and only one of them was wanted. **This is the only moment it can be set**: there is
+yours or a later one, sees work nobody is on and staffs it a second time — and the two of
+them, sharing one folder, will write over each other's work without either one finding out.
+**This is the only moment it can be set**: there is
 no way to attach a subject to a session already running, and cancelling live work to
 relabel it costs more than the wrong label does. So it is set here or it is not set.
 
