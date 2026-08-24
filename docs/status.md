@@ -105,13 +105,50 @@ watched:** nothing has observed the next brain turn actually catch those 61 up.
    the window carries *"N tasks past the idle boundary; no manager has run since X"*. Cognition
    cannot derive that by thinking harder, which is the test for earning a place in a window.
 
-**The task body grew a running record, 2026-08-23 — guidance only, and unexercised.** The
-ledger body now carries three writers' parts: Cognition writes what would make it right at
-open, the worker writes how it is going (landed / blocked / checked), the manager writes the
-status and the closing line and carries the rest forward. Nothing renders differently to build
-it — `task.body` was already served (`server/tasks.rs`) and already rendered as prose in the
-board's detail panel (`views/factory/tasks.jsx`), so the sections appear on screen the moment a
-mind writes them, and nowhere before that. **Nothing has been watched writing them.**
+**The running record got a shape, a store-written spine and a surface, 2026-08-24.** The
+2026-08-23 version was guidance only: three writers were told which parts of one prose body
+were theirs, nothing rendered differently, and nothing was ever watched writing them. It is
+now a schema. The body carries a `## Timeline` heading and, under it, dated append-only
+lines of five kinds — `asked` (Cognition, at open), `landed` / `blocked` / `checked` (the
+worker and the manager), and `moved`. Prose above the heading passes through untouched.
+
+**`moved` is written by the store**, in `Task::stamp_transition`, on the same
+`tasks::reconcile` pass that already stamps `status_since` — so the spine of every task's
+history exists whether or not an agent cooperates, and the two writers of a transition
+(code, which is told; the pass, which finds out) are kept from both claiming the same one
+by `write_task` updating `LAST_SEEN`. Nothing is backfilled: a record predating the pass
+gets a history starting at its next transition.
+
+The panel was rebuilt around it (`views/factory/tasks.jsx`): `asked` pinned at the top,
+the record newest-first, the long prose folded behind a disclosure, and the latest line on
+each card. That last part is why this was worth doing — median live body is 3.2 KB and the
+largest is 48 KB, all of it previously dumped into one `<div>`.
+
+**Watched, 2026-08-24, against a copy of the live 101-record store**: the first pass
+rewrote **0** records (the store is already canonical, so the schema costs nothing to
+adopt), no record lost a character of prose, no status moved, and no record grew a history
+it did not earn. A `todo → doing` edit made by hand then produced exactly one line —
+`- 2026-08-24T08:35:21Z moved — todo → doing`, appended below untouched prose — and the two
+passes after it wrote nothing. No live body carries a clashing `## Timeline` heading.
+
+**Also watched, 2026-08-24, and it found the one defect.** A release binary was run against
+a seeded three-task store and the board rendered in a real browser: `asked` pinned, the
+record newest-first with per-kind rails, the prose folded, and each card carrying its
+latest line. While it ran, a live rung read the ledger and **wrote a `checked` line into
+the running record unprompted, in the format the prompt specifies** — the half that had
+never been watched. The store wrote its `moved` line on the same turn.
+
+**And in the same turn it wrote `status: blocked`.** `blocked` is a *record kind*; it is
+not one of the five status words, so `TaskStatus::parse` fell back to `Todo` and a task
+that was underway and stuck came back reading *not started*. `is_malformed` caught it and
+the panel said so in red, which is the designed behaviour working — but the collision was
+introduced by this change, so the fix went where the mistake was made: all three prompts
+now say a kind is not a status and that a blocked task stays `doing`. **The re-test is
+watching a rung meet that wording** — nothing has yet.
+
+**Built, not watched:** `asked`, `landed` and `blocked` lines written by a mind (only
+`checked` has been seen), and a Task Manager appending its closing `checked` line before
+it moves the status word.
 
 **And the shared-folder collision is answered in prose, on purpose.** Two sessions wrote the
 same path under one task; the loser's briefing was replaced whole and the winner's file was then

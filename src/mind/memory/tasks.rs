@@ -24,7 +24,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, SecondsFormat, TimeZone, Utc};
 
 use super::episodes::{frontmatter_field, jstr, strip_frontmatter};
 use super::{facets, layout};
@@ -101,6 +101,93 @@ impl Liveness {
     }
 }
 
+/// The heading the running record lives under, and the only body structure this schema
+/// owns. Everything above it is the writer's own prose and passes through untouched.
+const TIMELINE_HEADING: &str = "## Timeline";
+
+/// What a line in a task's running record is saying.
+///
+/// **Five words, because a sixth is a paragraph.** This record is read by the person
+/// catching up on their own errand, not by an auditor: what they asked for, what landed,
+/// what is in the way, what was checked, and where the row stands. Anything a mind wants
+/// to say that is none of those belongs in the prose above the timeline, which has room
+/// for it and is not read line by line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineKind {
+    /// What would make this right, in the person's words. Written once, at open, by the
+    /// rung that was in the conversation — see `cognition.md`. It is a **reading, not a
+    /// gate**: nothing waits on it and no task is held open against it.
+    Asked,
+    /// Something was delivered. The milestone.
+    Landed,
+    /// Something is in the way, and what it is.
+    Blocked,
+    /// A verification and what came back — including when what came back was wrong.
+    Checked,
+    /// A status transition. **Written by the store, never by a mind**, on the same pass
+    /// that stamps `status_since`: a mind that has to remember to record its own
+    /// transition is a mind that will sometimes not.
+    Moved,
+    /// A line this schema does not recognise, kept exactly as it was written. The
+    /// frontmatter rule one level down: a writer that does not understand a line is not
+    /// thereby entitled to drop it.
+    Note,
+}
+
+impl TimelineKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Asked => "asked",
+            Self::Landed => "landed",
+            Self::Blocked => "blocked",
+            Self::Checked => "checked",
+            Self::Moved => "moved",
+            Self::Note => "note",
+        }
+    }
+
+    /// `None` for anything else, so an unrecognised first word stays part of the text
+    /// rather than being eaten as a kind.
+    fn parse(word: &str) -> Option<Self> {
+        match word.trim().trim_end_matches([':', ',']).to_ascii_lowercase().as_str() {
+            "asked" => Some(Self::Asked),
+            "landed" => Some(Self::Landed),
+            "blocked" => Some(Self::Blocked),
+            "checked" => Some(Self::Checked),
+            "moved" => Some(Self::Moved),
+            "note" => Some(Self::Note),
+            _ => None,
+        }
+    }
+}
+
+/// One line of a task's running record.
+///
+/// `at` is optional because a hand-written line carrying no instant is still something
+/// somebody meant to record, and a reader that drops what it cannot date is exactly the
+/// writer [`Task::extra`] exists to forbid. Nothing here invents a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimelineEntry {
+    pub at: Option<DateTime<Utc>>,
+    pub kind: TimelineKind,
+    pub text: String,
+}
+
+impl TimelineEntry {
+    pub fn new(kind: TimelineKind, at: DateTime<Utc>, text: impl Into<String>) -> Self {
+        Self { at: Some(at), kind, text: text.into() }
+    }
+
+    /// The one entry the store writes for itself.
+    fn moved(before: TaskStatus, after: TaskStatus, at: DateTime<Utc>) -> Self {
+        Self::new(
+            TimelineKind::Moved,
+            at,
+            format!("{} \u{2192} {}", before.as_str(), after.as_str()),
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Task {
     pub subject: String,
@@ -136,7 +223,18 @@ pub struct Task {
     /// only those, silently deleting the rest of the ledger. **A writer that does not
     /// understand a line is not thereby entitled to drop it.**
     pub extra: Vec<String>,
+    /// Prose above the timeline: the long-form account, written whole by whoever is
+    /// keeping it. Not read line by line and not rendered on a card.
     pub body: String,
+    /// The running record, oldest first — **append-only, and that is the whole design.**
+    ///
+    /// The body used to be one prose blob three writers shared, and a rewrite by any of
+    /// them silently replaced the other two. Dated lines do not fix a clobber, but they
+    /// make one *visible*: an entry that disappears leaves a gap in a sequence, where a
+    /// rewritten paragraph leaves nothing at all. Order is the file's order, never sorted
+    /// — a record that appends is already chronological, and re-sorting one that is not
+    /// would assert a history nobody wrote.
+    pub timeline: Vec<TimelineEntry>,
 }
 
 /// Frontmatter keys [`parse`] consumes, current and legacy. These are the only lines
@@ -178,6 +276,7 @@ impl Task {
             status_since: Some(now),
             extra: Vec::new(),
             body: String::new(),
+            timeline: Vec::new(),
         }
     }
 
@@ -190,8 +289,9 @@ impl Task {
         if self.status == status {
             return;
         }
+        let before = self.status;
         self.status = status;
-        self.stamp_transition(at);
+        self.stamp_transition(before, at);
     }
 
     /// Write down that this record's **current** status was reached at `at`.
@@ -202,8 +302,16 @@ impl Task {
     /// on disk by a mind that had no obligation to stamp anything, and all the pass can
     /// say is *this differs from what it said last time*. One body, so a transition means
     /// the same thing however it was learned.
-    fn stamp_transition(&mut self, at: DateTime<Utc>) {
+    ///
+    /// It writes the timeline's `moved` entry too, for the reason the stamps are here at
+    /// all: a consequence of a decision already recorded is not something a mind should
+    /// have to remember. `status_since` answers *how long has it been like this*; the
+    /// entry answers *what happened, and when* — the second question the first one has
+    /// never been able to reach, because a scalar is overwritten by the next transition.
+    fn stamp_transition(&mut self, before: TaskStatus, at: DateTime<Utc>) {
         self.status_since = Some(at);
+        self.timeline
+            .push(TimelineEntry::moved(before, self.status, at));
         match self.status {
             TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
                 self.completed_at = None;
@@ -260,6 +368,31 @@ impl Task {
         before != (self.completed_at, self.cancelled_at)
     }
 
+    /// Prose and running record as one text: the body exactly as the file carries it.
+    ///
+    /// The struct splits them because the two are read differently — the panel renders
+    /// the timeline as lines and the prose as a block — but anything handed a task
+    /// *whole* (a duty handler's brief, [`render`]) wants them joined, and joining them
+    /// here is what keeps one source of truth for the bytes.
+    pub fn record(&self) -> String {
+        let mut out = self.body.trim().to_owned();
+        if !self.timeline.is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(render_timeline(&self.timeline).trim_end());
+        }
+        out
+    }
+
+    /// What would make this right, in their words — the first thing a person catching up
+    /// on their own errand wants, and the reason it is pinned rather than scrolled to.
+    pub fn asked(&self) -> Option<&TimelineEntry> {
+        self.timeline
+            .iter()
+            .find(|entry| entry.kind == TimelineKind::Asked)
+    }
+
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
         self.due_at.is_some_and(|due| due <= now)
     }
@@ -297,9 +430,24 @@ pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<
     }
 }
 
+/// Write a record, and tell [`reconcile`] this status is now the one on disk.
+///
+/// **The second half is what keeps the timeline from stuttering.** A status changed
+/// through code has already recorded its own `moved` entry ([`Task::set_status`]); left
+/// unsaid, the next pass would compare against a [`LAST_SEEN`] holding the *old* word,
+/// witness a transition that had already been written down, and append a second entry
+/// dated later than the first. So the two writers of a transition — code, which is told,
+/// and the pass, which finds out — are kept from both claiming the same one.
 pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     let content = render(task);
-    facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await
+    let written = facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await?;
+    if let Ok(mut seen) = last_seen().lock() {
+        seen.insert(
+            facets::subject_dir(data_dir, DIMENSION, &task.subject),
+            task.status,
+        );
+    }
+    Ok(written)
 }
 
 pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<String> {
@@ -368,7 +516,7 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
 
         let previous = last_seen().lock().ok().and_then(|m| m.get(&key).copied());
         match previous {
-            Some(before) if before != task.status => task.stamp_transition(Utc::now()),
+            Some(before) if before != task.status => task.stamp_transition(before, Utc::now()),
             _ => {
                 task.derive_stamps();
             }
@@ -861,6 +1009,7 @@ fn parse(subject: &str, content: &str) -> Task {
         start_key: field("start_key"),
     };
     let created_at = field("created_at").and_then(|value| parse_timestamp(&value));
+    let (body, timeline) = split_timeline(strip_frontmatter(content));
     Task {
         subject: subject.to_owned(),
         status: coerce_duty(status, &liveness),
@@ -879,7 +1028,8 @@ fn parse(subject: &str, content: &str) -> Task {
             .and_then(|value| parse_timestamp(&value))
             .or(created_at),
         extra: foreign_frontmatter(content),
-        body: strip_frontmatter(content).trim().to_owned(),
+        body,
+        timeline,
     }
 }
 
@@ -1027,8 +1177,142 @@ fn render(task: &Task) -> String {
         let _ = writeln!(out, "{line}");
     }
     out.push_str("---\n\n");
-    out.push_str(task.body.trim());
+    out.push_str(task.record().trim());
     out.push('\n');
+    out
+}
+
+/// Split a stored body into the prose above the running record and the record itself.
+///
+/// **Nothing is dropped, at any level.** Prose keeps its lines verbatim. A line under the
+/// heading that is not a bullet continues the entry above it, so a wrapped note survives a
+/// round trip. A bullet with no instant, or none this schema can date, is a
+/// [`TimelineKind::Note`] carrying its whole text. And more than one `## Timeline` heading
+/// — what two writers appending independently produce — merges into one section in
+/// document order, which heals on the next pass rather than accumulating.
+fn split_timeline(body: &str) -> (String, Vec<TimelineEntry>) {
+    let mut prose = String::new();
+    let mut entries: Vec<TimelineEntry> = Vec::new();
+    let mut inside = false;
+    for line in body.lines() {
+        if line.trim_start().starts_with('#') {
+            inside = is_timeline_heading(line);
+            if inside {
+                continue;
+            }
+        }
+        if !inside {
+            prose.push_str(line);
+            prose.push('\n');
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        match parse_entry(line) {
+            Some(entry) => entries.push(entry),
+            None => match entries.last_mut() {
+                Some(last) => {
+                    last.text.push('\n');
+                    last.text.push_str(line.trim());
+                }
+                // Loose text under the heading with no entry above it to belong to.
+                None => entries.push(TimelineEntry {
+                    at: None,
+                    kind: TimelineKind::Note,
+                    text: line.trim().to_owned(),
+                }),
+            },
+        }
+    }
+    (prose.trim().to_owned(), entries)
+}
+
+/// `## Timeline` in either spelling the store might meet, and nothing that merely starts
+/// with the word — `## Timeline of the outage` is somebody's prose section.
+fn is_timeline_heading(line: &str) -> bool {
+    let text = line.trim();
+    if !text.starts_with('#') {
+        return false;
+    }
+    let text = text.trim_start_matches('#').trim();
+    text.eq_ignore_ascii_case("timeline") || text == "\u{65f6}\u{95f4}\u{7ebf}"
+}
+
+fn take_token(s: &str) -> (&str, &str) {
+    match s.split_once(char::is_whitespace) {
+        Some((head, tail)) => (head, tail.trim_start()),
+        None => (s, ""),
+    }
+}
+
+/// A separator a mind is likely to put between the kind and what it is saying. Optional
+/// on the way in, canonical on the way out.
+fn strip_separator(s: &str) -> &str {
+    let s = s.trim_start();
+    for sep in ["\u{2014}", "\u{2013}", "\u{b7}", "\u{ff1a}", ":", "-"] {
+        if let Some(rest) = s.strip_prefix(sep) {
+            return rest.trim_start();
+        }
+    }
+    s
+}
+
+/// `- <instant?> <kind?> <separator?> <text>`, every part after the bullet optional.
+///
+/// Forgiving on purpose: this is written by minds with a shell, in two languages, and a
+/// strict grammar here would mean a line silently failing to be a line. `None` only for
+/// something that is not a bullet at all, which the caller reads as a continuation.
+fn parse_entry(line: &str) -> Option<TimelineEntry> {
+    let trimmed = line.trim();
+    let rest = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))?
+        .trim();
+    let (head, tail) = take_token(rest);
+    let (at, rest) = match parse_timestamp(head) {
+        Some(at) => (Some(at), tail),
+        None => (None, rest),
+    };
+    let (head, tail) = take_token(rest);
+    let (kind, rest) = match TimelineKind::parse(head) {
+        Some(kind) => (kind, tail),
+        None => (TimelineKind::Note, rest),
+    };
+    let text = if kind == TimelineKind::Note {
+        rest.trim().to_owned()
+    } else {
+        strip_separator(rest).trim().to_owned()
+    };
+    Some(TimelineEntry { at, kind, text })
+}
+
+/// The canonical text of a running record. A [`TimelineKind::Note`] is re-emitted without
+/// a kind word, so a line somebody wrote by hand comes back looking the way they wrote it.
+fn render_timeline(entries: &[TimelineEntry]) -> String {
+    let mut out = String::from(TIMELINE_HEADING);
+    out.push_str("\n\n");
+    for entry in entries {
+        out.push_str("- ");
+        if let Some(at) = entry.at {
+            out.push_str(&at.to_rfc3339_opts(SecondsFormat::Secs, true));
+            out.push(' ');
+        }
+        if entry.kind != TimelineKind::Note {
+            out.push_str(entry.kind.as_str());
+            out.push_str(" \u{2014} ");
+        }
+        let mut lines = entry.text.lines();
+        out.push_str(lines.next().unwrap_or_default());
+        out.push('\n');
+        // Wrapped lines ride indented, which is exactly what `split_timeline` reads back
+        // as a continuation of this entry rather than as a new one.
+        for line in lines {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
     out
 }
 
@@ -1202,6 +1486,191 @@ mod tests {
     }
 
     /// The common case for the projection tests that predate the join: nothing registered, so
+    /// **The line the scalars could never write.** `status_since` is overwritten by the
+    /// next transition, so a record could say how long it had been in `done` and never
+    /// what it had been before. The pass that already witnesses the move writes it down.
+    #[tokio::test]
+    async fn a_witnessed_transition_writes_one_line_in_the_running_record() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "moved-once", "status: doing\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        hand_write(dir.path(), "moved-once", "status: done\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "moved-once").await.unwrap().unwrap();
+        let moves: Vec<_> = task
+            .timeline
+            .iter()
+            .filter(|entry| entry.kind == TimelineKind::Moved)
+            .collect();
+        assert_eq!(moves.len(), 1, "{:?}", task.timeline);
+        assert_eq!(moves[0].text, "doing \u{2192} done");
+        // One moment, said twice at different precisions: the stamp keeps what the clock
+        // gave it, and the line is dated to the second because a person reads it.
+        assert_eq!(
+            moves[0].at.unwrap().timestamp(),
+            task.status_since.unwrap().timestamp()
+        );
+        assert_eq!(task.body, "prose", "the prose above it is untouched");
+    }
+
+    /// A pass that ran forever would append forever. The record is the one part of a task
+    /// that grows, so the thing that must not repeat is a transition already written down.
+    #[tokio::test]
+    async fn reconcile_does_not_re_record_a_transition_it_already_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "no-stutter", "status: doing\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+        hand_write(dir.path(), "no-stutter", "status: done\ntitle: in flight\n", "prose").await;
+        for _ in 0..3 {
+            reconcile(dir.path()).await.unwrap();
+        }
+
+        let task = read_task(dir.path(), "no-stutter").await.unwrap().unwrap();
+        assert_eq!(task.timeline.len(), 1, "{:?}", task.timeline);
+    }
+
+    /// The other writer of a transition is code, and it records its own. Left unsaid, the
+    /// next pass would compare against a stale reading, witness the same move a second
+    /// time, and date it later than the moment it actually happened.
+    #[tokio::test]
+    async fn a_transition_made_through_code_is_recorded_once_too() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "via-code", "status: doing\ntitle: in flight\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let mut task = read_task(dir.path(), "via-code").await.unwrap().unwrap();
+        task.set_status(TaskStatus::Done, Utc::now());
+        write_task(dir.path(), &task).await.unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "via-code").await.unwrap().unwrap();
+        assert_eq!(task.timeline.len(), 1, "{:?}", task.timeline);
+        assert_eq!(task.timeline[0].text, "doing \u{2192} done");
+    }
+
+    /// Cold — no previous reading — so nothing is known about when it moved, and nothing
+    /// is written. The same refusal `derive_stamps` already makes about the clock: a
+    /// history invented on the first pass after a restart is indistinguishable from one
+    /// somebody recorded.
+    #[tokio::test]
+    async fn a_cold_pass_records_no_history_it_did_not_witness() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "cold-record", "status: done\ntitle: filed late\n", "prose").await;
+        reconcile(dir.path()).await.unwrap();
+
+        let task = read_task(dir.path(), "cold-record").await.unwrap().unwrap();
+        assert!(task.timeline.is_empty(), "{:?}", task.timeline);
+    }
+
+    /// Prose above, record below, and a round trip through `render` that changes neither.
+    #[tokio::test]
+    async fn prose_and_running_record_survive_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "round-trip",
+            "status: doing\ntitle: the digest\n",
+            "The long account, written whole.\n\n\
+             ## Timeline\n\n\
+             - 2026-08-24T06:16:17Z asked \u{2014} it goes to the Feishu group, not to me\n\
+             - 2026-08-24T07:02:00Z blocked: the app has no im:chat scope\n",
+        )
+        .await;
+
+        let task = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
+        assert_eq!(task.body, "The long account, written whole.");
+        assert_eq!(task.timeline.len(), 2);
+        assert_eq!(task.timeline[0].kind, TimelineKind::Asked);
+        assert_eq!(task.timeline[0].text, "it goes to the Feishu group, not to me");
+        assert_eq!(task.timeline[1].kind, TimelineKind::Blocked);
+        assert_eq!(task.timeline[1].text, "the app has no im:chat scope");
+        assert_eq!(
+            task.asked().map(|entry| entry.text.as_str()),
+            Some("it goes to the Feishu group, not to me")
+        );
+
+        write_task(dir.path(), &task).await.unwrap();
+        let again = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
+        assert_eq!(again.body, task.body);
+        assert_eq!(again.timeline, task.timeline);
+        assert_eq!(reconcile(dir.path()).await.unwrap(), 0, "canonical already");
+    }
+
+    /// **Nothing under the heading is dropped**, whatever shape it is in — the frontmatter
+    /// rule one level down. An undated bullet keeps its whole text; a wrapped line stays
+    /// on the entry it belongs to instead of becoming an entry of its own.
+    #[tokio::test]
+    async fn a_line_this_schema_cannot_read_is_still_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "kept-verbatim",
+            "status: doing\ntitle: keep it all\n",
+            "## Timeline\n\n\
+             - \u{6536}\u{5230}\u{8d75}\u{529b}\u{7684}\u{8865}\u{5145}\u{8bf4}\u{660e}\n\
+             - 2026-08-24T09:00:00Z landed \u{2014} first half shipped\n\
+               and the second half is in review\n",
+        )
+        .await;
+
+        let task = read_task(dir.path(), "kept-verbatim").await.unwrap().unwrap();
+        assert_eq!(task.timeline.len(), 2, "{:?}", task.timeline);
+        assert_eq!(task.timeline[0].kind, TimelineKind::Note);
+        assert!(task.timeline[0].at.is_none());
+        assert_eq!(task.timeline[0].text, "\u{6536}\u{5230}\u{8d75}\u{529b}\u{7684}\u{8865}\u{5145}\u{8bf4}\u{660e}");
+        assert_eq!(
+            task.timeline[1].text,
+            "first half shipped\nand the second half is in review"
+        );
+
+        write_task(dir.path(), &task).await.unwrap();
+        let again = read_task(dir.path(), "kept-verbatim").await.unwrap().unwrap();
+        assert_eq!(again.timeline, task.timeline, "and a round trip keeps it");
+    }
+
+    /// Two writers appending independently produce two headings. Merging them on read is
+    /// what stops that from compounding — the alternative is a record that grows a section
+    /// every time somebody does the obvious thing.
+    #[tokio::test]
+    async fn two_running_records_in_one_file_merge_into_one() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(
+            dir.path(),
+            "two-sections",
+            "status: doing\ntitle: merged\n",
+            "## Timeline\n\n\
+             - 2026-08-24T09:00:00Z landed \u{2014} first\n\n\
+             ## Notes\n\n\
+             kept prose\n\n\
+             ## Timeline\n\n\
+             - 2026-08-24T10:00:00Z checked \u{2014} second\n",
+        )
+        .await;
+
+        let task = read_task(dir.path(), "two-sections").await.unwrap().unwrap();
+        assert_eq!(task.timeline.len(), 2, "{:?}", task.timeline);
+        assert_eq!(task.timeline[0].text, "first");
+        assert_eq!(task.timeline[1].text, "second");
+        assert!(task.body.contains("## Notes"), "the other section is prose: {:?}", task.body);
+        assert!(task.body.contains("kept prose"));
+
+        write_task(dir.path(), &task).await.unwrap();
+        let raw = stored(dir.path(), "two-sections").await;
+        assert_eq!(raw.matches("## Timeline").count(), 1, "{raw}");
+    }
+
+    /// A prose section that merely starts with the word is somebody's writing, not the
+    /// schema's section.
+    #[test]
+    fn only_the_heading_itself_opens_the_running_record() {
+        assert!(is_timeline_heading("## Timeline"));
+        assert!(is_timeline_heading("###   timeline  "));
+        assert!(!is_timeline_heading("## Timeline of the outage"));
+        assert!(!is_timeline_heading("Timeline"));
+    }
+
     /// every task is unattended. `doing` rows then carry "nobody on it", which is correct.
     fn nobody() -> std::collections::HashMap<String, OnIt> {
         std::collections::HashMap::new()

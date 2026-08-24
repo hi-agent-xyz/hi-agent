@@ -333,8 +333,12 @@ fn brief_for(task: &Task, arrived: &str) -> String {
     brief.push_str("## ");
     brief.push_str(&task.title);
     brief.push('\n');
-    if !task.body.trim().is_empty() {
-        brief.push_str(task.body.trim());
+    // `record()`, not `body`: the running record is half of what the ledger knows about
+    // this duty — what was asked for, what has landed, what was checked and when it last
+    // moved — and a handler reopened after a restart has nothing else to read.
+    let record = task.record();
+    if !record.trim().is_empty() {
+        brief.push_str(record.trim());
         brief.push('\n');
     }
     brief.push_str("\n## Just arrived\n");

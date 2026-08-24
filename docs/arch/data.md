@@ -415,6 +415,51 @@ rail's clothes, and its failure mode is silence — the field is simply absent, 
 indistinguishable from a task that never moved. A pass that re-reads the bytes cannot be walked
 around, because it reads whatever is actually there, however it got there.
 
+**A stamp says how long; it never says what happened.** `status_since` is overwritten by
+the next transition, so a row could tell you it had been in `done` for three days and
+nothing at all about what it had been before, who moved it, or what had landed on the way.
+Five scalars are five current values, and a person catching up on their own errand is
+asking a question none of them answers. **So the body carries a running record**: a
+`## Timeline` heading at its end, and under it one dated line per thing that happened,
+oldest first. Everything above the heading is the writer's own prose and passes through
+untouched — the same courtesy the frontmatter already extends to keys it does not know.
+
+**Five kinds, because a sixth is a paragraph.** `asked` — what would make this right, in
+the person's words, written once at open by the rung that was in the conversation.
+`landed`, `blocked`, `checked` — the worker's, as it goes. `moved` — the status
+transition. Anything a mind wants to say that is none of those goes in the prose above,
+which is not read line by line. A line this schema cannot classify is kept verbatim as a
+note; the frontmatter rule, one level down.
+
+**`moved` is the store's, on the pass that already stamps the clocks.** It is the same
+argument and the same code path: a consequence of a decision already recorded is not
+something a mind should have to remember, and the pass *witnesses* the transition rather
+than being told about it. Which means the spine of every task's history is written whether
+or not any agent cooperates, and the minds only supply the prose. Nothing is backfilled —
+a record that existed before this pass ever ran gets a history starting at its next
+transition, because a history invented on the first pass after a restart is
+indistinguishable from one somebody kept.
+
+**Append-only, and never sorted.** The order is the file's order, because a record that
+appends is already chronological and re-sorting one that is not would assert a history
+nobody wrote. Appending does not *prevent* the clobber the shared folder already has — the
+manager still rewrites the file whole, and prompt moves a verb but cannot keep bytes — but
+it makes one **visible**: a line that disappears leaves a gap in a dated sequence, where a
+rewritten paragraph leaves nothing at all.
+
+**And the acceptance line stays a reading, not a gate.** `asked` is pinned at the top of
+the panel and nothing waits on it: no task is held open against it, no confirmation is
+solicited, no button asks the person to approve their own errand. Showing it is the whole
+mechanism — a reading that is wrong is one sentence away from being corrected, which is
+only true if it was written where they can see it. The road not taken is the one this
+section already refused twice: a field an agent must fill for the gate to work is
+*silently* absent when it forgets, which looks exactly like a clean delivery.
+
+**What is deliberately not done with it.** The record does not go into the agent's window.
+The projection is capped and finite, and the last line of every task is a thing to read
+when you look, not a thing to be told — the same test that keeps a worker's activity tail
+out of the comparison. This record is for the person's panel.
+
 **And the pass reports what it cannot fix.** A `verify:` filed on a `done` row, a status word
 the schema does not know, work sitting in a task directory with no record at all, a `serving`
 row retired while the machinery it names still answers its own `verify:` — the store can see

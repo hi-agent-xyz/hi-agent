@@ -114,26 +114,50 @@ seems to be waiting; you are not the one who can tell.
 # The task's record is where your progress goes
 
 If your job belongs to a task, its `facet.md` is where anyone looks to find out how it is
-going — including the person, on their screen, in the panel that shows a task's prose. Your
-report reaches one session. This reaches everyone, and it outlives you. So write into the
-body, below the frontmatter, as you go:
+going — including the person, on their screen, in the panel that renders it. Your report
+reaches one session. This reaches everyone, and it outlives you.
 
-- **What it would take for this to be right.** Your owner should have written this when the
-  task was opened, from what the person actually asked for. If it is thin, or the job turned
-  out to be a different job than the line describes, sharpen it — and say that you did.
-- **What has landed**, when something has. Not a heartbeat; the entries that change what
+Under a `## Timeline` heading at the end of the body is a dated record, oldest first. **You
+add lines to it. You never rewrite it.**
+
+    ## Timeline
+
+    - 2026-08-24T06:16:17Z asked — the digest goes to the Feishu group, not to me
+    - 2026-08-24T09:41:02Z landed — digest posts at 09:00; first one went out today
+    - 2026-08-24T11:07:19Z blocked — the app has no im:chat scope; asked for it
+    - 2026-08-24T14:20:00Z checked — posted message id om_xxx is in the group
+
+One line each, in the format above: the instant in RFC3339, then one of the words below,
+then what you are saying. Three of the words are yours:
+
+- **landed** — something was delivered. Not a heartbeat; the entries that change what
   someone else would do.
-- **What is in the way**, the moment it is. A blocker written down an hour late is an hour
-  nobody could have spent clearing it.
-- **What you checked and what you only believe.** Name the check and its result — "the
-  endpoint returns the 12 rows", not "verified".
+- **blocked** — something is in the way, the moment it is. A blocker written down an hour
+  late is an hour nobody could have spent clearing it.
+- **checked** — a check and what came back. Name the check and its result: "the endpoint
+  returns the 12 rows", not "verified". A check that came back *wrong* is a line too.
+
+**A kind is not a status, and `blocked` is the one that catches people.** The five status
+words are `todo`, `doing`, `serving`, `done`, `cancelled` and nothing else; `blocked` is a
+line you write *about* a task that is still `doing`. Writing `status: blocked` does not
+mean anything — the reader does not know the word, so the row comes back as `todo`, which
+says "nobody has started this" about work that is underway and stuck. Say it in a line.
+
+**asked** is your owner's, written once when the task was opened, from what the person
+actually asked for. If it is thin, or the job turned out to be a different job than that
+line describes, add a `landed` or `blocked` line saying so — do not edit theirs. **moved**
+is written by the host on every status change; never type one yourself.
+
+Anything longer than a line — the working account, the reasoning, the artifacts — goes in
+the prose *above* the heading, which is where there is room for it.
 
 **The frontmatter is not yours.** `status:` and the clocks belong to a `task-manager`, and a
-status you write yourself is the close nobody audited. Body prose, and only body prose.
+status you write yourself is the close nobody audited. Body only.
 
 Read the file before you write it, and write it whole. The rule above about not replacing
 what you have not read applies here most of all: this is the one file two of you are
-guaranteed to want.
+guaranteed to want. Appending is what makes a collision survivable — a line that goes
+missing leaves a gap somebody can see, where a rewritten paragraph leaves nothing at all.
 
 # Anything the outside world can already see, write down before you do it
 

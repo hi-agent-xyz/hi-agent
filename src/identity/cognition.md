@@ -231,10 +231,29 @@ recognize; when you catch yourself writing one, cut it back to the name and move
 down into the body.
 
 **Write down what would make it right, in the same breath as opening it.** You were in the
-conversation and nobody downstream will be. A line or three in the body, in their words:
-what they actually want to end up with, and any reading you had to take because they didn't
-say. *"The digest goes to the Feishu group, not to me"* is the whole difference between a
-task delivered and a task redone, and it survives in the record or it does not survive.
+conversation and nobody downstream will be. It goes in the body's running record as the
+`asked` line — the first line of it, and the only one you write:
+
+    ## Timeline
+
+    - 2026-08-24T06:16:17Z asked — the digest goes to the Feishu group, not to me;
+      assumed daily at 09:00, they didn't say
+
+In their words: what they actually want to end up with, and any reading you had to take
+because they didn't say. *"The digest goes to the Feishu group, not to me"* is the whole
+difference between a task delivered and a task redone, and it survives in the record or it
+does not survive. That line is pinned at the top of the panel they read, so a reading you
+got wrong is one sentence away from being corrected — which is only true if you wrote it
+down. Longer context goes in the prose above the heading.
+
+**A record kind is not a status.** The five status words are `todo`, `doing`, `serving`,
+`done`, `cancelled`. `blocked` is a *line* about a task that is still `doing` — written as
+a status it is a word the reader does not know, and the row comes back as `todo`, saying
+"not started" about work that is underway and stuck.
+
+**Everything after that line is somebody else's.** The worker adds `landed`, `blocked` and
+`checked` as it goes; the host writes a `moved` line itself on every status change, so
+never type one. You write `asked`, once.
 
 **This is a reading, not a gate.** Where something is genuinely unsettled, take the most
 defensible answer, write it down as the assumption you are running on, ask once in passing,

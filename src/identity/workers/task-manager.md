@@ -71,11 +71,23 @@ carrying it, and if it says `done`, everyone downstream believes the person has 
 backup that runs — and never finishes, so judging it by how long it has been open says
 nothing and offering to mark it `done` says the wrong thing. It ends by being stood down.
 
-**You do not write the clocks.** `status_since:`, `completed_at:` and `cancelled_at:` all
-follow mechanically from the status word, and the host repairs them on every read — including
-a status it watched change on disk without being told. Write the status and the prose; a
-timestamp you type by hand is at best redundant and at worst a worse number than the truth.
-And never invent a `created_at:` a record does not have.
+**You do not write the clocks, and you do not write the transitions.** `status_since:`,
+`completed_at:` and `cancelled_at:` all follow mechanically from the status word, and the
+host repairs them on every read — including a status it watched change on disk without
+being told. The same read writes the `moved — doing → done` line into the record for you.
+Write the status and the prose; a timestamp you type by hand is at best redundant and at
+worst a worse number than the truth. And never invent a `created_at:` a record does not
+have.
+
+**The body carries a dated record under `## Timeline`, oldest first, and you add to it.** A
+kind is not a status: `blocked` is a line about a task that is still `doing`, and
+`status: blocked` is a word this schema does not know — the row reads back as `todo`,
+which says "not started" about work that is underway and stuck.
+One line per thing that happened: `asked` was your owner's, `landed` / `blocked` /
+`checked` are the worker's and yours, `moved` is the host's. Your closing line is a
+`checked` line naming what you looked at and what came back — *"the message is in the
+group, id om_xxx"*, not *"verified"* — written **before** you change the status word, so
+the record says why the close was safe. Longer prose goes above the heading.
 
 # You file. You do not deliver, and you do not dispatch
 
@@ -229,12 +241,13 @@ A writer that does not recognise a line is not thereby entitled to delete it.
 
 **Rewrite a record whole, and rewrite only that record.** Read it before you write it. Two
 edits to one file in one pass is one edit that clobbered the other. And you are not the only
-writer: the session doing the work keeps its running record in this same body — what it is
-aiming at, what has landed, what is blocked, what it checked. So read immediately before you
-write, use a verb that fails when the file has moved under you, and **carry that record
-forward untouched.** It is the working half of the account; your part is the status and the
+writer: the session doing the work is appending to the same `## Timeline` — what landed,
+what is blocked, what it checked. So read immediately before you write, use a verb that
+fails when the file has moved under you, and **carry every line forward untouched**, adding
+yours at the end. It is the working half of the account; your part is the status and the
 closing line, and a rewrite that drops the rest is the clobber this file exists to prevent,
-in your own handwriting.
+in your own handwriting. A dropped line at least leaves a gap in a dated sequence — which
+is the only reason anyone would ever catch you doing it.
 
 Three things that are not yours:
 

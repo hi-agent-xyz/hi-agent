@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::foundation::server::AppState;
 use crate::mind::memory::facets;
-use crate::mind::memory::tasks::{self, Task, TaskStatus};
+use crate::mind::memory::tasks::{self, Task, TaskStatus, TimelineEntry};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,8 +29,30 @@ struct TaskDto {
     completed_at: Option<String>,
     cancelled_at: Option<String>,
     liveness: Option<LivenessDto>,
+    /// The running record, oldest first — what was asked, what landed, what is in the
+    /// way, what was checked, and every status change. This is what the panel renders;
+    /// `body` is the long prose behind it.
+    timeline: Vec<MomentDto>,
     body: String,
     malformed: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MomentDto {
+    /// Absent on a hand-written line carrying no instant the store could read. The panel
+    /// shows the line without a time rather than guessing one.
+    at: Option<String>,
+    kind: &'static str,
+    text: String,
+}
+
+fn moment(entry: &TimelineEntry) -> MomentDto {
+    MomentDto {
+        at: entry.at.map(rfc3339),
+        kind: entry.kind.as_str(),
+        text: entry.text.clone(),
+    }
 }
 
 #[derive(Serialize)]
@@ -66,6 +88,7 @@ fn dto(task: &Task, malformed: bool) -> TaskDto {
                 start_key: task.liveness.start_key.clone(),
             })
         },
+        timeline: task.timeline.iter().map(moment).collect(),
         body: task.body.clone(),
         malformed,
     }
@@ -309,6 +332,47 @@ mod tests {
         assert!(value["cancelledAt"].is_null());
         assert!(value.get("kind").is_none());
         assert!(value.get("state").is_none());
+    }
+
+    /// The seam the panel is built on: prose and running record reach it as two things,
+    /// so the record can be rendered as lines and the prose folded away behind them.
+    #[tokio::test]
+    async fn dto_carries_the_running_record_apart_from_the_prose() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = Task::new("Daily ops digest", TaskStatus::Doing);
+        task.body = "The long account, written whole.".into();
+        task.timeline = vec![
+            TimelineEntry::new(
+                tasks::TimelineKind::Asked,
+                at(1, 9),
+                "it goes to the Feishu group, not to me",
+            ),
+            TimelineEntry::new(tasks::TimelineKind::Blocked, at(2, 11), "no im:chat scope"),
+        ];
+        tasks::write_task(dir.path(), &task).await.unwrap();
+
+        let got = tasks::read_task(dir.path(), "daily-ops-digest")
+            .await
+            .unwrap()
+            .unwrap();
+        let value = serde_json::to_value(dto(&got, false)).unwrap();
+        assert_eq!(value["body"], "The long account, written whole.");
+        assert_eq!(value["timeline"][0]["kind"], "asked");
+        assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
+        assert_eq!(
+            value["timeline"][0]["text"],
+            "it goes to the Feishu group, not to me"
+        );
+        assert_eq!(value["timeline"][1]["kind"], "blocked");
+    }
+
+    /// A task nobody has recorded anything about serves an empty list, never a null — the
+    /// panel maps over it, and an empty board is the ordinary state of a fresh ledger.
+    #[test]
+    fn a_task_with_no_running_record_serves_an_empty_list() {
+        let task = Task::new("Ship the deck", TaskStatus::Todo);
+        let value = serde_json::to_value(dto(&task, false)).unwrap();
+        assert_eq!(value["timeline"], serde_json::json!([]));
     }
 
     #[test]

@@ -79,6 +79,19 @@ const T = {
     malformed: "This task has invalid stored fields. Changing its status will rewrite the recognized fields.",
     malformedShort: "Invalid fields",
     noBody: "(no notes)",
+    asked: "What was asked",
+    assumed: "assumed, never confirmed",
+    timeline: "What has happened",
+    noTimeline: "Nothing recorded yet.",
+    fullNotes: "Full notes",
+    moment: {
+      asked: "asked",
+      landed: "landed",
+      blocked: "blocked",
+      checked: "checked",
+      moved: "moved",
+      note: "note",
+    },
     monitoring: "Liveness",
     verify: "Check",
     restart: "If it stops",
@@ -132,6 +145,19 @@ const T = {
     malformed: "这条任务包含无效字段。修改状态时会重写可识别的字段。",
     malformedShort: "字段无效",
     noBody: "（没有备注）",
+    asked: "要什么",
+    assumed: "推断的，未经确认",
+    timeline: "发生了什么",
+    noTimeline: "还没有记录。",
+    fullNotes: "完整记录",
+    moment: {
+      asked: "要求",
+      landed: "交付",
+      blocked: "受阻",
+      checked: "核查",
+      moved: "状态",
+      note: "备注",
+    },
     monitoring: "运行检查",
     verify: "检查方式",
     restart: "停止后",
@@ -162,6 +188,19 @@ const STATUSES = [
   { id: "done", label: L.category.done, tone: "secondary" },
   { id: "cancelled", label: L.category.cancelled, tone: "danger" },
 ];
+
+// A running-record line is read by its kind before its text, so the kind carries the
+// colour: blocked is the one that should catch an eye crossing the panel, landed the one
+// that says this went well, and `moved` — written by the store, not by a mind — is
+// deliberately the quietest thing on the list.
+const MOMENT_TONE = {
+  asked: "var(--accent-2)",
+  landed: "var(--accent-2)",
+  blocked: "var(--danger)",
+  checked: "var(--task-serving)",
+  moved: "var(--fg-mute)",
+  note: "var(--fg-mute)",
+};
 
 const STATUS_TONE = {
   todo: "var(--fg-dim)",
@@ -378,6 +417,10 @@ function Column({ column, tasks, busy, drag, onStatus, onOpen, onDragStart, onDr
 
 function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }) {
   const notes = cardNotes(task);
+  // The last thing that happened, clamped to one line. A board of titles says what each
+  // task *is* and nothing about where any of it stands, which is the question somebody
+  // scanning this actually has.
+  const latest = latestMoment(task);
   // A drag that ends on the card it started from still delivers a `click`, which would
   // open the panel on a gesture the person meant as "put it back".
   const dragged = useRef(false);
@@ -418,6 +461,15 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
         }}
       >
         <span className="hi-tasks__card-title">{task.title || task.subject}</span>
+        {latest && (
+          <span
+            className="hi-tasks__card-latest"
+            style={{ "--moment": MOMENT_TONE[latest.kind] || "var(--fg-mute)" }}
+          >
+            <span className="hi-tasks__moment-kind">{L.moment[latest.kind] || latest.kind}</span>
+            <span className="hi-tasks__card-latest-text">{latest.text}</span>
+          </span>
+        )}
         {notes.length > 0 && (
           <span className="hi-tasks__card-notes">
             {notes.map((note) => (
@@ -448,6 +500,14 @@ function Detail({ task, busy, onStatus, onClose }) {
 
   const due = dueMeta(task);
   const health = healthMeta(task);
+  // What they asked for is pinned rather than scrolled to: it is the first thing somebody
+  // catching up on their own errand wants, and it does not move for the life of the task.
+  // It is a **reading, not a gate** — nothing here waits on it and no task is held open
+  // against it; showing it is what makes a wrong reading cheap to correct in one sentence.
+  const asked = (task.timeline || []).find((moment) => moment.kind === "asked");
+  // Newest first. The file appends, because that is what a writer with a shell can do
+  // safely; a reader catching up wants the opposite order.
+  const moments = [...(task.timeline || [])].reverse();
   const closedAt =
     task.status === "done" && task.completedAt
       ? L.completed(formatStamp(task.completedAt))
@@ -486,11 +546,44 @@ function Detail({ task, busy, onStatus, onClose }) {
 
           {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
 
-          {task.body ? (
-            <div className="hi-tasks__prose">{task.body}</div>
-          ) : (
-            <div className="hi-tasks__none">{L.noBody}</div>
+          {asked && (
+            <div className="hi-tasks__asked">
+              <div className="hi-tasks__asked-title">{L.asked}</div>
+              <div className="hi-tasks__asked-text">{asked.text}</div>
+            </div>
           )}
+
+          <div className="hi-tasks__moments-title">{L.timeline}</div>
+          {moments.length === 0 ? (
+            <div className="hi-tasks__none">{L.noTimeline}</div>
+          ) : (
+            <ol className="hi-tasks__moments">
+              {moments.map((moment, index) => (
+                <li
+                  key={`${moment.at || ""}-${index}`}
+                  className="hi-tasks__moment"
+                  style={{ "--moment": MOMENT_TONE[moment.kind] || "var(--fg-mute)" }}
+                >
+                  <span className="hi-tasks__moment-head">
+                    <span className="hi-tasks__moment-kind">
+                      {L.moment[moment.kind] || moment.kind}
+                    </span>
+                    {moment.at && (
+                      <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
+                    )}
+                  </span>
+                  <span className="hi-tasks__moment-text">{moment.text}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+
+          {task.body ? (
+            <details className="hi-tasks__notes">
+              <summary>{L.fullNotes}</summary>
+              <div className="hi-tasks__prose">{task.body}</div>
+            </details>
+          ) : null}
 
           {task.liveness && (
             <div className="hi-tasks__liveness">
@@ -577,6 +670,13 @@ function formatStamp(value) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+// The last line of the running record, whatever kind it is. `moved` counts: "this went
+// to done an hour ago" is exactly as much news as anything a mind wrote.
+function latestMoment(task) {
+  const timeline = task.timeline || [];
+  return timeline.length > 0 ? timeline[timeline.length - 1] : null;
 }
 
 function dueMeta(task) {
@@ -887,6 +987,27 @@ const CSS = `
     overflow-wrap: anywhere;
   }
 
+  /* One line, clamped: a card is a glance, and a second line of record would cost the
+     column a card. The panel is where the rest of it is. */
+  .hi-tasks__card-latest {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 6px;
+    min-width: 0;
+  }
+
+  .hi-tasks__card-latest-text {
+    flex: 1;
+    min-width: 0;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .hi-tasks__card-notes {
     display: flex;
     align-items: baseline;
@@ -1074,6 +1195,107 @@ const CSS = `
     color: var(--danger);
     font-size: 12.5px;
     line-height: 1.5;
+  }
+
+  /* Pinned above the record and never scrolled past: one or three lines in their own
+     words, so it can be read as prose rather than parsed as a field. */
+  .hi-tasks__asked {
+    margin-bottom: 16px;
+    padding: 11px 13px;
+    border-left: 3px solid var(--accent-2);
+    background: color-mix(in srgb, var(--accent-2) 8%, transparent);
+  }
+
+  .hi-tasks__asked-title {
+    margin-bottom: 4px;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__asked-text {
+    color: var(--fg);
+    font-size: 13.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__moments-title {
+    margin-bottom: 8px;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__moments {
+    margin: 0 0 4px;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .hi-tasks__moment {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: 4px 10px;
+    padding-left: 11px;
+    border-left: 2px solid color-mix(in srgb, var(--moment) 55%, transparent);
+  }
+
+  .hi-tasks__moment-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    white-space: nowrap;
+  }
+
+  .hi-tasks__moment-kind {
+    color: var(--moment);
+    font-size: 11px;
+    font-weight: 780;
+    letter-spacing: 0.02em;
+  }
+
+  .hi-tasks__moment-at {
+    color: var(--fg-mute);
+    font-size: 11px;
+    font-weight: 620;
+  }
+
+  .hi-tasks__moment-text {
+    color: var(--fg-dim);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* The long account is still here and still whole — just not the first thing between a
+     person and what happened. Live bodies run to tens of kilobytes of working notes. */
+  .hi-tasks__notes {
+    margin-top: 14px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  .hi-tasks__notes > summary {
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__notes > summary:focus-visible {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 2px;
+  }
+
+  .hi-tasks__notes .hi-tasks__prose {
+    margin-top: 9px;
   }
 
   .hi-tasks__prose,
