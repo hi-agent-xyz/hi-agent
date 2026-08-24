@@ -581,7 +581,7 @@ function Detail({ task, busy, onStatus, onClose }) {
           {task.body ? (
             <details className="hi-tasks__notes">
               <summary>{L.fullNotes}</summary>
-              <div className="hi-tasks__prose">{task.body}</div>
+              <Prose text={task.body} />
             </details>
           ) : null}
 
@@ -729,6 +729,128 @@ function cardNotes(task) {
     notes.push({ text: L.created(formatStamp(task.createdAt)) });
   }
   return notes;
+}
+
+// What is left of a body once `split_timeline` has taken the dated lines out of it: the
+// long prose, behind the fold. The timeline is the spine and this is everything the spine
+// does not carry — and for now it is most of what there is, since nothing backfills, so a
+// record written before the schema has its entire account down here.
+//
+// It was rendered into one flat block, which is survivable at a sentence or two and is not
+// what these are: the live store's median body is 3.2 KB and its largest 48 KB. So it is
+// read as the markdown the agent already writes.
+//
+// **A subset, deliberately.** Headings, bullets, bold, emphasis, inline code — the whole
+// vocabulary these bodies use. No links, images, tables or raw HTML: nothing here needs
+// them, and each is a way for text a session wrote to reach further than text should.
+// Output is React elements and never `dangerouslySetInnerHTML`, so an unclosed tag in
+// someone's note stays a character on the screen instead of becoming markup.
+//
+// Underscores are *not* emphasis, and that is the one deliberate omission: these bodies are
+// full of `status_since`, `checked_at`, `start_key`, and a renderer that reads those as
+// italics mangles the field names the record is mostly made of.
+//
+// A marker must also be followed by a non-space to open, which is what stops "2 * 3 = 6"
+// and a line carrying two loose asterisks from being read as one long emphasis.
+const INLINE = /(\*\*[^*\s][^*]*?\*\*|`[^`]+`|\*[^*\s][^*\n]*\*)/g;
+
+function inline(text, keyBase) {
+  const out = [];
+  let i = 0;
+  for (const part of String(text).split(INLINE)) {
+    if (!part) continue;
+    const key = `${keyBase}-${i++}`;
+    if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
+      out.push(<strong key={key}>{part.slice(2, -2)}</strong>);
+    } else if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
+      out.push(<code key={key}>{part.slice(1, -1)}</code>);
+    } else if (part.length > 2 && part.startsWith("*") && part.endsWith("*")) {
+      out.push(<em key={key}>{part.slice(1, -1)}</em>);
+    } else {
+      out.push(part);
+    }
+  }
+  return out;
+}
+
+// Paragraph lines are joined with a space rather than kept as typed. Prose written at a
+// terminal is hard-wrapped around column 90, and preserving those breaks at panel width
+// gives every paragraph a ragged right edge that reads as damage. A blank line still
+// separates paragraphs, which is the break that carries meaning.
+function blocks(text) {
+  const out = [];
+  let para = [];
+  let list = null;
+  const flushPara = () => {
+    if (para.length) out.push({ kind: "p", text: para.join(" ") });
+    para = [];
+  };
+  const flushList = () => {
+    if (list) out.push({ kind: "ul", items: list });
+    list = null;
+  };
+  for (const raw of String(text).replace(/\r\n?/g, "\n").split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      flushPara();
+      flushList();
+      out.push({ kind: "h", depth: heading[1].length, text: heading[2] });
+      continue;
+    }
+    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
+    if (bullet) {
+      flushPara();
+      if (!list) list = [];
+      list.push(bullet[1]);
+      continue;
+    }
+    // An indented line under a bullet continues it; anything else is prose.
+    if (list && /^\s{2,}\S/.test(line)) {
+      list[list.length - 1] += ` ${line.trim()}`;
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+  flushPara();
+  flushList();
+  return out;
+}
+
+function Prose({ text }) {
+  return (
+    <div className="hi-tasks__prose">
+      {blocks(text).map((block, i) => {
+        if (block.kind === "h") {
+          return (
+            <div key={i} className="hi-tasks__prose-h" data-depth={Math.min(block.depth, 3)}>
+              {inline(block.text, i)}
+            </div>
+          );
+        }
+        if (block.kind === "ul") {
+          return (
+            <ul key={i} className="hi-tasks__prose-ul">
+              {block.items.map((item, j) => (
+                <li key={j}>{inline(item, `${i}-${j}`)}</li>
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={i} className="hi-tasks__prose-p">
+            {inline(block.text, i)}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 const CSS = `
@@ -1303,8 +1425,58 @@ const CSS = `
     color: var(--fg-dim);
     font-size: 13.5px;
     line-height: 1.65;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  /* No white-space: pre-wrap on the prose any more. blocks() decides where the breaks
+     are, and leaving it on would keep the source's hard wraps as well and double them. */
+  .hi-tasks__prose-p {
+    margin: 0 0 10px;
+  }
+
+  .hi-tasks__prose > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* One weight of heading, three sizes. A record's sections are shallow — the depth is
+     never the point, only that a section started — so this reads the marker without
+     pretending a level-3 heading means something a level-6 does not. */
+  .hi-tasks__prose-h {
+    margin: 14px 0 6px;
+    color: var(--fg);
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  .hi-tasks__prose-h[data-depth="1"] { font-size: 14.5px; }
+  .hi-tasks__prose-h[data-depth="2"] { font-size: 13.5px; }
+  .hi-tasks__prose-h[data-depth="3"] { font-size: 13px; }
+
+  .hi-tasks__prose > .hi-tasks__prose-h:first-child {
+    margin-top: 0;
+  }
+
+  .hi-tasks__prose-ul {
+    margin: 0 0 10px;
+    padding-left: 18px;
+    list-style: disc;
+  }
+
+  .hi-tasks__prose-ul li {
+    margin-bottom: 3px;
+  }
+
+  .hi-tasks__prose strong {
+    color: var(--fg);
+    font-weight: 700;
+  }
+
+  .hi-tasks__prose code {
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.92em;
   }
 
   .hi-tasks__liveness {
