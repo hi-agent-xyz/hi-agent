@@ -414,7 +414,7 @@ impl LegacyEntry {
 ///
 /// The `⟨…⟩` grammar is what makes this safe rather than a parse of prose: only
 /// carriers write it and a person cannot type it. Nothing is read out of what
-/// anybody *said*.
+/// anybody *said*, and a marker that names nobody stays naming nobody.
 ///
 /// Deliberately partial. The live mic wrote the tag only when the **speaker
 /// changed**, so within one person's run only the first line carries it and the rest
@@ -434,8 +434,13 @@ fn recover_voice_sender(sender: Option<Sender>, body: &str) -> Sender {
     // `⟨voice: 老王 ~0.82⟩` — the score is the carrier's confidence, not part of
     // anybody's name, and writing it into `subject` would open a facet called
     // "老王 ~0.82" that no later match ever joins.
+    // `⟨voice: unfamiliar⟩` names nobody: it is the carrier saying it heard someone
+    // and could not place them, so it must never become a person called
+    // "unfamiliar" (`signal-attribution.md`). `audio.rs` writes that word whenever
+    // the voiceprint scores below its recognition floor, so old audio lines are full
+    // of it.
     match marker_value(body, "voice: ").map(|v| v.split(" ~").next().unwrap_or(v).trim()) {
-        Some(name) if !name.is_empty() => Sender {
+        Some(name) if !name.is_empty() && name != "unfamiliar" => Sender {
             subject: Some(name.to_owned()),
             basis: SenderBasis::Cluster,
         },

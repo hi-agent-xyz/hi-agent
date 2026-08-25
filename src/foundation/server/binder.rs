@@ -17,7 +17,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::body::reaction::OutboundSignal;
 use crate::foundation::server::{
-    AudioEvent, OutputEcho, Role, Transcript, ViewBus, ViewEvent, Wire,
+    AudioEvent, OutputEcho, Transcript, ViewBus, ViewEvent, Wire,
 };
 use crate::types::Channel;
 

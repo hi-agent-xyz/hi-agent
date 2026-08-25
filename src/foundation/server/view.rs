@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::foundation::server::AppState;
 use crate::foundation::server::headers::AuthBearer;
-use crate::types::{Channel, JournalEntry, Origin, Sender};
+use crate::types::{Channel, JournalEntry, Sender};
 
 #[derive(serde::Deserialize)]
 pub struct ViewQuery {

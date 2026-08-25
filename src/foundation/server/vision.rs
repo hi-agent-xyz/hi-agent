@@ -52,7 +52,7 @@ use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::{AppState, FacePresence, PartialMinute, VideoInEvent, VideoSource};
-use crate::types::{Channel, Inbound, JournalEntry, Media, Origin, Sender, Signal};
+use crate::types::{Channel, Inbound, JournalEntry, Media, Sender, Signal};
 
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";

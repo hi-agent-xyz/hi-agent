@@ -70,7 +70,7 @@ use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
 use crate::foundation::segment::{Segmenter, Speech};
-use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Media, Message, Origin, Sender, SenderBasis, Signal};
+use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Media, Message, Sender, SenderBasis};
 use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";

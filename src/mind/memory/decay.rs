@@ -366,7 +366,6 @@ async fn sum_full_bytes(dir: &Path, channel: Channel) -> anyhow::Result<u64> {
 mod tests {
     use super::*;
     use crate::mind::memory::journal::Journal;
-    use crate::types::JournalEntry;
     use uuid::Uuid;
 
     /// Append `n` text signals "now" and record one episode covering them, so the

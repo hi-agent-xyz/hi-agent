@@ -337,7 +337,7 @@ fn jarr(v: &[String]) -> String {
 mod reflection_tests {
     use super::*;
     use crate::mind::memory::journal::Journal;
-    use crate::types::{Channel, JournalEntry};
+    use crate::types::Channel;
     use chrono::Utc;
 
     /// Append `n` text signals with strictly increasing uuidv7 ids (a 2ms gap puts

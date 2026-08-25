@@ -2174,7 +2174,7 @@ mod turn_context_tests {
     use super::*;
     use crate::mind::memory::layout;
     use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
-    use crate::types::{Channel, JournalEntry};
+    use crate::types::Channel;
 
     /// Put one line in the log, so the recent tail has something to carry.
     async fn heard(memory: &Memory, body: &str) {

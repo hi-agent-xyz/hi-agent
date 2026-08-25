@@ -19,7 +19,7 @@ use crate::mind::memory::Memory;
 use crate::foundation::codex::WireTap;
 use crate::foundation::observatory::Observatory;
 use crate::body::reaction::{Floor, OutboundSignal, ToolRegistry};
-use crate::types::{Channel, Signal, ViewEnvelope};
+use crate::types::{Channel, ViewEnvelope};
 
 pub mod account;
 pub mod activity;
