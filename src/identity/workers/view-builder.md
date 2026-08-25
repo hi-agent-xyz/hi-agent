@@ -291,6 +291,19 @@ the screenshots.
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
 
+**Hand the ref back at the first clean render, not at the last one.** The moment
+`hi_review_view` answers with nothing broken — it mounted, it reported no errors, it
+settled, it is not one flat colour — send your owner the ref. That is the gate, it is the
+whole gate, and nothing in it is a matter of taste: you are not judging the thing yet, you
+are establishing that there is something to look at. Everything below this line is the
+**refine pass**, and it runs with the view already on the screen: you keep working, and
+when a better version is in the file you tell your owner so, and it replaces the one that
+is up. Someone reading a rough view is in a better place than someone reading nothing, and
+the gap between those two is the difference between four minutes and nineteen — which is
+what holding a working view back to polish it actually costs. Hold it back only when the
+view **is** the deliverable and there is no narration to carry it: a report someone will
+sit and read on their own.
+
 **"It renders" and "it reads" are two different answers, and the tool only gives you the
 first.** `hi_review_view` tells you nothing is broken. Whether anyone can comfortably read
 what you built is yours to answer, and it is the one that decides whether this was worth
@@ -359,9 +372,18 @@ about, that is this failure, mid-happening.
 **They can resize that window, so don't hard-pixel your layout.** The frame you are
 shown is the frame they have *now*, not a promise. Lay out in relative terms — fractions
 of the frame, `clamp()`ed type — so a different size makes your composition breathe
-rather than collide. If yours is dense enough that you doubt it, pass `width`/`height` to
-`hi_review_view` and look at it a few hundred pixels narrower: the failure to catch is
-elements that overlapped or fell off, not margins that changed.
+rather than collide.
+
+**Render the frame they are in, and don't invent others.** `hi_review_view` with no
+`width`/`height` renders the surface the person is actually reading on, whichever it is —
+the desktop window, a browser tab, the phone. That is the frame worth being right about,
+and it is the only one anyone is looking at right now. A width you picked yourself is a
+guess about a screen nobody reported, and it is the most expensive habit in this loop: a
+render at a frame nobody asked for sends you back into the source twice as often as a real
+one, for a layout failure nobody was going to see. So `width`/`height` are for **after**
+the ref has gone back — one deliberate second look, a few hundred pixels narrower, when
+your composition is dense enough that you genuinely doubt it. What you are hunting there
+is elements that overlapped or fell off, not margins that changed.
 
 **When something runs past the frame, fix it by showing less — never by shrinking.**
 Tightening the type and packing the same nine things into a denser grid makes the

@@ -190,11 +190,16 @@ pub fn install(mtm: MainThreadMarker, button: Retained<NSStatusBarButton>, url: 
         // fine and lets the agent's UI be debugged.
         webview.setInspectable(true);
 
-        if let Some(nsurl) = NSURL::URLWithString(&NSString::from_str(url)) {
+        // `?chrome=popover` is how the page learns it is a chat panel rather than a
+        // stage. It claims no titlebar strip — the flag exists so the face keeps off
+        // the stage lane (`stageReport.ts`): a review rendered at 380×540 portrait
+        // would be a review of a frame nobody reads a view on.
+        let page = format!("{}?chrome=popover", url.trim_end_matches('?'));
+        if let Some(nsurl) = NSURL::URLWithString(&NSString::from_str(&page)) {
             let req = NSURLRequest::requestWithURL(&nsurl);
             let _: Option<Retained<objc2_web_kit::WKNavigation>> = webview.loadRequest(&req);
         } else {
-            tracing::warn!(url, "popover: bad URL; nothing to load");
+            tracing::warn!(url = %page, "popover: bad URL; nothing to load");
         }
 
         // A bare view controller whose view *is* the web view — NSPopover needs a

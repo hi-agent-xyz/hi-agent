@@ -69,78 +69,94 @@ pub const DEFAULT_SCALE: f64 = 2.0;
 const MIN_STAGE: u32 = 320;
 const MAX_STAGE: u32 = 16_384;
 
-/// The frame the desktop window is showing **right now**, as the face last
-/// reported it.
+/// Every face that can show a view, most-recently-reported first.
 ///
 /// This is the whole answer to "what size does a view get built for". A view is
-/// composed edge to edge for one landscape frame, so a builder composing against
-/// a constant that matches no real window — and a reviewer signing off on that
-/// same constant — is the defect: the person's cards collide at a size neither
-/// of them ever saw. The face knows the number without any OS call, so it
-/// reports it and this holds the latest.
+/// composed edge to edge for one frame, so a builder composing against a constant
+/// that matches no real window — and a reviewer signing off on that same constant
+/// — is the defect: the person's cards collide at a size neither of them ever saw.
+/// A face knows its own frame without any OS call, so it reports it and this holds
+/// the latest.
+///
+/// **A list, not a slot**, because there is more than one face: the desktop window,
+/// a browser tab, and the iPhone client's `WKWebView`, and one `hi_show` lands on all
+/// of them at once. The head is the **primary** — the surface that reported most
+/// recently, which is a resize, a skin flip or a load, and all three are someone
+/// looking. A review renders the primary and nothing else; the rest are what the
+/// refine pass walks after the view is already up.
 ///
 /// `RwLock` rather than a `OnceLock`, because unlike the compiler and base URL
-/// published beside it in `mind::views`, this one legitimately changes: the
-/// person drags the window, and the next review should use the new size.
-static STAGE: std::sync::RwLock<Option<Viewport>> = std::sync::RwLock::new(None);
+/// published beside it in `mind::views`, this one legitimately changes: the person
+/// drags the window, and the next review should use the new size.
+static STAGE: std::sync::RwLock<Vec<Surface>> = std::sync::RwLock::new(Vec::new());
 
-/// The skin the desktop window is currently in, as the face last reported it.
-///
-/// Sits beside [`STAGE`] and is reported by the same lane for the same reason: the
-/// page already knows the answer (`data-theme`, else `prefers-color-scheme`) with no
-/// OS call, and a picture of a view rendered in the other skin is a wrong record of
-/// what the person was looking at.
-///
-/// Only the *thumbnail* path reads it. `hi_review_view` deliberately renders both
-/// skins, because a review exists to catch the colour that resolves in one and not
-/// the other — pinning it to the window's would blind the review to half of that.
-static STAGE_THEME: std::sync::RwLock<Option<&'static str>> = std::sync::RwLock::new(None);
+/// How many faces to remember. A page that closes never says so, so the list is
+/// bounded and the stalest entry falls off the end rather than being reaped.
+const MAX_SURFACES: usize = 8;
 
-/// Record the skin the desktop window is in. Anything that is not a skin we can
-/// render is ignored, keeping the last good answer.
-pub fn set_stage_theme(theme: &str) -> bool {
-    let known = match theme {
-        "light" => "light",
-        "dark" => "dark",
-        _ => return false,
-    };
-    if let Ok(mut slot) = STAGE_THEME.write() {
-        *slot = Some(known);
-    }
-    true
+/// One face, as it last described itself.
+#[derive(Debug, Clone)]
+pub struct Surface {
+    /// The face's own id, minted per page load and stable across its reports.
+    /// Opaque here on purpose: which *device* this is is not something the page
+    /// can honestly know, and nothing downstream needs it — only the frame.
+    pub id: String,
+    pub viewport: Viewport,
+    /// The skin it is in — `data-theme` when the person has pinned one, else what
+    /// `prefers-color-scheme` resolves to. `None` before it has said.
+    pub theme: Option<&'static str>,
 }
 
-/// The skin to render into, or `None` when no window has reported one — which the
-/// render page reads as its own default (light).
-pub fn stage_theme() -> Option<String> {
-    STAGE_THEME.read().ok().and_then(|s| *s).map(str::to_owned)
-}
-
-/// Record the frame the desktop window is showing. Out-of-range reports are
-/// dropped rather than stored (see [`MIN_STAGE`]).
+/// Record what one face is showing: its frame in CSS pixels, its device pixel
+/// ratio, and its skin. Reporting moves it to the head of the list, so the last
+/// face to say anything is the one a review renders.
 ///
-/// Deliberately fed by the **desktop window only**. The same page also runs in
-/// the menu-bar popover (380×540, portrait) and in a plain browser tab, and a
-/// review rendered at the popover's frame would be a review of something nobody
-/// is composing for. The client gates on the same `chrome=titlebar` flag the
-/// window already sets to claim its titlebar strip.
-pub fn set_stage_frame(width: u32, height: u32, scale: f64) -> bool {
+/// Out-of-range frames are rejected rather than stored (see [`MIN_STAGE`]): a
+/// browser reports a window a few pixels tall mid-drag, and a bogus report is worse
+/// than no report — it silently moves the frame every view is built and judged
+/// against. A skin we cannot render is dropped on its own, keeping whatever this
+/// face said last, because the frame is the half anything depends on.
+pub fn report_surface(id: &str, width: u32, height: u32, scale: f64, theme: Option<&str>) -> bool {
     if !(MIN_STAGE..=MAX_STAGE).contains(&width) || !(MIN_STAGE..=MAX_STAGE).contains(&height) {
         return false;
     }
     // A device pixel ratio outside this is not a display we can render for; clamp
     // rather than reject, since the frame itself is still good.
     let scale = if scale.is_finite() { scale.clamp(1.0, 4.0) } else { DEFAULT_SCALE };
-    if let Ok(mut slot) = STAGE.write() {
-        *slot = Some(Viewport { width, height, scale });
+    let theme = match theme {
+        Some("light") => Some("light"),
+        Some("dark") => Some("dark"),
+        _ => None,
+    };
+    let id = match id.trim() {
+        "" => "face",
+        id => id,
+    };
+    if let Ok(mut list) = STAGE.write() {
+        let previous = list.iter().position(|s| s.id == id).map(|i| list.remove(i));
+        let theme = theme.or_else(|| previous.and_then(|s| s.theme));
+        list.insert(0, Surface { id: id.to_owned(), viewport: Viewport { width, height, scale }, theme });
+        list.truncate(MAX_SURFACES);
     }
     true
 }
 
-/// The frame a review should render into: what the window last reported, or the
-/// fallback when nothing has.
+/// The frame a review should render into: what the primary face last reported, or
+/// the fallback when none has.
 pub fn stage_frame() -> Viewport {
-    STAGE.read().ok().and_then(|s| *s).unwrap_or_default()
+    STAGE.read().ok().and_then(|l| l.first().map(|s| s.viewport)).unwrap_or_default()
+}
+
+/// The skin to render into, or `None` when no face has reported one — which the
+/// render page reads as its own default (light).
+pub fn stage_theme() -> Option<String> {
+    STAGE.read().ok().and_then(|l| l.first().and_then(|s| s.theme)).map(str::to_owned)
+}
+
+/// Every face currently known, primary first. The refine pass reads this to render
+/// the frames the first show deliberately skipped; nothing on the ship path does.
+pub fn surfaces() -> Vec<Surface> {
+    STAGE.read().map(|l| l.clone()).unwrap_or_default()
 }
 
 /// How long the page gets to mount, settle fonts, and resolve its images.
@@ -398,24 +414,40 @@ mod tests {
             (v.width, v.height)
         };
 
-        assert!(set_stage_frame(1920, 1080, 2.0));
+        assert!(report_surface("w", 1920, 1080, 2.0, Some("light")));
         assert_eq!(frame(), (1920, 1080));
 
         // A resize is just the next report; the newest frame wins.
-        assert!(set_stage_frame(1000, 720, 2.0));
+        assert!(report_surface("w", 1000, 720, 2.0, None));
         assert_eq!(frame(), (1000, 720));
+        assert_eq!(stage_theme().as_deref(), Some("light"), "a frame-only report keeps the skin");
 
         // A window mid-drag can report a sliver, and a stored sliver would
         // silently become the frame every view is built and judged against.
-        assert!(!set_stage_frame(4, 3, 2.0));
-        assert!(!set_stage_frame(99_999, 720, 2.0));
+        assert!(!report_surface("w", 4, 3, 2.0, None));
+        assert!(!report_surface("w", 99_999, 720, 2.0, None));
         assert_eq!(frame(), (1000, 720), "a rejected report keeps the last good frame");
+
+        // A second face does not replace the first — it takes the head, and the
+        // one it displaced is still there for the refine pass to walk.
+        assert!(report_surface("phone", 390, 844, 3.0, Some("dark")));
+        assert_eq!(frame(), (390, 844), "the last face to report is the one a review renders");
+        assert_eq!(stage_theme().as_deref(), Some("dark"));
+        let seen = surfaces();
+        assert_eq!(seen.len(), 2, "both faces are known: {seen:?}");
+        assert_eq!(seen[0].id, "phone");
+        assert_eq!(seen[1].viewport.width, 1000, "the desktop frame is kept, not overwritten");
+
+        // The window speaking again takes the head back.
+        assert!(report_surface("w", 1000, 720, 2.0, None));
+        assert_eq!(frame(), (1000, 720));
+        assert_eq!(surfaces().len(), 2, "reporting twice does not mint a second entry");
 
         // A nonsense DPR still carries a usable frame, so clamp the scale rather
         // than throw the report away.
-        assert!(set_stage_frame(1000, 720, f64::NAN));
+        assert!(report_surface("w", 1000, 720, f64::NAN, None));
         assert_eq!(stage_frame().scale, DEFAULT_SCALE);
-        assert!(set_stage_frame(1000, 720, 99.0));
+        assert!(report_surface("w", 1000, 720, 99.0, None));
         assert_eq!(stage_frame().scale, 4.0);
     }
 

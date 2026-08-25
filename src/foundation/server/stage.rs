@@ -1,4 +1,4 @@
-//! The stage lane — the desktop window reports the frame it is showing.
+//! The stage lane — every face reports the frame it is showing.
 //!
 //! `POST /api/stage` carries `{"width":…,"height":…,"scale":…,"theme":…}` in CSS
 //! pixels, and both consumers are renderers: `review_view` renders into whatever the
@@ -24,10 +24,13 @@
 //! — that namespace is perception, world→agent, and nothing about a window's size
 //! reaches the agent's senses.
 //!
-//! The client sends only from the desktop window (see `stageReport.ts`); the
-//! popover and a browser tab stay quiet, because a review rendered at the
-//! popover's 380×540 portrait frame would be a review of something nobody is
-//! composing for.
+//! **Every face that can show a view reports**, each under its own `surface` id: the
+//! desktop window, a browser tab, and the iPhone client's `WKWebView`, which loads
+//! the same page. The one that stays quiet is the menu-bar popover, which says so
+//! with `?chrome=popover` — it is a chat panel, and a review rendered at its 380×540
+//! portrait frame would be a review of a frame nobody reads a view on. The store
+//! keeps one entry per surface with the most recent reporter at the head, because a
+//! report follows a resize, a skin flip or a load, and all three are someone looking.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -35,7 +38,8 @@ use serde::Deserialize;
 
 use crate::body::capabilities::view_render;
 
-/// A window frame in CSS pixels, plus its device pixel ratio.
+/// One face's frame in CSS pixels, plus its device pixel ratio, its skin and who
+/// is speaking.
 #[derive(Debug, Deserialize)]
 pub struct StageFrame {
     width: f64,
@@ -43,14 +47,19 @@ pub struct StageFrame {
     /// `window.devicePixelRatio`. Absent reads as the review default.
     #[serde(default)]
     scale: Option<f64>,
-    /// The skin the window is in — `data-theme` when one is forced, else what
+    /// The skin this face is in — `data-theme` when one is forced, else what
     /// `prefers-color-scheme` resolves to. Absent on a client older than the field,
-    /// which keeps whatever was reported last.
+    /// which keeps whatever this surface reported last.
     #[serde(default)]
     theme: Option<String>,
+    /// The face's own id, minted per page load. Absent on a client older than the
+    /// field, which then reports as the one unnamed face — the behaviour from when
+    /// there was only ever one.
+    #[serde(default)]
+    surface: Option<String>,
 }
 
-/// Record the frame the desktop window is showing.
+/// Record the frame one face is showing.
 ///
 /// A rejected frame answers `400` rather than failing quietly: the client reports
 /// on every resize, so a silently-dropped report would leave reviews rendering at
@@ -64,13 +73,11 @@ pub async fn post_stage(Json(frame): Json<StageFrame>) -> StatusCode {
         return StatusCode::BAD_REQUEST;
     }
     let scale = frame.scale.unwrap_or(view_render::DEFAULT_SCALE);
-    // A theme we don't know is dropped on its own rather than failing the report: the
-    // frame is the half anything depends on, and rejecting the whole POST over the
-    // decoration would leave every later review rendering at a stale size.
-    if let Some(theme) = frame.theme.as_deref() {
-        view_render::set_stage_theme(theme);
-    }
-    if view_render::set_stage_frame(width as u32, height as u32, scale) {
+    // A theme we don't know is dropped inside the store rather than failing the
+    // report: the frame is the half anything depends on, and rejecting the whole POST
+    // over the decoration would leave every later review rendering at a stale size.
+    let surface = frame.surface.as_deref().unwrap_or("face");
+    if view_render::report_surface(surface, width as u32, height as u32, scale, frame.theme.as_deref()) {
         StatusCode::ACCEPTED
     } else {
         StatusCode::BAD_REQUEST
@@ -86,9 +93,9 @@ mod tests {
     }
 
     /// Only the rejecting cases are exercised here, on purpose: an accepted frame
-    /// writes the process-global `STAGE`, and the store's own semantics (newest
-    /// wins, absurd frames dropped, scale clamped) are asserted in
-    /// `view_render`'s tests. Asserting them from a second test in the same
+    /// writes the process-global `STAGE`, and the store's own semantics (the newest
+    /// reporter leads, one entry per surface, absurd frames dropped, scale clamped)
+    /// are asserted in `view_render`'s tests. Asserting them from a second test in the same
     /// binary would just race that one through the global.
     #[tokio::test]
     async fn a_frame_that_is_not_a_window_is_refused() {
@@ -108,11 +115,18 @@ mod tests {
 
     /// Fractional CSS pixels are ordinary on a scaled display, and `scale` is
     /// optional because a client that cannot name its DPR still knows its frame.
+    /// `surface` is optional for the same reason the skin is: a client that predates
+    /// the field still knows the number the renderer actually needs.
     #[test]
-    fn a_fractional_frame_parses_and_scale_is_optional() {
+    fn a_fractional_frame_parses_and_the_optional_fields_are_optional() {
         let f = body(r#"{"width":1512.5,"height":944.5}"#);
         assert_eq!(f.scale, None);
+        assert_eq!(f.surface, None);
         assert_eq!(f.width.round(), 1513.0);
         assert_eq!(f.height.round(), 945.0);
+
+        let named = body(r#"{"width":390,"height":844,"surface":"a1b2","theme":"dark"}"#);
+        assert_eq!(named.surface.as_deref(), Some("a1b2"));
+        assert_eq!(named.theme.as_deref(), Some("dark"));
     }
 }

@@ -9,22 +9,50 @@ import { url } from "./base";
 // The views band's history thumbnails render into that frame *and* the skin we
 // report, so the picture on a tile is of the screen this window was showing.
 //
-// **Only the desktop window reports.** The same page also runs in the menu-bar
-// popover (380×540, portrait) and in a plain browser tab; a review rendered at
-// either would be a review of a frame nobody composes for. The window already
-// announces itself with `?chrome=titlebar` to claim its titlebar strip, and
-// `applyHostChrome` has hoisted that onto `<html data-chrome>` before we run —
-// so the same flag gates this, with no second notion of "which host am I".
+// **Every face that can show a view reports, under its own id.** The same page runs
+// in the desktop window, in a plain browser tab, and in the iPhone client's web view
+// (`CoreWebView.swift`), and one `hi_show` lands on all of them — so any of them can
+// be the frame a person is actually reading a view in, and the builder that composes
+// for one of them has to be told which. The store keeps an entry per surface and a
+// review renders the one that reported most recently.
+//
+// The single exception is the **menu-bar popover** (380×540, portrait). It is a chat
+// panel; a review rendered at its frame would be a review of a frame nobody reads a
+// view on. It declares itself with `?chrome=popover`, which `applyHostChrome` has
+// hoisted onto `<html data-chrome>` before we run — so the flag gates this, with no
+// second notion of "which host am I".
 //
 // Fire-and-forget, like the attention lane: a dropped report just means the next
 // review uses the previous frame.
 
-/** CSS pixels, the display's device pixel ratio, and the skin. */
+/** CSS pixels, the display's device pixel ratio, the skin, and which face this is. */
 interface StageFrame {
   width: number;
   height: number;
   scale: number;
   theme: "light" | "dark";
+  surface: string;
+}
+
+/** This face's id, stable across reloads of the same tab and distinct from every
+ *  other face on the same core. It is deliberately opaque: which *device* this is
+ *  is not something the page can honestly know, and the renderer only wants the
+ *  frame. `sessionStorage` rather than a module constant so a refresh keeps the
+ *  entry it already had instead of minting a second one beside it. */
+const SURFACE_KEY = "hi.surface";
+
+function surfaceId(): string {
+  try {
+    const kept = sessionStorage.getItem(SURFACE_KEY);
+    if (kept) return kept;
+    const minted = Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem(SURFACE_KEY, minted);
+    return minted;
+  } catch {
+    // Private mode, or storage denied: an id that lasts as long as the page is
+    // still better than every face reporting as the same one.
+    return Math.random().toString(36).slice(2, 10);
+  }
 }
 
 /** The skin this window is actually in: a forced `data-theme` when the person has
@@ -47,6 +75,7 @@ function currentFrame(): StageFrame {
     height: window.innerHeight,
     scale: window.devicePixelRatio || 1,
     theme: currentTheme(),
+    surface: surfaceId(),
   };
 }
 
@@ -63,11 +92,12 @@ async function send(frame: StageFrame): Promise<void> {
 }
 
 /**
- * Start reporting this window's frame: once now, then whenever a resize settles.
- * No-op unless we are the desktop window. Returns a teardown.
+ * Start reporting this face's frame: once now, then whenever a resize settles.
+ * No-op in the popover, which is not a surface anyone reads a view on. Returns a
+ * teardown.
  */
 export function installStageReport(): () => void {
-  if (document.documentElement.dataset.chrome !== "titlebar") return () => {};
+  if (document.documentElement.dataset.chrome === "popover") return () => {};
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Don't re-post a frame we already reported: a `resize` also fires for things

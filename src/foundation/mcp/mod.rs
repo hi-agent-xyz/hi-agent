@@ -327,17 +327,21 @@ fn session_messages_tool() -> Value {
 /// view that "renders" as a blank white page because an import failed to resolve, and
 /// pixels alone report that as success.
 ///
-/// Renders at the frame the desktop window is currently showing
-/// ([`view_render::stage_frame`]). `width`/`height` override it, for the one honest
+/// Renders at the frame the **primary surface** is currently showing
+/// ([`view_render::stage_frame`]) — the face that reported most recently, which is the one
+/// someone was last doing something in. `width`/`height` override it, for the one honest
 /// reason a builder has to ask for another size: the person can resize the window, so a
-/// composition that only holds at one frame is worth catching before it ships.
+/// composition that only holds at one frame is worth catching. It is deliberately not a
+/// routine move — a render at a frame no surface reported sent the builder back into the
+/// source twice as often as a real one, for a failure nobody was going to see.
 fn review_view_tool() -> Value {
     tool(
         "hi_review_view",
         "Render a saved view in a real browser and look at it. Returns a verdict, any \
          errors the page reported, and a screenshot of each theme — so you can see what \
-         you actually made rather than trusting that it compiled. It renders at the size \
-         the person's window is showing right now, so the screenshot is the frame they \
+         you actually made rather than trusting that it compiled. With no size it renders \
+         the surface the person is actually reading on — their desktop window, a browser \
+         tab, or their phone, whichever spoke last — so the screenshot is the frame they \
          have. Use it on anything you are about to hand over as a view, and again after a \
          fix. Compare the light and dark frames: anything that vanishes or turns \
          unreadable in one of them is a colour that only works in the other.",
@@ -347,8 +351,8 @@ fn review_view_tool() -> Value {
                 "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
                 "theme": { "type": "string", "enum": ["light", "dark"], "description": "Optional: render only this theme. Omit to get both, which is what you want unless you are re-checking one." },
                 "lang": { "type": "string", "description": "Optional: render as if the person's language were this (e.g. `en`, `zh-Hans`). Only matters for a view that ships copy in more than one language." },
-                "width": { "type": "integer", "description": "Optional: render at this width in CSS pixels instead of the person's current window. They can resize, so check a narrower and a wider frame if your composition might not survive one." },
-                "height": { "type": "integer", "description": "Optional: render at this height in CSS pixels instead of the person's current window." },
+                "width": { "type": "integer", "description": "Optional: render at this width in CSS pixels instead of the surface the person is on. For one deliberate second look at a composition you doubt — not a routine sweep: a frame no surface reported is a screen nobody is looking at." },
+                "height": { "type": "integer", "description": "Optional: render at this height in CSS pixels instead of the surface the person is on." },
             },
             "required": ["ref"],
         }),

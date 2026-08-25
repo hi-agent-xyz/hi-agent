@@ -1186,6 +1186,29 @@ mod soul_tests {
         assert!(WORKER_VIEW_BUILDER_BASE.contains("factory/"));
     }
 
+    /// The gate a view goes up on is machine-checkable and the rest is a refine pass that
+    /// runs with it already on screen — `docs/arch/stage.md` § *The frame is a surface, and
+    /// a view goes up before it is finished*. Both halves are pinned because dropping either
+    /// one restores the old serial chain: without the early hand-back the builder polishes
+    /// off-screen for fifteen minutes, and without the reviewer knowing the view is already
+    /// up, its verdict reads as a gate again.
+    ///
+    /// The invented frame is pinned for the same reason. A render at a width no surface
+    /// reported sent the builder back into the source twice as often as a real one, so the
+    /// prompt has to say the default *is* the person's surface — otherwise the habit that
+    /// cost ~5 minutes a build comes straight back as helpfulness.
+    #[test]
+    fn a_view_goes_up_on_its_first_clean_render_and_the_frame_is_the_persons_own() {
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("Hand the ref back at the first clean render"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("refine pass"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("don't invent others"));
+        assert!(WORKER_VIEW_REVIEWER_BASE.contains("It is probably already on the screen"));
+        assert!(
+            WORKER_VIEW_REVIEWER_BASE.contains("renders the surface the person is actually"),
+            "the reviewer must be told what an unsized render means now"
+        );
+    }
+
     /// Quick Views are an authoring judgment over ordinary JSX, not a second
     /// representation the host has to interpret. The prompt carries only a concise
     /// direct-import listing for the installed shadcn source.

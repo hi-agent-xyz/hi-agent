@@ -618,6 +618,69 @@ desktop — and is the argument for `contain` rather than against it. The shot i
 aspect the window had; a portrait phone and a half-width column are the same channel as
 the maximised Mac. Matching the common case is a bet, and `contain` is the guarantee.*
 
+## The frame is a surface, and a view goes up before it is finished
+
+Amended August 25, 2026. Two rules with one cause: the run from *build me a view* to *it is
+on the screen* takes **36 minutes at the median**, and almost none of that is building or
+showing. Measured across 136 worker sessions, 15–24 August, from the frame log
+(`data/memory/raw/sessions/`): the headless browser is **2.4%** of a builder's active time,
+while the review loop — every render plus the model turn that reads the picture back — is
+**29%**, at ~27s a call (2.3s of Chromium, ~25s of model round trip). The pictures are cheap.
+Asking for them, and waiting to show anything until they all pass, is not.
+
+**The stage lane reports a surface, not the desktop window.** `installStageReport` returns a
+no-op unless `data-chrome=titlebar`, so only the desktop window ever posts `/api/stage`. But
+the iPhone client loads the same face in a `WKWebView` (`CoreWebView.swift`), so a view read
+on a phone is reviewed at the desktop's last-reported frame — and the workers, given no
+signal, guess: **41% of builder review calls render at a width under 500px**. That guess is
+not free. A narrow render sends the builder back into the source **28%** of the time against
+**13%** for a desktop render, and the diffs are real responsive work (`@media`, `clamp`). The
+frame is the expensive criterion; the guessing is what makes it expensive.
+
+So `STAGE` holds **one entry per attached surface**, each face reports its own, and
+`hi_review_view` renders **the surface the view will be read on — that one, not a sweep of
+plausible ones**. With more than one attached, the primary is the surface that reported most
+recently, because reporting follows a resize, a theme flip or a load, and all three are
+someone looking. The others are not a second review; they are the background pass below.
+
+**The skin stays swept, and this is the asymmetry worth writing down.** A dark render sends
+the builder back to the source 4% of the time — the same rate as a light one — because
+nothing about a skin is authored: views paint in `var(--…)` tokens and the tokens flip.
+Across 127 views written in that window, `dark:` appears **zero** times. So the second skin
+costs 1.1s and buys the one defect a single-skin review structurally cannot see, which is a
+colour that resolves in one and not the other. Two bundled-view contrast failures shipped
+that way. Sweep the skin; pick the frame.
+
+**A view goes up on its first clean render.** The chain is serial today — builder finishes,
+reviewer session runs, agent shows — and the reviewer is 6 minutes of it. Nothing requires
+that order: `hi_show` puts up a compiled module and needs no render at all, and `op=replace`
+already swaps a view in its own slot, keeping the slot so a motion-tagged element animates
+rather than blinks. So the bar splits in two:
+
+- **The ship gate** — `RenderedView::verdict` is `Rendered` at the primary surface's frame
+  and skin: mounted, no console errors, settled, not one flat colour. That is machine-checkable
+  and it is the whole gate. It can be met at the 4-minute mark rather than the 19-minute one.
+- **The refine pass** — the other skin, the other surface, the readability floors, and the
+  reviewer's judgment. It runs *behind* the show and lands as `op=replace` on the same id, or
+  not at all.
+
+The rule this replaces was never written down, only practised: *nothing goes up until it is
+finished*. What it bought was that the person never sees a rough view. What it cost was that
+they see nothing for half an hour, and a view held back for a taste finding is a view nobody
+has read yet — the strictly worse failure of the two, and the one nobody was counting.
+
+**Rejected: pinning the review to the current skin.** It reads like the same idea as picking
+the frame and it is not. The frame the person has is a fact about the composition; the skin
+they are in right now is a fact about a setting they can flip while the view is on screen.
+One is a target, the other is a moment.
+
+**Accepted consequences.** The person can be reading a view for a few minutes that a refine
+pass then improves under them; a `replace` moves something they may be mid-sentence on. Both
+are the same trade the tile made — a picture of the present beats a correct picture nobody
+has yet. And a builder whose first render never comes back clean shows nothing, exactly as
+today.
+
+
 ## The card is the picture
 
 Amended August 20, 2026. The card was three stacked things — a 118×76 tile at no
@@ -1037,6 +1100,15 @@ Built on `design/stage`, in this order:
    the line. Escape arms whenever the conversation is up; the press-behind keeps its old
    condition — something actually behind the panel — and now spares the views band as well
    as the controls cluster.
+
+11. **The surface, and the show that does not wait (August 25)** — *designed, not built.*
+   `installStageReport` drops its `data-chrome` gate and posts a surface tag instead, so the
+   iOS `WKWebView` and any other face report their own frame; `STAGE` becomes a map keyed by
+   surface with the most recent reporter as primary, and `RenderRequest::new` takes that one.
+   `hi_review_view` stops accepting a frame the caller invented as a routine move — `width`/
+   `height` stay, for the deliberate second look, but the default is the surface. The builder
+   prompt splits its bar into the ship gate and the refine pass, and the reviewer's round
+   moves behind the show, replacing on the same id.
 
 **Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
 the wire vocabulary — it has no server-side existence to name, so this is naming, not
