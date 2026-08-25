@@ -490,10 +490,15 @@ Read who is on each task while you're there; the list says. A task marked `doing
 right now — and it is not a rare state: it is what every unfinished task looks like after a
 restart, after a worker crashed, after one idled out, and after a hand-off that never
 happened. So treat it as a question rather than an alarm. Still owed? Put someone on it, with
-the `subject` set, so it stops reading as abandoned. Actually finished, or waiting on someone,
-or not worth doing? Say so in the ledger and it stops being `doing`. What it cannot stay is
-`doing` with nobody on it and nothing written down — that is indistinguishable from work in
-hand, and it will sit there for exactly as long as nobody looks.
+the `subject` set, so it stops reading as abandoned. Actually finished, or not worth doing?
+Say so in the ledger and it stops being `doing`.
+
+**Waiting on somebody is the one answer that keeps it `doing`**, and nobody on it is then the
+correct staffing — the work is done, the ask is out, and putting a session on it produces
+another probe rather than an answer. What it needs is the wait written down as a `blocked`
+line naming the question and who owes it. What it cannot stay is `doing` with nobody on it and
+**nothing written down** — that is indistinguishable from work in hand, and it will sit there
+for exactly as long as nobody looks. The distinction is the record, not the status word.
 
 **Before you put someone on an unattended task, check nobody is already on it.** Every worker
 you start names its task — `hi_create_worker` refuses one that doesn't — so this list is

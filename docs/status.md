@@ -83,21 +83,28 @@ to any status, and every rule about *when* a row moves was prose.
 
 The pressure was in the projection, not the prose. `past_idle_boundary` keyed on `doing` + 48h
 and nothing else, so past two days a row got *"close it with what you did verify, or ask once,
-or cancel it"* on every pulse — three answers that exclude the correct one — plus *nobody on it*,
-which reads as abandoned. The prompt bullet licensing the close existed to relieve exactly that.
-So: the projection now reads the running record. A row whose most recent `landed`/`blocked`/
-`checked` line is `blocked` reports what it is blocked on, is not counted as awaiting a
-disposition, and is not flagged unstaffed — while still sitting in the band that keeps it off
-the bottom of a capped list, because a block rots too. A later `landed`/`checked` supersedes it.
-`moved` deliberately does not, since the store writes that on every transition.
+or cancel it"* on every pulse — three answers that all mean stop. With no gates anywhere on this
+ledger, that sentence is the only pressure the host applies, so a disposition it does not name
+reads as one that is not allowed. The prompt bullet licensing the close existed to relieve it.
 
-**Built, never watched.** Green — 984 Rust, 105 web — and no live instance has yet had a pulse
-land on a blocked row. Two things a live run is the only way to settle: whether managers
-actually write `blocked` lines rather than the `checked` line they wrote on all seven of these,
-and whether the relay added to `cognition.md` (a close or a new block is news, said in the turn
-the report lands) survives a busy turn — that is the half that failed here, and it is still only
-prose with nothing enforcing it. **The seven rows themselves are still `done` on the live
-instance; nothing in this change reopens them.**
+**The fix is the sentence, and the first attempt at it was too clever.** A `blocked_on()`
+classifier was built and pushed first: it read each row's running record, and a row whose most
+recent `landed`/`blocked`/`checked` line was `blocked` got a different note, a different count,
+and no *nobody on it*. Cut the same day, on Zhao Li's call — **code should do only clear and
+decisive logic**, and that was 135 lines deciding what a `blocked` line *means* on exactly the
+long-tail content it would be worst at. It also depended on a verb the managers demonstrably do
+not use: all seven of these rows were closed under a `checked` line, not a `blocked` one. What
+replaced it is one sentence — *say where it stands: close it with what you did verify, ask once
+and record what it waits on, or cancel it* — which names the recorded ask as a disposition and
+still refuses the seventh probe. Where a waiting row lives is now settled in one place only,
+`task-manager.md`, and code has no opinion about it.
+
+**Built, never watched.** Green — 982 Rust, 105 web. What a live run is the only way to settle:
+whether managers reading the widened sentence actually record the wait and leave the row in
+`doing`, and whether the relay added to `cognition.md` (a close or a new block is news, said in
+the turn the report lands) survives a busy turn — that is the half that failed here, and it is
+still only prose with nothing enforcing it. **The seven rows are still `done` on the live
+instance; nothing here reopens them.**
 
 **A worker names its task, or there is no worker — 2026-08-25.** `subject` on
 `hi_create_worker` was optional and its omission silent, so the join every ledger line is

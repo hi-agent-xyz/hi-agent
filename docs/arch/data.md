@@ -400,7 +400,14 @@ across two folders. Folding them is the [Task Manager](agents.md#task-manager)'s
 one tidying it may do, because a fold moves a promise where pruning would end one.
 
 So every transition of a row that already exists — closing, reopening, standing a duty down —
-belongs to a [Task Manager](agents.md#task-manager), and nothing else may perform one. The two
+belongs to a [Task Manager](agents.md#task-manager), and no other *agent* may perform one.
+
+**The person is not one of the writers this constrains.** `PATCH /api/tasks/<subject>` sets any
+status from the board's own buttons, and that is the point of them: it is his ledger, the split
+above exists to stop a rung ruling on its own errand, and he is not a rung. It is worth naming
+because it makes three hands on row-state rather than two, and the third leaves the thinnest
+trace — a `moved` line the store writes and no `checked` line at all, since nobody checked
+anything. A row that changed with no closing prose was probably him. The two
 writers cannot contradict each other because they never touch the same row-state: one turns
 nothing into `todo` or `doing`, the other owns everything after that. Splitting them is not tidiness — it breaks the loop where
 whoever did the work also rules on whether it landed, and that loop has already failed in the
@@ -547,16 +554,19 @@ state: `blocked` is a timeline kind, defined here as a line about a task that is
 something downstream acts on: `todo` says nobody has started finished work, and `done` says
 they have the thing when what they have is an unanswered question.
 
-**The projection has to be able to tell the two apart, because otherwise the cadence closes
-the row.** Past the idle boundary a `doing` line stops reporting its age and asks for a
-disposition, naming the three there are — close, ask once, cancel. Waiting is not among them,
-and it cannot be added as a fourth for every row, because for a row that is merely stuck
-"keep waiting" is the exact non-answer the boundary exists to refuse. So the projection reads
-the running record: a row whose most recent `landed`/`blocked`/`checked` line is `blocked`
-reports what it is blocked on instead of being asked to pick, and a later `landed` or
-`checked` supersedes the block and restores the question. It still sits in the band that
-keeps it from falling off a capped list — a block rots too, when the ask never went out or
-the answer arrived unnoticed.
+**And the cadence must not exclude it, because the cadence is the only pressure there is.**
+There are no gates on this ledger, so past the idle boundary the sentence a `doing` line
+carries — *say where it stands: close it, ask once and record what it waits on, or cancel
+it* — is the whole of what the host asks for. A disposition that sentence does not name
+reads as one that is not allowed.
+
+What it asks for is a disposition **recorded**, not a terminal one. That is the distinction
+worth holding: an ask that has been made and written down is a row that has stopped drifting,
+and it is the seventh probe — the same check run again in place of a decision — that the
+boundary exists to refuse. Code cannot tell those two apart. It has no business trying: a
+classifier over prose the agent writes freely would decide what a `blocked` line *means*, and
+be wrong on the long tail in a way nobody could see. So the host supplies the words and the
+manager supplies the judgment, which is the same division the whole ledger already runs on.
 
 This is written from a failure, not a worry. On 2026-08-25 a glance-up manager closed seven
 rows `todo → done` in one batch, every one of them waiting on the person's own decision, each
