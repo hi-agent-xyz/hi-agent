@@ -71,6 +71,46 @@ item 2 below already said this pass reports what it cannot fix and never refuses
 is guidance in `cognition.md` now, and the reader takes both path forms. **Built, not yet
 watched:** nothing has observed the next brain turn actually catch those 61 up.
 
+**A worker names its task, or there is no worker — 2026-08-25.** `subject` on
+`hi_create_worker` was optional and its omission silent, so the join every ledger line is
+projected through rested on a dispatcher remembering a field while busy with the errand itself.
+Counted over every `hi_create_worker` frame in one install's `data/memory/raw/sessions/` — 474
+distinct calls: **34 of the 384 whose kind serves the ledger named no task** (9%), among them
+both live workers on screen when this was raised, each running work whose task line meanwhile
+read *nobody on it*. Four changes, one commit:
+
+- **Refused without one**, exactly as an empty `title` is, for every kind that serves the ledger.
+- **And refused unless it names a row that already exists** — `tasks::named`, which reads and
+  never writes. A dispatch that *opened* the missing row was built first and cut: it makes the
+  required field always satisfiable at the price of a ledger that fills itself, and a review
+  filed as its own task or a second row for work already tracked is a worse list than a missing
+  label. Every line on the ledger is something somebody decided was owed; opening one is a file
+  a mind writes with the shell it already has.
+- **A miss comes back with the open ledger** — up to 30 rows, `subject`, status and title — so
+  the answer to *no such row* arrives with the rows there are. That is where the joining
+  actually happens: the reviewer sees the builder's row and names it rather than coining a
+  sibling beside it.
+- **The two kinds that serve no single task are refused a subject** — `task-manager`, whose row
+  would be the whole ledger, and `person-reader`, whose subject is a person and would open a
+  task named after somebody. That closes what was item 4 here: `WorkerType::expects_a_subject`
+  had the manager on the wrong side, so **all 69 task-manager dispatches carried *not linked to
+  any task*** — the phrase that means *staff this*, flown by the one session that can never
+  satisfy it. Its line now says it serves the whole ledger.
+
+**And the list gets an owner: one promise, one row.** Two rows for one job double-count what is
+owed, split its record across two folders and invite two workers onto one job — a fault only
+visible from the whole list at once, which is what a `task-manager` reads and no rung does. It
+was forbidden from folding them (*"do not prune, merge or tidy an open task"*); it now may, and
+only it may. A fold carries everything the second row says into the survivor and closes the
+folded one `cancelled` with a line naming where the promise went — never a deleted directory,
+never a moved artifact. **Folding is not the pruning still forbidden**: pruning ends a promise, a
+fold moves one, and a merely stale row is neither. The test written into the prompt is delivery,
+not resemblance — two rows are one job when delivering either delivers the other.
+
+`Registry::has_unlinked_worker` went with all of it: a predicate whose doc named "the check that
+runs before staffing a task", with no caller anywhere and none in its history. The fence replaces
+what it was for.
+
 **Still to build, in order:**
 
 1. **A recently-closed `serving` row keeps its place in the manager's window** — closed when,
@@ -94,11 +134,7 @@ watched:** nothing has observed the next brain turn actually catch those 61 up.
    `reconcile` closed-with-no-instant, the 2 task directories with no `facet.md` at all,
    `kt8-070` / `ktv-doubao-ref-only` still in `done` after an audit that found neither had reached
    the person, and `feishu-it-group-watcher` cancelled while its machinery runs.
-4. **The no-subject exemption.** `CreateWorker(subject)` is omitted for a manager, but the
-   reachable list still renders that as *not linked to any task* — the line that means "staff
-   this" — so the manager trips that alarm on itself every glance-up. The prompts say to omit
-   `subject`; nothing enforces it.
-5. **Nothing starts a manager.** No code path creates one, nothing checks that one ran, nothing
+4. **Nothing starts a manager.** No code path creates one, nothing checks that one ran, nothing
    notices if none ever does — `git grep TaskManager` outside the enum returns nothing. The
    chain is *pulse fires* (code) → *Cognition starts a manager* (prompt) → *manager files*
    (prompt), and two of the three links are prose. Same lever as (1) and it belongs beside it:
@@ -311,6 +347,8 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
 | **The views band opening on the bookmarks row** | The upper row's scroll-to-*here* has been watched; the lower row's is new, and its arithmetic was only checked in a standalone page carrying the real stylesheet — not in the mounted band, where the chip appears a render after the first `listViews()` answers. Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
 | **Working ahead** — the handover carries the questions it provokes, and the reversible half of the likely next step is handed out in the same turn ([`agents.md` § *Working ahead*](arch/agents.md)) | Journey [34](user-journeys/34-a-step-ahead.md), written to be run without leading the witness. **The one that decides it**: hand over something whose next step is outward, then say nothing, and confirm it stopped at the door. This is prompt-level throughout — the identity tests pin that the prose is present and that the permission never travels without its boundary; nothing pins that the agent acts on either |
 | **The seam between the rungs** — a name in the person's words crosses down quoted, with Reaction's reading beside it rather than in place of it; the agent's own housekeeping (gate verdicts, retries, contrast ratios, which attempt this is) does not cross up at all; a commit answers *what was done* and never *what was asked*; a name matching exactly one open ledger row is survivorship, not disambiguation; an ask you simply answer opens no row; one `task-manager` serves the whole ledger, never one per row ([`agents.md` § *The hand-down*](arch/agents.md)) | All six are prose in `reaction.md` and `cognition.md`, written off one failure watched on 2026-08-24: a bare "056" went down already bound to a commit, the rung holding the ledger read only what that binding pointed at, and eleven minutes of confident, internally consistent answers described a child regression instead of the contract it was a child of — ten of the ledger's 103 rows carry that ticket number, and exactly one of the ten was open. Every step after the binding was correct work. Nothing pins that any of the six changes behaviour. **The re-test, in two parts**: ask about something whose short name is ambiguous in the ledger, then read the hand-down in the frame log — their word must be in it, quoted, and any binding marked as a guess. Then hand over work that runs through a builder/reviewer loop and count what reaches the conversation: the thing landing, and not one line about the gates |
+| **A worker names the task it serves** — `hi_create_worker` refuses a ledger-serving kind without a `subject`, refuses one that names no existing row (handing back the open ledger), and refuses one from `task-manager` / `person-reader` ([`agents.md`](arch/agents.md)) | Unit tests reach every refusal, the exemption, the offered list and the slugged lookup; **no live dispatch has gone through it.** The re-test, in one session: ask for something the ledger has never heard of and read the frames — the first `hi_create_worker` may well be refused, and what matters is what the model does next. It should either name a row from the list it was handed or write `memory/facets/tasks/<subject>/facet.md` and retry; if it instead thrashes, or names the nearest row rather than the right one, the fence costs more than the label did. Then the case the fence is really for: hand out a review or a second pass on work that already has a row, and confirm it names the parent. Also unwatched: whether the offered list (30 rows) is the right size in a store with 108 subjects. Existing compiled views re-derive *not linked to any task* from a null `subject` themselves, so a `task-manager` card keeps flying the old phrase until the roster view is rebuilt |
+| **One promise, one row** — a `task-manager` may fold a duplicate into the row it duplicates, and only it may | Prompt-level throughout (`task-manager.md` § *One promise, one row*), and the manager itself is still *real and unexercised* — nothing has ever started one, which is item 4 below. So this is guidance handed to a worker that has never run: **the first fold will also be the first pass.** What decides it is the boundary, not the mechanics — watch it fold two rows that are one job and *decline* two that merely share a subject, and read whether the cancelled row still says where the promise went |
 | **The `ahead` count** — `hi_create_worker(ahead)` → `WorkerSpawned` → `N/M errands started ahead` in the events view | It is self-reported, so it can only undercount, and a zero is two different findings wearing one number: nothing is being prepared, or nothing is marking it. Read it against the wire frames' actual `hi_create_worker` arguments on a run where working ahead plainly happened, or the count grades its own homework |
 
 ---

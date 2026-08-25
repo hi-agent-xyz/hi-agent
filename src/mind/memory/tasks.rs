@@ -464,6 +464,70 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
     anyhow::bail!("too many tasks already named like {base:?}; give this one its own title")
 }
 
+/// How many open rows a refusal offers back. Enough that the row being looked for is almost
+/// always in the list, few enough that the list stays readable — one live store carries 108
+/// subjects and twelve of them open.
+const OFFERED_SUBJECTS: usize = 30;
+
+/// What the ledger says about a subject somebody named.
+#[derive(Debug)]
+pub enum Named {
+    /// A row exists, and this is the subject **as the ledger spells it**. The join between a
+    /// task and the session working it is an exact match on the directory name, so a raw
+    /// `Login failure` handed on would name a row that exists and match nothing.
+    Row(String),
+    /// Nothing is filed under that name — with the open rows rendered beside it, because a
+    /// refusal that only says *no* is the one that gets answered by coining a near-duplicate.
+    /// Empty when the ledger is empty.
+    Missing { open: String },
+}
+
+/// Look `subject` up, and answer a miss with the ledger itself.
+///
+/// **Nothing here writes.** A row is a promise somebody made, and the one thing that keeps
+/// the list worth reading is that every line on it was put there deliberately — an
+/// auto-opened row is a row nobody decided to owe. So this reports, and a mind with a shell
+/// does the opening ([`write_task`] is not the path; the writer edits the file).
+///
+/// **The list is the point of the miss.** Two workers on one job, a review filed as its own
+/// task, a second row for work already tracked under another name — each of those is a
+/// dispatcher that did not know what the ledger already held. It holds it right here, so the
+/// answer to *no such row* arrives with the rows there are.
+pub async fn named(data_dir: &Path, subject: &str) -> anyhow::Result<Named> {
+    let subject = facets::slug(subject);
+    if !subject.is_empty() && read_task(data_dir, &subject).await?.is_some() {
+        return Ok(Named::Row(subject));
+    }
+    Ok(Named::Missing { open: open_rows(data_dir).await })
+}
+
+/// The open ledger, one line per row, for a reader choosing among them.
+///
+/// Never fails: this is the helpful half of a refusal that has already been decided, and a
+/// ledger that cannot be read is a reason to say less, not a second error to raise.
+async fn open_rows(data_dir: &Path) -> String {
+    use std::fmt::Write as _;
+
+    let mut open = match active_tasks(data_dir).await {
+        Ok(open) => open,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the ledger to offer its open rows");
+            return String::new();
+        }
+    };
+    open.sort_by(|a, b| {
+        (a.status.as_str(), a.subject.as_str()).cmp(&(b.status.as_str(), b.subject.as_str()))
+    });
+    let mut out = String::new();
+    for task in open.iter().take(OFFERED_SUBJECTS) {
+        let _ = writeln!(out, "- `{}` [{}] {}", task.subject, task.status.as_str(), task.title);
+    }
+    if open.len() > OFFERED_SUBJECTS {
+        let _ = writeln!(out, "- (and {} more open)", open.len() - OFFERED_SUBJECTS);
+    }
+    out
+}
+
 /// What each subject's status was the last time [`reconcile`] looked.
 ///
 /// **In memory on purpose, and lossy on purpose.** Written down it would be a second
@@ -1368,6 +1432,62 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A subject that names a row resolves to it, spelled as the ledger spells it.** The
+    /// join is an exact string match on the directory name, so a raw `Login Failure!` carried
+    /// on to the session would name a row that exists and match nothing — a worker linked in
+    /// its own record and absent from the task's line.
+    #[tokio::test]
+    async fn a_named_row_comes_back_as_the_ledger_spells_it() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "login-failure", "status: doing\ntitle: \"Chase the login failure\"\n", "")
+            .await;
+
+        let Named::Row(subject) = named(dir.path(), "  Login Failure!  ").await.unwrap() else {
+            panic!("the row is there");
+        };
+        assert_eq!(subject, "login-failure");
+    }
+
+    /// **A miss answers with the ledger, because a refusal that only says *no* is the one that
+    /// gets answered by coining a near-duplicate.** The list is what lets a review name the
+    /// task it is a review *of* instead of opening a sibling row beside it.
+    #[tokio::test]
+    async fn a_miss_offers_the_open_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        hand_write(dir.path(), "ship-the-flash-cards", "status: todo\ntitle: \"Ship the flash cards\"\n", "").await;
+        hand_write(dir.path(), "watch-the-ops-group", "status: serving\ntitle: \"Watch the ops group\"\n", "").await;
+        hand_write(dir.path(), "old-thing", "status: done\ntitle: \"Old thing\"\n", "").await;
+
+        let Named::Missing { open } = named(dir.path(), "review-the-flash-cards").await.unwrap()
+        else {
+            panic!("nothing is filed under that name");
+        };
+        assert!(open.contains("`ship-the-flash-cards` [todo] Ship the flash cards"), "{open}");
+        assert!(open.contains("`watch-the-ops-group` [serving]"), "{open}");
+        assert!(!open.contains("old-thing"), "a closed row is not what someone is looking for: {open}");
+    }
+
+    /// **Nothing in this path writes.** The whole reason the lookup refuses instead of opening
+    /// is that a row nobody decided to owe is what turns the list into a place nobody reads.
+    #[tokio::test]
+    async fn a_lookup_never_opens_a_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = named(dir.path(), "something-brand-new").await.unwrap();
+        assert!(
+            !facets::subject_dir(dir.path(), DIMENSION, "something-brand-new").exists(),
+            "a lookup must not have filed anything"
+        );
+    }
+
+    /// A subject of nothing but punctuation slugs to the empty string, which names no row and
+    /// could never be a directory. It is a miss like any other — the list comes back, and the
+    /// caller says what a subject looks like.
+    #[tokio::test]
+    async fn a_subject_that_slugs_to_nothing_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(named(dir.path(), "///").await.unwrap(), Named::Missing { .. }));
+    }
 
     /// Write a facet exactly as a hand-editing agent would — straight to the file, no
     /// `render`, no stamps it forgot. Every `reconcile` test starts from one of these,

@@ -228,6 +228,31 @@ the last three hours by a run that returned real values"* fails within one caden
 `checked_at` is stamped only when a check came back **alive** — a probe that came back down
 must never stamp it, or the field records attention rather than health.
 
+# One promise, one row
+
+The list is read by somebody deciding what to do next, so **two rows for one job is a fault in
+the list itself**. It double-counts a promise, splits that work's record across two folders,
+and invites two workers onto one job — which is the collision the whole ledger is arranged to
+prevent. Folding them is yours, and it is the one kind of tidying that is: nothing is dropped,
+because the promise moves rather than ending.
+
+**The test is delivery, not resemblance.** Two rows are one job when delivering either one
+delivers the other — *review the trip view* beside *build the trip view*, *audit the login
+timeline* beside *diagnose the login failure*. Rows that merely share a subject are two
+promises: a fix and the thing it fixes are not one job, and folding them loses the smaller one.
+When you cannot tell, leave both open and say so — an unfolded duplicate costs a reader a
+moment, a wrongly folded pair costs somebody the thing they were promised.
+
+**How to fold.** Pick the survivor: the row with the record, or the one being worked, or the
+older if neither decides it. Carry everything the other says into it — its prose, its
+`## Timeline` lines, its `due_at` — before you touch either status. Then close the folded row
+as `cancelled` with a `checked` line reading **`folded into <subject>`** and the survivor's
+name. Never delete a directory and never move artifacts out of one: the folded row keeps its
+folder and its history, and now says where the promise went.
+
+**Both subjects go in your report.** A fold changes what the list *means*, and whoever reads
+the report has to be able to find the promise again.
+
 # What you write, and what you must not touch
 
 **Prose goes in the body, below the frontmatter.** Frontmatter is schema, not a filing
@@ -251,7 +276,9 @@ is the only reason anyone would ever catch you doing it.
 
 Three things that are not yours:
 
-- **Do not prune, merge or tidy an open task.** However stale it looks, it is a promise.
+- **Do not prune or tidy an open task away.** However stale it looks, it is a promise. Folding
+  a duplicate into the row it duplicates is the one exception, and it is not pruning — the
+  promise survives in the survivor (*One promise, one row*, above).
 - **Do not close something because it stopped looking current.** That is not one of the two
   closing moments.
 - **Do not re-check as a substitute for deciding.** Past a couple of days in `doing` the age

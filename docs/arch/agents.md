@@ -231,6 +231,37 @@ nowhere: a facet field naming its worker would be a second copy of a fact the re
 holds, free to disagree with it, and wrong by construction after a restart — still naming a
 session that no longer exists.
 
+**A worker names the task it serves, and the call is refused without one.** `subject` was
+optional, and an optional field is the one a dispatcher busy with the errand itself skips — the
+worker runs, the join is never made, and the task line reads *nobody on it* for as long as the
+work takes, which is the line that gets a second worker started on a folder the first is
+already writing into. So it is required wherever the kind serves the ledger, the same fence
+`title` has and for a stronger reason: a poor title costs a roster row its readability, a
+missing subject costs the ledger its only account of who is doing what.
+
+**The subject must name a row that already exists, and nothing mechanical opens one.** One
+check refuses two different mistakes. A subject nothing is filed under leaves the roster reading
+`on task fix-the-login` against a ledger holding no such row — tracked to look at, untracked in
+fact, which is worse than the blank it replaced. And opening the row *for* the dispatcher, which
+is the obvious way to make a required field always satisfiable, fills the list with rows nobody
+decided to owe: a review filed as a task of its own, a second row for work already tracked under
+another name, a refresh nobody would ever have written down. **The ledger is the list of what is
+owed, and a list that fills itself is one nobody reads.** So a row is opened by a mind, with the
+shell it already has, and the dispatch only ever joins one.
+
+**A miss answers with the ledger.** A refusal that says only *no* is the one that gets answered
+by coining a near-duplicate, so the open rows come back with it and the dispatcher picks. That
+is where most of the joining actually happens: the reviewer sees the builder's row and names it
+instead of opening a sibling beside it.
+
+The cost is a round trip the first time work is genuinely new — write the facet, then create the
+worker. It is paid once per task and it buys the property that makes the list worth reading:
+every line on it is something somebody decided was owed.
+
+**Two kinds serve no single task and take none.** The [Task Manager](#task-manager) serves every
+row, and a `person-reader` organizer's subject is a person. Passing one is refused rather than
+quietly dropped: a `people/` name accepted there would open a task named after a human being.
+
 That makes **`doing` with nobody on it** a fact the ledger reports rather than an inference
 someone has to draw. It is the shape every unfinished task takes after a restart, a crash, an
 idle-out, or a hand-off that never happened, and until it was projected it was indistinguishable
@@ -855,12 +886,25 @@ what a status change implies is idempotent. A restart mid-file leaves a ledger p
 nobody on it, which is a state the next glance-up reads and continues — the ordinary shape of
 [recovery](#across-a-restart), not a special case.
 
-**The one type that names no subject.** `CreateWorker(subject)` binds a worker to a single
-ledger task, and a worker without one reads as *not linked to any task* — the line that means
-**nobody is on this, staff it**. A manager serves every task, so it can never name one, and left
-alone it would trip that alarm on itself at every glance-up. So it is subjectless by
-construction and the reachable list says so in words, rather than by an absence that means
-something else everywhere it appears.
+**One promise, one row, and folding a duplicate is its.** Two rows for one job is a fault in
+the list itself: it double-counts a promise, splits that work's record across two folders, and
+invites two workers onto one job. Nothing else can see it — the fault is visible only from the
+whole list at once, which is exactly what this worker reads and no rung does. So the manager
+folds them: carry everything the second row says into the survivor, then close it `cancelled`
+with a line naming where the promise went. **This is not the pruning it is forbidden**, and the
+difference is the whole of it — pruning ends a promise, a fold moves one, and a row that is
+merely stale is neither. The test is delivery, not resemblance: two rows are one job when
+delivering either delivers the other.
+
+**It names no subject, and is one of only two kinds that may not.** `CreateWorker(subject)`
+binds a worker to a single ledger task and is required of every kind that serves the ledger;
+a worker without one reads as *not linked to any task* — the line that means **nobody is on
+this, staff it**. A manager serves every task, so it can never name one, and left inside that
+rule it would trip the alarm on itself at every glance-up. So it is subjectless by construction,
+a subject passed to one is refused, and the reachable list says *serves the whole ledger* in
+words rather than by an absence that means something else everywhere else it appears. (The other
+is the `person-reader` organizer, for the opposite reason: its subject is a person, and a person
+is not something the ledger owes.)
 
 ## Delegation
 

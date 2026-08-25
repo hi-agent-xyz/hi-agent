@@ -147,20 +147,31 @@ impl WorkerType {
         Self::ALL.iter().copied().find(|t| t.as_str() == s.trim())
     }
 
-    /// Whether a session of this kind is expected to name a ledger task.
+    /// Whether a session of this kind **must** name a ledger task.
     ///
-    /// Almost all of them are: a worker is how a task gets done, so one created without a
-    /// `subject` leaves its task reading as owed by nobody, and that is worth saying out
-    /// loud wherever a worker is listed.
+    /// Almost all of them must, and `hi_create_worker` refuses one of these kinds without a
+    /// `subject` rather than merely reporting the gap afterwards
+    /// ([`crate::foundation::mcp`]). A worker is how a task gets done, so the join between
+    /// the two is not a label to be added when convenient: without it the task line reads
+    /// *nobody on it* while the work is running, and the reading that line invites is to
+    /// start a second worker on a folder one is already writing into.
     ///
-    /// `person-reader` is the exception, and it is the exception by design. It is one of
-    /// Reflection's **organizers** (`docs/arch/agents.md`) — housekeeping keyed to a
-    /// `people/<name>` facet, dispatched one per person present in a stretch, and never
-    /// work the ledger owes anyone. There is no task for it to name. Flagging it would put
-    /// the phrase on every settling pass's fan-out, which is the same mistake the ledger
-    /// side already refuses: "nobody on it" is said only where nobody is a problem.
+    /// **Two kinds serve no single task, and both are exceptions by design.**
+    ///
+    /// `person-reader` is one of Reflection's **organizers** (`docs/arch/agents.md`) —
+    /// housekeeping keyed to a `people/<name>` facet, dispatched one per person present in a
+    /// stretch, and never work the ledger owes anyone. There is no task for it to name.
+    ///
+    /// `task-manager` is the other, and it is the one that was on the wrong side of this
+    /// predicate. It serves *every* task, so naming one would tie the whole ledger to a
+    /// single row (`docs/arch/agents.md`: *the one type that names no subject*) — yet it
+    /// counted as expecting a subject here, so every one of them was listed as **not linked
+    /// to any task**, the phrase that means *nobody is on this, staff it*. Measured over the
+    /// raw frames of one install: 69 of 474 dispatches were task-managers, and all 69 flew
+    /// that flag. A phrase that fires on a session which can never satisfy it is a phrase
+    /// the reader learns to skip — including on the line where it means something.
     pub fn expects_a_subject(self) -> bool {
-        !matches!(self, Self::PersonReader)
+        !matches!(self, Self::PersonReader | Self::TaskManager)
     }
 
     /// The embedded base for this type's layer.
@@ -1574,6 +1585,42 @@ mod soul_tests {
             COGNITION_BASE.contains("reopened by the host"),
             "Cognition has to know its errands come back on their own, or it starts a second \
              worker on a task that already has one"
+        );
+    }
+
+    /// **A prompt that calls a required argument optional teaches a call that gets refused.**
+    /// `subject` stopped being a nicety when `hi_create_worker` began refusing a
+    /// ledger-serving worker without one ([`WorkerType::expects_a_subject`]); a rung still
+    /// reading "set it if the work belongs to a task" spends a turn finding out.
+    ///
+    /// All three halves are pinned, because the fence without the way past it is worse than
+    /// neither: a rung told the field is required and that it must name an existing row, but
+    /// not that opening one is a file it writes itself, has no move at all the first time it
+    /// staffs work the ledger has never heard of.
+    #[test]
+    fn both_dispatching_rungs_know_the_subject_is_required() {
+        for (name, text) in [("cognition", COGNITION_BASE), ("reflection", REFLECTION_BASE)] {
+            assert!(
+                text.contains("refused without one"),
+                "{name}.md must say the call is refused without a `subject`"
+            );
+            assert!(
+                text.contains("name a row that already exists"),
+                "{name}.md must say the subject names an existing row — the fence refuses \
+                 anything else"
+            );
+            assert!(
+                text.contains("memory/facets/tasks/<subject>/facet.md"),
+                "{name}.md must say how to open a row, or the fence has no way past it"
+            );
+        }
+        assert!(
+            !COGNITION_BASE.contains("if the work belongs to a task"),
+            "cognition.md still offers `subject` as a choice"
+        );
+        assert!(
+            REFLECTION_BASE.contains("takes **no `subject`**"),
+            "reflection.md must say a person-reader is refused one, not merely excused it"
         );
     }
 

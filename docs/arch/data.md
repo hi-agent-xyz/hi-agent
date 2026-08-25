@@ -384,6 +384,21 @@ restart eats*, and a promise waiting on a worker to be spawned is a promise livi
 Closing is a claim **about the world**: that the thing reached them. Nobody witnesses that from
 inside the conversation, least of all the agent that handed the work out.
 
+**A row is opened by a mind, never by machinery.** `CreateWorker(subject)` requires the ledger
+task a worker serves and refuses a subject nothing is filed under
+([agents.md](agents.md#cognition--minutes-and-beyond)) — but it does not open the missing row,
+and that restraint is the load-bearing part. A dispatch that opened rows would make the field
+always satisfiable and the list unreadable: a review filed as its own task, a second row for
+work already tracked, an errand nobody would have written down. Every line here is something
+somebody decided was owed, or the list stops being the answer to *what do I owe*. Whoever hands
+the work out does the opening, which is Reflection as well as Cognition — a promise it made is
+no less a promise — and the other half does not widen at all: every transition of a row that
+exists is still a Task Manager's.
+
+**One promise, one row.** Two rows for one job double-count what is owed and split its record
+across two folders. Folding them is the [Task Manager](agents.md#task-manager)'s, and it is the
+one tidying it may do, because a fold moves a promise where pruning would end one.
+
 So every transition of a row that already exists — closing, reopening, standing a duty down —
 belongs to a [Task Manager](agents.md#task-manager), and nothing else may perform one. The two
 writers cannot contradict each other because they never touch the same row-state: one turns

@@ -201,15 +201,24 @@ fn create_worker_tool() -> Value {
                 },
                 "subject": {
                     "type": "string",
-                    "description": "The ledger subject of the task this errand is for — the \
-                                    directory name under `memory/facets/tasks/`, not the title. \
-                                    Set it whenever the work belongs to a task you are tracking: \
-                                    it is what makes that task show as *being worked on* rather \
-                                    than as owed by nobody, and what lets a later glance tell a \
-                                    task with someone on it from one that has quietly stalled. \
-                                    Leave it out only for work that is genuinely not in the \
-                                    ledger — and always for a `task-manager`, which serves every \
-                                    task and so can name none.",
+                    "description": "The ledger task this errand serves — the directory name \
+                                    under `memory/facets/tasks/`, not the title. **Required for \
+                                    every type except `task-manager` and `person-reader`**, \
+                                    which serve every task and no single one, and it must name \
+                                    a row that already exists: the call is refused otherwise, \
+                                    and the refusal lists what is open so you can pick. A \
+                                    follow-up, a review or a second pass serves the task it is \
+                                    *about* — name that row, not a new one. If the work is \
+                                    genuinely new, open its row first (write \
+                                    `memory/facets/tasks/<subject>/facet.md`) and then create \
+                                    the worker; a row nobody decided to owe is how the list \
+                                    stops being worth reading. It is the whole join between a \
+                                    task and the session doing it: set, the task reads as being \
+                                    worked on and by whom; missing, the work runs where no list \
+                                    can see it while its task reads as owed by nobody — \
+                                    indistinguishable from an abandoned one, so the next glance \
+                                    staffs it again and two sessions write over each other in \
+                                    one folder. **This call is the only moment it can be set.**",
                 },
                 "ahead": {
                     "type": "boolean",
@@ -1390,6 +1399,90 @@ async fn dispatch_tool(
                     }
                 },
             };
+            // **Required wherever the kind serves the ledger, and refused like an empty
+            // `title` is.** It was optional, and optional is the field a busy dispatcher
+            // drops: over the raw frames of one install, 34 of 384 workers whose kind expects
+            // a task carried none — each of them running work whose task line meanwhile read
+            // *nobody on it*, which is the line that gets a second worker started on a folder
+            // the first is already writing into.
+            //
+            // `task-manager` and `person-reader` serve no one task, and are exempt by the
+            // same predicate that marks them exempt on every roster
+            // ([`WorkerType::expects_a_subject`]).
+            let asked =
+                args.get("subject").and_then(|v| v.as_str()).map(str::trim).unwrap_or_default();
+            if asked.is_empty() && kind.expects_a_subject() {
+                return tool_error(&format!(
+                    "hi_create_worker requires a `subject` for a `{}` worker — the ledger task \
+                     this errand serves, spelled as the directory name under \
+                     `memory/facets/tasks/`. It has to name a row that exists; call it again \
+                     with your best guess and the refusal will list what is open. \
+                     (`task-manager` and `person-reader` serve every task and no single one, so \
+                     they take none.)",
+                    kind.as_str()
+                ));
+            }
+            // **And refused on the two kinds that serve no one task**, which is the same
+            // fence from the other side. A `task-manager` handed a subject would tie the
+            // whole ledger to a single row; a `person-reader`'s person is not a task at all,
+            // and the four that passed one on the install this was measured against would now
+            // each open a task named after a human being. Silence about that is how a
+            // `people/` name ends up as a row in `tasks/`.
+            if !asked.is_empty() && !kind.expects_a_subject() {
+                return tool_error(&format!(
+                    "a `{}` worker takes no `subject`: it serves no single ledger task, and \
+                     naming one would tie the whole ledger to one row. Say who or what it is \
+                     about in `task` instead.",
+                    kind.as_str()
+                ));
+            }
+            // **The subject must name a row that exists, and a miss comes back with the
+            // ledger.** Two things are being refused here at once. A subject nothing is filed
+            // under would leave the roster reading `on task x` against a ledger holding no
+            // `x` — tracked to look at, untracked in fact. And opening the row *for* the
+            // caller, which is the obvious way to make a required field always satisfiable,
+            // fills the list with rows nobody decided to owe: a review filed as its own task,
+            // a second row for work already tracked under another name, an errand that would
+            // never have been written down by hand. The ledger is the list of what is owed,
+            // and a list that fills itself is one nobody reads — so nothing mechanical writes
+            // a row here. What the miss carries instead is the open ledger: the answer to *no
+            // such row* arriving with the rows there are is what stops the near-duplicate
+            // from being coined in the first place.
+            let subject = match asked.is_empty() {
+                true => None,
+                false => match crate::mind::memory::tasks::named(data_dir, asked).await {
+                    Ok(crate::mind::memory::tasks::Named::Row(subject)) => Some(subject),
+                    Ok(crate::mind::memory::tasks::Named::Missing { open }) => {
+                        let ledger = match open.trim().is_empty() {
+                            true => "Nothing is open on the ledger right now.".to_string(),
+                            false => format!("Open right now:\n{}", open.trim_end()),
+                        };
+                        return tool_error(&format!(
+                            "no task is filed under `{asked}`, so nothing was started. Name the \
+                             row this work belongs to — a follow-up, a review or a second pass \
+                             serves the task it is about, not a task of its own. {ledger}\n\
+                             If this really is new work, open its row first — write \
+                             `memory/facets/tasks/{asked}/facet.md` with `status:`, `title:` \
+                             and `created_at:` — then create the worker."
+                        ));
+                    }
+                    // The ledger could not be read at all — no disk, no permission. Refused
+                    // rather than started blind: a worker spawned on an unverifiable subject
+                    // is the dangling link this check exists to prevent.
+                    Err(err) => {
+                        return tool_error(&format!(
+                            "the ledger could not be read, so `{asked}` could not be confirmed: \
+                             {err:#}. Nothing was started."
+                        ));
+                    }
+                },
+            };
+            // Named rather than left to be inferred: the reply is what a caller reads back to
+            // check it staffed the row it meant to.
+            let link = match &subject {
+                Some(subject) => format!(" on task `{subject}`"),
+                None => String::new(),
+            };
             // A worker must run in the standing loop that created it. Role-specific
             // slots keep Cognition and Reflection from replacing each other's route.
             let owner_role = ToolOwner::from_role(role).expect("role guard above");
@@ -1398,16 +1491,6 @@ async fn dispatch_tool(
                     "the owning loop is not up, so there is nowhere to run a worker",
                 );
             };
-            // Not validated against the ledger. A subject that names no task is a mislabelled
-            // worker, which is visible and fixable; refusing the call over it would mean a
-            // typo costs the work rather than the label. The projection simply finds no live
-            // worker for that task, which is the same answer as not setting it at all.
-            let subject = args
-                .get("subject")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
             // The id is minted **here**, before the session exists, and handed back in
             // this reply — the contract is `CreateWorker → a session slug`, and a caller
             // that cannot name what it made cannot brief it, ask after it, or read it.
@@ -1459,7 +1542,7 @@ async fn dispatch_tool(
             }
             return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, registered).await {
                 Ok(Ok(Ok(()))) => tool_ok(&format!(
-                    "session {id} is up; brief it with hi_send_message, check it with \
+                    "session {id} is up{link}; brief it with hi_send_message, check it with \
                      hi_session_status"
                 )),
                 // The open failed. Said out loud rather than logged, because the caller is
@@ -2770,6 +2853,152 @@ mod surface_tests {
                 "{role:?} must fail before any network request"
             );
         }
+    }
+
+    /// Everything `hi_create_worker` needs that is not the errand itself.
+    async fn create_worker(
+        dir: &std::path::Path,
+        args: Value,
+    ) -> Value {
+        let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir).unwrap();
+        let partial = Mutex::new(None);
+        let obs = Observatory::new(None);
+        dispatch_tool(
+            &tools,
+            dir,
+            &privacy,
+            &partial,
+            &obs,
+            Some(7.into()),
+            Some("cognition"),
+            "hi_create_worker",
+            &args,
+        )
+        .await
+    }
+
+    fn refusal(got: &Value) -> &str {
+        assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{got}");
+        got["content"][0]["text"].as_str().unwrap_or_default()
+    }
+
+    /// **A worker that serves the ledger is refused without a task, the same way it is
+    /// refused without a title.** An optional field is the one a dispatcher busy with the
+    /// errand skips: over the raw frames of one install, 34 of 384 workers whose kind expects
+    /// a task carried none, and each ran while its task line read *nobody on it* — the line
+    /// whose obvious reading is to start a second worker on a folder the first is writing to.
+    ///
+    /// The refusal must also leave the ledger alone. "Nothing was started" has to include
+    /// "and nothing was filed", or a rejected call leaves a `doing` row nobody is on.
+    #[tokio::test]
+    async fn a_worker_serving_the_ledger_is_refused_without_a_subject() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = create_worker(
+            dir.path(),
+            json!({ "title": "chase the deploy", "task": "the release stalled; find out why" }),
+        )
+        .await;
+
+        assert!(refusal(&got).contains("requires a `subject`"), "{got}");
+        assert!(
+            !dir.path().join("memory/facets/tasks").exists(),
+            "a refused call must not have opened a row"
+        );
+    }
+
+    /// **A subject nothing is filed under is refused, and the refusal hands back the ledger.**
+    /// Accepting it would put `on task x` on the roster against a ledger with no `x`; opening
+    /// the row instead would fill the list with rows nobody decided to owe — a review filed as
+    /// its own task, a second row for work already tracked. The list that comes back is what
+    /// makes the refusal answerable in one move rather than by coining a near-duplicate.
+    #[tokio::test]
+    async fn a_subject_nothing_is_filed_under_is_refused_with_the_open_ledger() {
+        use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
+
+        let dir = tempfile::tempdir().unwrap();
+        write_task(dir.path(), &Task::new("Ship the flash cards", TaskStatus::Doing)).await.unwrap();
+
+        let got = create_worker(
+            dir.path(),
+            json!({
+                "title": "review the flash cards",
+                "task": "look at the deck and say whether it is ready",
+                "subject": "review-the-flash-cards",
+            }),
+        )
+        .await;
+
+        let said = refusal(&got);
+        assert!(said.contains("no task is filed under `review-the-flash-cards`"), "{got}");
+        assert!(said.contains("`ship-the-flash-cards` [doing] Ship the flash cards"), "{got}");
+        assert!(
+            !dir.path().join("memory/facets/tasks/review-the-flash-cards").exists(),
+            "the refusal must not have opened the row it refused"
+        );
+    }
+
+    /// The other side of it: a subject that **does** name a row gets past the fence, and the
+    /// only thing left to complain about is the loop this test never started.
+    #[tokio::test]
+    async fn a_subject_naming_a_row_gets_past_the_fence() {
+        use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
+
+        let dir = tempfile::tempdir().unwrap();
+        write_task(dir.path(), &Task::new("Ship the flash cards", TaskStatus::Doing)).await.unwrap();
+
+        let got = create_worker(
+            dir.path(),
+            json!({
+                "title": "finish the deck",
+                "task": "cut the last four cards",
+                // Spelled as somebody would type it, not as the directory is named.
+                "subject": "Ship the Flash Cards",
+            }),
+        )
+        .await;
+
+        assert!(refusal(&got).contains("the owning loop is not up"), "{got}");
+    }
+
+    /// **The two kinds that serve no single task are refused one, which is the same fence
+    /// from the other side.** A `task-manager` handed a subject would tie the whole ledger to
+    /// one row; a `person-reader`'s subject is a person, and accepting it would open a task
+    /// named after a human being — four calls on the measured install passed one.
+    #[tokio::test]
+    async fn the_kinds_that_serve_no_one_task_are_refused_a_subject() {
+        let dir = tempfile::tempdir().unwrap();
+        for kind in ["task-manager", "person-reader"] {
+            let got = create_worker(
+                dir.path(),
+                json!({
+                    "title": "keep the ledger",
+                    "task": "go and look",
+                    "type": kind,
+                    "subject": "ship-the-flash-cards",
+                }),
+            )
+            .await;
+            assert!(refusal(&got).contains("takes no `subject`"), "{kind}: {got}");
+        }
+        assert!(!dir.path().join("memory/facets/tasks").exists(), "no row either way");
+    }
+
+    /// The other half of the exemption: those same kinds get **past** the fence with no
+    /// subject at all. Pinned by the error they fail with instead — there is no loop
+    /// registered here, and reaching that complaint means the subject check let them through.
+    #[tokio::test]
+    async fn a_task_manager_needs_no_subject_to_get_past_the_fence() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = create_worker(
+            dir.path(),
+            json!({ "title": "keep the ledger", "task": "go and look", "type": "task-manager" }),
+        )
+        .await;
+
+        let said = refusal(&got);
+        assert!(said.contains("the owning loop is not up"), "{got}");
+        assert!(!said.contains("subject"), "it must not be asked for one: {got}");
     }
 
     #[test]

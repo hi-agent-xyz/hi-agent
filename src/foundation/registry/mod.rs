@@ -508,10 +508,6 @@ pub fn render(batch: &[Message]) -> String {
         .join("\n\n")
 }
 
-/// Render `reachable` as the block that goes into an agent's window.
-///
-/// Empty when there is nobody — an empty section is worse than none, because a heading
-/// with nothing under it reads as a load that failed rather than as an honest "no one".
 /// What a worker's line says about the task it serves, if anything.
 ///
 /// **The unlinked case is the one that has to speak.** A worker with a subject is already
@@ -522,20 +518,36 @@ pub fn render(batch: &[Message]) -> String {
 /// the two halves of that mistake in one window: a task claiming nobody, and a session claiming
 /// no task.
 ///
-/// Said only of a worker whose kind serves the ledger at all
-/// ([`crate::identity::WorkerType::expects_a_subject`]). An organizer has no task to be
-/// missing, and marking one is how the phrase stops being read.
+/// **It is now a residue rather than the ordinary case.** `hi_create_worker` refuses a kind
+/// that [`expects_a_subject`](crate::identity::WorkerType::expects_a_subject) without one, so
+/// the only linked-to-nothing sessions left are ones the host put back from before that fence
+/// existed. The phrase stays because a fence that is ever bypassed must still be legible from
+/// the window, not because anything is expected to trip it.
+///
+/// **A `task-manager` gets a sentence of its own, and that is the point of it.** It serves
+/// every task, so it can never name one; flagged as unlinked it would trip the alarm on itself
+/// at every glance-up, and a phrase that fires where it can never be acted on is a phrase the
+/// reader stops seeing. `person-reader` says nothing at all: an organizer keyed to a person is
+/// not the ledger's business either way, so a line about the ledger would be noise on every
+/// settling pass's fan-out.
 fn link_note(e: &Entry) -> String {
     let Some(kind) = e.role.worker_type() else {
         return String::new();
     };
     match e.subject.as_deref() {
         Some(subject) => format!(" — on task `{subject}`"),
+        None if kind == crate::identity::WorkerType::TaskManager => {
+            " — serves the whole ledger, so it names no one task".to_string()
+        }
         None if kind.expects_a_subject() => " — not linked to any task".to_string(),
         None => String::new(),
     }
 }
 
+/// Render `reachable` as the block that goes into an agent's window.
+///
+/// Empty when there is nobody — an empty section is worse than none, because a heading
+/// with nothing under it reads as a load that failed rather than as an honest "no one".
 pub fn render_reachable(who: &[(String, SessionSlug)]) -> String {
     if who.is_empty() {
         return String::new();
@@ -1251,26 +1263,6 @@ impl Registry {
         // reports to was minted before the worker — and a slug does not sort that way.
         out.sort_by_key(|(_, id)| map.get(id).map(|e| e.started));
         out
-    }
-
-    /// Whether any live worker owned by `asker` is running without a task subject.
-    ///
-    /// The one question the ledger cannot answer about itself. A worker created without a
-    /// `subject` is invisible to the task↔worker join, so its task reads *nobody on it* while
-    /// the work is genuinely in flight — and the obvious reading of that line is to put
-    /// someone on it, which starts a second worker on work already running. That duplicate is
-    /// the real cost of a missed label, and it is worse than the silence the join was built to
-    /// end, so the omission has to be visible from the same window that invites the mistake.
-    ///
-    /// Asked only of the kinds that serve the ledger — same rule as [`link_note`], because a
-    /// disagreement between the two would mean a rung told there is an unlabelled worker and
-    /// shown a roster where none is marked.
-    pub fn has_unlinked_worker(&self, asker: &SessionSlug) -> bool {
-        self.sessions.lock().unwrap().values().any(|e| {
-            e.owner.as_ref() == Some(asker)
-                && e.subject.is_none()
-                && e.role.worker_type().is_some_and(|k| k.expects_a_subject())
-        })
     }
 
     /// Put `text` in `id`'s inbox **on the host's own behalf** — no sender, and none of
@@ -2237,7 +2229,6 @@ mod tests {
             who.iter().all(|(label, _)| !label.contains("not linked")),
             "Reaction is not an unlabelled worker: {who:?}"
         );
-        assert!(!r.has_unlinked_worker(&cog), "a rung is not an unlinked worker");
     }
 
     /// **An organizer has no task to be missing, so it is not marked as missing one.**
@@ -2245,8 +2236,9 @@ mod tests {
     /// A `person-reader` is Reflection's housekeeping — one per person present in a stretch,
     /// keyed to a `people/<name>` facet, never work the ledger owes anyone. It is also the
     /// worker type dispatched in the largest fan-out there is, so marking it would print the
-    /// warning once per person on a page where none of them is a fault. Both halves are pinned
-    /// here: the roster line and the cheap predicate, which must not disagree.
+    /// warning once per person on a page where none of them is a fault. It says nothing at
+    /// all — where a `task-manager`, which is subjectless for a different reason, says what it
+    /// serves instead.
     #[test]
     fn an_organizer_is_not_marked_as_linked_to_nothing() {
         let r = reg();
@@ -2267,20 +2259,36 @@ mod tests {
             .map(|(l, _)| l.clone())
             .expect("offered");
         assert!(!line.contains("not linked"), "{line:?}");
-        assert!(!r.has_unlinked_worker(&refl), "an organizer is not an unlinked worker");
     }
 
-    /// The cheap half of the same question, for the check that runs before staffing a task.
+    /// **A task manager says what it serves, and must never be flagged for what it cannot
+    /// name.** It is subjectless by construction — one row would tie the whole ledger to one
+    /// task — and it was on the wrong side of `expects_a_subject`, so every one of them
+    /// carried *not linked to any task*, the phrase that means **staff this**. Measured over
+    /// one install's frames: 69 of 474 dispatches, every one of them flying a flag nobody
+    /// could act on. A warning that fires where it can never be true is a warning the reader
+    /// learns to skip.
     #[test]
-    fn an_unlinked_worker_is_visible_to_its_owner_alone() {
+    fn a_task_manager_says_it_serves_the_whole_ledger() {
         let r = reg();
-        let (cog, refl, w) = (mint(), mint(), mint());
+        let (cog, manager) = (mint(), mint());
         r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
-        r.register(refl.clone(), Role::Reflection, None, "housekeeping".into(), None);
-        r.register(w, Role::Worker(WorkerType::General), Some(cog.clone()), "an errand".into(), None);
+        r.register(
+            manager.clone(),
+            Role::Worker(WorkerType::TaskManager),
+            Some(cog.clone()),
+            "keep the ledger".into(),
+            None,
+        );
 
-        assert!(r.has_unlinked_worker(&cog));
-        assert!(!r.has_unlinked_worker(&refl), "not someone else's to answer for");
+        let who = r.reachable(&cog);
+        let line = who
+            .iter()
+            .find(|(_, i)| *i == manager)
+            .map(|(l, _)| l.clone())
+            .expect("offered");
+        assert!(!line.contains("not linked"), "{line:?}");
+        assert!(line.contains("serves the whole ledger"), "{line:?}");
     }
 
     /// The lookup the hand-down rides on. Reaction has no id for Cognition — nothing

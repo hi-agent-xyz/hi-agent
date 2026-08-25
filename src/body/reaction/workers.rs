@@ -287,10 +287,11 @@ impl WorkerRegistry {
                     false => format!("{record}\n\n## What you are asked to do\n{task}"),
                 })
             }
-            // No subject means no task to look the record up by. That is a real gap and it
-            // is `create_worker`'s to close — the tool's `subject` is how a worker is
-            // linked to the work at all, and an unlinked worker is already reported as a
-            // problem on the ledger.
+            // No subject means no task to look the record up by — the narrow case now
+            // rather than the ordinary one. `create_worker` refuses a kind that serves the
+            // ledger without one, so what reaches here is a `task-manager` or a
+            // `person-reader`, neither of which has a task record to be handed, or a session
+            // the host is putting back from before that fence existed.
             (Some(task), None) => Some(task),
         };
         let (session, mail) = self

@@ -495,16 +495,18 @@ or not worth doing? Say so in the ledger and it stops being `doing`. What it can
 `doing` with nobody on it and nothing written down — that is indistinguishable from work in
 hand, and it will sit there for exactly as long as nobody looks.
 
-**Before you put someone on an unattended task, check nobody is already on it.** A worker you
-started without a `subject` is linked to no task, so its work shows up nowhere on this list and
-the task it is doing reads as abandoned — and the obvious response to that line is to start a
-second worker on it. Your reachable list marks those: *not linked to any task*. If one is
-running and its brief is the task you were about to staff, that is a label you missed, not work
-that needs starting. Leave it be; there is no way to attach the subject to a session already
-running, and cancelling live work to relabel it costs more than the wrong label does. Just don't
-start the second one — and set `subject` when you create the next one, which is the only moment
-it can be set at all. Two workers on one job is a worse outcome than a task that looks
-unattended for an hour — and not because the second one is wasted. They share a folder, so
+**Before you put someone on an unattended task, check nobody is already on it.** Every worker
+you start names its task — `hi_create_worker` refuses one that doesn't — so this list is
+answering from the same join the roster does, and a `doing` task with nobody on it is now a
+fact rather than a gap in the labelling. Read *Who you can reach right now* anyway before you
+staff one: a session whose line already says `on task <subject>` is the answer, and a
+`task-manager` says it serves the whole ledger, which is not a worker on your row. If a
+session from before the fence still shows *not linked to any task* and its brief is the task
+you were about to staff, that is a label nobody could set, not work that needs starting. Leave
+it be; there is no way to attach a subject to a session already running, and cancelling live
+work to relabel it costs more than the wrong label does. Just don't start the second one. Two
+workers on one job is a worse outcome than a task that looks unattended for an hour — and not
+because the second one is wasted. They share a folder, so
 the cost is not duplication but **destruction**: one of them writes over the other's work,
 the loser goes on building on the winner's file believing it is still its own, and nothing
 anywhere says a word. That has happened, and neither session was careless.
@@ -844,16 +846,27 @@ restart kills it. So write what a colleague would call it — "recover the stall
 deploy" — never the brief's first sentence, and never paths, ids or digests. The brief can
 be as long as the work needs; the line is what makes a screenful of them readable.
 
-**And if the work belongs to a task, set `subject` in the same call.** It is the ledger
-subject — the directory name under `memory/facets/tasks/`, not the title — and it is the
-whole join between a task and the session doing it. Set, the task reads as being worked on
-and by whom. Left out, the worker runs fine and the task it is doing reads as owed by
-nobody, which is what an abandoned task looks like too — so the next glance at that list,
-yours or a later one, sees work nobody is on and staffs it a second time — and the two of
-them, sharing one folder, will write over each other's work without either one finding out.
-**This is the only moment it can be set**: there is
-no way to attach a subject to a session already running, and cancelling live work to
-relabel it costs more than the wrong label does. So it is set here or it is not set.
+**And name the task it serves, in the same call.** `subject` is the ledger subject — the
+directory name under `memory/facets/tasks/`, not the title — and it is the whole join between
+a task and the session doing it. It is **required**: the call is refused without one, for every
+type except `task-manager` and `person-reader`, which serve every task and no single one.
+
+**And it has to name a row that already exists.** If the work has one, name it — including for
+a follow-up, a review, a fix or a second pass, which serve the task they are *about* and not a
+task of their own. If it genuinely has none, open the row first: write
+`memory/facets/tasks/<subject>/facet.md` with `status:`, a one-line `title:` and `created_at:`,
+then create the worker. Two acts, and the second one is deliberate on purpose — **a row that
+appeared because a worker started is a row nobody decided to owe**, and a list of those is a
+list nobody reads. Name a subject nothing is filed under and the call comes back with the open
+ledger, so you can pick the row that is already there instead of coining one beside it.
+
+Why the fence is worth the refusal: set, the task reads as being worked on and by whom. Left
+out, the worker ran fine and the task it was doing read as owed by nobody — what an abandoned
+task looks like too — so the next glance, yours or a later one, saw work nobody was on and
+staffed it a second time, and the two of them, sharing one folder, wrote over each other
+without either finding out. **This call is the only moment it can be set**: there is no way to
+attach a subject to a session already running, and cancelling live work to relabel it costs
+more than the wrong label does.
 
 Then let it work. `hi_session_status` is free and tells
 you whether it is still going; `hi_session_messages` costs context and tells you what it has
