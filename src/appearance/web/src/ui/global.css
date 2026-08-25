@@ -45,6 +45,17 @@
   --line: rgba(58, 53, 44, 0.12);
   --line-strong: rgba(58, 53, 44, 0.22);
 
+  /* The edge of host chrome that stands on paper the agent painted (the channel
+     cluster, the views band). It cannot be `--line-strong`: that hairline is
+     tuned against this theme's own paper, and a view brings its own value. The
+     disc is filled from `--surface-strong`, so in light it is near-white and
+     only ever needs cutting out of a *light* view — a dark ring does that, and
+     the contact shadow finishes it. In dark the disc is espresso, and every dark
+     backdrop (a dark view, or the host's own `--bg-0`) leaves it edgeless with
+     the black shadows drawing nothing: there the edge has to be a light one.
+     Same role, opposite polarity — hence its own token, not a reused hairline. */
+  --chrome-edge: rgba(58, 53, 44, 0.22);
+
   /* floating surfaces (cards, pills, controls) over the paper */
   --surface: rgba(255, 253, 248, 0.72);
   --surface-strong: rgba(255, 253, 248, 0.9);
@@ -155,6 +166,8 @@
 
     --line: rgba(232, 223, 206, 0.12);
     --line-strong: rgba(232, 223, 206, 0.22);
+    /* light edge, not a hairline: see the note in `:root` */
+    --chrome-edge: rgba(240, 233, 220, 0.42);
 
     --surface: rgba(58, 52, 42, 0.55);
     --surface-strong: rgba(52, 47, 38, 0.82);
@@ -199,6 +212,7 @@
   --danger-wash: rgba(255, 123, 120, 0.1);
   --line: rgba(232, 223, 206, 0.12);
   --line-strong: rgba(232, 223, 206, 0.22);
+  --chrome-edge: rgba(240, 233, 220, 0.42);
   --surface: rgba(58, 52, 42, 0.55);
   --surface-strong: rgba(52, 47, 38, 0.82);
   --surface-border: rgba(232, 223, 206, 0.12);
@@ -271,7 +285,16 @@ body {
   color: var(--fg);
 }
 
-button:not([data-slot]) {
+/* The bare-button reset, and it has to weigh nothing. This was a plain `button`
+   at (0,0,1) until a `:not([data-slot])` was added to let shadcn's own buttons
+   through; an attribute selector took it to (0,1,1), heavier than any single
+   class, and from that day it silently outranked every one-class rule that
+   dressed a button — `.hi-channel` lost its fill and its ring to the
+   `background: none` / `border: none` below and nobody's stylesheet said so.
+   `:where()` contributes no specificity, so the escape hatch is kept and the
+   reset goes back to (0,0,1) — a floor any class can stand on, which is all a
+   reset should ever be. */
+button:where(:not([data-slot])) {
   font: inherit;
   color: inherit;
   background: none;
@@ -1012,34 +1035,54 @@ button:not([data-slot]) {
 /* The cluster is the only way in and out, and it is always standing on paper the
    agent painted: a view's background fills the whole frame, the reserved bottom
    band included (`.hi-view-fill > :only-child`, `background-origin: border-box`).
-   So it cannot be dressed for the host's own white page. `--surface`/`--line`/
-   `--fg-mute` are the quiet tokens for a card sitting on that white, and against
-   a view that paints warm off-white they vanish outright — a 0.72 near-white disc
-   on cream is the same colour, a 0.12 hairline is not a ring, and `--fg-mute`
-   glyphs land near 3:1. Dressed at the weights the views band already uses over a
-   view (`--surface-strong`, `--line-strong`, `--fg-dim` ink), the disc reads on any
-   backdrop: on a light one the ring and the contact shadow cut it out; on a dark
-   one the disc itself does. */
+   So it cannot be dressed for the host's own white page: the disc is filled at
+   `--surface-strong` and ringed in `--chrome-edge`, the one edge colour that
+   changes polarity with the theme so it can cut the disc out of paper of any
+   value — on a light backdrop the dark ring and the contact shadow draw it, on a
+   dark one the light ring does, because there the shadows draw nothing at all.
+
+   Until now none of that rendered, and the reason was never in this rule: the
+   bare-button reset three hundred lines up outweighed it (see the note there), so
+   every disc lost its fill and its ring to `background: none` / `border: none`
+   and the cluster was eight glyphs standing on a black shadow. On a light backdrop
+   that shadow was enough to read as buttons, which is why the dressing looked
+   settled; on a dark one there was nothing left to see. The reset weighs nothing
+   now, and that — not the values below, which were already written — is what
+   makes this dressing real rather than merely declared. */
 .hi-channel {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-edge);
   background: var(--surface-strong);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  color: var(--fg-dim);
+  /* Full ink, and stated rather than inherited. `--fg-dim` was written here and
+     never applied — the reset's `color: inherit` outranked it, so the glyphs have
+     always drawn in the body's `--fg`. Making the reset weightless would have
+     handed them the dimmer ink for the first time, and dim is wrong for these:
+     they are 1.6px strokes, where antialiasing costs a third of the nominal
+     colour, and the cluster is the only way in and out — it is quiet by being
+     small and cornered, not by being faint. */
+  color: var(--fg);
   /* Two layers: a tight contact shadow that draws the edge when the disc and the
-     paper behind it are the same value, and the wide soft one for lift. */
+     paper behind it are the same value, and the wide soft one for lift. Both are
+     the theme's shadow, so on a dark backdrop they draw nothing at all — that is
+     why the ring above is `--chrome-edge` and turns light in the dark theme
+     rather than staying a hairline. */
   box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
   transition: color 200ms var(--ease), border-color 200ms var(--ease),
     box-shadow 200ms var(--ease);
 }
 
+/* The ink is already full, so hover thickens the edge instead of brightening the
+   glyph — and it does it with the same `--chrome-edge`, which is the one colour
+   here that reads against any paper a view might have painted. */
 .hi-channel:hover {
-  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--chrome-edge), 0 1px 3px var(--shadow-strong),
+    0 8px 24px var(--shadow);
 }
 
 .hi-channel:disabled {
@@ -1074,7 +1117,7 @@ button:not([data-slot]) {
   width: 1px;
   height: 24px;
   margin: 0 2px;
-  background: var(--line-strong);
+  background: var(--chrome-edge);
 }
 
 .hi-status-button--starting,
@@ -1354,7 +1397,10 @@ button:not([data-slot]) {
   bottom: calc(max(20px, var(--hi-safe-bottom)) + 58px);
   width: min(720px, calc(100vw - 2 * max(20px, var(--hi-safe-right))));
   pointer-events: auto;
-  border: 1px solid var(--surface-border);
+  /* Chrome over the view, dressed like the cluster it opens from — a 0.12
+     hairline had the band's edge disappearing on a dark view exactly as the
+     discs did. */
+  border: 1px solid var(--chrome-edge);
   border-radius: 16px;
   background: var(--surface-strong);
   backdrop-filter: blur(18px);
