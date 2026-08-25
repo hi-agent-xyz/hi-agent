@@ -538,6 +538,31 @@ is not, and a rung that reads "you have not shown them this" and closes anyway h
 decision rather than an omission. A task whose last remaining step belongs to the person is not the agent's work
 in progress: it owes the ask, once, not the wait.
 
+**And then it waits somewhere, which the lifecycle has to name.** The status words say who
+the row is about — `todo` and `doing` describe *our* work, `serving` describes presence —
+and none of them describes a row where our side is delivered and the answer is theirs. It is
+`doing`, carrying a `blocked` line that names the question and who owes it. That is not a new
+state: `blocked` is a timeline kind, defined here as a line about a task that is still
+`doing`, and this is the case it was for. The two other readings are both wrong, in ways
+something downstream acts on: `todo` says nobody has started finished work, and `done` says
+they have the thing when what they have is an unanswered question.
+
+**The projection has to be able to tell the two apart, because otherwise the cadence closes
+the row.** Past the idle boundary a `doing` line stops reporting its age and asks for a
+disposition, naming the three there are — close, ask once, cancel. Waiting is not among them,
+and it cannot be added as a fourth for every row, because for a row that is merely stuck
+"keep waiting" is the exact non-answer the boundary exists to refuse. So the projection reads
+the running record: a row whose most recent `landed`/`blocked`/`checked` line is `blocked`
+reports what it is blocked on instead of being asked to pick, and a later `landed` or
+`checked` supersedes the block and restores the question. It still sits in the band that
+keeps it from falling off a capped list — a block rots too, when the ask never went out or
+the answer arrived unnoticed.
+
+This is written from a failure, not a worry. On 2026-08-25 a glance-up manager closed seven
+rows `todo → done` in one batch, every one of them waiting on the person's own decision, each
+close correctly reasoned from a prompt that had been told three different things about where
+such a row lives. Nothing was said to him; he found them on the board.
+
 > **TODO — closed tasks accumulate.** A task is a subject, a closed task is the record that it
 > was closed, and nothing deletes it. The cost is not disk but anything that *enumerates* —
 > reflection's own prompt is seeded from the subject index. The invariant below says never

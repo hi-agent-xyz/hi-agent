@@ -71,6 +71,34 @@ item 2 below already said this pass reports what it cannot fix and never refuses
 is guidance in `cognition.md` now, and the reader takes both path forms. **Built, not yet
 watched:** nothing has observed the next brain turn actually catch those 61 up.
 
+**A row waiting on him stays `doing`, and the cadence stops asking it to close — 2026-08-25.**
+Seven rows went `todo → done` in one batch on a glance-up, every one of them waiting on Zhao
+Li's own decision — a KT candidate handed over for him to Run and listen to, a COS scope choice,
+a Feishu callback only he can register. Each close was correctly reasoned. The prompt had been
+told three different things about where such a row lives: `todo` waiting on them
+(`task-manager.md`), close it and it reopens when they act (same file, thirty lines later), and
+`blocked` is a line about a task that is still `doing` (same file, and `cognition.md`). No
+transition predicate existed anywhere in code to settle it — `Task::set_status` takes any status
+to any status, and every rule about *when* a row moves was prose.
+
+The pressure was in the projection, not the prose. `past_idle_boundary` keyed on `doing` + 48h
+and nothing else, so past two days a row got *"close it with what you did verify, or ask once,
+or cancel it"* on every pulse — three answers that exclude the correct one — plus *nobody on it*,
+which reads as abandoned. The prompt bullet licensing the close existed to relieve exactly that.
+So: the projection now reads the running record. A row whose most recent `landed`/`blocked`/
+`checked` line is `blocked` reports what it is blocked on, is not counted as awaiting a
+disposition, and is not flagged unstaffed — while still sitting in the band that keeps it off
+the bottom of a capped list, because a block rots too. A later `landed`/`checked` supersedes it.
+`moved` deliberately does not, since the store writes that on every transition.
+
+**Built, never watched.** Green — 984 Rust, 105 web — and no live instance has yet had a pulse
+land on a blocked row. Two things a live run is the only way to settle: whether managers
+actually write `blocked` lines rather than the `checked` line they wrote on all seven of these,
+and whether the relay added to `cognition.md` (a close or a new block is news, said in the turn
+the report lands) survives a busy turn — that is the half that failed here, and it is still only
+prose with nothing enforcing it. **The seven rows themselves are still `done` on the live
+instance; nothing in this change reopens them.**
+
 **A worker names its task, or there is no worker — 2026-08-25.** `subject` on
 `hi_create_worker` was optional and its omission silent, so the join every ledger line is
 projected through rested on a dispatcher remembering a field while busy with the errand itself.

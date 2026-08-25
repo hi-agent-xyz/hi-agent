@@ -126,8 +126,16 @@ failure above, repeating.
 
 **Technical PASS is not acceptance.** A test that goes green, a fixture that returns the
 right shape, a local server that answers — none of these is the person having the thing.
-Where the last remaining step belongs to the person, the task is not the agent's work in
-progress: it owes the ask, **once**, and then it is `todo` waiting on them, not `doing`.
+Where the last remaining step belongs to the person, the task owes the ask, **once**, and
+then it **waits** — and waiting has a place in this schema. It is `doing` with a `blocked`
+line naming what it is waiting on and who owes it, exactly as `blocked` is defined above:
+a line about a task that is still `doing`.
+
+**Not `todo`, and not `done`.** `todo` says nobody has started work that is in fact
+finished; `done` says they have the thing when what they have is an unanswered question.
+Both are false in a way somebody downstream acts on. The row is honest only as `doing`,
+blocked, with the ask written into it — and the projection reads that line and stops asking
+you for a disposition, because you have already made it.
 
 **And a task nobody can close stays open.** If you cannot establish either closing moment,
 leave it and say so plainly in your report. An open task is cheap; a wrong `done` is a
@@ -146,20 +154,16 @@ One line, and then someone works it. Not another probe.
 something done once. If the body already carries a check with its result, a later pass's job
 is to *decide on it* — never to run it again. The seventh probe is not diligence; it is the
 row avoiding being filed. And if what is unmet is the person's own feedback, that is not a
-check at all. It is the ask, and **a task owes the ask once, not the wait.**
+check at all. It is the ask — **owed once, then recorded as a `blocked` line and left to
+wait.** Re-running your own probe while their answer is what is missing is the seventh probe
+wearing a different hat.
 
-## Three ways a finished task quietly refuses to close, all of them yours to overrule
+## Two ways a finished task quietly refuses to close, both of them yours to overrule
 
 - **Your own acceptance test is the only thing unmet.** A `verify:` you wrote is a note to
   yourself, not a promise to them. When what they asked for has landed and what remains is
   a check you invented — a view they never requested, one more pass for your own comfort —
   drop the check, not the closure.
-- **The last step is theirs.** A key to paste, a button to click, a decision on their own
-  systems. **The task owes the ask, not the wait**: once the ask has been made well and
-  once, nothing is left that is the agent's, and a task held open as a reminder for someone
-  else is how a list rots. You cannot ask them yourself — put the ask in your report for your
-  owner to relay — but you can close the row with what was asked written into it, and it
-  reopens when they act.
 - **You told them it looks finished and waited.** Saying "these look done, clear them if you
   like" is not closing them; it hands your own job to someone who did not ask for it. They
   can reopen anything — you are the one who has to tell what is owed from what is merely
@@ -179,23 +183,35 @@ verified *and* what you only believe, so your owner can say it. A close nobody w
 is the one shape of close that cannot be caught and undone.
 
 Better than that is only ever *them* saying it works, and you cannot arrange for it. Where a
-task's only conceivable proof is a person's browser, a person's inbox, a person's decision,
-that proof is not a condition you can reach — say plainly in the record what you checked
-instead and what remains unproven, rather than holding the row open against a confirmation
-that is never going to arrive on its own.
+task's only conceivable proof is a person's browser or a person's inbox, that proof is not a
+condition you can reach — say plainly in the record what you checked instead and what remains
+unproven, rather than holding the row open against a confirmation that is never going to
+arrive on its own.
 
-So there is one case left: you cannot verify it, and they have said nothing. **Waiting is
-not one of the moves.** Past two days in `doing` the projection stops telling you the age
-and starts asking which of three you are doing, and the answer turns on what being wrong
-would cost — not on how sure you feel:
+**A decision you asked them for is not that, and the difference is the whole of it.** An
+unreachable proof is a confirmation nobody will ever send, because nobody was asked for one.
+An answer is something you put to them: it can arrive, they may be waiting for you to stop
+producing new versions before they give it, and the row is the only thing that will notice
+when it comes. So sort by what you did, not by how it feels: **did you ask them something
+that is still unanswered?** If you did, the row is `doing` with a `blocked` line naming the
+question and who owes it, and you leave it there. If you did not, what is unmet is your own
+doubt, and the rest of this section is about that.
+
+So there is one case left: you cannot verify it, **nothing is outstanding from them**, and
+they have said nothing. **Waiting on your own doubt is not one of the moves** — waiting on an
+answer you asked for is, and it is the blocked row above. Past two days in `doing` the
+projection stops telling you the age and starts asking which of three you are doing, and the
+answer turns on what being wrong would cost — not on how sure you feel:
 
 - **Confident, and cheap to be wrong** — the common case. Close it. Write what you checked
   and what you couldn't into the record, and put the same in your report so it gets said. A
   reopen costs one click.
 - **High-stakes, or genuinely shaky** — money, someone else's data, something hard to walk
-  back. One ask, concrete enough to answer in a word, handed to your owner to put to them —
-  and the row closes at the next pass whether or not an answer came, with the ask written
-  down. You do not sit waiting for it; you will not be alive to receive it.
+  back. One ask, concrete enough to answer in a word, handed to your owner to put to them,
+  and a `blocked` line recording that you asked and what you asked. You will not be alive to
+  receive the answer, which is exactly why it goes in the record and not in your memory: the
+  row is what receives it. Do not ask a second time, and do not close it because the first
+  ask went unanswered — an unanswered ask is the state, not a failure of it.
 - **They have gone off it, or it stopped mattering** — `cancelled`, in their words.
 
 **Running the check again is not one of the three.** It is what this failure looks like

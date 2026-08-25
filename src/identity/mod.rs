@@ -1428,6 +1428,14 @@ mod soul_tests {
     /// Cognition never starting a manager, or the manager not being told closing is its job.
     /// So both ends are asserted here, and the handoff between them is named in the one place
     /// it can be forgotten.
+    ///
+    /// **The pen has a third position, and it is the one that was missing.** This test used to
+    /// pin "the task owes the ask, not the wait" — which shut the list by closing any row whose
+    /// remaining step was the person's. That produced the opposite failure on 2026-08-25: seven
+    /// rows waiting on his own decision were closed `todo → done` in a single glance-up, and he
+    /// was never told. A row waiting on an answer is neither finished nor unstarted, so the
+    /// manager must be told in as many words where it lives — `doing`, with a `blocked` line —
+    /// or it will pick one of the two words that lie.
     #[test]
     fn both_ends_of_the_pen_have_an_owner() {
         assert!(
@@ -1443,8 +1451,14 @@ mod soul_tests {
             "the rung that closes must be told closing is the whole point of it"
         );
         assert!(
-            WORKER_TASK_MANAGER_BASE.contains("The task owes the ask, not the wait"),
-            "a task whose last step is theirs must not sit open as a reminder for them"
+            WORKER_TASK_MANAGER_BASE.contains("Not `todo`, and not `done`."),
+            "a task waiting on the person must be given the one status that does not lie"
+        );
+        // The failure this test was originally written against: a row held open against a
+        // check the agent invented for itself, which nobody will ever come and satisfy.
+        assert!(
+            WORKER_TASK_MANAGER_BASE.contains("drop the check, not the closure"),
+            "and a row held open by the agent's own unmet check must still be closed"
         );
     }
 

@@ -32,6 +32,10 @@ use super::{facets, layout, task_history};
 pub const DIMENSION: &str = "tasks";
 pub const PROJECTED_TASKS: usize = 12;
 const PROJECTED_LINE_CHARS: usize = 120;
+/// How much of a `blocked` line's text a projected row carries. The title has already spent
+/// [`PROJECTED_LINE_CHARS`] and the note is appended after that cap, so an unclipped reason
+/// is the one trailing fact that can push a line past the width everything else respects.
+const BLOCKED_REASON_CHARS: usize = 72;
 
 /// How long work may sit in `doing` before the projection stops reporting its age and
 /// starts asking for a disposition.
@@ -408,12 +412,53 @@ impl Task {
         self.is_serving() && self.checked_at.is_none()
     }
 
+    /// The last thing anyone recorded about the **work**, which is not the last line.
+    ///
+    /// `moved` is the store's and lands on every transition, and `asked` is pinned at open
+    /// and never moves, so neither says where the work stands now. The three a worker
+    /// writes as it goes do: `landed`, `blocked`, `checked`. The most recent of those is
+    /// what the record currently claims about this row.
+    fn last_state_line(&self) -> Option<&TimelineEntry> {
+        self.timeline
+            .iter()
+            .rfind(|entry| {
+                matches!(
+                    entry.kind,
+                    TimelineKind::Landed | TimelineKind::Blocked | TimelineKind::Checked
+                )
+            })
+    }
+
+    /// What this row is waiting on, when waiting is the last thing recorded about it.
+    ///
+    /// **Waiting is a state work is allowed to be in, and `doing` is where it waits.** A row
+    /// whose remaining step belongs to the person — a key to paste, a decision only they can
+    /// make, an audition only they can sit through — has not stalled: everything on our side
+    /// landed, the ask went out, and there is nothing further to do until they answer. That is
+    /// a `blocked` line on a task that is still `doing` (`task-manager.md`), and the ledger has
+    /// no other way to say it.
+    ///
+    /// Reading it matters because the projection used to be unable to tell that row from an
+    /// errand nobody had touched in a week, and told the ledger writer, every pulse, to close
+    /// it or cancel it or ask again. Seven rows waiting on the person were closed in one batch
+    /// on 2026-08-25 by a manager doing exactly what the line said. A later `landed` or
+    /// `checked` supersedes the block — the work moved, so the clock is honest again.
+    fn blocked_on(&self) -> Option<&TimelineEntry> {
+        self.last_state_line()
+            .filter(|entry| entry.kind == TimelineKind::Blocked)
+    }
+
     /// Work that has been underway long enough that continuing to hold it open is itself
     /// the thing to answer for.
     ///
     /// `doing` only. `serving` is exempt because a duty being old is what a duty looks
     /// like, and `todo` because not-started-yet is a state it may sit in on purpose. The
     /// one status that promises an ending is the one that can fail to reach it.
+    ///
+    /// **A blocked row is not exempt from this, and must not be.** It stays in the band that
+    /// keeps it from falling off the bottom of a capped list, because a block can rot too —
+    /// the ask never went out, or they answered and nobody noticed. What changes is what the
+    /// line *says*: see [`trailing_note`].
     fn past_idle_boundary(&self, now: DateTime<Utc>) -> bool {
         self.status == TaskStatus::Doing
             && self
@@ -838,9 +883,18 @@ fn render_projection(
         if unchecked > 0 {
             let _ = write!(out, ", {unchecked} duties never confirmed alive");
         }
-        let stalled = rest.iter().filter(|task| task.past_idle_boundary(now)).count();
+        // A blocked row is past the boundary too, and it is *not* waiting on a disposition
+        // from the reader — it is waiting on the person, which is a disposition already made.
+        let stalled = rest
+            .iter()
+            .filter(|task| task.past_idle_boundary(now) && task.blocked_on().is_none())
+            .count();
         if stalled > 0 {
             let _ = write!(out, ", {stalled} waiting on a disposition from you");
+        }
+        let blocked = rest.iter().filter(|task| task.blocked_on().is_some()).count();
+        if blocked > 0 {
+            let _ = write!(out, ", {blocked} blocked on somebody else");
         }
         out.push_str(". The whole list is memory/facets/tasks/.\n");
     }
@@ -875,7 +929,19 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
 /// Past [`IDLE_BOUNDARY_HOURS`] the age stops being the fact worth carrying and the
 /// disposition does. An age is something to note; this is something to answer, and it names
 /// the three answers there are so that a seventh probe cannot pass for one of them.
+///
+/// **Unless the record already says what it is waiting on**, in which case the disposition
+/// has been made and naming three that exclude it is how a row waiting on the person gets
+/// closed for being old. The block comes first, at any age: it is the more specific fact,
+/// and under the boundary it is still better than `open 3d`.
 fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    if let Some(blocked) = task.blocked_on() {
+        let what = clip(blocked.text.trim(), BLOCKED_REASON_CHARS);
+        return Some(match blocked.at {
+            Some(at) => format!("blocked {} — {what}", ago(now, at)),
+            None => format!("blocked — {what}"),
+        });
+    }
     if task.past_idle_boundary(now) {
         let since = task.status_since?;
         return Some(format!(
@@ -964,7 +1030,13 @@ fn worker_note(task: &Task, on_it: Option<&OnIt>, now: DateTime<Utc>) -> Option<
         ),
         // Same rule as below: said only where nobody is a problem.
         Some(OnIt::Reopening) | Some(OnIt::Lost) => None,
-        None if task.status == TaskStatus::Doing => Some("nobody on it".to_owned()),
+        // **And nobody on a blocked row is not a problem — it is the correct staffing.**
+        // The work is done and the ask is out; putting somebody on it would produce another
+        // probe, not an answer. Saying "nobody on it" here invites exactly that, and on the
+        // row where the phrase means something it would then read as ordinary.
+        None if task.status == TaskStatus::Doing && task.blocked_on().is_none() => {
+            Some("nobody on it".to_owned())
+        }
         None => None,
     }
 }
@@ -2234,6 +2306,65 @@ mod tests {
         work.status_since = Some(old);
         let text = render_projection(std::slice::from_ref(&work), now(), &nobody());
         assert!(text.contains("close it with"), "{text}");
+    }
+
+    /// **Waiting on the person is a state, and `doing` is where it waits.** A row whose last
+    /// recorded state is `blocked` is past the boundary like any other, but the three answers
+    /// the line offers — close, ask once, cancel — do not include the one that is correct, and
+    /// a ledger writer reading that every pulse eventually picks one. On 2026-08-25 one picked
+    /// `done`, seven times in a single batch, on rows whose remaining step was Zhao Li's.
+    #[test]
+    fn a_row_waiting_on_the_person_is_not_asked_for_a_disposition() {
+        let mut waiting = task("KT8-059 doubao_ref timestamp control", TaskStatus::Doing);
+        waiting.status_since = Some(now() - Duration::days(6));
+        waiting.timeline.push(TimelineEntry::new(
+            TimelineKind::Blocked,
+            now() - Duration::days(6),
+            "handed him the native URL; waiting on his own Run/listen accept or reject",
+        ));
+
+        let text = render_projection(std::slice::from_ref(&waiting), now(), &nobody());
+        assert!(text.contains("· blocked 6d ago — handed him the native URL"), "{text}");
+        assert!(!text.contains("close it with"), "the disposition is made: {text}");
+        assert!(!text.contains("not one of the three"), "{text}");
+        // And nobody being on it is the correct staffing, not the alarm.
+        assert!(!text.contains("nobody on it"), "{text}");
+    }
+
+    /// The block is the *last* word about the work, not any word. A `landed` or `checked`
+    /// after it says the work moved, so the clock is honest again and the boundary applies —
+    /// otherwise one `blocked` line early in a long errand would exempt it forever, which is
+    /// the rot the disposition line exists to catch.
+    #[test]
+    fn a_block_is_superseded_by_later_work() {
+        let mut task = task("Ship Google login", TaskStatus::Doing);
+        task.status_since = Some(now() - Duration::days(4));
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Blocked,
+            now() - Duration::days(3),
+            "waiting on his OAuth consent screen",
+        ));
+        let text = render_projection(std::slice::from_ref(&task), now(), &nobody());
+        assert!(text.contains("blocked 3d ago"), "{text}");
+
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Checked,
+            now() - Duration::hours(2),
+            "he approved it; the callback returns 200",
+        ));
+        let text = render_projection(std::slice::from_ref(&task), now(), &nobody());
+        assert!(!text.contains("blocked"), "the work moved: {text}");
+        assert!(text.contains("close it with"), "{text}");
+
+        // `moved` is the store's own line and lands on every transition, so it must not be
+        // what supersedes a block — otherwise nothing could ever read as blocked.
+        let mut still = task.clone();
+        still.timeline.truncate(still.timeline.len() - 1);
+        still
+            .timeline
+            .push(TimelineEntry::new(TimelineKind::Moved, now(), "todo \u{2192} doing"));
+        let text = render_projection(std::slice::from_ref(&still), now(), &nobody());
+        assert!(text.contains("blocked 3d ago"), "{text}");
     }
 
     /// A transition restamps the clock, a write persists it, and a record that predates the
