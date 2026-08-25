@@ -71,6 +71,28 @@ item 2 below already said this pass reports what it cannot fix and never refuses
 is guidance in `cognition.md` now, and the reader takes both path forms. **Built, not yet
 watched:** nothing has observed the next brain turn actually catch those 61 up.
 
+**The acceptance line is specified and almost never written — 2026-08-25.** `asked` is the
+task's acceptance criteria: what would make this right, in the person's words, plus any reading
+taken because they did not say. `cognition.md` has carried the instruction, the format and a
+worked example since the timeline shipped on 2026-08-24. Counted across one live store: **106
+records, 15 with a `## Timeline` at all, 3 with an `asked` line, 1 with a `blocked` line — and
+0 of the 4 open rows had an `asked`.** Among the 29 rows touched since the mechanism landed,
+15 grew a timeline and 4 grew an `asked`, so the vocabulary is being adopted and the acceptance
+line specifically is not.
+
+`asked` is writable at open or never — the worker is told not to edit it, the manager writes
+closings, and cognition does not re-enter a row it opened — so the prompt now says that in as
+many words, with the count. **No code check was added, deliberately:** *"this row has no
+`asked` line"* is a decisive enough test, but there is no valid response to it after open, so
+it would be a nag naming no action. The only lever is at the moment of opening, which is prose.
+
+**Guidance, therefore unenforced, therefore unproven.** Whether the next rows opened carry an
+`asked` line is a thing to count again in a week, not something any test can report. The same
+pass added the asking posture to *Working ahead*: when a fork genuinely turns on something only
+he knows, carry both branches as far as the one-way door and hand back both answers so his reply
+selects rather than starts — two branches, never five, and a fork with an obviously better arm
+is an assumption to take rather than a question to ask.
+
 **A row waiting on him stays `doing`, and the cadence stops asking it to close — 2026-08-25.**
 Seven rows went `todo → done` in one batch on a glance-up, every one of them waiting on Zhao
 Li's own decision — a KT candidate handed over for him to Run and listen to, a COS scope choice,

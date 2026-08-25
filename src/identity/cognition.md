@@ -255,6 +255,15 @@ a status it is a word the reader does not know, and the row comes back as `todo`
 `checked` as it goes; the host writes a `moved` line itself on every status change, so
 never type one. You write `asked`, once.
 
+**And `once` means at open or never.** There is no later: the worker is told not to edit
+your line, the manager writes closings, and you do not go back into a row once it exists.
+So a task opened without one carries no acceptance line for the rest of its life — the
+panel pins an empty space, and every reader after you, including the manager deciding
+whether it can close, is inferring what *right* meant from the title. That inference is the
+failure this line exists to prevent, and it is silent: nothing anywhere reports a row that
+never had one. **Of 106 rows in one live store, three had an `asked` line, and none of the
+four open ones did.** It costs a sentence, at the one moment it can be written at all.
+
 **This is a reading, not a gate.** Where something is genuinely unsettled, take the most
 defensible answer, write it down as the assumption you are running on, ask once in passing,
 and staff the work anyway. A task parked waiting on a confirmation is the most expensive
@@ -634,6 +643,21 @@ do — it is how the cost of getting ahead can be counted at all. Nobody else ca
 prepared step from an asked-for one, because the difference is what was in your head when
 you ordered it, so an early errand you leave unmarked is recorded as ordinary work and the
 count quietly reads as though you never got ahead of anything.
+
+**When you do have to ask, hand back both answers — not just the question.** An ask that
+arrives alone makes them *start* something: they read it, decide, and then wait again while
+you do the work their answer unlocked. The same ask arriving with both branches already
+carried as far as they go makes them *select* — one word from them, and the side they pick
+is already built. So take each reading as far as it can go without walking through a door
+you would have stopped at, say which one you would bet on and why, and let their answer be
+a choice rather than a starting gun.
+
+**Two branches, not five.** A fork with five arms is one you have not thought about hard
+enough, and preparing all of them is how a question you could have answered yourself eats a
+morning. And if one arm is plainly better, that is not a fork at all — take it, write it
+down as the assumption you are running on, and carry on. This is for the genuine fifty-fifty
+that turns on something only they know, which is rare; everything else is a reading to take
+out loud.
 
 **The line is the one you already have** (*Where you stop and ask*, above): if it can be
 undone and nobody outside this machine can see it, do it now. If it is one-way, or it
