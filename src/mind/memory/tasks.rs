@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDate, SecondsFormat, TimeZone, Utc};
 
 use super::episodes::{frontmatter_field, jstr, strip_frontmatter};
-use super::{facets, layout};
+use super::{facets, layout, task_history};
 
 pub const DIMENSION: &str = "tasks";
 pub const PROJECTED_TASKS: usize = 12;
@@ -442,10 +442,8 @@ pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> 
     let content = render(task);
     let written = facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await?;
     if let Ok(mut seen) = last_seen().lock() {
-        seen.insert(
-            facets::subject_dir(data_dir, DIMENSION, &task.subject),
-            task.status,
-        );
+        let key = facets::subject_dir(data_dir, DIMENSION, &task.subject);
+        seen.entry(key).or_default().status = Some(task.status);
     }
     Ok(written)
 }
@@ -479,10 +477,25 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
 /// store and says nothing across two, and one process holding two stores is the ordinary
 /// case under test.
 static LAST_SEEN: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<PathBuf, TaskStatus>>,
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Seen>>,
 > = std::sync::OnceLock::new();
 
-fn last_seen() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, TaskStatus>> {
+/// One subject directory as the pass last found it.
+///
+/// The status and the file marks are remembered together because they are learned in the
+/// same read and are stale in the same way — a restart empties both, and both degrade to
+/// the cold path rather than to a wrong answer.
+#[derive(Debug, Default)]
+struct Seen {
+    /// The status word this pass last read off disk. `None` before it has ever looked, which
+    /// is what makes a first sight after a restart a non-event rather than a transition.
+    status: Option<TaskStatus>,
+    /// What [`task_history::keep`] found in this directory, so an untouched file costs a
+    /// `stat` and nothing more.
+    files: task_history::DirState,
+}
+
+fn last_seen() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Seen>> {
     LAST_SEEN.get_or_init(Default::default)
 }
 
@@ -514,7 +527,32 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         let subject = task.subject.clone();
         let key = facets::subject_dir(data_dir, DIMENSION, &subject);
 
-        let previous = last_seen().lock().ok().and_then(|m| m.get(&key).copied());
+        // Both facts about the last look, taken under one lock. The marks are moved out
+        // rather than borrowed because keeping this directory is `await`-ing IO and a
+        // `std::sync` guard may not be held across it.
+        let (previous, mut files) = match last_seen().lock() {
+            Ok(mut seen) => {
+                let entry = seen.entry(key.clone()).or_default();
+                (entry.status, std::mem::take(&mut entry.files))
+            }
+            Err(_) => (None, task_history::DirState::default()),
+        };
+
+        // **Before the repair below can rewrite anything.** Whatever is on disk right now is
+        // what some session last wrote, and the next writer — this pass, a worker, a second
+        // worker that never knew about the first — is free to replace it whole with no error
+        // and no copy. This is the copy. See [`task_history`] for why it rides on the read.
+        let looked = task_history::keep(&key, &mut files, Utc::now()).await;
+        if !looked.gone.is_empty() {
+            // A file that was in a task's folder and is not any more. Unambiguous, unlike a
+            // content change, which is ordinary work most of the time.
+            tracing::warn!(
+                task = %subject,
+                files = %looked.gone.join(", "),
+                "files vanished from a task folder; their last seen version is in .history",
+            );
+        }
+
         match previous {
             Some(before) if before != task.status => task.stamp_transition(before, Utc::now()),
             _ => {
@@ -534,7 +572,9 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         }
 
         if let Ok(mut seen) = last_seen().lock() {
-            seen.insert(key, task.status);
+            let entry = seen.entry(key).or_default();
+            entry.status = Some(task.status);
+            entry.files = files;
         }
     }
     Ok(rewritten)

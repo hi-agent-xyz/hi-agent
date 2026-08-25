@@ -158,11 +158,37 @@ two confirmed silent losses in a week — a **floor**, since it can only resolve
 cannot see through 326 `write_text(…)` calls or 575 `tee`s. `facets.rs`'s *last-writer-wins, and
 that is fine* was correct about `facet.md` and silently general about its siblings; that comment
 is now scoped, and `general.md` carries the write-verb rule (`apply_patch` checks, a heredoc
-does not). **No mechanism was added and none is planned here** — the rejected `deliverable:
-<ref>` gate is the precedent: a guard on a field an agent must remember to fill is *silently*
-absent when it forgets, which reads exactly like a clean delivery. What that leaves standing:
-**a loss that happens anyway is still undetectable and unrecoverable.** Prompt moves the verb;
-it cannot keep the bytes.
+does not). No gate was added and none is planned — the rejected `deliverable: <ref>` is the
+precedent: a guard on a field an agent must remember to fill is *silently* absent when it
+forgets, which reads exactly like a clean delivery.
+
+**The keeping half landed 2026-08-24, and is watched.** Guidance moves the write verb and
+cannot keep the bytes, so `mind/memory/task_history.rs` keeps them: `reconcile` — the pass
+that already re-reads every record on every window build — now copies each file in a task
+folder into `<subject>/.history/` before anything can rewrite it. It rides on that pass for
+the pass's own stated reason, that *a pass that re-reads the bytes cannot be walked around,
+because it reads whatever is actually there however it got there*. Content-addressed, so an
+edit-and-undo keeps two versions and not three; `(len, mtime)` pre-checked, so an untouched
+store costs one `stat` per file and no reads at all. **No size threshold**, deliberately: a
+cap that silently skipped the largest file would drop history for exactly the artifact most
+expensive to lose and look identical to having kept it, and every task folder in every store
+on hand holds one `facet.md`, the largest 6 KB.
+
+**Watched, by re-running the original failure.** A release binary against a seeded task
+folder: pass one kept `briefing.md` and `facet.md`; a `cat > briefing.md <<EOF` from outside
+the process replaced the file whole, exactly as the real loss did; the next pass kept the
+replacement, and the destroyed version was still on disk and readable. Five passes over a
+task the agent was actively working produced six entries and six distinct contents — no
+duplicates, nothing kept twice, 24 KB.
+
+**Three things it does not do**, none of them oversights. It does not **prevent** a
+collision — a lock or a refused write is a gate, and both writers still land. It does not
+**detect** one: the pass sees that a file changed, never who changed it, and a body changing
+without a status moving is ordinary work rather than a signal, so nothing goes in the window
+and nothing should until the writer's identity is available. And a version written *and*
+replaced between two passes was never observed, so the exposure window is one brain turn
+rather than zero — it is not zero, and no cheap mechanism makes it zero. Only files directly
+in a subject directory are covered; a nested deliverable is not.
 
 **And one floor that is not a step, recorded so it stops reading as an oversight.**
 `checked_at` — the one liveness field code reads — can only ever be written by a mind. A
