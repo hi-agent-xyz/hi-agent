@@ -210,6 +210,25 @@ ledger written · Reflection firing on its own backoff · the session swap on al
 long-lived rungs · Cognition resuming a standing duty after a host restart · the duty inbox
 (`POST /api/in/duty/<start_key>`) taking a burst into one handler.
 
+**A large paste is a handed artifact, not an utterance — watched 2026-08-24, one boot.** A
+61,890-byte body stayed words (`Content::Text`, text channel, 61,890 chars in the journal); a
+334,890-byte body arrived as `Content::File` on the file channel with `bytes: 334890`, a peek,
+and a blob that `cmp` reports byte-identical to what was posted. The line the mind was handed
+was `>/file handed you a file: pasted-….txt (text/plain; charset=utf-8, 327 KB) ⟨ref: …⟩`
+followed by `┆`-marked opening rows — **and 327 KB of log never entered the prompt**. Off that
+line alone the agent said *"I've got the log file you sent"*; asked afterwards how many distinct
+workers appeared in it, it opened the ref and answered *"Seven distinct workers: worker-0
+through worker-6"*, which is correct. `POST /api/in/text` streams and carries no size limit at
+all now — it inherited axum's 2 MB default before, and answered a bigger paste with a 413 the
+face discarded silently.
+
+What that boot did **not** reach: a body large enough to matter as a *stream* (the biggest was
+327 KB, so nothing has exercised writing through for minutes), the `SCAN_MAX` ceiling where the
+credential scan starts reporting `partial`, and the composer's put-the-draft-back path — the web
+suite has no DOM harness, so that one is read-only-verified. Two artifacts pasted inside the
+same second still overwrite each other; `media_rel_path` has one-second granularity and no
+uniquifier, which dragged files have always shared.
+
 **Topology.** The local shape; the directly-public acceptor; the relayed shape end to end
 through the deployed community and Tencent EdgeOne; the gate in both credential presentations,
 with CSRF, all three pairing paths, the device list and revocation; the app's roster and local

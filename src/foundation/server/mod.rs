@@ -552,7 +552,14 @@ pub fn build(
         )
         .route("/api/surfaces", get(surfaces::get_surfaces))
         .route("/api/surfaces/{id}", axum::routing::delete(surfaces::delete_surface))
-        .route("/api/in/text", post(text::post_text).get(text::get_in_text))
+        // No size limit, and the handler is what earns that: it streams the body and
+        // spills past 64 KiB to a blob, so nothing here can be made to buffer a large
+        // one. Left at the framework default it inherited 2 MB — a ceiling nobody
+        // chose, which rejected a big paste with a 413 the face threw away.
+        .route(
+            "/api/in/text",
+            post(text::post_text).layer(DefaultBodyLimit::disable()).get(text::get_in_text),
+        )
         // Not an input channel: a contentless liveness ping from whatever holds an
         // unsent draft. It reaches the floor and stops there.
         .route("/api/in/text/typing", post(text::post_text_typing))

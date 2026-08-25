@@ -383,6 +383,27 @@ pub struct FileRef {
     pub reff: String,
     pub mime: String,
     pub name: String,
+    /// How big the artifact is, when the boundary counted it.
+    ///
+    /// The one thing a rung that cannot read files still needs in order to *decide*:
+    /// whether this is a paragraph or a logfile, and so whether the turn is worth
+    /// handing down. Optional because a carrier that never counted must say so rather
+    /// than write a zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// The opening of a text artifact, verbatim — enough to tell what the thing *is*
+    /// without opening it.
+    ///
+    /// **A peek is not the content, and the difference is the whole point of the
+    /// field.** The artifact holds what was handed over; this is a fixed-size look at
+    /// its head that the prompt can afford to carry every turn. Whoever wants the rest
+    /// joins `{raw_dir}` to [`FileRef::reff`] and reads it.
+    ///
+    /// Only text gets one. `None` on a photo, on a PDF, and on any artifact that
+    /// arrived through a carrier that does not take peeks — a picture's opening bytes
+    /// say nothing a reader could use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peek: Option<String>,
 }
 
 /// What crosses the boundary inward, on its way to Reaction.

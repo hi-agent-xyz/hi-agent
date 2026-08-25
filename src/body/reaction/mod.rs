@@ -1759,13 +1759,64 @@ fn render_message_line(m: &crate::types::Message) -> String {
     let said = match &m.content {
         Content::Text(t) => t.clone(),
         Content::Speech { text, .. } => text.clone(),
-        Content::File(f) => format!("handed you a file: {} ({}) ⟨ref: {}⟩", f.name, f.mime, f.reff),
+        Content::File(f) => render_file_line(f),
     };
     let said = match m.from.sender().and_then(|s| s.subject.as_deref()) {
         Some(who) => format!("⟨voice: {who}⟩ {said}"),
         None => said,
     };
     transcript_line(Speaker::Them, kind, &said)
+}
+
+/// A handed artifact as the mind reads it: what it is called, how big it is, where it
+/// is, and — for text — how it opens.
+///
+/// **The size and the peek are what make the line decidable by a rung that cannot
+/// read.** Reaction never opens a file; on this line alone it decides whether the turn
+/// is worth handing down. "They handed you a file: notes.txt" is not enough to tell a
+/// sticky note from a database dump, and both want different answers.
+///
+/// **Every peek line is marked, and that is not decoration.** The transcript is
+/// line-oriented — `>` is their side, `<` is the agent's — so pasted content
+/// containing a line that begins with `>` would otherwise arrive indistinguishable
+/// from a turn somebody actually took. The marker means anything quoted here can only
+/// read as quoted material, whatever it contains.
+fn render_file_line(f: &crate::types::FileRef) -> String {
+    use std::fmt::Write as _;
+
+    let mut line = format!("handed you a file: {} ({}", f.name, f.mime);
+    if let Some(bytes) = f.bytes {
+        let _ = write!(line, ", {}", human_bytes(bytes));
+    }
+    let _ = write!(line, ") ⟨ref: {}⟩", f.reff);
+
+    if let Some(peek) = f.peek.as_deref().map(str::trim_end).filter(|p| !p.is_empty()) {
+        let _ = write!(line, "\n  ┆ it opens:");
+        for row in peek.lines() {
+            let _ = write!(line, "\n  ┆ {row}");
+        }
+        let _ = write!(line, "\n  ┆ (the opening only — read the ref for the rest)");
+    }
+    line
+}
+
+/// A byte count as a person would say it. Whole units below ten, so a size reads as a
+/// size and not as a measurement: `412 KB`, `1.4 MB`, `27 MB`.
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
 }
 
 fn render_human_from_batch(batch: &[LoopInput]) -> String {
@@ -3230,6 +3281,64 @@ mod hand_down_tests {
             assert!(!rendered.contains("owe"), "host framing came back: {rendered}");
             assert!(!rendered.contains("relay"), "host framing came back: {rendered}");
         }
+    }
+}
+
+#[cfg(test)]
+mod file_line_tests {
+    use super::{human_bytes, render_file_line};
+    use crate::types::FileRef;
+
+    fn artifact(peek: Option<&str>, bytes: Option<u64>) -> FileRef {
+        FileRef {
+            reff: "file/2026-08-24/14/35-02.txt".to_string(),
+            mime: "text/plain; charset=utf-8".to_string(),
+            name: "pasted-20260824-143502.txt".to_string(),
+            bytes,
+            peek: peek.map(str::to_string),
+        }
+    }
+
+    /// The line a rung that cannot read files decides on. Without the size, a sticky
+    /// note and a database dump render identically.
+    #[test]
+    fn the_line_carries_name_size_and_ref() {
+        let line = render_file_line(&artifact(None, Some(421_888)));
+        assert!(line.contains("pasted-20260824-143502.txt"), "{line}");
+        assert!(line.contains("412 KB"), "{line}");
+        assert!(line.contains("⟨ref: file/2026-08-24/14/35-02.txt⟩"), "{line}");
+        assert_eq!(line.lines().count(), 1, "no peek, no extra rows: {line}");
+    }
+
+    /// **The reason every quoted row is marked.** `>` opens the person's side of the
+    /// transcript, so pasted content beginning with `>` would otherwise arrive looking
+    /// exactly like a turn somebody took. Nothing quoted may start a line bare.
+    #[test]
+    fn quoted_rows_cannot_be_read_as_turns() {
+        let line = render_file_line(&artifact(Some("> not a turn\n< nor this\nplain"), Some(70_000)));
+        for row in line.lines().skip(1) {
+            assert!(row.starts_with("  ┆ "), "unmarked row: {row:?}");
+        }
+        assert!(!line.contains("\n> not a turn"), "{line}");
+        assert!(!line.contains("\n< nor this"), "{line}");
+    }
+
+    /// A carrier that took no peek must not grow an empty one — a `it opens:` header
+    /// over nothing reads as an artifact that opens blank.
+    #[test]
+    fn an_absent_or_blank_peek_adds_nothing() {
+        assert_eq!(render_file_line(&artifact(None, None)).lines().count(), 1);
+        assert_eq!(render_file_line(&artifact(Some("   \n\n"), None)).lines().count(), 1);
+    }
+
+    /// A size is said, not measured: nobody reads `412.0 KB` as clearer than `412 KB`.
+    #[test]
+    fn sizes_read_as_sizes() {
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1024), "1.0 KB");
+        assert_eq!(human_bytes(421_888), "412 KB");
+        assert_eq!(human_bytes(1_500_000), "1.4 MB");
+        assert_eq!(human_bytes(28_000_000), "27 MB");
     }
 }
 

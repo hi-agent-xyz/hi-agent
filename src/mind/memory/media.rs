@@ -29,6 +29,36 @@ use crate::types::Channel;
 
 use super::layout::{self, MediaSlot};
 
+/// Open the blob for `ts` at the grid slot `slot` dictates, creating the
+/// channel-day folder around it, and hand back both the path **relative to that
+/// folder** and the open file.
+///
+/// The half of [`store_blob`] that does not need the bytes up front. A caller
+/// holding a whole payload should use `store_blob`; this exists for one that is
+/// still receiving it — an arriving body written through as it streams, so the
+/// payload never has to fit in memory to be kept. Either way the path grammar is
+/// decided here and nowhere else, which is what keeps a streamed artifact
+/// addressable by the same ref as a stored one.
+///
+/// The file is returned **unsynced**: durability is the caller's to declare, at
+/// the point it knows it has written everything it meant to.
+pub async fn create_blob(
+    data_dir: &Path,
+    channel: Channel,
+    ts: DateTime<Utc>,
+    slot: MediaSlot,
+    ext: &str,
+) -> anyhow::Result<(String, tokio::fs::File)> {
+    let dir = layout::channel_day_dir(data_dir, channel, ts);
+    let rel = layout::media_rel_path(ts, slot, ext);
+    let path = dir.join(&rel);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let f = tokio::fs::File::create(&path).await?;
+    Ok((rel, f))
+}
+
 /// Persist `bytes` inside the channel-day folder for `ts` — the same
 /// folder that holds `<channel>.jsonl` — at the grid slot `slot` dictates, and
 /// return the path **relative to that folder**. The caller records it in the
@@ -42,14 +72,7 @@ pub async fn store_blob(
     ext: &str,
     bytes: &[u8],
 ) -> anyhow::Result<String> {
-    let dir = layout::channel_day_dir(data_dir, channel, ts);
-    let rel = layout::media_rel_path(ts, slot, ext);
-    let path = dir.join(&rel);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    let mut f = tokio::fs::File::create(&path).await?;
+    let (rel, mut f) = create_blob(data_dir, channel, ts, slot, ext).await?;
     f.write_all(bytes).await?;
     f.flush().await?;
     f.sync_data().await?;

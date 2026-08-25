@@ -129,7 +129,8 @@ export interface AgentSession {
   toggleAudioOutput: () => void;
   /** Show the conversation, or put it away. */
   setTextChannel: (on: boolean) => void;
-  sendText: (text: string) => void;
+  /** Rejects if the line did not reach the server, so a caller can say so. */
+  sendText: (text: string) => Promise<void>;
 }
 
 /**
@@ -767,13 +768,18 @@ export function useAgentSession(): AgentSession {
   }, []);
 
   // ---- keyboard fallback send --------------------------------------------
+  // **A failed send is reported, not swallowed.** This used to end in
+  // `.catch(() => {})` while the composer cleared the box the moment Enter was
+  // pressed — so a rejected POST took the words with it and looked exactly like a
+  // successful one. Nothing here shows the failure itself; it hands the rejection
+  // back so the caller that still holds the draft can.
   const sendText = useCallback(
-    (text: string) => {
+    async (text: string): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed) return;
       // The server appends the accepted line to the conversation and it arrives
       // back on the stream, so this window keeps no private optimistic copy.
-      void postInText({ body: trimmed }).catch(() => {});
+      await postInText({ body: trimmed });
     },
     [],
   );

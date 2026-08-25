@@ -130,7 +130,7 @@ describe("the line being written", () => {
   it("stands in the conversation's own foot, under the messages", () => {
     const html = renderToStaticMarkup(
       <Chat messages={[said("1", "帮我看下")]}>
-        <Composer onSend={() => {}} shown onOpen={() => {}} />
+        <Composer onSend={() => Promise.resolve()} shown onOpen={() => {}} />
       </Chat>,
     );
 

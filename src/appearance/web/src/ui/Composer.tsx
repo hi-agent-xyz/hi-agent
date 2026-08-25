@@ -12,7 +12,8 @@ import {
 } from "./shadcn/input-group";
 
 interface ComposerProps {
-  onSend: (text: string) => void;
+  /** Rejects if the line never reached the server; the draft comes back if so. */
+  onSend: (text: string) => Promise<void>;
   /** Whether the conversation — and so this line standing in its foot — is on
    * screen. Not a mount switch: the line stays mounted while the conversation is
    * away, because that is what keeps a half-written draft through a put-away. */
@@ -107,10 +108,22 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
     inputRef.current?.focus();
   }, [shown, pastedText]);
 
+  // Clear on send, but **only keep it cleared if the line actually went**. The box
+  // emptied the instant Enter was pressed and the send's rejection was thrown away, so
+  // a message the server refused looked precisely like one it accepted — the words
+  // gone, nothing said. Optimistic still, because a line that lags behind the keypress
+  // is its own kind of wrong; the draft simply comes back if the optimism was
+  // misplaced. If they have started writing the next thing by then, that draft wins and
+  // the failure is left to the console — overwriting what somebody is mid-sentence on
+  // would be a worse loss than the one being repaired.
   const submit = () => {
     const trimmed = text.trim();
-    if (trimmed) onSend(trimmed);
+    if (!trimmed) return;
     setText(""); // clear, but keep the channel open
+    void onSend(trimmed).catch((error: unknown) => {
+      console.error("the line was not sent", error);
+      setText((current) => (current ? current : trimmed));
+    });
   };
 
   return (

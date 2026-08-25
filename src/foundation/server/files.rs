@@ -27,7 +27,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -155,6 +155,39 @@ async fn ingest_file(
 
     crate::foundation::channel_log::inbound(Channel::File, name);
 
+    deliver_artifact(
+        state,
+        ts,
+        FileRef {
+            reff,
+            mime: mime.to_string(),
+            name: name.to_string(),
+            bytes: Some(bytes.len() as u64),
+            // No peek: a carrier that hands over a photo or a PDF has no opening
+            // worth quoting, and this one does not read what it stores. The typed
+            // channel's own artifacts take theirs from the bytes as they arrive.
+            peek: None,
+        },
+        note,
+    )
+    .await
+}
+
+/// Put an artifact whose bytes are already on disk into the conversation: journal it,
+/// append it to the live window, and wake the reaction.
+///
+/// **The tail of every handed artifact, shared because the head is what differs.** A
+/// dragged file arrives whole and is written in one call; a typed body arrives in
+/// chunks and is written as it streams (see
+/// [`crate::foundation::server::text::post_text`]). By the time either has a
+/// [`FileRef`] the remaining work is identical, and a second copy of it is how the two
+/// paths would drift into journalling the same thing two ways.
+pub(crate) async fn deliver_artifact(
+    state: &AppState,
+    ts: DateTime<Utc>,
+    file: FileRef,
+    note: Option<String>,
+) -> Result<(), String> {
     // Addressed, like text: a file is *handed over*, and the hander is the owner
     // unless something says otherwise. `Channel::File`'s own definition already
     // promised "the signal says who handed over what"; this is that field.
@@ -178,7 +211,7 @@ async fn ingest_file(
         id: Uuid::now_v7().to_string(),
         ts,
         from: Author::Person(sender),
-        content: Content::File(FileRef { reff, mime: mime.to_string(), name: name.to_string() }),
+        content: Content::File(file),
     });
 
     // Journaled first, all of them, so durability precedes reaction — and then

@@ -130,7 +130,7 @@ const stubSession: AgentSession = {
   toggleVideo: () => {},
   toggleAudioOutput: () => {},
   setTextChannel: () => {},
-  sendText: () => {},
+  sendText: () => Promise.resolve(),
 };
 
 /** Resolve once the browser has actually painted what React just committed:

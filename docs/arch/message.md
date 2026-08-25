@@ -82,9 +82,11 @@ pub enum Content {
 }
 
 pub struct FileRef {
-    pub reff: String,  // channel-qualified media ref; GET /api/media/<ref>
+    pub reff: String,          // channel-qualified media ref; GET /api/media/<ref>
     pub mime: String,
-    pub name: String,  // what a person calls it
+    pub name: String,          // what a person calls it
+    pub bytes: Option<u64>,    // how big, when the boundary counted
+    pub peek: Option<String>,  // how a text artifact opens
 }
 ```
 
@@ -103,6 +105,38 @@ journal-seeded path disagree. Both halves of that reason are gone: a `File` mess
 prose to hide the name in, and one canonical `Message` is what removes the disagreement. Both
 consumers need it — the renderer draws it under the thumbnail, the prompt builder writes
 "they handed you passport.jpg".
+
+**`bytes` and `peek` are what make a file *decidable* by a rung that cannot read one.**
+Reaction never opens an artifact; on the rendered line alone it decides whether the turn is
+worth handing down, and "they handed you notes.txt" does not distinguish a sticky note from a
+database dump. The size answers that, and for text the opening answers what the thing is. Both
+are optional because absent is a real answer: a carrier that never counted must say so rather
+than write a zero, and a photo has no opening a reader could use.
+
+A peek is **not** the content. The artifact holds what was handed over; the peek is a
+fixed-size look at its head that the prompt can afford to carry every turn. Whoever wants the
+rest joins `{raw_dir}` to the ref and reads it.
+
+## What somebody says, and what they hand over
+
+**Size is what separates the two, and the boundary decides it — not the carrier, and not the
+person.** A typed body under 64 KiB is words: `Content::Text`, journalled on the text channel,
+into the prompt verbatim. The same channel above 64 KiB is a handed artifact: the bytes are
+written through to a blob as they arrive, kept under the file channel (which forgetting
+exempts), and delivered as `Content::File` carrying a ref, a size and a peek.
+
+**No input channel has a size limit, and none should.** A person hands over what they hand
+over; bounding *that* is the system refusing to receive. What is bounded is how much of it
+rides in the prompt every turn, which is a different question with a different answer. The
+inbound text route therefore streams and holds at most the seam in memory — an implementation
+consequence of the same rule, since a route that buffers whole bodies cannot honestly claim to
+be unbounded.
+
+This sits **upstream** of the underlying agent's own compaction, and does not duplicate it.
+Compaction shrinks history that accumulated; nothing in it can shrink the item that just
+arrived. An oversized single message is exactly the shape that makes compaction fail — the
+summary request is assembled from a thread already over the limit — and the seam is what keeps
+arrivals in a range where compaction can still work.
 
 ## One arrival, one message each
 

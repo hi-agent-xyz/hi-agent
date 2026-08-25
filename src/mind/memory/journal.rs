@@ -354,7 +354,17 @@ impl LegacyEntry {
                                     id,
                                     ts,
                                     from,
-                                    content: Content::File(FileRef { reff, mime: m.mime, name }),
+                                    // No size and no peek: an old line recorded neither,
+                                    // and the blob it names may since have gone. Absent is
+                                    // the honest answer — this is a recovery, not a
+                                    // backfill.
+                                    content: Content::File(FileRef {
+                                        reff,
+                                        mime: m.mime,
+                                        name,
+                                        bytes: None,
+                                        peek: None,
+                                    }),
                                 },
                             }
                         }

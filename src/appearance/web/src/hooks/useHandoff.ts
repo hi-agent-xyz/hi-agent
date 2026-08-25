@@ -273,13 +273,28 @@ export function useHandoff({
         pasteIntoTextInput(rawText);
         return;
       }
-      sendText(text);
-      showTimedFeedback({
-        state: "sent",
-        kind: "text",
-        message: "Sent clipboard text",
-        retryable: false,
-      });
+      // A paste with no line on screen is sent outright, so this overlay is the only
+      // account of it the person gets — which means it has to be able to say "no" as
+      // well as "sent". It claimed "Sent clipboard text" unconditionally before,
+      // including for a paste that never left the window.
+      void sendText(text).then(
+        () =>
+          showTimedFeedback({
+            state: "sent",
+            kind: "text",
+            message: "Sent clipboard text",
+            retryable: false,
+          }),
+        (error: unknown) => {
+          console.error("clipboard text was not sent", error);
+          showTimedFeedback({
+            state: "error",
+            kind: "text",
+            message: "Couldn't send that — it's still on your clipboard",
+            retryable: false,
+          });
+        },
+      );
     },
     [
       pasteIntoTextInput,

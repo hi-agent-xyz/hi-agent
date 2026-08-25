@@ -123,6 +123,77 @@ async fn post_thought_accepts_and_journals() {
     }
 }
 
+/// A body far past the old framework default, which used to answer 413 and lose the
+/// text. It is accepted, kept verbatim, and arrives as something the prompt can carry:
+/// a ref and an opening, not a megabyte of words.
+#[tokio::test]
+async fn a_large_paste_is_kept_whole_and_arrives_as_an_artifact() {
+    let (base, dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Distinguishable rows, so a wrong offset or a lost chunk fails loudly rather than
+    // passing on a body that happens to be the right length.
+    let pasted: String = (0..120_000).map(|i| format!("row {i} of the pasted log\n")).collect();
+    assert!(pasted.len() > 2 * 1024 * 1024, "the point is to exceed the old 2 MB ceiling");
+
+    let resp = client
+        .post(format!("{base}/api/in/text"))
+        .body(pasted.clone())
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let entries = read_journal(dir.path());
+    assert_eq!(entries.len(), 1, "expected one journal entry, got {} ", entries.len());
+    let JournalEntry::Message { channel, message } = &entries[0] else {
+        panic!("expected a message, got {:?}", entries[0]);
+    };
+    // The file channel, which forgetting exempts — a person's own words do not fade.
+    assert_eq!(*channel, Channel::File);
+    let Content::File(file) = &message.content else {
+        panic!("expected a file, got {:?}", message.content);
+    };
+    assert_eq!(file.bytes, Some(pasted.len() as u64));
+    assert!(file.name.starts_with("pasted-"), "{}", file.name);
+    let peek = file.peek.as_deref().expect("a text artifact opens somewhere");
+    assert!(peek.starts_with("row 0 of the pasted log"), "{peek:?}");
+    assert!(peek.len() < pasted.len(), "a peek is an opening, not the content");
+
+    // Verbatim: the bytes on disk are the bytes that were sent, to the last row.
+    // A ref is `<channel>/<day>/<rel>` under `memory/raw`, so it is already the path.
+    let blob = dir.path().join("memory").join("raw").join(&file.reff);
+    let stored = std::fs::read_to_string(&blob)
+        .unwrap_or_else(|e| panic!("read {}: {e}", blob.display()));
+    assert_eq!(stored, pasted, "the artifact must hold exactly what was handed over");
+}
+
+/// The seam is a size test, and a body just under it is still words. Guards against a
+/// creeping threshold quietly turning ordinary long messages into files.
+#[tokio::test]
+async fn a_body_under_the_seam_is_still_words() {
+    let (base, dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let long = "x".repeat(64 * 1024 - 1);
+    let resp = client
+        .post(format!("{base}/api/in/text"))
+        .body(long.clone())
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let entries = read_journal(dir.path());
+    let JournalEntry::Message { channel, message } = &entries[0] else {
+        panic!("expected a message, got {:?}", entries[0]);
+    };
+    assert_eq!(*channel, Channel::Text);
+    assert_eq!(message.content.text(), Some(long.as_str()));
+}
+
 #[tokio::test]
 async fn post_files_returns_a_structured_batch_result_and_journals_each_file() {
     let (base, dir, _seams) = spawn_server().await;
