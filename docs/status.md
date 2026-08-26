@@ -197,9 +197,42 @@ gap by itself**, and an audit built by listing every fact the system computes ag
 screen that does not show it produces a list of additions, each justified by what is possible
 rather than by what is needed. Deleted whole, nothing behind a flag.
 
-**Built, never watched.** Green — 992 Rust, 106 web. No live instance has drawn either field;
-what a run would settle is whether promoting `systems` to tags is right for records whose value
-is not a list of systems.
+**And came back the same day on a carrier that costs almost nothing — 2026-08-26.** The cut
+argument turned on the last clause: nobody had been unable to act for want of it. That premise
+expired within hours. Zhao Li, looking at a `doing` row that had not moved in half an hour,
+could not tell stuck from working; the live ledger at that moment had **9 of its 11 `doing` rows
+with nobody running on them** — 3 more with a session that had gone idle, one of them 2h idle
+behind `last turn FAILED: responseStreamDisconnected 403` — all drawn identically to the two
+that were live. The fact was never the problem. Its carrier was.
+
+`GET /api/workers` already carries `subject`, `state`, `state_since`, `doing` and `last_turn`,
+and the Sessions page already joins on it for its *on ‹subject›* chip. So the board joins the
+same roster **in the view** (`onItMeta` / `bySubject` in `views/factory/tasks.jsx`): no field on
+`GET /api/tasks`, no DTO, no server staleness rules, no Rust test — one more fetch on a page
+that already polls every 8s, and 4 strings in two locales. The three states are the ones
+`tasks::worker_note` reasoned out, and the rule about which absence is worth saying is carried
+over whole: a live worker is reported wherever there is one, *nobody* only on `doing`.
+
+**Not in the timeline, and that was the proposal.** The panel puts it beside the status, in the
+meta row that already carries `created` and `standing 2d`. A live line is not a seventh
+`TimelineKind`: it has no instant that means anything, it changes on every poll, and as the
+newest node of an append-only record it would make a row that has not moved in half an hour
+read as one that just did — the exact inversion of the question being asked.
+
+**What the cheap carrier costs, and it is a real loan:** a restart's casualties are not in the
+roster at all, so cut-off work reads *nobody on it* rather than naming the restart, and the
+`Reopening` / `Lost` distinction `tasks::OnIt` draws stays on the agent's side only. Both
+readings are true and both raise the same alarm; the distinction is the input to resume-or-write
+-off, which is Cognition's decision against `worker_note`, not one made on this board. **It is
+also deliberately not an attention flag** — `taskNeedsAttention` is untouched, because a
+condition that holds on 9 of 11 rows would repaint most of the column and train the eye past it.
+
+**Built, never watched.** Green — 998 Rust, 106 web. No live instance has drawn any of the three
+fields. The derivation *has* been run against the live roster and ledger — the three states and
+the failed-turn tail all came out as above from a harness over the real `/api/tasks` +
+`/api/workers` — but that is the join checked, not the board seen. What a run would settle:
+whether promoting `systems` to tags is right for records whose value is not a list of systems,
+and whether *Nobody on it* on most of the `doing` column reads as an alarm or as wallpaper.
 
 **What is still missing from that panel**, from the same audit and after the account came out
 of the fold (below): `[[…]]` cross-links render as literal brackets on the 60 records that carry

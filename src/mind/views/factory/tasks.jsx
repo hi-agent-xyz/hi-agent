@@ -21,6 +21,15 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react
 const J = { "Content-Type": "application/json" };
 const api = {
   list: () => fetch("/api/tasks").then((response) => response.json()),
+  // The switchboard, joined to the ledger by subject in this view rather than served
+  // alongside it. `GET /api/workers` already carries `subject` — the workers page reads it
+  // the same way — so the alternative was a field on every row of a polled list, its own
+  // staleness rules, and tests keeping both derivations agreeing forever, for a fact one
+  // lookup answers. What that costs is precision the person's board does not spend: a
+  // restart's casualties are not in the roster at all, so cut-off work reads "nobody on it"
+  // rather than naming the restart. Still true, still the same alarm; resume-or-write-off is
+  // the agent's decision, made against `tasks::worker_note`, not this one.
+  workers: () => fetch("/api/workers").then((response) => response.json()),
   patch: (subject, patch) =>
     fetch(`/api/tasks/${encodeURIComponent(subject)}`, {
       method: "PATCH",
@@ -106,6 +115,10 @@ const T = {
     moreFields: (n) => `+${n} more, in the record`,
     standing: (label, span) => `${label} for ${span}`,
     agoUnits: { m: "m", h: "h", d: "d" },
+    nobodyOnIt: "Nobody on it",
+    onItRunning: (span) => `Running for ${span}`,
+    onItIdle: (span) => `Worker idle ${span}`,
+    onItDoing: (what) => `\u2014 ${what}`,
   },
   zh: {
     title: "任务",
@@ -179,6 +192,10 @@ const T = {
     moreFields: (n) => `还有 ${n} 条，在记录里`,
     standing: (label, span) => `${label} ${span}`,
     agoUnits: { m: "分钟", h: "小时", d: "天" },
+    nobodyOnIt: "无人在做",
+    onItRunning: (span) => `已跑 ${span}`,
+    onItIdle: (span) => `执行者停了 ${span}`,
+    onItDoing: (what) => `— ${what}`,
   },
 };
 
@@ -233,6 +250,9 @@ export default function Tasks() {
   // replaces every task on each tick, and a held object would freeze the panel on
   // the version that was open when it was clicked.
   const [openSubject, setOpenSubject] = useState(null);
+  // Subject -> the session on it, from the same poll. `null` until the first roster lands, so
+  // the board can tell "nobody is on this" from "we have not asked yet" and say neither early.
+  const [onIt, setOnIt] = useState(null);
   // The card in hand: `{ subject, status }`, so a column can tell whether a drop over it
   // would change anything before it offers to accept one.
   const [drag, setDrag] = useState(null);
@@ -242,8 +262,15 @@ export default function Tasks() {
   const dragRef = useRef(false);
 
   const reload = useCallback(async () => {
-    const data = await api.list().catch(() => ({ tasks: [] }));
+    const [data, roster] = await Promise.all([
+      api.list().catch(() => ({ tasks: [] })),
+      // A failed roster is *not* an empty one. Empty says nobody is on anything, which on
+      // this board is the alarm on every `doing` row at once — so a fetch that did not come
+      // back leaves the last reading standing rather than raising eleven false alarms.
+      api.workers().catch(() => null),
+    ]);
     setTasks(data.tasks || []);
+    if (roster) setOnIt(bySubject(roster.workers || []));
   }, []);
 
   // Poll, for the reason the workers roster does: the agent opens and closes tasks while
@@ -309,9 +336,15 @@ export default function Tasks() {
   // number moved only when a duty was retired.
   const activeCount = tasks.filter((task) => task.status === "todo" || task.status === "doing").length;
   const servingCount = tasks.filter((task) => task.status === "serving").length;
+  // The roster read, carried on the row rather than threaded through every component that
+  // draws one. `undefined` while no roster has landed, `null` once one has and nobody is on
+  // this — the two say different things and `onItMeta` answers only the second.
+  const rows = onIt
+    ? tasks.map((task) => ({ ...task, onIt: onIt.get(task.subject) || null }))
+    : tasks;
   // A task whose status changed out from under the panel keeps the panel open on it —
   // it is still the task someone was reading. Only a task that left the ledger closes it.
-  const open = openSubject ? tasks.find((task) => task.subject === openSubject) || null : null;
+  const open = openSubject ? rows.find((task) => task.subject === openSubject) || null : null;
 
   return (
     <div className="hi-tasks">
@@ -327,7 +360,7 @@ export default function Tasks() {
           <Column
             key={column.id}
             column={column}
-            tasks={tasks.filter((task) => task.status === column.id)}
+            tasks={rows.filter((task) => task.status === column.id)}
             busy={busy}
             drag={drag}
             onStatus={setTaskStatus}
@@ -517,6 +550,11 @@ function Detail({ task, busy, onStatus, onClose }) {
   const due = dueMeta(task);
   const health = healthMeta(task);
   const age = ageMeta(task);
+  // Beside the status, never inside the record below it. "Somebody is on this" is a qualifier
+  // on the word `Doing`, not a seventh kind of timeline entry: it has no instant that means
+  // anything, it changes on every poll, and sat at the top of an append-only record it would
+  // make a row that has not moved in half an hour read as one that just did.
+  const on = onItMeta(task, true);
   // What they asked for is pinned rather than scrolled to: it is the first thing somebody
   // catching up on their own errand wants, and it does not move for the life of the task.
   // It is a **reading, not a gate** — nothing here waits on it and no task is held open
@@ -580,6 +618,7 @@ function Detail({ task, busy, onStatus, onClose }) {
           <h3 className="hi-tasks__detail-title">{task.title || task.subject}</h3>
 
           <div className="hi-tasks__detail-meta">
+            {on && <span data-warn={on.warn ? "true" : undefined}>{on.text}</span>}
             {task.createdAt && <span>{L.created(formatStamp(task.createdAt))}</span>}
             {closedAt && <span>{closedAt}</span>}
             {age && <span data-warn={age.warn ? "true" : undefined}>{age.text}</span>}
@@ -823,6 +862,73 @@ function ageMeta(task) {
   };
 }
 
+// The switchboard folded to one session per subject, because a task can have more than one
+// registered under it and the card has room for one answer. The most alive wins: running over
+// idle, and among equals the one that moved most recently. Reporting the quietest of two
+// sessions would turn a task that *is* being worked into an alarm.
+function bySubject(workers) {
+  const rank = (worker) => (worker.state === "running" ? 2 : 1);
+  const map = new Map();
+  for (const worker of workers) {
+    if (!worker.subject) continue;
+    const held = map.get(worker.subject);
+    if (
+      !held ||
+      rank(worker) > rank(held) ||
+      (rank(worker) === rank(held) &&
+        new Date(worker.state_since || 0) > new Date(held.state_since || 0))
+    ) {
+      map.set(worker.subject, worker);
+    }
+  }
+  return map;
+}
+
+// Whether anybody is on this row right now — the question `doing` raises and the record
+// cannot answer.
+//
+// **A `doing` row with no live session looks exactly like one being worked.** The card shows a
+// title, a date and the last thing written, all of which a task whose worker died mid-turn
+// keeps unchanged forever. On one live ledger 9 of 11 `doing` rows had nobody running on them,
+// drawn identically to the one that did.
+//
+// **Which absences are worth saying is not the same question for every status**, and this
+// follows the rule `tasks::worker_note` already reasoned out on the agent's side: a live worker
+// is reported wherever there is one, because that is positive information and cannot be a false
+// alarm — but *nobody* is said only on `doing`, where nobody is the alarm. A `todo` with no
+// worker is what a `todo` is, and a duty spends most of its life between bursts; printing it
+// there would put the phrase on most of the board and teach the eye to skip it, and then it
+// would be skipped on the one row where it means something.
+//
+// `undefined` is the third answer and is not "nobody": until the first roster lands, nothing is
+// known and nothing is said.
+//
+// **`idle` on a `doing` row is a warning, not a state.** It is the same word a worker waiting
+// for its next instruction reports, so the row that should read as stalled reads as patient —
+// but on `doing` the turn ended and nothing moved the row, which is the stall itself.
+function onItMeta(task, detail) {
+  const worker = task.onIt;
+  if (worker === undefined) return null;
+  if (!worker) return task.status === "doing" ? { text: L.nobodyOnIt, warn: true } : null;
+  const span = elapsed(worker.state_since);
+  const stamp = span ? `${span.n}${span.unit}` : "";
+  const running = worker.state === "running";
+  let text = running ? L.onItRunning(stamp) : L.onItIdle(stamp);
+  if (detail) {
+    // What it is *doing*, not what it has said: a worker four minutes into a shell command has
+    // produced no output, and that silence is what is most easily mistaken for death. Beside
+    // it, the other reading of a quiet worker — a turn that ended badly. Never both: while a
+    // worker is busy, what it is doing now is the answer and last turn's ending is stale.
+    const doing = running ? worker.doing : worker.last_turn?.error;
+    // One line, clipped. A worker's activity tail is whatever it is running, verbatim — a
+    // heredoc'd Python script arrives with its newlines in it — and this chip sits in a row of
+    // short meta beside the created date. What earns the space is which command, not all of it.
+    const said = (doing || "").replace(/\s+/g, " ").trim();
+    if (said) text += ` ${L.onItDoing(said.length > 72 ? `${said.slice(0, 71)}\u2026` : said)}`;
+  }
+  return { text, warn: task.status === "doing" && !running };
+}
+
 // Every duty gets this line, including one with no `liveness` recorded — a duty nobody
 // wrote a check for is the worse case, not an exempt one, and silence there reads as fine.
 function healthMeta(task) {
@@ -843,11 +949,18 @@ function cardNotes(task) {
   const due = dueMeta(task);
   const health = healthMeta(task);
   const age = ageMeta(task);
+  // First, when it is the alarm: on a `doing` card every other note here is about the record,
+  // and the record is exactly what a row whose worker died keeps looking fine by.
+  const on = onItMeta(task);
+  if (on?.warn) notes.push(on);
   if (age?.warn) notes.push(age);
   if (due?.warn) notes.push(due);
   if (health?.warn) notes.push(health);
   if (notes.length === 0) {
-    if (due) notes.push(due);
+    // A running worker is the reassuring half of the same question, so it takes the space only
+    // when nothing is wrong — which on a `doing` card is the whole point: this one is alive.
+    if (on) notes.push(on);
+    else if (due) notes.push(due);
     else if (health) notes.push(health);
   }
   if (task.status === "done" && task.completedAt) {
