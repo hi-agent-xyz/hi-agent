@@ -489,6 +489,17 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
   a run where prepared work is redone or forgotten, which is exactly what that journey's
   reverse test looks for.
 
+- **The tool workshop**, in every part [`tools.md`](arch/tools.md) adds on top of `skills/`. The
+  tree itself is real — `install_factory_skills` seeds `skills/factory/`, the learnt layer
+  survives upgrade, and `/api/skills` reads and prunes it. Everything that makes a note a *tool*
+  is absent: there is no `<data_dir>/bin` and nothing puts one on the child's PATH, no note
+  carries `purpose:`/`use:` front matter (the one seed, `adding-a-device.md`, is a procedure),
+  no prompt tells any rung to scan the registry, `hi mcp` has no CLI and the repo has an MCP
+  *server* but no client, nothing counts tool calls so the hot level cannot exist, and the Tool
+  Manager — which residency makes the only route to anything outside the hot set — is not a
+  rung. The live cost is already on record: journey 07 reported having no browser while
+  `runtime::browser` resolved a Chromium on the same disk.
+
 - **post** — the push service, and with it waking a surface. Deliberately not next: push exists
   to wake a surface holding no channel, and a phone browser opening the relayed address needs no
   waking to be useful. The native iOS client changes that calculus; it has not been re-decided.
