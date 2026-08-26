@@ -669,7 +669,17 @@ function Detail({ task, busy, onStatus, onClose }) {
                 {rest.map((field, index) => (
                   <div key={`${field.key}-${index}`}>
                     {field.key && <dt>{field.key}</dt>}
-                    <dd>{field.clipped ? `${field.value}\u2026` : field.value}</dd>
+                    <dd>
+                      {/* Autolinked for the reason a `blocked` line is: the panel has no
+                          address bar, and a URL the agent filed under `report_to:` or a
+                          dated note key is otherwise one to retype off the screen. Through
+                          `linked` and not `inline` — a field value is a literal, so the
+                          asterisks and backticks in it are its own characters. */}
+                      {linked(
+                        field.clipped ? `${field.value}\u2026` : field.value,
+                        `f${index}`,
+                      )}
+                    </dd>
                   </div>
                 ))}
               </dl>
