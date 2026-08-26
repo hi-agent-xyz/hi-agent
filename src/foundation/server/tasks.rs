@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::foundation::server::AppState;
 use crate::mind::memory::facets;
-use crate::mind::memory::tasks::{self, Task, TaskStatus, TimelineEntry};
+use crate::mind::memory::snapshot;
+use crate::mind::memory::tasks::{self, OnIt, Task, TaskStatus, TimelineEntry};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +36,10 @@ struct TaskDto {
     timeline: Vec<MomentDto>,
     body: String,
     malformed: bool,
+    /// Who is on this task right now, or `null` where the switchboard says nobody is.
+    /// **`null` is not "fine"** — on a `doing` row it is the alarm, and the panel says so
+    /// there; on a `todo` or a duty it is the ordinary state and the panel says nothing.
+    on_it: Option<OnItDto>,
 }
 
 #[derive(Serialize)]
@@ -55,6 +60,78 @@ fn moment(entry: &TimelineEntry) -> MomentDto {
     }
 }
 
+/// What the switchboard says about this task's worker.
+///
+/// The **same join the agent's own window reads** — `snapshot::working_on_tasks`, projected
+/// through `tasks::worker_note` there and through the panel here. One derivation, because
+/// two would be free to disagree and the board's is the one that would go wrong: a restart's
+/// casualties are not in the roster, so a board deriving this from `GET /api/workers` would
+/// report cut-off work as merely unattended.
+///
+/// Structured rather than a rendered sentence: the panel writes the words, in the reader's
+/// language, and the two locales it already carries are the reason this cannot be prose here.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnItDto {
+    /// `live` — a session is registered under this subject · `reopening` — the last stop cut
+    /// its worker off and the host is putting it back, which calls for no move at all ·
+    /// `lost` — it would not reopen, so the errand needs starting again or writing off.
+    state: &'static str,
+    /// The session's slug, so a reader can find it on the roster. `null` off `live`, where
+    /// there is no session to name.
+    session: Option<String>,
+    /// Mid-turn, or waiting for its next instruction.
+    busy: Option<bool>,
+    /// When it entered that state, RFC3339 — the elapsed figure a reader wants, since uptime
+    /// is the same for a session quiet for five minutes and one that just finished a turn.
+    since: Option<String>,
+    /// The last thing it was seen doing — a shell command, a tool call. **Only while busy**:
+    /// nothing clears the field when a turn ends, so drawing it beside an idle session is
+    /// what made a finished worker read as `idle` and `thinking` at once.
+    doing: Option<String>,
+    /// Why its last finished turn died, when the session is quiet enough for that to still be
+    /// the news. `idle` after a turn that failed reads as patience, and the move it invites is
+    /// "get on with it" rather than "it fell over".
+    failed: Option<String>,
+    /// The same ending without a fault: the last turn was stopped, by its owner or by a
+    /// shutdown. Not an alarm — a decision somebody made.
+    stopped: bool,
+}
+
+fn on_it(entry: Option<&OnIt>) -> Option<OnItDto> {
+    let bare = |state| OnItDto {
+        state,
+        session: None,
+        busy: None,
+        since: None,
+        doing: None,
+        failed: None,
+        stopped: false,
+    };
+    match entry? {
+        OnIt::Live(worker) => {
+            // Only on a quiet worker: while it is busy, what it is doing now is the answer
+            // and last turn's ending is stale.
+            let trouble = worker
+                .last_turn
+                .as_ref()
+                .filter(|_| !worker.busy)
+                .filter(|outcome| outcome.is_trouble());
+            Some(OnItDto {
+                state: "live",
+                session: Some(worker.session.to_string()),
+                busy: Some(worker.busy),
+                since: Some(rfc3339(worker.since)),
+                doing: worker.busy.then(|| worker.doing.clone()).flatten(),
+                failed: trouble.and_then(|outcome| outcome.error().map(str::to_owned)),
+                stopped: trouble.is_some_and(|outcome| outcome.error().is_none()),
+            })
+        }
+        OnIt::Reopening => Some(bare("reopening")),
+        OnIt::Lost => Some(bare("lost")),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LivenessDto {
@@ -68,7 +145,7 @@ fn rfc3339(time: DateTime<Utc>) -> String {
     time.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn dto(task: &Task, malformed: bool) -> TaskDto {
+fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
     TaskDto {
         subject: task.subject.clone(),
         title: task.title.clone(),
@@ -91,6 +168,7 @@ fn dto(task: &Task, malformed: bool) -> TaskDto {
         timeline: task.timeline.iter().map(moment).collect(),
         body: task.body.clone(),
         malformed,
+        on_it: self::on_it(on_it),
     }
 }
 
@@ -203,6 +281,9 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> Response {
         Err(error) => return err(&error.to_string()),
     };
     let prefix = format!("{}/", tasks::DIMENSION);
+    // Once for the whole board, not once per row: it walks the switchboard, and the answer
+    // has to be the same for every card in one response.
+    let working = snapshot::working_on_tasks();
 
     let mut rows: Vec<(SortKey, TaskDto)> = Vec::new();
     for facet_ref in index {
@@ -218,7 +299,8 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> Response {
             }
             _ => (unreadable(subject), true),
         };
-        rows.push((sort_key(&task), dto(&task, malformed)));
+        let on_it = working.get(&task.subject);
+        rows.push((sort_key(&task), dto(&task, malformed, on_it)));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -277,7 +359,9 @@ pub async fn patch_task(
     if let Err(error) = tasks::write_task(&state.data_dir, &task).await {
         return err(&error.to_string());
     }
-    Json(serde_json::json!({ "ok": true, "task": dto(&task, false) })).into_response()
+    let working = snapshot::working_on_tasks();
+    let on_it = working.get(&task.subject);
+    Json(serde_json::json!({ "ok": true, "task": dto(&task, false, on_it) })).into_response()
 }
 
 fn err(message: &str) -> Response {
@@ -323,7 +407,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false)).unwrap();
+        let value = serde_json::to_value(dto(&got, false, None)).unwrap();
         assert_eq!(value["status"], "serving");
         assert_eq!(value["createdAt"], "2026-08-01T09:00:00Z");
         assert_eq!(value["dueAt"], "2026-08-09T10:00:00Z");
@@ -355,7 +439,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false)).unwrap();
+        let value = serde_json::to_value(dto(&got, false, None)).unwrap();
         assert_eq!(value["body"], "The long account, written whole.");
         assert_eq!(value["timeline"][0]["kind"], "asked");
         assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
@@ -371,14 +455,93 @@ mod tests {
     #[test]
     fn a_task_with_no_running_record_serves_an_empty_list() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
         assert_eq!(value["timeline"], serde_json::json!([]));
+    }
+
+    /// A live worker reaches the card as structure, not as a sentence — the panel has two
+    /// locales and the words are its own.
+    #[test]
+    fn a_live_worker_reaches_the_card() {
+        let task = Task::new("Ship the deck", TaskStatus::Doing);
+        let entry = OnIt::Live(tasks::WorkingOnIt {
+            session: "worker-3".parse().unwrap(),
+            busy: true,
+            doing: Some("cargo test -p hi-agent".into()),
+            since: at(3, 9),
+            last_turn: None,
+        });
+        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        assert_eq!(value["onIt"]["state"], "live");
+        assert_eq!(value["onIt"]["session"], "worker-3");
+        assert_eq!(value["onIt"]["busy"], true);
+        assert_eq!(value["onIt"]["since"], "2026-08-03T09:00:00Z");
+        assert_eq!(value["onIt"]["doing"], "cargo test -p hi-agent");
+    }
+
+    /// `doing` is only meaningful while the session is running — nothing clears it when a
+    /// turn ends, so a quiet worker carrying the last command it ran would read as busy.
+    /// A turn that died is the opposite: on a quiet worker that ending *is* the news.
+    #[test]
+    fn a_quiet_worker_shows_how_its_turn_ended_and_not_what_it_last_ran() {
+        let task = Task::new("Ship the deck", TaskStatus::Doing);
+        let entry = OnIt::Live(tasks::WorkingOnIt {
+            session: "worker-3".parse().unwrap(),
+            busy: false,
+            doing: Some("cargo test -p hi-agent".into()),
+            since: at(3, 9),
+            last_turn: Some(crate::foundation::registry::TurnOutcome::Failed(
+                "stream closed".into(),
+            )),
+        });
+        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        assert!(value["onIt"]["doing"].is_null());
+        assert_eq!(value["onIt"]["failed"], "stream closed");
+        assert_eq!(value["onIt"]["stopped"], false);
+    }
+
+    /// While it is busy, what it is doing now is the answer and last turn's ending is stale.
+    #[test]
+    fn a_busy_worker_does_not_report_last_turns_ending() {
+        let task = Task::new("Ship the deck", TaskStatus::Doing);
+        let entry = OnIt::Live(tasks::WorkingOnIt {
+            session: "worker-3".parse().unwrap(),
+            busy: true,
+            doing: None,
+            since: at(3, 9),
+            last_turn: Some(crate::foundation::registry::TurnOutcome::Interrupted),
+        });
+        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        assert!(value["onIt"]["failed"].is_null());
+        assert_eq!(value["onIt"]["stopped"], false);
+    }
+
+    /// The two the restart leaves behind, which the roster cannot answer at all: one is
+    /// coming back on its own and needs no move, the other needs somebody put on it.
+    #[test]
+    fn the_restarts_casualties_are_distinguishable_from_each_other() {
+        let task = Task::new("Ship the deck", TaskStatus::Doing);
+        let reopening = serde_json::to_value(dto(&task, false, Some(&OnIt::Reopening))).unwrap();
+        let lost = serde_json::to_value(dto(&task, false, Some(&OnIt::Lost))).unwrap();
+        assert_eq!(reopening["onIt"]["state"], "reopening");
+        assert!(reopening["onIt"]["session"].is_null());
+        assert_eq!(lost["onIt"]["state"], "lost");
+    }
+
+    /// Nobody on it is `null`, not an object saying so. What that absence *means* depends on
+    /// the status — an alarm on `doing`, the ordinary state on a `todo` — and that judgment
+    /// is the panel's, which is the only place that knows what it is drawing.
+    #[test]
+    fn nobody_on_it_is_an_absence() {
+        let task = Task::new("Ship the deck", TaskStatus::Doing);
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert!(value["onIt"].is_null());
     }
 
     #[test]
     fn bare_task_has_no_due_or_liveness_metadata() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
         assert!(value["dueAt"].is_null());
         assert!(value["checkedAt"].is_null());
         assert!(value["liveness"].is_null());

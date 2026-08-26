@@ -97,6 +97,17 @@ const T = {
     restart: "If it stops",
     owner: "Owner",
     startKey: "Start key",
+    onIt: "Who is on it",
+    working: (session, ago) => `${session} — working ${ago}`,
+    idling: (session, ago) => `${session} — idle ${ago}`,
+    nobody: "Nobody on it",
+    reopening: "The restart cut its worker off — it is being reopened",
+    lost: "The restart took its worker and its session would not reopen",
+    turnFailed: (why) => `last turn failed: ${why}`,
+    turnStopped: "last turn was stopped",
+    ago: (n, unit) => `${n}${unit} ago`,
+    agoUnits: { m: "m", h: "h", d: "d" },
+    justNow: "just now",
   },
   zh: {
     title: "任务",
@@ -163,6 +174,17 @@ const T = {
     restart: "停止后",
     owner: "负责人",
     startKey: "启动标识",
+    onIt: "谁在做",
+    working: (session, ago) => `${session} — 工作中 ${ago}`,
+    idling: (session, ago) => `${session} — 空闲 ${ago}`,
+    nobody: "没有人在做",
+    reopening: "重启中断了它的 worker，正在恢复",
+    lost: "重启带走了它的 worker，会话无法恢复",
+    turnFailed: (why) => `上一轮失败：${why}`,
+    turnStopped: "上一轮被中止",
+    ago: (n, unit) => `${n}${unit}前`,
+    agoUnits: { m: "分钟", h: "小时", d: "天" },
+    justNow: "刚刚",
   },
 };
 
@@ -421,6 +443,10 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
   // task *is* and nothing about where any of it stands, which is the question somebody
   // scanning this actually has.
   const latest = latestMoment(task);
+  // The other half of "does this need me": the running record says where the work got to,
+  // this says whether anyone is still carrying it. A `doing` card with neither is the state
+  // this line exists to make visible.
+  const who = whoMeta(task);
   // A drag that ends on the card it started from still delivers a `click`, which would
   // open the panel on a gesture the person meant as "put it back".
   const dragged = useRef(false);
@@ -470,6 +496,11 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
             <span className="hi-tasks__card-latest-text">{latest.text}</span>
           </span>
         )}
+        {who && (
+          <span className="hi-tasks__card-who" data-warn={who.warn ? "true" : undefined}>
+            {who.text}
+          </span>
+        )}
         {notes.length > 0 && (
           <span className="hi-tasks__card-notes">
             {notes.map((note) => (
@@ -508,6 +539,9 @@ function Detail({ task, busy, onStatus, onClose }) {
   // Newest first. The file appends, because that is what a writer with a shell can do
   // safely; a reader catching up wants the opposite order.
   const moments = [...(task.timeline || [])].reverse();
+  // What was asked, then who is carrying it now, then what has happened — the three
+  // questions a person catching up on their own errand asks, in that order.
+  const who = whoMeta(task);
   const closedAt =
     task.status === "done" && task.completedAt
       ? L.completed(formatStamp(task.completedAt))
@@ -550,6 +584,14 @@ function Detail({ task, busy, onStatus, onClose }) {
             <div className="hi-tasks__asked">
               <div className="hi-tasks__asked-title">{L.asked}</div>
               <div className="hi-tasks__asked-text">{asked.text}</div>
+            </div>
+          )}
+
+          {who && (
+            <div className="hi-tasks__who" data-warn={who.warn ? "true" : undefined}>
+              <div className="hi-tasks__who-title">{L.onIt}</div>
+              <div className="hi-tasks__who-text">{who.text}</div>
+              {who.detail && <div className="hi-tasks__who-detail">{who.detail}</div>}
             </div>
           )}
 
@@ -692,6 +734,54 @@ function dueMeta(task) {
     text: overdue ? L.overdue(formatStamp(task.dueAt)) : L.due(formatStamp(task.dueAt)),
     warn: overdue,
   };
+}
+
+// How long ago, in the spelling `tasks::ago` uses on the agent's side of the same fact.
+// Relative rather than absolute on purpose: "idle 12m" is the question a reader of this line
+// has, and an absolute stamp makes them do the subtraction.
+function formatAgo(value) {
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return null;
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return L.justNow;
+  if (mins < 60) return L.ago(mins, L.agoUnits.m);
+  if (mins < 60 * 24) return L.ago(Math.floor(mins / 60), L.agoUnits.h);
+  return L.ago(Math.floor(mins / (60 * 24)), L.agoUnits.d);
+}
+
+// Who is on this task, or — where nobody is a problem — that nobody is.
+//
+// The switchboard join arrives on the task (`onIt`), computed by the same code that writes
+// the agent's own window, so the board and the agent cannot disagree about it. The judgment
+// left here is the one the server deliberately did not make: what an *absence* means.
+//
+// **"Nobody" is only said on `doing`.** A `todo` with no worker is what a `todo` is, and a
+// duty spends most of its life with no live handler because one is spawned per burst and
+// idles out. Printing it on those would put the phrase on most of the board and teach the eye
+// to skip it — and then it would be skipped on the one card where it means something.
+function whoMeta(task) {
+  const on = task.onIt;
+  if (!on) {
+    return task.status === "doing" ? { text: L.nobody, warn: true } : null;
+  }
+  if (on.state === "reopening") {
+    // No move is called for: the errand is coming back on its own, and an alarm here is what
+    // made the seconds after every restart read as abandoned work.
+    return { text: L.reopening, warn: false };
+  }
+  if (on.state === "lost") return { text: L.lost, warn: true };
+  const since = on.since ? formatAgo(on.since) : "";
+  const text = on.busy
+    ? L.working(on.session, since)
+    : L.idling(on.session, since);
+  // `idle` after a turn that died says the wrong thing loudest — it is the same word a worker
+  // waiting for its next instruction reports, so the detail is what separates the two.
+  const detail = on.failed
+    ? L.turnFailed(on.failed)
+    : on.stopped
+      ? L.turnStopped
+      : on.doing || null;
+  return { text, warn: Boolean(on.failed), detail };
 }
 
 // Every duty gets this line, including one with no `liveness` recorded — a duty nobody
@@ -1201,6 +1291,23 @@ const CSS = `
     white-space: nowrap;
   }
 
+  /* One clipped line, under the record and above the dates: it is a fact about right now,
+     and the two things around it are about the past. */
+  .hi-tasks__card-who {
+    min-width: 0;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    line-height: 1.4;
+    font-weight: 620;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hi-tasks__card-who[data-warn="true"] {
+    color: var(--danger);
+  }
+
   .hi-tasks__card-notes {
     display: flex;
     align-items: baseline;
@@ -1411,6 +1518,46 @@ const CSS = `
     font-size: 13.5px;
     line-height: 1.6;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* Between what was asked and what has happened, because that is where it belongs in
+     time: the only line on this panel about the present. */
+  .hi-tasks__who {
+    margin-bottom: 16px;
+    padding: 9px 12px;
+    border-left: 3px solid var(--fg-mute);
+    background: color-mix(in srgb, var(--fg-mute) 7%, transparent);
+  }
+
+  .hi-tasks__who[data-warn="true"] {
+    border-left-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 7%, transparent);
+  }
+
+  .hi-tasks__who-title {
+    margin-bottom: 4px;
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__who-text {
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__who[data-warn="true"] .hi-tasks__who-text {
+    color: var(--danger);
+  }
+
+  .hi-tasks__who-detail {
+    margin-top: 3px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
 
