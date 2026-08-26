@@ -42,6 +42,19 @@ struct TaskDto {
     timeline: Vec<MomentDto>,
     body: String,
     malformed: bool,
+    /// Frontmatter this schema does not know, in the file's order — `systems:`, `report_to:`,
+    /// and the dated note keys the agent keeps its own ledger in. The store preserves them
+    /// because a writer that does not understand a line is not entitled to drop it, and the
+    /// same argument reaches here: a person looking at a task cannot read what the record
+    /// says if the projection keeps only the twelve keys the code happens to parse.
+    ///
+    /// **Capped, and the cap is reported.** The board polls this list every few seconds and
+    /// one live record carries 144 of these, 85 KB of them. Values are clipped and the tail
+    /// is dropped, with [`TaskDto::extra_dropped`] saying how many — a projection that
+    /// silently truncated would read as a record with nothing more in it.
+    extra: Vec<FieldDto>,
+    /// Fields past [`EXTRA_FIELDS`], which are in the record and not in this response.
+    extra_dropped: usize,
     /// Who is on this task right now, or `null` where the switchboard says nobody is.
     /// **`null` is not "fine"** — on a `doing` row it is the alarm, and the panel says so
     /// there; on a `todo` or a duty it is the ordinary state and the panel says nothing.
@@ -138,6 +151,97 @@ fn on_it(entry: Option<&OnIt>) -> Option<OnItDto> {
     }
 }
 
+/// Most foreign frontmatter fields one task ships, and the most characters of any one value.
+/// Both are board-poll budgets, not statements about the record.
+const EXTRA_FIELDS: usize = 24;
+const EXTRA_VALUE_CHARS: usize = 240;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FieldDto {
+    /// The key as written. Empty for a line the frontmatter carries that is not a `key: value`
+    /// at all — kept rather than dropped, for the same reason the store keeps it.
+    key: String,
+    value: String,
+    /// Whether `value` is the whole of what the record says.
+    clipped: bool,
+}
+
+/// The store's verbatim lines, read back as fields.
+///
+/// Indented lines continue the field above them, which is how the agent writes a multi-line
+/// value; a line that opens no key and continues nothing is its own keyless field. Nothing is
+/// re-ordered and nothing is dropped for being unrecognised — the only losses are the two caps,
+/// and both are counted.
+fn extra_fields(lines: &[String]) -> (Vec<FieldDto>, usize) {
+    let mut out: Vec<FieldDto> = Vec::new();
+    let mut dropped = 0usize;
+    for line in lines {
+        let continuation = line.starts_with([' ', '\t']);
+        let piece = line.trim();
+        if continuation {
+            // A blank indented line carries nothing in any reading, and appending it would
+            // put a trailing space on the value above.
+            if piece.is_empty() {
+                continue;
+            }
+            if let Some(last) = out.last_mut() {
+                if push_clipped(&mut last.value, piece) {
+                    last.clipped = true;
+                }
+                continue;
+            }
+            // An indented line continuing nothing falls through as its own keyless field.
+        }
+        // A blank line is not a field. Nothing is lost saying so: there is nothing in it.
+        if piece.is_empty() {
+            continue;
+        }
+        if out.len() >= EXTRA_FIELDS {
+            dropped += 1;
+            continue;
+        }
+        let (key, raw) = match line.split_once(':') {
+            Some((key, value)) if !continuation => (key.trim().to_owned(), value.trim()),
+            _ => (String::new(), piece),
+        };
+        let value = unquote(raw);
+        let clipped = value.chars().count() > EXTRA_VALUE_CHARS;
+        out.push(FieldDto {
+            key,
+            value: value.chars().take(EXTRA_VALUE_CHARS).collect(),
+            clipped,
+        });
+    }
+    (out, dropped)
+}
+
+/// Append `piece` to `value`, stopping at the cap. `true` if anything was left behind — the
+/// caller's `clipped` flag is the only thing that keeps a cut value from reading as a whole one.
+fn push_clipped(value: &mut String, piece: &str) -> bool {
+    let room = EXTRA_VALUE_CHARS.saturating_sub(value.chars().count());
+    let mut add = String::new();
+    if !value.is_empty() {
+        add.push(' ');
+    }
+    add.push_str(piece);
+    let taken: String = add.chars().take(room).collect();
+    let truncated = taken.chars().count() < add.chars().count();
+    value.push_str(&taken);
+    truncated
+}
+
+/// A frontmatter value as the writer meant it: [`facets`] JSON-quotes anything with a colon
+/// or a newline in it, and a panel showing the escapes would be showing the encoding.
+fn unquote(value: &str) -> String {
+    if value.starts_with('"')
+        && let Ok(decoded) = serde_json::from_str::<String>(value)
+    {
+        return decoded;
+    }
+    value.to_owned()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LivenessDto {
@@ -152,6 +256,7 @@ fn rfc3339(time: DateTime<Utc>) -> String {
 }
 
 fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
+    let (extra, extra_dropped) = extra_fields(&task.extra);
     TaskDto {
         subject: task.subject.clone(),
         title: task.title.clone(),
@@ -175,6 +280,8 @@ fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
         timeline: task.timeline.iter().map(moment).collect(),
         body: task.body.clone(),
         malformed,
+        extra,
+        extra_dropped,
         on_it: self::on_it(on_it),
     }
 }
@@ -230,13 +337,7 @@ fn raw_field(content: &str, key: &str) -> Option<String> {
         if candidate.trim() != key {
             continue;
         }
-        let value = value.trim();
-        if value.starts_with('"')
-            && let Ok(decoded) = serde_json::from_str::<String>(value)
-        {
-            return Some(decoded);
-        }
-        return Some(value.to_owned());
+        return Some(unquote(value.trim()));
     }
     None
 }
@@ -573,6 +674,100 @@ mod tests {
         assert!(value["dueAt"].is_null());
         assert!(value["checkedAt"].is_null());
         assert!(value["liveness"].is_null());
+    }
+
+    /// The ledger a real task carries is mostly not schema — `systems:` on 78 of one live
+    /// store's 108 records, `report_to:` on 10 — and a panel that showed only the keys the
+    /// parser knows was showing a fraction of the record it claimed to be.
+    #[test]
+    fn foreign_frontmatter_reaches_the_panel() {
+        let mut task = Task::new("Deploy KUT", TaskStatus::Doing);
+        task.extra = vec![
+            "systems: KUT, gz, hi-agent".into(),
+            "report_to: prdo8qht".into(),
+        ];
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert_eq!(value["extra"][0]["key"], "systems");
+        assert_eq!(value["extra"][0]["value"], "KUT, gz, hi-agent");
+        assert_eq!(value["extra"][0]["clipped"], false);
+        assert_eq!(value["extra"][1]["key"], "report_to");
+        assert_eq!(value["extraDropped"], 0);
+    }
+
+    /// A quoted value is shown as the writer meant it. The store quotes anything carrying a
+    /// colon, and a panel rendering the escapes would be rendering the encoding.
+    #[test]
+    fn a_quoted_value_is_shown_unquoted() {
+        let mut task = Task::new("Deploy KUT", TaskStatus::Doing);
+        task.extra = vec![r#"note: "16:20 — the callback is still not registered""#.into()];
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert_eq!(
+            value["extra"][0]["value"],
+            "16:20 — the callback is still not registered"
+        );
+    }
+
+    /// Indented lines continue the field above, which is how a multi-line value is written.
+    /// A line continuing nothing keeps its place as a keyless field rather than vanishing.
+    #[test]
+    fn an_indented_line_continues_the_field_above_it() {
+        let mut task = Task::new("Deploy KUT", TaskStatus::Doing);
+        task.extra = vec![
+            "note: first".into(),
+            "  second".into(),
+            "  third".into(),
+            "   ".into(),
+        ];
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert_eq!(value["extra"][0]["value"], "first second third");
+        assert_eq!(value["extra"].as_array().unwrap().len(), 1);
+    }
+
+    /// The board polls this list; one live record carries 147 foreign keys running to 85 KB.
+    /// Both caps report what they cut, because a truncation that says nothing reads as a
+    /// record with nothing more in it.
+    #[test]
+    fn the_caps_say_what_they_left_out() {
+        let mut task = Task::new("Watch the group", TaskStatus::Serving);
+        task.extra = (0..EXTRA_FIELDS + 6)
+            .map(|i| format!("CHECK_{i}: still up"))
+            .chain(std::iter::once(format!("long: {}", "x".repeat(400))))
+            .collect();
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert_eq!(value["extra"].as_array().unwrap().len(), EXTRA_FIELDS);
+        assert_eq!(value["extraDropped"], 7);
+
+        let mut one = Task::new("Watch the group", TaskStatus::Serving);
+        one.extra = vec![format!("long: {}", "x".repeat(400))];
+        let value = serde_json::to_value(dto(&one, false, None)).unwrap();
+        assert_eq!(
+            value["extra"][0]["value"].as_str().unwrap().chars().count(),
+            EXTRA_VALUE_CHARS
+        );
+        assert_eq!(value["extra"][0]["clipped"], true);
+    }
+
+    /// What the parser understands is not foreign frontmatter, and must not be listed twice.
+    #[tokio::test]
+    async fn schema_keys_are_not_repeated_as_foreign_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        facets::update_facet(
+            dir.path(),
+            tasks::DIMENSION,
+            "kut",
+            "---\nstatus: doing\ntitle: \"Deploy KUT\"\nsystems: KUT, gz\n---\n",
+        )
+        .await
+        .unwrap();
+        let task = tasks::read_task(dir.path(), "kut").await.unwrap().unwrap();
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let keys: Vec<&str> = value["extra"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(keys, vec!["systems"]);
     }
 
     #[test]

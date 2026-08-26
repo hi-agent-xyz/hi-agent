@@ -97,6 +97,8 @@ const T = {
     restart: "If it stops",
     owner: "Owner",
     startKey: "Start key",
+    fields: "Other fields",
+    moreFields: (n) => `+${n} more, in the record`,
     onIt: "Who is on it",
     working: (session, ago) => `${session} — working ${ago}`,
     idling: (session, ago) => `${session} — idle ${ago}`,
@@ -175,6 +177,8 @@ const T = {
     restart: "停止后",
     owner: "负责人",
     startKey: "启动标识",
+    fields: "其他字段",
+    moreFields: (n) => `还有 ${n} 条，在记录里`,
     onIt: "谁在做",
     working: (session, ago) => `${session} — 工作中 ${ago}`,
     idling: (session, ago) => `${session} — 空闲 ${ago}`,
@@ -545,6 +549,17 @@ function Detail({ task, busy, onStatus, onClose }) {
   // What was asked, then who is carrying it now, then what has happened — the three
   // questions a person catching up on their own errand asks, in that order.
   const who = whoMeta(task);
+  // Frontmatter this schema does not know. The store keeps it because a writer that does not
+  // understand a line is not entitled to drop it; the panel shows it for the same reason —
+  // most of what a real record says about itself is down here, not in the twelve parsed keys.
+  //
+  // `systems` is promoted because it is the one that answers *what is this about*: it is on
+  // 78 of one live store's 108 records and it reads as a tag, not as a field. That is a
+  // presentation guess about one common spelling, deliberately not a schema — every other key
+  // is listed exactly as written, in the file's order.
+  const fields = task.extra || [];
+  const systems = fields.find((field) => field.key === "systems" && !field.clipped);
+  const rest = fields.filter((field) => field !== systems);
   const closedAt =
     task.status === "done" && task.completedAt
       ? L.completed(formatStamp(task.completedAt))
@@ -581,6 +596,20 @@ function Detail({ task, busy, onStatus, onClose }) {
             {due && <span data-warn={due.warn ? "true" : undefined}>{due.text}</span>}
             {health && <span data-warn={health.warn ? "true" : undefined}>{health.text}</span>}
           </div>
+
+          {systems && (
+            <div className="hi-tasks__systems">
+              {systems.value
+                .split(",")
+                .map((name) => name.trim())
+                .filter(Boolean)
+                .map((name) => (
+                  <span key={name} className="hi-tasks__system">
+                    {name}
+                  </span>
+                ))}
+            </div>
+          )}
 
           {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
 
@@ -632,6 +661,23 @@ function Detail({ task, busy, onStatus, onClose }) {
               <Prose text={task.body} />
             </details>
           ) : null}
+
+          {(rest.length > 0 || task.extraDropped > 0) && (
+            <details className="hi-tasks__notes hi-tasks__fields">
+              <summary>{L.fields}</summary>
+              <dl>
+                {rest.map((field, index) => (
+                  <div key={`${field.key}-${index}`}>
+                    {field.key && <dt>{field.key}</dt>}
+                    <dd>{field.clipped ? `${field.value}\u2026` : field.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {task.extraDropped > 0 && (
+                <div className="hi-tasks__fields-more">{L.moreFields(task.extraDropped)}</div>
+              )}
+            </details>
+          )}
 
           {task.liveness && (
             <div className="hi-tasks__liveness">
@@ -1540,6 +1586,60 @@ const CSS = `
     color: var(--danger);
     font-size: 12.5px;
     line-height: 1.5;
+  }
+
+  /* What the record says this touches, read as tags rather than as a field — it is the
+     answer to "what is this about", and it belongs beside the title. */
+  .hi-tasks__systems {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 14px;
+  }
+
+  .hi-tasks__system {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg-mute) 14%, transparent);
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 650;
+  }
+
+  /* Everything else the frontmatter carries, in the file's order and folded away: a real
+     record's own ledger runs to tens of keys, and it is a thing to go and read rather than a
+     thing to be shown. */
+  .hi-tasks__fields dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    gap: 2px 12px;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .hi-tasks__fields dl > div {
+    display: contents;
+  }
+
+  .hi-tasks__fields dt {
+    color: var(--fg-dim);
+    font-weight: 650;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__fields dd {
+    grid-column: 2;
+    margin: 0;
+    color: var(--fg);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__fields-more {
+    margin-top: 8px;
+    color: var(--fg-dim);
+    font-size: 11.5px;
   }
 
   /* Pinned above the record and never scrolled past: one or three lines in their own

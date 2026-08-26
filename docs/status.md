@@ -168,6 +168,41 @@ not resemblance — two rows are one job when delivering either delivers the oth
 runs before staffing a task", with no caller anywhere and none in its history. The fence replaces
 what it was for.
 
+**The board says what the agent's window says — 2026-08-26.** Three facts the host already
+computed reached the ledger writer and stopped there, so the person's board could not answer
+questions the agent's window answered every turn. All three now ride `GET /api/tasks`:
+
+- **Who is on a row.** `onIt`, from the same `snapshot::working_on_tasks` join `worker_note`
+  reads — live worker, busy or idle and for how long, what it is running, a last turn that
+  failed, or the restart's two casualties (`reopening`, which needs no move, and `lost`, which
+  needs somebody put on it). Of the 5 `doing` rows on the live ledger you could not tell a live
+  one from an abandoned one. One derivation, not two: a board deriving this from
+  `GET /api/workers` would report cut-off work as merely unattended, because the restart's
+  casualties are not on the roster at all.
+- **How long a row has stood where it stands.** `statusSince`, shown as elapsed on `todo` and
+  `doing` only, silent below a day, warning past the same 48 hours the idle boundary reads.
+  `Created` cannot stand in for it — churn is not movement.
+- **The frontmatter the schema does not know.** `systems:` (78 of 108 records), `report_to:`
+  (10), and the dated note keys the agent keeps its own ledger in. `Task::extra` preserved all
+  of it and the DTO dropped all of it. Capped for a surface that polls — 24 fields, 240
+  characters — with the count of what was cut shipped beside it, since a silent truncation
+  reads as a record with nothing more in it. Run over a copy of the live store: 110 records,
+  80 carrying `systems`, 5 with a value long enough to clip and 2 past the field cap (one has
+  144 foreign keys), and the whole list costs **39 KB of a 843 KB response**.
+
+**Built, never watched.** Green — 994 Rust, 106 web. No live instance has drawn any of it; what a run
+would settle is whether the worker line reads as the alarm it is on a `doing` card, and whether
+promoting `systems` to tags is right for records whose value is not a list of systems.
+
+**What is still missing from that panel**, from the same audit: `[[…]]` cross-links render as
+literal brackets on the 60 records that carry them; the body sits behind a collapsed fold on the
+89 records whose whole account is in it — and is **686 KB of that 843 KB response**, re-sent
+every 8 seconds to draw a board that never shows it; nothing lists the artifacts a worker leaves in the task
+directory (234 `.md`, 224 `.txt`, 19 `.png` beside 108 `facet.md`) or the `.history/` every
+record keeps; `malformed` says "invalid stored fields" without naming which; and `L.assumed` is
+a string in both locales that nothing renders. The acceptance line is its own item — still 0 of
+11 open rows carry one.
+
 **Still to build, in order:**
 
 1. **A recently-closed `serving` row keeps its place in the manager's window** — closed when,
