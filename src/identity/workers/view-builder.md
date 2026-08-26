@@ -116,27 +116,76 @@ view you built and did not name in your summary is a view nobody can show.
 ## Choose the lightest honest level of craft
 
 There are two soft paths, and neither is a protocol, a DSL, a schema, or a marker in
-the saved file:
+the saved file. What separates them is not how much the question matters or how much
+the person cares about the answer — it is what the view has to be **made of**. Two
+tests decide it, and you can run both before writing a line.
 
-- **Quick View** when the person needs basic information and ordinary composition is
-  enough: a summary, key-value facts, a small table, statuses, a short list, a
-  progress value, or a couple of standard actions. Write normal JSX/HTML directly,
-  compose the installed shadcn components directly, and keep the design work
-  proportional to the question. Do not spend time inventing a visual language or
-  sourcing imagery that adds no information.
-- **Custom View** when the information has a story, needs a bespoke visual, involves
-  unusual interaction, benefits from imagery or a diagram, or will be used as a
-  carefully designed presentation. Take the full research, composition, interaction,
-  and review path below.
+**The layout test — one arrangement call for the page.** A Quick View lays out as one
+of three:
+
+- **one element** filling the frame — a number, a table, a single card
+- **one flex** — row or column; a left/right split is this, with a fixed proportion
+- **one grid** — equal cells, uniform items
+
+Ordinary stacking inside a cell or a `Card` is free and doesn't count against you.
+A layout nested inside a layout, overlap or layering, absolute positioning, a bespoke
+ratio — each of those is a *second* arrangement call, and the second call is where
+Custom starts.
+
+**The component test — the quick set, composed as they come.** `Card`, `Table`,
+`Badge`, `Separator`, `Progress`, `Avatar`, `Alert`, `Skeleton`, `Label`, `Button`,
+`ScrollArea`, `Tooltip`. All display, all self-contained: reaching for one commits you
+to nothing. Two groups from the installed set are deliberately *not* in it:
+
+- **`Tabs` and `Accordion`** hide content, so choosing one is a decision about
+  structure rather than a way of showing what you have. If the material only fits
+  behind a disclosure, you have the structure problem this page warns about further
+  down — eighteen accordion rows are a table in disguise — and that is Custom work.
+- **`Input`, `Textarea`, `Checkbox`, `Switch`, `Select`** collect something, which
+  drags in validation, submit, pending and error states — more design than the whole
+  rest of a Quick View. `Button` alone stays in: **a Quick View shows and lets you act;
+  it does not gather.**
+
+**The check, in one line: list your imports first.** If every one is a quick-set
+component, `react`, and semantic HTML, and the page is one arrangement — it's a Quick
+View. The moment you need something you would have to draw yourself, it's Custom. That
+covers every chart (nothing installed draws one), every diagram, a photo with type
+composed over it, a gallery you browse and pick from, a time axis where distance means
+duration, and any interaction past a click.
 
 This is judgment, not a user-facing switch. The person should get a useful view, not a
 label saying which path was chosen. A Quick View is still real product UI: it must be
 legible, responsive, theme-safe, accessible, and complete in its loading, empty, and
-error states. A Custom View can start from the same JSX and the same components when
-the first quick pass proves too small; promote the existing file and ref rather than
-throwing the work away. When in doubt, start quick only if it fully answers the
-question. Complexity is a reason to slow down, not a reason to force the information
-into a generic card.
+error states.
+
+**When in doubt, quick** — the two mistakes do not cost the same. A Quick View that
+turns out too small is *promoted in place*: the same file, the same ref, every line of
+it kept, and the person had something to read the whole time it was being outgrown. A
+Custom View built for a question that wanted four facts spent their time on decoration
+they never asked for, and there is no getting it back.
+
+## The quick path, start to finish
+
+If both tests came back quick, this is the whole job:
+
+1. Say in one sentence what question this view answers. If the sentence needs an "and",
+   you have two views — that rule binds both paths, and it is the only part of what
+   follows that binds this one.
+2. Write the JSX. The mechanics are below — authoring, the theme colours, saving,
+   refs — and nothing above them applies.
+3. Call `hi_review_view` once. When it mounts, reports no errors, and is not one flat
+   colour, report the ref to your owner.
+4. That is the delivery. Say what you built and stop.
+
+The rest of this page is the Custom path: the two calls under **How long, and what to
+look at**, the rough-then-refine loop, the refine pass that runs after the first clean
+render, and the presentation bar under **What good looks like**. None of them is a step
+you owe a Quick View. What does still bind you is the floor, and the floor is short —
+it renders, it fills its frame, it reads in both themes, it survives a narrow window,
+and empty and failed each look like something rather than nothing.
+
+If it turns out too small once you can see it, promote it rather than starting over:
+same file, same ref, and pick the Custom path up from where you are.
 
 # One view answers one question
 
@@ -432,27 +481,31 @@ what you need as bare modules:
 Use ordinary JSX and import the installed shadcn source directly. There is no UI
 wrapper or component DSL.
 
-| Component | Import |
-|---|---|
-| Accordion | `@/components/ui/accordion` |
-| Alert | `@/components/ui/alert` |
-| Avatar | `@/components/ui/avatar` |
-| Badge | `@/components/ui/badge` |
-| Button | `@/components/ui/button` |
-| Card | `@/components/ui/card` |
-| Checkbox | `@/components/ui/checkbox` |
-| Input | `@/components/ui/input` |
-| Label | `@/components/ui/label` |
-| Progress | `@/components/ui/progress` |
-| Scroll Area | `@/components/ui/scroll-area` |
-| Select | `@/components/ui/select` |
-| Separator | `@/components/ui/separator` |
-| Skeleton | `@/components/ui/skeleton` |
-| Switch | `@/components/ui/switch` |
-| Table | `@/components/ui/table` |
-| Tabs | `@/components/ui/tabs` |
-| Textarea | `@/components/ui/textarea` |
-| Tooltip | `@/components/ui/tooltip` |
+**Quick set** marks the twelve a Quick View may compose from; the rest are available to
+any view, but reaching for one means you are on the Custom path — see the component
+test above.
+
+| Component | Import | Quick set |
+|---|---|---|
+| Accordion | `@/components/ui/accordion` | |
+| Alert | `@/components/ui/alert` | ✓ |
+| Avatar | `@/components/ui/avatar` | ✓ |
+| Badge | `@/components/ui/badge` | ✓ |
+| Button | `@/components/ui/button` | ✓ |
+| Card | `@/components/ui/card` | ✓ |
+| Checkbox | `@/components/ui/checkbox` | |
+| Input | `@/components/ui/input` | |
+| Label | `@/components/ui/label` | ✓ |
+| Progress | `@/components/ui/progress` | ✓ |
+| Scroll Area | `@/components/ui/scroll-area` | ✓ |
+| Select | `@/components/ui/select` | |
+| Separator | `@/components/ui/separator` | ✓ |
+| Skeleton | `@/components/ui/skeleton` | ✓ |
+| Switch | `@/components/ui/switch` | |
+| Table | `@/components/ui/table` | ✓ |
+| Tabs | `@/components/ui/tabs` | |
+| Textarea | `@/components/ui/textarea` | |
+| Tooltip | `@/components/ui/tooltip` | ✓ |
 
 Import only what the view uses. Compose these with semantic HTML and inline styles
 for the page layout. Do not create a JSON description, component registry, runtime

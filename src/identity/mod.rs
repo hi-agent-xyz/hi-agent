@@ -1254,13 +1254,50 @@ mod soul_tests {
     #[test]
     fn the_builder_uses_shadcn_directly_without_a_ui_layer() {
         assert!(WORKER_VIEW_BUILDER_BASE.contains("Quick View"));
-        assert!(WORKER_VIEW_BUILDER_BASE.contains("ordinary composition"));
         assert!(WORKER_VIEW_BUILDER_BASE.contains("Available shadcn components"));
         assert!(WORKER_VIEW_BUILDER_BASE.contains("@/components/ui/card"));
         assert!(WORKER_VIEW_BUILDER_BASE.contains("Do not create a JSON description"));
         assert!(
             WORKER_VIEW_BUILDER_BASE.contains("same JSX whether the result is quick or custom")
         );
+    }
+
+    /// The quick/custom line is what the view is *made of*, not how much the question
+    /// matters — two tests the builder can run before writing a line. It went unused for
+    /// as long as it was one paragraph of taste followed by seven hundred lines of the
+    /// custom path, so what is pinned here is that both tests are stated, that the quick
+    /// path terminates on its own, and that doubt resolves quick rather than custom.
+    #[test]
+    fn the_quick_view_line_is_mechanical_and_the_quick_path_ends() {
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("The layout test — one arrangement call"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("The component test — the quick set"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("list your imports first"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("**When in doubt, quick**"));
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("The quick path, start to finish"));
+        assert!(
+            WORKER_VIEW_BUILDER_BASE.contains("None of them is a step\nyou owe a Quick View"),
+            "the quick path has to say the custom sections do not apply, or the page's own \
+             weight puts them back"
+        );
+        // The quick set is a listing, so it has to survive someone editing the component
+        // table: a name in one and not the other is a test the builder cannot run.
+        for quick in [
+            "Card", "Table", "Badge", "Separator", "Progress", "Avatar", "Alert", "Skeleton",
+            "Label", "Button", "ScrollArea", "Tooltip",
+        ] {
+            assert!(
+                WORKER_VIEW_BUILDER_BASE.contains(&format!("`{quick}`")),
+                "{quick} is in the quick set but not named in the prompt"
+            );
+        }
+        // A Quick View shows and lets you act; it does not gather, and it does not hide.
+        for excluded in ["Tabs", "Accordion", "Input", "Textarea", "Checkbox", "Switch", "Select"] {
+            assert!(
+                WORKER_VIEW_BUILDER_BASE.contains(&format!("`{excluded}`")),
+                "{excluded} is excluded from the quick set, which only means anything if the \
+                 prompt says so"
+            );
+        }
     }
 
     /// The drive organizer copies rather than moves, and the reason has to travel with the

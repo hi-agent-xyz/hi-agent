@@ -9,11 +9,29 @@ JSX/HTML 文件,已有的 `hi_show`、`hi_review_view` 和 view 工具箱正常�
 
 ## Steps & expected UX
 
+## 这条线画在"用什么做"上,不画在"问题重不重要"上
+
+判断由 **view-builder 做**,不由 agent 做:agent 只知道用户问了什么,builder 才知道
+手上的材料和现成组件能不能扛住。两个测试都能在写第一行之前跑完:
+
+- **布局测试**:整页只有一次排布决定 —— 单个元素铺满、一个 flex(行或列,左右分栏
+  就是它加一个固定比例)、或一个 grid。cell 或 `Card` 内部的普通堆叠不算。布局套
+  布局、重叠分层、绝对定位、特殊比例,都是第二次排布决定,那就是 Custom。
+- **组件测试**:Quick View 只从 quick set 组合 —— `Card`、`Table`、`Badge`、
+  `Separator`、`Progress`、`Avatar`、`Alert`、`Skeleton`、`Label`、`Button`、
+  `ScrollArea`、`Tooltip`。`Tabs`/`Accordion` 会藏内容(那是信息结构决定),表单类
+  `Input`/`Textarea`/`Checkbox`/`Switch`/`Select` 会收集输入(那要带上校验、提交、
+  pending 和错误态)—— 都不在其中。**Quick View 负责呈现和触发,不负责收集。**
+
+一句话的检查:**先列 import**。全部来自 quick set、`react` 和语义化 HTML,且整页只有
+一次排布 —— 那就是 Quick View。一旦需要自己画的东西(图表、示意图、压字的照片、可挑选
+的画廊、距离代表时长的时间轴、点击以外的交互),就是 Custom。拿不准时按 Quick 走。
+
 ### Case A · 基础信息 → 直接给 Quick View
 
 1. **用户说**:"把这个项目的负责人、状态、截止日期和最近三条任务摆出来。"
-2. **Agent 判断**:这是基本信息,不需要图片、复杂图表或特殊交互;它直接安排一个
-   Quick View,不把"Quick View"这个内部判断说给用户听。
+2. **Builder 判断**:一个 flex 列 + `Card`/`Badge`/`Separator`/`Table` 就够,两个测试
+   都通过;它直接走 Quick View,不把"Quick View"这个内部判断说给用户听。
 3. **Builder 写普通 JSX**:从已有 view 工具箱看一眼相近的旧件,必要时从头写一个
    `.jsx`;从 `@/components/ui/card`、`@/components/ui/table` 等标准路径直接 import
    `Card`、`Badge`、`Table`、`Separator`、`Progress`、`Button`。不写 JSON schema,
@@ -34,8 +52,9 @@ JSX/HTML 文件,已有的 `hi_show`、`hi_review_view` 和 view 工具箱正常�
 ### Case C · 信息变复杂 → 从 Quick View 升级
 
 1. **用户继续说**:"再比较过去六个月的趋势,标出异常,允许我点进去看每周细节。"
-2. **Agent 判断**:这已经需要时间序列、异常表达和多层交互;它不硬塞进原来的基础
-   表格,而是把现有 JSX 当作起点,转入 Custom View 的研究、构图、交互和多轮 review。
+2. **Builder 判断**:图表没有现成组件、下钻超出点击、异常标注要自己画 —— 组件测试直接
+   判 Custom;它不硬塞进原来的基础表格,而是把现有 JSX 和 ref 当作起点,**就地升级**,
+   转入 Custom View 的研究、构图、交互和多轮 review。
 3. **用户感受**:升级发生在原有内容之上,项目名、状态和已有事实仍在;只是为了新的
    问题增加了真正必要的可视化和交互,而不是把一个简单页面永久复杂化。
 
@@ -57,13 +76,21 @@ JSX/HTML 文件,已有的 `hi_show`、`hi_review_view` 和 view 工具箱正常�
 - **用户只是要上次那一份** → 直接 `hi_show(ref)`;不能把旧快照误当成"现在的状态"。
 - **用户要最新数据** → 先刷新数据,再在旧 JSX 上更新内容;不能只复用旧 ref。
 - **窄窗口或暗色主题读不清** → 先减少内容、改布局或拆 view,不能把字体缩到不可读。
-- **现成组件缺失** → 用 shadcn CLI 安装并 review 对应组件源码,再把它加入简短可用清单;
-  不要在每个 view 里复制一套私有按钮、表格或弹窗实现。
+- **现成组件缺失** → 用 shadcn CLI 安装并 review 对应组件源码,再把它加入简短可用清单,
+  同时明确它算不算 quick set(呈现型、自身完备的算;藏内容或收输入的不算);不要在每个
+  view 里复制一套私有按钮、表格或弹窗实现。
 
 ## UX principles this journey establishes
 
 - Quick View 是**软引导**,不是模式锁定、协议或 DSL。
-- "基本信息"优先用普通 JSX + 直接 import 的 shadcn 组件;复杂内容才投入定制设计。
+- 这条线画在**做视图要用到什么**上(一次排布 + quick set 组件),不画在问题重不重要、
+  用户在不在乎上;两个测试写第一行之前就能跑完。
+- **判断属于 builder**,不属于 agent:agent 手上只有用户的话,builder 手上才有材料和
+  组件。给 agent 一个 quick/custom 开关就把软引导变成了模式锁定。
+- Quick View 有**自己走得完的流程**:一句话说清回答什么问题、写 JSX、一次
+  `hi_review_view`、交 ref、结束。构图分类、rough-then-refine、refine pass 和表现力
+  标准都属于 Custom;写在同一页上,但不欠 Quick View。
 - 组件准备好,才能让"快速"来自组合,而不是来自降低可用性。
 - Quick View 仍然要过真实渲染、主题、窄屏、空态和错误态检查;快不等于粗糙。
-- 简单 view 可以自然升级成 Custom View,保留原文件和 ref,避免一次性推倒重来。
+- 拿不准按 Quick 走:太小了可以就地升级(同一个文件、同一个 ref),而为四条事实做了
+  一整套设计,花掉的时间要不回来。
