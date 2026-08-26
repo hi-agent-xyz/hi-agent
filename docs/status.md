@@ -333,8 +333,11 @@ workspace and in an episode's prose as *"the native TTS playground URL"*, which 
 description of a URL and not one; grepping the row itself for `http` returns nothing. So the
 definition grew a third element — where they answer it — in `docs/arch/data.md` and in the
 three prompts that teach it (`cognition.md`, `workers/task-manager.md`, `workers/general.md`),
-with `identity::soul_tests::a_blocked_line_names_where_the_person_answers_it` holding the
-three together, since one drifting from the other two is silent.
+with `identity::soul_tests::a_waiting_line_names_where_the_person_acts` holding the
+three together, since one drifting from the other two is silent. (It was
+`a_blocked_line_names_where_the_person_answers_it` and asserted the phrase *where they
+answer it*, until the entry below renamed the kind and widened the phrase to *where they do
+it* — a wait can be owed labour, not only an answer.)
 
 And the panel makes it clickable. `views/factory/tasks.jsx` renders its timeline through the
 same inline vocabulary as the prose and both autolink `http(s)` — *autolink only*, never a
@@ -354,6 +357,43 @@ second one; `` `doing` `` rendered as code instead of literal backticks. Both sk
 
 **Built, not watched:** a mind actually writing an address into a `blocked` line. The live
 KT8-059 row still carries none; nothing backfills one.
+
+**The kinds are named for the reader, 2026-08-26.** `asked` / `landed` / `blocked` /
+`checked` became `created` / `delivered` / `waiting` / `update`, and the change came out of
+counting the live ledger rather than out of taste. Two numbers decided it. **`checked` held
+154 of 263 lines** — 59% of the record, 70% of everything a mind wrote — and a sample of its
+openings was four unrelated speech acts: a real verification, a reading of the record, a
+closing rationale, and somebody else's decision arriving. A bucket holding the majority of a
+record is a default, and one calling itself `checked` claims a discipline it is not
+exercising, so it is now `update`. **And `blocked`'s 18 lines carried four meanings**: your
+answer is owed (10), a human's labour is owed (2), a technical dead end the worker was
+already routing around (4), an internal handoff the person had not been shown (3). Two of
+those clear themselves, which is exactly the confusion reported from the panel — a red line
+sitting on a row that had moved on three times since. `waiting` now means **a human must act**
+and nothing else; anything the agent can get past by itself is an `update`.
+
+**What makes a wait current is that nothing stands under it.** There is no closing kind and
+nothing to unset: the record only appends, so a `waiting` line is live exactly while no mind
+has written below it, and `moved` does not count because the store writes it on a transition
+it merely witnessed. `waitsOnPerson`/`latestSpoken` in `views/factory/tasks.jsx` are that
+rule, and they feed three things: a *Needs you* block above the record, the same words on the
+board card, and the column's attention count. An older `waiting` line goes grey rather than
+red. This is why no sixth kind was added — the gap was unstated, not unrepresentable.
+
+**A status change now reads as its verb** — started, put back, reopened, standing duty, done,
+cancelled — instead of the stored `todo → doing`. The store still writes the pair, which is
+the right thing to store and the wrong thing to show.
+
+**Old spellings parse; `render_timeline` then writes the new word.** A lazy migration, not a
+compatibility path — no file is touched until the store rewrites it anyway, after which one
+vocabulary exists. The lossy edge is named on `TimelineKind::parse`: `blocked → waiting`
+over-claims on the 6 of 18 lines that were not waits. `identity::soul_tests::a_wait_is_about_a_human_and_nothing_closes_it` holds the two
+rules in both prompts that write one, since one drifting from the other is silent.
+
+**Built, not watched:** all of it. No mind has yet written a line in the new vocabulary, and
+the *Needs you* block, the card marker, the greyed-out superseded wait and the lifecycle
+verbs have been compiled and unit-tested but never rendered in a browser. The prior entry's
+gap stands unchanged underneath: no mind has written an address into a wait either.
 
 **And the shared-folder collision is answered in prose, on purpose.** Two sessions wrote the
 same path under one task; the loser's briefing was replaced whole and the winner's file was then

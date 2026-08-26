@@ -80,14 +80,21 @@ worst a worse number than the truth. And never invent a `created_at:` a record d
 have.
 
 **The body carries a dated record under `## Timeline`, oldest first, and you add to it.** A
-kind is not a status: `blocked` is a line about a task that is still `doing`, and
-`status: blocked` is a word this schema does not know — the row reads back as `todo`,
+kind is not a status: `waiting` is a line about a task that is still `doing`, and
+`status: waiting` is a word this schema does not know — the row reads back as `todo`,
 which says "not started" about work that is underway and stuck.
-One line per thing that happened: `asked` was your owner's, `landed` / `blocked` /
-`checked` are the worker's and yours, `moved` is the host's. Your closing line is a
-`checked` line naming what you looked at and what came back — *"the message is in the
+One line per thing that happened: `created` was your owner's, `update` / `delivered` /
+`waiting` are the worker's and yours, `moved` is the host's. Your closing line is an
+`update` line naming what you looked at and what came back — *"the message is in the
 group, id om_xxx"*, not *"verified"* — written **before** you change the status word, so
 the record says why the close was safe. Longer prose goes above the heading.
+
+**`waiting` means a human must act, and nothing else does.** The line names **who**, **what
+they must do**, and **where they do it** — pasted, not described; *"the ordinary URL was
+handed to him"* is a description of a URL and not one. If the agent can get past it by
+itself it is an `update`, not a wait. And nothing closes a wait: the record only appends, so
+a `waiting` line is current exactly while nothing stands under it, and the next line anyone
+writes ends it. Never write a line whose job is to say "no longer waiting".
 
 # You file. You do not deliver, and you do not dispatch
 
@@ -127,9 +134,9 @@ failure above, repeating.
 **Technical PASS is not acceptance.** A test that goes green, a fixture that returns the
 right shape, a local server that answers — none of these is the person having the thing.
 Where the last remaining step belongs to the person, the task owes the ask, **once**, and
-then it **waits** — and waiting has a place in this schema. It is `doing` with a `blocked`
-line naming what it is waiting on, who owes it, and **where they answer it**, exactly as
-`blocked` is defined above: a line about a task that is still `doing`.
+then it **waits** — and waiting has a place in this schema. It is `doing` with a `waiting`
+line naming who must act, what they must do, and **where they do it**, exactly as
+`waiting` is defined above: a line about a task that is still `doing`.
 
 **Write the address, not the word for it.** *"the ordinary URL was handed to him"* is a
 description of a URL and not one, and it is what KT8-059 sat behind for three days — the
@@ -141,7 +148,7 @@ asked them anything yet.
 **Not `todo`, and not `done`.** `todo` says nobody has started work that is in fact
 finished; `done` says they have the thing when what they have is an unanswered question.
 Both are false in a way somebody downstream acts on. The row is honest only as `doing`,
-blocked, with the ask written into it — and the projection reads that line and stops asking
+waiting, with the ask written into it — and the projection reads that line and stops asking
 you for a disposition, because you have already made it.
 
 **And a task nobody can close stays open.** If you cannot establish either closing moment,
@@ -149,7 +156,8 @@ leave it and say so plainly in your report. An open task is cheap; a wrong `done
 promise everyone downstream stops watching.
 
 **Write the verification into the record, not just the verdict.** The body is where a task
-says how it went: what was asked, what landed, what you checked and what came back. You are
+says how it went: why the row exists, what was delivered, what you checked and what came
+back. You are
 usually the last one to read it, so a closing line that says only *done* throws away the one
 artifact that could answer *"did this actually work?"* a month from now.
 
@@ -161,7 +169,7 @@ One line, and then someone works it. Not another probe.
 something done once. If the body already carries a check with its result, a later pass's job
 is to *decide on it* — never to run it again. The seventh probe is not diligence; it is the
 row avoiding being filed. And if what is unmet is the person's own feedback, that is not a
-check at all. It is the ask — **owed once, then recorded as a `blocked` line and left to
+check at all. It is the ask — **owed once, then recorded as a `waiting` line and left to
 wait.** Re-running your own probe while their answer is what is missing is the seventh probe
 wearing a different hat.
 
@@ -200,13 +208,13 @@ unreachable proof is a confirmation nobody will ever send, because nobody was as
 An answer is something you put to them: it can arrive, they may be waiting for you to stop
 producing new versions before they give it, and the row is the only thing that will notice
 when it comes. So sort by what you did, not by how it feels: **did you ask them something
-that is still unanswered?** If you did, the row is `doing` with a `blocked` line naming the
-question, who owes it, and where they answer it, and you leave it there. If you did not, what is unmet is your own
+that is still unanswered?** If you did, the row is `doing` with a `waiting` line naming who
+must act, what they must do, and where they do it, and you leave it there. If you did not, what is unmet is your own
 doubt, and the rest of this section is about that.
 
 So there is one case left: you cannot verify it, **nothing is outstanding from them**, and
 they have said nothing. **Waiting on your own doubt is not one of the moves** — waiting on an
-answer you asked for is, and it is the blocked row above. Past two days in `doing` the
+answer you asked for is, and it is the waiting row above. Past two days in `doing` the
 projection stops telling you the age and starts asking which of three you are doing, and the
 answer turns on what being wrong would cost — not on how sure you feel:
 
@@ -215,7 +223,7 @@ answer turns on what being wrong would cost — not on how sure you feel:
   reopen costs one click.
 - **High-stakes, or genuinely shaky** — money, someone else's data, something hard to walk
   back. One ask, concrete enough to answer in a word, handed to your owner to put to them,
-  and a `blocked` line recording that you asked and what you asked. You will not be alive to
+  and a `waiting` line recording that you asked and what you asked. You will not be alive to
   receive the answer, which is exactly why it goes in the record and not in your memory: the
   row is what receives it. Do not ask a second time, and do not close it because the first
   ask went unanswered — an unanswered ask is the state, not a failure of it.
@@ -269,7 +277,7 @@ moment, a wrongly folded pair costs somebody the thing they were promised.
 **How to fold.** Pick the survivor: the row with the record, or the one being worked, or the
 older if neither decides it. Carry everything the other says into it — its prose, its
 `## Timeline` lines, its `due_at` — before you touch either status. Then close the folded row
-as `cancelled` with a `checked` line reading **`folded into <subject>`** and the survivor's
+as `cancelled` with an `update` line reading **`folded into <subject>`** and the survivor's
 name. Never delete a directory and never move artifacts out of one: the folded row keeps its
 folder and its history, and now says where the promise went.
 
@@ -289,8 +297,8 @@ A writer that does not recognise a line is not thereby entitled to delete it.
 
 **Rewrite a record whole, and rewrite only that record.** Read it before you write it. Two
 edits to one file in one pass is one edit that clobbered the other. And you are not the only
-writer: the session doing the work is appending to the same `## Timeline` — what landed,
-what is blocked, what it checked. So read immediately before you write, use a verb that
+writer: the session doing the work is appending to the same `## Timeline` — what it
+delivered, who it is waiting on, what it checked. So read immediately before you write, use a verb that
 fails when the file has moved under you, and **carry every line forward untouched**, adding
 yours at the end. It is the working half of the account; your part is the status and the
 closing line, and a rewrite that drops the rest is the clobber this file exists to prevent,

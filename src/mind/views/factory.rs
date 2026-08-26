@@ -381,10 +381,10 @@ mod tests {
         }
     }
 
-    /// **The task panel is the only place a blocked row's door is read, and it has no
+    /// **The task panel is the only place a waiting row's door is read, and it has no
     /// address bar.**
     ///
-    /// A `blocked` line waiting on the person carries where they answer it
+    /// A `waiting` line carries where the person acts on it
     /// (`docs/arch/data.md`), which is prose, which means a URL. Rendered inert it is a URL
     /// somebody has to retype off their own screen — the panel is a modal inside a native
     /// window, so there is nothing to paste it into and nothing to copy it from but the
@@ -394,7 +394,7 @@ mod tests {
     /// — a label with a separate href is text the agent wrote naming one destination and
     /// going to another.
     #[test]
-    fn the_task_panel_makes_a_blocked_row_s_url_clickable() {
+    fn the_task_panel_makes_a_waiting_row_s_url_clickable() {
         let tasks = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "tasks").unwrap().1;
         assert!(tasks.contains("AUTOLINK"), "tasks.jsx must find URLs in the record it renders");
         assert!(tasks.contains("hi-tasks__link"), "tasks.jsx must render them as anchors");
@@ -402,7 +402,7 @@ mod tests {
             tasks.contains("target=\"_blank\""),
             "a review URL opens in a real browser, not inside the panel"
         );
-        // The timeline is where a `blocked` line lands, so it is the run that must go
+        // The timeline is where a `waiting` line lands, so it is the run that must go
         // through the inline renderer rather than being dropped in as a bare string.
         assert!(
             tasks.contains("{inline(moment.text,"),

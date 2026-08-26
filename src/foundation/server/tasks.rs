@@ -41,8 +41,9 @@ struct TaskDto {
     completed_at: Option<String>,
     cancelled_at: Option<String>,
     liveness: Option<LivenessDto>,
-    /// The running record, oldest first — what was asked, what landed, what is in the
-    /// way, what was checked, and every status change. This is what the panel renders;
+    /// The running record, oldest first — why the row exists, what happened, what was
+    /// delivered, who is being waited on, and every status change. This is what the
+    /// panel renders;
     /// `body` is the long prose behind it.
     timeline: Vec<MomentDto>,
     body: String,
@@ -594,11 +595,11 @@ mod tests {
         task.body = "The long account, written whole.".into();
         task.timeline = vec![
             TimelineEntry::new(
-                tasks::TimelineKind::Asked,
+                tasks::TimelineKind::Created,
                 at(1, 9),
                 "it goes to the Feishu group, not to me",
             ),
-            TimelineEntry::new(tasks::TimelineKind::Blocked, at(2, 11), "no im:chat scope"),
+            TimelineEntry::new(tasks::TimelineKind::Waiting, at(2, 11), "no im:chat scope"),
         ];
         tasks::write_task(dir.path(), &task).await.unwrap();
 
@@ -608,13 +609,13 @@ mod tests {
             .unwrap();
         let value = serde_json::to_value(dto(&got, false, Vec::new())).unwrap();
         assert_eq!(value["body"], "The long account, written whole.");
-        assert_eq!(value["timeline"][0]["kind"], "asked");
+        assert_eq!(value["timeline"][0]["kind"], "created");
         assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
         assert_eq!(
             value["timeline"][0]["text"],
             "it goes to the Feishu group, not to me"
         );
-        assert_eq!(value["timeline"][1]["kind"], "blocked");
+        assert_eq!(value["timeline"][1]["kind"], "waiting");
     }
 
     /// A task nobody has recorded anything about serves an empty list, never a null — the
@@ -740,7 +741,7 @@ mod tests {
              the draft `never-written.md` was abandoned."
             .into();
         task.timeline = vec![TimelineEntry::new(
-            tasks::TimelineKind::Landed,
+            tasks::TimelineKind::Delivered,
             at(25, 6),
             "`notes/working.md` has the sampling method",
         )];

@@ -406,8 +406,7 @@ belongs to a [Task Manager](agents.md#task-manager), and no other *agent* may pe
 status from the board's own buttons, and that is the point of them: it is his ledger, the split
 above exists to stop a rung ruling on its own errand, and he is not a rung. It is worth naming
 because it makes three hands on row-state rather than two, and the third leaves the thinnest
-trace — a `moved` line the store writes and no `checked` line at all, since nobody checked
-anything. A row that changed with no closing prose was probably him. The two
+trace — a `moved` line the store writes and no spoken line at all, since nobody wrote one. A row that changed with no closing prose was probably him. The two
 writers cannot contradict each other because they never touch the same row-state: one turns
 nothing into `todo` or `doing`, the other owns everything after that. Splitting them is not tidiness — it breaks the loop where
 whoever did the work also rules on whether it landed, and that loop has already failed in the
@@ -446,12 +445,32 @@ asking a question none of them answers. **So the body carries a running record**
 oldest first. Everything above the heading is the writer's own prose and passes through
 untouched — the same courtesy the frontmatter already extends to keys it does not know.
 
-**Five kinds, because a sixth is a paragraph.** `asked` — what would make this right, in
-the person's words, written once at open by the rung that was in the conversation.
-`landed`, `blocked`, `checked` — the worker's, as it goes. `moved` — the status
-transition. Anything a mind wants to say that is none of those goes in the prose above,
-which is not read line by line. A line this schema cannot classify is kept verbatim as a
-note; the frontmatter rule, one level down.
+**Four kinds a mind writes, and they are the reader's questions, not the writer's
+distinctions.** `created` — why this row exists, in the person's words, written once at
+open by the rung that was in the conversation. `update` — anything that happened: work,
+a finding, a check and what it came back with. `delivered` — the person has something
+now, or it went out; **not a closing**, since a standing watch delivers its first digest
+and keeps running. `waiting` — **a human must act before this row can move**. And
+`moved`, the status transition, which is the store's. Anything a mind wants to say that is
+none of those goes in the prose above, which is not read line by line. A line this schema
+cannot classify is kept verbatim as a note; the frontmatter rule, one level down.
+
+**The words were `asked` / `landed` / `blocked` / `checked` until 2026-08-26, and two
+measurements retired them.** `checked` held 154 of the live ledger's 263 lines — 59% of
+the record, 70% of everything a mind wrote — and a sample of it turned up four unrelated
+speech acts: a verification, a reading of the record, a closing rationale, and somebody
+else's decision arriving. A bucket that holds the majority of a record is a default, and a
+default that calls itself `checked` claims a discipline it is not exercising. It is now
+named for what it is. The distinctions that word was carrying — delivered versus verified,
+built versus watched — are real and this repo runs on them; they live in
+[docs/status.md](../status.md) and in the prose above the heading, and they were never what
+somebody opening their own errand was asking.
+
+**And a kind is a word for the reader, so the panel spells `moved` as the verb for it** —
+started, put back, reopened, standing duty, done, cancelled. The store writes the pair it
+witnessed, `todo → doing`, because that is the honest thing to *store*; it is the wrong
+thing to show. Nothing about the record changes: this is the rendering knowing which side
+of the boundary it is on.
 
 **`moved` is the store's, on the pass that already stamps the clocks.** It is the same
 argument and the same code path: a consequence of a decision already recorded is not
@@ -469,7 +488,7 @@ manager still rewrites the file whole, and prompt moves a verb but cannot keep b
 it makes one **visible**: a line that disappears leaves a gap in a dated sequence, where a
 rewritten paragraph leaves nothing at all.
 
-**And the acceptance line stays a reading, not a gate.** `asked` is pinned at the top of
+**And the acceptance line stays a reading, not a gate.** `created` is pinned at the top of
 the panel and nothing waits on it: no task is held open against it, no confirmation is
 solicited, no button asks the person to approve their own errand. Showing it is the whole
 mechanism — a reading that is wrong is one sentence away from being corrected, which is
@@ -480,7 +499,7 @@ section already refused twice: a field an agent must fill for the gate to work i
 **The account is what a closed row is opened for, so it is not behind a fold.** The prose above
 the heading is where a task says how it went; the dated lines are the spine, and a spine is not
 an answer. A person coming back to their own errand a week later wants *what came of it* — and
-`asked` pinned above a reverse-chronological list of `checked` and `moved` lines answers every
+`created` pinned above a reverse-chronological list of `update` and `moved` lines answers every
 question except that one. So the account renders in the panel, above the record, clamped to a
 screenful with the rest one click under it. Bodies run to tens of kilobytes and that is the
 reason for the clamp; it was never a reason for concealment.
@@ -566,15 +585,40 @@ in progress: it owes the ask, once, not the wait.
 **And then it waits somewhere, which the lifecycle has to name.** The status words say who
 the row is about — `todo` and `doing` describe *our* work, `serving` describes presence —
 and none of them describes a row where our side is delivered and the answer is theirs. It is
-`doing`, carrying a `blocked` line that names the question, who owes it, and **where they
-answer it**. That is not a new state: `blocked` is a timeline kind, defined here as a line
+`doing`, carrying a `waiting` line that names who must act, what they must do, and **where
+they do it**. That is not a new state: `waiting` is a timeline kind, defined here as a line
 about a task that is still `doing`, and this is the case it was for. The two other readings
 are both wrong, in ways something downstream acts on: `todo` says nobody has started
 finished work, and `done` says they have the thing when what they have is an unanswered
 question.
 
+**`waiting` means a human is wanted, and nothing else qualifies.** It was called `blocked`,
+and that word let in three meanings it could not distinguish from this one. Across 18 live
+lines it carried: your answer is owed (10), a human's *labour* is owed (2), a technical dead
+end the worker was already routing around (4), and an internal handoff the person had not
+been shown yet (3). Only the first two want anything from the reader; the other two clear
+themselves, which is how a red line came to sit on a row that had moved on three times
+since. So the rule is a single test with no long tail: **if the agent can get past it by
+itself, it is an `update`.** A dead end is an `update`; a handoff between two of our own
+rungs is not a timeline line at all.
+
+**A wait is ended by being superseded, not by being cleared.** The record only appends, so
+there is no closing kind and nothing to unset: a `waiting` line is current exactly while no
+mind has written under it, and the moment an `update` or a `delivered` lands below it, it is
+history. `moved` does not count — the store writes it on a transition it merely witnessed, so
+a status change can neither raise a wait nor answer one. This is deliberate in the direction
+this document keeps choosing: a flag somebody must remember to clear is *silently* wrong when
+they forget, and reads exactly like a row nobody is waiting on. A wait that decays by being
+overtaken cannot be left set.
+
+**And the panel says it in words, on the card.** *Needs you* renders above the record when
+the newest spoken line is a `waiting` one, and on the board card beside the title — because a
+red stripe inside a modal is a colour the reader has to interpret, and the question they
+actually have is whether to wait or to act. The rest of the record is history and should
+read as history.
+
 **The third element is the one that was missing, and it is the whole point of the line.** A
-row blocked on the person is the agent naming them as the bottleneck; a row that names them
+row waiting on the person is the agent naming them as the bottleneck; a row that names them
 and not the door has moved the block onto them without handing anything over. KT8-059 sat
 `doing` for three days behind *"the ordinary native UI Run/listen accept-or-reject question
 was already handed to Zhao Li and remains unanswered"* — a correct sentence, written by a
@@ -588,10 +632,10 @@ agent must remember to fill, silently absent when it forgets — the failure thi
 already refused twice, and refuses again here. Property 1 below still holds: a task carries
 no *destination*, because there is one place a result can be said. This is the reverse
 direction. It is not where the agent reports; it is where the person acts, it is only ever
-written on a row already blocked on them, and its whole enforcement is that they can see the
+written on a row already waiting on them, and its whole enforcement is that they can see the
 line is missing.
 
-**And the panel makes it clickable.** A `blocked` line is prose, and a URL rendered as inert
+**And the panel makes it clickable.** A `waiting` line is prose, and a URL rendered as inert
 text on a surface with no address bar is one the reader must retype from a screenshot. The
 timeline and the notes autolink `http(s)` — *autolink only*, never a markdown label with a
 separate href, so the visible text is always the destination and text a session wrote cannot
@@ -607,7 +651,7 @@ What it asks for is a disposition **recorded**, not a terminal one. That is the 
 worth holding: an ask that has been made and written down is a row that has stopped drifting,
 and it is the seventh probe — the same check run again in place of a decision — that the
 boundary exists to refuse. Code cannot tell those two apart. It has no business trying: a
-classifier over prose the agent writes freely would decide what a `blocked` line *means*, and
+classifier over prose the agent writes freely would decide what a `waiting` line *means*, and
 be wrong on the long tail in a way nobody could see. So the host supplies the words and the
 manager supplies the judgment, which is the same division the whole ledger already runs on.
 

@@ -122,35 +122,50 @@ add lines to it. You never rewrite it.**
 
     ## Timeline
 
-    - 2026-08-24T06:16:17Z asked — the digest goes to the Feishu group, not to me
-    - 2026-08-24T09:41:02Z landed — digest posts at 09:00; first one went out today
-    - 2026-08-24T11:07:19Z blocked — the app has no im:chat scope; asked for it
-    - 2026-08-24T14:20:00Z checked — posted message id om_xxx is in the group
+    - 2026-08-24T06:16:17Z created — the digest goes to the Feishu group, not to me
+    - 2026-08-24T09:41:02Z update — the scope request is in; the poller runs against a stub
+    - 2026-08-24T11:07:19Z waiting — Zhao Li must grant `im:chat` to the app at https://open.feishu.cn/app/cli_a1b2/auth — nothing posts until he does
+    - 2026-08-24T14:20:00Z delivered — digest posts at 09:00; today's is in the group as om_xxx
 
 One line each, in the format above: the instant in RFC3339, then one of the words below,
 then what you are saying. Three of the words are yours:
 
-- **landed** — something was delivered. Not a heartbeat; the entries that change what
-  someone else would do.
-- **blocked** — something is in the way, the moment it is. A blocker written down an hour
-  late is an hour nobody could have spent clearing it. When what is in the way is a person's
-  answer, the line names **where they answer it** — the URL, the path, the message — pasted,
-  not described. *"the ordinary URL was handed to him"* is a description of a URL and not one,
-  and a row that names someone as the bottleneck without handing them the door is a row they
-  can read and cannot act on.
-- **checked** — a check and what came back. Name the check and its result: "the endpoint
-  returns the 12 rows", not "verified". A check that came back *wrong* is a line too.
+- **update** — anything that happened: work done, a finding, a check and what it came back
+  with. This is the default and most of your lines are these. Name the check and its
+  result — "the endpoint returns the 12 rows", not "verified" — and remember that a check
+  that came back **wrong** is one of these too.
+- **delivered** — the person has something now, or it went out. Not a heartbeat and not
+  every step: the entries that change what someone else would do. **It is not a closing.**
+  A standing watch delivers its first digest and keeps running.
+- **waiting** — **a human must act before this row can move.** Write it the moment it is
+  true. The line names three things: **who**, **what they must do**, and
+  **where they do it** — the URL, the path, the message — pasted, not described.
+  *"the ordinary URL was handed to him"* is a description of a URL and not one, and a row
+  that names someone as the bottleneck without handing them the door is a row they can
+  read and cannot act on.
 
-**A kind is not a status, and `blocked` is the one that catches people.** The five status
-words are `todo`, `doing`, `serving`, `done`, `cancelled` and nothing else; `blocked` is a
-line you write *about* a task that is still `doing`. Writing `status: blocked` does not
-mean anything — the reader does not know the word, so the row comes back as `todo`, which
-says "nobody has started this" about work that is underway and stuck. Say it in a line.
+**`waiting` is only ever about a human, and that is the whole test.** If you can
+get past it yourself, it is an `update` — a rate limit you are backing off from, a model
+that keeps
+returning the wrong thing, a dead end you are routing around. Those are not waits, and
+writing them as one puts *Needs you* on the person's board for something that is not
+theirs. A handoff to another of our own rungs is not a timeline line at all.
 
-**asked** is your owner's, written once when the task was opened, from what the person
+**Nothing closes a wait, and you do not need to close one.** The record only appends. A
+`waiting` line counts as current exactly while nothing has been written under it, so the
+next `update` or `delivered` you write ends it by standing after it. There is no line that
+says "no longer waiting" and you must never invent one.
+
+**A kind is not a status.** The five status words are `todo`, `doing`, `serving`, `done`,
+`cancelled` and nothing else; `waiting` is a line you write *about* a task that is still
+`doing`. Writing `status: waiting` does not mean anything — the reader does not know the
+word, so the row comes back as `todo`, which says "nobody has started this" about work
+that is underway and stuck. Say it in a line.
+
+**created** is your owner's, written once when the task was opened, from what the person
 actually asked for. If it is thin, or the job turned out to be a different job than that
-line describes, add a `landed` or `blocked` line saying so — do not edit theirs. **moved**
-is written by the host on every status change; never type one yourself.
+line describes, add an `update` saying so — do not edit theirs. **moved** is written by the
+host on every status change; never type one yourself.
 
 Anything longer than a line — the working account, the reasoning, the artifacts — goes in
 the prose *above* the heading, which is where there is room for it.

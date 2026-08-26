@@ -1545,7 +1545,7 @@ mod soul_tests {
     /// remaining step was the person's. That produced the opposite failure on 2026-08-25: seven
     /// rows waiting on his own decision were closed `todo → done` in a single glance-up, and he
     /// was never told. A row waiting on an answer is neither finished nor unstarted, so the
-    /// manager must be told in as many words where it lives — `doing`, with a `blocked` line —
+    /// manager must be told in as many words where it lives — `doing`, with a `waiting` line —
     /// or it will pick one of the two words that lie.
     #[test]
     fn both_ends_of_the_pen_have_an_owner() {
@@ -1749,9 +1749,9 @@ mod soul_tests {
         );
     }
 
-    /// **A row blocked on the person names the door, in all three prompts that define one.**
+    /// **A row waiting on a person names the door, in all three prompts that define one.**
     ///
-    /// Three prompts spell out what a `blocked` line carries — Cognition's, the task
+    /// Three prompts spell out what a `waiting` line carries — Cognition's, the task
     /// manager's, the general worker's — and for a long time all three said *the question
     /// and who owes it* and stopped. KT8-059 then sat `doing` for three days behind a
     /// correct sentence naming Zhao Li as the one holding it up; the URL he was supposed to
@@ -1759,16 +1759,22 @@ mod soul_tests {
     /// playground URL", and nowhere on the row he actually read. This is the drift the test
     /// exists for: one of the three gets updated and the other two keep teaching the old
     /// shape, which nothing anywhere reports.
+    ///
+    /// The line was called `blocked` until 2026-08-26, and the word is why it needed three
+    /// elements to be readable at all: it also covered dead ends the worker was routing
+    /// around, so naming the person was the only thing that distinguished a wait from a
+    /// grumble. `waiting` carries that distinction in the word, and the address stays
+    /// because a bottleneck who is not handed a door still cannot act.
     #[test]
-    fn a_blocked_line_names_where_the_person_answers_it() {
+    fn a_waiting_line_names_where_the_person_acts() {
         for (name, text) in [
             ("cognition", COGNITION_BASE),
             ("task-manager", WORKER_TASK_MANAGER_BASE),
             ("general", WORKER_GENERAL_BASE),
         ] {
             assert!(
-                text.contains("where they answer it"),
-                "{name}.md defines a `blocked` line and must ask for where it is answered"
+                text.contains("where they do it"),
+                "{name}.md defines a `waiting` line and must ask for where it is acted on"
             );
         }
         // And the two that actually write the waiting rows are told that a word for the
@@ -1780,6 +1786,38 @@ mod soul_tests {
             assert!(
                 text.contains("description of a URL and not one"),
                 "{name}.md must refuse \"the ordinary URL\" in place of the address"
+            );
+        }
+    }
+
+    /// **The two rules that make `waiting` answerable, in both prompts that write one.**
+    ///
+    /// The word is only worth renaming if it stays narrow, and it stays narrow for exactly
+    /// as long as both prompts say the same two things. First: a wait is about a human. The
+    /// word it replaced covered four situations across 18 live lines — an answer owed, a
+    /// person's labour owed, a technical dead end being routed around, and an internal
+    /// handoff the person had not been shown — and the last two cleared themselves, which
+    /// is how a row that had moved on three times still showed an alarm. Second: nothing
+    /// closes a wait. The record only appends, so a `waiting` line is current exactly while
+    /// nothing stands under it, and a prompt that invents a closing line puts a second
+    /// vocabulary into a schema that has no word for it.
+    ///
+    /// Cognition is not checked here: it writes `created` and relays waits, it never writes
+    /// one. The panel enforces neither — `waitsOnPerson` in `views/factory/tasks.jsx` reads
+    /// the newest spoken line and believes whatever these two prompts produced.
+    #[test]
+    fn a_wait_is_about_a_human_and_nothing_closes_it() {
+        for (name, text) in [
+            ("task-manager", WORKER_TASK_MANAGER_BASE),
+            ("general", WORKER_GENERAL_BASE),
+        ] {
+            assert!(
+                text.contains("get past it"),
+                "{name}.md must send anything the agent can clear itself to `update`"
+            );
+            assert!(
+                text.contains("no longer waiting"),
+                "{name}.md must forbid inventing a line that closes a wait"
             );
         }
     }

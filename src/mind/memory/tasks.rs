@@ -107,40 +107,59 @@ const TIMELINE_HEADING: &str = "## Timeline";
 
 /// What a line in a task's running record is saying.
 ///
-/// **Five words, because a sixth is a paragraph.** This record is read by the person
-/// catching up on their own errand, not by an auditor: what they asked for, what landed,
-/// what is in the way, what was checked, and where the row stands. Anything a mind wants
-/// to say that is none of those belongs in the prose above the timeline, which has room
-/// for it and is not read line by line.
+/// **Four words a mind writes, and they answer the reader's questions rather than naming
+/// the writer's distinctions.** Somebody opening their own errand a week later asks: why
+/// does this row exist, what has happened, do I have anything yet, and is anything wanted
+/// from me. Delivered-versus-verified and built-versus-watched are real distinctions and
+/// this repo runs on them — they live in `docs/status.md` and in the prose above the
+/// heading, which has room for them and is not read line by line.
+///
+/// **The words changed on 2026-08-26, for two things the live ledger measured.** `checked`
+/// held 154 of 263 lines — 59% of the record, 70% of everything a mind wrote — and
+/// sampling it turned up four unrelated speech acts: a real verification, a reading of the
+/// record, a closing rationale, and somebody else's decision arriving. That is a default
+/// bucket wearing a verification badge, so it is now named [`Self::Update`], which is what
+/// it was. And `blocked` carried four meanings across its 18 lines — your answer is
+/// owed (10), a human's labour is owed (2), a technical dead end the worker is already
+/// routing around (4), and an internal handoff you have not been shown yet (3) — of
+/// which only the first two want anything from the reader. Two of the four cleared
+/// themselves, which is why a red line could sit on a row that was never stuck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineKind {
-    /// What would make this right, in the person's words. Written once, at open, by the
-    /// rung that was in the conversation — see `cognition.md`. It is a **reading, not a
-    /// gate**: nothing waits on it and no task is held open against it.
-    Asked,
-    /// Something was delivered. The milestone.
-    Landed,
-    /// Something is in the way, and what it is.
-    Blocked,
-    /// A verification and what came back — including when what came back was wrong.
-    Checked,
+    /// Why this row exists, in the person's words. Written once, at open, by the rung that
+    /// was in the conversation — see `cognition.md`. It is a **reading, not a gate**:
+    /// nothing waits on it and no task is held open against it. Formerly `asked`, folded
+    /// into the row's own creation because they are one instant and this is its content.
+    Created,
+    /// Anything that happened: work done, a finding, a check and what it came back with.
+    /// The default, and named as one. A check that came back **wrong** is one of these.
+    Update,
+    /// The person has something now, or it went out. **Not a closing**: a standing watch
+    /// delivers its first digest and keeps running. Formerly `landed`.
+    Delivered,
+    /// **A human must act before this row can move**, and the line names who, what they
+    /// must do, and where they do it. Anything the agent can get past by itself is an
+    /// [`Self::Update`] — that is the whole of the distinction, and it is the one
+    /// `blocked` did not make.
+    Waiting,
     /// A status transition. **Written by the store, never by a mind**, on the same pass
     /// that stamps `status_since`: a mind that has to remember to record its own
     /// transition is a mind that will sometimes not.
     Moved,
-    /// A line this schema does not recognise, kept exactly as it was written. The
-    /// frontmatter rule one level down: a writer that does not understand a line is not
-    /// thereby entitled to drop it.
+    /// A line this schema does not recognise, kept exactly as it was written and
+    /// re-emitted without a kind word. The frontmatter rule one level down: a writer that
+    /// does not understand a line is not thereby entitled to drop it. To a reader it is an
+    /// update; it is a separate variant only so the round trip stays byte-exact.
     Note,
 }
 
 impl TimelineKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Asked => "asked",
-            Self::Landed => "landed",
-            Self::Blocked => "blocked",
-            Self::Checked => "checked",
+            Self::Created => "created",
+            Self::Update => "update",
+            Self::Delivered => "delivered",
+            Self::Waiting => "waiting",
             Self::Moved => "moved",
             Self::Note => "note",
         }
@@ -148,12 +167,21 @@ impl TimelineKind {
 
     /// `None` for anything else, so an unrecognised first word stays part of the text
     /// rather than being eaten as a kind.
+    ///
+    /// **The four old spellings read back, and `render_timeline` then writes the new one.**
+    /// That is a lazy migration, not a compatibility path: 263 lines exist in the old
+    /// vocabulary and none of them is rewritten until the store next rewrites that file
+    /// anyway, after which there is one vocabulary and no second spelling to keep alive.
+    /// `blocked → waiting` is the one mapping that says more than the writer did — it is
+    /// true of the 12 lines that were waits and over-claims on the 6 that were not. That is
+    /// pre-existing ambiguity being resolved the way it usually read, and a `waiting` line
+    /// with anything below it no longer asks the reader for anything.
     fn parse(word: &str) -> Option<Self> {
         match word.trim().trim_end_matches([':', ',']).to_ascii_lowercase().as_str() {
-            "asked" => Some(Self::Asked),
-            "landed" => Some(Self::Landed),
-            "blocked" => Some(Self::Blocked),
-            "checked" => Some(Self::Checked),
+            "created" | "asked" => Some(Self::Created),
+            "update" | "checked" => Some(Self::Update),
+            "delivered" | "landed" => Some(Self::Delivered),
+            "waiting" | "blocked" => Some(Self::Waiting),
             "moved" => Some(Self::Moved),
             "note" => Some(Self::Note),
             _ => None,
@@ -385,12 +413,12 @@ impl Task {
         out
     }
 
-    /// What would make this right, in their words — the first thing a person catching up
-    /// on their own errand wants, and the reason it is pinned rather than scrolled to.
-    pub fn asked(&self) -> Option<&TimelineEntry> {
+    /// Why this row exists, in their words — the first thing a person catching up on
+    /// their own errand wants, and the reason it is pinned rather than scrolled to.
+    pub fn created(&self) -> Option<&TimelineEntry> {
         self.timeline
             .iter()
-            .find(|entry| entry.kind == TimelineKind::Asked)
+            .find(|entry| entry.kind == TimelineKind::Created)
     }
 
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
@@ -1748,19 +1776,24 @@ mod tests {
         )
         .await;
 
+        // Written in the vocabulary of 2026-08-25, read in the one that replaced it: the
+        // migration is the parse, and the rewrite below is where it reaches the disk.
         let task = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
         assert_eq!(task.body, "The long account, written whole.");
         assert_eq!(task.timeline.len(), 2);
-        assert_eq!(task.timeline[0].kind, TimelineKind::Asked);
+        assert_eq!(task.timeline[0].kind, TimelineKind::Created);
         assert_eq!(task.timeline[0].text, "it goes to the Feishu group, not to me");
-        assert_eq!(task.timeline[1].kind, TimelineKind::Blocked);
+        assert_eq!(task.timeline[1].kind, TimelineKind::Waiting);
         assert_eq!(task.timeline[1].text, "the app has no im:chat scope");
         assert_eq!(
-            task.asked().map(|entry| entry.text.as_str()),
+            task.created().map(|entry| entry.text.as_str()),
             Some("it goes to the Feishu group, not to me")
         );
 
         write_task(dir.path(), &task).await.unwrap();
+        let on_disk = stored(dir.path(), "round-trip").await;
+        assert!(on_disk.contains("created \u{2014} it goes"), "rewritten: {on_disk}");
+        assert!(!on_disk.contains(" asked "), "the old spelling is gone: {on_disk}");
         let again = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
         assert_eq!(again.body, task.body);
         assert_eq!(again.timeline, task.timeline);

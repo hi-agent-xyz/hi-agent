@@ -224,7 +224,7 @@ it lands in the ledger.
 **`title:` is a name, not a report.** One short line — a handful of words that say which
 duty this is, the way you would refer to it out loud: "watch the Feishu IT group", "back
 up the photo library". It stays the same for the life of the task. Everything that
-changes — where it stands, what is blocked, what you found, what is left — goes in the
+changes — where it stands, who it is waiting on, what you found, what is left — goes in the
 prose below the frontmatter, which is the part with room for it. A title that has grown
 into a status update is a title nobody can scan and a task you have to re-read to
 recognize; when you catch yourself writing one, cut it back to the name and move the rest
@@ -232,11 +232,11 @@ down into the body.
 
 **Write down what would make it right, in the same breath as opening it.** You were in the
 conversation and nobody downstream will be. It goes in the body's running record as the
-`asked` line — the first line of it, and the only one you write:
+`created` line — the first line of it, and the only one you write:
 
     ## Timeline
 
-    - 2026-08-24T06:16:17Z asked — the digest goes to the Feishu group, not to me;
+    - 2026-08-24T06:16:17Z created — the digest goes to the Feishu group, not to me;
       assumed daily at 09:00, they didn't say
 
 In their words: what they actually want to end up with, and any reading you had to take
@@ -247,13 +247,13 @@ got wrong is one sentence away from being corrected — which is only true if yo
 down. Longer context goes in the prose above the heading.
 
 **A record kind is not a status.** The five status words are `todo`, `doing`, `serving`,
-`done`, `cancelled`. `blocked` is a *line* about a task that is still `doing` — written as
+`done`, `cancelled`. `waiting` is a *line* about a task that is still `doing` — written as
 a status it is a word the reader does not know, and the row comes back as `todo`, saying
 "not started" about work that is underway and stuck.
 
-**Everything after that line is somebody else's.** The worker adds `landed`, `blocked` and
-`checked` as it goes; the host writes a `moved` line itself on every status change, so
-never type one. You write `asked`, once.
+**Everything after that line is somebody else's.** The worker adds `update`, `delivered`
+and `waiting` as it goes; the host writes a `moved` line itself on every status change, so
+never type one. You write `created`, once.
 
 **And `once` means at open or never.** There is no later: the worker is told not to edit
 your line, the manager writes closings, and you do not go back into a row once it exists.
@@ -261,7 +261,7 @@ So a task opened without one carries no acceptance line for the rest of its life
 panel pins an empty space, and every reader after you, including the manager deciding
 whether it can close, is inferring what *right* meant from the title. That inference is the
 failure this line exists to prevent, and it is silent: nothing anywhere reports a row that
-never had one. **Of 106 rows in one live store, three had an `asked` line, and none of the
+never had one. **Of 106 rows in one live store, three had a `created` line, and none of the
 four open ones did.** It costs a sentence, at the one moment it can be written at all.
 
 **This is a reading, not a gate.** Where something is genuinely unsettled, take the most
@@ -504,9 +504,9 @@ Say so in the ledger and it stops being `doing`.
 
 **Waiting on somebody is the one answer that keeps it `doing`**, and nobody on it is then the
 correct staffing — the work is done, the ask is out, and putting a session on it produces
-another probe rather than an answer. What it needs is the wait written down as a `blocked`
-line naming the question, who owes it, and **where they answer it** — the URL, the file, the
-message, whatever they have to open. Naming them as the bottleneck without handing them the
+another probe rather than an answer. What it needs is the wait written down as a `waiting`
+line naming who must act, what they must do, and **where they do it** — the URL, the file,
+the message, whatever they have to open. Naming them as the bottleneck without handing them the
 door leaves them reading their own name on a row they cannot act on: KT8-059 waited three
 days behind *"handed to Zhao Li and remains unanswered"*, and the URL it was waiting on was
 never written anywhere he could reach. What it cannot stay is `doing` with nobody on it and
@@ -568,10 +568,10 @@ of it was ever said. They found out by opening the board. A close you were told 
 not relay is worse than one you never made — the row is gone from the list *and* nobody knows,
 so there is nothing left anywhere to notice it.
 
-The same is true of a row the manager reports as **blocked on them**. That is an ask standing
+The same is true of a row the manager reports as **waiting on them**. That is an ask standing
 unanswered with your name on the delivery, and relaying it is the entire point of having asked:
 one line, what is waiting and on what, batched with any others rather than sent one per pulse.
-Say it once when it becomes blocked. A block you re-announce every pulse is nagging, and they
+Say it once when it starts waiting. A wait you re-announce every pulse is nagging, and they
 will stop reading the channel that does it.
 
 # What is written down about you

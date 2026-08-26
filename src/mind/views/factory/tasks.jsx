@@ -88,7 +88,8 @@ const T = {
     malformed: "This task has invalid stored fields. Changing its status will rewrite the recognized fields.",
     malformedShort: "Invalid fields",
     noBody: "(no notes)",
-    asked: "What was asked",
+    wanted: "What you asked for",
+    needsYou: "Needs you",
     assumed: "assumed, never confirmed",
     timeline: "What has happened",
     noTimeline: "Nothing recorded yet.",
@@ -99,12 +100,23 @@ const T = {
     showAll: "Show everything",
     showLess: "Show less",
     moment: {
-      asked: "asked",
-      landed: "landed",
-      blocked: "blocked",
-      checked: "checked",
+      created: "created",
+      update: "update",
+      delivered: "delivered",
+      waiting: "waiting",
       moved: "moved",
-      note: "note",
+      note: "update",
+    },
+    // A status change reads as the verb for it. The stored text is the pair the store
+    // wrote — `todo → doing` — which is the transition spelled out for a machine, and
+    // the person reading it wants the word.
+    life: {
+      started: "started",
+      putBack: "put back",
+      reopened: "reopened",
+      serving: "standing duty",
+      done: "done",
+      cancelled: "cancelled",
     },
     monitoring: "Liveness",
     verify: "Check",
@@ -167,7 +179,8 @@ const T = {
     malformed: "这条任务包含无效字段。修改状态时会重写可识别的字段。",
     malformedShort: "字段无效",
     noBody: "（没有备注）",
-    asked: "要什么",
+    wanted: "你要什么",
+    needsYou: "等你处理",
     assumed: "推断的，未经确认",
     timeline: "发生了什么",
     noTimeline: "还没有记录。",
@@ -176,12 +189,20 @@ const T = {
     showAll: "展开全部",
     showLess: "收起",
     moment: {
-      asked: "要求",
-      landed: "交付",
-      blocked: "受阻",
-      checked: "核查",
+      created: "创建",
+      update: "进展",
+      delivered: "交付",
+      waiting: "等人",
       moved: "状态",
-      note: "备注",
+      note: "进展",
+    },
+    life: {
+      started: "开始",
+      putBack: "退回待办",
+      reopened: "重开",
+      serving: "转为值守",
+      done: "完成",
+      cancelled: "取消",
     },
     monitoring: "运行检查",
     verify: "检查方式",
@@ -223,17 +244,30 @@ const STATUSES = [
 ];
 
 // A running-record line is read by its kind before its text, so the kind carries the
-// colour: blocked is the one that should catch an eye crossing the panel, landed the one
-// that says this went well, and `moved` — written by the store, not by a mind — is
-// deliberately the quietest thing on the list.
+// colour: `waiting` is the one that should catch an eye crossing the panel, `delivered`
+// the one that says this went well, and `moved` — written by the store, not by a mind —
+// is deliberately the quietest thing on the list.
+//
+// **`update` is dim on purpose.** It is the default kind and it holds most of the record;
+// a default that draws the eye is a record with no shape, and the reader is scanning for
+// the two lines that mean something to them.
 const MOMENT_TONE = {
-  asked: "var(--accent-2)",
-  landed: "var(--accent-2)",
-  blocked: "var(--danger)",
-  checked: "var(--task-serving)",
+  created: "var(--accent-2)",
+  delivered: "var(--accent-2)",
+  waiting: "var(--danger)",
+  update: "var(--fg-dim)",
   moved: "var(--fg-mute)",
   note: "var(--fg-mute)",
 };
+
+// A `waiting` line is a dated sentence in an append-only record, and nothing ever clears
+// one. So the alarm colour is spent only where the wait is still true — newest — and a
+// superseded one reads as the history it is. This is the confusion the rename was for: a
+// red stripe on a row that had moved on three times since.
+function momentTone(moment, live) {
+  if (moment.kind === "waiting" && !live) return "var(--fg-mute)";
+  return MOMENT_TONE[moment.kind] || "var(--fg-mute)";
+}
 
 const STATUS_TONE = {
   todo: "var(--fg-dim)",
@@ -470,6 +504,9 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
   // task *is* and nothing about where any of it stands, which is the question somebody
   // scanning this actually has.
   const latest = latestMoment(task);
+  // The board's copy of the same two rules the panel uses: a status change reads as its
+  // verb, and a wait keeps the alarm colour only while it is the last word.
+  const latestLife = latest?.kind === "moved" ? lifecycleWord(latest.text) : null;
   // A drag that ends on the card it started from still delivers a `click`, which would
   // open the panel on a gesture the person meant as "put it back".
   const dragged = useRef(false);
@@ -513,10 +550,14 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
         {latest && (
           <span
             className="hi-tasks__card-latest"
-            style={{ "--moment": MOMENT_TONE[latest.kind] || "var(--fg-mute)" }}
+            style={{ "--moment": momentTone(latest, waitsOnPerson(task)) }}
           >
-            <span className="hi-tasks__moment-kind">{L.moment[latest.kind] || latest.kind}</span>
-            <span className="hi-tasks__card-latest-text">{inline(latest.text, "latest")}</span>
+            <span className="hi-tasks__moment-kind">
+              {latestLife || L.moment[latest.kind] || latest.kind}
+            </span>
+            {!latestLife && (
+              <span className="hi-tasks__card-latest-text">{inline(latest.text, "latest")}</span>
+            )}
           </span>
         )}
         {notes.length > 0 && (
@@ -559,7 +600,11 @@ function Detail({ task, busy, onStatus, onClose }) {
   // catching up on their own errand wants, and it does not move for the life of the task.
   // It is a **reading, not a gate** — nothing here waits on it and no task is held open
   // against it; showing it is what makes a wrong reading cheap to correct in one sentence.
-  const asked = (task.timeline || []).find((moment) => moment.kind === "asked");
+  const wanted = (task.timeline || []).find((moment) => moment.kind === "created");
+  // The live wait, if there is one, so the reader learns whether to act before reading a
+  // record to work it out. It is the same object as the line below in the list, which is
+  // what lets that line keep the alarm colour while every older wait goes quiet.
+  const waiting = waitsOnPerson(task) ? latestSpoken(task) : null;
   // A record spells its artifacts in inline code — *"the completed report is
   // `inspection-report.md` in this task directory"* — and that was a pointer the one
   // person reading it could not follow. The server says which of those names are really
@@ -642,10 +687,19 @@ function Detail({ task, busy, onStatus, onClose }) {
 
           {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
 
-          {asked && (
+          {waiting && (
+            <div className="hi-tasks__waiting">
+              <div className="hi-tasks__waiting-title">{L.needsYou}</div>
+              <div className="hi-tasks__waiting-text">
+                {inline(waiting.text, "waiting", linkFile)}
+              </div>
+            </div>
+          )}
+
+          {wanted && (
             <div className="hi-tasks__asked">
-              <div className="hi-tasks__asked-title">{L.asked}</div>
-              <div className="hi-tasks__asked-text">{inline(asked.text, "asked", linkFile)}</div>
+              <div className="hi-tasks__asked-title">{L.wanted}</div>
+              <div className="hi-tasks__asked-text">{inline(wanted.text, "wanted", linkFile)}</div>
             </div>
           )}
 
@@ -666,25 +720,33 @@ function Detail({ task, busy, onStatus, onClose }) {
             <div className="hi-tasks__none">{L.noTimeline}</div>
           ) : (
             <ol className="hi-tasks__moments">
-              {moments.map((moment, index) => (
-                <li
-                  key={`${moment.at || ""}-${index}`}
-                  className="hi-tasks__moment"
-                  style={{ "--moment": MOMENT_TONE[moment.kind] || "var(--fg-mute)" }}
-                >
-                  <span className="hi-tasks__moment-head">
-                    <span className="hi-tasks__moment-kind">
-                      {L.moment[moment.kind] || moment.kind}
+              {moments.map((moment, index) => {
+                // A status change is shown as the word for it and nothing else: the stored
+                // `todo → doing` is the transition spelled for a machine, and repeating
+                // it beside the word would be the same fact twice.
+                const life = moment.kind === "moved" ? lifecycleWord(moment.text) : null;
+                return (
+                  <li
+                    key={`${moment.at || ""}-${index}`}
+                    className="hi-tasks__moment"
+                    style={{ "--moment": momentTone(moment, moment === waiting) }}
+                  >
+                    <span className="hi-tasks__moment-head">
+                      <span className="hi-tasks__moment-kind">
+                        {life || L.moment[moment.kind] || moment.kind}
+                      </span>
+                      {moment.at && (
+                        <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
+                      )}
                     </span>
-                    {moment.at && (
-                      <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
+                    {!life && (
+                      <span className="hi-tasks__moment-text">
+                        {inline(moment.text, `m${index}`, linkFile)}
+                      </span>
                     )}
-                  </span>
-                  <span className="hi-tasks__moment-text">
-                    {inline(moment.text, `m${index}`, linkFile)}
-                  </span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ol>
           )}
 
@@ -696,7 +758,7 @@ function Detail({ task, busy, onStatus, onClose }) {
                   <div key={`${field.key}-${index}`}>
                     {field.key && <dt>{field.key}</dt>}
                     <dd>
-                      {/* Autolinked for the reason a `blocked` line is: the panel has no
+                      {/* Autolinked for the reason a `waiting` line is: the panel has no
                           address bar, and a URL the agent filed under `report_to:` or a
                           dated note key is otherwise one to retype off the screen. Through
                           `linked` and not `inline` — a field value is a literal, so the
@@ -807,6 +869,48 @@ function formatStamp(value) {
 function latestMoment(task) {
   const timeline = task.timeline || [];
   return timeline.length > 0 ? timeline[timeline.length - 1] : null;
+}
+
+// The newest line a *mind* wrote. `moved` is excluded because the store writes it on a
+// transition it merely witnessed: a status change is the consequence of a decision, not a
+// statement about one, so it can neither raise a wait nor answer it.
+function latestSpoken(task) {
+  const timeline = task.timeline || [];
+  for (let i = timeline.length - 1; i >= 0; i -= 1) {
+    if (timeline[i].kind !== "moved") return timeline[i];
+  }
+  return null;
+}
+
+// **Whether a human is wanted right now** — the one question the record could not answer
+// before, and the reason `blocked` became `waiting`.
+//
+// Nothing clears a `waiting` line; it is a dated sentence in a record that only appends.
+// What makes it current is that no mind has written anything under it. So a wait ends by
+// being superseded rather than by being closed, which needs no second kind to say "no
+// longer waiting" and cannot go stale the way a flag somebody must remember to unset does.
+// A closed row is never waiting, whatever its last line says.
+function waitsOnPerson(task) {
+  if (task.status === "done" || task.status === "cancelled") return false;
+  return latestSpoken(task)?.kind === "waiting";
+}
+
+// A status change, in the word for it. The store writes the transition as the pair it
+// witnessed — `todo → doing` — and that is the right thing to *store*; it is the wrong
+// thing to show somebody catching up on their own errand.
+function lifecycleWord(text) {
+  const parts = String(text || "").split("\u2192");
+  if (parts.length < 2) return null;
+  const from = parts[0].trim();
+  const to = parts[parts.length - 1].trim();
+  if (to === "todo") {
+    return from === "done" || from === "cancelled" ? L.life.reopened : L.life.putBack;
+  }
+  return (
+    { doing: L.life.started, serving: L.life.serving, done: L.life.done, cancelled: L.life.cancelled }[
+      to
+    ] || null
+  );
 }
 
 function dueMeta(task) {
@@ -938,13 +1042,20 @@ function healthMeta(task) {
 }
 
 function taskNeedsAttention(task) {
-  return Boolean(dueMeta(task)?.warn || healthMeta(task)?.warn || ageMeta(task)?.warn);
+  return Boolean(
+    waitsOnPerson(task) || dueMeta(task)?.warn || healthMeta(task)?.warn || ageMeta(task)?.warn,
+  );
 }
 
 // One clipped line under the title, so what earns the space is what would make someone
 // act: a warning first, then the one date that means anything for this status.
 function cardNotes(task) {
   const notes = [];
+  // Before anything else on the card, because it is the only note here that is somebody
+  // else's move. Every other warning says the agent has a problem; this one says the row
+  // will not advance until the reader does something, and it should not need a modal to
+  // be discovered.
+  if (waitsOnPerson(task)) notes.push({ text: L.needsYou, warn: true });
   if (task.malformed) notes.push({ text: L.malformedShort, warn: true });
   const due = dueMeta(task);
   const health = healthMeta(task);
@@ -1002,7 +1113,7 @@ function cardNotes(task) {
 // concession. `[click here](somewhere-else)` lets text a session wrote name one destination
 // and go to another, which is the reach the paragraph above refuses. An autolink cannot:
 // the visible text *is* the href, so the worst it can do is take you where it plainly says.
-// And a URL is exactly what a row blocked on the person has to carry — the panel has no
+// And a URL is exactly what a `waiting` row has to carry — the panel has no
 // address bar, so an inert one is a URL they must retype off their own screen.
 //
 // Underscores are *not* emphasis, and that is the one deliberate omission: these bodies are
@@ -1190,7 +1301,7 @@ function Prose({ text, link }) {
 // back in conversation, the row closed, and the one paragraph saying what was found — 90%
 // used, this writer, this much a day — sat collapsed below a reverse-chronological list of
 // housekeeping. Somebody coming back to their own errand a week later opened the panel and
-// saw that it had been checked, not what it said. A fold is the right shape for a
+// saw that it had been updated, not what it said. A fold is the right shape for a
 // reference; it is the wrong shape for the thing the reader came for.
 //
 // **Clamped, not truncated.** The reason for the fold was real — the live store's median
@@ -1764,6 +1875,30 @@ const CSS = `
 
   /* Pinned above the record and never scrolled past: one or three lines in their own
      words, so it can be read as prose rather than parsed as a field. */
+  /* Louder than the pin below it, because it is the one block on this surface that is
+     asking the reader for something rather than telling them how the work went. */
+  .hi-tasks__waiting {
+    margin-bottom: 16px;
+    padding: 11px 13px;
+    border-left: 3px solid var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+
+  .hi-tasks__waiting-title {
+    margin-bottom: 4px;
+    color: var(--danger);
+    font-size: 11.5px;
+    font-weight: 750;
+  }
+
+  .hi-tasks__waiting-text {
+    color: var(--fg);
+    font-size: 13.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
   .hi-tasks__asked {
     margin-bottom: 16px;
     padding: 11px 13px;
