@@ -482,6 +482,35 @@ staleness is visible even when honesty is not verifiable.
 
 Against running processes, not by reading code.
 
+**A tool is found and run — 2026-08-26, isolated instance, and the first attempt failed the
+way this repo always fails.** `<data_dir>/bin` is created at boot and prepended to every
+session's PATH (`mind::skills::install_tool_bin`, `bin_dir`); `skills/factory/browser.md` is
+seeded carrying `purpose:`/`use: browser`; and `bin/browser` is a shim that defers resolution
+to call time — `--resolve-browser` prints the argv prefix, so a machine that never opens a
+page never pays the ~100 MB download, and a full Chrome is told `--headless` while a
+`chrome-headless-shell` is not. Verified on the box: the child codex process's PATH begins
+with the data dir's `bin`, and the shim returned `<title>Example Domain</title>` from a real
+Chromium.
+
+**The first live run is the finding.** Asked to read a page, Cognition ran
+`curl … | sed -n '1,90p'` itself, **never created a worker**, never scanned the workshop, and
+named the second Hacker News item as the first. The scan had been written into `general.md`
+alone — a worker prompt, on a rung that never opened. Cognition holds codex's own shell, so
+the instruction went there too, pinned by
+`identity::tests::a_worker_scans_the_workshop_before_saying_it_cannot`.
+
+**After that, watched end to end.** On a page that is only text it ran `grep -rn "^purpose:"`,
+opened `browser.md` before running anything, and then *correctly used `curl`* — which is what
+the note itself ranks first for a page that need not run. On a client-rendered page it tried
+`curl`, got the 789-byte shell, and **fell through to `browser --dump-dom`**, returning four
+FAQ questions verbatim that exist nowhere in the `curl` response. Reaching for the tool exactly
+when the cheap path fails is the behaviour the note asks for.
+
+**Not closed by this.** Cognition ran both errands itself and dispatched no worker, so the
+delegation half of [journey 07](user-journeys/07-browser-errand.md) — operate a page, click,
+fill — is still unexercised, and the prompt's *a real errand still goes to a worker* is written
+but unproven. Nothing here provisions a tool the workshop lacks; that is Phase B.
+
 **The spine.** Boot with both sceneless rungs registering synchronously · `say` adopted from the
 first turn · `show` and the first-meeting welcome · the character actually read · the frame log
 filling under a run id · Cognition woken by a hand-up and hosting its own workers · the task
@@ -610,16 +639,18 @@ Each of these is green and unexercised. Ordered by what breaks worst if wrong.
   a run where prepared work is redone or forgotten, which is exactly what that journey's
   reverse test looks for.
 
-- **The tool workshop**, in every part [`tools.md`](arch/tools.md) adds on top of `skills/`. The
-  tree itself is real — `install_factory_skills` seeds `skills/factory/`, the learnt layer
-  survives upgrade, and `/api/skills` reads and prunes it. Everything that makes a note a *tool*
-  is absent: there is no `<data_dir>/bin` and nothing puts one on the child's PATH, no note
-  carries `purpose:`/`use:` front matter (the one seed, `adding-a-device.md`, is a procedure),
-  no prompt tells any rung to scan the registry, `hi mcp` has no CLI and the repo has an MCP
-  *server* but no client, nothing counts tool calls so the hot level cannot exist, and the Tool
-  Manager — which residency makes the only route to anything outside the hot set — is not a
-  rung. The live cost is already on record: journey 07 reported having no browser while
-  `runtime::browser` resolved a Chromium on the same disk.
+- **The tool workshop beyond discovery.** What [`tools.md`](arch/tools.md) calls *finding and
+  running* a tool is built and watched (see below); the rest of it is not. **`hi mcp` has no
+  CLI and the repo has an MCP *server* but no client**, so a service speaking only MCP is
+  unreachable. **The hot level cannot exist yet**, for a narrower reason than "nothing counts":
+  `GET /api/stats` already derives `tools_by_name` from the frame logs on read — with failures,
+  per role and per worker type — but `codex::messages::kind_of` maps `mcpToolCall` to `tool`
+  and `commandExecution` to `command`, and the scan counts commands as a bare total with no
+  name. So usage is measured for exactly the tools that are already resident and is blind by
+  name to the CLI carrier the design prefers; a `browser` call cannot appear. The command text
+  is in the frames already, so this is an extraction, not new plumbing. And the **Tool
+  Manager** — which residency makes the only route to anything outside the hot set — is not a
+  rung, so today's reach is *what a scan of the workshop finds* and nothing further.
 
 - **post** — the push service, and with it waking a surface. Deliberately not next: push exists
   to wake a surface holding no channel, and a phone browser opening the relayed address needs no

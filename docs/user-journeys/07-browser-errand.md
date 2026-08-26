@@ -33,3 +33,24 @@ _机制:技能(怎么开这类页)+ effector(浏览器)。可行性:**可行**�
 
 - ✅ 诚实:"我没有浏览器工具,没法直接打开和操控网页",并给降级(用搜索查),不假装操作页面。
 - ⚠️ **没主动提议置备浏览器 effector**(按 [02](02-feishu-sprint-backlog.md) 范型"缺工具是任务的一部分",应研究 + 请示装),而是直接降级到搜索。浏览器 effector 未建,真实操作未测。
+
+## 复测 2026-08-26 · 隔离实例 `--data-dir /tmp/hi-tools2`
+
+浏览器现在是工作间里的一条**工具笔记**:`skills/factory/browser.md` 带 `purpose:`/`use: browser`,
+`<data_dir>/bin` 进了每个 session 的 PATH,`bin/browser` 在**调用时**才解析这台机器上的
+Chrome(所以从不开网页的机器不会白下 100 MB)。
+
+- 🔴 **第一次跑,暴露的是老毛病:指令挂在了不在路径上的那一节。** "去看下这个页面"这类活,
+  Cognition **自己**用 `curl … | sed -n '1,90p'` 办了,**一个 worker 都没建**,工作间从没被扫过,
+  结果把 HN 第二条当成了第一条。扫描规则当时只写在 `general.md`(worker 的 prompt)里。
+  修复:Cognition 手上有 codex 自带的 shell,规则同时写进 `cognition.md`,由
+  `identity::tests::a_worker_scans_the_workshop_before_saying_it_cannot` 钉住。
+- ✅ **修完之后,发现—读笔记—用工具整条链路实测通过。** 纯文本页面上它先
+  `grep -rn "^purpose:"` 扫工作间、`sed` 打开 `browser.md` 再动手,然后**正确地用了 `curl`**
+  ——笔记本身就说"页面只是文本时,普通抓取才是对的工具"。换成前端渲染的页面
+  (`hi-agent.xyz`,`curl` 只拿到 789 字节空壳),它先试 `curl`、看出是空的,
+  **再落到 `browser --dump-dom`**,把 4 条 FAQ 原文一字不差取了回来。
+  便宜的路走不通才伸手拿工具,正是笔记要的那个次序。
+- 🟠 **本 journey 的正题仍未测:点、填、多步操作。** 两次都是"读一个页面",而且两次
+  Cognition 都自己干了、没派 worker——prompt 里"真正的差事仍旧交给 worker"这句写了但没被验证。
+- 🟠 **缺工具时主动置备**依然未测(见上一次实测的同一条),那是工作间的"写"那一半,尚未建。

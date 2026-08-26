@@ -164,6 +164,12 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // first note is written. Agent-written skills land alongside and are never touched.
     mind::skills::install_factory_skills(&config.data_dir).context("installing built-in skills")?;
 
+    // The other half of a tool note: `<data_dir>/bin` is prepended to every session's
+    // PATH below, so a note's `use:` can name a command and mean *whatever this
+    // machine turned out to have*. Only shims a note cannot otherwise name live here
+    // (today: `browser`); anything a package manager put on the PATH needs nothing.
+    mind::skills::install_tool_bin(&config.data_dir).context("installing tool shims")?;
+
     // The agent's precious drive — where it files artifacts worth keeping (a user's
     // handed-over documents, its own kept work). Created here so it always exists;
     // filling it is the agent's job. (Verbatim annex of memory; see data-dir-layout.)
@@ -282,6 +288,23 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         "HI_AGENT_PROMPTS_DIR".to_string(),
         prompts_dir.display().to_string(),
     ));
+    // The agent's own PATH entry, **prepended** to the inherited one rather than
+    // replacing it: a tool note's `use:` names a command, and something the agent
+    // wrote should be indistinguishable at the call site from something the machine
+    // already had (`docs/arch/tools.md`). Prepending is what keeps every package
+    // manager's bin dir working, so most tools need nothing here at all.
+    //
+    // Read from this process's environment: the child inherits ours and `command.env`
+    // overrides key by key, so a bare push would silently drop the system PATH.
+    {
+        let bin = mind::skills::bin_dir(&config.data_dir);
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let joined = std::env::join_paths(
+            std::iter::once(bin).chain(std::env::split_paths(&inherited)),
+        )
+        .context("building the child PATH")?;
+        child_env.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
+    }
     // Diagnostic: surface exactly what differs between launchers (terminal vs. cmux
     // etc.) — cwd, the resolved codex binary, its home, and the upstream key's
     // fingerprint. The credential is not frozen into `child_env` (it is re-resolved per

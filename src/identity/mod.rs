@@ -1022,6 +1022,67 @@ mod soul_tests {
         assert!(WORKER_GENERAL_BASE.contains("Never wait for an answer"));
     }
 
+    /// **A worker must scan the workshop before reporting it cannot do something.**
+    ///
+    /// The registry is derived, never an index file (`docs/arch/tools.md`), which is
+    /// only worth anything if some rung is actually told to run the scan — the same
+    /// bargain the views toolbox makes, where `view-builder.md` carries the
+    /// `^// purpose:` grep. Without the instruction, a derived registry is a registry
+    /// with no reader, and a retrieval miss reads as *"I can't do that"*.
+    ///
+    /// Watched failing, journey 07: the answer that went back was "I have no browser"
+    /// while a provisioned Chromium sat on the same disk.
+    ///
+    /// Three things are pinned, because the failure needs all three to be closed: the
+    /// scan itself, the rule about when to run it, and `--help` as the source of a
+    /// tool's arguments (a flag list copied into a note is a second truth that drifts).
+    #[test]
+    fn a_worker_scans_the_workshop_before_saying_it_cannot() {
+        assert!(
+            WORKER_GENERAL_BASE.contains("^purpose:"),
+            "the derived registry needs a reader; the scan must be in the prompt"
+        );
+        assert!(
+            WORKER_GENERAL_BASE.contains("before you tell anyone you can't do something"),
+            "scanning is only worth anything on the path where the answer would be no"
+        );
+        assert!(
+            WORKER_GENERAL_BASE.contains("--help"),
+            "a tool's arguments come from the tool, not from a list written down"
+        );
+
+        // **And Cognition, because it is the rung that was actually in the path.**
+        // Watched 2026-08-26 on an isolated instance: asked to read a page, Cognition
+        // ran `curl … | sed -n '1,90p'` itself, never created a worker, never scanned
+        // the workshop, and reported the second Hacker News item as the first. The
+        // scan had been written into `general.md` alone, so it sat on a rung that
+        // never opened — this repo's oldest failure, an instruction handed to nobody.
+        // Cognition holds codex's own shell, so it can and must find a tool too.
+        assert!(
+            COGNITION_BASE.contains("^purpose:"),
+            "Cognition holds a shell and answers directly; the scan has to reach it too"
+        );
+        assert!(
+            COGNITION_BASE.contains("still goes to a worker"),
+            "knowing how to find a tool must not read as licence to run the errand itself"
+        );
+    }
+
+    /// The seeded tool note and the prompt that reads it must agree about the format.
+    /// They are written in different trees by different hands, and a note whose keys
+    /// the prompt never mentions is a tool nothing can find.
+    #[test]
+    fn the_prompt_and_the_seeded_tool_note_agree_on_the_front_matter() {
+        let note = crate::mind::skills::browser_note();
+        for key in ["purpose:", "use:"] {
+            assert!(note.contains(key), "the seeded tool note must carry `{key}`");
+            assert!(
+                WORKER_GENERAL_BASE.contains(key),
+                "the prompt must name `{key}` or a worker cannot tell a tool from a skill"
+            );
+        }
+    }
+
     /// **Reading is never something to ask for**, and all three rungs that can stall on it
     /// say so. On 2026-08-15 a deploy script failed its own health poll, printed the
     /// `docker compose logs` line to run next, and the run stopped there: the worker

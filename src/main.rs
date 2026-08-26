@@ -45,6 +45,19 @@ struct Cli {
     #[arg(long, hide = true, value_name = "DIR")]
     provision_into: Option<PathBuf>,
 
+    /// Resolve this machine's browser and print its argv prefix — the executable,
+    /// then `--headless` on a following line if that binary needs telling — one
+    /// element per line, then exit.
+    ///
+    /// Hidden: this is called by `<data_dir>/bin/browser`, the shim
+    /// [`hi_agent::mind::skills::install_tool_bin`] writes, at *call* time rather
+    /// than at boot. That is what keeps a ~100 MB managed download off the startup
+    /// path while still letting a portable note say `use: browser`.
+    ///
+    /// Because the shim parses stdout, logging is redirected to stderr in this mode.
+    #[arg(long, hide = true)]
+    resolve_browser: bool,
+
     /// Where the **app** listens — the address the face is opened at. The app
     /// holds the roster and forwards to whichever core is attached, adding this
     /// install's credential; the core's own port stays an internal address.
@@ -273,7 +286,18 @@ fn main() -> anyhow::Result<()> {
     if !ort_opt_in {
         env_filter = env_filter.add_directive("ort=warn".parse().expect("valid tracing directive"));
     }
-    tracing_subscriber::fmt().with_env_filter(env_filter).with_target(false).init();
+    // `--resolve-browser`'s stdout is parsed by a shell script, so its logs — which
+    // include the managed browser's download progress, worth seeing — go to stderr
+    // instead. Every other mode keeps stdout, which is what `server.log` captures.
+    if cli.resolve_browser {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(env_filter).with_target(false).init();
+    }
 
     // Package-time provisioning: fill a `.app`'s Resources with the managed
     // runtime + models + static ffmpeg, then exit. Forces the managed downloads
@@ -313,6 +337,22 @@ fn main() -> anyhow::Result<()> {
         if let Err(e) = dotenvy::from_path(&env_path) {
             tracing::debug!(error = %e, path = %env_path.display(), "no .env at data dir (or unreadable)");
         }
+    }
+
+    // The `bin/browser` shim asking what to run. After the `.env` load above, so an
+    // `HI_AGENT_BROWSER_BIN` override set there is honoured exactly as it is for a
+    // view render. One element per line: the executable, then `--headless` iff this
+    // binary is a full Chrome (a `chrome-headless-shell` build rejects the flag).
+    if cli.resolve_browser {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(async move {
+            let browser = hi_agent::runtime::browser::ensure().await?;
+            println!("{}", browser.bin.display());
+            if !browser.headless_shell {
+                println!("--headless");
+            }
+            Ok(())
+        });
     }
 
     if cli.purge_voice_galleries {
