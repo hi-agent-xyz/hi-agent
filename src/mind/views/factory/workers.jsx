@@ -1852,7 +1852,7 @@ const CSS = `
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-    padding: 28px clamp(16px, 3vw, 44px) 0;
+    padding: max(28px, var(--hi-safe-top)) clamp(16px, 3vw, 44px) 0;
   }
 
   /* What is running, given the whole frame whether or not it needs it — and taller than the
@@ -2414,7 +2414,7 @@ const CSS = `
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: clamp(12px, 3vh, 40px) clamp(12px, 3vw, 40px) 128px;
+    padding: max(clamp(12px, 3vh, 40px), var(--hi-safe-top)) clamp(12px, 3vw, 40px) 128px;
     background: color-mix(in srgb, var(--bg-0) 62%, transparent);
     backdrop-filter: blur(3px);
   }

@@ -909,7 +909,10 @@ const CSS = `
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    padding: 14px clamp(16px, 2.4vw, 30px);
+    /* Nothing is reserved for the window's titlebar any more, so the heading clears
+       it here: 0 in a browser tab, the strip in the desktop window, the notch on a
+       phone. */
+    padding: max(14px, var(--hi-safe-top)) clamp(16px, 2.4vw, 30px) 14px;
     border-bottom: 1px solid var(--line);
   }
 
@@ -949,7 +952,9 @@ const CSS = `
     display: grid;
     grid-template-columns: repeat(5, minmax(236px, 1fr));
     gap: 12px;
-    padding: 14px clamp(16px, 2.4vw, 30px) 16px;
+    /* A board is the case the bottom token exists for: a card half under a control
+       disc is a lost row, not texture passing behind glass. */
+    padding: 14px clamp(16px, 2.4vw, 30px) calc(16px + var(--hi-chrome-bottom));
     overflow-x: auto;
     overflow-y: hidden;
   }

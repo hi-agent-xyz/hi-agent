@@ -60,16 +60,14 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * **Every view owns the frame it is handed.** There is no host card, no region and
  * no size class to resolve: the server hands over at most two layers in z-order
  * (the agent's content, then the host's condition notice), and each gets the same
- * `.hi-view-fill` layer with its own layout. The frame's non-negotiable insets are
- * the window chrome and the bottom band the controls float in — and those two
- * only: the conversation is a popover over this layer now rather than a rail
- * beside it, so nothing it does changes the frame's size. `.hi-view-fill` puts
- * both insets on the view's own root as a transparent border rather than as
- * padding of its own (see
- * the stylesheet: a view returning several roots keeps the padding instead). So a
- * view that lays out nothing still lands legible and clear of the chrome, and a
- * ground it paints — pinned at `inset: 0` or simply set on the root it flows —
- * paints under that border and reaches every edge.
+ * `.hi-view-fill` layer with its own layout. **The frame is the window and nothing
+ * is subtracted from it** — not for the titlebar, not for the controls, and not for
+ * the conversation, which is a popover over this layer rather than a rail beside it.
+ * Everything the host floats carries its own ground instead (the cluster and the
+ * pills wear a scrim), so a view's content reaches every edge exactly like its
+ * ground does, and a picture pinned at `inset: 0` fills the window. What a view
+ * owes the chrome is placement, not space: `--hi-safe-top` and `--hi-chrome-bottom`
+ * are published for the views that want to be exact about it.
  *
  * **The frame is fixed, and the layer scrolls.** A view taller than the frame used
  * to be cut at the window edge with nothing to reach the rest — `.hi-root` is

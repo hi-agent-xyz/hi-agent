@@ -162,7 +162,7 @@ export default function Upload() {
 const S = {
   root: { width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
     display: "flex", flexDirection: "column", gap: 18,
-    padding: "36px clamp(20px,5vw,72px) 128px",
+    padding: "max(36px, var(--hi-safe-top)) clamp(20px,5vw,72px) 128px",
     fontFamily: "var(--font-display)", color: "var(--fg)" },
   title: { width: "min(980px,100%)", margin: "0 auto", fontWeight: 800, fontSize: 28,
     lineHeight: 1.2, letterSpacing: 0, textAlign: "left" },

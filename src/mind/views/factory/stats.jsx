@@ -600,7 +600,7 @@ const CSS = `
     min-height: 0;
     overflow-y: auto;
     box-sizing: border-box;
-    padding: 28px clamp(18px, 3vw, 44px) 128px;
+    padding: max(28px, var(--hi-safe-top)) clamp(18px, 3vw, 44px) 128px;
     color: var(--fg);
     font-family: var(--font-display);
     container-type: inline-size;

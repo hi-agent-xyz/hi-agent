@@ -765,14 +765,15 @@ cost a round trip and land the person somewhere they did not ask to be. The popo
 class on that same element for exactly this reason — a portal or a `<dialog>` would be a
 second mount of the one surface that must not lose its place.
 
-`.hi-view-fill` keeps its job — it insets the frame the content view is handed — and its
-insets are now the window chrome and the bottom band, both constant. The frame no longer
-changes size with anything the person does to the conversation.
+`.hi-view-fill` keeps its job — it hands the content view a frame — and that frame no
+longer changes size with anything the person does to the conversation. Since *The frame is
+the window* (below) it does not change size for the chrome either: it is the window,
+whole.
 
 ## The frame is fixed, and overflow scrolls
 
-The compositor gives a view a frame, and the frame never grows: it is the window minus the
-insets, in both axes. So the document has to say what happens to a view whose content is
+The compositor gives a view a frame, and the frame never grows: it is the window itself,
+in both axes. So the document has to say what happens to a view whose content is
 taller than that, and it did not — the planes below settle *who covers whom* down to the
 digit and said nothing at all about *where the rest of it goes*. What the code did in the
 silence was lose it: `.hi-root` is `overflow: hidden`, `.hi-view-fill` declared no overflow,
@@ -1115,6 +1116,49 @@ the wire vocabulary — it has no server-side existence to name, so this is nami
 mechanism. And the whole thing wants eyes on a real window: the tests cover the pass and
 the plane discipline, not whether the panel sits well over a five-column board, or which
 part of a board people find themselves wanting back from under it.
+
+## The frame is the window, and chrome carries its own ground
+
+**Decision (2026-08-25): nothing on the stage is reserved. The view is handed the window,
+whole, and every piece of host chrome that floats over it — the channel cluster, the
+caption pills, the views band — is legible on its own account.** The cluster and the pills
+wear the same scrim (`--scrim-bg` / `--scrim-ink`, dark ground and light ink, and
+deliberately *not* flipped by the skin, because a pill is dark on white paper and dark on a
+night-sky poster alike). The band keeps the skin's surface, because it is full of the skin's
+own type, and takes `--chrome-edge` for an edge that flips.
+
+What this replaces is an inset the layer pressed onto every view's root as a transparent
+border — the titlebar strip on top, a gutter either side, 76px for the controls at the
+foot. It was a good trade read one way: flowed content got clearance for free, and a
+`background` still painted under the border, so grounds bled. The price was the half nobody
+priced. **Inside a bordered root, *content* can never reach an edge.** So a picture meant to
+fill the window had to be written as the root's `background` — and the obvious thing, an
+`<img>` pinned at `inset: 0`, letterboxed itself into a band of ground instead. That is a
+mechanism every view-builder session has to be taught, and it was taught, twice: the builder
+guide carried a section on it and the reviewer's checklist named the exact failure. A view
+shipped it anyway, and neither the ship gate nor anything else in the code could see it —
+`RenderedView::verdict` knows *mounted, silent, settled, not one flat colour*, and an edge
+is not among them.
+
+So the rule that could not be enforced is deleted rather than enforced. The box is the
+window: the ground bleeds, the content bleeds, `contain` versus `cover` is an ordinary
+choice about a photograph rather than a fact about the host, and what a view owes the
+chrome is one sentence — don't put the thing the view is *about* under the traffic lights,
+the discs, or the pills.
+
+**Reserving is now opt-in, and the two tokens say so.** `--hi-safe-top` (the titlebar
+strip, a phone's notch, 0 in a browser tab) and `--hi-chrome-bottom` (the strip the discs
+hold) are published for the views that must be exact: a board where the last row half under
+a disc is lost information, not texture passing behind glass. A poster ignores both. This
+is the same shape the caption pills have always had — no reservation, own scrim — extended
+to the rest of the chrome, which is what makes it one model instead of two.
+
+**What it costs.** A view that never thought about the titlebar now paints under it. The
+host's own factory surfaces were swept with this change (`views/factory/*.jsx` read the two
+tokens where they need them); views the agent has already written were not, and a headline
+one of them put at the very top-left will sit under the traffic lights until it is next
+composed. That is the deliberate trade: a one-time drift in old views against a model that
+is one sentence to teach and has no silently-wrong shape in it.
 
 ## See also
 

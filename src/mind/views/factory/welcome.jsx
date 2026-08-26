@@ -92,7 +92,7 @@ const S = {
     alignItems: "center",
     justifyContent: "center",
     gap: 30,
-    padding: "64px 32px 128px",
+    padding: "max(64px, var(--hi-safe-top)) 32px 128px",
     background: "#fff8f3",
     fontFamily: "var(--font-display)",
   },

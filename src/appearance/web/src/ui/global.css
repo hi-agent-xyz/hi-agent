@@ -45,15 +45,18 @@
   --line: rgba(58, 53, 44, 0.12);
   --line-strong: rgba(58, 53, 44, 0.22);
 
-  /* The edge of host chrome that stands on paper the agent painted (the channel
-     cluster, the views band). It cannot be `--line-strong`: that hairline is
-     tuned against this theme's own paper, and a view brings its own value. The
-     disc is filled from `--surface-strong`, so in light it is near-white and
-     only ever needs cutting out of a *light* view — a dark ring does that, and
-     the contact shadow finishes it. In dark the disc is espresso, and every dark
-     backdrop (a dark view, or the host's own `--bg-0`) leaves it edgeless with
-     the black shadows drawing nothing: there the edge has to be a light one.
-     Same role, opposite polarity — hence its own token, not a reused hairline. */
+  /* The edge of a *themed panel* floating over a view — the views band, which keeps
+     the skin's own surface because it is full of the skin's own type. It cannot be
+     `--line-strong`: that hairline is tuned against this theme's paper, and a view
+     brings its own value. In light the panel is near-white and only ever needs
+     cutting out of a light view, which a dark ring plus the contact shadow does; in
+     dark it is espresso and every dark backdrop leaves it edgeless, with the black
+     shadows drawing nothing, so there the edge has to be a light one. Same role,
+     opposite polarity — hence its own token, not a reused hairline.
+
+     Chrome that carries no type of its own — the pills, the channel discs — does
+     not use this. It wears `--scrim-*` below and needs no polarity, because its
+     ground is dark in both skins. */
   --chrome-edge: rgba(58, 53, 44, 0.22);
 
   /* floating surfaces (cards, pills, controls) over the paper */
@@ -65,10 +68,19 @@
 
   --sentence-halo: rgba(255, 251, 244, 0.9); /* text legibility on paper */
 
-  /* dark scrim pills for captions over a view — legible in both modes */
-  --caption-bg: rgba(46, 41, 33, 0.6);
-  --caption-fg: rgba(255, 252, 246, 0.96);
-  --caption-user: #d98a5c;
+  /* The scrim: what host chrome floating over a view wears — the caption pills and
+     the channel discs. Nothing is reserved for either of them (see the view-stage
+     note), so each has to be legible over whatever the agent has painted, and the
+     one dressing that is legible over anything is a dark ground with light ink on
+     it. These do NOT flip with the skin, and that is the point: the pill is dark on
+     white paper and dark on a night-sky poster, so a second set tuned to the light
+     skin would only be a set that fails on half the views. The accents are the dark
+     skin's, for the same reason — terracotta on a scrim lands near 3:1. */
+  --scrim-bg: rgba(24, 20, 15, 0.62);
+  --scrim-ink: rgba(255, 252, 246, 0.96);
+  --scrim-edge: rgba(255, 252, 246, 0.24);
+  --scrim-accent: #e0975a;
+  --scrim-accent-2: #c9a06a;
 
   --selection: rgba(192, 106, 63, 0.22);
   --selfview-veil: rgba(244, 237, 224, 0.34);
@@ -136,6 +148,13 @@
   --hi-safe-right: env(safe-area-inset-right, 0px);
   --hi-safe-bottom: env(safe-area-inset-bottom, 0px);
   --hi-safe-left: env(safe-area-inset-left, 0px);
+
+  /* The strip the channel cluster holds at the foot of the window. Nothing reserves
+     it — the view runs under it — so this is published for the views that *want* to
+     hold content clear of it: a board or a table, where the last row being half
+     under a disc is lost information rather than texture passing behind glass. A
+     poster ignores it, which is the point of it being a token and not an inset. */
+  --hi-chrome-bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
 }
 
 /* The face window (macos_window.rs) — its content spans the titlebar, so the page
@@ -177,9 +196,6 @@
 
     --sentence-halo: rgba(10, 8, 5, 0.45);
 
-    --caption-bg: rgba(10, 8, 5, 0.55);
-    --caption-fg: rgba(255, 252, 246, 0.96);
-    --caption-user: #e0975a;
 
     --selection: rgba(224, 151, 90, 0.28);
     --selfview-veil: rgba(20, 18, 14, 0.4);
@@ -219,9 +235,6 @@
   --shadow: rgba(0, 0, 0, 0.4);
   --shadow-strong: rgba(0, 0, 0, 0.5);
   --sentence-halo: rgba(10, 8, 5, 0.45);
-  --caption-bg: rgba(10, 8, 5, 0.55);
-  --caption-fg: rgba(255, 252, 246, 0.96);
-  --caption-user: #e0975a;
   --selection: rgba(224, 151, 90, 0.28);
   --selfview-veil: rgba(20, 18, 14, 0.4);
   --glow-idle: rgba(201, 160, 106, 0);
@@ -858,10 +871,10 @@ button:where(:not([data-slot])) {
 .hi-captions .hi-sentence {
   padding: 8px 18px;
   border-radius: 14px;
-  background: var(--caption-bg);
+  background: var(--scrim-bg);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  color: var(--caption-fg);
+  color: var(--scrim-ink);
   text-shadow: none;
   /* One current line — sized to read comfortably on a desktop and still legible
      across a room on a TV, without dominating the view it sits under. */
@@ -884,78 +897,62 @@ button:where(:not([data-slot])) {
 
 .hi-captions .hi-sentence--prev {
   opacity: 0.45;
-  color: var(--caption-fg);
+  color: var(--scrim-ink);
 }
 
 .hi-captions .hi-sentence--user {
-  color: var(--caption-user);
+  color: var(--scrim-accent);
 }
 
 /* --- View stage -------------------------------------------------------
-   Every view owns the whole frame. There is no host card and no region: the
-   server hands over at most two layers (the agent's content, then the host's
-   condition notice) and each gets this same bare full-bleed surface, owning its
-   own background and layout.
+   Every view owns the whole frame, and the frame is the window. There is no host
+   card, no region, and nothing reserved: the server hands over at most two layers
+   (the agent's content, then the host's condition notice) and each gets this same
+   bare full-bleed surface, owning its own background and layout, corner to corner.
 
-   The one thing the layer still supplies is the frame, because its insets are not
-   the view's to know: the window's own chrome floats over the top strip (traffic
-   lights + centred title) and the bottom band is shared with the pill, the camera
-   pip and the channel controls — all of them on the `cover` plane, all of them
-   above this one. The conversation is not among them any more: as a popover it
-   covers the frame rather than shortening it, so the view is handed the same
-   width whether it is open or away.
+   **Nothing is reserved, because everything the host floats carries its own ground.**
+   The channel cluster, the caption pills and the views band all sit on the `cover`
+   plane above this one, and each is legible over whatever is under it on its own
+   account — the pills and the discs by their scrim (`--scrim-bg`), the band by its
+   surface and its edge. What this replaces is an inset the layer used to press onto
+   every view's root as a transparent border — the titlebar strip on top, a gutter
+   either side, 76px for the controls at the foot. It bought flowed content a free
+   clearance, and the price turned out to be the larger thing: inside a bordered root
+   *content* can never reach the edge, so a picture meant to fill the window had to be
+   written as the root's `background`, and the obvious `<img>` pinned at `inset: 0`
+   letterboxed itself in a band of ground instead. That is a mechanism every view
+   builder has to be taught, and a way for a view to be quietly wrong that no gate
+   could see. The box is the window now: the ground bleeds, the content bleeds, and
+   what a view owes the chrome is one sentence rather than a model — don't put the
+   thing the view is *about* in the three places something floats: top-left (the
+   window's traffic lights), bottom-right (the cluster), bottom-centre (the pills).
 
-   Those insets ride on the view's own root as a **transparent border**, not as
-   padding on this layer, and the difference is the whole point: a border is inside
-   the element's background box (`background-clip: border-box` is the default), so
-   a root that paints a ground paints it under the border, corner to corner, while
-   its content still starts clear of the chrome. Padding on the layer put the root
-   *inside* a box the layer painted, so a view with its own ground — `#f5f5f1`, a
-   photo, any palette that isn't the theme's — stopped at the padded box and the
-   paper around it read as a frame the view never drew: a hard line across the top
-   strip and down both gutters. Painting `--paper` on the layer only hid that for
-   views whose ground was already the theme's. Now every ground reaches every edge,
-   whether the view pins it at `inset: 0` or simply sets it on the root it flows.
+   `--hi-safe-*` stays exposed for a view that wants to hold content clear of the
+   titlebar strip or a phone's notch deliberately. It is a tool now, not a tax.
 
-   The border is additive: the root's own padding still applies inside it, so a view
-   composes as though the frame were the window, which it is. A view that
-   absolutely-positions its *content* at `top: 0` opts back out (an absolute child
-   resolves against this layer's padding box, which is the full frame); the
-   view-builder guide says to place with `var(--hi-safe-top)` instead.
+   Two details outlive the border, because neither was ever about it. **`min-height:
+   100%`** floors the root at the frame, so a poster whose content ends early paints
+   its ground all the way down instead of stopping where its text does, while a root
+   with more in it than the frame holds simply grows past it into the layer's scroll.
+   This was grid + `grid-template-rows: 1fr` for exactly the first half of that, on
+   the reasoning that stretching the *used* height leaves a view's own `min-height`
+   intact — and the second half is what it cost. `1fr` is `minmax(auto, 1fr)`, and a
+   grid item's `auto` minimum is content-based only while its `min-height` is `auto`;
+   a view writing the near-universal `min-height: 100%` on its own root replaced that
+   with a definite 913-and-no-more, so the track stopped at the frame and the item was
+   *stretched to* it. Its ground then ended at the first screen while the content
+   spilled out and ran to the window's edge. Block layout has no stretch to do that
+   with: the root's height is its content's, floored here and capped by nothing.
+   **`min-width: 100%`** is the same floor across the width, and it has to be
+   `min-width` — the natural fill of a block box loses to any width the view declared,
+   and what a view declares when it declares one is a card: `width: min(1180px, 96vw)`
+   with a radius and a drop shadow. That held 1180px of a 1512px window and left the
+   rest of the frame as bare paper down the right-hand side. The frame is the view's
+   box, so a width picked for a card cannot decide how much of the window a view
+   holds; `min-width` is the one property that outranks a declared `width`.
 
-   Two details finish the job, because a ground that reaches three edges is still a
-   seam at the fourth. **`min-height: 100%`** floors the root at the frame, so a
-   poster whose content ends early paints its ground all the way down instead of
-   stopping where its text does, while a root with more in it than the frame holds
-   simply grows past it into the layer's scroll. This was grid + `grid-template-rows:
-   1fr` for exactly the first half of that, on the reasoning that stretching the *used*
-   height leaves a view's own `min-height` intact — and the second half is what it cost.
-   `1fr` is `minmax(auto, 1fr)`, and a grid item's `auto` minimum is content-based only
-   while its `min-height` is `auto`; a view writing the near-universal `min-height: 100%`
-   on its own root replaced that with a definite 913-and-no-more, so the track stopped at
-   the frame and the item was *stretched to* it. Its ground then ended at the first
-   screen and its bottom border — the band that holds the last line clear of the
-   controls — stayed up there with it, while the content spilled out and ran to the
-   window's edge. Block layout has no stretch to do that with: the root's height is its
-   content's, floored here and capped by nothing.
-   **`background-origin: border-box`** makes an image or gradient ground *size*
-   itself to the same box it paints, so `cover` covers the frame; the default
-   (`padding-box`) would size it to the inside of the border and then either tile
-   the remainder into the inset band or, with `no-repeat`, leave it bare. It is the
-   one `!important` on the stage, and it earns it: every `background:` shorthand
-   resets this longhand to `padding-box`, inline styles included, and writing
-   `background: url(…)` is how anyone sane writes a ground. The value it would win
-   back means "inside a border the host invented and the view cannot see", which is
-   never what a view meant — the view's box is the frame, and this makes the
-   geometry say so.
-
-   The border is scoped to a lone root, and the old padding stays as the fallback
-   for a view that returns several sibling roots — bordering each of those would
-   give every one of them a full inset and open a chrome-sized gap between them.
-   One root is what every view we ship has, and what JSX makes natural.
-
-   The layer keeps `--paper` behind it all — the ground the presence stands on — so
-   a themed view needs no background of its own at all.
+   The layer keeps `--paper` behind it all — the ground the presence stands on — so a
+   themed view needs no background of its own at all.
 
    **The frame is fixed in both axes; the layer scrolls in one.** The frame is the
    window, and the window does not grow, so a view whose content runs taller than it
@@ -980,20 +977,10 @@ button:where(:not([data-slot])) {
 .hi-view-fill {
   position: absolute;
   inset: 0;
-  /* The several-roots fallback (see above): inset them as a group, as this layer
-     always did. The lone-root rule below turns this off for the usual shape. */
-  padding: var(--hi-safe-top)
-    max(20px, var(--hi-safe-right))
-    calc(var(--hi-safe-bottom) + 76px)
-    max(20px, var(--hi-safe-left));
   background: var(--paper);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-
-.hi-view-fill:has(> :only-child) {
-  padding: 0;
 }
 
 .hi-view-fill > :only-child {
@@ -1002,22 +989,9 @@ button:where(:not([data-slot])) {
      worth, and gets out of the way when it has more. See the note above for why this
      is a `min-height` on the root and not a stretched grid track. */
   min-height: 100%;
-  /* The same floor across the width, and it has to be `min-width` — the natural fill
-     of a block box loses to any width the view declared, and what a view declares
-     when it declares one is a card: `width: min(1180px, 96vw)` with a radius and a
-     drop shadow. That held 1180px of a 1512px window and left the rest of the frame
-     as bare paper down the right-hand side. The frame is the view's box (the note
-     above), so a width picked for a card cannot decide how much of the window a view
-     holds; `min-width` is the one property that outranks a declared `width`. */
   min-width: 100%;
-  border-style: solid;
-  border-color: transparent;
-  border-width: var(--hi-safe-top)
-    max(20px, var(--hi-safe-right))
-    calc(var(--hi-safe-bottom) + 76px)
-    max(20px, var(--hi-safe-left));
-  background-origin: border-box !important;
 }
+
 
 /* --- Channel controls ------------------------------------------------- */
 .hi-channels {
@@ -1032,56 +1006,41 @@ button:where(:not([data-slot])) {
   gap: 10px;
 }
 
-/* The cluster is the only way in and out, and it is always standing on paper the
-   agent painted: a view's background fills the whole frame, the reserved bottom
-   band included (`.hi-view-fill > :only-child`, `background-origin: border-box`).
-   So it cannot be dressed for the host's own white page: the disc is filled at
-   `--surface-strong` and ringed in `--chrome-edge`, the one edge colour that
-   changes polarity with the theme so it can cut the disc out of paper of any
-   value — on a light backdrop the dark ring and the contact shadow draw it, on a
-   dark one the light ring does, because there the shadows draw nothing at all.
+/* The cluster is the only way in and out, and nothing is held clear for it: the
+   view runs under it corner to corner (see the view-stage note), so it is standing
+   on paper the agent painted, of a value it cannot know. So it carries its own —
+   the same scrim the caption pills carry, for the same reason. A dark disc with
+   light ink reads on a night-sky poster and on white paper alike; a disc dressed in
+   the theme's own `--surface-strong` reads on exactly the half of views the theme
+   guessed right about, which is how eight controls came to be invisible over a dark
+   view while the stylesheet said they were dressed.
 
-   Until now none of that rendered, and the reason was never in this rule: the
-   bare-button reset three hundred lines up outweighed it (see the note there), so
-   every disc lost its fill and its ring to `background: none` / `border: none`
-   and the cluster was eight glyphs standing on a black shadow. On a light backdrop
-   that shadow was enough to read as buttons, which is why the dressing looked
-   settled; on a dark one there was nothing left to see. The reset weighs nothing
-   now, and that — not the values below, which were already written — is what
-   makes this dressing real rather than merely declared. */
+   The ink is full, not `--fg-dim`: these are 1.6px strokes, where antialiasing costs
+   about a third of the nominal colour, and the cluster is the way in and out — it is
+   quiet by being small and cornered, not by being faint. The ring is what draws the
+   disc when the scrim and the paper behind it are close in value, and the shadows
+   are lift, not edge: on a dark backdrop they draw nothing at all, which is why the
+   ring is not one of them. */
 .hi-channel {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid var(--chrome-edge);
-  background: var(--surface-strong);
+  border: 1px solid var(--scrim-edge);
+  background: var(--scrim-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  /* Full ink, and stated rather than inherited. `--fg-dim` was written here and
-     never applied — the reset's `color: inherit` outranked it, so the glyphs have
-     always drawn in the body's `--fg`. Making the reset weightless would have
-     handed them the dimmer ink for the first time, and dim is wrong for these:
-     they are 1.6px strokes, where antialiasing costs a third of the nominal
-     colour, and the cluster is the only way in and out — it is quiet by being
-     small and cornered, not by being faint. */
-  color: var(--fg);
-  /* Two layers: a tight contact shadow that draws the edge when the disc and the
-     paper behind it are the same value, and the wide soft one for lift. Both are
-     the theme's shadow, so on a dark backdrop they draw nothing at all — that is
-     why the ring above is `--chrome-edge` and turns light in the dark theme
-     rather than staying a hairline. */
+  color: var(--scrim-ink);
   box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
   transition: color 200ms var(--ease), border-color 200ms var(--ease),
     box-shadow 200ms var(--ease);
 }
 
 /* The ink is already full, so hover thickens the edge instead of brightening the
-   glyph — and it does it with the same `--chrome-edge`, which is the one colour
-   here that reads against any paper a view might have painted. */
+   glyph. */
 .hi-channel:hover {
-  box-shadow: 0 0 0 1px var(--chrome-edge), 0 1px 3px var(--shadow-strong),
+  box-shadow: 0 0 0 1px var(--scrim-edge), 0 1px 3px var(--shadow-strong),
     0 8px 24px var(--shadow);
 }
 
@@ -1091,13 +1050,15 @@ button:where(:not([data-slot])) {
 }
 
 .hi-channel:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--scrim-accent);
   outline-offset: 3px;
 }
 
+/* On-state in the scrim's accent, not the theme's: the disc is dark in both skins,
+   and the light skin's terracotta lands near 3:1 on it. */
 .hi-channel.is-on {
-  color: var(--accent);
-  border-color: var(--accent-line);
+  color: var(--scrim-accent);
+  border-color: var(--scrim-accent);
   box-shadow: 0 0 0 1px var(--accent-soft), 0 1px 3px var(--shadow-strong),
     0 8px 24px var(--shadow);
 }
@@ -1117,18 +1078,18 @@ button:where(:not([data-slot])) {
   width: 1px;
   height: 24px;
   margin: 0 2px;
-  background: var(--chrome-edge);
+  background: var(--scrim-edge);
 }
 
 .hi-status-button--starting,
 .hi-status-button--working,
 .hi-status-button--typing,
 .hi-status-button--speaking {
-  color: var(--accent);
+  color: var(--scrim-accent);
 }
 
 .hi-status-button--listening {
-  color: var(--accent-2);
+  color: var(--scrim-accent-2);
 }
 
 .hi-status-glyph {
@@ -1364,12 +1325,6 @@ button:where(:not([data-slot])) {
   .hi-captions .hi-sentence {
     font-size: clamp(14px, 4.4vw, 22px);
   }
-  .hi-view-fill {
-    padding: var(--hi-safe-top) 12px calc(var(--hi-safe-bottom) + 60px) 12px;
-  }
-  .hi-view-fill > :only-child {
-    border-width: var(--hi-safe-top) 12px calc(var(--hi-safe-bottom) + 60px) 12px;
-  }
   .hi-channels {
     right: max(12px, var(--hi-safe-right));
     bottom: max(12px, var(--hi-safe-bottom));
@@ -1397,9 +1352,10 @@ button:where(:not([data-slot])) {
   bottom: calc(max(20px, var(--hi-safe-bottom)) + 58px);
   width: min(720px, calc(100vw - 2 * max(20px, var(--hi-safe-right))));
   pointer-events: auto;
-  /* Chrome over the view, dressed like the cluster it opens from — a 0.12
-     hairline had the band's edge disappearing on a dark view exactly as the
-     discs did. */
+  /* The band keeps the skin's surface rather than the scrim, because it is a panel
+     of the skin's own type and thumbnails — so it needs the edge that flips with the
+     skin. A 0.12 hairline had it disappearing on a dark view exactly as the discs
+     did. */
   border: 1px solid var(--chrome-edge);
   border-radius: 16px;
   background: var(--surface-strong);

@@ -349,11 +349,11 @@ before you hand anything over:
 - **`--fg-dim` and `--fg-mute` are for incidental text.** They are quieter than `--fg`
   on purpose, so substance set in them *and* set small is paying the cost twice.
 - **Whatever was meant to reach an edge reaches it.** Read the screenshot's four edges
-  before you read anything inside them: a band of bare paper around your composition
-  means it stopped where the host's inset starts. The single-image view is where this
-  lands hardest — one photo `contain`ed in the middle, paper above and below — and the
-  cause is almost always an `<img>` in flow, which cannot bleed however you size it. The
-  mechanics below say how.
+  before you read anything inside them: a band of dead ground around your composition
+  means it stopped short, and nothing in the host stops it — the frame is the window.
+  The single-image view is where this lands hardest — one photo in the middle with bands
+  above and below — and the cause is almost always `object-fit: contain` or a width on
+  your root. The mechanics below say how.
 - **The screenshot is the first screen, and only the first screen.** It is taken at the
   frame's size, so whatever your content does below the fold is not in it. If your view
   is taller than the frame, the picture you are judging is the top of it — read it as
@@ -465,8 +465,9 @@ the paper) and `--surface-border`, `--line` / `--line-strong` (borders, and neut
 placeholder fills), `--accent` / `--accent-soft` / `--accent-line` / `--accent-wash`,
 a second accent `--accent-2`, `--danger` / `--danger-line` / `--danger-wash` for
 something destructive, `--shadow` / `--shadow-strong` (colours, not shadow lists),
-`--bg-0` / `--bg-1` (the page ground), `--font-display` / `--font-mono`, and `--ease`
-(the shared easing curve). Reach for one when you want a colour that tracks light/dark. Two
+`--bg-0` / `--bg-1` (the page ground), `--font-display` / `--font-mono`, `--ease`
+(the shared easing curve), and the two chrome tokens `--hi-safe-top` /
+`--hi-chrome-bottom` (clearance you opt into, never taken from you). Reach for one when you want a colour that tracks light/dark. Two
 things to get right: don't invent a name — `var(--card,#fff)` looks like a token and is
 really just a hardcoded white, because `--card` doesn't exist — and don't half-do it: a
 fixed background under `var(--fg)` text is the exact recipe for a view that is legible
@@ -560,28 +561,22 @@ would do with a wall, and this is a wall. Scale the treatment to the content: a 
 content earns structure, a little earns drama. Density is about how much you put on the
 frame — never about how small you set it.
 
-**The screen has edges that aren't yours.** The face runs in a desktop window, and the
-window's own chrome floats over the top of the page: the three system buttons in the
-top-left corner and the title beside them. The bottom band is shared too — the caption
-pills sit bottom-centre and the mic/camera controls hold the bottom-right corner, both
-floating *over* your view.
+**The frame is the window, and nothing is reserved.** Every pixel is yours — ground and
+content alike, corner to corner. Three things float *over* you, each carrying its own
+dark scrim so it stays readable on any view, and none of them takes space away from you:
 
-The host insets your root clear of the titlebar and of the control cluster, so ordinary
-flowed content is clear of *those* for free — and it does it with a transparent border
-on your root rather than by handing you a smaller box, so a background you set on that
-root paints *under* the inset and runs corner to corner anyway. Ground the composition
-however you like: on your flowed root, or pinned with `position: absolute; inset: 0`.
-Either bleeds. What does not is pinning readable *content* with
-`position: absolute/fixed; top: 0` — that escapes the inset and lands under the traffic
-lights; pin that to `var(--hi-safe-top)` instead.
+- the desktop window's system buttons and title, top-left, in the top ~28px;
+- the channel controls, bottom-right, a row of discs about 76px tall;
+- the caption pills, bottom-centre, from roughly 70px up to 200px above the bottom edge.
 
-The caption pills are the one thing no inset holds off you, deliberately: they carry
-their own dark scrim so they stay legible over anything, and reserving room for them
-would cost you a slice of frame on every view whether or not there is anything to
-caption. They dock bottom-centre and rise from roughly 70px up to about 200px above the
-bottom edge, across the middle of the width. So treat that strip as somewhere words
-will land: don't run a line of your own text through it, and don't put the one element
-the whole view is about there. Everything else may pass under it happily.
+So the whole rule is: **don't put the thing the view is about in those three places.**
+Ground, texture and photographs may pass under them happily — that is what they are for.
+
+Two tokens are published for the views that need to be exact about it, and neither costs
+you anything unless you use it: `var(--hi-safe-top)` is the titlebar strip (0 in a plain
+browser tab, the notch on a phone), and `var(--hi-chrome-bottom)` is the strip the control
+discs hold. A poster ignores both. A board or a table wants the second one as
+`padding-bottom`, because a row half under a disc is a lost row rather than texture.
 
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
 leaving an ugly broken box. Instead **download the image into your project folder**
@@ -591,13 +586,9 @@ views tree is served at `/views/<the same relative path>`, so a file you write t
 `badminton-top10/leader.jpg` is `<img src={url("/views/badminton-top10/leader.jpg")}>`.
 That path always loads and keeps your source small.
 
-**A picture that fills the frame is a ground, not an `<img>`.** The host's inset rides on
-your root as a transparent border, so everything *inside* that root starts after it: an
-`<img>` in flow can come close to the edges and can never reach them, and what lands on
-the screen is a rectangle of photo floating in a band of the theme's paper. A picture
-meant to bleed is set as the root's `background`, which paints *under* that border and
-runs corner to corner. The host pins `background-origin: border-box`, so `cover` covers
-the window rather than the inset box inside it:
+**A picture that fills the frame fills it — however you write it.** Nothing is
+reserved, so a photograph reaches all four edges whether you set it as the root's
+`background` or pin an `<img>` over it. Use whichever the composition wants:
 
 ```
 import { url } from "@hi/core";
@@ -606,24 +597,29 @@ export default function AutumnTea() {
     <main style={{
       background: `url(${url("/views/autumn-milk-tea/cup.jpg")}) center / cover no-repeat`,
     }}>
-      … your words, which stay clear of the chrome because they are content …
+      … your words over it …
     </main>
   );
 }
 ```
 
-The host already floors your root at the frame's full height, so that root needs no width
-or height of its own — and don't give it one. `min-height: 100%` is what the host puts
-there and is simply redundant; `height: 100%` is worse than redundant, because it pins the
-root to exactly one frame, and then any content past that spills out of it and off the end
-of your ground. Leave the height alone and the root fills the frame when you have less than
-a frame's worth and grows with you when you have more. This is the shape you want for a
-picture too, because the photo bleeds while the
-type you flow over it stays inset clear of the titlebar and the controls. When you need
-the element rather than the ground — alt text, or motion on the picture itself — an
-`<img>` with `position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover`
-bleeds the same way, because an absolutely positioned child resolves against the host's
-layer instead of against your bordered root.
+The `<img>` form — `position: absolute; inset: 0; width: 100%; height: 100%` — is the
+one to reach for when you need the element itself: alt text, or motion on the picture.
+
+**`cover`, not `contain`.** This is the one that goes wrong. A photograph is almost
+never the frame's aspect, and `contain` fits the whole of it inside the box, which
+leaves bands of dead ground on two sides — the picture that "isn't full bleed" is
+nearly always a `contain`. `cover` crops instead, and a crop is what a full-frame
+picture is. If the image is a *poster* whose edges carry type you cannot crop, then it
+should not be a bitmap at all: compose it in DOM so it reflows to whatever window the
+person has, which is the whole point of building a view rather than shipping a picture.
+
+The host floors your root at the frame in both axes, so that root needs no width or
+height of its own — and don't give it one. `min-height: 100%` is what the host already
+puts there; `height: 100%` is worse than redundant, because it pins the root to exactly
+one frame and any content past that spills off the end of your ground. Leave the height
+alone: the root fills the frame when you have less than a frame's worth and grows with
+you when you have more.
 
 **A path in an attribute goes through `url()`.** `import { url } from "@hi/core"` and
 wrap any path you put in a `src` or an `href` — an image, a download link, a QR. This

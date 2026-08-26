@@ -176,12 +176,14 @@ because nobody else in the loop is looking for it.
   a poster — set large, composed across the frame — not as a lonely sentence in an empty
   field. The single-image version of that is the most common one you will see: one photo
   sitting in the middle with bands of bare paper above and below it. A picture that is
-  the whole view should reach the edges — cropped with intent, or bled as a ground with
-  the uncropped copy standing on it — so paper showing around it is a finding, not a
-  margin, and the cause worth naming is that an `<img>` in normal flow cannot bleed at
-  all. The
-  render reserves the same top strip the desktop window's system buttons and
-  title float in, so anything the view pinned into it anyway shows up here — call it.
+  the whole view should reach the edges, so ground showing around it is a finding, not a
+  margin, and the cause worth naming is almost always `object-fit: contain`, which fits
+  the whole photo inside the box and leaves bands on two sides. Nothing in the host holds
+  a picture off the edge — the frame is the window — so `cover`, or a `background` sized
+  `cover`, is all it takes. What *does* float over the view is chrome carrying its own
+  scrim: the system buttons top-left, the control discs bottom-right, the caption pills
+  bottom-centre. Texture passing under them is fine and intended; the view's headline, a
+  number it is about, or a row of a board sitting under one is a finding — call it.
 - **Does it survive a different window?** They can resize, and the screenshot only
   proves one size. If the layout looks tuned to this exact frame — elements butted right
   up against each other, a row that only just fits, anything absolutely positioned at

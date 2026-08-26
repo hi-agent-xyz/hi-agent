@@ -21,8 +21,8 @@
 //! `--danger` (+ `-line` / `-wash`) for a destructive verb, `--shadow` / `--shadow-strong`
 //! (which are *colours*, not shadow lists), `--bg-0` / `--bg-1` and the ground they make
 //! (`--paper`, which the layer already paints for you), `--font-display` /
-//! `--font-mono`, the shared easing `--ease`, and the frame insets `--hi-safe-top` /
-//! `-right` / `-bottom` / `-left`. Do not invent a name: `var(--card,#fff)`
+//! `--font-mono`, the shared easing `--ease`, and the chrome tokens `--hi-safe-top` /
+//! `-right` / `-bottom` / `-left` and `--hi-chrome-bottom` (opt-in clearance, not insets). Do not invent a name: `var(--card,#fff)`
 //! reads like a token and is really a hardcoded white, which is how named people once went
 //! invisible in dark mode. Mixing the two halves is the trap — a *fixed* palette is fine
 //! and often right for a poster, but then the text colour must be fixed too, or it flips
@@ -82,17 +82,16 @@ const WELCOME_MARK: &str = include_str!("factory/hi-mark.svg");
 const OUT_OF_ENERGY: &str = include_str!("factory/vendor-outage.jsx");
 
 /// The review surfaces: one per kind of thing the agent accumulates. Each owns the full
-/// canvas and provides its own scrolling; the *safe* insets are the host's
-/// (`.hi-view-fill` pads every layer clear of the window chrome and the control cluster),
-/// so a view never reads `--hi-safe-*` itself. The *ground* is the host's too — the layer
-/// paints `--paper` under its own padding, so a themed surface paints no background at
-/// all rather than a flat `--bg-0` that stops at the padding and frames itself in the
-/// paper (a visible border across the titlebar strip and both gutters in dark, where
-/// `--bg-1` and `--bg-0` differ). A fixed-palette poster like `welcome` is the exception
-/// and covers the frame itself by pinning at `inset: 0`. What each one does still reserve is the
-/// bottom strip the caption pills rise through — deliberately unpadded by the host, since
-/// reserving it would cost every view a slice of frame — which is what the 128px of
-/// bottom padding in these files is for, on top of the host's own 76px.
+/// canvas and provides its own scrolling, and each holds its *own* content clear of the
+/// window chrome: the host reserves nothing any more (`.hi-view-fill`), so these read
+/// `--hi-safe-top` for the titlebar strip or a phone's notch and `--hi-chrome-bottom`
+/// where a row must not sit under the control discs. The *ground* is still the host's —
+/// the layer paints `--paper` behind every view — so a themed surface paints no
+/// background at all rather than a flat `--bg-0` that stops where its own padding does
+/// and frames itself in paper it doesn't match (a visible border in dark, where `--bg-1`
+/// and `--bg-0` differ). A fixed-palette poster like `welcome` covers the frame itself by
+/// pinning at `inset: 0`. The 128px of bottom padding in these files is the strip the
+/// caption pills rise through, which nothing has ever reserved and nothing should.
 ///
 /// They are siblings of `people-review`, and they exist for the same reason it does — the
 /// agent's own state was only inspectable by reading files over its shoulder, so nothing

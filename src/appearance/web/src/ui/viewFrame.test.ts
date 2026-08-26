@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The frame a view is handed is fixed in both axes — it is the window minus the
-// insets, and the window does not grow (docs/arch/stage.md, "The frame is fixed,
+// The frame a view is handed is fixed in both axes — it *is* the window, nothing
+// subtracted, and the window does not grow (docs/arch/stage.md, "The frame is fixed,
 // and overflow scrolls"). So the layer has to say where a too-tall view goes, and
 // the failure this guards is exactly the one that shipped: it said nothing, the
 // only clipping ancestor was `.hi-root { overflow: hidden }`, and everything past
@@ -43,7 +43,20 @@ describe("the view frame", () => {
   // while the content scrolled on past them.
   it("floors the view's root at the frame without capping it", () => {
     expect(block(".hi-view-fill > :only-child")).toMatch(/min-height:\s*100%\s*;/);
-    expect(block(".hi-view-fill:has(> :only-child)")).not.toMatch(/grid-template-rows/);
+    expect(block(".hi-view-fill > :only-child")).not.toMatch(/grid-template-rows/);
+  });
+
+  // Nothing is reserved for host chrome any more: the cluster, the pills and the band
+  // float on the `cover` plane carrying their own ground, and the view runs under them
+  // corner to corner. The regression this guards is the return of an inset — as padding
+  // here or as a transparent border on the root — because either one re-creates the rule
+  // it cost a model to delete: that a view's *content* cannot reach the edge, so a
+  // picture meant to fill the window has to be written as a background.
+  it("reserves nothing — the frame is the window", () => {
+    expect(block(".hi-view-fill")).not.toMatch(/padding/);
+    const root = block(".hi-view-fill > :only-child");
+    expect(root).not.toMatch(/border-width/);
+    expect(root).not.toMatch(/border-style/);
   });
 
   // The width had no floor at all, on the assumption that a block box fills its parent
