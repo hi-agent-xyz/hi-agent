@@ -522,3 +522,81 @@ async fn a_posted_window_frame_becomes_the_review_viewport() {
     assert_eq!(resp.status(), 400);
     assert_eq!(view_render::stage_frame().width, 1728, "the last good frame survives");
 }
+
+/// The file a task's own record names is reachable from the panel that renders it.
+///
+/// The gap this closes was on screen: a `done` row whose account read *"the completed
+/// report is `inspection-report.md` in this task directory"*, with no way to open it from
+/// the panel — the reader was told where the answer lived and handed nothing.
+#[tokio::test]
+async fn a_task_serves_the_files_its_own_record_names() {
+    let (base, dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let mut task = hi_agent::mind::memory::tasks::Task::new(
+        "Inspect gz-02 /data disk usage",
+        hi_agent::mind::memory::tasks::TaskStatus::Done,
+    );
+    task.body = "The completed report is `inspection-report.md` in this task directory. \
+                 `hi_say` carried the headline."
+        .into();
+    hi_agent::mind::memory::tasks::write_task(dir.path(), &task)
+        .await
+        .expect("write task");
+    let folder = dir
+        .path()
+        .join("memory/facets/tasks")
+        .join(&task.subject);
+    std::fs::write(folder.join("inspection-report.md"), "# /data at 90%\n").expect("write report");
+    // The one thing on disk that the record does not name stays where it is: the panel
+    // shows the account's own references, not a listing of the working folder.
+    std::fs::write(folder.join("scratch.log"), "noise").expect("write scratch");
+
+    let listed: serde_json::Value = client
+        .get(format!("{base}/api/tasks"))
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    let row = listed["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|row| row["subject"] == serde_json::Value::String(task.subject.clone()))
+        .expect("the task is in the list");
+    assert_eq!(row["files"][0]["path"], "inspection-report.md");
+    assert_eq!(row["files"][0]["bytes"], 15);
+    assert_eq!(row["files"].as_array().expect("files").len(), 1, "only what it names");
+
+    let resp = client
+        .get(format!(
+            "{base}/api/tasks/{}/files/inspection-report.md",
+            task.subject
+        ))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/plain; charset=utf-8"),
+        "a report opens in the browser rather than downloading",
+    );
+    assert_eq!(resp.text().await.expect("body"), "# /data at 90%\n");
+
+    // Every segment of that path came from an agent, so the route refuses to leave the
+    // folder however the request is spelled.
+    let resp = client
+        .get(format!(
+            "{base}/api/tasks/{}/files/..%2F..%2F..%2Fconfig.db",
+            task.subject
+        ))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), 404, "no climbing out of the task's folder");
+}

@@ -42,7 +42,7 @@ use crate::foundation::server::AppState;
 // guard too many — the copy that gets a fix is never reliably the copy in the path
 // under attack.
 
-use crate::mind::memory::media::{drive_root as drive_dir, resolve_in_drive};
+use crate::mind::memory::media::{content_type, drive_root as drive_dir, ext_of, resolve_in_drive};
 
 #[cfg(test)]
 use crate::mind::memory::media::{resolve_in_root, safe_rel_path};
@@ -57,16 +57,6 @@ fn rfc3339(t: SystemTime) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
         .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).expect("unix epoch is valid"))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-/// Lowercase extension without the dot; `""` for directories and extensionless files.
-/// The view keys its icons off this, so it must never carry the dot or a case.
-fn ext_of(name: &str) -> String {
-    std::path::Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .unwrap_or_default()
 }
 
 // ── list ──────────────────────────────────────────────────────────────────────
@@ -162,43 +152,11 @@ pub async fn get_drive_file(
     };
     let mut resp = Response::new(Body::from(bytes));
     resp.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(drive_content_type(&path)));
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type(&path)));
     // Drive files are edited in place under a stable path, so a cached copy would go
     // stale silently.
     resp.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     resp
-}
-
-/// Best-effort `Content-Type` by extension — same shape as
-/// [`crate::foundation::server::people`]'s clip helper, widened to what a Documents
-/// folder actually holds. Unknown types download rather than render.
-fn drive_content_type(path: &str) -> &'static str {
-    match ext_of(path).as_str() {
-        "pdf" => "application/pdf",
-        "md" | "markdown" | "txt" | "log" | "csv" | "jsonl" => "text/plain; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "html" | "htm" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" | "mjs" => "application/javascript; charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "heic" => "image/heic",
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "m4a" => "audio/mp4",
-        "ogg" | "opus" => "audio/ogg",
-        "zip" => "application/zip",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        _ => "application/octet-stream",
-    }
 }
 
 /// A uniform JSON error body with a 400.
@@ -233,9 +191,9 @@ mod tests {
         assert_eq!(ext_of("contract.PDF"), "pdf");
         assert_eq!(ext_of("archive.tar.gz"), "gz");
         assert_eq!(ext_of("Makefile"), "");
-        assert_eq!(drive_content_type("projects/lease/contract.pdf"), "application/pdf");
-        assert_eq!(drive_content_type("notes/facedet.md"), "text/plain; charset=utf-8");
-        assert_eq!(drive_content_type("notes/x.unknown"), "application/octet-stream");
+        assert_eq!(content_type("projects/lease/contract.pdf"), "application/pdf");
+        assert_eq!(content_type("notes/facedet.md"), "text/plain; charset=utf-8");
+        assert_eq!(content_type("notes/x.unknown"), "application/octet-stream");
     }
 
     #[tokio::test]

@@ -408,15 +408,31 @@ mod tests {
             tasks.contains("{inline(moment.text,"),
             "the timeline must render through the inline vocabulary, or its URLs stay text"
         );
-        // Autolink only. One `href` in the whole view, fed by the autolinker, whose anchor
-        // text is the same binding as its destination — so text a session wrote can name a
-        // place and go somewhere else only by first growing a second link site here.
+        // **Two link sites, and each one's anchor text *is* its destination.** That is the
+        // property, and the count is only how it is held: a third site cannot appear without
+        // failing here and having to say why it is self-naming too. The autolinker's anchor
+        // is `{url}` going to `{url}`. The file link's is the code span the record wrote
+        // going to that same token under the task's own folder — `linkFile` builds the path
+        // out of the token and the server only answers for a regular file that resolves
+        // inside the folder, so the worst it can do is open the file it plainly names.
+        //
+        // What neither can be is a *label*: text a session wrote naming one destination and
+        // going to another. That is the reach being refused, and it needs a link site whose
+        // text and href are separate bindings — which is what this count notices.
         assert_eq!(
             tasks.matches("href={").count(),
-            1,
-            "the autolinker must be the only thing in the panel that produces a link"
+            2,
+            "a link in this panel is the autolinker's or the record's own filename, and nothing else"
         );
         assert!(tasks.contains("href={url}") && tasks.contains("{url}\n      </a>"));
+        assert!(
+            tasks.contains("href={href}") && tasks.contains("<code>{token}</code>"),
+            "the file link's anchor text is the token it opens"
+        );
+        assert!(
+            tasks.contains("/files/${token"),
+            "and its destination is built from that token, never from a separate binding"
+        );
     }
 
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint

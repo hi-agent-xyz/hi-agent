@@ -212,6 +212,51 @@ pub async fn resolve_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
     tokio::fs::metadata(&full).await.ok()?.is_file().then_some(full)
 }
 
+/// Lowercase extension without the dot; `""` for directories and extensionless files.
+/// The drive view keys its icons off this, so it must never carry the dot or a case.
+pub fn ext_of(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// Best-effort `Content-Type` by extension, for the trees whose bytes a surface serves
+/// verbatim — `drive/` and a task's own folder. Unknown types download rather than render.
+///
+/// It lives beside the path guards for the same reason they do: both trees are served by
+/// more than one route now, and a table that gets a new extension in one copy and not the
+/// other is a file that renders in one place and downloads in another.
+pub fn content_type(path: &str) -> &'static str {
+    match ext_of(path).as_str() {
+        "pdf" => "application/pdf",
+        "md" | "markdown" | "txt" | "log" | "csv" | "jsonl" => "text/plain; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "heic" => "image/heic",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "ogg" | "opus" => "audio/ogg",
+        "zip" => "application/zip",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Persist an artifact the agent produced — a generated image, a rendered clip — under
 /// `drive/generated/<day>/<HHMMSS>-<slug>.<ext>`, and return the [`drive_ref`] that
 /// addresses it.

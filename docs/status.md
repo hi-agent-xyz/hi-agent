@@ -248,9 +248,10 @@ by `write_task` updating `LAST_SEEN`. Nothing is backfilled: a record predating 
 gets a history starting at its next transition.
 
 The panel was rebuilt around it (`views/factory/tasks.jsx`): `asked` pinned at the top,
-the record newest-first, the long prose folded behind a disclosure, and the latest line on
-each card. That last part is why this was worth doing — median live body is 3.2 KB and the
-largest is 48 KB, all of it previously dumped into one `<div>`.
+the record newest-first, the long prose behind a disclosure, and the latest line on each
+card. That last part is why this was worth doing — median live body is 3.2 KB and the
+largest is 48 KB, all of it previously dumped into one `<div>`. (The disclosure is gone
+again as of 2026-08-26, below — it was hiding the answer.)
 
 **Watched, 2026-08-24, against a copy of the live 101-record store**: the first pass
 rewrote **0** records (the store is already canonical, so the schema costs nothing to
@@ -348,6 +349,40 @@ and nothing should until the writer's identity is available. And a version writt
 replaced between two passes was never observed, so the exposure window is one brain turn
 rather than zero — it is not zero, and no cheap mechanism makes it zero. Only files directly
 in a subject directory are covered; a nested deliverable is not.
+
+**The answer was in the record and folded shut — 2026-08-26.** A `done` row was opened a day
+after it closed: `Inspect gz-02 /data disk usage`. The panel showed what was asked, then
+`note — ledger correction`, `checked — 5,624 bytes with SHA-256 …`, `landed`, `asked`. All
+true, all housekeeping. The one paragraph saying **90% used, 72.6 GiB free, a Podman
+`knq-vision-gateway` recording growing at 36.6 GiB/day, confirm before stopping it** was in the
+body, collapsed under *Full notes* below the whole timeline — so the reader was told the errand
+had been checked, not what it found, and the answer only existed anywhere they would look in the
+conversation, which scrolls away. The record was never the problem: it carried the outcome, and
+in a count of one live store every closed row does.
+
+So the account comes out of the fold and sits above the timeline, headed *What came of it* on a
+closed row and *Where it stands* on an open one. It is clamped to 22em with the rest one click
+under it — the reason for the fold was real, and the fix for a 48 KB body is a clamp, not
+concealment. **The clamp is unconditional while collapsed**: the first cut hung the `max-height`
+on measuring overflow, and unclamped `scrollHeight` equals `clientHeight`, so nothing ever
+measured as too long and the whole account rendered — caught in a render, not in a test, which is
+the only place it was visible.
+
+**And a name the record wrote is now the file it names.** *"The completed report is
+`inspection-report.md` in this task directory"* was a pointer the one person reading it could not
+follow. `GET /api/tasks/{subject}/files/{*path}` serves a task's own folder, guarded exactly as
+`drive/` is (`safe_rel_path`, then canonicalised containment), and `TaskDto.files` lists the
+inline-code tokens the prose and the timeline spell **that are really on disk** — the account's
+own references, resolved. Not a listing of the folder, deliberately: that store holds 39,946
+files under `tasks/`, cloned repos and `__pycache__` included, and one task's top level alone
+holds 114. Two listings would mean one of them is wrong and no way to tell which.
+
+**Watched, 2026-08-26, headless-rendered against copies of two real records.** The gz-02 row:
+the whole outcome paragraph visible without a click, `inspection-report.md` a link in both the
+account and the `checked` line, the timeline still on screen. A 10.8 KB body
+(`kut-gz-gpu-deployment-planning`): clamped with the fade, *Show everything*, `What has
+happened` still above the fold. Not watched: the link followed in the real app, and the account
+of a row nobody has written prose into.
 
 **And one floor that is not a step, recorded so it stops reading as an oversight.**
 `checked_at` — the one liveness field code reads — can only ever be written by a mind. A

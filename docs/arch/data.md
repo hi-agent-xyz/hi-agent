@@ -477,6 +477,24 @@ only true if it was written where they can see it. The road not taken is the one
 section already refused twice: a field an agent must fill for the gate to work is
 *silently* absent when it forgets, which looks exactly like a clean delivery.
 
+**The account is what a closed row is opened for, so it is not behind a fold.** The prose above
+the heading is where a task says how it went; the dated lines are the spine, and a spine is not
+an answer. A person coming back to their own errand a week later wants *what came of it* — and
+`asked` pinned above a reverse-chronological list of `checked` and `moved` lines answers every
+question except that one. So the account renders in the panel, above the record, clamped to a
+screenful with the rest one click under it. Bodies run to tens of kilobytes and that is the
+reason for the clamp; it was never a reason for concealment.
+
+**A record indexes its own artifacts, and nothing else does.** A task's folder is where the work
+happened — one live store holds 39,946 files under `tasks/`, and a single task's top level holds
+114 — so listing it shows the workshop floor to somebody who asked what was made. What is
+authoritative is the file the prose *names*: *"the completed report is `inspection-report.md` in
+this task directory"*. The surface therefore resolves the record's own inline-code tokens against
+the folder and makes the ones that exist openable, rather than growing a second listing beside
+the record. It is the rule this section runs on everywhere else — two listings mean one of them
+is wrong and no way to tell which — and it costs a writer nothing it was not already doing: the
+name is written in the sentence that explains it, or it is not indexed.
+
 **What is deliberately not done with it.** The record does not go into the agent's window.
 The projection is capped and finite, and the last line of every task is a thing to read
 when you look, not a thing to be told — the same test that keeps a worker's activity tail

@@ -16,7 +16,7 @@
 // gesture the layout already promises. It is never the *only* way: HTML5 drag does not
 // exist on touch and cannot be driven from a keyboard, so every card keeps its buttons
 // and the drag is the shortcut on top of them.
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -83,7 +83,12 @@ const T = {
     assumed: "assumed, never confirmed",
     timeline: "What has happened",
     noTimeline: "Nothing recorded yet.",
-    fullNotes: "Full notes",
+    // One field, two questions, because the reader arrives with a different one
+    // depending on whether the row is still owed.
+    accountOpen: "Where it stands",
+    accountClosed: "What came of it",
+    showAll: "Show everything",
+    showLess: "Show less",
     moment: {
       asked: "asked",
       landed: "landed",
@@ -163,7 +168,10 @@ const T = {
     assumed: "推断的，未经确认",
     timeline: "发生了什么",
     noTimeline: "还没有记录。",
-    fullNotes: "完整记录",
+    accountOpen: "进展如何",
+    accountClosed: "结果如何",
+    showAll: "展开全部",
+    showLess: "收起",
     moment: {
       asked: "要求",
       landed: "交付",
@@ -499,7 +507,7 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
             style={{ "--moment": MOMENT_TONE[latest.kind] || "var(--fg-mute)" }}
           >
             <span className="hi-tasks__moment-kind">{L.moment[latest.kind] || latest.kind}</span>
-            <span className="hi-tasks__card-latest-text">{latest.text}</span>
+            <span className="hi-tasks__card-latest-text">{inline(latest.text, "latest")}</span>
           </span>
         )}
         {who && (
@@ -543,6 +551,20 @@ function Detail({ task, busy, onStatus, onClose }) {
   // It is a **reading, not a gate** — nothing here waits on it and no task is held open
   // against it; showing it is what makes a wrong reading cheap to correct in one sentence.
   const asked = (task.timeline || []).find((moment) => moment.kind === "asked");
+  // A record spells its artifacts in inline code — *"the completed report is
+  // `inspection-report.md` in this task directory"* — and that was a pointer the one
+  // person reading it could not follow. The server says which of those names are really
+  // on disk; this turns each one into the file itself, wherever the record says it.
+  const linkFile = useCallback(
+    (token) =>
+      (task.files || []).some((file) => file.path === token)
+        ? `/api/tasks/${encodeURIComponent(task.subject)}/files/${token
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/")}`
+        : null,
+    [task.subject, task.files],
+  );
   // Newest first. The file appends, because that is what a writer with a shell can do
   // safely; a reader catching up wants the opposite order.
   const moments = [...(task.timeline || [])].reverse();
@@ -616,7 +638,7 @@ function Detail({ task, busy, onStatus, onClose }) {
           {asked && (
             <div className="hi-tasks__asked">
               <div className="hi-tasks__asked-title">{L.asked}</div>
-              <div className="hi-tasks__asked-text">{asked.text}</div>
+              <div className="hi-tasks__asked-text">{inline(asked.text, "asked", linkFile)}</div>
             </div>
           )}
 
@@ -627,6 +649,18 @@ function Detail({ task, busy, onStatus, onClose }) {
               {who.detail && <div className="hi-tasks__who-detail">{who.detail}</div>}
             </div>
           )}
+
+          {task.body && task.body.trim() ? (
+            <Account
+              text={task.body}
+              link={linkFile}
+              label={
+                task.status === "done" || task.status === "cancelled"
+                  ? L.accountClosed
+                  : L.accountOpen
+              }
+            />
+          ) : null}
 
           <div className="hi-tasks__moments-title">{L.timeline}</div>
           {moments.length === 0 ? (
@@ -648,19 +682,12 @@ function Detail({ task, busy, onStatus, onClose }) {
                     )}
                   </span>
                   <span className="hi-tasks__moment-text">
-                    {inline(moment.text, `m${index}`)}
+                    {inline(moment.text, `m${index}`, linkFile)}
                   </span>
                 </li>
               ))}
             </ol>
           )}
-
-          {task.body ? (
-            <details className="hi-tasks__notes">
-              <summary>{L.fullNotes}</summary>
-              <Prose text={task.body} />
-            </details>
-          ) : null}
 
           {(rest.length > 0 || task.extraDropped > 0) && (
             <details className="hi-tasks__notes hi-tasks__fields">
@@ -1011,7 +1038,12 @@ function linked(text, keyBase) {
 
 // Code spans are the one run left alone: a URL somebody deliberately fenced is being shown
 // as a literal, and the panel is full of `start_key`-shaped strings that are not addresses.
-function inline(text, keyBase) {
+//
+// `link` is the other half of that: optional, and it resolves a code span to a file the task
+// actually has, so a name the record wrote becomes the file it names. It is given the token
+// verbatim and answers `null` for everything else, which is nearly everything — these bodies
+// spell `hi_say`, `status_since` and a SHA-256 the same way they spell a filename.
+function inline(text, keyBase, link) {
   const out = [];
   let i = 0;
   for (const part of String(text).split(INLINE)) {
@@ -1020,7 +1052,17 @@ function inline(text, keyBase) {
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
       out.push(<strong key={key}>{linked(part.slice(2, -2), key)}</strong>);
     } else if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
-      out.push(<code key={key}>{part.slice(1, -1)}</code>);
+      const token = part.slice(1, -1);
+      const href = link ? link(token) : null;
+      out.push(
+        href ? (
+          <a key={key} className="hi-tasks__file" href={href} target="_blank" rel="noreferrer">
+            <code>{token}</code>
+          </a>
+        ) : (
+          <code key={key}>{token}</code>
+        ),
+      );
     } else if (part.length > 2 && part.startsWith("*") && part.endsWith("*")) {
       out.push(<em key={key}>{linked(part.slice(1, -1), key)}</em>);
     } else {
@@ -1080,14 +1122,14 @@ function blocks(text) {
   return out;
 }
 
-function Prose({ text }) {
+function Prose({ text, link }) {
   return (
     <div className="hi-tasks__prose">
       {blocks(text).map((block, i) => {
         if (block.kind === "h") {
           return (
             <div key={i} className="hi-tasks__prose-h" data-depth={Math.min(block.depth, 3)}>
-              {inline(block.text, i)}
+              {inline(block.text, i, link)}
             </div>
           );
         }
@@ -1095,17 +1137,70 @@ function Prose({ text }) {
           return (
             <ul key={i} className="hi-tasks__prose-ul">
               {block.items.map((item, j) => (
-                <li key={j}>{inline(item, `${i}-${j}`)}</li>
+                <li key={j}>{inline(item, `${i}-${j}`, link)}</li>
               ))}
             </ul>
           );
         }
         return (
           <p key={i} className="hi-tasks__prose-p">
-            {inline(block.text, i)}
+            {inline(block.text, i, link)}
           </p>
         );
       })}
+    </div>
+  );
+}
+
+// The account, in the panel rather than behind a fold.
+//
+// It was a `<details>` under the timeline, and what that hid was the answer: a report went
+// back in conversation, the row closed, and the one paragraph saying what was found — 90%
+// used, this writer, this much a day — sat collapsed below a reverse-chronological list of
+// housekeeping. Somebody coming back to their own errand a week later opened the panel and
+// saw that it had been checked, not what it said. A fold is the right shape for a
+// reference; it is the wrong shape for the thing the reader came for.
+//
+// **Clamped, not truncated.** The reason for the fold was real — the live store's median
+// body is 3.2 KB and its largest 48 KB, and unfolding that on top of the timeline buries
+// it just as thoroughly. So the first screenful reads by itself and the rest is one click
+// away, and the button only exists when there is something under it: measured, because a
+// guess from character count is wrong in both directions on prose this varied.
+function Account({ text, link, label }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const box = useRef(null);
+
+  // The clamp is unconditional while collapsed, and the measurement only decides whether
+  // there is a button. Hanging the clamp itself on the measurement is the bug this
+  // comment exists to stop coming back: unclamped, `scrollHeight` equals `clientHeight`,
+  // so nothing ever reads as too long and a 48 KB account renders whole.
+  useLayoutEffect(() => {
+    if (expanded) return;
+    const el = box.current;
+    if (el) setOverflows(el.scrollHeight - el.clientHeight > 4);
+  }, [text, expanded]);
+
+  return (
+    <div className="hi-tasks__account">
+      <div className="hi-tasks__moments-title">{label}</div>
+      <div
+        ref={box}
+        className="hi-tasks__account-body"
+        data-clamped={expanded ? undefined : "true"}
+        data-fade={!expanded && overflows ? "true" : undefined}
+      >
+        <Prose text={text} link={link} />
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          className="hi-tasks__more"
+          onClick={() => setExpanded((was) => !was)}
+        >
+          {expanded ? L.showLess : L.showAll}
+        </button>
+      )}
     </div>
   );
 }
@@ -1769,28 +1864,65 @@ const CSS = `
     overflow-wrap: anywhere;
   }
 
-  /* The long account is still here and still whole — just not the first thing between a
-     person and what happened. Live bodies run to tens of kilobytes of working notes. */
-  .hi-tasks__notes {
-    margin-top: 14px;
-    border-top: 1px solid var(--line);
-    padding-top: 10px;
+  /* The account sits above the timeline and reads without being asked for. Clamped to a
+     screenful, with the rest one click down: whole, but never the wall the fold was
+     hiding. The fade is drawn on the box, so it lands on whatever the last visible line
+     happens to be. */
+  .hi-tasks__account {
+    margin-bottom: 18px;
   }
 
-  .hi-tasks__notes > summary {
+  .hi-tasks__account-body {
+    position: relative;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .hi-tasks__account-body[data-clamped="true"] {
+    /* A screenful of account, and the timeline still on screen under it. Taller and the
+       spine goes back below the fold, which is the shape this was fixing. */
+    max-height: 22em;
+    overflow: hidden;
+  }
+
+  .hi-tasks__account-body[data-fade="true"]::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 4.5em;
+    background: linear-gradient(to bottom, transparent, var(--bg-0));
+    pointer-events: none;
+  }
+
+  .hi-tasks__more {
+    margin-top: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
     cursor: pointer;
-    color: var(--fg-dim);
+    color: var(--accent-2);
+    font: inherit;
     font-size: 11.5px;
     font-weight: 750;
   }
 
-  .hi-tasks__notes > summary:focus-visible {
+  .hi-tasks__more:focus-visible {
     outline: 3px solid var(--accent-soft);
     outline-offset: 2px;
   }
 
-  .hi-tasks__notes .hi-tasks__prose {
-    margin-top: 9px;
+  /* A name the record wrote that turned out to be a file it has. It stays typographically
+     the code span it was — the sentence is unchanged — and only gains the underline that
+     says it opens. */
+  .hi-tasks__file {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--accent-2);
+    text-underline-offset: 2px;
+  }
+
+  .hi-tasks__file:hover code {
+    color: var(--accent-2);
   }
 
   .hi-tasks__prose,

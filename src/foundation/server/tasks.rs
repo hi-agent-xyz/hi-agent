@@ -3,18 +3,24 @@
 //! `GET /api/tasks` returns every task across the five lifecycle statuses.
 //! `PATCH /api/tasks/{subject}` changes `status` or `title`. Status transitions stamp
 //! `completed_at` and `cancelled_at` automatically and clear them when reopened.
+//! `GET /api/tasks/{subject}/files/{*path}` serves one file out of a task's own folder.
 
+use std::path::Path as FsPath;
 use std::sync::Arc;
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::foundation::server::AppState;
 use crate::mind::memory::facets;
+use crate::mind::memory::media::{content_type, ext_of, resolve_in_root, safe_rel_path};
 use crate::mind::memory::snapshot;
 use crate::mind::memory::tasks::{self, OnIt, Task, TaskStatus, TimelineEntry};
 
@@ -41,6 +47,9 @@ struct TaskDto {
     /// `body` is the long prose behind it.
     timeline: Vec<MomentDto>,
     body: String,
+    /// The artifacts the record itself points at, that are actually on disk beside the
+    /// `facet.md` — see [`referenced_files`].
+    files: Vec<FileDto>,
     malformed: bool,
     /// Frontmatter this schema does not know, in the file's order — `systems:`, `report_to:`,
     /// and the dated note keys the agent keeps its own ledger in. The store preserves them
@@ -59,6 +68,16 @@ struct TaskDto {
     /// **`null` is not "fine"** — on a `doing` row it is the alarm, and the panel says so
     /// there; on a `todo` or a duty it is the ordinary state and the panel says nothing.
     on_it: Option<OnItDto>,
+}
+
+/// One file in the task's own folder, addressed the way the record spells it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileDto {
+    /// Verbatim as the record writes it, so the panel can match the token it is about to
+    /// render against this list without normalising anything.
+    path: String,
+    bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -255,7 +274,7 @@ fn rfc3339(time: DateTime<Utc>) -> String {
     time.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
+fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>, files: Vec<FileDto>) -> TaskDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     TaskDto {
         subject: task.subject.clone(),
@@ -279,11 +298,95 @@ fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
         },
         timeline: task.timeline.iter().map(moment).collect(),
         body: task.body.clone(),
+        files,
         malformed,
         extra,
         extra_dropped,
         on_it: self::on_it(on_it),
     }
+}
+
+/// The files a task's own record points at, that are on disk in its folder.
+///
+/// **Not a listing of the folder, deliberately.** A task folder is where the work
+/// happened, not a shelf of deliverables: one live store holds 39,946 files under
+/// `tasks/` — cloned repos, `__pycache__`, scraped HTML — and a single task's *top level*
+/// holds 114. Listing that is showing somebody the workshop floor when they asked what
+/// was made. What they came back for is the file the account names — *"the completed
+/// report is `inspection-report.md` in this task directory"* — and until that sentence is
+/// reachable, the panel is pointing at something the reader cannot open.
+///
+/// So the record stays the authority and this only makes its own references resolvable:
+/// every inline-code token the prose or the timeline spells, kept when a regular file of
+/// that name is really there. A record naming a file it never wrote lists nothing; a file
+/// nobody wrote down stays where it is, which is the same rule the ledger runs on
+/// everywhere else — two listings would mean one of them is wrong and no way to tell
+/// which.
+async fn referenced_files(data_dir: &FsPath, task: &Task) -> Vec<FileDto> {
+    let mut candidates: Vec<String> = Vec::new();
+    code_spans(&task.body, &mut candidates);
+    for entry in &task.timeline {
+        code_spans(&entry.text, &mut candidates);
+    }
+    candidates.retain(|token| names_a_file(token));
+    candidates.sort();
+    candidates.dedup();
+    // A body is a few KB of prose and carries a handful of these; the cap is a backstop
+    // against a record that pasted a directory listing into itself, not a policy. It
+    // bounds the stats per task, and what it drops is reported in the log rather than
+    // silently vanishing from the panel.
+    const MAX_CANDIDATES: usize = 32;
+    if candidates.len() > MAX_CANDIDATES {
+        tracing::debug!(
+            subject = %task.subject,
+            named = candidates.len(),
+            "task names more files than the panel resolves; keeping the first {MAX_CANDIDATES}"
+        );
+        candidates.truncate(MAX_CANDIDATES);
+    }
+
+    let dir = facets::subject_dir(data_dir, tasks::DIMENSION, &task.subject);
+    let mut files = Vec::new();
+    for path in candidates {
+        let Some(full) = resolve_in_root(&dir, &path).await else {
+            continue;
+        };
+        let bytes = tokio::fs::metadata(&full).await.map_or(0, |meta| meta.len());
+        files.push(FileDto { path, bytes });
+    }
+    files
+}
+
+/// Every ``` `…` ``` span in `text`, appended to `out`. Markdown's inline code is what
+/// both prompts tell every writer to spell a filename in, and it is the only marker in
+/// these bodies that means "this is a name, not a word".
+fn code_spans(text: &str, out: &mut Vec<String>) {
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('`') else {
+            return;
+        };
+        out.push(after[..close].to_owned());
+        rest = &after[close + 1..];
+    }
+}
+
+/// Whether a code span could be a file in the task's folder — before asking the disk.
+///
+/// These bodies are mostly made of things spelled the same way that are not files:
+/// `status_since`, `hi_say`, a SHA-256, a shell line. Requiring an extension and rejecting
+/// whitespace keeps the stat count down; `facet.md` is excluded because it is the panel
+/// the reader is already looking at. Everything past this is decided by whether the file
+/// is actually there.
+fn names_a_file(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 200
+        && !token.contains(char::is_whitespace)
+        && safe_rel_path(token)
+        && !ext_of(token).is_empty()
+        && token != facets::FACET_FILE
+        && !token.split('/').any(|seg| seg.starts_with('.'))
 }
 
 /// Todo, doing, serving, done, cancelled. Work uses due order; duties put the ones least
@@ -408,7 +511,8 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> Response {
             _ => (unreadable(subject), true),
         };
         let on_it = working.get(&task.subject);
-        rows.push((sort_key(&task), dto(&task, malformed, on_it)));
+        let files = referenced_files(dir, &task).await;
+        rows.push((sort_key(&task), dto(&task, malformed, on_it, files)));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -469,7 +573,44 @@ pub async fn patch_task(
     }
     let working = snapshot::working_on_tasks();
     let on_it = working.get(&task.subject);
-    Json(serde_json::json!({ "ok": true, "task": dto(&task, false, on_it) })).into_response()
+    let files = referenced_files(&state.data_dir, &task).await;
+    Json(serde_json::json!({ "ok": true, "task": dto(&task, false, on_it, files) })).into_response()
+}
+
+/// One file out of a task's own folder, by the path the record spells.
+///
+/// Guarded exactly as `drive/` is, and for the same reason: every segment of both the
+/// subject and the path came from an agent. [`facets::slug`] settles the subject,
+/// [`resolve_in_root`] settles the rest — a syntactic pass that stops `..`, then a
+/// canonicalised containment check that also defeats a symlink inside the folder pointing
+/// at somebody's `~/.ssh`.
+///
+/// Read-only. A task's folder is written by the sessions doing the work, and a write verb
+/// here would be a second writer on files two of them are already sharing.
+pub async fn get_task_file(
+    State(state): State<Arc<AppState>>,
+    Path((subject, path)): Path<(String, String)>,
+) -> Response {
+    let subject = facets::slug(&subject);
+    if subject.is_empty() {
+        return not_found("no such task");
+    }
+    let dir = facets::subject_dir(&state.data_dir, tasks::DIMENSION, &subject);
+    let Some(full) = resolve_in_root(&dir, &path).await else {
+        return not_found("no such file");
+    };
+    let Ok(bytes) = tokio::fs::read(&full).await else {
+        return not_found("no such file");
+    };
+    let mut resp = Response::new(Body::from(bytes));
+    resp.headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type(&path)));
+    // The deliverable in a task folder is advanced in place — `general.md` asks a worker
+    // to keep one file that is always the current best version — so a cached copy is a
+    // reader looking at an older draft with nothing to tell them so.
+    resp.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
 }
 
 fn err(message: &str) -> Response {
@@ -516,7 +657,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&got, false, None, Vec::new())).unwrap();
         assert_eq!(value["status"], "serving");
         assert_eq!(value["createdAt"], "2026-08-01T09:00:00Z");
         assert_eq!(value["statusSince"], "2026-08-02T09:00:00Z");
@@ -529,7 +670,7 @@ mod tests {
     }
 
     /// The seam the panel is built on: prose and running record reach it as two things,
-    /// so the record can be rendered as lines and the prose folded away behind them.
+    /// so the record renders as dated lines and the account as the prose above them.
     #[tokio::test]
     async fn dto_carries_the_running_record_apart_from_the_prose() {
         let dir = tempfile::tempdir().unwrap();
@@ -549,7 +690,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&got, false, None, Vec::new())).unwrap();
         assert_eq!(value["body"], "The long account, written whole.");
         assert_eq!(value["timeline"][0]["kind"], "asked");
         assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
@@ -565,7 +706,7 @@ mod tests {
     #[test]
     fn a_task_with_no_running_record_serves_an_empty_list() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(value["timeline"], serde_json::json!([]));
     }
 
@@ -581,7 +722,7 @@ mod tests {
             since: at(3, 9),
             last_turn: None,
         });
-        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Some(&entry), Vec::new())).unwrap();
         assert_eq!(value["onIt"]["state"], "live");
         assert_eq!(value["onIt"]["session"], "worker-3");
         assert_eq!(value["onIt"]["busy"], true);
@@ -604,7 +745,7 @@ mod tests {
                 "stream closed".into(),
             )),
         });
-        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Some(&entry), Vec::new())).unwrap();
         assert!(value["onIt"]["doing"].is_null());
         assert_eq!(value["onIt"]["failed"], "stream closed");
         assert_eq!(value["onIt"]["stopped"], false);
@@ -621,7 +762,7 @@ mod tests {
             since: at(3, 9),
             last_turn: Some(crate::foundation::registry::TurnOutcome::Interrupted),
         });
-        let value = serde_json::to_value(dto(&task, false, Some(&entry))).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Some(&entry), Vec::new())).unwrap();
         assert!(value["onIt"]["failed"].is_null());
         assert_eq!(value["onIt"]["stopped"], false);
     }
@@ -631,8 +772,8 @@ mod tests {
     #[test]
     fn the_restarts_casualties_are_distinguishable_from_each_other() {
         let task = Task::new("Ship the deck", TaskStatus::Doing);
-        let reopening = serde_json::to_value(dto(&task, false, Some(&OnIt::Reopening))).unwrap();
-        let lost = serde_json::to_value(dto(&task, false, Some(&OnIt::Lost))).unwrap();
+        let reopening = serde_json::to_value(dto(&task, false, Some(&OnIt::Reopening), Vec::new())).unwrap();
+        let lost = serde_json::to_value(dto(&task, false, Some(&OnIt::Lost), Vec::new())).unwrap();
         assert_eq!(reopening["onIt"]["state"], "reopening");
         assert!(reopening["onIt"]["session"].is_null());
         assert_eq!(lost["onIt"]["state"], "lost");
@@ -644,7 +785,7 @@ mod tests {
     #[test]
     fn nobody_on_it_is_an_absence() {
         let task = Task::new("Ship the deck", TaskStatus::Doing);
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert!(value["onIt"].is_null());
     }
 
@@ -663,14 +804,14 @@ mod tests {
         .await
         .unwrap();
         let task = tasks::read_task(dir.path(), "old-row").await.unwrap().unwrap();
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(value["statusSince"], "2026-08-01T09:00:00Z");
     }
 
     #[test]
     fn bare_task_has_no_due_or_liveness_metadata() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert!(value["dueAt"].is_null());
         assert!(value["checkedAt"].is_null());
         assert!(value["liveness"].is_null());
@@ -686,7 +827,7 @@ mod tests {
             "systems: KUT, gz, hi-agent".into(),
             "report_to: prdo8qht".into(),
         ];
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(value["extra"][0]["key"], "systems");
         assert_eq!(value["extra"][0]["value"], "KUT, gz, hi-agent");
         assert_eq!(value["extra"][0]["clipped"], false);
@@ -700,7 +841,7 @@ mod tests {
     fn a_quoted_value_is_shown_unquoted() {
         let mut task = Task::new("Deploy KUT", TaskStatus::Doing);
         task.extra = vec![r#"note: "16:20 — the callback is still not registered""#.into()];
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(
             value["extra"][0]["value"],
             "16:20 — the callback is still not registered"
@@ -718,7 +859,7 @@ mod tests {
             "  third".into(),
             "   ".into(),
         ];
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(value["extra"][0]["value"], "first second third");
         assert_eq!(value["extra"].as_array().unwrap().len(), 1);
     }
@@ -733,13 +874,13 @@ mod tests {
             .map(|i| format!("CHECK_{i}: still up"))
             .chain(std::iter::once(format!("long: {}", "x".repeat(400))))
             .collect();
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         assert_eq!(value["extra"].as_array().unwrap().len(), EXTRA_FIELDS);
         assert_eq!(value["extraDropped"], 7);
 
         let mut one = Task::new("Watch the group", TaskStatus::Serving);
         one.extra = vec![format!("long: {}", "x".repeat(400))];
-        let value = serde_json::to_value(dto(&one, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&one, false, None, Vec::new())).unwrap();
         assert_eq!(
             value["extra"][0]["value"].as_str().unwrap().chars().count(),
             EXTRA_VALUE_CHARS
@@ -760,7 +901,7 @@ mod tests {
         .await
         .unwrap();
         let task = tasks::read_task(dir.path(), "kut").await.unwrap().unwrap();
-        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        let value = serde_json::to_value(dto(&task, false, None, Vec::new())).unwrap();
         let keys: Vec<&str> = value["extra"]
             .as_array()
             .unwrap()
@@ -768,6 +909,51 @@ mod tests {
             .map(|field| field["key"].as_str().unwrap())
             .collect();
         assert_eq!(keys, vec!["systems"]);
+    }
+
+    /// The whole point of resolving against disk: a record names things that are spelled
+    /// like files and are not, and the reader must not be handed a link to a 404.
+    #[tokio::test]
+    async fn only_the_named_files_that_exist_come_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = Task::new("Inspect gz-02 /data disk usage", TaskStatus::Done);
+        task.body = "The completed report is `inspection-report.md` in this task \
+             directory. `hi_say` carried the headline; `status_since` moved with it, and \
+             the draft `never-written.md` was abandoned."
+            .into();
+        task.timeline = vec![TimelineEntry::new(
+            tasks::TimelineKind::Landed,
+            at(25, 6),
+            "`notes/working.md` has the sampling method",
+        )];
+        tasks::write_task(dir.path(), &task).await.unwrap();
+
+        let folder = facets::subject_dir(dir.path(), tasks::DIMENSION, &task.subject);
+        tokio::fs::write(folder.join("inspection-report.md"), "# report")
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(folder.join("notes")).await.unwrap();
+        tokio::fs::write(folder.join("notes/working.md"), "how")
+            .await
+            .unwrap();
+
+        let files = referenced_files(dir.path(), &task).await;
+        let named: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(named, vec!["inspection-report.md", "notes/working.md"]);
+        assert_eq!(files[0].bytes, 8);
+    }
+
+    /// `facet.md` is the panel the reader is already looking at, and the folder's own
+    /// history is not an artifact of the work.
+    #[test]
+    fn the_record_itself_is_never_offered_as_one_of_its_artifacts() {
+        assert!(!names_a_file("facet.md"));
+        assert!(!names_a_file(".history/facet.md"));
+        assert!(!names_a_file("../../config.db"), "no climbing out of the folder");
+        assert!(!names_a_file("hi_say"), "no extension, so not a filename");
+        assert!(!names_a_file("ls -la /data"), "a shell line is not a path");
+        assert!(names_a_file("inspection-report.md"));
+        assert!(names_a_file("evidence/p95.json"));
     }
 
     #[test]

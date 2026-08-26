@@ -647,6 +647,7 @@ pub fn build(
         // person can fix from a screen.
         .route("/api/tasks", get(tasks::get_tasks))
         .route("/api/tasks/{subject}", patch(tasks::patch_task))
+        .route("/api/tasks/{subject}/files/{*path}", get(tasks::get_task_file))
         .route("/api/skills", get(skills::get_skills))
         .route("/api/skills/{*path}", get(skills::get_skill).delete(skills::delete_skill))
         .route("/api/facets", get(facets::get_facets))
