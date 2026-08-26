@@ -25,6 +25,12 @@ struct TaskDto {
     title: String,
     status: &'static str,
     created_at: Option<String>,
+    /// When the status last changed. **Not "when was this touched"** — a ticket that sat in
+    /// `doing` for four days was rewritten six times in five hours while it did so, so the
+    /// file's own mtime called it freshly tended right up to the day it was closed by hand.
+    /// This is the clock the idle boundary reads, and the panel's only measure of how long a
+    /// row has stood where it stands: the timeline dates the move, this says how long ago.
+    status_since: Option<String>,
     due_at: Option<String>,
     checked_at: Option<String>,
     completed_at: Option<String>,
@@ -151,6 +157,7 @@ fn dto(task: &Task, malformed: bool, on_it: Option<&OnIt>) -> TaskDto {
         title: task.title.clone(),
         status: task.status.as_str(),
         created_at: task.created_at.map(rfc3339),
+        status_since: task.status_since.map(rfc3339),
         due_at: task.due_at.map(rfc3339),
         checked_at: task.checked_at.map(rfc3339),
         completed_at: task.completed_at.map(rfc3339),
@@ -396,6 +403,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut task = Task::new("Watch oil prices", TaskStatus::Serving);
         task.created_at = Some(at(1, 9));
+        task.status_since = Some(at(2, 9));
         task.due_at = Some(at(9, 10));
         task.checked_at = Some(at(4, 22));
         task.liveness.verify =
@@ -410,6 +418,7 @@ mod tests {
         let value = serde_json::to_value(dto(&got, false, None)).unwrap();
         assert_eq!(value["status"], "serving");
         assert_eq!(value["createdAt"], "2026-08-01T09:00:00Z");
+        assert_eq!(value["statusSince"], "2026-08-02T09:00:00Z");
         assert_eq!(value["dueAt"], "2026-08-09T10:00:00Z");
         assert_eq!(value["checkedAt"], "2026-08-04T22:00:00Z");
         assert!(value["completedAt"].is_null());
@@ -536,6 +545,25 @@ mod tests {
         let task = Task::new("Ship the deck", TaskStatus::Doing);
         let value = serde_json::to_value(dto(&task, false, None)).unwrap();
         assert!(value["onIt"].is_null());
+    }
+
+    /// A record with no `status_since` of its own reads back as its creation instant — the
+    /// store's fallback, which is older and therefore errs toward the idle boundary rather
+    /// than hiding behind it. The panel inherits that rather than reinventing it.
+    #[tokio::test]
+    async fn a_record_with_no_status_stamp_falls_back_to_when_it_was_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        facets::update_facet(
+            dir.path(),
+            tasks::DIMENSION,
+            "old-row",
+            "---\nstatus: doing\ntitle: \"Old row\"\ncreated_at: \"2026-08-01T09:00:00Z\"\n---\n",
+        )
+        .await
+        .unwrap();
+        let task = tasks::read_task(dir.path(), "old-row").await.unwrap().unwrap();
+        let value = serde_json::to_value(dto(&task, false, None)).unwrap();
+        assert_eq!(value["statusSince"], "2026-08-01T09:00:00Z");
     }
 
     #[test]

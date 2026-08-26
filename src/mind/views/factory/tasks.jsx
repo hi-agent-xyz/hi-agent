@@ -105,6 +105,7 @@ const T = {
     lost: "The restart took its worker and its session would not reopen",
     turnFailed: (why) => `last turn failed: ${why}`,
     turnStopped: "last turn was stopped",
+    standing: (label, span) => `${label} for ${span}`,
     ago: (n, unit) => `${n}${unit} ago`,
     agoUnits: { m: "m", h: "h", d: "d" },
     justNow: "just now",
@@ -182,6 +183,7 @@ const T = {
     lost: "重启带走了它的 worker，会话无法恢复",
     turnFailed: (why) => `上一轮失败：${why}`,
     turnStopped: "上一轮被中止",
+    standing: (label, span) => `${label} ${span}`,
     ago: (n, unit) => `${n}${unit}前`,
     agoUnits: { m: "分钟", h: "小时", d: "天" },
     justNow: "刚刚",
@@ -531,6 +533,7 @@ function Detail({ task, busy, onStatus, onClose }) {
 
   const due = dueMeta(task);
   const health = healthMeta(task);
+  const age = ageMeta(task);
   // What they asked for is pinned rather than scrolled to: it is the first thing somebody
   // catching up on their own errand wants, and it does not move for the life of the task.
   // It is a **reading, not a gate** — nothing here waits on it and no task is held open
@@ -574,6 +577,7 @@ function Detail({ task, busy, onStatus, onClose }) {
           <div className="hi-tasks__detail-meta">
             {task.createdAt && <span>{L.created(formatStamp(task.createdAt))}</span>}
             {closedAt && <span>{closedAt}</span>}
+            {age && <span data-warn={age.warn ? "true" : undefined}>{age.text}</span>}
             {due && <span data-warn={due.warn ? "true" : undefined}>{due.text}</span>}
             {health && <span data-warn={health.warn ? "true" : undefined}>{health.text}</span>}
           </div>
@@ -739,14 +743,47 @@ function dueMeta(task) {
 // How long ago, in the spelling `tasks::ago` uses on the agent's side of the same fact.
 // Relative rather than absolute on purpose: "idle 12m" is the question a reader of this line
 // has, and an absolute stamp makes them do the subtraction.
-function formatAgo(value) {
+function elapsed(value) {
   const then = new Date(value).getTime();
   if (Number.isNaN(then)) return null;
   const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 1) return L.justNow;
-  if (mins < 60) return L.ago(mins, L.agoUnits.m);
-  if (mins < 60 * 24) return L.ago(Math.floor(mins / 60), L.agoUnits.h);
-  return L.ago(Math.floor(mins / (60 * 24)), L.agoUnits.d);
+  if (mins < 60) return { n: mins, unit: L.agoUnits.m, hours: mins / 60 };
+  if (mins < 60 * 24) return { n: Math.floor(mins / 60), unit: L.agoUnits.h, hours: mins / 60 };
+  return { n: Math.floor(mins / (60 * 24)), unit: L.agoUnits.d, hours: mins / 60 };
+}
+
+function formatAgo(value) {
+  const span = elapsed(value);
+  if (!span) return null;
+  return span.hours * 60 < 1 ? L.justNow : L.ago(span.n, span.unit);
+}
+
+// How long work may sit in `doing` before its age stops being a fact to note and becomes one
+// to answer. The same 48 hours `tasks::IDLE_BOUNDARY_HOURS` reads, deliberately duplicated
+// rather than served: it decides a colour here and a whole sentence there, and a board that
+// fetched it would still have to decide what to do with it.
+const IDLE_BOUNDARY_HOURS = 48;
+
+// How long this row has stood where it stands.
+//
+// **`todo` and `doing` only.** A duty is *supposed* to be old — its age says nothing and
+// "last confirmed alive" says everything — and a closed row already carries the stamp of its
+// closing. The one status that promises an ending is the one that can fail to reach it.
+//
+// Below a day the number is noise on a surface read many times a day, so nothing is said and
+// the creation date keeps the space. Past the idle boundary it is the fact on the card.
+function ageMeta(task) {
+  if (task.status !== "todo" && task.status !== "doing") return null;
+  // The store's own fallback for a record that never recorded a transition: older than the
+  // truth, so it errs toward the boundary rather than hiding behind it.
+  const at = task.statusSince || task.createdAt;
+  if (!at) return null;
+  const span = elapsed(at);
+  if (!span || span.hours < 24) return null;
+  return {
+    text: L.standing(L.category[task.status], `${span.n}${span.unit}`),
+    warn: task.status === "doing" && span.hours >= IDLE_BOUNDARY_HOURS,
+  };
 }
 
 // Who is on this task, or — where nobody is a problem — that nobody is.
@@ -793,7 +830,7 @@ function healthMeta(task) {
 }
 
 function taskNeedsAttention(task) {
-  return Boolean(dueMeta(task)?.warn || healthMeta(task)?.warn);
+  return Boolean(dueMeta(task)?.warn || healthMeta(task)?.warn || ageMeta(task)?.warn);
 }
 
 // One clipped line under the title, so what earns the space is what would make someone
@@ -803,6 +840,8 @@ function cardNotes(task) {
   if (task.malformed) notes.push({ text: L.malformedShort, warn: true });
   const due = dueMeta(task);
   const health = healthMeta(task);
+  const age = ageMeta(task);
+  if (age?.warn) notes.push(age);
   if (due?.warn) notes.push(due);
   if (health?.warn) notes.push(health);
   if (notes.length === 0) {
@@ -817,6 +856,12 @@ function cardNotes(task) {
     // Never "Created Aug 3": a watch is supposed to be old, so its age is the one fact
     // here that means nothing. Whether it is still up is the only one that does.
     if (health && !notes.includes(health)) notes.push(health);
+  } else if (age) {
+    // Two dates on one clipped line is one too many, and of the two this is the one that
+    // moved: "created Aug 3" and "doing for 6d" are the same row's story, but only the
+    // second says it has been sitting. Same guard as the duty above — past the boundary it
+    // is already on the line as a warning, and it must not be written there twice.
+    if (!notes.includes(age)) notes.push(age);
   } else if (task.createdAt) {
     notes.push({ text: L.created(formatStamp(task.createdAt)) });
   }
