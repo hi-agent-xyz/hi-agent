@@ -337,13 +337,7 @@ fn shown_name(body: &str) -> Option<String> {
 /// Keyed by subject, last writer wins. Two live workers on one task is a mistake worth seeing
 /// rather than an invariant worth enforcing here — the ledger line will name one of them, and
 /// the roster (`GET /api/workers`) shows both.
-///
-/// **Shared with the person's board**, which asks the same question of the same rows: the
-/// task panel reads this join through `GET /api/tasks` rather than deriving its own from the
-/// roster. Two derivations of one fact are free to disagree, and the one that would have gone
-/// wrong is the board's — a restart's casualties are not in the roster at all, so a
-/// re-derivation from it reports abandoned work as merely absent.
-pub(crate) fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
+fn working_on_tasks() -> std::collections::HashMap<String, tasks::OnIt> {
     let registry = crate::foundation::registry::global();
     let mut join: std::collections::HashMap<String, tasks::OnIt> = registry
         .reopening_subjects()

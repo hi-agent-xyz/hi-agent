@@ -168,17 +168,9 @@ not resemblance — two rows are one job when delivering either delivers the oth
 runs before staffing a task", with no caller anywhere and none in its history. The fence replaces
 what it was for.
 
-**The board says what the agent's window says — 2026-08-26.** Three facts the host already
-computed reached the ledger writer and stopped there, so the person's board could not answer
-questions the agent's window answered every turn. All three now ride `GET /api/tasks`:
+**The board carries what a card draws — 2026-08-26.** Two facts the record held and the
+projection dropped now ride `GET /api/tasks`:
 
-- **Who is on a row.** `onIt`, from the same `snapshot::working_on_tasks` join `worker_note`
-  reads — live worker, busy or idle and for how long, what it is running, a last turn that
-  failed, or the restart's two casualties (`reopening`, which needs no move, and `lost`, which
-  needs somebody put on it). Of the 5 `doing` rows on the live ledger you could not tell a live
-  one from an abandoned one. One derivation, not two: a board deriving this from
-  `GET /api/workers` would report cut-off work as merely unattended, because the restart's
-  casualties are not on the roster at all.
 - **How long a row has stood where it stands.** `statusSince`, shown as elapsed on `todo` and
   `doing` only, silent below a day, warning past the same 48 hours the idle boundary reads.
   `Created` cannot stand in for it — churn is not movement.
@@ -190,18 +182,38 @@ questions the agent's window answered every turn. All three now ride `GET /api/t
   80 carrying `systems`, 5 with a value long enough to clip and 2 past the field cap (one has
   144 foreign keys), and the whole list costs **39 KB of a 843 KB response**.
 
-**Built, never watched.** Green — 994 Rust, 106 web. No live instance has drawn any of it; what a run
-would settle is whether the worker line reads as the alarm it is on a `doing` card, and whether
-promoting `systems` to tags is right for records whose value is not a list of systems.
+**The caps are a loan, and the item that takes them back is named below.** They exist because
+one endpoint serves both the board and the panel, so a record's whole ledger is paid for by
+every card on every poll. A per-row endpoint retires them rather than tuning them.
 
-**What is still missing from that panel**, from the same audit: `[[…]]` cross-links render as
-literal brackets on the 60 records that carry them; the body sits behind a collapsed fold on the
-89 records whose whole account is in it — and is **686 KB of that 843 KB response**, re-sent
-every 8 seconds to draw a board that never shows it; nothing lists the artifacts a worker leaves in the task
-directory (234 `.md`, 224 `.txt`, 19 `.png` beside 108 `facet.md`) or the `.history/` every
-record keeps; `malformed` says "invalid stored fields" without naming which; and `L.assumed` is
-a string in both locales that nothing renders. The acceptance line is its own item — still 0 of
-11 open rows carry one.
+**A third field was built and cut the same day: `onIt`, who is working a row** — the
+switchboard join `worker_note` computes for the agent's window, projected onto the card so a
+`doing` row whose worker had died would stop looking exactly like one being worked. The fact
+was real and so was the question. Neither made the structure necessary: a field on every row of
+a polled list, a DTO and its staleness rules, a render path on card and panel, eight strings in
+two locales, CSS and five tests — priced forever, for a fact whose reader was already told it in
+the one window where a stalled row actually gets dispositioned. **Known but not shown is not a
+gap by itself**, and an audit built by listing every fact the system computes against every
+screen that does not show it produces a list of additions, each justified by what is possible
+rather than by what is needed. Deleted whole, nothing behind a flag.
+
+**Built, never watched.** Green — 992 Rust, 106 web. No live instance has drawn either field;
+what a run would settle is whether promoting `systems` to tags is right for records whose value
+is not a list of systems.
+
+**What is still missing from that panel**, from the same audit and after the account came out
+of the fold (below): `[[…]]` cross-links render as literal brackets on the 60 records that carry
+them — `064a26e` settled the safety question, since an autolink's text is its destination and a
+wiki link has the same property, so what is left is resolving a ref without guessing at it in
+the view; the `.history/` every record keeps has no surface; `malformed` says "invalid stored
+fields" without naming which, though `is_malformed` knows; and `L.assumed` is a string in both
+locales that nothing renders. The acceptance line is its own item — still 0 of 11 open rows
+carry one.
+
+**And the list still ships records where a board needs a projection.** A card draws a title, a
+status, the latest timeline line and one date; the list sends every record's body (686 KB of
+that 843 KB), every foreign field, and every timeline entry, for 110 rows every 8 seconds. The
+per-row endpoint `02e599f` opened is most of what a split needs.
 
 **Still to build, in order:**
 
