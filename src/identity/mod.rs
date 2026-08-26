@@ -1666,6 +1666,41 @@ mod soul_tests {
         );
     }
 
+    /// **A row blocked on the person names the door, in all three prompts that define one.**
+    ///
+    /// Three prompts spell out what a `blocked` line carries — Cognition's, the task
+    /// manager's, the general worker's — and for a long time all three said *the question
+    /// and who owes it* and stopped. KT8-059 then sat `doing` for three days behind a
+    /// correct sentence naming Zhao Li as the one holding it up; the URL he was supposed to
+    /// open was in a review workspace and in an episode's prose as "the native TTS
+    /// playground URL", and nowhere on the row he actually read. This is the drift the test
+    /// exists for: one of the three gets updated and the other two keep teaching the old
+    /// shape, which nothing anywhere reports.
+    #[test]
+    fn a_blocked_line_names_where_the_person_answers_it() {
+        for (name, text) in [
+            ("cognition", COGNITION_BASE),
+            ("task-manager", WORKER_TASK_MANAGER_BASE),
+            ("general", WORKER_GENERAL_BASE),
+        ] {
+            assert!(
+                text.contains("where they answer it"),
+                "{name}.md defines a `blocked` line and must ask for where it is answered"
+            );
+        }
+        // And the two that actually write the waiting rows are told that a word for the
+        // address is not the address — which is the specific thing that went wrong.
+        for (name, text) in [
+            ("task-manager", WORKER_TASK_MANAGER_BASE),
+            ("general", WORKER_GENERAL_BASE),
+        ] {
+            assert!(
+                text.contains("description of a URL and not one"),
+                "{name}.md must refuse \"the ordinary URL\" in place of the address"
+            );
+        }
+    }
+
     /// The model keeps the operational context that makes a file reference useful, while
     /// the drive organizer preserves the stable path.
     #[test]

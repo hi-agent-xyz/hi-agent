@@ -133,7 +133,11 @@ then what you are saying. Three of the words are yours:
 - **landed** — something was delivered. Not a heartbeat; the entries that change what
   someone else would do.
 - **blocked** — something is in the way, the moment it is. A blocker written down an hour
-  late is an hour nobody could have spent clearing it.
+  late is an hour nobody could have spent clearing it. When what is in the way is a person's
+  answer, the line names **where they answer it** — the URL, the path, the message — pasted,
+  not described. *"the ordinary URL was handed to him"* is a description of a URL and not one,
+  and a row that names someone as the bottleneck without handing them the door is a row they
+  can read and cannot act on.
 - **checked** — a check and what came back. Name the check and its result: "the endpoint
   returns the 12 rows", not "verified". A check that came back *wrong* is a line too.
 

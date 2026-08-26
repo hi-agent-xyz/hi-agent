@@ -548,11 +548,36 @@ in progress: it owes the ask, once, not the wait.
 **And then it waits somewhere, which the lifecycle has to name.** The status words say who
 the row is about — `todo` and `doing` describe *our* work, `serving` describes presence —
 and none of them describes a row where our side is delivered and the answer is theirs. It is
-`doing`, carrying a `blocked` line that names the question and who owes it. That is not a new
-state: `blocked` is a timeline kind, defined here as a line about a task that is still
-`doing`, and this is the case it was for. The two other readings are both wrong, in ways
-something downstream acts on: `todo` says nobody has started finished work, and `done` says
-they have the thing when what they have is an unanswered question.
+`doing`, carrying a `blocked` line that names the question, who owes it, and **where they
+answer it**. That is not a new state: `blocked` is a timeline kind, defined here as a line
+about a task that is still `doing`, and this is the case it was for. The two other readings
+are both wrong, in ways something downstream acts on: `todo` says nobody has started
+finished work, and `done` says they have the thing when what they have is an unanswered
+question.
+
+**The third element is the one that was missing, and it is the whole point of the line.** A
+row blocked on the person is the agent naming them as the bottleneck; a row that names them
+and not the door has moved the block onto them without handing anything over. KT8-059 sat
+`doing` for three days behind *"the ordinary native UI Run/listen accept-or-reject question
+was already handed to Zhao Li and remains unanswered"* — a correct sentence, written by a
+worker doing exactly what this section asked of it, and the person who opened that panel had
+no way to learn what to open. The URL existed: it was in the review workspace and in the
+episode's prose as *"the native TTS playground URL"*, which is a description of a URL and not
+one. **Where a task's last step is theirs, the row carries the address of that step.**
+
+**In the line's prose, not in a field of its own.** A `where:` key would be one more thing an
+agent must remember to fill, silently absent when it forgets — the failure this section has
+already refused twice, and refuses again here. Property 1 below still holds: a task carries
+no *destination*, because there is one place a result can be said. This is the reverse
+direction. It is not where the agent reports; it is where the person acts, it is only ever
+written on a row already blocked on them, and its whole enforcement is that they can see the
+line is missing.
+
+**And the panel makes it clickable.** A `blocked` line is prose, and a URL rendered as inert
+text on a surface with no address bar is one the reader must retype from a screenshot. The
+timeline and the notes autolink `http(s)` — *autolink only*, never a markdown label with a
+separate href, so the visible text is always the destination and text a session wrote cannot
+lie about where it sends someone.
 
 **And the cadence must not exclude it, because the cadence is the only pressure there is.**
 There are no gates on this ledger, so past the idle boundary the sentence a `doing` line

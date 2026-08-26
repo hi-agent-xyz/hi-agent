@@ -381,6 +381,44 @@ mod tests {
         }
     }
 
+    /// **The task panel is the only place a blocked row's door is read, and it has no
+    /// address bar.**
+    ///
+    /// A `blocked` line waiting on the person carries where they answer it
+    /// (`docs/arch/data.md`), which is prose, which means a URL. Rendered inert it is a URL
+    /// somebody has to retype off their own screen — the panel is a modal inside a native
+    /// window, so there is nothing to paste it into and nothing to copy it from but the
+    /// pixels. The renderer's stated rule used to be "no links" and the reason it gave was
+    /// sound; what the rule missed is that an *autolink* is not the thing it was refusing.
+    /// So both halves are checked: the anchor exists, and no markdown-label link ever does
+    /// — a label with a separate href is text the agent wrote naming one destination and
+    /// going to another.
+    #[test]
+    fn the_task_panel_makes_a_blocked_row_s_url_clickable() {
+        let tasks = REVIEW_VIEWS.iter().find(|(name, ..)| *name == "tasks").unwrap().1;
+        assert!(tasks.contains("AUTOLINK"), "tasks.jsx must find URLs in the record it renders");
+        assert!(tasks.contains("hi-tasks__link"), "tasks.jsx must render them as anchors");
+        assert!(
+            tasks.contains("target=\"_blank\""),
+            "a review URL opens in a real browser, not inside the panel"
+        );
+        // The timeline is where a `blocked` line lands, so it is the run that must go
+        // through the inline renderer rather than being dropped in as a bare string.
+        assert!(
+            tasks.contains("{inline(moment.text,"),
+            "the timeline must render through the inline vocabulary, or its URLs stay text"
+        );
+        // Autolink only. One `href` in the whole view, fed by the autolinker, whose anchor
+        // text is the same binding as its destination — so text a session wrote can name a
+        // place and go somewhere else only by first growing a second link site here.
+        assert_eq!(
+            tasks.matches("href={").count(),
+            1,
+            "the autolinker must be the only thing in the panel that produces a link"
+        );
+        assert!(tasks.contains("href={url}") && tasks.contains("{url}\n      </a>"));
+    }
+
     /// The two that carry a correction verb have to keep reaching for it. If the endpoint
     /// behind one of these is ever renamed, this is what notices — a review surface whose
     /// write silently 404s still *looks* like it worked.

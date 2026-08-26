@@ -572,7 +572,9 @@ function Detail({ task, busy, onStatus, onClose }) {
                       <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
                     )}
                   </span>
-                  <span className="hi-tasks__moment-text">{moment.text}</span>
+                  <span className="hi-tasks__moment-text">
+                    {inline(moment.text, `m${index}`)}
+                  </span>
                 </li>
               ))}
             </ol>
@@ -740,11 +742,18 @@ function cardNotes(task) {
 // what these are: the live store's median body is 3.2 KB and its largest 48 KB. So it is
 // read as the markdown the agent already writes.
 //
-// **A subset, deliberately.** Headings, bullets, bold, emphasis, inline code — the whole
-// vocabulary these bodies use. No links, images, tables or raw HTML: nothing here needs
+// **A subset, deliberately.** Headings, bullets, bold, emphasis, inline code, and bare URLs
+// — the whole vocabulary these bodies use. No images, tables or raw HTML: nothing here needs
 // them, and each is a way for text a session wrote to reach further than text should.
 // Output is React elements and never `dangerouslySetInnerHTML`, so an unclosed tag in
 // someone's note stays a character on the screen instead of becoming markup.
+//
+// **URLs autolink; markdown links do not exist here.** These two are not the same
+// concession. `[click here](somewhere-else)` lets text a session wrote name one destination
+// and go to another, which is the reach the paragraph above refuses. An autolink cannot:
+// the visible text *is* the href, so the worst it can do is take you where it plainly says.
+// And a URL is exactly what a row blocked on the person has to carry — the panel has no
+// address bar, so an inert one is a URL they must retype off their own screen.
 //
 // Underscores are *not* emphasis, and that is the one deliberate omission: these bodies are
 // full of `status_since`, `checked_at`, `start_key`, and a renderer that reads those as
@@ -753,7 +762,64 @@ function cardNotes(task) {
 // A marker must also be followed by a non-space to open, which is what stops "2 * 3 = 6"
 // and a line carrying two loose asterisks from being read as one long emphasis.
 const INLINE = /(\*\*[^*\s][^*]*?\*\*|`[^`]+`|\*[^*\s][^*\n]*\*)/g;
+const AUTOLINK = /(https?:\/\/[^\s<>"'`]+)/g;
 
+// A URL written mid-sentence collects the sentence's punctuation, and a URL written inside
+// brackets collects the closing one. Neither belongs to the address: trailing `.,;:!?` always
+// comes off, and a `)` comes off only when the run has no `(` to match it — which keeps the
+// query strings and the wiki paths that genuinely carry balanced parens intact.
+const count = (text, ch) => text.split(ch).length - 1;
+
+function address(url) {
+  let end = url.length;
+  while (end > 0) {
+    const last = url[end - 1];
+    if (".,;:!?".includes(last)) {
+      end -= 1;
+      continue;
+    }
+    const body = url.slice(0, end);
+    if ((last === ")" || last === "]") && count(body, last) > count(body, last === ")" ? "(" : "[")) {
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  return url.slice(0, end);
+}
+
+// Autolink only — never a label with a separate destination. The anchor's text is the href
+// it goes to, so text the agent wrote cannot say one place and send the reader to another.
+function linked(text, keyBase) {
+  const out = [];
+  let i = 0;
+  for (const part of String(text).split(AUTOLINK)) {
+    if (!part) continue;
+    const key = `${keyBase}-u${i++}`;
+    if (!/^https?:\/\//.test(part)) {
+      out.push(part);
+      continue;
+    }
+    const url = address(part);
+    out.push(
+      <a
+        key={key}
+        className="hi-tasks__link"
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {url}
+      </a>,
+    );
+    if (url.length < part.length) out.push(part.slice(url.length));
+  }
+  return out;
+}
+
+// Code spans are the one run left alone: a URL somebody deliberately fenced is being shown
+// as a literal, and the panel is full of `start_key`-shaped strings that are not addresses.
 function inline(text, keyBase) {
   const out = [];
   let i = 0;
@@ -761,13 +827,13 @@ function inline(text, keyBase) {
     if (!part) continue;
     const key = `${keyBase}-${i++}`;
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
-      out.push(<strong key={key}>{part.slice(2, -2)}</strong>);
+      out.push(<strong key={key}>{linked(part.slice(2, -2), key)}</strong>);
     } else if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
       out.push(<code key={key}>{part.slice(1, -1)}</code>);
     } else if (part.length > 2 && part.startsWith("*") && part.endsWith("*")) {
-      out.push(<em key={key}>{part.slice(1, -1)}</em>);
+      out.push(<em key={key}>{linked(part.slice(1, -1), key)}</em>);
     } else {
-      out.push(part);
+      out.push(...linked(part, key));
     }
   }
   return out;
@@ -1474,6 +1540,18 @@ const CSS = `
   .hi-tasks__prose strong {
     color: var(--fg);
     font-weight: 700;
+  }
+
+  .hi-tasks__link {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: var(--accent-line);
+    text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+  }
+
+  .hi-tasks__link:hover {
+    text-decoration-color: var(--accent);
   }
 
   .hi-tasks__prose code {

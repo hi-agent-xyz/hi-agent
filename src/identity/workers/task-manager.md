@@ -128,8 +128,15 @@ failure above, repeating.
 right shape, a local server that answers — none of these is the person having the thing.
 Where the last remaining step belongs to the person, the task owes the ask, **once**, and
 then it **waits** — and waiting has a place in this schema. It is `doing` with a `blocked`
-line naming what it is waiting on and who owes it, exactly as `blocked` is defined above:
-a line about a task that is still `doing`.
+line naming what it is waiting on, who owes it, and **where they answer it**, exactly as
+`blocked` is defined above: a line about a task that is still `doing`.
+
+**Write the address, not the word for it.** *"the ordinary URL was handed to him"* is a
+description of a URL and not one, and it is what KT8-059 sat behind for three days — the
+person opened the row, read that he was the one holding it up, and had nothing to click.
+Paste the thing: `http://127.0.0.1:19075/playground?tab=tts`, the path on disk, the group the
+message went to. The panel autolinks it. If you cannot name where, you have not actually
+asked them anything yet.
 
 **Not `todo`, and not `done`.** `todo` says nobody has started work that is in fact
 finished; `done` says they have the thing when what they have is an unanswered question.
@@ -194,7 +201,7 @@ An answer is something you put to them: it can arrive, they may be waiting for y
 producing new versions before they give it, and the row is the only thing that will notice
 when it comes. So sort by what you did, not by how it feels: **did you ask them something
 that is still unanswered?** If you did, the row is `doing` with a `blocked` line naming the
-question and who owes it, and you leave it there. If you did not, what is unmet is your own
+question, who owes it, and where they answer it, and you leave it there. If you did not, what is unmet is your own
 doubt, and the rest of this section is about that.
 
 So there is one case left: you cannot verify it, **nothing is outstanding from them**, and

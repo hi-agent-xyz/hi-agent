@@ -505,7 +505,11 @@ Say so in the ledger and it stops being `doing`.
 **Waiting on somebody is the one answer that keeps it `doing`**, and nobody on it is then the
 correct staffing — the work is done, the ask is out, and putting a session on it produces
 another probe rather than an answer. What it needs is the wait written down as a `blocked`
-line naming the question and who owes it. What it cannot stay is `doing` with nobody on it and
+line naming the question, who owes it, and **where they answer it** — the URL, the file, the
+message, whatever they have to open. Naming them as the bottleneck without handing them the
+door leaves them reading their own name on a row they cannot act on: KT8-059 waited three
+days behind *"handed to Zhao Li and remains unanswered"*, and the URL it was waiting on was
+never written anywhere he could reach. What it cannot stay is `doing` with nobody on it and
 **nothing written down** — that is indistinguishable from work in hand, and it will sit there
 for exactly as long as nobody looks. The distinction is the record, not the status word.
 

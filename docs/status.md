@@ -243,6 +243,37 @@ watching a rung meet that wording** — nothing has yet.
 `checked` has been seen), and a Task Manager appending its closing `checked` line before
 it moves the status word.
 
+**A blocked row names the door, 2026-08-26.** The `blocked` line was defined in four places
+as *the question and who owes it*, and that definition is what KT8-059 sat three days
+behind. Its line was correct — *"the ordinary native UI Run/listen accept-or-reject question
+was already handed to Zhao Li and remains unanswered"* — and he opened the panel, read his
+own name as the thing holding it up, and had nothing to go to. The URL existed in a review
+workspace and in an episode's prose as *"the native TTS playground URL"*, which is a
+description of a URL and not one; grepping the row itself for `http` returns nothing. So the
+definition grew a third element — where they answer it — in `docs/arch/data.md` and in the
+three prompts that teach it (`cognition.md`, `workers/task-manager.md`, `workers/general.md`),
+with `identity::soul_tests::a_blocked_line_names_where_the_person_answers_it` holding the
+three together, since one drifting from the other two is silent.
+
+And the panel makes it clickable. `views/factory/tasks.jsx` renders its timeline through the
+same inline vocabulary as the prose and both autolink `http(s)` — *autolink only*, never a
+markdown label with its own href, so the anchor text is always the destination. The renderer
+had refused links outright and the reason it gave was sound; what it missed is that an
+autolink cannot lie about where it sends someone, and the panel is a modal with no address
+bar, so an inert URL is one the reader has to retype off their own screen.
+
+**Watched, 2026-08-26**: a release binary on an isolated store, its ledger seeded with a
+blocked row carrying `http://127.0.0.1:19075/playground?tab=tts` mid-sentence, rendered
+through `GET /render/view` in a real Chromium and driven over CDP. The panel opened with the
+URL as an `<a>` whose text equals its `href`, `target="_blank"`, `rel="noreferrer noopener"`;
+the trailing comma stayed outside the link and `&ex=drury_timed_en` survived intact in a
+second one; `` `doing` `` rendered as code instead of literal backticks. Both skins.
+`target="_blank"` reaches the system browser through the window's existing
+`createWebViewWithConfiguration` — the path the out-of-energy card already uses.
+
+**Built, not watched:** a mind actually writing an address into a `blocked` line. The live
+KT8-059 row still carries none; nothing backfills one.
+
 **And the shared-folder collision is answered in prose, on purpose.** Two sessions wrote the
 same path under one task; the loser's briefing was replaced whole and the winner's file was then
 read by the loser as its own, with no error and no copy. The scan that found it: 1,635 facet
