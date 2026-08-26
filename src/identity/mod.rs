@@ -1388,6 +1388,52 @@ mod soul_tests {
 
 
 
+    /// *The screen answers to the conversation* (`docs/arch/stage.md`) is one
+    /// consideration in this one file, and the thing to pin is that it stays one.
+    ///
+    /// The retired sentence is worth pinning hardest. *"There is no wrong moment to put one
+    /// up"* was true while a show left a parked window alone, and became false on
+    /// 2026-08-21 when a show started taking every window with it — so a line reading as
+    /// timeless advice is now an instruction to interrupt.
+    #[test]
+    fn reaction_weighs_a_show_against_the_conversation_rather_than_ruling_on_cases() {
+        assert!(
+            !REACTION_BASE.contains("no wrong moment to put one up"),
+            "a show takes every window with it; it can absolutely land at a wrong moment"
+        );
+        // What the section leads with is load-bearing, not tone. Written the other way up
+        // — the cost of a show first — the whole passage reads as a case for showing less,
+        // which is the failure below. Led by what a view is *for*, one question settles
+        // both directions: a view that helps them follow the subject at hand earns the
+        // screen, and one that does not is not helping whoever it was built for either.
+        assert!(
+            REACTION_BASE.contains("what would help them keep up with you"),
+            "the screen's purpose has to lead; weighing a show is downstream of it"
+        );
+        assert!(
+            REACTION_BASE.contains("takes off whatever was there"),
+            "and the cost has to be stated, or weighing one means nothing"
+        );
+        // The half that keeps it from becoming a reason to withhold. A finished view
+        // nobody has been shown is the worse of the two failures, and the guidance has to
+        // say so in the same breath or it reads as permission to sit on the work.
+        assert!(
+            REACTION_BASE.contains("when you're unsure, show it"),
+            "weighing must not read as a licence to hold work back"
+        );
+
+        // And it must stay a consideration rather than a table of cases. These were in an
+        // earlier draft of this section, written straight off the two situations that
+        // prompted it — which is the shape that ages into a rule for a screen nobody has
+        // any more (see the retired sentence above).
+        for overfit in ["Two things go up the moment", "Everything else waits"] {
+            assert!(
+                !REACTION_BASE.contains(overfit),
+                "{overfit:?} enumerates cases the agent should be reading off the room"
+            );
+        }
+    }
+
     /// "Sole writer of the ledger" is not enforced by any rail — it is enforced by exactly
     /// one prompt carrying the instruction. So the thing that can silently go wrong is the
     /// instruction existing in two places, or in none: two writers means one is wrong with

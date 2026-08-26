@@ -83,6 +83,23 @@ pub struct Attention {
     pub at: DateTime<Utc>,
 }
 
+/// One past show the agent can put back up. See [`ViewBus::shown`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shown {
+    /// The durable ref, which is what `hi_show` takes. An entry without one is not in
+    /// this list at all, so this is never `None` here.
+    pub view_ref: String,
+    /// The name the person meets this view under, on its card in the band and in the
+    /// inventory — so agent and person are talking about the same thing by the same word.
+    pub label: String,
+    /// When the screen last held it. Rendered as a coarse age for the same reason
+    /// [`Attention::at`] is: a live figure would rewrite this block every turn.
+    pub at: DateTime<Utc>,
+    /// Whether this is what is up right now — the newest *show* is not the answer once
+    /// a `dismiss` has cleared the slot under it.
+    pub live: bool,
+}
+
 /// The screen: two fixed slots, not a stack.
 ///
 /// The screen used to be an open z-ordered list any `show` could push onto, and
@@ -533,6 +550,42 @@ impl ViewBus {
             .as_ref()
             .map(|v| vec![v.id.clone()])
             .unwrap_or_default()
+    }
+
+    /// The named views this screen has held, newest first — what the agent can put
+    /// back up when the talk comes back round to one.
+    ///
+    /// **The person could always see this and the agent never could.** The band draws the
+    /// same list with pictures and labels ([`ui/ViewsBand.tsx`]), Cognition is told what
+    /// went up in the last 90 minutes
+    /// ([`crate::mind::memory::snapshot::shown_recently`]) — and Reaction, the one rung
+    /// that actually calls `hi_show`, had [`on_screen`](Self::on_screen) and nothing else:
+    /// one bare id, for the view that is up right now. Its own instruction to put a view
+    /// back ("if you still have the ref for what they're asking about") therefore rested
+    /// on a ref sitting somewhere back in its session, from the turn a builder happened to
+    /// return it. That is the half of a conversation the screen was not following.
+    ///
+    /// **Named views only.** `hi_show` takes a ref; an inline view is the content-addressed
+    /// artifact it compiled to and the agent has no call that puts one back. Listing an
+    /// entry it cannot act on would only invite it to try — the same reason
+    /// [`on_screen`](Self::on_screen) reports the content slot and not the condition
+    /// layer. So this is a list of what is *reachable*, not a record of what has been
+    /// shown; the record is the journal's, and Cognition reads it there.
+    pub async fn shown(&self) -> Vec<Shown> {
+        let map = self.inner.lock().await;
+        let live = map.content.as_ref().map(destination_of);
+        map.history
+            .iter()
+            .rev()
+            .filter_map(|h| {
+                h.view.view_ref.as_ref().map(|view_ref| Shown {
+                    view_ref: view_ref.clone(),
+                    label: label_for(&h.view),
+                    at: h.at,
+                    live: live.as_deref() == Some(destination_of(&h.view).as_str()),
+                })
+            })
+            .collect()
     }
 
     /// The appearance, as soon as its version exceeds `since`.
@@ -1372,6 +1425,50 @@ mod tests {
             bus.on_screen().await,
             vec!["a".to_string()],
             "the agent is told what it can act on, not the host's layer"
+        );
+    }
+
+    #[tokio::test]
+    async fn shown_lists_the_named_views_newest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        assert!(bus.shown().await.is_empty(), "nothing has been up yet");
+
+        bus.apply(show_ref("s1", "/m/a.mjs", "spend/august")).await;
+        bus.apply(show("s2", "/m/inline.mjs")).await;
+        bus.apply(show_ref("s3", "/m/t.mjs", "trip/itinerary")).await;
+
+        let trail = bus.shown().await;
+        assert_eq!(
+            trail.iter().map(|s| s.view_ref.as_str()).collect::<Vec<_>>(),
+            vec!["trip/itinerary", "spend/august"],
+            "newest first, and the inline show is not offered — `hi_show` cannot put it back"
+        );
+        assert_eq!(trail[0].label, "Itinerary", "the name the person's card carries");
+        assert!(trail[0].live, "the newest show is what is up");
+        assert!(!trail[1].live);
+
+        // A dismiss clears the slot and leaves the trail — so `live` has to be read from
+        // the slot, not inferred from the newest entry.
+        bus.apply(dismiss("s3")).await;
+        let after = bus.shown().await;
+        assert_eq!(after.len(), 2, "dismissing does not un-show the past");
+        assert!(after.iter().all(|s| !s.live), "nothing is up now");
+    }
+
+    #[tokio::test]
+    async fn shown_offers_one_entry_per_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("s1", "/m/a.mjs", "factory/tasks")).await;
+        bus.apply(show_ref("s2", "/m/b.mjs", "spend/august")).await;
+        // The same board again, in a fresh slot: one place to go back to, not two.
+        bus.apply(show_ref("s3", "/m/c.mjs", "factory/tasks")).await;
+
+        let trail = bus.shown().await;
+        assert_eq!(
+            trail.iter().map(|s| s.view_ref.as_str()).collect::<Vec<_>>(),
+            vec!["factory/tasks", "spend/august"]
         );
     }
 

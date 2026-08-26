@@ -1903,9 +1903,12 @@ async fn run_reaction_turn(
     // …and where *they* went, when that is not where the agent put them. Read from the
     // same bus and into the same block, because it is the same subject: what is in front
     // of the person right now.
+    // …and what it can put *back* up, which is what lets the screen follow the talk back
+    // to a topic instead of only forward to a new one.
     let on_screen = render_on_screen(
         &reaction.inner.views.on_screen().await,
         reaction.inner.views.attention().await.as_ref(),
+        &reaction.inner.views.shown().await,
     );
 
     // Open (or reuse) the persistent reaction session. `reaction.md` rides its
@@ -2232,20 +2235,73 @@ mod turn_context_tests {
             at: Utc::now(),
         };
 
-        let parked = render_on_screen(&["tasks".to_string()], Some(&went));
+        let parked = render_on_screen(&["tasks".to_string()], Some(&went), &[]);
         assert!(parked.contains("factory/drive"), "{parked}");
         assert!(parked.contains("just now"), "{parked}");
         assert!(parked.contains("not at what you have up"), "{parked}");
 
         // Nothing shown: there is no "instead" to draw, and claiming one would be a
         // contradiction of the line right above it.
-        let clear = render_on_screen(&[], Some(&went));
+        let clear = render_on_screen(&[], Some(&went), &[]);
         assert!(clear.contains("the room is clear"), "{clear}");
         assert!(clear.contains("factory/drive"), "{clear}");
         assert!(!clear.contains("not at what you have up"), "{clear}");
 
         // And with nobody having gone anywhere, the block is exactly what it was.
-        assert!(!render_on_screen(&["tasks".to_string()], None).contains("The person went"));
+        assert!(!render_on_screen(&["tasks".to_string()], None, &[]).contains("The person went"));
+    }
+
+    /// The half of the screen the agent could not see: what it has already put up and can
+    /// put back. Carries refs, because going back is a `hi_show` by ref and the id the
+    /// slot is wearing is no help.
+    #[test]
+    fn the_screen_block_lists_what_can_be_put_back_up() {
+        use crate::foundation::server::view_bus::Shown;
+        let trail = vec![
+            Shown {
+                view_ref: "trip/itinerary".into(),
+                label: "Itinerary".into(),
+                at: Utc::now(),
+                live: true,
+            },
+            Shown {
+                view_ref: "spend/august".into(),
+                label: "August".into(),
+                at: Utc::now() - chrono::Duration::minutes(20),
+                live: false,
+            },
+        ];
+
+        let block = render_on_screen(&["slot".to_string()], None, &trail);
+        assert!(block.contains("Already shown"), "{block}");
+        assert!(block.contains("`trip/itinerary` — Itinerary — up now"), "{block}");
+        assert!(block.contains("`spend/august` — August — last up a while back"), "{block}");
+
+        // Nothing shown yet: no heading offering an empty list.
+        let first = render_on_screen(&[], None, &[]);
+        assert!(!first.contains("Already shown"), "{first}");
+    }
+
+    /// The list is recall, not a menu. A prompt block that tells the agent when to reach
+    /// for one of these is a second answer to a question `reaction.md` already answers,
+    /// sitting in the one place that can see the whole list — which is how a way back to a
+    /// subject becomes somewhere to reach when the conversation goes quiet.
+    #[test]
+    fn the_trail_block_does_not_argue_for_showing_anything() {
+        use crate::foundation::server::view_bus::Shown;
+        let block = render_on_screen(
+            &[],
+            None,
+            &[Shown {
+                view_ref: "spend/august".into(),
+                label: "August".into(),
+                at: Utc::now(),
+                live: false,
+            }],
+        );
+        for nudge in ["right move", "comes back round", "instant", "nothing is rebuilt"] {
+            assert!(!block.contains(nudge), "the block only lists; {nudge:?} argues: {block}");
+        }
     }
 
     /// The screen block is `OnChange`, so a live "40s ago" would re-send the whole thing
@@ -2862,11 +2918,28 @@ fn join_sections(sections: &[&str]) -> String {
 /// Render the agent's own screen as a prompt section: the ids currently displayed,
 /// z-order top-most last. Always emitted (unlike the empty-dropping sections) — when
 /// the screen is clear the agent needs to *know* it's clear so it stops firing blind
-/// dismisses at ids that are already gone. Kept to bare ids: the reaction shows/dismisses
-/// by id, and the id is all it needs to target one.
+/// dismisses at ids that are already gone. The ids stay bare: the reaction dismisses by
+/// id, and the id is all it needs to target one.
+///
+/// **Then what it has already shown**, which is a different question and needs a different
+/// key. Going back to a view is a `hi_show` by *ref*, so the id the slot is wearing right
+/// now is no help; and the trail is the one thing on this screen the person could always
+/// see — it is drawn as a row of labelled pictures in the band — and the agent never could.
+/// Without it, "just show it again when they come back to it" was an instruction
+/// conditioned on a ref still being somewhere in the session from the turn a builder
+/// returned it. See [`ViewBus::shown`](crate::foundation::server::view_bus::ViewBus::shown).
+///
+/// **Written as recall, not as an offer.** It carries the refs and nothing else — no
+/// "put one of these up", no reason to. A standing list under a heading that invites
+/// showing is a menu, and a menu in a prompt gets picked from: the point is to be able to
+/// return to a subject that came back, not to have somewhere to reach when the
+/// conversation goes quiet. Whether a view belongs on the screen is
+/// [`REACTION_BASE`](crate::identity)'s question, answered once, and repeating a nudge
+/// here would answer it a second time in the one place that sees the list.
 fn render_on_screen(
     ids: &[String],
     attention: Option<&crate::foundation::server::view_bus::Attention>,
+    shown: &[crate::foundation::server::view_bus::Shown],
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::from("## On screen now\n");
@@ -2887,6 +2960,17 @@ next is most likely about it.",
             went.name,
             went_ago(Utc::now() - went.at),
         );
+    }
+    if !shown.is_empty() {
+        s.push_str("\n\n### Already shown, newest first (yours to put back up by ref)\n");
+        for view in shown {
+            let when = if view.live {
+                " — up now".to_string()
+            } else {
+                format!(" — last up {}", went_ago(Utc::now() - view.at))
+            };
+            let _ = writeln!(s, "- `{}` — {}{when}", view.view_ref, view.label);
+        }
     }
     s
 }

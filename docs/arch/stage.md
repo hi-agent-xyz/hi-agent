@@ -35,7 +35,12 @@ argued in *Where they went is reported; the cursor still is not*. **Amended Augu
 2026 — the card is the picture, and the name is written on it:** the tile becomes 160×90,
 the label moves onto the shot's bottom edge over a gradient, the time it went up is not
 printed, and both rows open on the item marked *here*; argued in *The card is the
-picture*. Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
+picture*. **Amended August 26, 2026 — the screen answers to the conversation in both
+directions:** a show is an interruption, so its *timing* is the agent's read of what the
+person is doing rather than a readiness event; and the agent is told its own trail, so the
+screen can follow the talk back to a topic and not only forward to a new one. Argued in
+*The screen answers to the conversation, in both directions*.
+Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
 
@@ -460,6 +465,81 @@ that seam. `dismiss` is still not one — nothing goes up, so no window is taken
 window on purpose; it must still not scroll the row of cards someone is reading with their
 finger on it. The stage follows the agent; the row follows the hand.
 
+### The screen answers to the conversation, in both directions
+
+Added August 26, 2026. *A show takes the window with it* settled what a show does to the
+person and left the other end of it unpriced: **nothing was ever said about when the agent
+should fire one, and the one thing that was said is now false.** `identity/reaction.md`
+told it *"a view waits on screen like a message waits in the chat, so there is no wrong
+moment to put one up — only a wrong thing to put up"*, which was exactly right while a
+show left a parked window alone, and stopped being right on August 21. Under the rule above
+a show is not a thing that waits: it lands on every window and takes whatever was there
+off. The two halves of one act were written five days apart and only the first was
+updated.
+
+**So the rule is what a view is for, and the timing falls out of it.** *While you are
+talking, keep asking what would help them keep up with you* — the screen exists to close
+the gap between what the agent has in front of it and what the person can see, and a view
+finishing is not a reason to show it, only a reason to be able to.
+
+**That it is stated as a purpose and not as a cost is the design decision, not the
+wording.** Written the other way up — *a show lands in front of them and takes what was
+there off, so weigh it* — every sentence after it argues for showing less, and the failure
+that produces (a finished view nobody is ever shown) is worse than the one it prevents.
+Led by what a view is for, one question settles both directions and needs no table of
+cases: a view that helps them follow the subject at hand earns the screen, and a view that
+does not is not helping whoever it was built for either. The earlier draft of this section
+*was* that table — *asked-for goes up now, a fun one waits, a work one cuts into a chat* —
+which is the wrong shape twice over: it answers the two situations that prompted it and
+nothing else, and a rule written for particular screens is exactly what the retired
+sentence above was. The agent is mid-sentence with the person; it can read which case it is
+in far better than a paragraph written months earlier can enumerate.
+
+**No host gate, no queue, no importance field.** The only thing in this system that knows
+whether a view is a fun aside or the thing they have been waiting on is the rung holding
+the conversation; a threshold in the bus would be a number standing in for a read of the
+room, and a hold-and-release queue would be machinery for a delay the agent can simply
+take. This stays guidance in the prompt, where it ranks options instead of forbidding one —
+and it carries its own counterweight, because the failure it must not produce is silence
+with a finished view behind it. A view nobody has been shown is worth nothing, which is
+strictly worse than one shown a minute early.
+
+**Going back is not an interruption, and the agent could not do it.** The opposite gap sits
+in the same place: when the talk returns to something already shown, the screen should
+return with it, and putting a view *back* is the one show that cannot land wrong — it is
+the screen catching up with the subject rather than changing it.
+
+What stopped it was that **the agent could not see its own trail.** The person always
+could: the band draws it as a row of labelled pictures, `history` is in every
+`GET /api/out/view`, and Cognition is told what went up in the last ninety minutes
+(`snapshot::shown_recently`). Reaction — the only rung that calls `hi_show` — had
+`on_screen()`, which is one bare id for the slot that is filled right now. Its own
+instruction to put a view back read *"if you still have the ref"*, and the only place that
+ref lived was its session, from the turn a builder happened to return it.
+
+So `ViewBus::shown()` reports the trail into the turn beside `on_screen`. Four things it
+deliberately is not:
+
+- **Not an offer.** The block lists refs and says nothing about reaching for one. A
+  standing list of views under a heading that argues for showing them is a menu, and a menu
+  in a prompt gets picked from — which turns a way back to a subject into somewhere to
+  reach when the conversation goes quiet, and puts more on the screen rather than the right
+  thing. Whether a view belongs up is answered once, in `reaction.md`; the block is recall.
+
+- **Not a history.** It carries only entries with a `view_ref`, because `hi_show` takes a
+  ref and there is no call that puts an inline artifact back. Listing something the agent
+  cannot act on only invites it to try — the same rule that keeps the condition layer out
+  of `on_screen`. What has been *shown* is the journal's record, and Cognition reads it
+  there.
+- **Not the cursor.** Where the person went is still theirs and still arrives separately,
+  as `Attention`. This is where the *agent* has been.
+- **Not a new bound.** It is the same `history` the band draws, at the same `HISTORY_MAX`,
+  through a second reader.
+
+**Ages are coarse here for the reason they are coarse in `Attention`:** the block is
+`Cadence::OnChange`, so a live figure would put the whole screen back in the prompt every
+turn.
+
 ### Where they went is reported; the cursor still is not
 
 Amended August 19, 2026. Those two read as one fact and are opposite in kind, which is why
@@ -668,6 +748,12 @@ The rule this replaces was never written down, only practised: *nothing goes up 
 finished*. What it bought was that the person never sees a rough view. What it cost was that
 they see nothing for half an hour, and a view held back for a taste finding is a view nobody
 has read yet — the strictly worse failure of the two, and the one nobody was counting.
+
+**"On its first clean render" is when a view *may* go up, not when it does.** This section
+removes the review from the path; it does not make a finished build a reason to take the
+screen. What decides the moment is *The screen answers to the conversation*, below — and
+the two agree about the case that matters, because a view they are waiting on goes up as
+soon as it renders under both rules.
 
 **Rejected: pinning the review to the current skin.** It reads like the same idea as picking
 the frame and it is not. The frame the person has is a fact about the composition; the skin
