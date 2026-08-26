@@ -1165,6 +1165,34 @@ mod soul_tests {
         assert!(REFLECTION_BASE.contains("hi_update_proactivity"));
     }
 
+    /// **An undelivered promise is handed to a rung, not written into a digest.** This
+    /// prompt spent an unknown stretch telling reflection its gists were projected by the
+    /// recency digest and read by "the agent when it wakes". That digest is `hot.md`, whose
+    /// injection and writer were both retired — `snapshot`'s
+    /// `leftover_legacy_files_are_never_inlined` exists to keep it from climbing back into a
+    /// window, and `episodes::recent_gists` hands gists only to reflection's *own* next pass.
+    /// So the one instruction aimed at catching promised-and-never-delivered work wrote to
+    /// nobody, which is this repo's oldest failure wearing new clothes: a prompt naming a
+    /// mechanism that does not exist.
+    ///
+    /// Watched failing on 2026-08-25 — a disk inspection's pending owner decision was
+    /// recorded in a gist, correctly and completely, and no rung ever read it.
+    ///
+    /// Both halves are pinned. The destination, because a record that reaches no reader is
+    /// the whole bug; and the *absence* of the digest, because the sentence that broke this
+    /// was plausible enough to survive the file it named.
+    #[test]
+    fn an_undelivered_promise_is_handed_on_rather_than_filed_in_a_digest() {
+        assert!(
+            REFLECTION_BASE.contains("then hand it to `cognition`"),
+            "the promise must go to the rung that can open a row, not into a record"
+        );
+        assert!(
+            !REFLECTION_BASE.contains("recency digest"),
+            "the digest is retired; a prompt may not route anything through it"
+        );
+    }
+
     /// The two halves of the view loop both name the tool that makes them possible.
     /// Before `hi_review_view` existed, the builder's prompt pointed at `hi_look` — which
     /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
