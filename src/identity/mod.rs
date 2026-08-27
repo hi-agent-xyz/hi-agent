@@ -462,6 +462,15 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
     let dir = |p: PathBuf| p.display().to_string();
     let mut out = text
         .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
+        // **The inventory a session carries without asking**, rebuilt here at every
+        // open rather than stored — a cut line, not a list (`docs/arch/tools.md`).
+        // For a note naming a command there is no schema to attach, so "resident"
+        // means exactly this: its `purpose` line is in the window, and everything
+        // below the cut is one grep away.
+        .replace(
+            "{tools_in_hand}",
+            &crate::mind::skills::hot_inventory(&base, crate::mind::skills::HOT_BUDGET_BYTES),
+        )
         // The root a `⟨ref: <channel>/<day>/<hh>/<file>⟩` resolves against: a ref is
         // literally that path under this directory. Without it a ref is a fragment,
         // not a path — and "a ref is a path, and an agent that can read files can

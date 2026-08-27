@@ -254,6 +254,9 @@ struct Breakdowns {
     sessions_by_role: Vec<SessionBreakdown>,
     sessions_by_worker_type: Vec<SessionBreakdown>,
     tools_by_name: Vec<ToolBreakdown>,
+    /// Shell commands by program name. `tools_by_name` covers only MCP calls, so
+    /// without this the carrier the tool design *prefers* — a CLI — is invisible.
+    commands_by_name: Vec<ToolBreakdown>,
     tools_by_role: Vec<CountBreakdown>,
     tools_by_worker_type: Vec<CountBreakdown>,
     tool_statuses: Vec<CountBreakdown>,
@@ -341,6 +344,11 @@ struct FrameAggregation {
     tokens: TokenSummary,
     tools: ToolSummary,
     tool_names: HashMap<String, (u64, u64)>,
+    /// Shell commands by the program they actually ran, with a failure count — the
+    /// CLI half of tool usage. Separate from `tool_names` on purpose: an MCP call and
+    /// a shell command are different acts, and merging them would make neither
+    /// countable.
+    command_names: HashMap<String, (u64, u64)>,
     tool_roles: HashMap<String, u64>,
     tool_worker_types: HashMap<String, u64>,
     tool_statuses: HashMap<String, u64>,
@@ -373,6 +381,11 @@ impl FrameAggregation {
         self.tools.edits += other.tools.edits;
         self.tools.web_searches += other.tools.web_searches;
         self.tools.context_compactions += other.tools.context_compactions;
+        for (name, (count, failed)) in other.command_names {
+            let entry = self.command_names.entry(name).or_insert((0, 0));
+            entry.0 += count;
+            entry.1 += failed;
+        }
         for (name, (count, failed)) in other.tool_names {
             let entry = self.tool_names.entry(name).or_insert((0, 0));
             entry.0 += count;
@@ -528,6 +541,7 @@ async fn build_stats(state: &AppState, range: Range, now: DateTime<Utc>) -> Stat
     coverage.legacy_estimated = frame_aggregation.estimated_token_updates > 0;
     summary.tokens.estimated = coverage.legacy_estimated;
     breakdowns.tools_by_name = sorted_tools(frame_aggregation.tool_names);
+    breakdowns.commands_by_name = sorted_tools(frame_aggregation.command_names);
     breakdowns.tools_by_role = sorted_counts(frame_aggregation.tool_roles);
     breakdowns.tools_by_worker_type = sorted_counts(frame_aggregation.tool_worker_types);
     breakdowns.tool_statuses = sorted_counts(frame_aggregation.tool_statuses);
@@ -979,6 +993,58 @@ struct WireMethod<'a> {
     method: Option<Cow<'a, str>>,
 }
 
+/// The program a shell command actually ran, or `None` when nothing recognisable is
+/// there.
+///
+/// **Why this is not just "the first word".** Every command the agent runs arrives
+/// wrapped — `/bin/zsh -lc "curl … | ruby -e …"` — so the first word is always the
+/// shell, and counting that would say every session ran `zsh` and nothing else. The
+/// wrapper is unwrapped, leading `VAR=value` assignments are stepped over, and the
+/// directory is dropped so `/opt/homebrew/bin/chromium` counts as `chromium` wherever
+/// it was installed.
+///
+/// **Stated limit: only the first program of a pipeline is counted.** `curl … | ruby`
+/// counts as `curl`. Counting every stage would need a shell parser, and the question
+/// this feeds — which tools does this install actually reach for — is answered well
+/// enough by the program that starts the line. A tool used only ever as the second
+/// stage of a pipe will read as unused; that is a known blind spot, not a silent one.
+fn program_name(command: &str) -> Option<String> {
+    // Unwrap `<shell> -c <script>` / `-lc` / `-ec` and friends: the script is the
+    // command that matters. Take everything after the flag as one string, since the
+    // script is normally quoted as a single argument.
+    let mut text = command.trim();
+    if let Some((_, rest)) = text.split_once(" -") {
+        let flagged = rest.trim_start_matches(['l', 'e', 'u', 'o', 'x']);
+        if let Some(script) = flagged.strip_prefix("c ") {
+            text = script.trim();
+        }
+    }
+    // The script is usually quoted; step inside so the program is the first token of
+    // the script rather than a quote character.
+    let text = text.trim_start_matches(['\'', '"', '(', '{']).trim_start();
+
+    for token in text.split_whitespace() {
+        // `FOO=bar cmd` — an assignment is not the program. Tested by what precedes
+        // the `=` being an identifier, not by the absence of a slash: `TZ=Asia/Shanghai`
+        // has one and is still an assignment.
+        if let Some((name, _)) = token.split_once('=') {
+            let is_identifier = !name.is_empty()
+                && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if is_identifier {
+                continue;
+            }
+        }
+        let name = token.rsplit(['/', '\\']).next().unwrap_or(token);
+        let name = name.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.');
+        if name.is_empty() {
+            continue;
+        }
+        return Some(name.to_string());
+    }
+    None
+}
+
 /// One item, accumulated across the frames that carry its id — the same message
 /// [`messages::fold`] would produce, reduced to what a count needs.
 struct ItemTally {
@@ -1124,6 +1190,12 @@ fn scan_frame_text(
                 if let Some(tool) = item.get("tool").and_then(Value::as_str) {
                     tally.tool = Some(tool.to_string());
                 }
+                // A shell command names its program in argv[0] rather than in a `tool`
+                // field, so the same slot is filled from it. `kind_of` keeps the two
+                // apart (`mcpToolCall` vs `commandExecution`), so nothing conflates.
+                if let Some(cmd) = item.get("command").and_then(Value::as_str) {
+                    tally.tool = program_name(cmd);
+                }
                 tally.errored |= item.get("error").is_some_and(|error| !error.is_null());
             }
             // Deltas and protocol housekeeping. A delta's payload is never parsed: it is
@@ -1161,7 +1233,15 @@ fn scan_frame_text(
                 let status = tally.status.unwrap_or_else(|| "unknown".to_string());
                 *out.tool_statuses.entry(status).or_default() += 1;
             }
-            "command" => out.tools.commands += 1,
+            "command" => {
+                out.tools.commands += 1;
+                let failed = tally.status.as_deref() == Some("failed") || tally.errored;
+                if let Some(name) = tally.tool {
+                    let entry = out.command_names.entry(name).or_insert((0, 0));
+                    entry.0 += 1;
+                    entry.1 += u64::from(failed);
+                }
+            }
             "edit" => out.tools.edits += 1,
             "search" => out.tools.web_searches += 1,
             "compaction" => out.tools.context_compactions += 1,
@@ -1623,6 +1703,38 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use serde_json::json;
+
+    /// **The first word is always the shell, so counting it says every session ran
+    /// `zsh`.** These are the shapes actually seen in the frame logs on 2026-08-26/27,
+    /// which is why the unwrapping exists at all.
+    #[test]
+    fn a_command_is_counted_by_the_program_it_actually_ran() {
+        let cases = [
+            (r#"/bin/zsh -lc "curl -fsSL 'https://x/' -o /tmp/x.html""#, "curl"),
+            (r#"/bin/zsh -lc 'grep -rn "^purpose:" /tmp/d/skills | head -80'"#, "grep"),
+            ("/bin/zsh -lc \"sed -n '1,220p' /tmp/d/skills/factory/browser.md\"", "sed"),
+            // The whole point: a tool reached through the shell becomes visible.
+            ("/bin/zsh -lc \"browser --dump-dom 'https://x/'\"", "browser"),
+            // An absolute path counts as the program wherever it was installed.
+            ("/opt/homebrew/bin/chromium --headless", "chromium"),
+            // Env assignments are not the program.
+            ("/bin/sh -c 'TZ=Asia/Shanghai date +%H'", "date"),
+            // Unwrapped commands still work.
+            ("python3 scripts/extract.py", "python3"),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                program_name(command).as_deref(),
+                Some(expected),
+                "from {command:?}"
+            );
+        }
+        assert_eq!(program_name("   "), None);
+
+        // The stated blind spot, pinned so it stays known rather than becoming a
+        // surprise: only the first stage of a pipeline is counted.
+        assert_eq!(program_name("/bin/zsh -lc 'curl -s x | ruby -e y'").as_deref(), Some("curl"));
+    }
 
     fn at(day: u32, hour: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, day, hour, 0, 0)

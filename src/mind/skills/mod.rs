@@ -22,12 +22,13 @@
 //!
 //! # Tools live here too
 //!
-//! A **tool** is a skill with an invocation contract: the same note, plus `purpose:`
-//! and `use:` front matter (`docs/arch/tools.md`). `purpose` is the line the registry
-//! scan emits; the *presence* of `use` is what makes a note a tool rather than an
-//! ordinary procedure, and its value is a command. There is no `tools/` tree.
+//! A **tool** is a note whose prose says how to run something. `purpose:` (or the
+//! `description:` the agent runtime teaches) is the line the registry scan emits and
+//! the one key code needs; `use:` names a command when a note happens to have one and
+//! is a convenience, not a classification — see [`FrontMatter`]. There is no `tools/`
+//! tree.
 //!
-//! `use` names a command, and [`install_tool_bin`] is the other half: [`path_entries`]
+//! When a note does carry `use:`, [`install_tool_bin`] is the other half: [`path_entries`]
 //! is prepended to every session's PATH, so a note can say `browser` and mean
 //! *whatever this machine turned out to have*. That is the whole point of the tree —
 //! **`skills/` syncs and `bin/` does not**, so a portable note needs a stable name and
@@ -79,10 +80,15 @@ pub(crate) fn browser_note() -> &'static str {
 /// half of the workshop, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
 
-/// What a note's front matter says about it. Two keys and no more
-/// (`docs/arch/tools.md`): `purpose` is the line the registry scan emits, and the
-/// **presence** of `use` is the whole discriminator between a tool and an ordinary
-/// procedure.
+/// What a note's front matter says about it.
+///
+/// **One key that matters and one convenience** (`docs/arch/tools.md`). `purpose` is
+/// the line the registry scan emits, and it is the only thing code needs. `use` names
+/// a command when the note happens to have one — useful, never load-bearing: it was
+/// once meant to be what *made* a note a tool, and two live runs showed the agent does
+/// not write it, so a discriminator built on it would have classified every learnt
+/// tool as an ordinary procedure. What makes a note runnable is that its prose says
+/// how to run it, which is where the format rule wanted it anyway.
 ///
 /// One parser, shared by the workshop API and the tests, for the same reason
 /// [`crate::foundation::codex::messages::kind_of`] is shared: two copies of a
@@ -92,15 +98,9 @@ pub struct FrontMatter {
     /// One line saying what the note is for. `None` degrades to a bare filename —
     /// unhelpful, never a confident wrong answer.
     pub purpose: Option<String>,
-    /// The command to run. Present iff this note is a tool.
+    /// The command to run, when the note names one. Absent on most notes, including
+    /// every learnt one so far — see the type doc.
     pub run: Option<String>,
-}
-
-impl FrontMatter {
-    /// True when this note names something runnable.
-    pub fn is_tool(&self) -> bool {
-        self.run.is_some()
-    }
 }
 
 /// Split a note into its front matter and its body.
@@ -150,6 +150,122 @@ pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
 /// skill directory. A note at `<dir>/SKILL.md` **is** the tool `<dir>` — the name
 /// still comes from the tree, one level up.
 pub const SKILL_FILE: &str = "SKILL.md";
+
+/// One note in the workshop: what it is called, where it is, and when it last changed.
+#[derive(Debug, Clone)]
+pub struct NoteRef {
+    /// Path under `skills/` with no `.md` — and for the directory shape, the directory
+    /// itself. This is the note's identity everywhere.
+    pub id: String,
+    pub path: PathBuf,
+    pub modified: std::time::SystemTime,
+}
+
+/// Every note in the workshop, in no particular order.
+///
+/// **The one place that decides what counts as a note**, so the API listing, the
+/// registry and any future reader cannot disagree. Two shapes: a `.md` file, or a
+/// directory holding a [`SKILL_FILE`] — and that second one **ends the descent**,
+/// because everything beside the note is the tool's payload rather than reading
+/// material. Walking in once listed a vendored `LICENSE.md` as a skill.
+///
+/// Dotfiles are skipped as editor litter. A missing root is an empty workshop, not an
+/// error — nothing has been learnt yet.
+pub fn notes(data_dir: &Path) -> io::Result<Vec<NoteRef>> {
+    let root = skills_dir(data_dir);
+    let mut out = Vec::new();
+    let mut stack = vec![(root.clone(), String::new())];
+    while let Some((dir, prefix)) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        for entry in rd {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel =
+                if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() {
+                let note = entry.path().join(SKILL_FILE);
+                if note.is_file() {
+                    push_note(&mut out, note, rel);
+                } else {
+                    stack.push((entry.path(), rel));
+                }
+            } else if name.ends_with(".md") {
+                push_note(&mut out, entry.path(), rel);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn push_note(out: &mut Vec<NoteRef>, path: PathBuf, rel: String) {
+    let modified = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    let id = rel.strip_suffix(".md").unwrap_or(&rel).to_string();
+    out.push(NoteRef { id, path, modified });
+}
+
+/// How many bytes of workshop inventory a session may carry.
+///
+/// **The cap is the budget, and the unit is bytes rather than a count** because one
+/// note with a two-hundred-word purpose line costs what five terse ones do
+/// (`docs/arch/tools.md`). ~1.5 KB is roughly 400 tokens: a real cost, and small
+/// beside a single attached MCP server's schemas, which is the comparison that matters.
+pub const HOT_BUDGET_BYTES: usize = 1536;
+
+/// The inventory a session carries without asking: `name — purpose`, one line each,
+/// truncated at [`HOT_BUDGET_BYTES`].
+///
+/// **A cut line, not a list.** Nothing stores which notes are in it; it is rebuilt at
+/// every session open, so a note written yesterday appears without anyone deciding it
+/// should and one that falls below the line falls out the same way.
+///
+/// **Ranking signal — stated plainly because it is not the one the design asks for.**
+/// This ranks by *when the note last changed*, freshest first. The design's `hot` level
+/// is recency-weighted **use**, and the counter for that now exists
+/// ([`crate::foundation::server::stats`]'s `commands_by_name`) but is not wired here:
+/// it means scanning the frame logs at every session open, and that cost is unmeasured.
+/// Until it is, freshness is a real but weaker proxy — a note just written is usually
+/// the relevant one. The item that takes this back is named in `docs/status.md`.
+///
+/// Returns an empty string for an empty workshop, so a caller can interpolate it
+/// without special-casing a fresh install.
+pub fn hot_inventory(data_dir: &Path, budget: usize) -> String {
+    let mut notes = notes(data_dir).unwrap_or_default();
+    // Freshest first; the id breaks ties so the output is stable rather than
+    // filesystem-ordered, which would make the prompt differ between two identical
+    // installs and make a diff unreadable.
+    notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.id.cmp(&b.id)));
+
+    let mut out = String::new();
+    for note in notes {
+        let Ok(text) = std::fs::read_to_string(&note.path) else { continue };
+        let (fm, _) = split_front_matter(&text);
+        // A note with no purpose line degrades to a bare name — unhelpful, never a
+        // confident wrong answer, which is the bargain the views toolbox already makes.
+        let line = match fm.purpose {
+            Some(purpose) => format!("- {} — {}\n", note.id, purpose),
+            None => format!("- {}\n", note.id),
+        };
+        if out.len() + line.len() > budget {
+            // Silently stopping at a budget is the failure shape this repo has paid
+            // for before, so say what was dropped. The scan is still the floor
+            // underneath: what is not in hand is one grep away.
+            out.push_str("- (more in the workshop — scan it)\n");
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
+}
 
 fn non_empty(v: &str) -> Option<String> {
     let v = v.trim();
@@ -348,14 +464,12 @@ mod tests {
         let (fm, body) = split_front_matter("---\npurpose: do a thing\nuse: thing\n---\n\n# T\n\nprose\n");
         assert_eq!(fm.purpose.as_deref(), Some("do a thing"));
         assert_eq!(fm.run.as_deref(), Some("thing"));
-        assert!(fm.is_tool());
         assert!(body.starts_with("# T"), "the body must not keep the block: {body:?}");
 
         // A note with no block is all body — the common case, since most skills are
         // procedures.
         let (fm, body) = split_front_matter("# Just a skill\n\nhow it went\n");
         assert_eq!(fm, FrontMatter::default());
-        assert!(!fm.is_tool());
         assert!(body.starts_with("# Just a skill"));
 
         // An unterminated block is not front matter. Treating it as one would eat the
@@ -364,9 +478,9 @@ mod tests {
         assert_eq!(fm, FrontMatter::default());
         assert!(body.starts_with("---"));
 
-        // A blank value is absent, not an empty tool.
+        // A blank value is absent, not an empty command.
         let (fm, _) = split_front_matter("---\nuse:   \n---\nx\n");
-        assert!(!fm.is_tool());
+        assert_eq!(fm.run, None);
     }
 
     /// **`description:` is read as `purpose:`.** Watched 2026-08-27: asked to build a
@@ -381,9 +495,9 @@ mod tests {
         let (fm, body) = split_front_matter(codex_shape);
         assert_eq!(fm.purpose.as_deref(), Some("Extract a page into Markdown"));
         assert!(body.starts_with("# Extract"));
-        // Still not a tool: nothing named a command, which is exactly the gap that
-        // run showed and the reason `use:` survives as its own key.
-        assert!(!fm.is_tool());
+        // No command named — the shape the agent actually writes, and the reason
+        // nothing is classified by whether `use:` is present.
+        assert_eq!(fm.run, None);
 
         // `purpose` wins when a note carries both — it is the key this design asked
         // for, and `description` is the fallback rather than an equal.
@@ -393,6 +507,81 @@ mod tests {
         // `name:` is ignored outright; the tree already addresses the note.
         let (fm, _) = split_front_matter("---\nname: whatever\n---\nx\n");
         assert_eq!(fm.purpose, None);
+    }
+
+    /// **The cap is the budget, and a budget that is not a test is not a budget.**
+    /// "Add tools continuously" is pressure on exactly this tier, so the failure mode
+    /// to prevent is a workshop that quietly grows the opening prompt forever.
+    #[test]
+    fn the_inventory_is_capped_and_says_what_it_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = skills_dir(dir.path());
+        std::fs::create_dir_all(&skills).unwrap();
+        for i in 0..80 {
+            std::fs::write(
+                skills.join(format!("tool-{i:02}.md")),
+                format!("---\npurpose: a reasonably wordy line about what tool {i:02} is for, long enough to cost real bytes\n---\n\nbody\n"),
+            )
+            .unwrap();
+        }
+
+        let out = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        assert!(
+            out.len() <= HOT_BUDGET_BYTES + 40,
+            "the inventory blew its budget: {} bytes",
+            out.len()
+        );
+        // Silently stopping at a cap is the failure shape this repo has paid for.
+        assert!(
+            out.contains("more in the workshop"),
+            "a truncated inventory must say so: {out}"
+        );
+        assert!(out.lines().count() < 80, "it did not actually cut anything");
+    }
+
+    #[test]
+    fn the_inventory_is_a_cut_line_rebuilt_not_a_stored_list() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_skills(dir.path()).unwrap();
+
+        let before = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        assert!(before.contains("factory/browser"), "seeded tools are in hand: {before}");
+        // A purpose line is what the entry carries; a note without one degrades to a
+        // bare name rather than vanishing.
+        assert!(before.contains("drive a real Chrome"), "{before}");
+
+        // Nothing stored: a note written now appears at the next build, no bookkeeping.
+        std::fs::write(
+            skills_dir(dir.path()).join("just-learnt.md"),
+            "---\npurpose: something the agent worked out today\n---\n\nbody\n",
+        )
+        .unwrap();
+        let after = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        assert!(after.contains("just-learnt"), "{after}");
+        assert!(
+            after.find("just-learnt") < after.find("factory/browser"),
+            "freshest first, so what was just written leads: {after}"
+        );
+
+        // An empty workshop interpolates to nothing rather than to an apology.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(hot_inventory(empty.path(), HOT_BUDGET_BYTES), "");
+    }
+
+    #[test]
+    fn a_skill_directory_is_one_note_to_the_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = skills_dir(dir.path());
+        std::fs::create_dir_all(skills.join("web-to-markdown/scripts/vendor")).unwrap();
+        std::fs::write(
+            skills.join("web-to-markdown").join(SKILL_FILE),
+            "---\ndescription: turn a URL into Markdown\n---\n\n# W\n",
+        )
+        .unwrap();
+        std::fs::write(skills.join("web-to-markdown/scripts/vendor/LICENSE.md"), "MIT\n").unwrap();
+
+        let ids: Vec<String> = notes(dir.path()).unwrap().into_iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec!["web-to-markdown".to_string()], "payload is not reading material");
     }
 
     #[test]
@@ -464,9 +653,9 @@ mod tests {
             EQUIPPING_A_TOOL.contains("Mark what rots"),
             "the perishable half must be marked or the next job trusts a stale note"
         );
-        // It is a procedure, not a tool: there is no command to run.
+        // It is a procedure: there is no command to run.
         let (fm, _) = split_front_matter(EQUIPPING_A_TOOL);
-        assert!(!fm.is_tool());
+        assert_eq!(fm.run, None);
     }
 
     #[test]

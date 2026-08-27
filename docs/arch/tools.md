@@ -106,33 +106,44 @@ use: chrome-devtools-cli
 How to actually use it, the traps, what good looks like — and how to rebuild it.
 ```
 
-Named by its filename: `skills/factory/browser.md` is the tool `browser`. A `name:` key would
-restate the path the tree is already addressed by.
+Named by its path: `skills/factory/browser.md` is the tool `browser`, and so is
+`skills/web-to-markdown/SKILL.md` the tool `web-to-markdown` — the directory shape the agent
+runtime's own skills feature writes, and the shape the agent actually reaches for. Either way
+the name comes from the tree, so a `name:` key would only restate it.
+
+A skill directory **is one note**, and everything beside that note is payload: a script, its
+fixtures, a vendored dependency tree. Payload is not reading material and is not walked as
+though it were — a run that walked in listed a bundled `LICENSE.md` as a skill. Portable source
+may sit beside its note; machine-specific weight (binaries, model files, vendored trees) belongs
+in [`bin/`](#bin), the tree a note can rebuild.
 
 It lives in [`skills/`](data.md#skills), which already has everything this needs — a factory
 layer rewritten on upgrade, a learnt layer never touched by one, a review API, and
-delete-learnt-only. A tool is a skill with an invocation contract; the front matter is what
-makes it one. There is no `tools/` tree.
+delete-learnt-only. There is no `tools/` tree.
 
 ### The format rule
 
 > **Front matter is only what code reads. Everything a mind reads is prose.**
 
-The two keys sit differently under that rule, and it is worth being exact about how.
+**One key is read by code, and it is the only one that has to be there.** `purpose` — or
+`description`, the spelling the agent runtime's own skills feature teaches, read as the same
+thing — is taken verbatim by the [registry](#the-registry) scan, and it alone costs anything at
+scale because it alone is in the scan's output. A note missing it degrades to a bare filename:
+unhelpful, never a confident wrong answer, the same bargain [`views/`](data.md#views) makes.
 
-`purpose` is read by code: the [registry](#the-registry) scan takes it verbatim, and it is the
-only key that costs anything at scale because it alone is in the scan's output. A note missing
-it degrades to a bare filename — unhelpful, never a confident wrong answer, the same bargain
-[`views/`](data.md#views) already makes.
+`use` names a command, and it is **a convenience rather than a classification.** An earlier
+version of this doc made the presence of `use` the discriminator between a tool and an ordinary
+skill. Two live runs killed that: asked to build a capability, the agent wrote a working tool,
+exercised it, and left a good note — with no `use:` line, twice, the second time after being
+told in as many words that it was the line that mattered most. A discriminator built on it
+would have filed every learnt tool as a procedure.
 
-`use` is read by a mind. Nothing parses the value; the agent runs it. **What code reads is the
-key's presence** — a note with `use` is a tool, a note without one is an ordinary skill, and
-that boolean is the whole discriminator between the two kinds of note sharing one tree. Its
-value stays out of the body for one reason only: a mind about to run something should find the
-command in one place rather than mid-paragraph. If that ever stops holding, the value goes to
-prose and the rule wins.
+So the honest reading is the one the format rule wanted anyway: **what makes a note runnable is
+that its prose says how to run it.** `use` is worth keeping where a note has one — it is a
+command you can type, in a place you can find without reading the whole note — but nothing
+classifies by it, and its absence says nothing.
 
-That is the whole of why there are two keys and no more. Whether a tool acts on the agent's own
+Whether a tool acts on the agent's own
 machine or the person's screen, whether it returns now or mails a result back later, whether it
 should stop and ask before doing something irreversible — all of that matters, and all of it is
 prose in the body.
@@ -344,8 +355,9 @@ fits in a window.
 | Decision | Reasoning |
 |---|---|
 | A tool is a **note**, not a registry row | The knowledge is the durable half; the binary is a cache |
-| **Two keys**, everything else prose | Front matter is only what code reads; forms get filled |
-| `use` is front matter for its **presence**, not its value | The key is the tool/skill discriminator, and that is a boolean; the value is read by a mind |
+| **One required key**, everything else prose | Front matter is only what code reads; forms get filled |
+| `description:` is read as `purpose:` | The runtime teaches that spelling and the agent writes it; refusing it loses the note |
+| `use:` is a **convenience, not a classification** | The agent never writes it; a discriminator built on it files every learnt tool as a procedure |
 | Named by **filename** | The tree is already addressed by path |
 | It lives in **`skills/`** | A tool is a skill with an invocation contract — same tree, installer, split and review API |
 | **Three residency levels**, nothing between hot and asking | A partial list is a surface that can be consulted and found empty |

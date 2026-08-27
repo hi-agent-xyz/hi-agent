@@ -707,6 +707,11 @@ Some of those notes are **tools you can run**. A note opening with a `purpose:` 
 `use:` line names a command that exists on your PATH right now, and one scan tells you
 everything you have:
 
+What you already have in hand, without looking anything up:
+
+{tools_in_hand}
+That list is the recently-touched end of the workshop, not all of it. For anything else:
+
     grep -rEn "^(purpose|description):" {skills_dir}
 
 Run it before you conclude you can't reach something, and before you improvise with

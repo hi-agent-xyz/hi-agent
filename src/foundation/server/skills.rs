@@ -90,9 +90,9 @@ fn skill_file(data_dir: &std::path::Path, rel: &str) -> PathBuf {
 // ── markdown reading ──────────────────────────────────────────────────────────
 
 // Front matter is read by [`crate::mind::skills::split_front_matter`], which owns the
-// vocabulary: `purpose` is what the registry scan emits and the presence of `use` is
-// what makes a note a tool. A second parser here would be free to disagree with it
-// about what a note *is*, so there isn't one.
+// vocabulary: `purpose` (or `description`) is what the registry scan emits, and `use`
+// names a command when a note has one. A second parser here would be free to disagree
+// with it about what a note *is*, so there isn't one.
 
 /// The note's own title: a `#` heading standing *before* any prose. A heading found
 /// further down is a section, not a title, so prose ends the search.
@@ -191,10 +191,14 @@ struct SkillDto {
     modified: String,
     excerpt: String,
     /// The command this note names, when it names one — `use:` in the front matter.
-    /// Present iff the note is a **tool** rather than an ordinary procedure, which is
-    /// the only distinction the reader needs: a tool can be run, a skill is followed.
+    /// A convenience for the reader, not a classification: most notes have none, and
+    /// the agent has never written one, so its absence says nothing about the note.
     #[serde(skip_serializing_if = "Option::is_none")]
     run: Option<String>,
+    /// Ordering only — the mtime `modified` was rendered from. Kept off the wire: the
+    /// client already has `modified`, and two spellings of one fact invite drift.
+    #[serde(skip)]
+    sort_key: SystemTime,
 }
 
 /// Walk the workshop and read every note in it. Iterative (a stack of dirs) rather
@@ -204,93 +208,48 @@ struct SkillDto {
 /// Two passes: the walk decides *which files are notes* (a `.md`, or a directory's
 /// `SKILL.md`, which also ends the descent), then each note is read. Splitting them
 /// keeps the "is this a note" rule in one place instead of interleaved with parsing.
-async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
-    let mut found: Vec<(SystemTime, SkillDto)> = Vec::new();
-    let mut notes: Vec<(PathBuf, String)> = Vec::new();
-    let mut stack = vec![(root.to_path_buf(), String::new())];
-    while let Some((dir, prefix)) = stack.pop() {
-        let mut rd = match tokio::fs::read_dir(&dir).await {
-            Ok(rd) => rd,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
-        while let Some(ent) = rd.next_entry().await? {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            let rel = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            // An entry we cannot stat (a broken symlink, a file removed mid-walk) is
-            // skipped rather than failing the whole listing.
-            let Ok(ft) = ent.file_type().await else { continue };
-            if ft.is_dir() {
-                // **A directory holding a `SKILL.md` is one note, not a subtree to
-                // walk.** Everything beside that file is the tool's payload — a
-                // vendored dependency tree, a script, its fixtures — and walking in
-                // listed a bundled `LICENSE.md` *as a skill* on the run that first
-                // produced this shape. The note is read here; the payload is not
-                // knowledge and is nobody's reading material.
-                if ent.path().join(crate::mind::skills::SKILL_FILE).is_file() {
-                    notes.push((ent.path().join(crate::mind::skills::SKILL_FILE), rel));
-                } else {
-                    stack.push((ent.path(), rel));
-                }
-                continue;
-            }
-            if name.ends_with(".md") {
-                notes.push((ent.path(), rel));
-            }
-        }
-    }
-
-    for (path, rel) in notes {
-        // The identity is the path without `.md` — or, for the directory shape, the
-        // directory itself: `extract-webpage-markdown/SKILL.md` is the tool
-        // `extract-webpage-markdown`. Either way the name comes from the tree.
-        {
-            let id = rel.strip_suffix(".md").unwrap_or(&rel).to_string();
-            let stem = id.rsplit('/').next().unwrap_or(&id).to_string();
-            let stem = stem.as_str();
-            let Ok(meta) = tokio::fs::metadata(&path).await else { continue };
-            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let text = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-            let (fm, body) = crate::mind::skills::split_front_matter(&text);
-            found.push((
-                modified,
-                SkillDto {
-                    builtin: is_factory(&id),
-                    path: id,
-                    name: first_heading(body).unwrap_or_else(|| label_from_stem(stem)),
-                    bytes: meta.len(),
-                    modified: rfc3339(modified),
-                    // `purpose` *is* the one-line summary, written to be matched
-                    // against a job — so when a note has one it beats anything
-                    // scraped from the prose, which for a tool note is whatever
-                    // sentence happened to come first.
-                    excerpt: fm.purpose.clone().unwrap_or_else(|| excerpt(body)),
-                    run: fm.run,
-                },
-            ));
-        }
+async fn walk_skills(data_dir: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
+    // **What counts as a note is decided in one place** —
+    // [`crate::mind::skills::notes`] — so this listing, the registry the agent greps,
+    // and the inventory a session carries cannot disagree about it. Here we only read
+    // what that walk found.
+    let refs = crate::mind::skills::notes(data_dir)?;
+    let mut found: Vec<SkillDto> = Vec::with_capacity(refs.len());
+    for note in refs {
+        let Ok(meta) = tokio::fs::metadata(&note.path).await else { continue };
+        let text = tokio::fs::read_to_string(&note.path).await.unwrap_or_default();
+        let (fm, body) = crate::mind::skills::split_front_matter(&text);
+        let stem = note.id.rsplit('/').next().unwrap_or(&note.id).to_string();
+        found.push(SkillDto {
+            builtin: is_factory(&note.id),
+            name: first_heading(body).unwrap_or_else(|| label_from_stem(&stem)),
+            bytes: meta.len(),
+            modified: rfc3339(note.modified),
+            // `purpose` *is* the one-line summary, written to be matched against a
+            // job — so when a note has one it beats anything scraped from the prose,
+            // which for a tool note is whatever sentence happened to come first.
+            excerpt: fm.purpose.clone().unwrap_or_else(|| excerpt(body)),
+            run: fm.run,
+            sort_key: note.modified,
+            path: note.id,
+        });
     }
     // Learnt skills first, freshest first: the note the agent just wrote is the one
-    // worth looking at, and the factory layer is the same on every install.
+    // most likely being looked for. The path breaks ties so two installs with the same
+    // workshop produce the same order.
     found.sort_by(|a, b| {
-        a.1.builtin
-            .cmp(&b.1.builtin)
-            .then(b.0.cmp(&a.0))
-            .then(a.1.path.cmp(&b.1.path))
+        a.builtin
+            .cmp(&b.builtin)
+            .then_with(|| b.sort_key.cmp(&a.sort_key))
+            .then_with(|| a.path.cmp(&b.path))
     });
-    Ok(found.into_iter().map(|(_, dto)| dto).collect())
+    Ok(found)
 }
 
-/// `GET /api/skills` — every skill in the workshop, learnt ones first.
+
+/// `GET /api/skills` — the whole workshop, learnt notes first, freshest first.
 pub async fn get_skills(State(state): State<Arc<AppState>>) -> Response {
-    match walk_skills(&skills_dir(&state.data_dir)).await {
+    match walk_skills(&state.data_dir).await {
         Ok(skills) => Json(serde_json::json!({ "skills": skills })).into_response(),
         Err(e) => err(&e.to_string()),
     }
@@ -411,7 +370,7 @@ mod tests {
         std::fs::create_dir_all(root.join("video")).unwrap();
         std::fs::write(root.join("video/trimming.md"), "# Trimming\n\nffmpeg -ss 0\n").unwrap();
 
-        let listed = walk_skills(root).await.unwrap();
+        let listed = walk_skills(data_dir).await.unwrap();
         let paths: Vec<&str> = listed.iter().map(|s| s.path.as_str()).collect();
         assert!(paths.contains(&"extract-webpage-markdown"), "got {paths:?}");
         assert!(paths.contains(&"video/trimming"), "a real subtree is still walked: {paths:?}");
@@ -461,14 +420,15 @@ mod tests {
     #[tokio::test]
     async fn walk_lists_md_only_learnt_first() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
+        let root_data = dir.path();
+        let root = &skills_dir(root_data);
         write(root, "factory/adding-a-device.md", "# adding a device\n\nseeded prose.\n");
         write(root, "posting-a-clip.md", "what worked last time\n");
         write(root, "video/trimming.md", "# Trimming\n\nffmpeg -ss ...\n");
         write(root, "notes.txt", "not a skill");
         write(root, ".DS_Store", "litter");
 
-        let skills = walk_skills(root).await.unwrap();
+        let skills = walk_skills(root_data).await.unwrap();
         let paths: Vec<&str> = skills.iter().map(|s| s.path.as_str()).collect();
         assert_eq!(paths.len(), 3, "only .md, dotfiles skipped: {paths:?}");
         assert_eq!(*paths.last().unwrap(), "factory/adding-a-device", "builtin sorts last");
@@ -490,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn walk_of_a_missing_workshop_is_empty_not_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        let skills = walk_skills(&dir.path().join("skills")).await.unwrap();
+        let skills = walk_skills(dir.path()).await.unwrap();
         assert!(skills.is_empty());
     }
 
