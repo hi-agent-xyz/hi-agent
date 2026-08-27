@@ -20,7 +20,7 @@ thinking layers are slow, confused, or dead.
 | A vendor outage is decided process-wide, not per turn | One upstream, decided once — never rediscovered or apologized for twice |
 | The reflex path never reaches a model | Stopping when someone starts talking cannot wait a generation |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
-| The host opens the agent's eyes; the agent owns its own timers | A scheduler we build dies with the process; a crontab the agent writes does not |
+| The host opens the agent's eyes; the agent owns its own timers — inside this process tree | A duty that outlives the engine is a duty nobody supervises. When hi-agent is down its machinery is down, and that is the intended behaviour, not a gap |
 | Sessions are host-owned and **replaceable** | No session is a source of truth — continuity lives in `data/`. Replaceable is not the same as short-lived: every thinking rung keeps **one long-lived session**, so it can remember what it was doing — while nothing downstream depends on it surviving. It is replaced when it breaks, not when it grows; growth is the underlying agent's to compact |
 
 ## Components
@@ -358,16 +358,46 @@ wake Reaction with a fresher read. Both halves of that went with the
 and there is no return edge left to defer it to.
 
 Everything else an agent needs from time, **the agent arranges itself.** It has a
-shell, so it installs a cron entry, a `launchd` job, a systemd timer, or parks a
-worker that sleeps and messages home — and a crontab survives a reboot, which
-nothing living in this process does. Nothing is restricted to keep it that way: the
-agent keeps every tool it has.
+shell, so it starts the process it needs, parks a worker that sleeps and messages
+home, or writes its own loop — and what it starts is a **child of this process
+tree**, owned by the worker that owns the duty and dying when the engine does.
+Nothing is restricted to keep it that way: the agent keeps every tool it has, and
+what follows is a rule about what to do with them.
+
+##### One background item, and it is this process
+
+**Do not register OS-level keepalive** — no `launchd` agent, no crontab, no systemd
+timer — unless the person asks for one. Not for want of the shell to do it, but for
+what it produces: a fixture that outlives the app, keeps firing after the row that
+wanted it is closed, and reaches the person as a background item they never
+installed and a notification about it. One of them woke every sixty seconds for
+sixteen days after its task closed `done`; closing the row did not touch it, and
+nothing in the engine knew it was there.
+
+And the thing it buys is not wanted. A duty is **managed**: if the engine is down,
+its machinery is down, and what it would have done does not happen. That is the
+behaviour to keep — a deploy loop still running while the mind that authorises it is
+gone is the failure, not the coverage gap.
+
+Two things follow, and a `serving` row is not sound without them:
+
+- **A duty catches up on start.** It was not running while the engine was down, so
+  its machinery keeps a cursor in its own ledger and fetches what it missed rather
+  than assuming it saw everything. A duty that can only work by never stopping cannot
+  be kept by a desktop app at all, and belongs in a server-side deployment.
+- **`restart:` is the way back up.** The glance-up reads it on the cadence and brings
+  a duty back the way it repairs anything else. Nothing at the OS level is holding it
+  up, so nothing at the OS level has to be found and removed when the duty ends.
+
+When the person does ask for a system trigger, it is theirs — and it gets named in
+the row that wanted it, with its exact label or crontab line, so whoever closes that
+row can take it off their machine.
 
 #### The three shapes, and what each needs from us
 
 | Shape | How it runs | What the host provides |
 |---|---|---|
-| **Cadence** — check this every N hours | Cognition's glance-up *is* the executor: it wakes, reads the ledger, and does what is due. Or an agent-installed timer does the work and leaves a durable trace. | The glance-up, and nothing else. |
+| **Cadence** — check this every N hours | Cognition's glance-up *is* the executor: it wakes, reads the ledger, and does what is due. Or a process a worker started does the work and leaves a durable trace. | The glance-up, and nothing else. |
 | **Precise moment** — be somewhere at 07:00 | A parked worker sleeps and `hi_send_message`s its owner; the ledger re-arms it after a restart. | `hi_create_worker` + the one verb. |
 | **Arrival** — something reached the group | The agent's own listener holds the connection and posts what arrived to `/api/in/duty/<start_key>`; a working session handles it in seconds. | The duty inbox: coalesce, resolve the key against the ledger, open a handler from the facet if none is live. |
 

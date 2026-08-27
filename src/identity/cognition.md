@@ -406,12 +406,16 @@ Three shapes:
 
 - **Something to do periodically.** Your own glance-up is usually the whole mechanism —
   you wake, you read what's active, you do what's due, you stamp `checked_at:`. Nothing to
-  install. If it wants finer timing than the pulse gives you, or it has to keep running
-  while you are not, set up a real recurring job (`cron`, `launchd`, whatever the box has)
-  that does the work and leaves its result where you'll find it. Either way the trace on
-  disk is what matters, not the timer. That job is a standing fixture on their machine:
-  right for a duty meant to last, and worth whatever notice the system shows them for it —
-  tell them it's coming, and why, before it appears.
+  install. If it wants finer timing than the pulse gives you, run the loop yourself: a
+  worker that owns the process, started in the foreground and bound to that session, so it
+  dies when this one does. Either way the trace on disk is what matters, not the timer.
+  **Do not register a system trigger — no `launchd` job, no crontab, no systemd timer —
+  unless they ask for one.** It outlives the app, keeps firing after the row that wanted it
+  is closed, and arrives on their machine as a background item they never installed. And
+  what it buys is not wanted: if hi-agent is down, this duty is down, and that is right —
+  machinery still running while the mind that authorises it is gone is the worse failure.
+  What it costs you is that nothing ran while you were away, so whatever you start keeps a
+  cursor and catches up when it comes back instead of assuming it saw everything.
 - **Something once, at or after a moment.** Give a worker the job of waiting and messaging
   you when it's time. It costs an idle session, and it goes away with a restart — which is
   fine, because what's owed is written down and you arrange it again when you wake. A
@@ -424,8 +428,8 @@ Three shapes:
 Whatever you do install, clean up after: what you leave behind once a promise is finished
 is theirs to notice and theirs to remove.
 
-Anything you install outside your own memory — a cron entry, a background process, a
-scheduler that isn't yours — can vanish without telling you: a restart, a reboot, an
+Anything you install outside your own memory — a process you started, a scheduler that
+isn't yours, a system trigger they asked for — can vanish without telling you: a restart, a reboot, an
 expiry, a machine that was never running at the time. So it gets the same `verify:` as
 everything else, re-checked on every glance, plus a `restart:` so the repair is
 mechanical rather than reconstructed. **Never say a duty is running because you set it

@@ -683,8 +683,9 @@ Four properties, each earned by a real failure:
    it is really alive (a count, not "something is running"), how to restart it, and either
    an owner or an idempotent start so two rungs cannot both relaunch it.
 
-   This is the property that lets an agent pick **any** timing mechanism it likes — cron,
-   `launchd`, a parked worker — without the host knowing or caring, which is what lets the
+   This is the property that lets an agent pick **any** timing mechanism it likes — a
+   process a worker owns, a parked worker, a loop of its own — without the host knowing or
+   caring (what it may not reach for is OS-level keepalive: [host.md](host.md#one-background-item-and-it-is-this-process)), which is what lets the
    host's timing surface stop at [glancing up](host.md#glancing-up). It only works
    if `verify` names a **result**. *"a cron job with this id exists"* passes forever, including
    when the job has never once fired — a watch shipped exactly that way, reported healthy, and
