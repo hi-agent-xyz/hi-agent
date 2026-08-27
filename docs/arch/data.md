@@ -504,6 +504,15 @@ question except that one. So the account renders in the panel, above the record,
 screenful with the rest one click under it. Bodies run to tens of kilobytes and that is the
 reason for the clamp; it was never a reason for concealment.
 
+**And a clamp from the top makes the account the mirror of the spine.** The record appends
+and is never sorted, oldest first, because that is what a history is. The prose above it is
+not a history — it is the current answer — so its newest reading belongs at the *top*, with
+superseded ones moved down beneath it rather than deleted. Nothing enforces this and nothing
+can: the store cannot tell a live paragraph from a stale one. It is a rule for whoever
+rewrites the record, and the cost of missing it is exact — of 120 records in one live store,
+69 have accounts longer than the clamp, and what the panel shows of one such row is whatever
+its writer happened to leave on top.
+
 **A record indexes its own artifacts, and nothing else does.** A task's folder is where the work
 happened — one live store holds 39,946 files under `tasks/`, and a single task's top level holds
 114 — so listing it shows the workshop floor to somebody who asked what was made. What is

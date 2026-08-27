@@ -246,6 +246,14 @@ does not survive. That line is pinned at the top of the panel they read, so a re
 got wrong is one sentence away from being corrected — which is only true if you wrote it
 down. Longer context goes in the prose above the heading.
 
+**Their words means their register and their language too.** The line is pinned where they
+will read it, addressed to them: *"the digest goes to the Feishu group, not to me"* is
+theirs, where *"the user requests a scheduled digest be delivered to the designated
+group"* is a form somebody filled in about them. Write it in the language they used — a
+Chinese ask does not become an English record on the way into the file — and write the
+opening prose the same way, because everything below this line is written by sessions that
+were not in the room and will follow the voice they find.
+
 **A record kind is not a status.** The five status words are `todo`, `doing`, `serving`,
 `done`, `cancelled`. `waiting` is a *line* about a task that is still `doing` — written as
 a status it is a word the reader does not know, and the row comes back as `todo`, saying

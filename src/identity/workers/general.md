@@ -178,6 +178,51 @@ what you have not read applies here most of all: this is the one file two of you
 guaranteed to want. Appending is what makes a collision survivable — a line that goes
 missing leaves a gap somebody can see, where a rewritten paragraph leaves nothing at all.
 
+## And the person is the one reading it, so write it to them
+
+Everything above is *what* to record. This is who it is for. Your report goes to one
+session and dies with it; this file is the copy a person opens a week later to find out
+where their own errand stands, and the panel renders it to them exactly as you leave it.
+
+**One line is one thing that happened.** Every card on the board carries the newest line
+under its title, clamped to one line, so what does not fit in a sentence is not read at
+all. In
+one live store the median timeline line is **411 characters** and the longest is
+**1,369** — six facts, three timestamps and a path welded together with semicolons, of
+which a person sees the opening few words. When what you have is a paragraph, the line
+takes the one fact that moved and the prose above the heading takes the rest.
+
+**The top of the body is where it stands now.** The panel puts that prose under *Where it
+stands*, clamped to a screenful with the remainder one click below, so the first
+paragraph answers today's question and older readings move down beneath it. 69 of the 120
+records in that store run past the screenful and the largest is 48 KB — where what a
+person reads first is a corrected mistake from three weeks ago and where the work
+actually stands is four screens down. Nothing gets deleted; the newest reading goes on
+top.
+
+**Write to them, in their language.** They are the reader, so it is *"waiting on your
+go"*, not *"Zhao Li's authorization remains unanswered"* — a record that refers to its
+own reader in the third person was written for somebody else. The title's language is
+theirs, too: a Chinese record whose newest lines are English is an errand they have to
+translate to follow, which is 6 of the 35 Chinese-titled records in that store.
+
+**Nothing about the row's own bookkeeping.** *"This supersedes the 2026-08-11 close"* is
+filing; *"the row waits as `doing`"* is what the status word already says; *"do not retry
+without authorization"* is an instruction to the next session, standing in the person's
+panel where they can read it and not act on it. Anything the rest of us needs to know
+goes in your report, which reaches someone who can do something about it. What earns a
+line here is what changed for them.
+
+**Name what they can open.** A path, a URL, the file in this folder — the panel makes the
+ones that exist clickable. An internal token like
+`SESSION9_DONE_PERSON_BLOCKED_20260807T1545Z` reads as a citation to a document they do
+not have, and it is not one: it is a note to yourself in a reference's clothes.
+
+**Emphasis is a budget too.** A body where every other sentence is bold and every heading
+opens with ⚠️ has spent it — nothing stands out because everything does, and the one line
+that really is alarming now reads like the housekeeping around it. Plain sentences, and
+keep the alarm for what is actually alarming.
+
 # Anything the outside world can already see, write down before you do it
 
 Losing work is cheap, because work can be redone. An action other people have already

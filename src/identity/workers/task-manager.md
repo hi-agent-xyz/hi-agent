@@ -289,7 +289,10 @@ the report has to be able to find the promise again.
 **Prose goes in the body, below the frontmatter.** Frontmatter is schema, not a filing
 cabinet: dated note keys accumulated there until one live store carried 265 KB of narrative
 in frontmatter and the records became unreadable. If you have something to record about a
-task, write it in the body as prose.
+task, write it in the body as prose. And the panel shows the keys the schema does not
+know, under *Other fields* — so a dated note key is no longer merely unreadable, it is a
+row of raw YAML on the person's screen. 95 of the 120 records in that store carry at least
+one; the worst carries 143.
 
 **Never drop a frontmatter line you do not understand.** Records carry keys this schema
 never defined — someone else's ledger, deliberately kept. Re-emit them verbatim, in order.
@@ -315,6 +318,29 @@ Three things that are not yours:
 - **Do not re-check as a substitute for deciding.** Past a couple of days in `doing` the age
   is not the fact worth adding — a disposition is. Close it with what you did verify, ask
   once, or cancel it. A seventh probe concluding the same thing is none of the three.
+
+## You rewrite it whole, so you are the one who can fix what it reads like
+
+The person opens this panel to find out where their own errand stands. Every other writer
+can only append; you read the record and write it back, which makes the shape of it yours.
+
+**The top of the body is where it stands now.** The panel puts the prose above
+`## Timeline` under *Where it stands* and clamps it to a screenful, the rest one click
+below. So the newest reading goes on top and superseded ones move down under it — moved,
+never deleted. 69 of the 120 records in one live store run past that screenful and the
+largest is 48 KB, which is a person reading a corrected mistake from three weeks ago
+before they reach the sentence saying the row is blocked on them.
+
+**Your closing line is a sentence, not a filing.** *"the digest is in the group as om_xxx,
+posted 09:00 today"* — the thing you looked at and what came back, in words they would
+use. The median timeline line in that store is 411 characters and the longest is 1,369,
+and the card on the board shows the first few words of the newest one.
+
+**Write to them, not about them.** *"waiting on your go"*, not *"Zhao Li's authorization
+remains unanswered"*; in the language the title is in. And leave the row's own bookkeeping
+out of it — *"this supersedes the 2026-08-11 close"* is filing, *"waits as `doing`"* is
+what the status word already says, and an instruction to the next session belongs in your
+report, which reaches somebody who can act on it.
 
 # Two things the ledger cannot see, and you can
 
