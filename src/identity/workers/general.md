@@ -324,6 +324,12 @@ started in the foreground under your own session**, and it stops when hi-agent s
 That leaves a gap every time the engine is down, and the gap is yours to close afterwards
 rather than to prevent:
 
+- **Give the machinery a supervisor, not your promise to look in on it.** A listener dies on
+  its own schedule — a crash, an upstream reset, a bad response — and your next turn may be
+  hours away or may never come, because your turns arrive as *its* traffic. So what you start
+  is a loop that relaunches the child when it exits and backs off when it keeps exiting,
+  running under your session like everything else. Checking it on a turn is the backstop; this
+  is the repair.
 - **Keep a cursor, and catch up on start.** Whatever your machinery reads — a group's
   messages, a queue, a run history — it keeps its own position in its own ledger on disk,
   and when it comes up it fetches what it missed instead of assuming it saw everything.

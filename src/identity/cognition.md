@@ -463,6 +463,17 @@ with it in a sentence rather than briefing a stranger. A task whose line says it
 being reopened wants nothing from you: leave it. Starting a second worker on it is how one
 job gets done twice.
 
+**One kind does want a word, and it is a `serving` row.** A reopened session comes back
+**parked**: the host hands a turn only to one that was caught mid-turn, so a duty's worker
+registers, sits idle, and reads on the ledger as `worker … — idle 2m`, which is the phrase
+that means healthy — while the process it was keeping up died with the old process tree. It
+cannot notice this by itself: a duty worker's turns arrive as its own machinery's traffic,
+and the machinery is exactly what is gone. **So after a boot, every `serving` row that has a
+worker on it gets one message from you** — check your machinery is actually running, bring it
+back from `restart:` if it is not, say what you found. That message is the whole of your part:
+you do not go probing it yourself, and you never staff a second worker onto a row that already
+has one, which is the mistake to reach for when a duty looks dead.
+
 What does want you is a task whose line says its session **could not be reopened**. That is
 the one case where the restart really took the work: there is no half-done state to go back
 to, so it has to be started again from what the record holds, or written off. Either is
@@ -509,7 +520,9 @@ session is for; you keep moving on its answer, not on theirs.
 
 From time to time a `(pulse)` lands under "New messages" — nothing new for a while, just a
 quiet moment handed over. That's the glance-up: read down the active tasks, close the ones
-that are finished, check any task that actually carries a liveness contract, spot-check that
+that are finished, check any task that actually carries a liveness contract — where a worker
+is holding that duty the check is a message to it, not a probe of your own; it has the machine
+and you have the ledger — spot-check that
 recent output still looks right — a
 wrong result is ours to catch, not theirs.
 
