@@ -79,22 +79,10 @@ fn skill_file(data_dir: &std::path::Path, rel: &str) -> PathBuf {
 
 // ── markdown reading ──────────────────────────────────────────────────────────
 
-/// Drop a leading `---` frontmatter block, if any, so the title and excerpt come from
-/// the note's own words rather than its metadata.
-fn strip_frontmatter(text: &str) -> &str {
-    if !text.starts_with("---\n") {
-        return text;
-    }
-    let body = &text[4..];
-    let mut off = 0usize;
-    for line in body.split_inclusive('\n') {
-        off += line.len();
-        if line.trim_end() == "---" {
-            return &body[off..];
-        }
-    }
-    text
-}
+// Front matter is read by [`crate::mind::skills::split_front_matter`], which owns the
+// vocabulary: `purpose` is what the registry scan emits and the presence of `use` is
+// what makes a note a tool. A second parser here would be free to disagree with it
+// about what a note *is*, so there isn't one.
 
 /// The note's own title: a `#` heading standing *before* any prose. A heading found
 /// further down is a section, not a title, so prose ends the search.
@@ -192,6 +180,11 @@ struct SkillDto {
     bytes: u64,
     modified: String,
     excerpt: String,
+    /// The command this note names, when it names one — `use:` in the front matter.
+    /// Present iff the note is a **tool** rather than an ordinary procedure, which is
+    /// the only distinction the reader needs: a tool can be run, a skill is followed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run: Option<String>,
 }
 
 /// Walk the workshop and read every `.md` in it. Iterative (a stack of dirs) rather
@@ -229,7 +222,7 @@ async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
             let Ok(meta) = ent.metadata().await else { continue };
             let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             let text = tokio::fs::read_to_string(ent.path()).await.unwrap_or_default();
-            let body = strip_frontmatter(&text);
+            let (fm, body) = crate::mind::skills::split_front_matter(&text);
             let id = rel.strip_suffix(".md").unwrap_or(&rel).to_string();
             found.push((
                 modified,
@@ -239,7 +232,12 @@ async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
                     name: first_heading(body).unwrap_or_else(|| label_from_stem(stem)),
                     bytes: meta.len(),
                     modified: rfc3339(modified),
-                    excerpt: excerpt(body),
+                    // `purpose` *is* the one-line summary, written to be matched
+                    // against a job — so when a note has one it beats anything
+                    // scraped from the prose, which for a tool note is whatever
+                    // sentence happened to come first.
+                    excerpt: fm.purpose.clone().unwrap_or_else(|| excerpt(body)),
+                    run: fm.run,
                 },
             ));
         }
@@ -359,7 +357,7 @@ mod tests {
     #[test]
     fn name_and_excerpt_come_from_the_note() {
         let text = "---\ntags: x\n---\n# Adding a device\n\nSSH gets you a shell.\n";
-        let body = strip_frontmatter(text);
+        let (_, body) = crate::mind::skills::split_front_matter(text);
         assert_eq!(first_heading(body).unwrap(), "Adding a device");
         assert_eq!(excerpt(body), "SSH gets you a shell.");
         // Prose before a heading means the heading is a section, not a title.

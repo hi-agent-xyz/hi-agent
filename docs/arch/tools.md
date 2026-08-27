@@ -217,17 +217,26 @@ state is ordinary durable data and lives in `drive/` with everything else the pe
 upset to lose. The line is not *what the tool needs in order to run* — it is *what a note can
 put back*.
 
-### One namespace, and the factory/learnt split does not cover it
+### It nests, because `skills/` nests
 
-`skills/` nests, so `skills/factory/browser.md` and `skills/browser.md` are two names and can
-coexist — that is how the [factory layer](data.md#skills) is rewritten on upgrade without
-touching what the agent wrote. **`bin/` is flat, and two `browser` commands cannot coexist.**
+`skills/` is path-scoped, so `skills/factory/browser.md` and `skills/browser.md` are two names
+that coexist — that is how the [factory layer](data.md#skills) is rewritten on upgrade without
+touching what the agent wrote. A flat `bin/` had no such room, and two `browser` commands
+cannot coexist. The knowledge layer nested and the execution layer did not.
 
-The knowledge layer is path-scoped; the execution layer is not. The split this doc inherits as
-solved was solved for *notes*, so a collision between a seeded tool and a learnt one of the
-same command name is a real state with no rule yet. It is [open](#open) rather than answered
-quietly, because the two candidate answers — the factory command wins and the learnt note is
-told, or learnt wins and an upgrade never shadows — differ in who gets surprised.
+**So the execution layer gets the same split**, which answers the collision by removing it
+rather than by picking a winner: `bin/` is the agent's own and `bin/factory/` inside it is
+ours, rewritten every boot, and boot may clobber anything under there and nothing above it.
+
+**The learnt directory is searched first.** A shim the agent wrote deliberately shadows a
+seeded one of the same name, and that direction is the whole point — overriding a factory tool
+is a legitimate act, while an upgrade silently reverting it is the failure. The system's own
+binaries come last, so everything a package manager installed keeps resolving.
+
+One consequence worth stating rather than discovering: **a script named after a command that
+already exists shadows it for every later session.** That is real reach, and the guidance
+against it belongs where the agent is told how to write one — not in a reserved-name list here,
+which would be a second copy of the machine's PATH, drifting.
 
 ## The registry
 
@@ -348,6 +357,7 @@ fits in a window.
 | **Prefer CLI** | Authorable by the agent, and pickable up mid-errand |
 | **MCP is a command** | One shim turns every MCP server into a note; a carrier class would need a loader |
 | `bin/` is **machine-local and disposable** | A binary is not portable; the note says how to rebuild |
+| **`bin/` nests, learnt first** | `skills/` is path-scoped and `bin/` was flat; deliberate override must outlive an upgrade |
 | **Session state never lives in `bin/`** | Disposable is only true of what a note can put back |
 | Lookup and authorship are **separate tempos** | Lookup is in every job's critical path; installing software is not |
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
@@ -365,8 +375,6 @@ because it stored something derivable, or gave a wrong answer a place to look ri
 - **What counts a tool call.** The hot level is derived from usage, and nothing measures usage.
   Until something does, the ladder has two rungs, not three.
 - **The resident cap** has no number yet. It needs one, as a test, in bytes.
-- **`bin/` name collisions** between a seeded tool and a learnt one: the factory command wins
-  and the learnt note is told, or learnt wins and an upgrade never shadows.
 - **Consent has no mechanical backstop** on the shell path. Guidance only, as above.
 - **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
   the same verbs mean two things, and *whose body* becomes something a note must say.

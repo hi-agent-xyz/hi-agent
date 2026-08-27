@@ -296,11 +296,15 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     //
     // Read from this process's environment: the child inherits ours and `command.env`
     // overrides key by key, so a bare push would silently drop the system PATH.
+    // Two entries, and the order is the collision rule: what the agent wrote comes
+    // before what shipped, so a shim it built deliberately shadows a seeded one of
+    // the same name and an upgrade never silently reverts it.
     {
-        let bin = mind::skills::bin_dir(&config.data_dir);
         let inherited = std::env::var_os("PATH").unwrap_or_default();
         let joined = std::env::join_paths(
-            std::iter::once(bin).chain(std::env::split_paths(&inherited)),
+            mind::skills::path_entries(&config.data_dir)
+                .into_iter()
+                .chain(std::env::split_paths(&inherited)),
         )
         .context("building the child PATH")?;
         child_env.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));

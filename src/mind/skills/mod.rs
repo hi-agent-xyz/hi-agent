@@ -27,12 +27,17 @@
 //! scan emits; the *presence* of `use` is what makes a note a tool rather than an
 //! ordinary procedure, and its value is a command. There is no `tools/` tree.
 //!
-//! `use` names a command, and [`install_tool_bin`] is the other half: `<data_dir>/bin`
+//! `use` names a command, and [`install_tool_bin`] is the other half: [`path_entries`]
 //! is prepended to every session's PATH, so a note can say `browser` and mean
 //! *whatever this machine turned out to have*. That is the whole point of the tree —
 //! **`skills/` syncs and `bin/` does not**, so a portable note needs a stable name and
 //! a machine-local binding for it. Most tools never appear in `bin/` at all: anything
 //! a package manager put on the PATH already resolves without help.
+//!
+//! **`bin/` nests the same way, and for the same reason.** [`bin_dir`] is the agent's
+//! own; [`factory_bin_dir`] inside it is ours, rewritten every boot. The learnt one is
+//! searched first, so a shim the agent wrote shadows a seeded one of the same name —
+//! deliberate override sticks, and an upgrade never silently reverts it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -47,12 +52,88 @@ const ADDING_A_DEVICE: &str = include_str!("adding-a-device.md");
 /// writes.
 const BROWSER: &str = include_str!("browser.md");
 
+/// Resolve the `{…}` placeholders a seed may carry into this install's absolute
+/// paths, the same way [`crate::identity`] does for prompts.
+///
+/// A note is read by a mind that will act on it, and a relative path resolves against
+/// whatever cwd that session happens to have — which differs per rung. So a seed that
+/// names a directory names it absolutely or not at all. A leftover `{placeholder}` on
+/// disk is a note telling the agent to look somewhere that does not exist, which is
+/// why [`tests::no_seed_leaves_an_unresolved_placeholder_on_disk`] pins it.
+fn interpolate(note: &str, data_dir: &Path) -> String {
+    let dir = |p: PathBuf| p.display().to_string();
+    note.replace("{skills_dir}", &dir(skills_dir(data_dir)))
+        .replace("{bin_dir}", &dir(bin_dir(data_dir)))
+        .replace("{drive_dir}", &dir(data_dir.join("drive")))
+}
+
 /// The seeded browser tool note, for the cross-tree test in [`crate::identity`]:
 /// the worker prompt there teaches `purpose:`/`use:` front matter, and without this
 /// nothing pins that the note actually carries what the prompt describes.
 #[cfg(test)]
 pub(crate) fn browser_note() -> &'static str {
     BROWSER
+}
+
+/// Seeded skill: how to equip a tool the workshop does not have yet — the *writing*
+/// half of the workshop, and the only path by which a learnt tool ever exists.
+const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
+
+/// What a note's front matter says about it. Two keys and no more
+/// (`docs/arch/tools.md`): `purpose` is the line the registry scan emits, and the
+/// **presence** of `use` is the whole discriminator between a tool and an ordinary
+/// procedure.
+///
+/// One parser, shared by the workshop API and the tests, for the same reason
+/// [`crate::foundation::codex::messages::kind_of`] is shared: two copies of a
+/// vocabulary are free to disagree about what a note *is*.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct FrontMatter {
+    /// One line saying what the note is for. `None` degrades to a bare filename —
+    /// unhelpful, never a confident wrong answer.
+    pub purpose: Option<String>,
+    /// The command to run. Present iff this note is a tool.
+    pub run: Option<String>,
+}
+
+impl FrontMatter {
+    /// True when this note names something runnable.
+    pub fn is_tool(&self) -> bool {
+        self.run.is_some()
+    }
+}
+
+/// Split a note into its front matter and its body.
+///
+/// Deliberately strict: the block must open on the very first line and close on a
+/// line of its own. A note without one is all body, which is the common case — most
+/// skills are procedures and carry no front matter at all.
+pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
+    let Some(rest) = note.strip_prefix("---\n") else {
+        return (FrontMatter::default(), note);
+    };
+    let Some(end) = rest.find("\n---") else {
+        // An unterminated block is not front matter; treating it as one would eat
+        // the whole note and leave the view blank.
+        return (FrontMatter::default(), note);
+    };
+    let (block, after) = rest.split_at(end);
+    let body = after.trim_start_matches('\n').strip_prefix("---").unwrap_or(after).trim_start();
+
+    let mut fm = FrontMatter::default();
+    for line in block.lines() {
+        if let Some(v) = line.strip_prefix("purpose:") {
+            fm.purpose = non_empty(v);
+        } else if let Some(v) = line.strip_prefix("use:") {
+            fm.run = non_empty(v);
+        }
+    }
+    (fm, body)
+}
+
+fn non_empty(v: &str) -> Option<String> {
+    let v = v.trim();
+    (!v.is_empty()).then(|| v.to_string())
 }
 
 /// `<data_dir>/skills/` — the workshop root. Agent-written skills live directly
@@ -75,12 +156,13 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
     std::fs::write(dir.join("browser.md"), BROWSER)?;
+    std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
     tracing::info!(dir = %dir.display(), "installed bundled skills");
     Ok(())
 }
 
-/// `<data_dir>/bin` — the agent's own PATH entry, prepended to every session's
-/// environment.
+/// `<data_dir>/bin` — where the **agent's own** scripts go, and the first of two PATH
+/// entries.
 ///
 /// **Machine-local and disposable.** A binary built on one machine does not run on
 /// another, so unlike [`drive/`](crate::mind) this never syncs and may be deleted
@@ -89,6 +171,30 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
 /// most tools never appear here at all.
 pub fn bin_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("bin")
+}
+
+/// `<data_dir>/bin/factory` — where **hi-agent's own** shims go, rewritten every boot.
+///
+/// **`bin/` nests because `skills/` nests.** The knowledge layer is path-scoped, so
+/// `skills/factory/browser.md` and `skills/browser.md` are two notes that coexist;
+/// a flat `bin/` had no such room, and two `browser` commands cannot. That mismatch
+/// was the open question in `docs/arch/tools.md`, and the answer is to remove it
+/// rather than to pick a winner: the execution layer gets the same split as the
+/// knowledge layer.
+///
+/// **The learnt directory comes first on the PATH**, so a shim the agent wrote
+/// deliberately shadows a seeded one of the same name. That direction is the whole
+/// point — overriding a factory tool is a legitimate act, and an upgrade silently
+/// reverting it is not. Boot may clobber anything under here and nothing above it.
+pub fn factory_bin_dir(data_dir: &Path) -> PathBuf {
+    bin_dir(data_dir).join("factory")
+}
+
+/// The agent's PATH entries, in the order they should be searched: what it wrote,
+/// then what shipped. Callers prepend these to the inherited `PATH`, so the system's
+/// own binaries come last and keep working.
+pub fn path_entries(data_dir: &Path) -> [PathBuf; 2] {
+    [bin_dir(data_dir), factory_bin_dir(data_dir)]
 }
 
 /// Create `<data_dir>/bin` and write the shims that bind a seeded tool note's `use:`
@@ -111,8 +217,11 @@ pub fn bin_dir(data_dir: &Path) -> PathBuf {
 /// Rewritten every boot, like the factory notes beside it. Nothing else in the tree
 /// is read or touched: a script the agent wrote itself lives here too and is none of
 /// this function's business.
+/// Only `bin/factory/` is written. The agent's own `bin/` is created and then left
+/// alone — a script it wrote lives there and is none of this function's business.
 pub fn install_tool_bin(data_dir: &Path) -> io::Result<()> {
-    let dir = bin_dir(data_dir);
+    std::fs::create_dir_all(bin_dir(data_dir))?;
+    let dir = factory_bin_dir(data_dir);
     std::fs::create_dir_all(&dir)?;
     let exe = std::env::current_exe()?;
     write_browser_shim(&dir, &exe)?;
@@ -204,15 +313,114 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&nested).unwrap(), "ffmpeg -ss ...");
     }
 
-    /// Read one front-matter key out of a note, the way the registry scan reads
-    /// `purpose`: anchored at the start of a line, in the block before any prose.
+    /// One front-matter key, via the shared parser the workshop API also uses.
     fn front_matter(note: &str, key: &str) -> Option<String> {
-        note.strip_prefix("---\n")?
-            .split("\n---")
-            .next()?
-            .lines()
-            .find_map(|line| line.strip_prefix(&format!("{key}:")))
-            .map(|v| v.trim().to_string())
+        let (fm, _) = split_front_matter(note);
+        match key {
+            "purpose" => fm.purpose,
+            "use" => fm.run,
+            other => panic!("no such front-matter key: {other}"),
+        }
+    }
+
+    #[test]
+    fn front_matter_is_read_and_the_body_survives_it() {
+        let (fm, body) = split_front_matter("---\npurpose: do a thing\nuse: thing\n---\n\n# T\n\nprose\n");
+        assert_eq!(fm.purpose.as_deref(), Some("do a thing"));
+        assert_eq!(fm.run.as_deref(), Some("thing"));
+        assert!(fm.is_tool());
+        assert!(body.starts_with("# T"), "the body must not keep the block: {body:?}");
+
+        // A note with no block is all body — the common case, since most skills are
+        // procedures.
+        let (fm, body) = split_front_matter("# Just a skill\n\nhow it went\n");
+        assert_eq!(fm, FrontMatter::default());
+        assert!(!fm.is_tool());
+        assert!(body.starts_with("# Just a skill"));
+
+        // An unterminated block is not front matter. Treating it as one would eat the
+        // whole note and leave the workshop view blank.
+        let (fm, body) = split_front_matter("---\npurpose: oops\nno end marker\n");
+        assert_eq!(fm, FrontMatter::default());
+        assert!(body.starts_with("---"));
+
+        // A blank value is absent, not an empty tool.
+        let (fm, _) = split_front_matter("---\nuse:   \n---\nx\n");
+        assert!(!fm.is_tool());
+    }
+
+    #[test]
+    fn a_learnt_shim_shadows_a_seeded_one_of_the_same_name() {
+        // The collision rule, and the reason `bin/` nests at all: `skills/` is
+        // path-scoped so two notes can share a name, and a flat `bin/` had no such
+        // room. Learnt comes first, so overriding a factory tool sticks and an
+        // upgrade never silently reverts it.
+        let dir = tempfile::tempdir().unwrap();
+        let entries = path_entries(dir.path());
+        assert_eq!(entries[0], bin_dir(dir.path()));
+        assert_eq!(entries[1], factory_bin_dir(dir.path()));
+        assert!(
+            entries[1].starts_with(&entries[0]),
+            "the factory layer nests inside the agent's own, mirroring skills/"
+        );
+
+        // Boot writes only under `factory/`, and leaves a same-named script alone.
+        install_tool_bin(dir.path()).unwrap();
+        let learnt = bin_dir(dir.path()).join("browser");
+        std::fs::write(&learnt, "#!/bin/sh\n# mine\n").unwrap();
+        install_tool_bin(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&learnt).unwrap(), "#!/bin/sh\n# mine\n");
+        let seeded = factory_bin_dir(dir.path())
+            .join(if cfg!(windows) { "browser.cmd" } else { "browser" });
+        assert!(seeded.exists(), "boot must still write its own layer");
+    }
+
+    #[test]
+    fn no_seed_leaves_an_unresolved_placeholder_on_disk() {
+        // A note is read by a mind that will act on it, so a `{placeholder}` reaching
+        // disk is an instruction to look somewhere that does not exist. Prompts have
+        // had this test since before skills carried any placeholder at all.
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_skills(dir.path()).unwrap();
+        let factory = skills_dir(dir.path()).join("factory");
+        for entry in std::fs::read_dir(&factory).unwrap() {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            for placeholder in ["{skills_dir}", "{bin_dir}", "{drive_dir}", "{data_dir}"] {
+                assert!(
+                    !text.contains(placeholder),
+                    "{path:?} still carries {placeholder}"
+                );
+            }
+        }
+        // And the interpolation actually landed an absolute path.
+        let equipping = std::fs::read_to_string(factory.join("equipping-a-tool.md")).unwrap();
+        assert!(equipping.contains(&skills_dir(dir.path()).display().to_string()));
+        assert!(equipping.contains(&bin_dir(dir.path()).display().to_string()));
+    }
+
+    /// The seeded tool notes, and what each must say. `equipping-a-tool` is the
+    /// *writing* half of the workshop — without it the learnt layer stays empty
+    /// forever — so the two rules it exists to carry are pinned: exercise a real call
+    /// before writing the note, and keep what only the person can create out of the
+    /// disposable tree.
+    #[test]
+    fn the_equipping_seed_carries_the_two_rules_it_exists_for() {
+        assert!(
+            EQUIPPING_A_TOOL.contains("Do not write the note yet"),
+            "a note for a call that never ran is the expensive kind of false confidence"
+        );
+        assert!(
+            EQUIPPING_A_TOOL.contains("logged-in session is a credential"),
+            "the one class of state a note cannot rebuild must be named"
+        );
+        assert!(
+            EQUIPPING_A_TOOL.contains("Mark what rots"),
+            "the perishable half must be marked or the next job trusts a stale note"
+        );
+        // It is a procedure, not a tool: there is no command to run.
+        let (fm, _) = split_front_matter(EQUIPPING_A_TOOL);
+        assert!(!fm.is_tool());
     }
 
     #[test]
@@ -242,7 +450,7 @@ mod tests {
         install_tool_bin(dir.path()).unwrap();
 
         let name = front_matter(BROWSER, "use").unwrap();
-        let shim = bin_dir(dir.path()).join(if cfg!(windows) {
+        let shim = factory_bin_dir(dir.path()).join(if cfg!(windows) {
             format!("{name}.cmd")
         } else {
             name.clone()
@@ -266,7 +474,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         install_tool_bin(dir.path()).unwrap();
-        let shim = bin_dir(dir.path()).join("browser");
+        let shim = factory_bin_dir(dir.path()).join("browser");
         let mode = std::fs::metadata(&shim).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0o111, "a shim nobody may execute is not on the PATH");
 

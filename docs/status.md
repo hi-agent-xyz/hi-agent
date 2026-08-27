@@ -482,6 +482,36 @@ staleness is visible even when honesty is not verifiable.
 
 Against running processes, not by reading code.
 
+**The workshop's execution layer nests, and the collision rule holds — 2026-08-27.** `bin/` is
+the agent's own and `bin/factory/` inside it is ours, rewritten every boot; `path_entries` puts
+the learnt directory first. Watched: `browser` resolved to `bin/factory/browser`, then to a
+hand-written `bin/browser` once one existed, and a restart rewrote only the factory copy. The
+child's PATH reads `…/bin:…/bin/factory:` then the system's. `split_front_matter` is now the one
+parser of the two keys — `server::skills`'s private copy is deleted — so `GET /api/skills`
+reports `run` for a tool and uses `purpose` as the excerpt.
+
+**But the seed that was supposed to make the agent write tools does not win, and the reason is
+not prose.** `factory/equipping-a-tool.md` landed and was followed in substance — asked for a
+URL→Markdown capability, the agent delegated to workers, built something that works, exercised
+it on a client-rendered page, and left a reusable note. It wrote that note in **codex's own
+skills format**, not ours: a directory with `SKILL.md` carrying `name:`/`description:`, which
+is what `codex_skills_extension` teaches (there is a second skills tree at
+`<data_dir>/codex-home/skills`, and the runtime logs about installing into it). Consequences,
+all observed on one run:
+
+- **No `use:`**, so the registry sees an ordinary procedure and the tool has no stable name.
+  Nothing was written to `bin/`, and the note invokes `python3 scripts/extract_webpage.py` —
+  a *relative* path, which breaks under any other cwd.
+- **76 MB of vendored Python inside `skills/`**, a tree meant to hold notes, that the registry
+  greps and that forgetting skips. A vendored `LICENSE.md` now appears in the scan *as a skill*.
+- **The seeded `browser` tool was not reused** — the worker vendored its own rendering stack
+  instead.
+
+So the mechanism is real and the authorship convention is contested by the agent runtime's own
+built-in. Guidance competing with a built-in the model has strong priors about is the losing
+shape, and picking between adopting codex's format, keeping ours, or pointing codex's skills
+dir at ours is an [open fork](#open-forks) rather than something to settle with firmer wording.
+
 **A tool is found and run — 2026-08-26, isolated instance, and the first attempt failed the
 way this repo always fails.** `<data_dir>/bin` is created at boot and prepended to every
 session's PATH (`mind::skills::install_tool_bin`, `bin_dir`); `skills/factory/browser.md` is
