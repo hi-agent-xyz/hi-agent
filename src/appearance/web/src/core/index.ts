@@ -10,6 +10,10 @@ export {
   useSendText,
 } from "./session";
 export { ViewsProvider, useViews, type ActiveView } from "./views";
+// The clock a surface re-reads on. Any view showing state the agent changes on its own
+// initiative needs one, because re-showing a view does not remount it and so cannot
+// refresh it — see `core/live.ts`.
+export { useLive, TEMPO, type LiveOptions } from "./live";
 // Where this page is served from. A view that calls the agent's own API needs it
 // for the same reason the host does: under the community's subpath, `/api/x` is
 // the community's route and `/ana/api/x` is the agent's. Empty everywhere else,

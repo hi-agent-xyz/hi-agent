@@ -1,14 +1,14 @@
 //! Bundled built-in views — seeded into the views tree on startup.
 //!
 //! Some views are platform "stdlib": basic, universal, the same for everyone (the
-//! file-upload entry — a drag-drop zone + a phone QR; the first-hello a brand-new
-//! person meets). We ship their source in the binary and write it into the views
-//! tree at boot, so the agent shows them with
+//! first-hello a brand-new person meets; the surfaces that show what has accumulated
+//! and hand over the verb that corrects it). We ship their source in the binary and
+//! write it into the views tree at boot, so the agent shows them with
 //! `show` like any other view — and can still adapt them, since they land as
 //! ordinary `.jsx` in the (disposable, re-seeded) tree. They live under
 //! `factory/` so they never collide with the agent's own `<project>/` work.
 //!
-//! # Three rules every view in here follows
+//! # Four rules every view in here follows
 //!
 //! These hold for the *system* surfaces only. An agent-authored content view is
 //! deliberately free of all three — `aesthetic.md` says its look comes from its subject
@@ -41,6 +41,28 @@
 //! words in both languages, because they name parts of this architecture rather than
 //! ordinary objects. Plain words do translate: Task is 任务, Drive is 文件, Sessions is 会话.
 //!
+//! **4. A surface that reads state the agent changes re-reads it, via `useLive` from
+//! `@hi/core`.** Every one of these shows something the agent alters on its own initiative —
+//! it files into the drive, writes its own skills, grows a cluster for a voice it cannot
+//! place, opens and closes its own tasks. A view that fetched once on mount was therefore
+//! not showing state, it was showing a timestamp nobody could see, and a quietly stale
+//! reading is worse than an error because it still reads as authoritative: this is the
+//! surface someone checks *before* asking "did you drop that?".
+//!
+//! Re-showing is not a refresh path, which is why the view has to own this. Compiled modules
+//! are content-addressed, so identical source is an identical URL, and `ViewMount` keys its
+//! import on that URL — a `show` of an already-visible view keeps the same slot and the same
+//! component instance. Nothing outside the view can make it read again.
+//!
+//! The tempo is named rather than numbered (`TEMPO.watching` for a thing you watch happen,
+//! `TEMPO.ledger` for a thing you check, `TEMPO.onAttention` when the read is too expensive
+//! to put on a clock). Two of these carry a `hold` and it is the half that makes a poll
+//! usable rather than infuriating — a tick that lands mid-write flips a card back under the
+//! click that changed it, and one that lands on an edited-but-unsaved facet throws the edit
+//! away. `welcome` reads nothing and `vendor-outage` is refreshed by the host's own energy
+//! gate, so those two are exempt; [`every_review_surface_re_reads_itself`] is what notices
+//! when a new one forgets.
+//!
 //! That last one used to be Workers, untranslated under this rule, and the rule was not
 //! what was wrong with it — the word was. The page lists every live session on the ladder
 //! with its workers nested underneath, and the ended ones; "Workers" named the bottom rung
@@ -52,10 +74,6 @@
 
 use std::io;
 use std::path::Path;
-
-/// The file-handoff view shown when the user wants to hand the agent a file.
-/// Ref: `factory/upload` (the agent puts it on screen via `show`).
-const UPLOAD: &str = include_str!("factory/upload.jsx");
 
 /// The "认识的人" review surface — review stored faces/voices, name the unknown
 /// ones, eject a mis-clustered clip, or auto-regroup a mixed cluster. Reads and
@@ -142,7 +160,6 @@ pub fn install_factory_views(data_dir: &Path) -> io::Result<()> {
     let dir = data_dir.join("views").join("factory");
     rename_legacy_dir(&data_dir.join("views").join("_builtin"), &dir);
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("upload.jsx"), UPLOAD)?;
     std::fs::write(dir.join("people-review.jsx"), PEOPLE_REVIEW)?;
     std::fs::write(dir.join("welcome.jsx"), WELCOME)?;
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
@@ -316,7 +333,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         install_factory_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("factory");
-        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
+        let mut names: Vec<&str> = vec!["people-review", "welcome", "vendor-outage"];
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
             let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
@@ -346,7 +363,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         install_factory_views(dir.path()).unwrap();
         let builtin = dir.path().join("views").join("factory");
-        let mut names: Vec<&str> = vec!["upload", "people-review", "welcome", "vendor-outage"];
+        let mut names: Vec<&str> = vec!["people-review", "welcome", "vendor-outage"];
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
             let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
@@ -432,6 +449,69 @@ mod tests {
         assert!(
             tasks.contains("/files/${token"),
             "and its destination is built from that token, never from a separate binding"
+        );
+    }
+
+    /// Rule 4: every review surface re-reads itself.
+    ///
+    /// This is checked as a property of the set rather than of any one view, because the
+    /// failure it guards against is a *new* surface being added that quietly fetches once
+    /// on mount. That reads as working — it is correct for exactly as long as the person
+    /// looks at it, and wrong from then on with nothing on screen to say so. Six of the
+    /// eight in here were written that way before anyone noticed.
+    ///
+    /// Matching on the import as well as the call, because a `useLive` that came from
+    /// nowhere is a runtime failure the moment the module loads, and the import map is the
+    /// only thing that resolves it.
+    #[test]
+    fn every_review_surface_re_reads_itself() {
+        // `people-review` is the eldest of these and is bundled on its own rather than
+        // through `REVIEW_VIEWS`, so it has to be named or the rule would skip the surface
+        // it applies to most — the clusters it lists grow while someone is reading it.
+        let surfaces = REVIEW_VIEWS
+            .iter()
+            .copied()
+            .chain(std::iter::once(("people-review", PEOPLE_REVIEW)));
+        for (name, source) in surfaces {
+            assert!(
+                source.contains("useLive("),
+                "{name} shows state the agent changes on its own — it must re-read with \
+                 useLive() from @hi/core, or it is showing a timestamp nobody can see"
+            );
+            assert!(
+                source.contains("@hi/core"),
+                "{name} calls useLive() but does not import it from @hi/core"
+            );
+            assert!(
+                source.contains("TEMPO."),
+                "{name} must say which tempo it re-reads on rather than passing a number"
+            );
+        }
+    }
+
+    /// The two surfaces someone *works in* have to hold their re-read off while they do.
+    ///
+    /// Named individually because this cannot be derived from the file: only tasks and
+    /// people-review have a hand on them mid-tick — a card being dragged between columns, a
+    /// name being typed into an open card. A tick there is not merely wasted, it takes the
+    /// work away, and a poll that does that gets removed rather than fixed. Memories carries
+    /// the same guard in a different shape (it re-reads the open facet only when clean), so
+    /// it is checked for that instead.
+    #[test]
+    fn the_surfaces_worked_in_hold_their_re_read() {
+        let by_name = |n: &str| REVIEW_VIEWS.iter().find(|(name, ..)| *name == n).unwrap().1;
+        assert!(
+            by_name("tasks").contains("hold:"),
+            "a tick mid-write or mid-drag flips a card back under the hand that moved it"
+        );
+        assert!(
+            PEOPLE_REVIEW.contains("hold:"),
+            "a tick re-orders the grid under an open card someone is correcting"
+        );
+        assert!(
+            by_name("memories").contains("dirty) return"),
+            "memories must not re-read a facet with unsaved edits in it — a draft is the one \
+             thing on these surfaces that cannot be fetched again"
         );
     }
 

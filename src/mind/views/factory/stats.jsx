@@ -1,5 +1,6 @@
 // purpose: activity and usage statistics — tokens, sessions, Tools, tasks, conversation, energy, and stored inventory over time.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 const T = {
   en: {
@@ -179,26 +180,31 @@ export default function Stats() {
   const [failed, setFailed] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const load = useCallback(() => {
-    const controller = new AbortController();
+  const load = useCallback(async () => {
     setLoading(true);
     setFailed(false);
-    fetch(`/api/stats?range=${range}`, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`stats ${response.status}`);
-        return response.json();
-      })
-      .then((next) => setData(next))
-      .catch((error) => {
-        if (error.name !== "AbortError") setFailed(true);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [range, refreshKey]);
+    try {
+      const response = await fetch(`/api/stats?range=${range}`);
+      if (!response.ok) throw new Error(`stats ${response.status}`);
+      setData(await response.json());
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [range]);
 
-  useEffect(load, [load]);
+  // No clock, unlike every other surface here — this one's reading is not cheap. `/api/stats`
+  // is derived on read: it opens every frame log inside the range and parses it line by
+  // line. Spending that on a tick, over and over, on a page nobody is touching is the
+  // wrong trade for a number that moves slowly anyway.
+  //
+  // Attention is the honest trigger instead, and it fixes the staleness that actually
+  // happens: a window left open on this page all afternoon re-reads when someone comes back
+  // to it, rather than showing the afternoon's opening figure with no sign that it is old.
+  // The Refresh button stays for "now, again" — `subject` is what makes it work, since a
+  // bumped key is a new subject and so a fresh read.
+  useLive(load, { period: TEMPO.onAttention, subject: `${range}/${refreshKey}` });
 
   if (!data && loading) {
     return (

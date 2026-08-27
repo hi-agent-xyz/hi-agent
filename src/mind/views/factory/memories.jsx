@@ -9,7 +9,8 @@
 // the state verbs live — editing the raw prose here would skip them.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const enc = (s) => encodeURIComponent(s);
@@ -93,15 +94,11 @@ export default function Memories() {
   const [failed, setFailed] = useState(false);
   const [episodes, setEpisodes] = useState(null);
 
-  useEffect(() => {
-    api.index().then((d) => {
-      const list = d.dimensions || [];
-      setDims(list);
-      const first = list.find((x) => x.dimension !== "tasks") || list[0];
-      if (first) { setDim(first.dimension); setSubject(first.subjects?.[0] ?? null); }
-    }).catch(() => setDims([]));
-    api.episodes().then((d) => setEpisodes(d.episodes || [])).catch(() => setEpisodes([]));
-  }, []);
+  // True once the rail has made its opening choice. A tick must never move the selection,
+  // so the "pick the first dimension" step belongs to the first read alone — this is a ref
+  // and not state because it is a fact about what already happened, and re-rendering on it
+  // would do nothing but schedule another render.
+  const picked = useRef(false);
 
   useEffect(() => {
     if (!dim || !subject) { setFacet(null); return; }
@@ -118,6 +115,54 @@ export default function Memories() {
   const stored = facet && !facet.error ? facet.content || "" : "";
   const draft = key !== null && key in drafts ? drafts[key] : stored;
   const dirty = key !== null && key in drafts;
+
+  // What is selected right now, for a read that has already been sent to check against
+  // when it comes back. Without it, switching subject while a tick's facet read is in
+  // flight lands the old subject's sentence in the new subject's panel.
+  const keyRef = useRef(key);
+  keyRef.current = key;
+
+  // Reflection rewrites these on its own clock — that is the whole mechanism, and it means
+  // this page goes stale while someone reads it. Re-read the rail, the episodes, and the
+  // open facet.
+  //
+  // The open facet only when it is clean. A draft here is a correction someone is in the
+  // middle of typing, and it is the one thing on any of these surfaces that cannot be
+  // fetched again if a tick throws it away. `dirty` and "has a draft" are the same question
+  // by construction (a key exists only while the text differs from what was read), so this
+  // is exact rather than a heuristic about focus or typing.
+  //
+  // Not a `useCallback`: `useLive` reads this through a ref, so it always runs the current
+  // render's closure and sees the current selection without being rebuilt.
+  const refresh = async () => {
+    const [index, eps] = await Promise.all([
+      api.index().catch(() => null),
+      api.episodes().catch(() => null),
+    ]);
+    if (index) {
+      const list = index.dimensions || [];
+      setDims(list);
+      if (!picked.current) {
+        const first = list.find((x) => x.dimension !== "tasks") || list[0];
+        if (first) {
+          picked.current = true;
+          setDim(first.dimension);
+          setSubject(first.subjects?.[0] ?? null);
+        }
+      }
+    } else {
+      setDims((prev) => (prev === null ? [] : prev));
+    }
+    if (eps) setEpisodes(eps.episodes || []);
+    else setEpisodes((prev) => (prev === null ? [] : prev));
+
+    if (key === null || dirty) return;
+    const sent = key;
+    const d = await api.read(dim, subject).catch(() => null);
+    if (d && keyRef.current === sent) setFacet(d);
+  };
+
+  useLive(refresh, { period: TEMPO.ledger });
 
   // One rule for the whole surface: a draft exists only while it differs from what was
   // read, so typing the original text back is not an edit.

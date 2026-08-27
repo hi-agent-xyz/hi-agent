@@ -102,6 +102,7 @@
 // the whole value is that it is current.
 import { useState, useEffect, useCallback, useRef, useMemo, useReducer } from "react";
 import { hierarchy, tree } from "d3-hierarchy";
+import { useLive, TEMPO } from "@hi/core";
 
 const api = {
   list: () => fetch("/api/workers").then((r) => r.json()),
@@ -119,11 +120,10 @@ const api = {
 const enc = encodeURIComponent;
 const runQ = (run) => (run ? `?run=${enc(run)}` : "");
 
-/** How often the roster re-reads. Both endpoints are in-memory reads on the server — the
- *  live roster is a lock on a HashMap, the ended list a capped Vec — so this is cheap
- *  enough to be genuinely live rather than nearly-live. Held off while the page is hidden,
- *  since nothing is being read then. */
-const POLL_MS = 2000;
+/* The roster re-reads on `TEMPO.watching`, the fast one. Both endpoints are in-memory reads
+ * on the server — the live roster is a lock on a HashMap, the ended list a capped Vec — so
+ * that is cheap enough to be genuinely live rather than nearly-live. This page is where
+ * that tempo was first arrived at; it is now named in `@hi/core` and shared. */
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback.
@@ -439,19 +439,11 @@ export default function Workers() {
     if (b) setEnded(b.ended || []);
   }, []);
 
-  useEffect(() => {
-    reload();
-    const t = setInterval(() => {
-      if (!document.hidden) reload();
-    }, POLL_MS);
-    // Re-read on the way back rather than showing however stale the last tick was.
-    const onShow = () => { if (!document.hidden) reload(); };
-    document.addEventListener("visibilitychange", onShow);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", onShow);
-    };
-  }, [reload]);
+  // A live roster is the thing you watch happen, so it runs on the fast tempo. `useLive`
+  // owns the rest of what this used to spell out itself — the first read, the hidden-page
+  // skip, and the re-read on the way back rather than showing however stale the last tick
+  // was.
+  useLive(reload, { period: TEMPO.watching });
 
   const roots = useMemo(() => forest(live || []), [live]);
 
@@ -520,7 +512,9 @@ export default function Workers() {
       </div>
 
       {open?.kind === "session" && <Session addr={open} onClose={() => setOpen(null)} />}
-      {open?.kind === "channel" && <Channel pair={open} onClose={() => setOpen(null)} />}
+      {open?.kind === "channel" && (
+        <Channel key={`${open.a} ${open.b}`} pair={open} onClose={() => setOpen(null)} />
+      )}
     </div>
   );
 }
@@ -1356,21 +1350,19 @@ function Channel({ pair, onClose }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  useEffect(() => {
-    let alive = true;
-    setState({ status: "loading" });
-    const read = () =>
-      api
-        .mail(pair.a, pair.b)
-        // A failed poll keeps the last good reading rather than blanking it, same rule as
-        // the roster: what is on screen was true a moment ago, which is strictly better
-        // than an empty panel produced by one 500.
-        .then((d) => alive && setState({ status: "ok", ...d }))
-        .catch(() => alive && setState((prev) => (prev.status === "ok" ? prev : { status: "failed" })));
-    read();
-    const t = setInterval(() => { if (!document.hidden) read(); }, POLL_MS);
-    return () => { alive = false; clearInterval(t); };
-  }, [pair.a, pair.b]);
+  // Keyed by its pair at the call site, so pointing the panel at a different arrow
+  // remounts it. That is what resets `state` to loading and takes a fresh first read —
+  // `useLive` re-reads whatever `read` closes over, but it cannot know the subject changed.
+  const read = () =>
+    api
+      .mail(pair.a, pair.b)
+      // A failed poll keeps the last good reading rather than blanking it, same rule as
+      // the roster: what is on screen was true a moment ago, which is strictly better
+      // than an empty panel produced by one 500.
+      .then((d) => setState({ status: "ok", ...d }))
+      .catch(() => setState((prev) => (prev.status === "ok" ? prev : { status: "failed" })));
+
+  useLive(read, { period: TEMPO.watching });
 
   const messages = state.messages || [];
   const count =

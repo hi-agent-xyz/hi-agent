@@ -7,7 +7,8 @@
 // part of it can do that" had no answer anywhere.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. `Tools` is this system's own vocabulary —
@@ -68,13 +69,16 @@ const ROLE = L.role;
 export default function Tools() {
   const [roles, setRoles] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/tools").then((r) => r.json())
-      .then((d) => alive && setRoles(d.roles || []))
-      .catch(() => alive && setRoles([]));
-    return () => { alive = false; };
-  }, []);
+  // The slowest-moving of these surfaces, but not a still one: equipping a tool adds a row
+  // here, and this page is exactly where someone would be looking when it happens.
+  useLive(
+    () =>
+      fetch("/api/tools")
+        .then((r) => r.json())
+        .then((d) => setRoles(d.roles || []))
+        .catch(() => setRoles((prev) => (prev === null ? [] : prev))),
+    { period: TEMPO.ledger },
+  );
 
   if (roles === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
 

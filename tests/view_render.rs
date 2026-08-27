@@ -362,6 +362,64 @@ async fn the_reach_surface_renders_on_a_core_that_has_nothing_yet() {
     );
 }
 
+/// Every bundled review surface draws, in a real browser, against a core that has nothing.
+///
+/// The unit tests next to these views check that each one *compiles* and that each says the
+/// right things about its endpoints and its clock. Neither can catch the failure this does:
+/// a name that only resolves at runtime, through the host page's import map, in the browser.
+/// `useLive` is exactly that shape — every one of these surfaces imports it from `@hi/core`,
+/// no host code imports it at all, and if the bundler ever drops it from the shared chunk or
+/// the map stops binding the specifier, the module throws on load. Nine views go blank at
+/// once and every unit test in the tree still passes.
+///
+/// Empty is the honest fixture: a fresh core is when the fetches behind these answer `[]` or
+/// 404, which is where a view that assumes a populated shape falls over.
+#[tokio::test]
+#[ignore = "launches a real browser; run with --ignored"]
+async fn every_review_surface_renders_on_a_core_that_has_nothing_yet() {
+    let Some(h) = ready().await else { return };
+
+    let surfaces: &[(&str, &str)] = &[
+        ("stats", include_str!("../src/mind/views/factory/stats.jsx")),
+        ("tasks", include_str!("../src/mind/views/factory/tasks.jsx")),
+        ("skills", include_str!("../src/mind/views/factory/skills.jsx")),
+        ("memories", include_str!("../src/mind/views/factory/memories.jsx")),
+        ("workers", include_str!("../src/mind/views/factory/workers.jsx")),
+        ("tools", include_str!("../src/mind/views/factory/tools.jsx")),
+        ("drive", include_str!("../src/mind/views/factory/drive.jsx")),
+        ("people-review", include_str!("../src/mind/views/factory/people-review.jsx")),
+    ];
+    // `reach` has its own test above, for what it says on an empty core specifically.
+    //
+    // `welcome` and `vendor-outage` are not here, and both absences are the rule rather than
+    // an oversight: neither reads anything the agent changes, so neither has a clock to
+    // check. `welcome` could not be checked here anyway without changing what this test is —
+    // it is the one bundled view that loads an asset (`hi-mark.svg`) out of the views tree,
+    // and this harness serves a temp dir that was never seeded, so it would fail on a 404
+    // that says nothing about the view.
+
+    for (name, source) in surfaces {
+        let module_url = h
+            .compiler
+            .compile(source)
+            .await
+            .unwrap_or_else(|e| panic!("{name} compiles: {e}"));
+        let out = view_render::render(&RenderRequest::new(h.base_url.as_str(), module_url.as_str()))
+            .await
+            .unwrap_or_else(|e| panic!("{name} renders: {e}"));
+        assert_eq!(
+            out.verdict(),
+            Verdict::Rendered,
+            "{name} should render cleanly; problems: {:?}",
+            out.problems
+        );
+        assert!(
+            !view_render::is_blank_png(&out.png),
+            "{name} rendered blank — its module scope probably threw"
+        );
+    }
+}
+
 /// The views band's history tile carries a **real picture of the raise**, and this is
 /// the whole path that produces it: the reaction emits a `show`, the bus records it,
 /// a headless browser renders the module it went up as, the shot is downscaled into

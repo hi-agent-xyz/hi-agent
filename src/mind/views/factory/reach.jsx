@@ -13,8 +13,8 @@
 // take one back.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
-import { useState, useEffect, useCallback } from "react";
-import { url } from "@hi/core";
+import { useState, useCallback } from "react";
+import { url, useLive, TEMPO } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
@@ -87,26 +87,29 @@ export default function Reach() {
   const [handle, setHandle] = useState(null); // {handles, limit, why?}
   const [devices, setDevices] = useState(null);
 
-  const loadDevices = useCallback(() => {
-    fetch(url("/api/surfaces"))
-      .then((r) => r.json())
-      .then((d) => setDevices(d.surfaces || []))
-      .catch(() => setDevices([]));
-  }, []);
+  const loadDevices = useCallback(
+    () =>
+      fetch(url("/api/surfaces"))
+        .then((r) => r.json())
+        .then((d) => setDevices(d.surfaces || []))
+        .catch(() => setDevices((prev) => (prev === null ? [] : prev))),
+    [],
+  );
 
-  const loadHandle = useCallback(() => {
-    // Always answers: a core with no name is a normal core, and the reason it
-    // has none (no account yet, no community reachable) rides in `why`.
-    fetch(url("/api/handle"))
-      .then((r) => r.json())
-      .then(setHandle)
-      .catch(() => setHandle({ handles: [] }));
-  }, []);
+  const loadHandle = useCallback(
+    () =>
+      // Always answers: a core with no name is a normal core, and the reason it
+      // has none (no account yet, no community reachable) rides in `why`.
+      fetch(url("/api/handle"))
+        .then((r) => r.json())
+        .then(setHandle)
+        .catch(() => setHandle((prev) => prev ?? { handles: [] })),
+    [],
+  );
 
-  useEffect(() => {
-    loadHandle();
-    loadDevices();
-  }, [loadHandle, loadDevices]);
+  // The name changes when they claim one and when the community becomes reachable — the
+  // second of those has no click behind it, so `why` can go stale on its own.
+  useLive(loadHandle, { period: TEMPO.ledger });
 
   return (
     <div style={S.page}>
@@ -190,6 +193,20 @@ function Devices({ list, reload }) {
   const [pairing, setPairing] = useState(null); // {code, url, app_url}
   const [busy, setBusy] = useState("");
 
+  // The pairing itself finishes on the *phone*. Nothing on this page hears about it, so
+  // without a clock the one moment this section exists for is the one it cannot show: they
+  // scan the code, the phone says paired, and the list still reads "no devices".
+  //
+  // Two speeds, because those are two different things to be doing. While the code is up
+  // they are watching for an arrival and it should land as it happens; the rest of the time
+  // this is a ledger of what already has a way in, and `last_seen_at` on each card drifts
+  // whether or not anyone clicks. Held while a revoke is in flight, so a device cannot
+  // reappear between the DELETE and its reload.
+  useLive(reload, {
+    period: pairing ? TEMPO.watching : TEMPO.ledger,
+    hold: () => busy !== "",
+  });
+
   async function addDevice() {
     setBusy("pair");
     try {
@@ -254,7 +271,18 @@ function Devices({ list, reload }) {
               <div style={S.hint}>{L.pairAt}</div>
             </>
           )}
-          <button style={S.button} onClick={() => setPairing(null)}>{L.done}</button>
+          <button
+            style={S.button}
+            onClick={() => {
+              setPairing(null);
+              // Read once on the way out as well as on the clock: closing the panel is a
+              // person saying they are finished pairing, and the tick they would otherwise
+              // wait for is the slow one, since the panel is gone by then.
+              reload();
+            }}
+          >
+            {L.done}
+          </button>
         </div>
       ) : (
         <button style={S.button} onClick={addDevice} disabled={busy === "pair"}>

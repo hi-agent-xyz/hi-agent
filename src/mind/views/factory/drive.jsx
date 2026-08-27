@@ -9,8 +9,8 @@
 // hand it, and is it still there", which today nothing can.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
-import { useState, useEffect } from "react";
-import { url } from "@hi/core";
+import { useState } from "react";
+import { url, useLive, TEMPO } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. `Drive` is an ordinary word for the shelf of
@@ -62,13 +62,18 @@ const LOOSE = "/loose";
 export default function Drive() {
   const [entries, setEntries] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/drive").then((r) => r.json())
-      .then((d) => alive && setEntries(d.entries || []))
-      .catch(() => alive && setEntries([]));
-    return () => { alive = false; };
-  }, []);
+  // It files things here itself — a carrier hands over an artifact and the shelf grows
+  // while this is on screen. A read that does not come back leaves the last good listing
+  // standing; only the very first one is allowed to settle on empty, because before it
+  // there is nothing to keep and the skeleton has to end somewhere.
+  useLive(
+    () =>
+      fetch("/api/drive")
+        .then((r) => r.json())
+        .then((d) => setEntries(d.entries || []))
+        .catch(() => setEntries((prev) => (prev === null ? [] : prev))),
+    { period: TEMPO.ledger },
+  );
 
   if (entries === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
 

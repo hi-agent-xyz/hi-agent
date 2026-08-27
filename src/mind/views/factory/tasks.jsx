@@ -17,6 +17,7 @@
 // exist on touch and cannot be driven from a keyboard, so every card keeps its buttons
 // and the drag is the shortcut on top of them.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -307,19 +308,20 @@ export default function Tasks() {
     if (roster) setOnIt(bySubject(roster.workers || []));
   }, []);
 
-  // Poll, for the reason the workers roster does: the agent opens and closes tasks while
+  // Re-read, for the reason the workers roster does: the agent opens and closes tasks while
   // this is on screen, and a ledger that is quietly stale still reads as authoritative —
-  // it is the surface someone checks *before* asking "did you drop that?". Held off while
-  // a status write is in flight (so a card can't flip back under the click), while a card
-  // is mid-drag (re-rendering the board out from under a held card cancels the drag), and
-  // while the page is hidden, since nothing is being read then.
-  useEffect(() => {
-    reload();
-    const timer = setInterval(() => {
-      if (!document.hidden && !busyRef.current && !dragRef.current) reload();
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [reload]);
+  // it is the surface someone checks *before* asking "did you drop that?". This is a ledger
+  // rather than something you watch happen, so it runs on the slower tempo.
+  //
+  // The hold reads the refs and not the state: `busyRef` is set imperatively either side of
+  // an `await`, and at that moment the matching `setBusy` has not committed, so a tick in
+  // the gap would see the old value and flip a card back under the click that changed it.
+  // Mid-drag it is the same shape — re-rendering the board out from under a held card
+  // cancels the drag.
+  useLive(reload, {
+    period: TEMPO.ledger,
+    hold: () => busyRef.current || dragRef.current,
+  });
 
   const setTaskStatus = async (subject, nextStatus) => {
     setBusy(subject);

@@ -11,6 +11,7 @@
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useEffect, useCallback } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 const api = {
   list: () => fetch("/api/skills").then((r) => r.json()),
@@ -72,10 +73,18 @@ export default function Skills() {
   const [confirming, setConfirming] = useState(null);
 
   const reload = useCallback(async () => {
-    const d = await api.list().catch(() => ({ skills: [] }));
-    setSkills(d.skills || []);
+    // A failed read keeps the list that is up. Empty here is a real claim — "nothing saved
+    // up yet", with its own copy — and one 500 is not entitled to make it.
+    const d = await api.list().catch(() => null);
+    if (d) setSkills(d.skills || []);
+    else setSkills((prev) => (prev === null ? [] : prev));
   }, []);
-  useEffect(() => { reload(); }, [reload]);
+
+  // It writes these itself, after a job goes well enough to be worth a note — so the list
+  // grows while someone is reading it. Held while a delete is being confirmed: the confirm
+  // sits inside its own row, and re-rendering the list under it moves the button the person
+  // is about to press.
+  useLive(reload, { period: TEMPO.ledger, hold: () => confirming !== null });
 
   useEffect(() => {
     if (!openPath) { setContent(null); return; }

@@ -4,6 +4,7 @@
 // per-modality clip strips right/below. Naming onto an existing name merges. Every
 // action posts to /api/people/*; the store is global.
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { useLive, TEMPO } from "@hi/core";
 
 const api = {
   list: () => fetch("/api/people").then((r) => r.json()),
@@ -85,10 +86,23 @@ export default function PeopleReview() {
   const rects = useRef(new Map()); // FLIP: id -> DOMRect before a change
 
   const reload = useCallback(async () => {
-    const d = await api.list().catch(() => ({ people: [] }));
-    setPeople(d.people || []);
+    // A failed read keeps the cards that are up. "Nobody stored yet" is a real answer here
+    // with its own copy, and one 500 must not be able to make it.
+    const d = await api.list().catch(() => null);
+    if (d) setPeople(d.people || []);
+    else setPeople((prev) => (prev === null ? [] : prev));
   }, []);
-  useEffect(() => { reload(); }, [reload]);
+
+  // New clusters appear while this is open — it grows one every time it hears or sees
+  // someone it cannot place, which is exactly what brings a person to this page.
+  //
+  // Held for as long as a card is open, and that is the deliberate half. An open card is
+  // someone mid-correction: typing a name, ejecting a clip, reading a regroup proposal. A
+  // tick that lands there re-orders the grid under the panel (`orderForOpen` promotes the
+  // open card to the start of its visual row, so an arrival two cards earlier moves it) and
+  // moves the thing being worked on. Freshness is worth less than stability under the hand;
+  // the list catches up on the first tick after the card closes.
+  useLive(reload, { period: TEMPO.ledger, hold: () => openId !== null });
 
   // FLIP: snapshot every card's rect just before a layout-affecting state change.
   const snapshot = () => {
