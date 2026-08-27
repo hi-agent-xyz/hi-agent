@@ -457,6 +457,64 @@ impl Window {
     }
 }
 
+/// How far back "recently used" looks. Long enough that a tool used a couple of times
+/// a week stays in hand, short enough that one abandoned in spring does not.
+const USAGE_WINDOW_DAYS: u64 = 30;
+
+/// How long a usage snapshot is reused before being recomputed.
+///
+/// **This is a cache, not a stored claim.** It is memoisation of a derivation that has
+/// one source of truth — the frame logs — and it dies with the process. The rule it must
+/// not break is `docs/arch/tools.md`'s *nothing is stored that can be derived*, and it
+/// doesn't: nothing is written down, and the worst staleness is one interval.
+///
+/// It exists because the alternative is scanning every frame log at **every session
+/// open**, and sessions open far more often than usage meaningfully changes.
+const USAGE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+static USAGE_CACHE: std::sync::OnceLock<
+    tokio::sync::Mutex<Option<(std::time::Instant, Arc<UsageCounts>)>>,
+> =
+    std::sync::OnceLock::new();
+
+/// How often each tool and command name was used in the recent window.
+pub type UsageCounts = HashMap<String, u64>;
+
+/// Recent usage by name, for ranking what a session carries in hand
+/// ([`crate::mind::skills::hot_inventory`]).
+///
+/// **MCP tool calls and shell commands are counted into one map on purpose.** The
+/// question being answered is *what does this install actually reach for*, and at that
+/// question a tool called through the wire and one called through the shell are the same
+/// event. Telling them apart is `GET /api/stats`'s job, not this one's.
+pub async fn recent_usage(data_dir: &Path, now: DateTime<Utc>) -> Arc<UsageCounts> {
+    let cell = USAGE_CACHE.get_or_init(|| tokio::sync::Mutex::new(None));
+    let mut guard = cell.lock().await;
+    if let Some((at, counts)) = guard.as_ref() {
+        if at.elapsed() < USAGE_TTL {
+            return Arc::clone(counts);
+        }
+    }
+
+    let window = Window {
+        range: Range::Days(USAGE_WINDOW_DAYS, "30d"),
+        from: Some(now - Duration::days(USAGE_WINDOW_DAYS as i64)),
+        to: now,
+    };
+    let mut series = BTreeMap::new();
+    let mut earliest = None;
+    let agg =
+        aggregate_frames(data_dir, &window, &HashMap::new(), &mut series, &mut earliest).await;
+
+    let mut counts: UsageCounts = HashMap::new();
+    for (name, (used, _failed)) in agg.tool_names.into_iter().chain(agg.command_names) {
+        *counts.entry(name).or_default() += used;
+    }
+    let counts = Arc::new(counts);
+    *guard = Some((std::time::Instant::now(), Arc::clone(&counts)));
+    counts
+}
+
 /// `GET /api/stats?range=7d|30d|90d|all`.
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,

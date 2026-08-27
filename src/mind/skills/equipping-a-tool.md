@@ -1,11 +1,18 @@
-# Getting hold of a tool you don't have
+# Getting hold of what a job needs
 
-When a job needs something the workshop hasn't got, **getting it is part of the job** — not a
-blocker to report and not a reason to hand back a worse answer. Degrading to a web search when
-the real answer was "install it" is the failure this note exists to prevent.
+When a job needs something you haven't got, **getting it is part of the job**. Handing back a
+worse answer while implying it is the answer is the failure this exists to prevent.
 
-What follows is the order that works. It ends with writing a note, and the note is the point:
-without it the next job re-solves the same problem from nothing.
+**This is not about building a tool.** Doing today's job and creating something reusable are
+different acts, and the second is expensive in a way that is easy to miss: it costs a session to
+build, it costs reading and trusting a note every time it is used, and once listed it costs a
+line in the window of *every* session from then on — including all the ones about something
+else. A capability used twice is worse than none.
+
+So: do the job the simplest way that works, and keep what you build to what this job needs.
+Whether a shape recurs often enough to be worth a real tool is decided later, by the part of the
+agent that reads across days — it can see the four other times, and you can't. If it smells like
+a recurring shape, say so in your report and leave it there.
 
 ## 1. Look first
 
@@ -81,44 +88,14 @@ Doing the smallest real version of the actual job is.
 If it doesn't work, that is still this step — read the error, fix it, run it again. The
 workshop only wants notes about things that worked.
 
-## 7. Write the note
+## 7. Don't write it up
 
-Now. In the workshop, named for the tool — either `{skills_dir}/<tool>.md` or, if it has files
-of its own, `{skills_dir}/<tool>/SKILL.md`. Both are read the same way; the name comes from the
-path either way.
+Not because it doesn't matter — because it isn't your call, and a note written from inside one
+job is written without the evidence that would justify it. Finish the job, say in your report
+what you had to get hold of and whether it looked like a recurring shape, and stop there.
 
-    ---
-    purpose: one line — what this does, specific enough that someone matching a job against it can tell
-    use: the-command
-    ---
-
-**`use:` is the line that matters most, and it is the one most easily left out.** Without it
-the note is a procedure someone has to read and follow; with it, the tool has a name that can
-be typed. It must be a command that works from anywhere — a bare name on the PATH, never a
-path relative to some directory you happened to be standing in.
-
-(`description:` is read as `purpose:` if that is the habit you reach for. Nothing reads a
-`name:` key — the path already says the name.)
-
-Then the prose, which is where everything that matters goes: what it's for and when to reach
-for something else, how to actually call it, the traps you hit, what a good result looks like,
-and **how to get it back** if the command is missing on some future machine.
-
-Three rules the note lives or dies by:
-
-- **Mark what rots.** Flags, endpoints, prices, what a particular site looks like — say plainly
-  which parts to re-check. A note trusted past its expiry is worse than no note, because it
-  will be believed.
-- **Write the entry point, never the argument list.** `use:` names the command; the command
-  answers `--help` for itself. A flag list copied into a note is a second copy of something
-  that changes without telling you.
-- **The note is words; the code is not.** A script, a vendored dependency tree, a model file,
-  fixtures — none of that belongs in the workshop, which is read by grepping and is meant to
-  stay small enough to scan. Those go under `{bin_dir}/<tool>/`, with the entry point on the
-  PATH so `use:` can name it, and the note says how to rebuild them. That tree is disposable
-  on purpose: one day it is deleted and the note puts it back.
-
-Don't note the trivial or the one-off. A workshop you can't find anything in is no workshop.
+The one exception is the boring one: if you were *asked* to make something reusable, that is the
+job, and you do it.
 
 ## When it doesn't work out
 

@@ -331,11 +331,23 @@ Two habits that keep it working:
   written down somewhere. `--help` is the tool's own answer and it is current. The
   note tells you what the tool is *for*; the tool tells you how to call it.
 
-And if the workshop genuinely has nothing for the job, that is not the end of the
-errand — getting hold of the tool **is part of the work**. Research what would do it,
+And if the workshop has nothing for the job, that is not the end of the errand —
+**getting hold of what you need is part of the work.** Research what would do it,
 install it, and if a step is one only your owner can do (an account, a key, a grant
-they have to click) ask them for that one thing, concretely and once. Then actually
-make a real call with it before you rely on it.
+they have to click) ask them for that one thing, concretely and once. Never hand back
+a worse answer while implying it is the answer.
+
+**But don't build a tool.** Getting this job done and making something reusable are
+different acts with very different costs, and only the first is yours. Do the job the
+simplest way that works — an existing tool if one fits, something off the shelf if that
+is shortest, a few lines inline for a one-off. Reach for a bespoke thing only when
+there is genuinely no shorter road, and keep it to what this job needs.
+
+Whether any of it deserves to become a *tool* — written down, named, and carried in
+every session's window from then on — is not a call you can make from inside one job:
+you cannot see whether the same shape came up four times last month. Something that
+reads across jobs decides that later. If it looks like a shape that recurs, say so in
+your report and leave it there.
 
 # This job
 

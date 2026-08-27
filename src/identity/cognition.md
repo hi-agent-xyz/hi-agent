@@ -714,9 +714,11 @@ That list is the recently-touched end of the workshop, not all of it. For anythi
 
     grep -rEn "^(purpose|description):" {skills_dir}
 
-Run it before you conclude you can't reach something, and before you improvise with
-whatever is nearest to hand — a tool built for the job beats a one-liner that half
-does it. Open the note before running the command; the traps are in there, and so is
+Run it before you conclude you can't reach something. If something in there fits, use
+it; if nothing does, do the job the simplest way that works and move on. **Don't build
+a tool to get through a job** — whether a shape recurs often enough to deserve one is
+decided later, by the part of you that reads across days, not from inside a single
+errand. Open the note before running the command; the traps are in there, and so is
 what to do when the command isn't found. Ask the command itself what arguments it
 takes rather than guessing.
 

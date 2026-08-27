@@ -44,7 +44,7 @@ costs to hold, cut wherever the budget falls:
 | Level | Resident | Membership decided by |
 |---|---|---|
 | **Bundled** | full schema | **authored** — ships with the role, static, per-role |
-| **Hot** | full schema | **derived** — recency-weighted use, per install |
+| **Hot** | full schema | **derived** — actual use over a recent window, per install |
 | **Inventory** | nothing | everything else; reached by [asking](#the-tool-manager) |
 
 A tool has no level of its own and nothing stores one. Hot is a *ranking* — one number per
@@ -153,6 +153,38 @@ here it decayed: facets stayed prose on the grounds that *forms get filled*, and
 `proactivity.md`'s four-value standing collapsed into eleven `muted` beside sentences that were
 still specific and useful. Gravity in particular is journey 07's open question — a soft list, or
 judge each time — and the answer everywhere else in this system is guidance plus judgment.
+
+### A tool is an investment, and most of the time it does not pay
+
+**The default is not to build one.** This doc is about a workshop that grows without bound,
+and it is easy to read that as a goal; it is not. A tool costs a session to build, costs
+reading and trusting a note every time it is used, and once listed costs **a line in the window
+of every session from then on — including every session about something else.** That last one
+is the cost that hides, because it is paid by jobs that will never touch the tool. Used twice,
+a tool is worse than none.
+
+So a tool is worth writing down only when all three hold:
+
+- **It actually recurred.** Not that someone said it would. An intention is not evidence —
+  people say *"I'll need this a lot"* about things they ask for once — and this system distrusts
+  stated claims everywhere else for the same reason. What counts is occasions that happened.
+- **A tool beats doing it inline.** If the ad-hoc version is a few lines each time, a tool is
+  the worse deal: it is those lines *plus* something to find, read and trust. What earns one is
+  real setup — something to install, a sequence with traps, an interface that took work to get
+  right.
+- **It is cheap to pick up.** One command, its own `--help`, nothing vendored. If picking it up
+  costs more than redoing the work, it is a liability in a tool's clothes.
+
+**And that decision belongs to [reflection](agents.md#reflection--background), not to the job.**
+A session in the middle of an errand knows what it is doing now and cannot know it is the fifth
+time; asking it to judge recurrence is asking it to guess, and under any instruction to *equip*
+the guess resolves to build. Reflection is the only rung that reads across days, so it weighs
+this and dispatches a worker to build what clears the bar. Deciding is reflection's, building
+is not.
+
+The job's own rule is unchanged and narrower: **get hold of what this job needs** — install it,
+ask once for the step only the person can do, and never hand back a worse answer while implying
+it is the answer. That is about not stalling. It is not about leaving something behind.
 
 ### The note records a call that succeeded
 
@@ -373,6 +405,8 @@ fits in a window.
 | **Session state never lives in `bin/`** | Disposable is only true of what a note can put back |
 | Lookup and authorship are **separate tempos** | Lookup is in every job's critical path; installing software is not |
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
+| A tool is **an investment reflection decides**, not a job-time reflex | Only the rung reading across days can see recurrence; inside one job the guess always resolves to build |
+| **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
 
 ## What this deliberately does not have
 
@@ -384,10 +418,9 @@ because it stored something derivable, or gave a wrong answer a place to look ri
 
 ## Open
 
-- **Ranking hot by *use* rather than by freshness.** Commands are now counted by the program
-  they ran, so the signal exists; the cut line is still ordered by when a note last changed,
-  because reading the frame logs at every session open has an unmeasured cost. Measure it, then
-  switch.
+- **Pruning what stopped paying.** A note nobody has run in a long time still costs its line in
+  every session. Reflection is told to notice; nothing acts on it, and no rung deletes a learnt
+  note today except the person.
 - **Consent has no mechanical backstop** on the shell path. Guidance only, as above.
 - **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
   the same verbs mean two things, and *whose body* becomes something a note must say.

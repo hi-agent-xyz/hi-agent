@@ -230,30 +230,69 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// truncated at [`HOT_BUDGET_BYTES`].
 ///
 /// **A cut line, not a list.** Nothing stores which notes are in it; it is rebuilt at
-/// every session open, so a note written yesterday appears without anyone deciding it
-/// should and one that falls below the line falls out the same way.
+/// every session open, so a tool reached for yesterday climbs on its own and one left
+/// alone for a month falls out the same way, without anyone deciding either.
 ///
-/// **Ranking signal — stated plainly because it is not the one the design asks for.**
-/// This ranks by *when the note last changed*, freshest first. The design's `hot` level
-/// is recency-weighted **use**, and the counter for that now exists
-/// ([`crate::foundation::server::stats`]'s `commands_by_name`) but is not wired here:
-/// it means scanning the frame logs at every session open, and that cost is unmeasured.
-/// Until it is, freshness is a real but weaker proxy — a note just written is usually
-/// the relevant one. The item that takes this back is named in `docs/status.md`.
+/// **Ranked by what was actually used**, from `usage` — counts of tool calls and shell
+/// commands over a recent window
+/// ([`crate::foundation::server::stats::recent_usage`]). A note is credited with the
+/// command its `use:` names, and otherwise with its own last path segment, so
+/// `web-to-markdown` is matched by a `web-to-markdown` invocation.
+///
+/// Freshness breaks ties, and only ties. It is a genuinely weaker signal — writing a
+/// note is not using it — so it decides nothing except the order of things nobody has
+/// run yet, where a newly written note is the better guess.
 ///
 /// Returns an empty string for an empty workshop, so a caller can interpolate it
 /// without special-casing a fresh install.
-pub fn hot_inventory(data_dir: &Path, budget: usize) -> String {
-    let mut notes = notes(data_dir).unwrap_or_default();
-    // Freshest first; the id breaks ties so the output is stable rather than
-    // filesystem-ordered, which would make the prompt differ between two identical
-    // installs and make a diff unreadable.
-    notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.id.cmp(&b.id)));
+/// How often this note's tool was actually reached for.
+///
+/// A note is credited with the command its `use:` names — first word only, since usage
+/// is counted by argv[0] — and otherwise with its own last path segment, so a
+/// `web-to-markdown` note is matched by a `web-to-markdown` invocation. A note whose
+/// name matches nothing scores zero and sorts on freshness, which is the right answer:
+/// nobody has run it.
+///
+/// **Known over-credit: one binary hosting several tools shares one count.** `use: hi
+/// mcp` is credited with every `hi` invocation, because the counter records the program
+/// and not its subcommand — observed live, where `hi` ran three times and the MCP note
+/// took all three. Harmless while `hi` is nearly always `hi mcp`, and it grows into a
+/// real distortion if `hi` gains unrelated subcommands. Fixing it means recording argv[1]
+/// for known multi-tool hosts, which is a special case waiting for a second example.
+fn used_count(
+    note: &NoteRef,
+    fm: &FrontMatter,
+    usage: &std::collections::HashMap<String, u64>,
+) -> u64 {
+    let from_use = fm
+        .run
+        .as_deref()
+        .and_then(|cmd| cmd.split_whitespace().next())
+        .and_then(|cmd| usage.get(cmd).copied());
+    let stem = note.id.rsplit('/').next().unwrap_or(&note.id);
+    from_use.unwrap_or_else(|| usage.get(stem).copied().unwrap_or(0))
+}
 
-    let mut out = String::new();
-    for note in notes {
+pub fn hot_inventory(
+    data_dir: &Path,
+    budget: usize,
+    usage: &std::collections::HashMap<String, u64>,
+) -> String {
+    let mut entries: Vec<(u64, NoteRef, FrontMatter)> = Vec::new();
+    for note in notes(data_dir).unwrap_or_default() {
         let Ok(text) = std::fs::read_to_string(&note.path) else { continue };
         let (fm, _) = split_front_matter(&text);
+        entries.push((used_count(&note, &fm, usage), note, fm));
+    }
+    // Most-used first, then freshest, then the id so the output is stable rather than
+    // filesystem-ordered — two identical installs should produce the same prompt, and
+    // a diff of it should be readable.
+    entries.sort_by(|a, b| {
+        b.0.cmp(&a.0).then_with(|| b.1.modified.cmp(&a.1.modified)).then_with(|| a.1.id.cmp(&b.1.id))
+    });
+
+    let mut out = String::new();
+    for (_, note, fm) in entries {
         // A note with no purpose line degrades to a bare name — unhelpful, never a
         // confident wrong answer, which is the bargain the views toolbox already makes.
         let line = match fm.purpose {
@@ -562,7 +601,7 @@ mod tests {
             .unwrap();
         }
 
-        let out = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        let out = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
         assert!(
             out.len() <= HOT_BUDGET_BYTES + 40,
             "the inventory blew its budget: {} bytes",
@@ -581,7 +620,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         install_factory_skills(dir.path()).unwrap();
 
-        let before = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        let before = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
         assert!(before.contains("factory/browser"), "seeded tools are in hand: {before}");
         // A purpose line is what the entry carries; a note without one degrades to a
         // bare name rather than vanishing.
@@ -593,16 +632,26 @@ mod tests {
             "---\npurpose: something the agent worked out today\n---\n\nbody\n",
         )
         .unwrap();
-        let after = hot_inventory(dir.path(), HOT_BUDGET_BYTES);
+        let after = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
         assert!(after.contains("just-learnt"), "{after}");
         assert!(
             after.find("just-learnt") < after.find("factory/browser"),
-            "freshest first, so what was just written leads: {after}"
+            "with nothing used, freshest leads: {after}"
+        );
+
+        // **Use beats freshness, which is the whole point.** A note written last week
+        // that the install actually reaches for outranks one written a minute ago and
+        // never run — writing a note is not using it.
+        let usage = std::collections::HashMap::from([("browser".to_string(), 9u64)]);
+        let ranked = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &usage);
+        assert!(
+            ranked.find("factory/browser") < ranked.find("just-learnt"),
+            "a used tool leads a fresh unused one: {ranked}"
         );
 
         // An empty workshop interpolates to nothing rather than to an apology.
         let empty = tempfile::tempdir().unwrap();
-        assert_eq!(hot_inventory(empty.path(), HOT_BUDGET_BYTES), "");
+        assert_eq!(hot_inventory(empty.path(), HOT_BUDGET_BYTES, &Default::default()), "");
     }
 
     #[test]
@@ -671,89 +720,55 @@ mod tests {
         assert!(equipping.contains(&bin_dir(dir.path()).display().to_string()));
     }
 
-    /// The seeded tool notes, and what each must say. `equipping-a-tool` is the
-    /// *writing* half of the workshop — without it the learnt layer stays empty
-    /// forever — so the two rules it exists to carry are pinned: exercise a real call
-    /// before writing the note, and keep what only the person can create out of the
-    /// disposable tree.
+    /// **The equipping seed is about finishing a job, not about building a tool.**
+    ///
+    /// It used to end by telling the worker to write the note. Two live runs showed why
+    /// that is wrong: a worker inside one job cannot see whether the shape recurred, so
+    /// under an instruction to equip it reliably resolves to *build* — once vendoring
+    /// 76 MB of Python for a job that ad-hoc code would have finished. The investment
+    /// decision moved to reflection, which is the only rung that reads across days.
+    ///
+    /// Both halves are pinned: the one it must still say (don't stall, get what the job
+    /// needs) and the one it must no longer say (write it up).
     #[test]
-    fn the_equipping_seed_carries_the_two_rules_it_exists_for() {
+    fn the_equipping_seed_finishes_jobs_and_does_not_build_tools() {
+        assert!(
+            EQUIPPING_A_TOOL.contains("getting it is part of the job"),
+            "the anti-stall rule is the reason this note exists"
+        );
+        assert!(
+            EQUIPPING_A_TOOL.contains("This is not about building a tool"),
+            "the cost of a tool must be stated where the temptation is"
+        );
         assert!(
             EQUIPPING_A_TOOL.contains("Do not write the note yet"),
-            "a note for a call that never ran is the expensive kind of false confidence"
+            "a call that never ran is the expensive kind of false confidence"
         );
         assert!(
             EQUIPPING_A_TOOL.contains("logged-in session is a credential"),
             "the one class of state a note cannot rebuild must be named"
-        );
-        assert!(
-            EQUIPPING_A_TOOL.contains("Mark what rots"),
-            "the perishable half must be marked or the next job trusts a stale note"
         );
         // It is a procedure: there is no command to run.
         let (fm, _) = split_front_matter(EQUIPPING_A_TOOL);
         assert_eq!(fm.run, None);
     }
 
+    /// The ROI decision belongs to reflection, and nowhere else may claim it.
     #[test]
-    fn the_browser_note_is_a_tool_and_not_merely_a_skill() {
-        // `purpose` is what the registry scan emits; the *presence* of `use` is the
-        // whole discriminator between a tool and an ordinary procedure
-        // (`docs/arch/tools.md`). A seed missing either is a note the workshop
-        // cannot run.
-        let purpose = front_matter(BROWSER, "purpose").expect("browser.md needs a purpose:");
+    fn only_reflection_decides_that_a_tool_should_exist() {
+        let reflection = crate::identity::reflection_base();
         assert!(
-            purpose.len() > 20,
-            "the purpose line is what a job is matched against; it says too little: {purpose:?}"
+            reflection.contains("an intention is not evidence"),
+            "a stated plan to reuse something is not a usage count"
         );
-        assert_eq!(front_matter(BROWSER, "use").as_deref(), Some("browser"));
-
-        // And the counter-example, so the discriminator is exercised in both
-        // directions: adding a device is a procedure, with nothing to invoke.
-        assert_eq!(front_matter(ADDING_A_DEVICE, "use"), None);
-    }
-
-    #[test]
-    fn the_shim_is_named_by_the_note_that_calls_it() {
-        // The command name in `use:` is the entire link between what the agent knows
-        // and what it can run. If these two ever drift, the note names a command
-        // that does not exist — which reads to the agent as "I can't do that".
-        let dir = tempfile::tempdir().unwrap();
-        install_tool_bin(dir.path()).unwrap();
-
-        let name = front_matter(BROWSER, "use").unwrap();
-        let shim = factory_bin_dir(dir.path()).join(if cfg!(windows) {
-            format!("{name}.cmd")
-        } else {
-            name.clone()
-        });
-        assert!(shim.exists(), "browser.md says `use: {name}` but {shim:?} was not written");
-
-        let script = std::fs::read_to_string(&shim).unwrap();
-        // Resolution is deferred to call time — the shim asks, it does not carry a
-        // path. Baking one here would force the ~100 MB download at boot.
-        assert!(script.contains("--resolve-browser"), "the shim must resolve at call time");
         assert!(
-            !script.contains("chrome-headless-shell-"),
-            "the shim carries no resolved path: {script}"
+            reflection.contains("costs a line in the window of *every* session"),
+            "the cost is paid by jobs that never use the tool; that has to be said"
         );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn the_shim_is_executable_and_survives_a_path_with_spaces() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        install_tool_bin(dir.path()).unwrap();
-        let shim = factory_bin_dir(dir.path()).join("browser");
-        let mode = std::fs::metadata(&shim).unwrap().permissions().mode();
-        assert_eq!(mode & 0o111, 0o111, "a shim nobody may execute is not on the PATH");
-
-        // macOS resolves the usual browser under `/Applications/Google Chrome.app/…`,
-        // so an unquoted path is the common failure, not the paranoid one.
-        assert_eq!(sh_quote(Path::new("/Applications/Google Chrome.app/x")), "'/Applications/Google Chrome.app/x'");
-        assert_eq!(sh_quote(Path::new("/tmp/it's")), r"'/tmp/it'\''s'");
+        assert!(
+            reflection.contains("the deciding is yours, the building is not"),
+            "reflection weighs it and dispatches; it does not build inline"
+        );
     }
 
     #[test]

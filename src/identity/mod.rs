@@ -43,6 +43,13 @@ use std::path::{Path, PathBuf};
 /// for.
 const REACTION_BASE: &str = include_str!("reaction.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
+
+/// The reflection prompt, for the cross-tree test in [`crate::mind::skills`]: the
+/// workshop's cost rules are enforced there, and the rung that applies them is here.
+#[cfg(test)]
+pub(crate) fn reflection_base() -> &'static str {
+    REFLECTION_BASE
+}
 const COGNITION_BASE: &str = include_str!("cognition.md");
 
 /// The worker prompts, under `workers/` — one file per **type**, each whole.
@@ -459,6 +466,11 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
         Ok(s) if !s.trim().is_empty() => s,
         _ => fallback.to_string(),
     };
+    // What this install actually reached for lately, for ranking the inventory below.
+    // Cached with a short TTL inside `recent_usage`: sessions open far more often than
+    // usage meaningfully changes, and the alternative is scanning every frame log each
+    // time. Nothing is written down — the frame logs stay the one source of truth.
+    let usage = crate::foundation::server::stats::recent_usage(&base, chrono::Utc::now()).await;
     let dir = |p: PathBuf| p.display().to_string();
     let mut out = text
         .replace("{skills_dir}", &dir(crate::mind::skills::skills_dir(&base)))
@@ -469,7 +481,11 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
         // below the cut is one grep away.
         .replace(
             "{tools_in_hand}",
-            &crate::mind::skills::hot_inventory(&base, crate::mind::skills::HOT_BUDGET_BYTES),
+            &crate::mind::skills::hot_inventory(
+                &base,
+                crate::mind::skills::HOT_BUDGET_BYTES,
+                &usage,
+            ),
         )
         // The root a `⟨ref: <channel>/<day>/<hh>/<file>⟩` resolves against: a ref is
         // literally that path under this directory. Without it a ref is a fragment,

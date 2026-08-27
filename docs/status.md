@@ -482,6 +482,41 @@ staleness is visible even when honesty is not verifiable.
 
 Against running processes, not by reading code.
 
+**Toolmaking moved off the job path — 2026-08-27, built, not yet watched.** The workshop was
+being grown by default: `equipping-a-tool.md` ended by telling the worker to write the note, and
+both rungs were told getting the tool was part of the work. That produced the 76 MB vendoring —
+a bespoke extractor built inside one job, for a shape that had happened once. A session in the
+middle of an errand cannot know it is the fifth time, so under any instruction to equip, the
+guess resolves to *build*.
+
+So the decision moved to **reflection**, which is the only rung that reads across days: a new
+step 3 in the settling pass weighs whether anything recurred often enough to pay, against a
+stated cost — a session to build, reading and trusting a note per use, and **a line in the window
+of every session from then on, including every session about something else.** All three of
+recurred / beats-inline / cheap-to-pick-up must hold, and *a stated intention is not evidence*.
+When they hold it dispatches a worker: deciding is reflection's, building is not. The job path
+keeps only the anti-stall half — get what this job needs, never hand back a worse answer while
+implying it is the answer.
+
+**And the two questions are now separate**, which is the point: whether a tool should *exist* is
+reflection's judgment over patterns; whether it is *in hand* is arithmetic over use.
+`hot_inventory` now ranks by `recent_usage` — tool calls and shell commands over 30 days, matched
+to a note by its `use:` command or its own name — with freshness demoting to a tiebreak for notes
+nobody has run. That repays the loan the previous entry named. The scan is cached in-process for
+5 minutes because sessions open far more often than usage changes; nothing is written to disk, so
+the frame logs stay the single source of truth.
+
+**The ranking half is watched.** On a live instance the agent used `browser` twice and `hi`
+three times; the next session's `baseInstructions` came back ordered `mcp-service` (3, via its
+`use: hi mcp`), `browser` (2), then the two unused notes by freshness — score-descending with
+mtime breaking only the tie, exactly as specified. Known over-credit, written into the code: one
+binary hosting several tools shares one count, because usage is recorded by program and not by
+subcommand, so `hi mcp`'s note took all three `hi` invocations.
+
+**The deciding half is unwatched.** Reflection has to fire on a real backlog for any of it to be
+observed, and it has not since the change. What to look for is a negative: that it *doesn't*
+propose tools on thin evidence.
+
 **`hi mcp` reaches a real MCP server, both transports — 2026-08-27.** `foundation::mcp::client`
 is the other direction from the server we publish to codex: `initialize` → `notifications/
 initialized` → `tools/list` / `tools/call`, over **stdio** (spawn the command) or **streamable
