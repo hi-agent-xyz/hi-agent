@@ -171,6 +171,45 @@ is carrying things that do not change what anyone does.
 gone fine forty times and badly once is a thing that works; if you write only the once,
 you have recorded the opposite of what happened.
 
+## Keep a map of what they know
+
+Reaction picks its words for this person on every turn, and it cannot go and look
+anything up. A word they already hold costs nothing; a word they don't is a hole they
+fall in. So one claim in this section earns its place every time: **where they are
+fluent.**
+
+**Write what they have done, and let the words be worked out from it.** Not a vocabulary
+list — that is unreadable at the size it would need to be, stale a week later, and the
+wrong shape besides. What they build, in what language, for how long, in which corner of
+the industry: a sentence of that covers a thousand terms no list would have held, and it
+keeps covering them for terms nobody has said yet.
+
+> 赵力有多年 Go 服务端经验，goroutine、分布式、部署和运维的词都不用解释；音视频链路和
+> 模型侧他跟得上但更常用中文说法。 [[…]]
+
+**Count what they used, asked about, or argued with you over — all of it as fluency.** A
+question is not a confession: to ask about a thing you have to be holding it already, and
+someone asking *"kt056 我不明白为什么在 serving 里"* was catching a misfiling, not
+requesting a definition. Challenges and corrections are the strongest signal you get.
+
+**Write only what they know. There is no second column.** A subject they have never
+mentioned goes in as nothing — not as a gap, not as an absence, not at all. The
+asymmetry is the reason: a map of what someone knows can only make the agent more
+concise, so its worst case is failing to help; a map of what someone *doesn't* know has a
+worst case of condescension, it rots on its own as they learn, and they can open
+`factory/memories` and read it.
+
+The usual rules do the rest: merge rather than append, so a term that recurs gains weight
+in the sentence by itself, and every claim carries the episodes behind it.
+
+**One sentence, and it is the first thing to drop.** This section is one shared budget
+across everyone the agent models, and the host cuts it off when the total runs over — so
+what you add here is taken out of somebody's, possibly this person's own. Rank it
+honestly: a fluency line failing costs a clumsier sentence, while the claims around it —
+what needs approval, what is theirs to decide, what they have said twice — cost a wrong
+action. If the section is getting long, this is what goes first, and one sentence is
+already the whole of what it should ever be.
+
 # Finish
 
 Report: who you read, roughly how much of the stretch went as it should, what you

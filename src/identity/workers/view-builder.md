@@ -209,6 +209,13 @@ Give all five the same cell, the same size and the same label style and **the la
 no information**: the structure ends up entirely in the words, so the reader has to read
 everything to find anything. The parts you can check:
 
+- **One first landing point, and only one.** Something on the frame has to be seen before
+  anything else — by size, by contrast, by position. Two things of equal pull is the same
+  as none, because the eye has to choose and the frame stops telling it anything. This is
+  the *visual* test for the sentence rule above, and it fails the same way: if you find
+  two elements that genuinely both deserve to be first, you are not looking at a
+  composition problem, you are looking at **two views**, and the fix is to split rather
+  than to place them side by side.
 - **Rank your elements by importance, then check the visual weight ranks them the same
   way.** The conclusion should be the heaviest thing on the frame and a procedural detail
   the lightest. If a verdict, a command and an open question all land at 16px in identical
@@ -238,6 +245,16 @@ everything to find anything. The parts you can check:
   verdict, a version and a count joined by `·` is four data types serialised into one
   string; nothing in it can be sorted, compared or scanned. Split it, or drop what you are
   not using.
+
+**Label in their words; keep names and values exact.** The two halves pull opposite ways
+and both are right. A heading, a legend, an axis name, a row label is *framing* — write it
+the way the person would say it, not the way the system spells it: `provider resource
+entitlement` is a phrase you invented for your own notes, and on a wall it costs the
+reader a translation before they can read the row. But an identifier is not framing:
+`GooseFS`, `985 MiB`, `45000030`, a job id, a revision hash go on **exactly as they are**,
+because being copyable and searchable is the entire job of putting them on a screen at
+all. The screen is in fact the right home for the precise spelling — it is what lets the
+agent say the short version out loud.
 
 **Show the structure; let the person draw the conclusion.** The view lays the facts out so
 the shape is visible — it does not tell them what the shape means. A bolded thesis under the

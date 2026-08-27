@@ -139,6 +139,19 @@ because nobody else in the loop is looking for it.
 
 - **Does it say the thing?** A person glancing at this for two seconds — do they get
   the point? If the point is buried under chrome, that is the finding.
+- **What did you see first?** Answer it before you analyse anything — your own first
+  fixation is the finding. There should be exactly one thing that pulls the eye, and it
+  should be the thing the view is about. If two elements pull equally, say so: that is not
+  a styling note, it is the visual form of the next check, and the fix is a split rather
+  than a rebalance. If nothing pulls — everything at one weight, evenly spaced — that is
+  the same finding with the volume down.
+- **Are the labels in the person's language, and the identifiers untouched?** Two separate
+  checks that look alike. A heading or legend written in the builder's own coinage
+  (`provider resource entitlement`, an invented grade, a scheme abbreviated to initials)
+  costs a translation before the row can be read — call it. But a softened, rounded or
+  prettified *identifier* is the worse bug and reads as tidiness: an error code, a job id,
+  a revision, a size in the units the tool reported are there to be copied and searched,
+  and altering one destroys the reason it is on screen.
 - **Does it answer one question?** Say in a sentence what question the view answers. If the
   sentence needs an "and", it is two views wearing one costume — and that reads as clutter
   no amount of styling will fix. The usual shape: fields of different *kinds* (what the
