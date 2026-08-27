@@ -4,10 +4,54 @@ use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+/// Subcommands the **agent** runs, as opposed to the flags an operator starts the
+/// server with.
+///
+/// `docs/arch/tools.md`: *MCP is a command, not a carrier class.* A service that speaks
+/// only MCP is reached through one small program, which turns every such server into an
+/// ordinary note in the workshop — no loader, no per-carrier dispatch, and no
+/// dead-server-kills-the-thread failure mode. This is that program.
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// Talk to an MCP server. ENDPOINT is a URL (streamable HTTP) or a command to
+    /// spawn (stdio).
+    Mcp {
+        /// A `https://…` URL, or — **as one quoted argument** — the command that
+        /// starts a server: `hi mcp "npx -y @scope/pkg" list`.
+        ///
+        /// One argument rather than a greedy list because a greedy one swallows the
+        /// action after it, and a server's own flags (`-y`) then look like ours.
+        /// Quoting is what a note would write anyway.
+        endpoint: String,
+
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum McpAction {
+    /// What this server can do: `name — description`, one per line.
+    List,
+    /// One tool's input schema, fetched now rather than copied into a note.
+    Schema { tool: String },
+    /// Call a tool. ARGUMENTS is a JSON object; omit it for none.
+    Call {
+        tool: String,
+        #[arg(default_value = "{}")]
+        arguments: String,
+    },
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "hi-agent", about = "Reference implementation of the human-interface spec")]
 #[command(version = version_string())]
 struct Cli {
+    /// A subcommand runs one action and exits. Without one the binary is the agent
+    /// itself and every flag below applies.
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Loopback port to bind on. Everything on this machine reaches the agent
     /// here, ungated.
     #[arg(long, default_value_t = 12358)]
@@ -289,7 +333,7 @@ fn main() -> anyhow::Result<()> {
     // `--resolve-browser`'s stdout is parsed by a shell script, so its logs — which
     // include the managed browser's download progress, worth seeing — go to stderr
     // instead. Every other mode keeps stdout, which is what `server.log` captures.
-    if cli.resolve_browser {
+    if cli.resolve_browser || cli.command.is_some() {
         tracing_subscriber::fmt()
             .with_env_filter(env_filter)
             .with_target(false)
@@ -337,6 +381,33 @@ fn main() -> anyhow::Result<()> {
         if let Err(e) = dotenvy::from_path(&env_path) {
             tracing::debug!(error = %e, path = %env_path.display(), "no .env at data dir (or unreadable)");
         }
+    }
+
+    // A subcommand is one action, then exit — the agent reaching a service rather than
+    // an operator starting the server. Its stdout is the command's output, so logging
+    // goes to stderr for the same reason `--resolve-browser` does.
+    if let Some(Command::Mcp { endpoint, action }) = cli.command {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(async move {
+            use hi_agent::foundation::mcp::client::{self, Endpoint};
+            let endpoint = Endpoint::parse(&endpoint)?;
+            match action {
+                McpAction::List => print!("{}", client::list(endpoint).await?),
+                McpAction::Schema { tool } => println!("{}", client::schema(endpoint, &tool).await?),
+                McpAction::Call { tool, arguments } => {
+                    let arguments: serde_json::Value = serde_json::from_str(&arguments)
+                        .with_context(|| format!("ARGUMENTS must be JSON; got {arguments:?}"))?;
+                    let (out, is_error) = client::call(endpoint, &tool, arguments).await?;
+                    print!("{out}");
+                    // A tool that reported an error exits non-zero, so the shell that
+                    // ran it knows without parsing the text. Readiness is running it.
+                    if is_error {
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Ok(())
+        });
     }
 
     // The `bin/browser` shim asking what to run. After the `.env` load above, so an

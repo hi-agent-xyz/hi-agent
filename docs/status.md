@@ -482,6 +482,45 @@ staleness is visible even when honesty is not verifiable.
 
 Against running processes, not by reading code.
 
+**`hi mcp` reaches a real MCP server, both transports — 2026-08-27.** `foundation::mcp::client`
+is the other direction from the server we publish to codex: `initialize` → `notifications/
+initialized` → `tools/list` / `tools/call`, over **stdio** (spawn the command) or **streamable
+HTTP** (POST, answered as JSON or SSE), told apart by whether the endpoint is a URL. Watched
+against `@modelcontextprotocol/server-everything`: `list` returned its 13 tools, `schema get-sum`
+returned the real input schema, `call get-sum {"a":17,"b":25}` answered *42* over stdio and
+*11* over HTTP, and a bad tool name came back naming what the server does publish. A `hi` shim
+sits in `bin/factory/` so a note says `use: hi mcp`, and `factory/mcp-service.md` is seeded.
+
+Two costs are in the code where they bite, not only in the design: a one-shot call **drops the
+protocol's push half** (progress, sampling, elicitation), and the reply reader matches on the
+request id so a server that emits notifications cannot desynchronise the answer.
+
+**Commands are counted by the program they ran — 2026-08-27.** `program_name` unwraps the
+`/bin/zsh -lc "…"` every command arrives in, steps over `FOO=bar` assignments, and drops the
+directory. Watched: a live errand's `sed` appeared in `commands_by_name` with its failure
+counted, where before it was an anonymous `commands: 1`. Known blind spot, pinned by a test:
+only the first stage of a pipeline is counted.
+
+**The hot level is real, and for a CLI note it means the purpose line is in the window —
+2026-08-27.** There is no schema to attach, so residency is exactly that. `hot_inventory` is
+rebuilt at every session open, never stored, capped at `HOT_BUDGET_BYTES` with a failing test,
+and says what it dropped. Watched inside the `baseInstructions` a live session actually
+received: three seeded tools with their purpose lines, and `equipping-a-tool` degrading to a
+bare name because it has no front matter — the intended failure mode.
+
+**Its ranking is a named loan.** The cut line orders by *when a note last changed*, not by
+recency-weighted **use**, which is what `tools.md` asks for. The counter now exists; wiring it
+means a frame-log scan at every session open and that cost is unmeasured. The item that takes
+this back is the first entry under `tools.md` § *Open*.
+
+**The Tool Manager is deliberately not built.** The workshop holds four notes, and at that size
+`grep -rEn "^(purpose|description):"` *is* the lookup — it is what both rungs are told to run,
+and it has been watched working. The design makes the Manager load-bearing as the only route
+*outside the hot set*, and today there is nothing outside it: the whole registry fits in the
+window. Building it now is machinery ahead of anything to manage. **What reopens it:** the
+inventory hitting its byte cap on a real install, which is the first moment a session stops
+being able to see the whole workshop.
+
 **The workshop's execution layer nests, and the collision rule holds — 2026-08-27.** `bin/` is
 the agent's own and `bin/factory/` inside it is ours, rewritten every boot; `path_entries` puts
 the learnt directory first. Watched: `browser` resolved to `bin/factory/browser`, then to a

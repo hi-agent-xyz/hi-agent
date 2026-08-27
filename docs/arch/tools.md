@@ -384,9 +384,10 @@ because it stored something derivable, or gave a wrong answer a place to look ri
 
 ## Open
 
-- **What counts a tool call.** The hot level is derived from usage, and nothing measures usage.
-  Until something does, the ladder has two rungs, not three.
-- **The resident cap** has no number yet. It needs one, as a test, in bytes.
+- **Ranking hot by *use* rather than by freshness.** Commands are now counted by the program
+  they ran, so the signal exists; the cut line is still ordered by when a note last changed,
+  because reading the frame logs at every session open has an unmeasured cost. Measure it, then
+  switch.
 - **Consent has no mechanical backstop** on the shell path. Guidance only, as above.
 - **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
   the same verbs mean two things, and *whose body* becomes something a note must say.

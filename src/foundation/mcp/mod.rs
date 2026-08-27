@@ -14,6 +14,8 @@
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
 //! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
+pub mod client;
+
 use serde_json::{Value, json};
 
 use base64::Engine as _;

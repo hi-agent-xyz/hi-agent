@@ -80,6 +80,11 @@ pub(crate) fn browser_note() -> &'static str {
 /// half of the workshop, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
 
+/// Seeded **tool**: `hi mcp`, which turns a service that speaks only MCP into an
+/// ordinary command. The note is the whole of *MCP is a command, not a carrier class*
+/// as far as the agent is concerned.
+const MCP_SERVICE: &str = include_str!("mcp-service.md");
+
 /// What a note's front matter says about it.
 ///
 /// **One key that matters and one convenience** (`docs/arch/tools.md`). `purpose` is
@@ -293,6 +298,7 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
     std::fs::write(dir.join("browser.md"), BROWSER)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
+    std::fs::write(dir.join("mcp-service.md"), MCP_SERVICE)?;
     tracing::info!(dir = %dir.display(), "installed bundled skills");
     Ok(())
 }
@@ -361,8 +367,39 @@ pub fn install_tool_bin(data_dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let exe = std::env::current_exe()?;
     write_browser_shim(&dir, &exe)?;
+    write_hi_shim(&dir, &exe)?;
     tracing::info!(dir = %dir.display(), "installed tool shims");
     Ok(())
+}
+
+/// `hi` — the agent's own binary under a short name, so a note can say
+/// `use: hi mcp <endpoint> call <tool> <json>`.
+///
+/// This is the whole of *MCP is a command*: one program on the PATH turns a service
+/// that speaks only MCP into an ordinary note, with no loader and no carrier class.
+/// It is a shim rather than a rename because the binary's real path is wherever this
+/// install put it, and a note must not have to know that.
+#[cfg(not(windows))]
+fn write_hi_shim(dir: &Path, exe: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let script = format!(
+        "#!/bin/sh\n\
+         # Written by hi-agent at every start. `hi` is this agent's own binary — see\n\
+         # `hi mcp --help`. Everything you pass goes straight through.\n\
+         exec {exe} \"$@\"\n",
+        exe = sh_quote(exe)
+    );
+    let path = dir.join("hi");
+    std::fs::write(&path, script)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+}
+
+/// **Never exercised** — same standing as the browser shim beside it.
+#[cfg(windows)]
+fn write_hi_shim(dir: &Path, exe: &Path) -> io::Result<()> {
+    let script = format!("@echo off\r\n\"{exe}\" %*\r\n", exe = exe.display());
+    std::fs::write(dir.join("hi.cmd"), script)
 }
 
 /// Single-quote a path for `sh`, so a space or a `$` in it cannot be re-read as
