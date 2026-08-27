@@ -1039,7 +1039,7 @@ mod soul_tests {
     #[test]
     fn a_worker_scans_the_workshop_before_saying_it_cannot() {
         assert!(
-            WORKER_GENERAL_BASE.contains("^purpose:"),
+            WORKER_GENERAL_BASE.contains("^(purpose|description):"),
             "the derived registry needs a reader; the scan must be in the prompt"
         );
         assert!(
@@ -1059,9 +1059,16 @@ mod soul_tests {
         // never opened — this repo's oldest failure, an instruction handed to nobody.
         // Cognition holds codex's own shell, so it can and must find a tool too.
         assert!(
-            COGNITION_BASE.contains("^purpose:"),
+            COGNITION_BASE.contains("^(purpose|description):"),
             "Cognition holds a shell and answers directly; the scan has to reach it too"
         );
+        // Both spellings, because the scan must find a note the agent runtime's own
+        // skills feature taught it to write. Watched 2026-08-27: a worker produced a
+        // `SKILL.md` with `description:` and no `use:`, and a scan anchored on
+        // `purpose:` alone would report the workshop as empty of it.
+        for base in [WORKER_GENERAL_BASE, COGNITION_BASE] {
+            assert!(base.contains("description"), "the common spelling must be scanned too");
+        }
         assert!(
             COGNITION_BASE.contains("still goes to a worker"),
             "knowing how to find a tool must not read as licence to run the errand itself"

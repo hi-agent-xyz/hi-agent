@@ -108,6 +108,15 @@ impl FrontMatter {
 /// Deliberately strict: the block must open on the very first line and close on a
 /// line of its own. A note without one is all body, which is the common case — most
 /// skills are procedures and carry no front matter at all.
+///
+/// **`description:` is read as `purpose:`.** They are the same idea, and the agent
+/// runtime's own skills feature teaches the second spelling — watched 2026-08-27, a
+/// worker asked to build a capability wrote a `SKILL.md` with `name:`/`description:`
+/// rather than our two keys. Accepting the spelling the model already reaches for
+/// costs nothing; a `purpose` line that reads as absent because it was spelt the
+/// common way costs a tool that cannot be found. `name:` is ignored outright — the
+/// tree is already addressed by path, and a key that restates it is free to disagree
+/// with it.
 pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
     let Some(rest) = note.strip_prefix("---\n") else {
         return (FrontMatter::default(), note);
@@ -121,15 +130,26 @@ pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
     let body = after.trim_start_matches('\n').strip_prefix("---").unwrap_or(after).trim_start();
 
     let mut fm = FrontMatter::default();
+    let mut described: Option<String> = None;
     for line in block.lines() {
         if let Some(v) = line.strip_prefix("purpose:") {
             fm.purpose = non_empty(v);
+        } else if let Some(v) = line.strip_prefix("description:") {
+            described = non_empty(v);
         } else if let Some(v) = line.strip_prefix("use:") {
             fm.run = non_empty(v);
         }
     }
+    // `purpose` wins when a note carries both, since it is the key this design asked
+    // for; `description` is the fallback rather than an equal.
+    fm.purpose = fm.purpose.or(described);
     (fm, body)
 }
+
+/// The filename the agent runtime's own skills feature uses for the note inside a
+/// skill directory. A note at `<dir>/SKILL.md` **is** the tool `<dir>` — the name
+/// still comes from the tree, one level up.
+pub const SKILL_FILE: &str = "SKILL.md";
 
 fn non_empty(v: &str) -> Option<String> {
     let v = v.trim();
@@ -347,6 +367,32 @@ mod tests {
         // A blank value is absent, not an empty tool.
         let (fm, _) = split_front_matter("---\nuse:   \n---\nx\n");
         assert!(!fm.is_tool());
+    }
+
+    /// **`description:` is read as `purpose:`.** Watched 2026-08-27: asked to build a
+    /// capability, a worker wrote the agent runtime's own skill shape — a directory
+    /// with `SKILL.md` carrying `name:`/`description:` — and our reader saw no purpose
+    /// line at all, so the tool was invisible to the registry. Accepting the spelling
+    /// the model already reaches for is free; refusing it costs a tool that cannot be
+    /// found.
+    #[test]
+    fn the_common_spelling_of_purpose_is_accepted() {
+        let codex_shape = "---\nname: extract-webpage-markdown\ndescription: Extract a page into Markdown\n---\n\n# Extract\n";
+        let (fm, body) = split_front_matter(codex_shape);
+        assert_eq!(fm.purpose.as_deref(), Some("Extract a page into Markdown"));
+        assert!(body.starts_with("# Extract"));
+        // Still not a tool: nothing named a command, which is exactly the gap that
+        // run showed and the reason `use:` survives as its own key.
+        assert!(!fm.is_tool());
+
+        // `purpose` wins when a note carries both — it is the key this design asked
+        // for, and `description` is the fallback rather than an equal.
+        let (fm, _) = split_front_matter("---\ndescription: second\npurpose: first\n---\nx\n");
+        assert_eq!(fm.purpose.as_deref(), Some("first"));
+
+        // `name:` is ignored outright; the tree already addresses the note.
+        let (fm, _) = split_front_matter("---\nname: whatever\n---\nx\n");
+        assert_eq!(fm.purpose, None);
     }
 
     #[test]

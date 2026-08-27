@@ -72,9 +72,19 @@ fn skill_id(path: &str) -> &str {
     path.strip_suffix(".md").unwrap_or(path)
 }
 
-/// The on-disk file for a skill identity.
+/// The on-disk file for a skill identity — either shape.
+///
+/// A note is `<id>.md`, **or** `<id>/SKILL.md` for the directory shape the agent
+/// runtime's own skills feature writes. The flat file is preferred when both exist,
+/// matching [`crate::mind::skills::split_front_matter`]'s preference for our own
+/// spelling; a caller that addressed `<id>` gets whichever is actually there.
 fn skill_file(data_dir: &std::path::Path, rel: &str) -> PathBuf {
-    skills_dir(data_dir).join(format!("{rel}.md"))
+    let flat = skills_dir(data_dir).join(format!("{rel}.md"));
+    if flat.is_file() {
+        return flat;
+    }
+    let nested = skills_dir(data_dir).join(rel).join(crate::mind::skills::SKILL_FILE);
+    if nested.is_file() { nested } else { flat }
 }
 
 // ── markdown reading ──────────────────────────────────────────────────────────
@@ -187,11 +197,16 @@ struct SkillDto {
     run: Option<String>,
 }
 
-/// Walk the workshop and read every `.md` in it. Iterative (a stack of dirs) rather
+/// Walk the workshop and read every note in it. Iterative (a stack of dirs) rather
 /// than recursive so no boxing is needed; dotfiles are skipped as editor/OS litter.
 /// A missing root is an empty workshop, not an error — nothing has been learnt yet.
+///
+/// Two passes: the walk decides *which files are notes* (a `.md`, or a directory's
+/// `SKILL.md`, which also ends the descent), then each note is read. Splitting them
+/// keeps the "is this a note" rule in one place instead of interleaved with parsing.
 async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
     let mut found: Vec<(SystemTime, SkillDto)> = Vec::new();
+    let mut notes: Vec<(PathBuf, String)> = Vec::new();
     let mut stack = vec![(root.to_path_buf(), String::new())];
     while let Some((dir, prefix)) = stack.pop() {
         let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -213,17 +228,37 @@ async fn walk_skills(root: &std::path::Path) -> std::io::Result<Vec<SkillDto>> {
             // skipped rather than failing the whole listing.
             let Ok(ft) = ent.file_type().await else { continue };
             if ft.is_dir() {
-                stack.push((ent.path(), rel));
+                // **A directory holding a `SKILL.md` is one note, not a subtree to
+                // walk.** Everything beside that file is the tool's payload — a
+                // vendored dependency tree, a script, its fixtures — and walking in
+                // listed a bundled `LICENSE.md` *as a skill* on the run that first
+                // produced this shape. The note is read here; the payload is not
+                // knowledge and is nobody's reading material.
+                if ent.path().join(crate::mind::skills::SKILL_FILE).is_file() {
+                    notes.push((ent.path().join(crate::mind::skills::SKILL_FILE), rel));
+                } else {
+                    stack.push((ent.path(), rel));
+                }
                 continue;
             }
-            let Some(stem) = name.strip_suffix(".md") else {
-                continue;
-            };
-            let Ok(meta) = ent.metadata().await else { continue };
-            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let text = tokio::fs::read_to_string(ent.path()).await.unwrap_or_default();
-            let (fm, body) = crate::mind::skills::split_front_matter(&text);
+            if name.ends_with(".md") {
+                notes.push((ent.path(), rel));
+            }
+        }
+    }
+
+    for (path, rel) in notes {
+        // The identity is the path without `.md` — or, for the directory shape, the
+        // directory itself: `extract-webpage-markdown/SKILL.md` is the tool
+        // `extract-webpage-markdown`. Either way the name comes from the tree.
+        {
             let id = rel.strip_suffix(".md").unwrap_or(&rel).to_string();
+            let stem = id.rsplit('/').next().unwrap_or(&id).to_string();
+            let stem = stem.as_str();
+            let Ok(meta) = tokio::fs::metadata(&path).await else { continue };
+            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let text = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+            let (fm, body) = crate::mind::skills::split_front_matter(&text);
             found.push((
                 modified,
                 SkillDto {
@@ -352,6 +387,51 @@ mod tests {
         assert!(is_factory("factory/adding-a-device"));
         assert!(!is_factory("factory-notes/mine"), "a sibling name is not the layer");
         assert!(!is_factory("video/factory"));
+    }
+
+    /// **A skill directory is one note, and its payload is not knowledge.** Watched
+    /// 2026-08-27: a learnt tool arrived as `extract-webpage-markdown/SKILL.md` with
+    /// 76 MB of vendored Python beside it, and the walk listed a bundled
+    /// `LICENSE.md` *as a skill*. So `SKILL.md` ends the descent, and the identity is
+    /// the directory — the name still comes from the tree, one level up.
+    #[tokio::test]
+    async fn a_skill_directory_is_one_note_and_its_payload_is_not_walked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+        let root = &skills_dir(data_dir);
+        let tool = root.join("extract-webpage-markdown");
+        std::fs::create_dir_all(tool.join("scripts/vendor/soupsieve/licenses")).unwrap();
+        std::fs::write(
+            tool.join(crate::mind::skills::SKILL_FILE),
+            "---\ndescription: Extract a page into Markdown\nuse: extract-md\n---\n\n# Extract\n\nbody\n",
+        )
+        .unwrap();
+        std::fs::write(tool.join("scripts/vendor/soupsieve/licenses/LICENSE.md"), "MIT License\n").unwrap();
+        // An ordinary flat note, and a real subtree that must still be walked.
+        std::fs::create_dir_all(root.join("video")).unwrap();
+        std::fs::write(root.join("video/trimming.md"), "# Trimming\n\nffmpeg -ss 0\n").unwrap();
+
+        let listed = walk_skills(root).await.unwrap();
+        let paths: Vec<&str> = listed.iter().map(|s| s.path.as_str()).collect();
+        assert!(paths.contains(&"extract-webpage-markdown"), "got {paths:?}");
+        assert!(paths.contains(&"video/trimming"), "a real subtree is still walked: {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("vendor")),
+            "the payload is not reading material: {paths:?}"
+        );
+
+        let tool_dto = listed.iter().find(|s| s.path == "extract-webpage-markdown").unwrap();
+        assert_eq!(tool_dto.run.as_deref(), Some("extract-md"));
+        assert_eq!(tool_dto.excerpt, "Extract a page into Markdown");
+
+        // The identity the listing reports must round-trip: `GET` and `DELETE` resolve
+        // it back to the file on disk, in either shape. A listing that names something
+        // the other verbs cannot open is the bug this guards.
+        assert_eq!(
+            skill_file(data_dir, "extract-webpage-markdown"),
+            tool.join(crate::mind::skills::SKILL_FILE)
+        );
+        assert_eq!(skill_file(data_dir, "video/trimming"), root.join("video/trimming.md"));
     }
 
     #[test]

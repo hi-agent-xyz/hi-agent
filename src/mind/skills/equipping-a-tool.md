@@ -83,18 +83,28 @@ workshop only wants notes about things that worked.
 
 ## 7. Write the note
 
-Now. In the workshop, under a filename that is the tool's name, with front matter:
+Now. In the workshop, named for the tool — either `{skills_dir}/<tool>.md` or, if it has files
+of its own, `{skills_dir}/<tool>/SKILL.md`. Both are read the same way; the name comes from the
+path either way.
 
     ---
     purpose: one line — what this does, specific enough that someone matching a job against it can tell
     use: the-command
     ---
 
+**`use:` is the line that matters most, and it is the one most easily left out.** Without it
+the note is a procedure someone has to read and follow; with it, the tool has a name that can
+be typed. It must be a command that works from anywhere — a bare name on the PATH, never a
+path relative to some directory you happened to be standing in.
+
+(`description:` is read as `purpose:` if that is the habit you reach for. Nothing reads a
+`name:` key — the path already says the name.)
+
 Then the prose, which is where everything that matters goes: what it's for and when to reach
 for something else, how to actually call it, the traps you hit, what a good result looks like,
 and **how to get it back** if the command is missing on some future machine.
 
-Two rules the note lives or dies by:
+Three rules the note lives or dies by:
 
 - **Mark what rots.** Flags, endpoints, prices, what a particular site looks like — say plainly
   which parts to re-check. A note trusted past its expiry is worse than no note, because it
@@ -102,6 +112,11 @@ Two rules the note lives or dies by:
 - **Write the entry point, never the argument list.** `use:` names the command; the command
   answers `--help` for itself. A flag list copied into a note is a second copy of something
   that changes without telling you.
+- **The note is words; the code is not.** A script, a vendored dependency tree, a model file,
+  fixtures — none of that belongs in the workshop, which is read by grepping and is meant to
+  stay small enough to scan. Those go under `{bin_dir}/<tool>/`, with the entry point on the
+  PATH so `use:` can name it, and the note says how to rebuild them. That tree is disposable
+  on purpose: one day it is deleted and the note puts it back.
 
 Don't note the trivial or the one-off. A workshop you can't find anything in is no workshop.
 

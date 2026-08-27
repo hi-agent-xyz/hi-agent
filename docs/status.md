@@ -507,10 +507,32 @@ all observed on one run:
 - **The seeded `browser` tool was not reused** — the worker vendored its own rendering stack
   instead.
 
-So the mechanism is real and the authorship convention is contested by the agent runtime's own
-built-in. Guidance competing with a built-in the model has strong priors about is the losing
-shape, and picking between adopting codex's format, keeping ours, or pointing codex's skills
-dir at ours is an [open fork](#open-forks) rather than something to settle with firmer wording.
+**So the container was adopted rather than fought, and re-watched the same day.** `SKILL.md` in
+a directory is now a valid note whose identity is the *directory* (`web-to-markdown`, not
+`…/SKILL`); `description:` is read as `purpose:` with `purpose` winning when both appear;
+`name:` is ignored, since the tree already addresses the note; and a directory holding a
+`SKILL.md` **ends the descent**, so a tool's payload is no longer walked as reading material.
+Both prompts scan `^(purpose|description):`.
+
+Re-run on the same errand, the reader-side half is fixed and the writer-side half is not:
+`skills/` came back **52 K instead of 76 MB** (no vendored tree, no `LICENSE.md` listed as a
+skill), the identity and the excerpt are right — and the note **still carries no `use:`**, with
+its script still under `skills/<tool>/scripts/` rather than `bin/`. Two attempts at asking for
+that key in prose, the second one explicit that it is the line that matters most, and neither
+took.
+
+**The conclusion that follows is about the design, not the wording: `use:` cannot be obtained by
+asking, and it was already the key that broke this doc's own format rule.** Front matter is only
+what code reads; nothing but a tool/skill badge ever read `use:`, while the *mind* reads it to
+run the thing. The model reliably writes `purpose`/`description` (which the registry genuinely
+needs) and reliably writes a `## Run` section (which is the invocation, in prose, where the rule
+says it belongs). Dropping `use:` to one key is the [open fork](#open-forks) now — it reverses a
+decision taken on 2026-08-26, so it is not being taken quietly.
+
+One rule *did* take, and it is worth keeping: the pathological case was **vendoring**, not code
+as such. A portable script beside its note travels with the knowledge and is fine; binaries,
+model files and vendored dependency trees are machine-specific and belong in `bin/`, which is
+the tree the note can rebuild.
 
 **A tool is found and run — 2026-08-26, isolated instance, and the first attempt failed the
 way this repo always fails.** `<data_dir>/bin` is created at boot and prepended to every

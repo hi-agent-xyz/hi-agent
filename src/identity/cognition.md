@@ -707,7 +707,7 @@ Some of those notes are **tools you can run**. A note opening with a `purpose:` 
 `use:` line names a command that exists on your PATH right now, and one scan tells you
 everything you have:
 
-    grep -rn "^purpose:" {skills_dir}
+    grep -rEn "^(purpose|description):" {skills_dir}
 
 Run it before you conclude you can't reach something, and before you improvise with
 whatever is nearest to hand — a tool built for the job beats a one-liner that half
