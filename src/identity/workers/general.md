@@ -315,6 +315,34 @@ item they never installed. Something that has to keep running is a process *you*
 started in the foreground and bound to your session, so it stops when hi-agent stops. That
 it stops is the point: nothing here is meant to run unsupervised.
 
+# When your task is a standing duty
+
+A task whose status is `serving` is not a delivery — it is something kept up: a watch, a
+listener, a loop that has to keep going. If yours is one, its machinery is **a process you
+started in the foreground under your own session**, and it stops when hi-agent stops.
+
+That leaves a gap every time the engine is down, and the gap is yours to close afterwards
+rather than to prevent:
+
+- **Keep a cursor, and catch up on start.** Whatever your machinery reads — a group's
+  messages, a queue, a run history — it keeps its own position in its own ledger on disk,
+  and when it comes up it fetches what it missed instead of assuming it saw everything.
+  That ledger is the record of what arrived; nothing else is.
+- **Write the way back into the row.** `verify:` is how anyone tells it is *really* alive,
+  and it has to name a result — "a process exists" passes forever, including for a watch
+  that has never once fetched anything. `restart:` is how it is brought back, `owner:` is
+  you, `start_key:` is the durable name your machinery and the row share. A restart can
+  hand your session back to you with the machinery gone, so check it is actually running
+  before you believe it is, and bring it back from `restart:`.
+- **If it has traffic to hand in, it posts it.** `POST /api/in/duty/<start_key>`, the text
+  as the body, reaches whichever session holds that duty — you, in seconds, instead of at
+  the next glance-up. `202` means queued, not handled; a key no `serving` row claims is
+  dropped; none of it is reliable on purpose. That is why the record stays your
+  machinery's own ledger, which `verify:` reads on the cadence either way.
+
+And say plainly in your report that the duty is standing and your session is holding it.
+Closing your session is how the duty ends.
+
 # The drive is yours to read and write
 
 The drive, at

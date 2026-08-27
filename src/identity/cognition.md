@@ -361,6 +361,13 @@ a `serving` task with none of them still reads as a duty nobody can confirm — 
 worse case, and it is shown as one. Plain `doing` work has no business carrying these
 fields and must never be described as "never checked".
 
+**A session holding a duty is not idle overhead.** Where a `serving` row's machinery is a
+process one of your workers started, that worker *is* the duty: `hi_close_worker` or
+`hi_cancel_worker` on it stops the thing being kept up, not just a conversation you were
+done with. Close one when you are standing the duty down, and not to tidy up. After a
+restart the session comes back but its machinery does not, so what that worker owes first
+is a check that its process is actually running, and the row's `restart:` if it is not.
+
 **`restart:` and `start_key:` are the two that say "this is machinery".** A record that
 says how to bring something back is read as a duty even if its status says `doing`, because
 that is the shape every duty written before `serving` existed is in. The reverse matters

@@ -240,6 +240,23 @@ async fn dispatch(
         return;
     };
 
+    // A session may already hold this duty without this inbox having opened it, and
+    // `bound` cannot know: it remembers only handlers minted here. Ask the roster before
+    // minting — the destructive case, not the wasteful one, is two sessions under one
+    // subject writing over each other in one task folder.
+    if let Some(id) = handler_on(&registry::global().statuses(), &task.subject) {
+        if let Delivery::Delivered = registry::global().post(&id, arrived.clone()) {
+            bound.insert(key.to_owned(), id.clone());
+            tracing::info!(
+                worker = %id,
+                arrivals = count,
+                duty = %task.subject,
+                "duty traffic delivered to the session already holding it"
+            );
+            return;
+        }
+    }
+
     // Owner is Cognition: what the handler *chooses* to raise needs somewhere to land,
     // and the rung that can amend the ledger and reach Reaction is the only sound
     // answer. `None` would leave an escalation addressed to nobody.
@@ -285,6 +302,27 @@ async fn dispatch(
             tracing::warn!(error = %format!("{err:#}"), duty = %task.subject, "could not open a duty handler");
         }
     }
+}
+
+/// The live worker already on `subject`, if the roster says there is one.
+///
+/// **Two ways a duty is held that this inbox never sees.** A worker Cognition staffed to own
+/// the machinery, and a session the host reopened after a restart: neither passes through
+/// [`dispatch`], so neither is in `bound`, and an inbox trusting `bound` alone would open a
+/// second handler on top of a working one. They would share the task's folder — the failure
+/// there is not duplicated effort but one of them writing over the other's file with nothing
+/// anywhere saying so.
+///
+/// The roster is the same join the ledger's *who is on it* line is rendered from
+/// ([`crate::mind::memory::tasks::OnIt`]), so this can only ever agree with what the agent is
+/// already being shown. Last writer wins there and first match wins here for the same reason:
+/// two live workers on one subject is a mistake to see, not an invariant to enforce from a
+/// delivery path.
+fn handler_on(statuses: &[registry::Status], subject: &str) -> Option<registry::SessionSlug> {
+    statuses
+        .iter()
+        .find(|status| status.role.is_worker() && status.subject.as_deref() == Some(subject))
+        .map(|status| status.id.clone())
 }
 
 /// The `serving` task that claims `key`, if one does.
@@ -389,6 +427,32 @@ mod tests {
             due <= first + DUTY_MAX_WAIT,
             "an arrival an hour into a burst must not extend it"
         );
+    }
+
+    /// The regression this exists for: a duty whose machinery a *staffed* worker owns. That
+    /// session never went through `dispatch`, so `bound` is empty for its key, and minting on
+    /// that emptiness puts a second worker under one task subject.
+    #[test]
+    fn a_worker_already_on_the_subject_is_the_handler() {
+        let id = registry::mint(Role::Worker(WorkerType::General), Some("watch-the-queue"));
+        registry::global().register(
+            id.clone(),
+            Role::Worker(WorkerType::General),
+            None,
+            "watch the queue".into(),
+            Some("watch-the-queue".into()),
+        );
+        let statuses = registry::global().statuses();
+        assert_eq!(
+            handler_on(&statuses, "watch-the-queue").as_ref(),
+            Some(&id),
+            "the roster knows a session is on this duty"
+        );
+        assert!(
+            handler_on(&statuses, "some-other-duty").is_none(),
+            "and does not answer for a subject nobody is on"
+        );
+        registry::global().unregister(&id);
     }
 
     /// Cost outranks latency: a key inside its floor waits for the floor even though the
