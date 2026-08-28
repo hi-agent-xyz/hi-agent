@@ -50,6 +50,13 @@ pub struct ExternalSessions {
     leases: Mutex<HashMap<SessionSlug, ExternalLease>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseOutcome {
+    Released,
+    AlreadyReleased,
+    InvalidCapability,
+}
+
 impl ExternalSessions {
     pub fn new() -> Self {
         Self { leases: Mutex::new(HashMap::new()) }
@@ -65,12 +72,7 @@ impl ExternalSessions {
         title: &str,
         subject: &str,
     ) -> anyhow::Result<RegisteredExternalSession> {
-        let subject = match crate::mind::memory::tasks::named(data_dir, subject).await? {
-            crate::mind::memory::tasks::Named::Row(subject) => subject,
-            crate::mind::memory::tasks::Named::Missing { open } => {
-                anyhow::bail!("no existing task named `{subject}`; open tasks:\n{open}");
-            }
-        };
+        let subject = external_subject(data_dir, subject).await?;
 
         let owner = registry::global()
             .session_of_role(Role::Cognition)
@@ -137,17 +139,26 @@ impl ExternalSessions {
     /// Release a named lease only when its capability matches. The registration is dropped
     /// after the table lock is released, so registry bookkeeping cannot block or re-enter
     /// the lease table.
-    pub fn release(&self, slug: &SessionSlug, capability: &str) -> bool {
+    fn release(&self, slug: &SessionSlug, capability: &str) -> ReleaseOutcome {
         self.prune_expired();
         let want = surfaces::token_hash(capability);
         let removed = {
             let mut leases = self.leases.lock().unwrap();
-            let valid = leases
-                .get(slug)
-                .is_some_and(|lease| constant_time_eq(&lease.capability_hash, &want));
-            if valid { leases.remove(slug) } else { None }
+            match leases.get(slug) {
+                Some(lease) if constant_time_eq(&lease.capability_hash, &want) => {
+                    leases.remove(slug)
+                }
+                Some(_) => return ReleaseOutcome::InvalidCapability,
+                None => return ReleaseOutcome::AlreadyReleased,
+            }
         };
-        removed.is_some()
+        if removed.is_some() {
+            ReleaseOutcome::Released
+        } else {
+            // The entry can only disappear between the lookup and remove if another
+            // release raced us; DELETE remains idempotent in that case.
+            ReleaseOutcome::AlreadyReleased
+        }
     }
 
     fn prune_expired(&self) {
@@ -260,10 +271,13 @@ pub async fn delete_release(
     let Ok(slug) = raw_slug.parse::<SessionSlug>() else {
         return (StatusCode::BAD_REQUEST, "invalid session slug\n").into_response();
     };
-    if state.external_sessions.release(&slug, &capability) {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        (StatusCode::UNAUTHORIZED, "that capability was not accepted\n").into_response()
+    match state.external_sessions.release(&slug, &capability) {
+        ReleaseOutcome::Released | ReleaseOutcome::AlreadyReleased => {
+            StatusCode::NO_CONTENT.into_response()
+        }
+        ReleaseOutcome::InvalidCapability => {
+            (StatusCode::UNAUTHORIZED, "that capability was not accepted\n").into_response()
+        }
     }
 }
 
@@ -323,6 +337,37 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
         diff |= left ^ right;
     }
     diff == 0
+}
+
+/// Resolve the metadata subject carried by an external lease.
+///
+/// Auto-run definitions are durable automation objects under `data/agents`, while ordinary
+/// work is filed under `memory/facets/tasks`. The weekly-report runner supplies the former's
+/// stable name (`weekly-report-friday`), not the dated implementation task that happened to
+/// staff this change. Accept either canonical object, but never accept an arbitrary string.
+async fn external_subject(data_dir: &std::path::Path, requested: &str) -> anyhow::Result<String> {
+    let subject = crate::mind::memory::facets::slug(requested);
+    if subject.is_empty() {
+        anyhow::bail!("external session subject must contain a usable character");
+    }
+    let task = crate::mind::memory::tasks::named(data_dir, &subject).await?;
+    if matches!(task, crate::mind::memory::tasks::Named::Row(_)) {
+        return Ok(subject);
+    }
+
+    let definition = data_dir
+        .join("agents")
+        .join(&subject)
+        .join(format!("{subject}.md"));
+    if tokio::fs::try_exists(&definition).await.unwrap_or(false) {
+        return Ok(subject);
+    }
+
+    let open = match task {
+        crate::mind::memory::tasks::Named::Missing { open } => open,
+        crate::mind::memory::tasks::Named::Row(_) => unreachable!("row checked above"),
+    };
+    anyhow::bail!("no existing task or agent definition named `{subject}`; open tasks:\n{open}");
 }
 
 #[cfg(test)]

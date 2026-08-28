@@ -24,14 +24,31 @@ impl Drop for SessionGuard {
 }
 
 async fn spawn(acceptor: Acceptor) -> (String, tempfile::TempDir, ServerSeams, SessionGuard) {
+    spawn_with_subject(acceptor, true).await
+}
+
+async fn spawn_with_subject(
+    acceptor: Acceptor,
+    create_task: bool,
+) -> (String, tempfile::TempDir, ServerSeams, SessionGuard) {
     let dir = tempdir().expect("tempdir");
-    let task_dir = dir.path().join("memory/facets/tasks/weekly-report-friday");
-    std::fs::create_dir_all(&task_dir).expect("task directory");
-    std::fs::write(
-        task_dir.join("facet.md"),
-        "---\nstatus: doing\n---\n\n## Timeline\n",
-    )
-    .expect("task facet");
+    if create_task {
+        let task_dir = dir.path().join("memory/facets/tasks/weekly-report-friday");
+        std::fs::create_dir_all(&task_dir).expect("task directory");
+        std::fs::write(
+            task_dir.join("facet.md"),
+            "---\nstatus: doing\n---\n\n## Timeline\n",
+        )
+        .expect("task facet");
+    } else {
+        let agent_dir = dir.path().join("agents/weekly-report-friday");
+        std::fs::create_dir_all(&agent_dir).expect("agent definition directory");
+        std::fs::write(
+            agent_dir.join("weekly-report-friday.md"),
+            "---\nname: Weekly Report Friday\nagent: opencode\ntrigger: cron\nschedule: \"30 9 * * 5\"\nenabled: true\n---\n",
+        )
+        .expect("agent definition");
+    }
 
     let memory = Memory::open(dir.path()).await.expect("memory");
     let cognition = registry::mint(hi_agent::identity::Role::Cognition, None);
@@ -168,6 +185,14 @@ async fn external_session_is_scoped_and_released() {
         .expect("release");
     assert_eq!(released.status(), reqwest::StatusCode::NO_CONTENT);
 
+    let repeated_release = client
+        .delete(format!("{base}/api/external-sessions/{slug}"))
+        .bearer_auth(&capability)
+        .send()
+        .await
+        .expect("repeated release");
+    assert_eq!(repeated_release.status(), reqwest::StatusCode::NO_CONTENT);
+
     let after_release = client
         .post(format!("{base}/mcp/external"))
         .bearer_auth(&capability)
@@ -184,6 +209,37 @@ async fn external_session_is_scoped_and_released() {
         ),
         Delivery::UnknownSender
     );
+}
+
+#[tokio::test]
+async fn external_session_accepts_a_known_agent_definition_subject() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let (base, _dir, seams, _owner) = spawn_with_subject(Acceptor::Loopback, false).await;
+    let client = reqwest::Client::new();
+    let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");
+
+    let response = client
+        .post(format!("{base}/api/external-sessions"))
+        .bearer_auth(&surface_token)
+        .json(&json!({
+            "title": "weekly report auto-run",
+            "subject": "weekly-report-friday"
+        }))
+        .send()
+        .await
+        .expect("register");
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    let registered: Value = response.json().await.expect("registration JSON");
+    let slug = registered["slug"].as_str().expect("slug");
+    let capability = registered["capability"].as_str().expect("capability");
+
+    let release = client
+        .delete(format!("{base}/api/external-sessions/{slug}"))
+        .bearer_auth(capability)
+        .send()
+        .await
+        .expect("release");
+    assert_eq!(release.status(), reqwest::StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
