@@ -149,6 +149,9 @@ directions — one asserts something false, the other withholds something true.
 | **Nobody writes their own seed** | The moment a seed exists to survive is the moment that takes the judgment needed to write one. Cognition writes Reaction's; Reflection writes Cognition's |
 | A handed-over secret is retained as `drive/accounts/secrets/*.txt`; that path is its reference | The whole drive stays portable and local commands can use the file without embedding its value in model requests |
 | The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
+| **No `onIt` field on `GET /api/tasks`** | Who is working a row is a *view-side* join against `GET /api/workers`, which already carries it. A field on every row of a polled list buys a DTO, server staleness rules and a render path for a fact the roster holds anyway |
+| **No `blocked_on()` classifier in code** | Deciding what a `waiting` line *means* is long-tail reading, and code should do only clear and decisive logic. One sentence in `task-manager.md` — say where it stands: close it, ask once and record what it waits on, or cancel it — replaces 135 lines that guessed |
+| **Closed tasks are never pruned** | The invariant is *never pruned while open*. Closed and cold ones age out like ambient identity clusters; nothing prunes them today and nothing should be built to |
 
 ## `memory/raw/`
 
@@ -571,9 +574,9 @@ speech acts: a verification, a reading of the record, a closing rationale, and s
 else's decision arriving. A bucket that holds the majority of a record is a default, and a
 default that calls itself `checked` claims a discipline it is not exercising. It is now
 named for what it is. The distinctions that word was carrying — delivered versus verified,
-built versus watched — are real and this repo runs on them; they live in
-[docs/status.md](../status.md) and in the prose above the heading, and they were never what
-somebody opening their own errand was asking.
+built versus watched — are real and this repo runs on them; they live in the prose above the
+heading and in [the journeys](../user-journeys/), and they were never what somebody opening
+their own errand was asking.
 
 **And a kind is a word for the reader, so the panel spells `moved` as the verb for it** —
 started, put back, reopened, standing duty, done, cancelled. The store writes the pair it
@@ -923,6 +926,13 @@ which is merely where this started. It never becomes a confident wrong answer.
 
 Keep-biased. Text is permanent; only raw replay fades, and never before it has been
 consolidated. Rather keep low-value media than lose something later worth querying.
+
+## Open
+
+- **Per-install prompt instances.** Should `data/prompts/` ship knowing whose agent it is?
+  Currently no: it learns by meeting them. With no per-install persona file and no hand-edit
+  lever ([`arch.md#character`](arch.md)), giving an install a name or a manner means telling it,
+  and what it hears becomes a facet.
 
 ## See also
 

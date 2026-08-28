@@ -422,6 +422,12 @@ because it stored something derivable, or gave a wrong answer a place to look ri
   every session. Reflection is told to notice; nothing acts on it, and no rung deletes a learnt
   note today except the person.
 - **Consent has no mechanical backstop** on the shell path. Guidance only, as above.
+- **`use:` cannot be obtained by asking.** Two attempts at getting the key in prose, the second
+  explicit that it is the line that matters most, and neither took: the model reliably writes
+  `purpose`/`description` and a `## Run` section, and reliably omits `use:`. It was already the
+  key that broke this doc's own format rule — front matter is only what code reads, and nothing
+  but a badge ever read `use:` while the *mind* reads it to run the thing. Dropping it to one key
+  reverses a decision taken 2026-08-26, so it is not to be taken quietly.
 - **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
   the same verbs mean two things, and *whose body* becomes something a note must say.
 

@@ -542,6 +542,17 @@ never on a busy worker.
 A hard kill exists (drop the handle, the process exits) and stays available for the cases
 where fix-forward genuinely does not apply.
 
+## Open
+
+- **The barge-in stop path** — core-owned or forever client-side? Today it is in the browser and
+  the backend hook is dead: `Floor::mark_flush` ([`floor.rs`](../../src/body/reaction/floor.rs))
+  has no caller outside its own tests. Wire it or delete it; leaving it is the third option that
+  keeps being taken.
+- **`record_reflex` is declared to no role.** The recognizer and `POST /api/reflex/invoke` are
+  live, so a reflex can be *fired* but never *written* — the authoring end is reachable by name
+  only. Give it a live role or delete the module.
+
+
 ## See also
 
 [`agents.md`](agents.md) for what the host drives ·

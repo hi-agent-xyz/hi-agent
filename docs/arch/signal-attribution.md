@@ -180,6 +180,14 @@ Three limits make it safe, and they are not optional:
 - **An install with no declared owner learns nothing about its owner from text.** Declaring
   one is the fix, and it is a single fact to state.
 
+## Settled — one capture at a time is not coming back
+
+**There is no hard slot for who may be captured.** Scenes are gone from the code, so a
+one-capture-at-a-time rule would be *new* machinery dressed as restoring something. What is
+left of it is two mics at once, and a hard slot is the wrong answer: this codebase's answer to
+*who is speaking* is soft evidence the agent weighs, not a winner the host picks.
+
+
 ## See also
 
 - [`surfaces.md`](surfaces.md#channels) — the channels themselves, and why a file is a ref

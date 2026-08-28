@@ -473,7 +473,7 @@ fn write_browser_shim(dir: &Path, exe: &Path) -> io::Result<()> {
 }
 
 /// The Windows shim. **Never exercised** — the Windows port cross-compiles and has
-/// never been run (`docs/status.md`), so this mirrors the POSIX logic on paper: the
+/// never been run on Windows, so this mirrors the POSIX logic on paper: the
 /// first line of output is the executable, any later line an argument to prepend.
 #[cfg(windows)]
 fn write_browser_shim(dir: &Path, exe: &Path) -> io::Result<()> {

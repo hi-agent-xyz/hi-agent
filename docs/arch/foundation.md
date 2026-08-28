@@ -450,6 +450,15 @@ This is why a handful of primitives are pre-built rather than grown: the upload 
 a route, and no amount of agent capability conjures one at runtime. It is the one place where
 the built-versus-grown line is drawn by mechanics rather than design taste.
 
+## Open
+
+- **Replay of a finished session's frames.** The frame log has live readers
+  (`GET /api/workers/{id}/frames`, `raw/sessions/index.jsonl`, and `cognition.md` tells the agent
+  where its own stream is), and threads open `ephemeral: false` so `thread/resume` is how the
+  rungs come back at boot. What replay would still add is reading a *finished* session's frames,
+  which nothing does.
+
+
 ## See also
 
 [`arch.md`](arch.md) for the authorship rule ·

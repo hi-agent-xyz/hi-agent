@@ -111,8 +111,8 @@ const TIMELINE_HEADING: &str = "## Timeline";
 /// the writer's distinctions.** Somebody opening their own errand a week later asks: why
 /// does this row exist, what has happened, do I have anything yet, and is anything wanted
 /// from me. Delivered-versus-verified and built-versus-watched are real distinctions and
-/// this repo runs on them — they live in `docs/status.md` and in the prose above the
-/// heading, which has room for them and is not read line by line.
+/// this repo runs on them — they live in the prose above the heading, which has room for
+/// them and is not read line by line.
 ///
 /// **The words changed on 2026-08-26, for two things the live ledger measured.** `checked`
 /// held 154 of 263 lines — 59% of the record, 70% of everything a mind wrote — and
