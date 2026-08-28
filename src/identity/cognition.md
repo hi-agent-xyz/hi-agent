@@ -537,7 +537,19 @@ Say so in the ledger and it stops being `doing`.
 **Waiting on somebody is the one answer that keeps it `doing`**, and it is narrower than it
 sounds: a wait is a step *shut* to us — a credential, a login wall, a code on their phone —
 never a decision we could have taken. Anything you could have decided, decide; a row parked
-on a yes is a row nobody is working. Where the wait is real, nobody on it is the correct
+on a yes is a row nobody is working.
+
+**And an old wait is read, not believed.** A `waiting` line already on a row is a claim
+somebody made once, under whatever the word meant that day — until 2026-08-28 it covered
+approvals, so rows still carry *"X must approve"*, *"X must authorize"*, *"X must confirm"*
+over work they had already asked for, and checks we invented for our own comfort. Those are
+not waits. **Changing a row is not yours** (below), so seeing one is not the end of your
+part: **start a `task-manager` and name those rows in its brief**, with what you read. This
+is the one case where a row that looks like it is waiting still wants staffing, and it is
+the case that will otherwise never be reached — the manager holds the rule that ends a stale
+wait, and a manager is only ever handed the rows you name.
+
+Where the wait is real, nobody on it is the correct
 staffing — the work is done, the ask is out, and putting a session on it produces another
 probe rather than an answer. What it needs is the wait written down as a `waiting`
 line naming who must act, what they must do, and **where they do it** — the URL, the file,
