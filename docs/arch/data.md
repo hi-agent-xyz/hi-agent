@@ -44,6 +44,63 @@ directory beside what the agent made. An upgrade replaces `factory/` and never t
 sibling, so there is never a merge conflict, only a precedence decision. Collapse them and an
 upgrade either clobbers what the agent built or can no longer refresh what we ship.
 
+### Reading back across the pen line
+
+The table says who *writes*. It has never said what happens when foundation **reads** the
+right-hand column — and it reads almost all of it, every turn: the task ledger, the
+consolidation cursor, `systems:`, the seeds. Each of those is a value the agent wrote,
+steering code the agent does not run.
+
+**And the writer has a shell.** This document already refuses to fix that by requiring a tool
+— *"every agent that may write these has a shell, so a tool is a door beside an open wall"* —
+and that argument does not stop at the diff. A frontmatter line never went through a
+serializer and never will; it is prose, typed by a model, and a worker mid-job can put
+anything on it. So an agent-written value has a *hoped-for* shape, and code that assumes the
+hope holds has made the next typo into its own control flow.
+
+Two rules. The first was already honoured almost everywhere. The second is the one nothing
+said out loud.
+
+1. **Parse before you obey.** A value that steers code is parsed at the boundary. One that
+   does not parse is **absent** — never passed through raw on the theory that it is probably
+   close enough.
+2. **Absent fails toward doing the work again.** This is the half that carries the weight.
+   *Absent* is not a neutral state; it picks a direction, and only one direction is
+   recoverable. A missing `checked` reads as **never checked** — the duty gets probed again.
+   An unreadable cursor reads as **nothing consolidated** — the frontier gets swept again.
+   Redundant work is visible and self-correcting. Skipped work is silent and permanent.
+
+**Written from a failure that cost a day and a half.** On 2026-08-26T03:16:37Z a worker
+hand-wrote an episode into `memory/episodes/` with `apply_patch` and filled its `to_id` with
+the subject slug `songguo-auto-deploy-oversight` where a uuidv7 belonged — the only one of
+1,592 episodes with a malformed id, and no rule anywhere said it could not be there.
+[`consolidation_cursor`](../../src/mind/memory/episodes.rs) is the greatest `to_id` by string
+order, and `s` outranks the `01a0…` every real id starts with, so that slug became the cursor
+and could never be overtaken. [`after_cursor`](../../src/mind/memory/journal.rs) *did* try to
+parse it — it fell back to the epoch to pick which day-folders to scan — and then retained on
+`entry_id > cursor` using the raw string it had just failed to parse. Every sweep returned
+empty. Every pass read that as a caught-up store and logged `consolidation skipped` at
+`debug`. **Reflection then ran zero passes for thirty-five hours**, across a thirty-three-hour
+process that never once opened a reflection session: no episode written after 2026-08-26, no
+`proactivity.md` regenerated, and nothing left to rebuild a missing seed. It surfaced as an
+agent that had lost a day — on 2026-08-27 it sent a worker off to find a WeChat send path it
+had itself built and verified that same afternoon.
+
+Three other readers of the same kind of value had the rule right, which is why the failure was
+survivable everywhere else and why the rule is worth stating rather than re-deriving:
+
+| reader | steers | parses | absent means |
+|---|---|---|---|
+| [`tasks::parse`](../../src/mind/memory/tasks.rs) | `checked_at`, `due_at`, `status_since` | yes → `Option` | never checked — probe it |
+| [`decay::consolidated_through_day`](../../src/mind/memory/decay.rs) | which days may fade | yes → `Option` | nothing fades |
+| [`snapshot::named_systems`](../../src/mind/memory/snapshot.rs) | a directory component | rejects `/` and `..` | the system is dropped |
+| `journal::after_cursor` | the whole reflection frontier | **parsed, then discarded** | — it obeyed the raw string |
+
+**A derived cursor is only as sound as the weakest value it is derived from.** The cursor is a
+max over a field in agent-written files, so one bad file is a bad cursor — permanently, since
+nothing that arrives later can outrank it. Deriving it over only the values that parse costs
+one filter and removes the whole class.
+
 ## Decisions
 
 | Decision | Reasoning |
@@ -56,6 +113,7 @@ upgrade either clobbers what the agent built or can no longer refresh what we sh
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
+| An agent-written value that steers code is **parsed**, and unparseable means **absent** | The writer has a shell and the field is prose; absent has to fail toward redoing work, because redundant work is visible and skipped work is silent |
 | A handed-over secret is retained as `drive/accounts/secrets/*.txt`; that path is its reference | The whole drive stays portable and local commands can use the file without embedding its value in model requests |
 | The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
 

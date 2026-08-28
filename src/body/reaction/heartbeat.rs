@@ -106,20 +106,41 @@ struct Frontier {
     pressure: Vec<decay::FadeDay>,
 }
 
+/// What a consolidation tick did, as the loop that scheduled it needs to know.
+///
+/// **"Slept and found nothing" and "swept and found something" must not be the same
+/// line** (`docs/arch/host.md#the-same-rule-turned-inward`). A pass that skips is
+/// ordinary and a pass that skips *forever* is a dead subsystem, and the two are
+/// indistinguishable from inside one tick. Returning which happened is what lets
+/// [`super::reflection`] — which already knows whether fresh input arrived — tell them
+/// apart across ticks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Pass {
+    /// A session was opened on a frontier that had something on it.
+    Swept,
+    /// The frontier was under [`MIN_REFLECT_SIGNALS`], or the pass failed. Nothing was
+    /// consolidated either way, which is the fact the caller is watching.
+    Skipped,
+}
+
 /// Consolidate the one conversation's unconsolidated frontier into episodes and
 /// facets in a dedicated "sleep" pass. Reads the raw log after its
 /// [`episodes::consolidation_cursor`], opens one reflection session, and drives
 /// it to completion. Run from the global reflection clock (see
 /// [`super::reflection`]). A crash leaves the frontier for the next tick.
-pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug) {
-    if let Err(err) = run_consolidation(reaction, id).await {
-        // A pass already in flight when shutdown began fails because its child took
-        // the process group's signal — expected, not a fault. Keep it out of the
-        // WARN stream so a real consolidation failure stays visible.
-        if reaction.inner.shutdown.is_triggered() {
-            tracing::debug!(error = %format!("{err:#}"), "consolidation aborted by shutdown");
-        } else {
-            tracing::warn!(error = %format!("{err:#}"), "consolidation failed");
+pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug) -> Pass {
+    match run_consolidation(reaction, id).await {
+        Ok(pass) => pass,
+        Err(err) => {
+            // A pass already in flight when shutdown began fails because its child took
+            // the process group's signal — expected, not a fault. Keep it out of the
+            // WARN stream so a real consolidation failure stays visible.
+            if reaction.inner.shutdown.is_triggered() {
+                tracing::debug!(error = %format!("{err:#}"), "consolidation aborted by shutdown");
+            } else {
+                tracing::warn!(error = %format!("{err:#}"), "consolidation failed");
+            }
+            Pass::Skipped
         }
     }
 }
@@ -127,7 +148,7 @@ pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug)
 async fn run_consolidation(
     reaction: &Reaction,
     id: &registry::SessionSlug,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Pass> {
     let data_dir = reaction.inner.memory.data_dir();
 
     // Gather the frontier; a pass is only worth opening when there is enough on it.
@@ -137,7 +158,7 @@ async fn run_consolidation(
     let tail = after_cursor(data_dir, cursor.as_deref(), episodes::REFLECTION_TAIL_LIMIT).await?;
     if reflectable(&tail) < MIN_REFLECT_SIGNALS {
         tracing::debug!("consolidation skipped; not enough on the frontier");
-        return Ok(());
+        return Ok(Pass::Skipped);
     }
     // Prior episode gists give continue-vs-new context; faces and voices are
     // clustered mechanically so the prompt can show a stable id per detected person
@@ -224,7 +245,7 @@ async fn run_consolidation(
     run.wait().await?;
 
     tracing::info!("reflection finished");
-    Ok(())
+    Ok(Pass::Swept)
 }
 
 /// Assemble the consolidated reflection prompt: the global subject index, the

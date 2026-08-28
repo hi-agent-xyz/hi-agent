@@ -113,11 +113,36 @@ impl Journal {
 /// the since-day is derived from the cursor's uuidv7 timestamp so only the
 /// touched day-folders are scanned. Ordering and the cursor compare both key on
 /// the uuidv7 `id` (the citation key), consistent with the cross-channel merge.
+///
+/// **A cursor that is not a uuidv7 is absent, not obeyed**
+/// (`docs/arch/data.md#reading-back-across-the-pen-line`). The cursor comes out of
+/// agent-written frontmatter, so its shape is a hope; this function already had to parse it
+/// to pick the since-day, and used to fall back to genesis for *that* and then compare
+/// against the unparsed string anyway. What that cost, once: a cursor reading
+/// `songguo-auto-deploy-oversight` sorted above every real id, `retain` dropped every entry
+/// on every call, and the frontier was permanently empty while looking exactly like a
+/// caught-up store.
+///
+/// The two halves now agree, and both fail toward **redoing work**: an unreadable cursor
+/// re-sweeps from genesis, which costs one over-long frontier that the `limit` bounds and
+/// the next episode re-anchors. The opposite default — treat it as "everything is already
+/// consolidated" — is the silent one, and silence is the failure mode that survives.
 pub async fn after_cursor(
     data_dir: &Path,
     cursor: Option<&str>,
     limit: usize,
 ) -> anyhow::Result<Vec<JournalEntry>> {
+    // Parse once, and let that one parse decide for both the day-scan and the compare.
+    let cursor = match cursor {
+        Some(c) if uuidv7_ts(c).is_none() => {
+            tracing::warn!(
+                cursor = %c,
+                "consolidation cursor is not a journal id; sweeping from genesis",
+            );
+            None
+        }
+        other => other,
+    };
     let since = cursor
         .and_then(uuidv7_ts)
         .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("unix epoch is valid"));

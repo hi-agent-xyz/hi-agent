@@ -124,6 +124,9 @@ async fn run(reaction: Reaction, registration: Registration) {
     let loop_started = Instant::now();
     let mut last_reflection: Option<Instant> = None;
     let mut backoff_gap = reflect_base.unwrap_or(super::DEFAULT_REFLECT_EVERY);
+    // Consecutive passes that had new input on the log and still found nothing to
+    // consolidate — see [`note_pass`].
+    let mut stalled: u32 = 0;
     let mut energy = crate::foundation::energy_state::subscribe();
     let mut energy_paused = crate::foundation::energy_state::is_out();
 
@@ -243,7 +246,11 @@ async fn run(reaction: Reaction, registration: Registration) {
                 let now = Instant::now();
                 let last_activity = *reaction.inner.last_signal_at.lock().unwrap();
                 let anchor = last_reflection.unwrap_or(loop_started);
-                backoff_gap = if last_activity > anchor {
+                // Read before the sweep, so it cannot be set by something that arrived
+                // during one: the question is whether input was already on the log when
+                // the frontier was gathered.
+                let fresh_input = last_activity > anchor;
+                backoff_gap = if fresh_input {
                     reflect_base.unwrap_or(super::DEFAULT_REFLECT_EVERY)
                 } else {
                     backoff_gap.checked_mul(2).unwrap_or(reflect_max).min(reflect_max)
@@ -255,7 +262,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // A settling pass is the longest thing this rung does and the place it
                 // dispatches most — one `person-reader` per person present in the stretch.
                 // Every one of those calls is made from inside this await.
-                serving_control(
+                let pass = serving_control(
                     &reaction,
                     &mut workers,
                     &mut control_rx,
@@ -263,7 +270,9 @@ async fn run(reaction: Reaction, registration: Registration) {
                 )
                 .await;
                 // A settling pass has no `Result` to read: `consolidate` handles its own
-                // failures internally and the pass is over either way.
+                // failures internally and the pass is over either way. What it does report
+                // is whether it swept anything, which is the half this loop can judge.
+                stalled = note_pass(stalled, fresh_input, pass);
                 registry::global().finish_turn(&id, TurnOutcome::Completed);
             }
             Wake::Turn => {}
@@ -341,6 +350,61 @@ async fn run(reaction: Reaction, registration: Registration) {
 ///
 /// The mail and clock arms stay outside, for Cognition's reason: serving them here would
 /// start a second turn on top of this one, and a turn boundary is what separates them.
+/// Consecutive stalled passes before the loop says so. Three separate ticks that each had
+/// new input on the log and each gathered an empty frontier.
+///
+/// Three rather than one because a single tick can race: [`Reaction::deliver`] stamps
+/// `last_signal_at` just before the entry is journaled, so one pass can legitimately see
+/// "input arrived" and gather the log a moment too early. Three cannot — a signal that has
+/// not landed after three cadences is not late, it is unreachable.
+const STALL_WARN: u32 = 3;
+
+/// How many further stalled passes between repeats of the warning, so a stall that lasts
+/// hours stays visible without filling the log. At the base cadence this is roughly
+/// half-hourly; the failure that motivated it ran for thirty-five hours.
+const STALL_REWARN: u32 = 30;
+
+/// Fold one consolidation tick into the stall count, warning when a caught-up store stops
+/// being a plausible explanation.
+///
+/// **A skipped pass is ordinary; a skipped pass with new input on the log is a
+/// contradiction** (`docs/arch/host.md#the-same-rule-turned-inward`). The frontier is
+/// everything after the consolidation cursor, and the raw log is written before anything
+/// reacts to it, so a signal the loop has already seen delivered must be *on* that
+/// frontier. When it is not, the cursor cannot advance — and the two facts needed to notice
+/// were already being computed one line apart for the backoff, and never compared.
+///
+/// A quiet tick neither counts nor clears: it is the one case that proves nothing, and
+/// clearing on it is what would let a real stall oscillate below the threshold forever in a
+/// conversation that is busy but not busy every cadence. Only an actual sweep clears.
+fn note_pass(stalled: u32, fresh_input: bool, pass: heartbeat::Pass) -> u32 {
+    match pass {
+        heartbeat::Pass::Swept => {
+            if stalled >= STALL_WARN {
+                tracing::info!(
+                    after = stalled,
+                    "consolidation is sweeping again; the frontier advanced",
+                );
+            }
+            0
+        }
+        heartbeat::Pass::Skipped if !fresh_input => stalled,
+        heartbeat::Pass::Skipped => {
+            let stalled = stalled.saturating_add(1);
+            if stalled == STALL_WARN
+                || (stalled > STALL_WARN && (stalled - STALL_WARN) % STALL_REWARN == 0)
+            {
+                tracing::warn!(
+                    passes = stalled,
+                    "consolidation keeps finding an empty frontier while new signals arrive; \
+                     the cursor is not advancing and nothing is being remembered",
+                );
+            }
+            stalled
+        }
+    }
+}
+
 async fn serving_control<T>(
     reaction: &Reaction,
     workers: &mut workers::WorkerRegistry,
@@ -434,4 +498,66 @@ async fn turn(
 
     tracing::info!(reflection = %id, typed_chars = full.chars().count(), "reflection turn done");
     Ok(())
+}
+
+#[cfg(test)]
+mod stall_tests {
+    use super::*;
+    use heartbeat::Pass;
+
+    /// The healthy shape: passes that sweep never accumulate a stall, however busy.
+    #[test]
+    fn sweeping_keeps_the_count_at_zero() {
+        let mut stalled = 0;
+        for _ in 0..10 {
+            stalled = note_pass(stalled, true, Pass::Swept);
+        }
+        assert_eq!(stalled, 0);
+    }
+
+    /// A caught-up store skipping is ordinary and must never be read as a stall, no matter
+    /// how long it goes on — this is the case the whole check has to stay quiet about.
+    #[test]
+    fn a_quiet_store_never_stalls() {
+        let mut stalled = 0;
+        for _ in 0..1_000 {
+            stalled = note_pass(stalled, false, Pass::Skipped);
+        }
+        assert_eq!(stalled, 0);
+    }
+
+    /// The broken-cursor shape: input keeps arriving, the frontier keeps coming back
+    /// empty. It reaches the threshold rather than sitting below it forever.
+    #[test]
+    fn fresh_input_with_an_empty_frontier_accumulates() {
+        let mut stalled = 0;
+        for _ in 0..STALL_WARN {
+            stalled = note_pass(stalled, true, Pass::Skipped);
+        }
+        assert_eq!(stalled, STALL_WARN);
+    }
+
+    /// The oscillation this design exists to avoid: a conversation busy enough to break
+    /// but not busy every single cadence. Quiet ticks in between must not clear the count,
+    /// or a real stall never reaches the threshold.
+    #[test]
+    fn a_quiet_tick_between_stalls_does_not_clear_it() {
+        let mut stalled = 0;
+        for _ in 0..STALL_WARN {
+            stalled = note_pass(stalled, true, Pass::Skipped);
+            stalled = note_pass(stalled, false, Pass::Skipped);
+        }
+        assert_eq!(stalled, STALL_WARN);
+    }
+
+    /// Only an actual sweep clears it — that is what "recovered" means here.
+    #[test]
+    fn one_sweep_clears_a_long_stall() {
+        let mut stalled = 0;
+        for _ in 0..(STALL_WARN + STALL_REWARN * 2) {
+            stalled = note_pass(stalled, true, Pass::Skipped);
+        }
+        assert!(stalled > STALL_WARN);
+        assert_eq!(note_pass(stalled, true, Pass::Swept), 0);
+    }
 }

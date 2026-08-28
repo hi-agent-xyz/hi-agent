@@ -39,6 +39,21 @@ pub const REFLECTION_TAIL_LIMIT: usize = 150;
 /// `kind: heartbeat-briefing` episodes carry no `to_id` and so don't contribute —
 /// the id-cursor starts fresh past them. uuidv7 ids are lexically time-sortable,
 /// so a string max is a recency max.
+///
+/// **Only ids that parse as uuidv7 are candidates**, and that filter is the whole
+/// difference between a cursor and a trap (`docs/arch/data.md#reading-back-across-the-pen-line`).
+/// [`record_episode`] mints these from the log, but an episode directory is in the
+/// agents' half of the pen and a worker with a shell can write one by hand — one did, on
+/// 2026-08-26, putting a subject slug where the id belonged. A max is only as sound as its
+/// weakest candidate: `s` outranks the `01a0…` every real id starts with, so that one file
+/// became the cursor and **nothing arriving later could ever overtake it**. The frontier
+/// was empty from that moment on, every pass read it as a caught-up store, and reflection
+/// did nothing at all for thirty-five hours.
+///
+/// A malformed id is dropped and logged rather than repaired in place: this is a read, the
+/// file is the agent's, and the cursor it should have contributed is recomputed from what
+/// is left. The `warn` is what makes the bad file findable — silently skipping it would
+/// trade a frozen cursor for an invisible one.
 pub async fn consolidation_cursor(data_dir: &Path) -> anyhow::Result<Option<String>> {
     let dir = layout::episodes_dir(data_dir);
     let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -55,9 +70,18 @@ pub async fn consolidation_cursor(data_dir: &Path) -> anyhow::Result<Option<Stri
             Ok(c) => c,
             Err(_) => continue,
         };
-        if let Some(to_id) = frontmatter_field(&content, "to_id")
-            && max.as_deref().is_none_or(|m| to_id.as_str() > m)
-        {
+        let Some(to_id) = frontmatter_field(&content, "to_id") else {
+            continue;
+        };
+        if journal::uuidv7_ts(&to_id).is_none() {
+            tracing::warn!(
+                episode = %ent.file_name().to_string_lossy(),
+                to_id = %to_id,
+                "episode `to_id` is not a journal id; ignored for the consolidation cursor",
+            );
+            continue;
+        }
+        if max.as_deref().is_none_or(|m| to_id.as_str() > m) {
             max = Some(to_id);
         }
     }
@@ -427,5 +451,54 @@ mod reflection_tests {
             .await
             .unwrap();
         assert_eq!(tail.len(), 2);
+    }
+
+    /// The 2026-08-26 failure, in one test: a worker hand-writes an episode and puts a
+    /// subject slug where the journal id belongs. A slug beginning with a letter outranks
+    /// every uuidv7 under string order, so before this it became a cursor nothing could
+    /// ever overtake and the frontier was empty from then on — for thirty-five hours,
+    /// silently, because an empty frontier is what a caught-up store looks like.
+    #[tokio::test]
+    async fn a_hand_written_episode_id_cannot_freeze_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = Journal::open(dir.path().to_path_buf()).await.unwrap();
+        let ids = append(&j, 4).await;
+        record_episode(dir.path(), 2, "A event", "a event", &[]).await.unwrap();
+
+        let hand_written = layout::episodes_dir(dir.path()).join("2026-08-26-written-by-a-worker");
+        tokio::fs::create_dir_all(&hand_written).await.unwrap();
+        tokio::fs::write(
+            hand_written.join("episode.md"),
+            "---\ntitle: \"Written by a worker\"\nfrom_id: \"local-some-bridge\"\n\
+             to_id: \"songguo-auto-deploy-oversight\"\nkind: implementation\n---\n\nBody.\n",
+        )
+        .await
+        .unwrap();
+
+        // The real episode still owns the cursor; the slug is not a candidate.
+        let cursor = consolidation_cursor(dir.path()).await.unwrap();
+        assert_eq!(cursor.as_deref(), Some(ids[1].as_str()));
+
+        // And the frontier still carries what has not been consolidated.
+        let tail = journal::after_cursor(dir.path(), cursor.as_deref(), REFLECTION_TAIL_LIMIT)
+            .await
+            .unwrap();
+        assert_eq!(tail.len(), 2);
+    }
+
+    /// The same rule one layer down, for a cursor that reaches the reader malformed by any
+    /// other route: unparseable means *absent*, and absent sweeps from genesis. The
+    /// direction is the point — the opposite default reads as "all consolidated" and is
+    /// the one that fails silently.
+    #[tokio::test]
+    async fn an_unparseable_cursor_sweeps_from_genesis_rather_than_returning_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = Journal::open(dir.path().to_path_buf()).await.unwrap();
+        append(&j, 3).await;
+
+        let tail = journal::after_cursor(dir.path(), Some("not-a-journal-id"), REFLECTION_TAIL_LIMIT)
+            .await
+            .unwrap();
+        assert_eq!(tail.len(), 3, "an unreadable cursor must not swallow the frontier");
     }
 }

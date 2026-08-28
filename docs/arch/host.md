@@ -465,6 +465,44 @@ Whether it used our machinery or the harness's stops mattering, because a duty t
 is not actually running fails its own check either way. `checked` is the one liveness
 field code reads, for exactly this reason.
 
+#### The same rule, turned inward
+
+**We hold the agent's duties to a result check and have never held our own loops to
+one.** Reflection's backoff, the glance-up, the check-in deadline — each is standing
+machinery that can stop doing its work while continuing to run, and each is exactly the
+shape the rule above exists to catch. None of them carries a `checked`, nothing reads one,
+and a rung that has consolidated nothing since Tuesday looks from every angle like a rung
+with nothing to consolidate.
+
+That is not a hypothetical: reflection did precisely this for thirty-five hours
+([`data.md`](data.md#reading-back-across-the-pen-line)), and every observable stayed
+normal — the loop woke on schedule, the process was healthy, the log line was a `debug`.
+It was found because a person said the agent felt forgetful.
+
+The fix is not a watchdog subsystem. A second mechanism watching the first is one more
+thing that can be built, typecheck, and never run, and this repo has shipped that shape
+before. The rule is the cheaper one:
+
+- **A periodic loop stamps that it did the work, never that it woke.** "Slept and found
+  nothing" and "swept and found nothing" are the same line today and must not be.
+- **The loop that skips is the one that can tell.** Skipping is ordinary — a caught-up
+  store *should* skip. What is not ordinary is skipping while new signals keep arriving,
+  and that is a contradiction the loop can already see: [`reflection`](../../src/body/reaction/reflection.rs)
+  reads `last_signal_at` on every iteration for its own backoff, and computes
+  `last_activity > anchor` — fresh input since the last pass — one line above the sweep
+  that comes back empty. It has both facts and has never compared them.
+- **What code can repair, code repairs; what it cannot, it says loudly.** Re-deriving a
+  cursor over only the ids that parse is repair. Anything past that is a `warn`, in the
+  log, where [diagnostics belong](../../src/foundation/server) — never a card in front of
+  the person.
+
+**A self-healing system whose only healer is the agent has no floor.** Reflection is the
+rung whose whole job is the agent's own house, and reflection is what broke;
+[`data.md`](data.md#prompts) hands it "rebuilding a missing seed" for the same reason, and
+that owner was gone too. So the floor here is code's, exactly as the window's floor is the
+log tail: the agent owns the judgment, and code owns the guarantee that there is a next
+pass to judge with.
+
 #### `/api/in/text` is not a wake channel
 
 If an agent-installed timer ever needs to poke a running instance over HTTP, note
