@@ -346,6 +346,23 @@ Vendor-backed capabilities keep two layers independent: a **capability** (the in
 its adaptation) and a **vendor** (one API implementation of it). No shared-vendor umbrella,
 no cross-capability references.
 
+**A capability holds every vendor configured for it, not one.** One task is commonly served
+over several wires at once — the same gateway answers `text-to-image` on both an images
+endpoint and a Responses one — so the credential layer carries a *list* per capability and
+never picks on the capability's behalf. Which HTTP shapes can actually be spoken is
+knowledge that exists only inside the capability, and a chooser upstream of it can do no
+better than guess. Two consequences follow, and they are the interface rule:
+
+- Where the caller **names a model**, the model chooses the vendor and every wire stays live
+  at once — one tool, a wider menu. Adding a wire adds models, never a second tool.
+- Where the caller **names nothing** (speech, vision), the capability keeps the first wire it
+  can speak and says which it passed over.
+
+A wire nothing implements is skipped with a log line, never fatal: that list is written by
+the broker in its own vocabulary and changes without asking us. The LLM is the one
+deliberate exception — its wire *is* the agent runtime, so a second wire there is a second
+engine, not a second config.
+
 ## User-added
 
 Equipped by the person, because only they can: an account logged in, an API key handed over,

@@ -18,6 +18,14 @@
 //! `doubao-*`/`seedream*` the Ark one; a provider may still carry an explicit
 //! `wire` (the broker does) and that wins where present.
 //!
+//! **Three wires, and one model may be reachable over two of them.** `gpt-image-2` is
+//! served both by the Images API and, as a tool argument, by the Responses API
+//! ([`openai_responses_image_gen`]) — same picture, different protocol and different
+//! bill. Which one a call takes is decided by the *provider* it resolves to, never by
+//! the caller: naming a wire is naming our plumbing. When a broker offers both, they
+//! arrive as two providers ranked best-first and the first to declare the model wins,
+//! so the choice is the broker's editorial ranking rather than an accident.
+//!
 //! The capability is a module of free functions over a process-global,
 //! once-initialized registry. The registry never appears in a signature. A
 //! provider's key arrives the same way for either task and either source — BYOK from
@@ -29,7 +37,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 
-use crate::foundation::vendors::{doubao_image_gen, openai_image_gen};
+use crate::foundation::vendors::{
+    doubao_image_gen, openai_image_gen, openai_responses_image_gen,
+};
 
 /// Image synthesis is slow (tens of seconds); budget generously. One client is
 /// shared by every provider — they differ by endpoint and key, not by transport.
@@ -121,12 +131,17 @@ pub struct ModelInfo {
 /// One configured provider, as the credential store or the broker describes it.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderSpec {
-    /// Explicit wire id, where the source knows one (`doubao`, `openai-images`).
-    /// `None` → inferred from the model name.
+    /// Explicit wire id, where the source knows one (`doubao`, `openai-images`,
+    /// `openai-responses`). `None` → inferred from the model name.
     pub wire: Option<String>,
     /// Gateway endpoint; `None` → the vendor's own default.
     pub base_url: Option<String>,
     pub api_key: String,
+    /// The mainline model that carries the `image_generation` tool on the Responses
+    /// wire, and nothing at all on the others. Empty there is fatal to *that* provider
+    /// (see [`build_providers`]) rather than defaulted: picking a carrier ourselves
+    /// would bill the user for a model nobody chose.
+    pub carrier: Option<String>,
     /// Used when a caller names no model.
     pub default_model: Option<String>,
     /// What this provider is known to serve. **Empty means BYOK**: we have no menu,
@@ -137,17 +152,24 @@ pub struct ProviderSpec {
 
 // ── the registry ──────────────────────────────────────────────────────────────
 
-/// One endpoint and key, ready to be spoken to in either shape.
+/// One endpoint and key, ready to be spoken to in whichever shape a model needs.
 ///
-/// **Both adapters, because the wire is a property of the call and not of the
-/// provider.** A gateway publishes one wire id and serves several model families
+/// **Both image-endpoint adapters, because the wire is a property of the call and not
+/// of the provider.** A gateway publishes one wire id and serves several model families
 /// behind it — songguo says `openai-images` and answers for both gpt-image and
 /// seedream — so binding a provider to one adapter at startup sends half its models
 /// down the wrong path. That is not theoretical: it sent a seedream edit as OpenAI
 /// multipart and got back "could not parse the JSON body".
+///
+/// `responses` is the exception and is `Some` only for an endpoint that speaks it,
+/// because there the URL itself accepts one body shape — a Responses provider is not
+/// two adapters with a choice, it is one.
 struct Provider {
     doubao: doubao_image_gen::Config,
     openai: openai_image_gen::Config,
+    /// `None` unless this provider's endpoint speaks Responses — that wire needs a
+    /// carrier model, and a provider without one never gets built.
+    responses: Option<openai_responses_image_gen::Config>,
     /// What the source called this endpoint, when we recognised it. Only consulted
     /// for a model whose family we cannot read off its name.
     declared_wire: Option<&'static str>,
@@ -156,17 +178,28 @@ struct Provider {
 }
 
 impl Provider {
-    /// The shape to speak for one model. **The model name wins**: it is the most
-    /// specific thing we know, and it is what the vendor actually keys on. The
-    /// declared wire is the fallback for an unfamiliar name, where a gateway's own
-    /// word beats a guess.
+    /// The shape to speak for one model.
+    ///
+    /// **A Responses endpoint is Responses-only**, whatever the model is called: that
+    /// URL accepts one body shape, and `gpt-image-2` reached through it is a tool
+    /// argument rather than the model of the call. This is the one case where the
+    /// declared wire outranks the model name.
+    ///
+    /// Everywhere else **the model name wins**: it is the most specific thing we know,
+    /// and one image endpoint really does serve several families — songguo says
+    /// `openai-images` and answers for seedream too. The declared wire is then the
+    /// fallback for an unfamiliar name, where a gateway's own word beats a guess.
     fn wire_for(&self, model: &str) -> &'static str {
+        if self.responses.is_some() {
+            return RESPONSES_WIRE;
+        }
         family_of(model).or(self.declared_wire).unwrap_or(OPENAI_WIRE)
     }
 
     /// Whether editing is implemented for `model`'s shape. A fact about *our* code,
-    /// not about what the vendor could do: Ark's edit parameter is unconfirmed, so
-    /// the doubao arm refuses rather than guessing a field name.
+    /// not about what the vendor could do: Ark's edit parameter is unconfirmed, so the
+    /// doubao arm refuses rather than guessing a field name, and the Responses tool's
+    /// `action: "edit"` needs an input-image part nobody has built.
     fn can_edit(&self, model: &str) -> bool {
         self.wire_for(model) == OPENAI_WIRE
     }
@@ -181,6 +214,7 @@ static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
 const DOUBAO_WIRE: &str = "doubao";
 const OPENAI_WIRE: &str = "openai-images";
+const RESPONSES_WIRE: &str = "openai-responses";
 
 /// The family a model name belongs to, or `None` when we don't recognise it.
 ///
@@ -201,12 +235,19 @@ fn family_of(model: &str) -> Option<&'static str> {
 /// The adapter an explicit wire id selects, or `None` if we have none for it.
 ///
 /// Spelling is deliberately loose. The broker names wires in its own vocabulary and
-/// has changed it before (`openai-responses` vs the gateway's `openai/responses`), and
-/// this string is machine-generated plumbing — since nobody picks a wire in Settings
-/// any more, matching it strictly buys no typo protection and costs a boot.
+/// has changed it before (`openai-images` vs the gateway's `openai/images`), and this
+/// string is machine-generated plumbing — since nobody picks a wire in Settings any
+/// more, matching it strictly buys no typo protection and costs a boot.
+///
+/// Responses is checked *before* the loose match, because it is not a near-miss
+/// spelling of the Images API: same vendor, same models, a different protocol, and the
+/// loose rule would read "openai-responses" as "openai" and POST an Images body
+/// (`prompt`, `size`, `n`) to an endpoint whose schema is `input` + a `tools` array.
 fn wire_named(wire: &str) -> Option<&'static str> {
     let w = wire.trim().to_ascii_lowercase();
-    if w.contains("doubao") || w.contains("ark") || w.contains("volc") {
+    if w.contains("responses") {
+        Some(RESPONSES_WIRE)
+    } else if w.contains("doubao") || w.contains("ark") || w.contains("volc") {
         Some(DOUBAO_WIRE)
     } else if w.contains("openai") || w.contains("image") {
         Some(OPENAI_WIRE)
@@ -245,9 +286,32 @@ fn build_providers(specs: Vec<ProviderSpec>) -> Vec<Provider> {
                 "no image-gen adapter for this wire; model names will decide instead"
             );
         }
+        // The Responses wire needs a carrier model, and there is no sane default: any
+        // model we picked would bill the user for a choice nobody made, and would go
+        // stale silently. So a carrier-less Responses provider is dropped whole, models
+        // and all — publishing them would put names on the menu that cannot be drawn.
+        let carrier = spec.carrier.as_deref().map(str::trim).filter(|c| !c.is_empty());
+        let responses = if declared_wire == Some(RESPONSES_WIRE) {
+            let Some(carrier) = carrier else {
+                tracing::warn!(
+                    models = ?spec.models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+                    "the openai-responses image wire names no carrier model; these models \
+                     are unreachable (set `carrier` on the wire, e.g. a gpt-5 model)"
+                );
+                continue;
+            };
+            Some(openai_responses_image_gen::Config::new(
+                &spec.api_key,
+                spec.base_url.as_deref(),
+                carrier,
+            ))
+        } else {
+            None
+        };
         providers.push(Provider {
             doubao: doubao_image_gen::Config::new(&spec.api_key, spec.base_url.as_deref()),
             openai: openai_image_gen::Config::new(&spec.api_key, spec.base_url.as_deref()),
+            responses,
             declared_wire,
             default_model: spec.default_model.clone(),
             models: spec.models.clone(),
@@ -342,8 +406,11 @@ pub async fn text_to_image(
     let reg = registry()?;
     let (provider, model) = pick(reg, params.model.as_deref())?;
     let client = &reg.client;
-    match provider.wire_for(&model) {
-        DOUBAO_WIRE => {
+    match (provider.wire_for(&model), provider.responses.as_ref()) {
+        (RESPONSES_WIRE, Some(cfg)) => {
+            openai_responses_image_gen::generate(client, cfg, &model, prompt, params).await
+        }
+        (DOUBAO_WIRE, _) => {
             doubao_image_gen::generate(client, &provider.doubao, &model, prompt, params).await
         }
         _ => openai_image_gen::generate(client, &provider.openai, &model, prompt, params).await,
@@ -436,6 +503,7 @@ mod tests {
             wire: Some("openai-images".into()),
             base_url: Some("https://gw.example/v1/images/generations".into()),
             api_key: "k".into(),
+            carrier: None,
             default_model: Some("doubao-seedream-5.0-lite".into()),
             models: vec![
                 ModelInfo { name: "doubao-seedream-5.0-lite".into(), ..Default::default() },
@@ -483,6 +551,7 @@ mod tests {
             wire: None,
             base_url: None,
             api_key: key.into(),
+            carrier: None,
             default_model: model.map(str::to_owned),
             models: models
                 .iter()
@@ -509,6 +578,145 @@ mod tests {
             spec("k", Some("gpt-image-2"), &[]),
         ]);
         assert_eq!(built.len(), 1);
+    }
+
+    /// **Two wires for one task, which is now the ordinary case.** A gateway serving
+    /// `text-to-image` over both an images endpoint and something else hands us both;
+    /// each keeps its own endpoint and menu, and a named model reaches the one that
+    /// declares it. Nothing here merges them.
+    #[test]
+    fn two_wires_for_one_task_are_both_reachable() {
+        let r = reg(vec![
+            ProviderSpec {
+                wire: Some("openai-images".into()),
+                base_url: Some("https://gw.example/v1/images/generations".into()),
+                api_key: "k".into(),
+                carrier: None,
+                default_model: Some("gpt-image-2".into()),
+                models: vec![ModelInfo { name: "gpt-image-2".into(), quality: 96, ..Default::default() }],
+            },
+            ProviderSpec {
+                wire: Some("ark/images".into()),
+                base_url: Some("https://ark.example/api/v3/images/generations".into()),
+                api_key: "k2".into(),
+                carrier: None,
+                default_model: Some("doubao-seedream-5.0-lite".into()),
+                models: vec![ModelInfo {
+                    name: "doubao-seedream-5.0-lite".into(),
+                    quality: 75,
+                    ..Default::default()
+                }],
+            },
+        ]);
+        assert_eq!(r.providers.len(), 2);
+
+        let (p, model) = pick(&r, Some("doubao-seedream-5.0-lite")).unwrap();
+        assert_eq!(p.wire_for(&model), DOUBAO_WIRE);
+        assert_eq!(p.default_model.as_deref(), Some("doubao-seedream-5.0-lite"), "the ark one");
+
+        // The published menu is the union, so the agent is shown both.
+        let names: Vec<String> = published_models(&r).into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["gpt-image-2", "doubao-seedream-5.0-lite"]);
+
+        // No model named → the first provider's default. The composition root hands
+        // them over best-first, so "first" is the best on offer.
+        let (_, model) = pick(&r, None).unwrap();
+        assert_eq!(model, "gpt-image-2");
+    }
+
+    /// A Responses endpoint speaks exactly one body shape, so there the declared wire
+    /// outranks the model name — the reverse of every other case. `gpt-image-2` behind
+    /// `/v1/responses` is a tool argument, not the model of the call, and reading its
+    /// name as "OpenAI images" would POST `prompt`/`size` to an endpoint whose schema is
+    /// `input` + `tools`.
+    #[test]
+    fn a_responses_endpoint_speaks_responses_whatever_the_model_is_called() {
+        assert_eq!(wire_named("openai-responses"), Some(RESPONSES_WIRE));
+        assert_eq!(wire_named("openai/responses"), Some(RESPONSES_WIRE));
+        assert_eq!(wire_named("openai-images"), Some(OPENAI_WIRE));
+
+        let r = reg(vec![ProviderSpec {
+            wire: Some("openai-responses".into()),
+            base_url: Some("https://gw.example/v1/responses".into()),
+            api_key: "k".into(),
+            carrier: Some("gpt-5.4".into()),
+            default_model: Some("gpt-image-2".into()),
+            models: vec![ModelInfo { name: "gpt-image-2".into(), quality: 96, ..Default::default() }],
+        }]);
+        assert_eq!(r.providers.len(), 1);
+        let p = &r.providers[0];
+        assert_eq!(p.wire_for("gpt-image-2"), RESPONSES_WIRE, "the endpoint wins here");
+        assert_eq!(p.wire_for("doubao-seedream-5.0-lite"), RESPONSES_WIRE, "still the endpoint");
+        // Editing over the tool needs an input-image part nobody has built, so this
+        // wire says so rather than sending a request that cannot work.
+        assert!(!p.can_edit("gpt-image-2"));
+    }
+
+    /// **The carrier is configuration, never a guess.** Without one there is no model to
+    /// host the tool, and any we chose would bill the user for a decision nobody made —
+    /// so the provider is dropped whole and its models never reach the menu.
+    #[test]
+    fn a_responses_wire_without_a_carrier_is_dropped_whole() {
+        let spec = |carrier: Option<&str>| ProviderSpec {
+            wire: Some("openai-responses".into()),
+            base_url: Some("https://gw.example/v1/responses".into()),
+            api_key: "k".into(),
+            carrier: carrier.map(str::to_owned),
+            default_model: Some("gpt-image-2".into()),
+            models: vec![ModelInfo { name: "gpt-image-2".into(), ..Default::default() }],
+        };
+        assert!(build_providers(vec![spec(None)]).is_empty());
+        assert!(build_providers(vec![spec(Some("  "))]).is_empty(), "blank is not a carrier");
+        assert_eq!(build_providers(vec![spec(Some("gpt-5.4"))]).len(), 1);
+
+        // A carrier on a wire that has no use for one is simply ignored — it must not
+        // turn an images provider into a Responses one.
+        let images = build_providers(vec![ProviderSpec {
+            wire: Some("openai-images".into()),
+            api_key: "k".into(),
+            carrier: Some("gpt-5.4".into()),
+            default_model: Some("gpt-image-2".into()),
+            ..Default::default()
+        }]);
+        assert_eq!(images[0].wire_for("gpt-image-2"), OPENAI_WIRE);
+    }
+
+    /// One model, two wires, one menu entry per wire — the case the whole multi-wire
+    /// shape exists for. Which one a call takes is the broker's ranking (best first),
+    /// not the caller's, because naming a wire is naming our plumbing.
+    #[test]
+    fn one_model_served_over_two_wires_resolves_to_the_better_ranked_one() {
+        let responses = ProviderSpec {
+            wire: Some("openai-responses".into()),
+            base_url: Some("https://gw.example/v1/responses".into()),
+            api_key: "k".into(),
+            carrier: Some("gpt-5.4".into()),
+            default_model: Some("gpt-image-2".into()),
+            models: vec![ModelInfo { name: "gpt-image-2".into(), quality: 96, ..Default::default() }],
+        };
+        let images = ProviderSpec {
+            wire: Some("openai-images".into()),
+            base_url: Some("https://gw.example/v1/images/generations".into()),
+            api_key: "k".into(),
+            carrier: None,
+            default_model: Some("gpt-image-2".into()),
+            models: vec![ModelInfo { name: "gpt-image-2".into(), quality: 96, ..Default::default() }],
+        };
+
+        let r = reg(vec![responses.clone(), images.clone()]);
+        let (p, model) = pick(&r, Some("gpt-image-2")).unwrap();
+        assert_eq!(p.wire_for(&model), RESPONSES_WIRE, "first to declare it wins");
+
+        // Reverse the ranking and the same request takes the images wire instead —
+        // and regains editing, which only that wire implements.
+        let r = reg(vec![images, responses]);
+        let (p, model) = pick(&r, Some("gpt-image-2")).unwrap();
+        assert_eq!(p.wire_for(&model), OPENAI_WIRE);
+        assert!(p.can_edit(&model));
+
+        // Either way the menu shows the model once, not twice.
+        let names: Vec<String> = published_models(&r).into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["gpt-image-2"]);
     }
 
     /// The broker names wires in its own vocabulary and has changed it before. An

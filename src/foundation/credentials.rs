@@ -7,11 +7,10 @@
 //! effect also implies that vendor is the provider for its capability; a capability
 //! with no key is simply off.
 //!
-//! Both modes' configs are stored side by side (one row per `(mode, feature)`),
-//! so switching mode in Settings surfaces whatever was last entered for it. The
-//! in-memory [`Credentials`] shape is unchanged — only persistence moved from a
-//! JSON file to SQLite; a legacy `credentials.json` is imported once on first
-//! load (see [`db::load`]).
+//! Both modes' configs are stored side by side (one row per `(mode, feature, wire)`),
+//! so switching mode in Settings surfaces whatever was last entered for it, and a
+//! capability served over several wires keeps all of them. A legacy
+//! `credentials.json` is imported once on first load (see [`db::load`]).
 
 use std::path::{Path, PathBuf};
 
@@ -177,13 +176,14 @@ impl LlmCredentials {
     }
 }
 
-/// A single-vendor config. In BYOK only `api_key` is set (other params stay on
-/// env defaults); in managed mode the broker also fills `base_url` (songguo) and
-/// may fill `model`, and the vendor host-rebases its native endpoint onto songguo.
+/// **One wire's** config for one capability. In BYOK only `api_key` is set (other
+/// params stay on env defaults); in managed mode the broker also fills `base_url`
+/// (songguo) and may fill `model`, and the vendor host-rebases its native endpoint
+/// onto songguo.
 ///
-/// `wire` names which vendor/protocol impl serves the feature — the seam for
-/// supporting more than one vendor per capability. Empty means the feature's
-/// default wire (today the only one); the capability's `init` dispatches on it.
+/// `wire` names which vendor/protocol impl serves the feature. A capability holds a
+/// *list* of these — one per wire the source offers (see [`Managed`]) — and the
+/// capability's `init` dispatches on the id. Empty means the feature's default wire.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VendorKey {
@@ -196,6 +196,15 @@ pub struct VendorKey {
     /// Model override; None → the vendor's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The mainline model that carries a hosted tool on wires where the work is done
+    /// *inside a turn* rather than by its own endpoint — today only `openai-responses`
+    /// for `text-to-image`, where the picture comes from an `image_generation` tool.
+    ///
+    /// A property of the wire, not of a model: it says which model hosts the turn, and
+    /// the models list still names what the agent may draw with. Empty everywhere else,
+    /// and never defaulted — a carrier we picked would bill for a choice nobody made.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub carrier: String,
     /// Every model this endpoint serves, as the broker published them. **Empty under
     /// BYOK**, where there is no menu — only the key its owner pasted.
     ///
@@ -243,6 +252,12 @@ impl VendorKey {
         self.model.as_deref().map(str::trim).filter(|m| !m.is_empty())
     }
 
+    /// The tool-carrying mainline model if set, else `None`.
+    pub fn carrier_opt(&self) -> Option<&str> {
+        let c = self.carrier.trim();
+        if c.is_empty() { None } else { Some(c) }
+    }
+
     /// The configured wire id if set, else `None` (use the feature default).
     pub fn wire_opt(&self) -> Option<&str> {
         let w = self.wire.trim();
@@ -253,15 +268,54 @@ impl VendorKey {
 /// Broker-minted configs (xiaoyuanzhu): the same credential fields as BYOK. The
 /// account/energy snapshot is separate ([`Energy`]) so it can be polled often
 /// without re-fetching configs.
+///
+/// **Every capability slot is a list, because the broker's menu is a list.** Its
+/// `/configs` is task → *wire* → endpoint, and songguo routinely offers a task over
+/// more than one wire (`text-to-image` over both `openai-images` and `openai-responses`;
+/// `text-generation` over both `openai-responses` and `anthropic-messages`). Collapsing
+/// that to one wire per task threw away every model served over the others — silently,
+/// since the survivor was whichever wire sorted first by name. The capability, which is
+/// the only layer that knows which shapes it can actually speak, now decides.
+///
+/// The LLM stays singular: codex is the agent runtime and it speaks OpenAI Responses,
+/// so a second LLM wire is a second engine, not a second config. See
+/// [`crate::foundation::broker::pick_llm_wire`].
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Managed {
     pub llm: LlmCredentials,
-    pub stt: VendorKey,
-    pub tts: VendorKey,
-    pub vision: VendorKey,
-    pub image: VendorKey,
-    pub video: VendorKey,
+    #[serde(deserialize_with = "one_or_many")]
+    pub stt: Vec<VendorKey>,
+    #[serde(deserialize_with = "one_or_many")]
+    pub tts: Vec<VendorKey>,
+    #[serde(deserialize_with = "one_or_many")]
+    pub vision: Vec<VendorKey>,
+    #[serde(deserialize_with = "one_or_many")]
+    pub image: Vec<VendorKey>,
+    #[serde(deserialize_with = "one_or_many")]
+    pub video: Vec<VendorKey>,
+}
+
+/// Accept both a bare `VendorKey` object and an array of them.
+///
+/// The slots were single objects before multi-wire, and a stored `credentials.json`
+/// from that era is still imported on first load ([`db::load`]). A hard parse error
+/// there does not lose one slot — serde fails the whole `Credentials`, so a legacy file
+/// would take the account and the BYOK keys down with it.
+fn one_or_many<'de, D>(d: D) -> Result<Vec<VendorKey>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(Box<VendorKey>),
+        Many(Vec<VendorKey>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(v) => vec![*v],
+        OneOrMany::Many(v) => v,
+    })
 }
 
 /// The user-facing balance from `/energy` (xiaoyuanzhu). Cached for display; the
@@ -278,13 +332,18 @@ pub struct Energy {
 
 /// The credentials in effect for the current mode — borrows from either the BYOK
 /// fields or the managed configs.
+///
+/// Each capability slot is a slice of the wires configured for it, best first. BYOK
+/// yields exactly one — a person pastes one key per capability, and there is no menu
+/// to choose from — so the slice is the shape both modes share rather than a shape
+/// invented for the broker.
 pub struct Effective<'a> {
     pub llm: &'a LlmCredentials,
-    pub stt: &'a VendorKey,
-    pub tts: &'a VendorKey,
-    pub vision: &'a VendorKey,
-    pub image: &'a VendorKey,
-    pub video: &'a VendorKey,
+    pub stt: &'a [VendorKey],
+    pub tts: &'a [VendorKey],
+    pub vision: &'a [VendorKey],
+    pub image: &'a [VendorKey],
+    pub video: &'a [VendorKey],
 }
 
 impl Credentials {
@@ -295,11 +354,11 @@ impl Credentials {
         match self.mode {
             Mode::Byok => Some(Effective {
                 llm: &self.llm,
-                stt: &self.stt,
-                tts: &self.tts,
-                vision: &self.vision,
-                image: &self.image,
-                video: &self.video,
+                stt: std::slice::from_ref(&self.stt),
+                tts: std::slice::from_ref(&self.tts),
+                vision: std::slice::from_ref(&self.vision),
+                image: std::slice::from_ref(&self.image),
+                video: std::slice::from_ref(&self.video),
             }),
             Mode::Xiaoyuanzhu => self.managed.as_ref().map(|m| Effective {
                 llm: &m.llm,
@@ -424,7 +483,12 @@ mod db {
             -- `capabilities::init` loads back, so anything not written is simply
             -- gone by the time the capability asks.
             models   TEXT,
-            PRIMARY KEY (mode, feature)
+            -- The mainline model that carries a hosted tool, on the wires that need
+            -- one (openai-responses image generation). Empty on every other wire.
+            carrier  TEXT,
+            -- Keyed by wire as well as feature: one capability holds one row per wire
+            -- its source offers, and the capability picks among them. See `Managed`.
+            PRIMARY KEY (mode, feature, wire)
         );
         CREATE TABLE IF NOT EXISTS account (
             id                INTEGER PRIMARY KEY CHECK (id = 1),
@@ -466,9 +530,10 @@ mod db {
         Ok(conn)
     }
 
-    /// Bring an older DB up to the current schema. Additive, idempotent column
-    /// adds only (the `CREATE TABLE IF NOT EXISTS` above already covers fresh DBs);
-    /// each is guarded on `table_info` so re-running is a no-op.
+    /// Bring an older DB up to the current schema (the `CREATE TABLE IF NOT EXISTS`
+    /// above already covers fresh DBs). Idempotent column adds, then the one
+    /// non-additive step — widening the `credential` key to include `wire`. Each is
+    /// guarded on `table_info` so re-running is a no-op.
     fn migrate(conn: &Connection) -> anyhow::Result<()> {
         if !column_exists(conn, "credential", "wire")? {
             conn.execute_batch("ALTER TABLE credential ADD COLUMN wire TEXT NOT NULL DEFAULT ''")?;
@@ -479,7 +544,60 @@ mod db {
         if !column_exists(conn, "credential", "models")? {
             conn.execute_batch("ALTER TABLE credential ADD COLUMN models TEXT")?;
         }
+        if !column_exists(conn, "credential", "carrier")? {
+            conn.execute_batch("ALTER TABLE credential ADD COLUMN carrier TEXT")?;
+        }
+        widen_credential_key(conn)?;
         Ok(())
+    }
+
+    /// Re-key `credential` from `(mode, feature)` to `(mode, feature, wire)`.
+    ///
+    /// SQLite cannot alter a primary key, so this is the table-rebuild dance. Guarded
+    /// on the live key, so it runs once and is a no-op forever after. No row is lost or
+    /// changed: an old store held at most one row per `(mode, feature)`, which is
+    /// exactly one row per `(mode, feature, wire)` too — and the broker refills the
+    /// managed rows at boot anyway.
+    fn widen_credential_key(conn: &Connection) -> anyhow::Result<()> {
+        if key_includes_wire(conn)? {
+            return Ok(());
+        }
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE credential_new (
+                 mode     TEXT NOT NULL,
+                 feature  TEXT NOT NULL,
+                 wire     TEXT NOT NULL DEFAULT '',
+                 base_url TEXT NOT NULL DEFAULT '',
+                 api_key  TEXT NOT NULL DEFAULT '',
+                 model    TEXT,
+                 small    TEXT,
+                 models   TEXT,
+                 carrier  TEXT,
+                 PRIMARY KEY (mode, feature, wire)
+             );
+             INSERT INTO credential_new (mode, feature, wire, base_url, api_key, model, small, models, carrier)
+                 SELECT mode, feature, wire, base_url, api_key, model, small, models, carrier FROM credential;
+             DROP TABLE credential;
+             ALTER TABLE credential_new RENAME TO credential;
+             COMMIT;",
+        )?;
+        Ok(())
+    }
+
+    /// Whether `wire` is part of the `credential` primary key — `table_info`'s `pk`
+    /// column is 0 for a non-key column and its 1-based position otherwise.
+    fn key_includes_wire(conn: &Connection) -> anyhow::Result<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(credential)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            let pk: i64 = row.get(5)?;
+            if name == "wire" {
+                return Ok(pk > 0);
+            }
+        }
+        Ok(false)
     }
 
     fn column_exists(conn: &Connection, table: &str, column: &str) -> anyhow::Result<bool> {
@@ -566,18 +684,18 @@ mod db {
         set_setting(conn, "mode", mode_str(c.mode))?;
         set_setting(conn, "device_id", &c.device_id)?;
         write_llm(conn, Mode::Byok, "llm", &c.llm)?;
-        write_vendor(conn, Mode::Byok, "stt", &c.stt)?;
-        write_vendor(conn, Mode::Byok, "tts", &c.tts)?;
-        write_vendor(conn, Mode::Byok, "vision", &c.vision)?;
-        write_vendor(conn, Mode::Byok, "image", &c.image)?;
-        write_vendor(conn, Mode::Byok, "video", &c.video)?;
+        write_vendors(conn, Mode::Byok, "stt", std::slice::from_ref(&c.stt))?;
+        write_vendors(conn, Mode::Byok, "tts", std::slice::from_ref(&c.tts))?;
+        write_vendors(conn, Mode::Byok, "vision", std::slice::from_ref(&c.vision))?;
+        write_vendors(conn, Mode::Byok, "image", std::slice::from_ref(&c.image))?;
+        write_vendors(conn, Mode::Byok, "video", std::slice::from_ref(&c.video))?;
         if let Some(m) = &c.managed {
             write_llm(conn, Mode::Xiaoyuanzhu, "llm", &m.llm)?;
-            write_vendor(conn, Mode::Xiaoyuanzhu, "stt", &m.stt)?;
-            write_vendor(conn, Mode::Xiaoyuanzhu, "tts", &m.tts)?;
-            write_vendor(conn, Mode::Xiaoyuanzhu, "vision", &m.vision)?;
-            write_vendor(conn, Mode::Xiaoyuanzhu, "image", &m.image)?;
-            write_vendor(conn, Mode::Xiaoyuanzhu, "video", &m.video)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "stt", &m.stt)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "tts", &m.tts)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "vision", &m.vision)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "image", &m.image)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "video", &m.video)?;
         }
         write_account(conn, c)?;
         write_identity(conn, c.identity.as_ref())?;
@@ -639,44 +757,40 @@ mod db {
             .optional()?)
     }
 
-    fn read_vendor(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<VendorKey> {
-        let Some((wire, base_url, api_key, model, _small)) = read_row(conn, mode, feature)? else {
-            return Ok(VendorKey::default());
-        };
-        Ok(VendorKey { wire, base_url, api_key, model, models: read_models(conn, mode, feature)? })
-    }
-
-    /// The published menu for one slot. Kept out of [`read_row`], whose five columns
-    /// are shared with the LLM slot and mean the same thing there; the menu does not.
+    /// Every wire stored for one `(mode, feature)`, in the order they were written —
+    /// which is the order the source ranked them, so the first is the best.
     ///
-    /// Malformed JSON reads as *no menu*, never as a failed load. The menu is a hint
-    /// for choosing a model; the key beside it is what makes the capability work at
-    /// all, and a garbled hint must not take the key down with it.
-    fn read_models(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<Vec<ModelOffer>> {
-        let raw: Option<Option<String>> = conn
-            .query_row(
-                "SELECT models FROM credential WHERE mode = ?1 AND feature = ?2",
-                params![mode_str(mode), feature],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(raw.flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+    /// `rowid` is the tiebreaker rather than the wire name: the whole point of the
+    /// change is that a wire's *name* must not decide anything, and inserting in rank
+    /// order is how the ranking survives a round-trip through a table with no rank
+    /// column. Malformed menu JSON reads as *no menu*, never as a failed load — the
+    /// menu is a hint for choosing a model, the key beside it is what makes the
+    /// capability work at all, and a garbled hint must not take the key down with it.
+    /// The BYOK reader: one key per capability, because one person pasted it. Extra
+    /// rows can only come from a mode that does not write them, so the first wins.
+    fn read_vendor(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<VendorKey> {
+        Ok(read_vendors(conn, mode, feature)?.into_iter().next().unwrap_or_default())
     }
 
-    /// Write the menu onto an already-inserted row. Separate statement because
-    /// [`write_row`] is shared with the LLM slot, which has no menu.
-    fn write_models(
-        conn: &Connection,
-        mode: Mode,
-        feature: &str,
-        models: &[ModelOffer],
-    ) -> anyhow::Result<()> {
-        let json = if models.is_empty() { None } else { Some(serde_json::to_string(models)?) };
-        conn.execute(
-            "UPDATE credential SET models = ?3 WHERE mode = ?1 AND feature = ?2",
-            params![mode_str(mode), feature, json],
+    fn read_vendors(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<Vec<VendorKey>> {
+        let mut stmt = conn.prepare(
+            "SELECT wire, base_url, api_key, model, models, carrier FROM credential
+             WHERE mode = ?1 AND feature = ?2 ORDER BY rowid",
         )?;
-        Ok(())
+        let rows = stmt.query_map(params![mode_str(mode), feature], |r| {
+            Ok(VendorKey {
+                wire: r.get(0)?,
+                base_url: r.get(1)?,
+                api_key: r.get(2)?,
+                model: r.get(3)?,
+                models: r
+                    .get::<_, Option<String>>(4)?
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                carrier: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     fn read_llm(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<LlmCredentials> {
@@ -704,20 +818,64 @@ mod db {
         }
         Ok(Some(Managed {
             llm: read_llm(conn, Mode::Xiaoyuanzhu, "llm")?,
-            stt: read_vendor(conn, Mode::Xiaoyuanzhu, "stt")?,
-            tts: read_vendor(conn, Mode::Xiaoyuanzhu, "tts")?,
-            vision: read_vendor(conn, Mode::Xiaoyuanzhu, "vision")?,
-            image: read_vendor(conn, Mode::Xiaoyuanzhu, "image")?,
-            video: read_vendor(conn, Mode::Xiaoyuanzhu, "video")?,
+            stt: read_vendors(conn, Mode::Xiaoyuanzhu, "stt")?,
+            tts: read_vendors(conn, Mode::Xiaoyuanzhu, "tts")?,
+            vision: read_vendors(conn, Mode::Xiaoyuanzhu, "vision")?,
+            image: read_vendors(conn, Mode::Xiaoyuanzhu, "image")?,
+            video: read_vendors(conn, Mode::Xiaoyuanzhu, "video")?,
         }))
     }
 
-    fn write_vendor(conn: &Connection, mode: Mode, feature: &str, vk: &VendorKey) -> anyhow::Result<()> {
-        write_row(conn, mode, feature, &vk.wire, &vk.base_url, &vk.api_key, vk.model.as_deref(), None)?;
-        write_models(conn, mode, feature, &vk.models)
+    /// Replace every wire stored for one `(mode, feature)`.
+    ///
+    /// Delete-then-insert, not upsert: a wire the source has *stopped* offering has to
+    /// disappear, and an upsert keyed on the wire can only ever add. Insert order is
+    /// the rank [`read_vendors`] reads back.
+    fn write_vendors(
+        conn: &Connection,
+        mode: Mode,
+        feature: &str,
+        vks: &[VendorKey],
+    ) -> anyhow::Result<()> {
+        clear_feature(conn, mode, feature)?;
+        for vk in vks {
+            let models =
+                if vk.models.is_empty() { None } else { Some(serde_json::to_string(&vk.models)?) };
+            conn.execute(
+                "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small, models, carrier)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8)
+                 ON CONFLICT(mode, feature, wire) DO UPDATE SET
+                     base_url = excluded.base_url, api_key = excluded.api_key,
+                     model = excluded.model, models = excluded.models,
+                     carrier = excluded.carrier",
+                params![
+                    mode_str(mode),
+                    feature,
+                    vk.wire,
+                    vk.base_url,
+                    vk.api_key,
+                    vk.model.as_deref(),
+                    models,
+                    vk.carrier_opt()
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn clear_feature(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<()> {
+        conn.execute(
+            "DELETE FROM credential WHERE mode = ?1 AND feature = ?2",
+            params![mode_str(mode), feature],
+        )?;
+        Ok(())
     }
 
     fn write_llm(conn: &Connection, mode: Mode, feature: &str, llm: &LlmCredentials) -> anyhow::Result<()> {
+        // Cleared first for the same reason as [`write_vendors`]: with `wire` in the
+        // key, changing wires under an upsert leaves the old row behind as a second
+        // answer to a question that has one.
+        clear_feature(conn, mode, feature)?;
         write_row(
             conn,
             mode,
@@ -743,9 +901,9 @@ mod db {
     ) -> anyhow::Result<()> {
         conn.execute(
             "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(mode, feature) DO UPDATE SET
-                 wire = excluded.wire, base_url = excluded.base_url,
-                 api_key = excluded.api_key, model = excluded.model, small = excluded.small",
+             ON CONFLICT(mode, feature, wire) DO UPDATE SET
+                 base_url = excluded.base_url, api_key = excluded.api_key,
+                 model = excluded.model, small = excluded.small",
             params![mode_str(mode), feature, wire, base_url, api_key, model, small],
         )?;
         Ok(())
@@ -896,7 +1054,7 @@ mod tests {
                     model: None,
                     ..Default::default()
                 },
-                stt: VendorKey { api_key: "sg-secret".into(), ..Default::default() },
+                stt: vec![VendorKey { api_key: "sg-secret".into(), ..Default::default() }],
                 ..Default::default()
             }),
             energy: Some(Energy { remaining: 70, total: 100, resets_at: "x".into(), tier: "free".into() }),
@@ -1009,7 +1167,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut c = Credentials::default();
         c.managed = Some(Managed {
-            image: VendorKey {
+            image: vec![VendorKey {
                 api_key: "k".into(),
                 model: Some("gpt-image-2".into()),
                 models: vec![
@@ -1017,19 +1175,149 @@ mod tests {
                     ModelOffer { name: "gpt-image-1-mini".into(), quality: 50, speed: 90, price: 5 },
                 ],
                 ..Default::default()
-            },
+            }],
+            ..Default::default()
+        });
+        c.save(dir.path()).unwrap();
+
+        let back = Credentials::load(dir.path());
+        let image = &back.managed.as_ref().unwrap().image[0];
+        assert_eq!(image.models.len(), 2, "the menu was dropped on the way through");
+        assert_eq!(image.models[0].name, "gpt-image-2");
+        assert_eq!(image.models[1].price, 5);
+
+        // A capability the broker offered nothing for keeps no row at all, rather than
+        // one blank provider standing in for "no provider".
+        assert!(back.managed.as_ref().unwrap().stt.is_empty());
+    }
+
+    /// A capability served over several wires keeps every one of them, in rank order,
+    /// across the store. The old key was `(mode, feature)`, so the second wire did not
+    /// merely lose its rank — it overwrote the first.
+    #[test]
+    fn every_wire_of_one_capability_survives_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = Credentials::default();
+        c.managed = Some(Managed {
+            image: vec![
+                VendorKey {
+                    wire: "openai-responses".into(),
+                    base_url: "https://songguo.example/v1/responses".into(),
+                    api_key: "k".into(),
+                    model: Some("gpt-image-2".into()),
+                    models: vec![ModelOffer {
+                        name: "gpt-image-2".into(),
+                        quality: 96,
+                        speed: 45,
+                        price: 90,
+                    }],
+                    carrier: "gpt-5.4".into(),
+                },
+                VendorKey {
+                    wire: "openai-images".into(),
+                    base_url: "https://songguo.example/v1/images/generations".into(),
+                    api_key: "k".into(),
+                    model: Some("doubao-seedream-5.0-lite".into()),
+                    models: vec![ModelOffer {
+                        name: "doubao-seedream-5.0-lite".into(),
+                        quality: 75,
+                        speed: 80,
+                        price: 40,
+                    }],
+                    carrier: String::new(),
+                },
+            ],
             ..Default::default()
         });
         c.save(dir.path()).unwrap();
 
         let back = Credentials::load(dir.path());
         let image = &back.managed.as_ref().unwrap().image;
-        assert_eq!(image.models.len(), 2, "the menu was dropped on the way through");
-        assert_eq!(image.models[0].name, "gpt-image-2");
-        assert_eq!(image.models[1].price, 5);
+        assert_eq!(image.len(), 2, "the second wire overwrote the first");
+        assert_eq!(image[0].wire, "openai-responses", "rank must survive the round-trip");
+        assert_eq!(image[1].wire, "openai-images");
+        assert_eq!(image[1].models[0].name, "doubao-seedream-5.0-lite");
+        // The carrier rides with its wire, and only with the wire that has one.
+        assert_eq!(image[0].carrier_opt(), Some("gpt-5.4"));
+        assert_eq!(image[1].carrier_opt(), None);
 
-        // A slot with no menu stays empty rather than becoming a row of nothing.
-        assert!(back.managed.as_ref().unwrap().stt.models.is_empty());
+        // A later refresh that drops a wire must drop its row too, not leave it behind
+        // as a provider the broker has stopped offering.
+        let mut fewer = back;
+        fewer.managed.as_mut().unwrap().image.truncate(1);
+        fewer.save(dir.path()).unwrap();
+        let after = Credentials::load(dir.path());
+        assert_eq!(after.managed.as_ref().unwrap().image.len(), 1);
+        assert_eq!(after.managed.as_ref().unwrap().image[0].wire, "openai-responses");
+    }
+
+    /// **The upgrade path, on a store that already exists.** Every other test here
+    /// builds a fresh DB, which is created with the current key and so never exercises
+    /// the rebuild. An installed agent has the old `(mode, feature)` key, and getting
+    /// this wrong empties the credential store on first launch after an update.
+    #[test]
+    fn an_existing_store_is_rekeyed_without_losing_a_row() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let conn = rusqlite::Connection::open(path(dir.path())).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE credential (
+                     mode     TEXT NOT NULL,
+                     feature  TEXT NOT NULL,
+                     wire     TEXT NOT NULL DEFAULT '',
+                     base_url TEXT NOT NULL DEFAULT '',
+                     api_key  TEXT NOT NULL DEFAULT '',
+                     model    TEXT,
+                     small    TEXT,
+                     models   TEXT,
+                     PRIMARY KEY (mode, feature)
+                 );
+                 INSERT INTO credential (mode, feature, wire, base_url, api_key, model, models)
+                 VALUES ('xiaoyuanzhu', 'image', 'openai-images',
+                         'https://songguo.example/v1/images/generations', 'old-key',
+                         'doubao-seedream-5.0-lite',
+                         '[{\"name\":\"doubao-seedream-5.0-lite\",\"quality\":75,\"speed\":80,\"price\":40}]');",
+            )
+            .unwrap();
+        }
+
+        let loaded = Credentials::load(dir.path());
+        let image = &loaded.managed.as_ref().unwrap().image;
+        assert_eq!(image.len(), 1, "the stored row did not survive the rebuild");
+        assert_eq!(image[0].api_key, "old-key");
+        assert_eq!(image[0].models[0].name, "doubao-seedream-5.0-lite");
+
+        // And the point of the rebuild: a second wire can now sit beside the first
+        // instead of replacing it.
+        let mut grown = loaded;
+        grown.managed.as_mut().unwrap().image.push(VendorKey {
+            wire: "openai-responses".into(),
+            api_key: "k".into(),
+            ..Default::default()
+        });
+        grown.save(dir.path()).unwrap();
+        assert_eq!(Credentials::load(dir.path()).managed.unwrap().image.len(), 2);
+    }
+
+    /// A `credentials.json` written before the slots became lists still loads — serde
+    /// fails the whole `Credentials` on one bad field, so a single-object slot would
+    /// take the account and the BYOK keys down with it.
+    #[test]
+    fn a_legacy_single_wire_slot_deserializes_as_a_list() {
+        let legacy = r#"{
+            "mode":"xiaoyuanzhu",
+            "managed":{
+                "llm":{"base_url":"https://songguo.example/v1","api_key":"k"},
+                "image":{"api_key":"ik","model":"gpt-image-2"},
+                "stt":{"api_key":"sk"}
+            }
+        }"#;
+        let c: Credentials = serde_json::from_str(legacy).unwrap();
+        let m = c.managed.unwrap();
+        assert_eq!(m.image.len(), 1);
+        assert_eq!(m.image[0].model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(m.stt[0].api_key, "sk");
+        assert!(m.video.is_empty(), "an absent slot is an empty list, not a blank provider");
     }
 
     #[test]
@@ -1052,12 +1340,12 @@ mod tests {
                 model: None,
                 ..Default::default()
             },
-            stt: VendorKey { api_key: "managed-stt".into(), ..Default::default() },
+            stt: vec![VendorKey { api_key: "managed-stt".into(), ..Default::default() }],
             ..Default::default()
         });
         let e = c.effective().unwrap();
         assert_eq!(e.llm.api_key, "managed-key");
-        assert_eq!(e.stt.key_opt(), Some("managed-stt"));
+        assert_eq!(e.stt[0].key_opt(), Some("managed-stt"));
         assert_ne!(e.llm.api_key, "byok-key"); // BYOK ignored while managed is live
     }
 

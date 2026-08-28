@@ -12,9 +12,10 @@
 //! capabilities is configured separately for each.
 //!
 //! [`init`] is the composition root for the keyed capabilities — it sequences
-//! each one's own `init`, threading that vendor's BYOK key (from the credential
-//! store, else its `.env` key) in. A misconfigured provider (unknown name, a key
-//! that won't build) fails fast at startup rather than as an error at first use.
+//! each one's own `init`, threading in every provider configured for it (from the
+//! credential store, else its `.env` key). A key that won't build a config fails fast
+//! at startup rather than as an error at first use; a wire no impl can speak is
+//! skipped with a warning, because that list is the broker's to write, not ours.
 //! The two recognition capabilities (voiceprint, face) are not env-configured — they run pinned local ONNX models that [`init_recognition`]
 //! auto-provisions on first run (see [`crate::foundation::models`]), so they have no provider
 //! toggle and nothing for the operator to set.
@@ -48,42 +49,70 @@ pub mod voiceprint;
 
 /// Initialize the keyed capabilities (STT, TTS, vision, image/video gen) from the
 /// credentials in effect for the current mode — the user's BYOK keys, or the
-/// broker-minted bundle (xiaoyuanzhu) — falling back to `.env` per vendor. Fails
-/// fast if a configured provider is missing its key or names an unknown provider.
-/// The recognition capabilities are provisioned separately by [`init_recognition`].
+/// broker-minted bundle (xiaoyuanzhu) — falling back to `.env` per vendor. The
+/// recognition capabilities are provisioned separately by [`init_recognition`].
+///
+/// **Every capability takes a list of providers — one per wire its source offers.**
+/// A task is served over several wires (`text-to-image` over both `openai-images` and
+/// `openai-responses`), and which HTTP shapes we can actually speak is knowledge that
+/// lives in the capability, so the choice is made there rather than upstream. Each
+/// capability maps the credential vocabulary into its own `ProviderSpec` — no shared
+/// spec type across capabilities, by the same rule as everything else here.
+///
+/// Where the caller names a model (image, video), the model chooses the wire and all
+/// of them stay live at once. Where it does not (STT, TTS, vision), the capability
+/// holds the first wire it can speak and logs the rest.
 pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Result<()> {
+    use crate::foundation::credentials::VendorKey;
     let eff = creds.effective();
+    let none: &[VendorKey] = &[];
+    let (stt_wires, tts_wires, vision_wires, image_wires, video_wires) = match eff.as_ref() {
+        Some(e) => (e.stt, e.tts, e.vision, e.image, e.video),
+        None => (none, none, none, none, none),
+    };
+
     stt::init(
-        eff.as_ref().and_then(|e| e.stt.key_opt()),
-        eff.as_ref().and_then(|e| e.stt.base_url_opt()),
-        eff.as_ref().and_then(|e| e.stt.model_opt()),
-        eff.as_ref().and_then(|e| e.stt.wire_opt()),
+        stt_wires
+            .iter()
+            .map(|v| stt::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+                model: v.model_opt().map(str::to_owned),
+            })
+            .collect(),
     )?;
     tts::init(
-        eff.as_ref().and_then(|e| e.tts.key_opt()),
-        eff.as_ref().and_then(|e| e.tts.base_url_opt()),
-        eff.as_ref().and_then(|e| e.tts.wire_opt()),
+        tts_wires
+            .iter()
+            .map(|v| tts::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+            })
+            .collect(),
     )?;
     vision::init(
-        eff.as_ref().and_then(|e| e.vision.key_opt()),
-        eff.as_ref().and_then(|e| e.vision.base_url_opt()),
-        eff.as_ref().and_then(|e| e.vision.model_opt()),
-        eff.as_ref().and_then(|e| e.vision.wire_opt()),
+        vision_wires
+            .iter()
+            .map(|v| vision::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+                model: v.model_opt().map(str::to_owned),
+            })
+            .collect(),
     )?;
-    // The two generation capabilities take a *list* of providers carrying a *list* of
-    // models, because their caller names a model rather than inheriting one. The store
-    // yields one endpoint per capability today; the menu on it is what the agent
-    // chooses from, and each capability maps the credential vocabulary into its own —
-    // no shared model type across capabilities, by the same rule as everything else here.
-    image_gen::init(vec![image_gen::ProviderSpec {
-        wire: eff.as_ref().and_then(|e| e.image.wire_opt()).map(str::to_owned),
-        base_url: eff.as_ref().and_then(|e| e.image.base_url_opt()).map(str::to_owned),
-        api_key: eff.as_ref().and_then(|e| e.image.key_opt()).unwrap_or_default().to_owned(),
-        default_model: eff.as_ref().and_then(|e| e.image.model_opt()).map(str::to_owned),
-        models: eff
-            .as_ref()
-            .map(|e| {
-                e.image
+    image_gen::init(
+        image_wires
+            .iter()
+            .map(|v| image_gen::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+                carrier: v.carrier_opt().map(str::to_owned),
+                default_model: v.model_opt().map(str::to_owned),
+                models: v
                     .models
                     .iter()
                     .map(|m| image_gen::ModelInfo {
@@ -92,19 +121,19 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
                         speed: m.speed,
                         price: m.price,
                     })
-                    .collect()
+                    .collect(),
             })
-            .unwrap_or_default(),
-    }])?;
-    video_gen::init(vec![video_gen::ProviderSpec {
-        wire: eff.as_ref().and_then(|e| e.video.wire_opt()).map(str::to_owned),
-        base_url: eff.as_ref().and_then(|e| e.video.base_url_opt()).map(str::to_owned),
-        api_key: eff.as_ref().and_then(|e| e.video.key_opt()).unwrap_or_default().to_owned(),
-        default_model: eff.as_ref().and_then(|e| e.video.model_opt()).map(str::to_owned),
-        models: eff
-            .as_ref()
-            .map(|e| {
-                e.video
+            .collect(),
+    )?;
+    video_gen::init(
+        video_wires
+            .iter()
+            .map(|v| video_gen::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+                default_model: v.model_opt().map(str::to_owned),
+                models: v
                     .models
                     .iter()
                     .map(|m| video_gen::ModelInfo {
@@ -113,10 +142,10 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
                         speed: m.speed,
                         price: m.price,
                     })
-                    .collect()
+                    .collect(),
             })
-            .unwrap_or_default(),
-    }])?;
+            .collect(),
+    )?;
     Ok(())
 }
 

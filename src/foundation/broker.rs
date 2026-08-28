@@ -140,36 +140,17 @@ struct WireDto {
     api_key: String,
     #[serde(default)]
     models: Vec<ModelDto>,
+    /// The mainline model that carries a hosted tool, on a wire whose work happens
+    /// inside a turn rather than at its own endpoint (`openai-responses` serving
+    /// `text-to-image`). Absent on every other wire, and the capability that needs one
+    /// refuses to start without it rather than inventing a model to bill.
+    #[serde(default)]
+    carrier: String,
 }
 
 /// GET /api/agent/configs — a three-layer menu: HF task name → wire name →
 /// endpoint. Collapsed into the internal per-slot [`Managed`] by [`managed_from`].
 type ConfigsDto = std::collections::HashMap<String, std::collections::HashMap<String, WireDto>>;
-
-/// Reduce one task's `wire → endpoint` map to (wire, full url, api_key, model):
-/// the selected wire (or lexically-first for deterministic default behavior) and
-/// the highest-`quality` model, plus that model's optional `small` companion.
-///
-/// Broker URLs are always full protocol endpoints. Callers keep that endpoint or
-/// strip/rebase it per local adapter requirements.
-fn pick_wire(
-    wires: &std::collections::HashMap<String, WireDto>,
-    desired_wire: Option<&str>,
-) -> Option<(String, String, String, Option<String>, Option<String>)> {
-    let (wire, w) = if let Some(desired) = desired_wire {
-        wires.get_key_value(desired)?
-    } else {
-        wires.iter().min_by(|a, b| a.0.cmp(b.0))?
-    };
-    let best = w.models.iter().max_by_key(|m| m.quality);
-    let model = best
-        .map(|m| m.model.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let small = best
-        .map(|m| m.small.trim().to_string())
-        .filter(|s| !s.is_empty());
-    Some((wire.clone(), w.url.trim().to_string(), w.api_key.clone(), model, small))
-}
 
 /// The broker's name for the wire the agent speaks. Codex drives the OpenAI
 /// **Responses** API, and the broker already mints this wire alongside the others, so
@@ -187,13 +168,20 @@ fn openai_responses_base(url: &str) -> String {
 
 /// The LLM wire from the broker's menu, or `None` when it offers none we can drive.
 ///
-/// The broker controls the agent by choosing which wires it returns; the client sends
-/// no preference. It still lists `anthropic-messages` for older installs, and we now
-/// ignore that one outright rather than preferring it.
+/// **The one task that is deliberately single-wire.** Every other task hands the whole
+/// menu to its capability to choose from ([`managed_from`]); here the wire is not ours
+/// to choose, because the wire *is* the agent runtime — codex speaks OpenAI Responses,
+/// so `anthropic-messages` (which the broker still lists for older installs) would be a
+/// second engine rather than a second config, and we ignore it outright.
+///
+/// Takes the highest-`quality` model on that wire, plus its optional `small` companion
+/// for the background slot.
 fn pick_llm_wire(c: &ConfigsDto) -> Option<(String, String, Option<String>, Option<String>)> {
-    let wires = c.get("text-generation")?;
-    let (_wire, url, api_key, model, small) = pick_wire(wires, Some(BROKER_LLM_WIRE))?;
-    Some((openai_responses_base(&url), api_key, model, small))
+    let w = c.get("text-generation")?.get(BROKER_LLM_WIRE)?;
+    let best = w.models.iter().max_by_key(|m| m.quality);
+    let model = best.map(|m| m.model.trim().to_string()).filter(|s| !s.is_empty());
+    let small = best.map(|m| m.small.trim().to_string()).filter(|s| !s.is_empty());
+    Some((openai_responses_base(w.url.trim()), w.api_key.clone(), model, small))
 }
 
 /// Collapse the broker menu into the internal per-slot [`Managed`], selecting the
@@ -203,53 +191,57 @@ fn pick_llm_wire(c: &ConfigsDto) -> Option<(String, String, Option<String>, Opti
 /// capabilities use it verbatim; the LLM wire strips only the endpoint leaf, keeping
 /// the OpenAI `/v1` base that codex's provider block wants.
 fn managed_from(c: &ConfigsDto) -> Managed {
-    // The endpoint, the key, and the best-quality model — and **no wire id**.
+    // **Every wire the broker offers for the task, best first — none discarded here.**
     //
-    // The blank wire is deliberate and load-bearing: the broker names wires in its own
-    // vocabulary (`volc-asr-stream-async`), which is not what these capabilities call
-    // their vendors, and each of them treats an unrecognised wire as fatal at startup.
-    // Passing it through cost a boot the first time it was tried. These slots take one
-    // vendor per capability and never choose, so the id buys nothing anyway.
-    let vendor = |task: &str| -> VendorKey {
-        c.get(task)
-            .and_then(|w| pick_wire(w, None))
-            .map(|(_wire, url, api_key, model, _small)| VendorKey {
-                wire: String::new(),
-                base_url: url,
-                api_key,
-                model,
-                models: Vec::new(),
+    // Which HTTP shapes we can actually speak is knowledge that lives in the
+    // capability, not in this function, so choosing among the wires is the
+    // capability's job; the broker client's job is to hand over the whole menu.
+    // Collapsing it here is what hid `gpt-image-2`: songguo served it over
+    // `openai-responses` while `openai-images` served seedream, and the survivor was
+    // whichever wire sorted first *by name*.
+    //
+    // Each wire keeps its id **and its whole model list**, not just the best-quality
+    // pick — for the generation capabilities that list *is* the menu the agent chooses
+    // from, and collapsing it is what made "the agent picks the model" unimplementable.
+    // Every capability now reads the wire id loosely and skips what it cannot speak, so
+    // an unfamiliar spelling (`volc-asr-stream-async`) costs a log line rather than the
+    // boot it cost when this passed the id through the first time.
+    let wires_for = |task: &str| -> Vec<VendorKey> {
+        let Some(wires) = c.get(task) else { return Vec::new() };
+        let mut slots: Vec<VendorKey> = wires
+            .iter()
+            .map(|(wire, w)| {
+                let best = w.models.iter().max_by_key(|m| m.quality);
+                VendorKey {
+                    wire: wire.clone(),
+                    base_url: w.url.trim().to_string(),
+                    api_key: w.api_key.clone(),
+                    model: best.map(|m| m.model.trim().to_string()).filter(|s| !s.is_empty()),
+                    carrier: w.carrier.trim().to_string(),
+                    models: w
+                        .models
+                        .iter()
+                        .filter(|m| !m.model.trim().is_empty())
+                        .map(|m| ModelOffer {
+                            name: m.model.trim().to_string(),
+                            quality: m.quality,
+                            speed: m.speed,
+                            price: m.price,
+                        })
+                        .collect(),
+                }
             })
-            .unwrap_or_default()
-    };
-
-    // The generation slots keep the wire id **and the whole model list**, not just the
-    // best-quality pick. For them that list *is* the menu the agent chooses from —
-    // collapsing it here is what made "the agent picks the model" unimplementable,
-    // since nothing was left to pick from by the time the capability saw it. Both
-    // capabilities read the wire id loosely and fall back to the model name, so an
-    // unfamiliar spelling costs a log line rather than a boot.
-    let generative = |task: &str| -> VendorKey {
-        let Some(wires) = c.get(task) else { return VendorKey::default() };
-        let Some((wire, url, api_key, model, _small)) = pick_wire(wires, None) else {
-            return VendorKey::default();
-        };
-        let models = wires
-            .get(&wire)
-            .map(|w| {
-                w.models
-                    .iter()
-                    .filter(|m| !m.model.trim().is_empty())
-                    .map(|m| ModelOffer {
-                        name: m.model.trim().to_string(),
-                        quality: m.quality,
-                        speed: m.speed,
-                        price: m.price,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        VendorKey { wire, base_url: url, api_key, model, models }
+            .collect();
+        // Rank by the best model each wire serves, so "first" means "best on offer"
+        // rather than "alphabetically luckiest". The wire name breaks ties only to keep
+        // the order stable across runs — a `HashMap` iterates differently every time,
+        // and a capability that takes the first would otherwise pick a different vendor
+        // on each boot.
+        slots.sort_by(|a, b| {
+            let q = |v: &VendorKey| v.models.iter().map(|m| m.quality).max().unwrap_or(i64::MIN);
+            q(b).cmp(&q(a)).then_with(|| a.wire.cmp(&b.wire))
+        });
+        slots
     };
     let llm = pick_llm_wire(c)
         .map(|(base_url, api_key, model, small)| LlmCredentials {
@@ -262,11 +254,11 @@ fn managed_from(c: &ConfigsDto) -> Managed {
         .unwrap_or_default();
     Managed {
         llm,
-        stt: vendor("automatic-speech-recognition"),
-        tts: vendor("text-to-speech"),
-        vision: vendor("image-text-to-text"),
-        image: generative("text-to-image"),
-        video: generative("text-to-video"),
+        stt: wires_for("automatic-speech-recognition"),
+        tts: wires_for("text-to-speech"),
+        vision: wires_for("image-text-to-text"),
+        image: wires_for("text-to-image"),
+        video: wires_for("text-to-video"),
     }
 }
 
@@ -897,6 +889,70 @@ mod tests {
         let managed = managed_from(&configs);
         assert_eq!(managed.llm.wire, "");
         assert_eq!(managed.llm.api_key, "");
+    }
+
+    /// **The regression this shape exists for.** songguo served `text-to-image` over two
+    /// wires — seedream on `openai-images`, `gpt-image-2` on `openai-responses` — and the
+    /// old collapse kept whichever wire sorted first *by name*, so `gpt-image-2` was
+    /// invisible to the agent and nothing said so. Every wire now survives the trip.
+    #[test]
+    fn every_wire_a_task_offers_survives() {
+        let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
+            "text-to-image": {
+                "openai-images": {
+                    "url": "https://songguo.example/v1/images/generations",
+                    "api_key": "tok",
+                    "models": [{ "model": "doubao-seedream-5.0-lite", "quality": 75 }]
+                },
+                "openai-responses": {
+                    "url": "https://songguo.example/v1/responses",
+                    "api_key": "tok",
+                    "models": [{ "model": "gpt-image-2", "quality": 96 }]
+                }
+            }
+        }))
+        .unwrap();
+
+        let image = managed_from(&configs).image;
+        assert_eq!(image.len(), 2, "neither wire may be dropped");
+        // Ranked by the best model on offer, not by the wire's name — `openai-images`
+        // sorts first alphabetically and would have won under the old rule.
+        assert_eq!(image[0].wire, "openai-responses");
+        assert_eq!(image[0].model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(image[0].base_url, "https://songguo.example/v1/responses");
+        assert_eq!(image[1].wire, "openai-images");
+        assert_eq!(image[1].model.as_deref(), Some("doubao-seedream-5.0-lite"));
+        // Each wire keeps its own menu; the lists are not merged.
+        assert_eq!(image[0].models.len(), 1);
+        assert_eq!(image[1].models[0].name, "doubao-seedream-5.0-lite");
+    }
+
+    /// The wire id reaches the capability now — it used to be blanked here because
+    /// these capabilities treated an unfamiliar spelling as fatal, and they no longer do.
+    #[test]
+    fn a_single_wire_task_still_carries_its_id_and_menu() {
+        let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
+            "automatic-speech-recognition": {
+                "volc-asr-stream-async": {
+                    "url": "https://songguo.example/v1/asr",
+                    "api_key": "tok",
+                    "models": [{ "model": "bigmodel-asr", "quality": 80 }]
+                }
+            }
+        }))
+        .unwrap();
+
+        let stt = managed_from(&configs).stt;
+        assert_eq!(stt.len(), 1);
+        assert_eq!(stt[0].wire, "volc-asr-stream-async");
+        assert_eq!(stt[0].model.as_deref(), Some("bigmodel-asr"));
+    }
+
+    /// A task the broker does not offer at all leaves an empty list, not a phantom
+    /// provider with a blank key.
+    #[test]
+    fn an_unoffered_task_is_empty() {
+        assert!(managed_from(&text_generation_configs()).video.is_empty());
     }
 
     #[test]
