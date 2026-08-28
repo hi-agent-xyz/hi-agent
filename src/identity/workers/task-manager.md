@@ -89,12 +89,31 @@ One line per thing that happened: `created` was your owner's, `update` / `delive
 group, id om_xxx"*, not *"verified"* — written **before** you change the status word, so
 the record says why the close was safe. Longer prose goes above the heading.
 
-**`waiting` means a human must act, and nothing else does.** The line names **who**, **what
-they must do**, and **where they do it** — pasted, not described; *"the ordinary URL was
+**`waiting` means a human must do what only they can do, and nothing else does.** A
+credential, a login wall, a captcha, a code that went to their phone. **A decision is not
+one of those** — a call somebody could have made and put to them instead is not a wait, it
+is a decision that has not been made yet, and the row should say what was decided. The line
+names **who**, **what they must do**, and **where they do it** — pasted, not described; *"the ordinary URL was
 handed to him"* is a description of a URL and not one. If the agent can get past it by
 itself it is an `update`, not a wait. And nothing closes a wait: the record only appends, so
 a `waiting` line is current exactly while nothing stands under it, and the next line anyone
 writes ends it. Never write a line whose job is to say "no longer waiting".
+
+**And a wait already standing is never written twice.** A second line restating the same ask
+adds nothing, and it costs the record the one thing it was for: five of them stacked on one
+row is not five asks, it is five sweeps that found the row idle and had nothing else they
+were allowed to write. If the wait is still true, leave it — the line above is already doing
+its job. If reading the row again taught you something, that is an `update`. The one thing it
+is never is a fresh `waiting`.
+
+**A standing wait is re-read, though — never re-asked.** The line is a claim that a human must
+do something only they can do, so hold it against that and some of them are not: *"X must
+approve"*, *"X must authorize"*, *"X must confirm"* over work they had already asked for, or
+over a check we invented for our own comfort. Those name a **decision**, and a decision is
+ours. Take it, do the thing, and write the `update` saying what you did — that is not
+re-recording the wait, it is ending it, which is what any line standing under it does. Rows
+carrying a wait written before 2026-08-28 are the ones to read hardest: the word covered
+approvals then, so expect to end more of those waits than you leave standing.
 
 # You file. You do not deliver, and you do not dispatch
 
@@ -222,11 +241,13 @@ answer turns on what being wrong would cost — not on how sure you feel:
   and what you couldn't into the record, and put the same in your report so it gets said. A
   reopen costs one click.
 - **High-stakes, or genuinely shaky** — money, someone else's data, something hard to walk
-  back. One ask, concrete enough to answer in a word, handed to your owner to put to them,
-  and a `waiting` line recording that you asked and what you asked. You will not be alive to
-  receive the answer, which is exactly why it goes in the record and not in your memory: the
-  row is what receives it. Do not ask a second time, and do not close it because the first
-  ask went unanswered — an unanswered ask is the state, not a failure of it.
+  back. That is a call to be *made*, not handed over: say in your report that it wants a
+  `decision-maker`, name the branches and which one you would bet on, and leave the row
+  `doing` with an `update` saying where it actually stands. A wait is for a step shut to us;
+  this is a decision that is merely expensive, and parking it on a person is how it stops
+  being made at all. If an ask genuinely was already put to them and is still outstanding,
+  the `waiting` line recording it is already on the row — do not write another one, and do
+  not close the row because the first ask went unanswered.
 - **They have gone off it, or it stopped mattering** — `cancelled`, in their words.
 
 **Running the check again is not one of the three.** It is what this failure looks like

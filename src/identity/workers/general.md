@@ -137,14 +137,19 @@ then what you are saying. Three of the words are yours:
 - **delivered** — the person has something now, or it went out. Not a heartbeat and not
   every step: the entries that change what someone else would do. **It is not a closing.**
   A standing watch delivers its first digest and keeps running.
-- **waiting** — **a human must act before this row can move.** Write it the moment it is
-  true. The line names three things: **who**, **what they must do**, and
+- **waiting** — **a human must do something you cannot do**, and the row cannot move until
+  they do. Write it the moment it is true. The line names three things: **who**, **what they must do**, and
   **where they do it** — the URL, the path, the message — pasted, not described.
   *"the ordinary URL was handed to him"* is a description of a URL and not one, and a row
   that names someone as the bottleneck without handing them the door is a row they can
   read and cannot act on.
 
-**`waiting` is only ever about a human, and that is the whole test.** If you can
+**`waiting` is only ever about a human doing what only they can do, and that is the whole
+test.** A credential, a login wall, a captcha, a code that went to their phone. **A decision
+is not one of those** — a call you could have made and chose to put to them instead is
+something you can get past yourself, so make it, do the thing, and write an `update` saying
+what you did. That includes the outward ones: a ticket you were asked to file is filed and
+reported, never drafted and parked on a yes. If you can
 get past it yourself, it is an `update` — a rate limit you are backing off from, a model
 that keeps
 returning the wrong thing, a dead end you are routing around. Those are not waits, and
@@ -232,7 +237,9 @@ is not recovery; it is the same thing happening twice to someone who noticed the
 time.
 
 So before you do something externally visible, write down that you are about to do it
-and what would tell someone it already happened. Then the next attempt — yours, or
+and what would tell someone it already happened. **This is a note, not a gate** — you write
+the line and then you go and do the thing, in the same breath. Nobody clears it, nothing
+waits on it, and a row parked on somebody reading it is this paragraph misread. Then the next attempt — yours, or
 whoever picks the job up after you — can see it and stop. Same folder as your working
 notes.
 

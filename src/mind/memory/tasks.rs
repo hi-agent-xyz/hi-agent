@@ -137,10 +137,13 @@ pub enum TimelineKind {
     /// The person has something now, or it went out. **Not a closing**: a standing watch
     /// delivers its first digest and keeps running. Formerly `landed`.
     Delivered,
-    /// **A human must act before this row can move**, and the line names who, what they
-    /// must do, and where they do it. Anything the agent can get past by itself is an
-    /// [`Self::Update`] — that is the whole of the distinction, and it is the one
-    /// `blocked` did not make.
+    /// **A human must do what only they can do before this row can move** — a credential,
+    /// a login wall, a code on their phone — and the line names who, what they must do, and
+    /// where they do it. Anything the agent can get past by itself is an [`Self::Update`],
+    /// and since 2026-08-28 that explicitly includes **a decision**: a call the agent could
+    /// have made and put to a person instead is not a wait, it is a decision that has not
+    /// been made. That is the whole of the distinction, and it is the one `blocked` did not
+    /// make.
     Waiting,
     /// A status transition. **Written by the store, never by a mind**, on the same pass
     /// that stamps `status_since`: a mind that has to remember to record its own
@@ -904,20 +907,29 @@ fn line(task: &Task, now: DateTime<Utc>) -> String {
 /// disposition does. An age is something to note; this is something to answer, and it names
 /// the answers there are so that a seventh probe cannot pass for one of them.
 ///
-/// **Waiting on the person is one of them, and leaving it out is how seven rows got closed.**
-/// The list is what the reader acts on — there are no gates on this ledger, so this sentence
-/// is the only pressure the host applies at all — and a disposition it does not name reads as
-/// one that is not allowed. On 2026-08-25 a glance-up manager, told three answers that were
-/// all *stop*, closed seven rows whose remaining step was Zhao Li's own decision. What the
-/// row needs is a **recorded** disposition, not a terminal one: an ask, written down, is a
-/// row that has stopped drifting, and code cannot tell that from a re-probe — so the sentence
-/// says which, and the judgment stays with the manager reading it.
+/// **Waiting on the person is one of them, and it has failed in both directions.** The list
+/// is what the reader acts on — there are no gates on this ledger, so this sentence is the
+/// only pressure the host applies at all — and a disposition it does not name reads as one
+/// that is not allowed. Leaving it out closed seven rows on 2026-08-25, when a glance-up
+/// manager told three answers that were all *stop* closed rows whose remaining step was a
+/// person's. Naming it as *"ask once and record what it waits on"* then failed the other way:
+/// a sweep that finds an idle row already waiting has no reason to write anything, but that
+/// clause reads as an invitation, and on 2026-08-27 one pass re-recorded the same wait on
+/// five rows at once — kt8-059 ended up carrying five successive `waiting` lines restating
+/// one ask. So the sentence now names the wait as a state to **re-read rather than re-ask** —
+/// and, crucially, one the re-read may *end*. "Leave it alone" was the first repair written
+/// here and it was wrong in the third direction: the same clause that stops a sweep
+/// re-recording a wait would freeze every wait already on disk, including the ones that only
+/// ever named an approval the agent could have decided for itself. A wait naming a decision
+/// is ended by taking it.
 fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
     if task.past_idle_boundary(now) {
         let since = task.status_since?;
         return Some(format!(
-            "last moved {} — say where it stands: close it with what you did verify, ask once \
-             and record what it waits on, or cancel it; checking it again is not one of the three",
+            "last moved {} — say where it stands: close it with what you did verify, take the \
+             decision it is stuck behind, or cancel it; a recorded wait is re-read, never \
+             re-asked, and one naming a decision rather than a step only they can take is \
+             yours to take. Checking it again is not one of the three",
             ago(now, since)
         ));
     }
@@ -2246,16 +2258,23 @@ mod tests {
         assert!(text.contains("last moved 4d ago"), "{text}");
         assert!(
             text.contains(
-                "close it with what you did verify, ask once and record what it waits on, \
+                "close it with what you did verify, take the decision it is stuck behind, \
                  or cancel it"
             ),
             "{text}"
         );
-        assert!(text.contains("checking it again is not one of the three"), "{text}");
-        // **The one that must not go missing.** Waiting on the person is a disposition, and
-        // a sentence that names only ways to stop reads as forbidding it — which is what
-        // closed seven rows in one batch on 2026-08-25.
-        assert!(text.contains("ask once and record what it waits on"), "{text}");
+        assert!(text.contains("Checking it again is not one of the three"), "{text}");
+        // **The one that must not go missing, and it now cuts both ways.** A sentence naming
+        // only ways to stop closed seven rows in one batch on 2026-08-25; a sentence inviting
+        // an ask re-recorded the same wait on five rows in one pass on 2026-08-27. The wait
+        // has to be named as a state that is left alone.
+        assert!(text.contains("a recorded wait is re-read, never re-asked"), "{text}");
+        // And the re-read has to be able to *end* the wait, or the clause that stops the
+        // re-park becomes the thing that makes a stale approval-wait permanent.
+        assert!(
+            text.contains("naming a decision rather than a step only they can take is yours"),
+            "{text}"
+        );
         assert!(!text.contains("open 30d"), "the age is no longer the fact: {text}");
 
         // The boundary itself: an hour short of it says nothing.

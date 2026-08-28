@@ -130,9 +130,16 @@ Each is a statement we can test, and each has a real failure behind it.
    valuable is written down before the crash.
 8. **A liveness probe that returns nothing means the thing is DOWN.** Count, don't check for
    existence.
-9. **Irreversible or outward-facing → ask.** No silent outward action, ever. This one is
-   about reversibility, and it stands — as guidance the agent follows, not a gate the host
-   enforces.
+9. **No silent outward action.** Not *ask before* — **say after**. The agent decides, acts,
+   and then says what reached the outside world; an outward step is announced, never
+   cleared. This read "irreversible or outward-facing → ask" until 2026-08-28, and the
+   asking half is what failed: a gate cannot tell the action the person just asked for from
+   one they never mentioned, so it stopped both, and *"create a Feishu ticket for me"*
+   became a drafted ticket parked on permission to create the ticket. Judgment replaces it —
+   weigh what being wrong would cost, and where the cost is one-way *and* nobody asked, that
+   is what a [Decision Maker](agents.md#decision-maker) is for. The person is for a step
+   genuinely shut to the agent: a credential, a login wall, a code on their phone. Guidance
+   the agent follows, not a gate the host enforces.
 10. **A key someone typed reaches a session as a path.** The core, its log, its drive and
     the person all keep the exact value; a credential found in an inbound message is
     written to an ordinary `drive/accounts/secrets/*.txt` file, and prompts entering a

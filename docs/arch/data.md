@@ -764,14 +764,18 @@ lie about where it sends someone.
 
 **And the cadence must not exclude it, because the cadence is the only pressure there is.**
 There are no gates on this ledger, so past the idle boundary the sentence a `doing` line
-carries — *say where it stands: close it, ask once and record what it waits on, or cancel
-it* — is the whole of what the host asks for. A disposition that sentence does not name
-reads as one that is not allowed.
+carries — *say where it stands: close it, take the decision it is stuck behind, or cancel
+it; a recorded wait is re-read, never re-asked* — is the whole of what the host asks for. A
+disposition that sentence does not name reads as one that is not allowed, and one it names
+loosely reads as an instruction: the clause used to say *ask once and record what it waits
+on*, and on 2026-08-27 a single pass re-recorded the same wait on five rows.
 
-What it asks for is a disposition **recorded**, not a terminal one. That is the distinction
-worth holding: an ask that has been made and written down is a row that has stopped drifting,
-and it is the seventh probe — the same check run again in place of a decision — that the
-boundary exists to refuse. Code cannot tell those two apart. It has no business trying: a
+What it asks for is a disposition **recorded**, not a terminal one, and a wait already on the
+row is one — so it wants no second ask. It does want reading: the word covered approvals until
+2026-08-28, so a wait on an older row often names a decision the agent could have taken, and
+taking it is what ends the wait. What the boundary refuses is the seventh probe — the same
+check run again in place of a decision — and the second wait written where the first still
+stands. Not the re-read that ends either of them. Code cannot tell those two apart. It has no business trying: a
 classifier over prose the agent writes freely would decide what a `waiting` line *means*, and
 be wrong on the long tail in a way nobody could see. So the host supplies the words and the
 manager supplies the judgment, which is the same division the whole ledger already runs on.

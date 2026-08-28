@@ -145,8 +145,8 @@ classifies by it, and its absence says nothing.
 
 Whether a tool acts on the agent's own
 machine or the person's screen, whether it returns now or mails a result back later, whether it
-should stop and ask before doing something irreversible — all of that matters, and all of it is
-prose in the body.
+how much weight to give being wrong about something irreversible — all of that matters, and
+all of it is prose in the body.
 
 Not because it is unimportant. Because every time judgment-read material was put in a schema
 here it decayed: facets stayed prose on the grounds that *forms get filled*, and
@@ -336,10 +336,10 @@ Two costs of that, stated rather than discovered later:
 
 - **Consent loses its mechanical backstop.** The agent runtime gates MCP calls and does not gate
   shell commands. That is consistent with [invariant 9](arch.md#invariants) being guidance the
-  agent follows rather than a gate the host enforces, and with the
-  [gates](foundation.md#gates) firing inside running work. It is a real change — and a smaller
-  one than it reads, since the rungs already run with approvals off and answer for themselves
-  what the runtime still asks.
+  agent follows rather than a gate the host enforces, and with there being
+  [no gates at all](foundation.md#judgment-not-gates) inside running work either. It is a real
+  change — and a smaller one than it reads, since the rungs already run with approvals off and
+  answer for themselves what the runtime still asks.
 - **One-shot calls drop the protocol's push half.** A shim is request/response; MCP servers can
   emit progress and can ask the client for things mid-call. Through a command, none of that
   arrives. For a system built on continuous-not-batch that is a real amputation, and it is

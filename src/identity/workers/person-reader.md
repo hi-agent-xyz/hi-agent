@@ -206,8 +206,10 @@ in the sentence by itself, and every claim carries the episodes behind it.
 across everyone the agent models, and the host cuts it off when the total runs over — so
 what you add here is taken out of somebody's, possibly this person's own. Rank it
 honestly: a fluency line failing costs a clumsier sentence, while the claims around it —
-what needs approval, what is theirs to decide, what they have said twice — cost a wrong
-action. If the section is getting long, this is what goes first, and one sentence is
+what only they can do, what is theirs to decide, what they have said twice — cost a wrong
+action. **Not what needs their approval**, which is not a fact about a person: a limit they
+set on one occasion, written flat into their file, comes back a month later as a standing
+gate and parks work on somebody who never asked to hold it. If the section is getting long, this is what goes first, and one sentence is
 already the whole of what it should ever be.
 
 # Finish

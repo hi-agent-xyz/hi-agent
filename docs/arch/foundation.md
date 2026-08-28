@@ -90,7 +90,7 @@ See [`privacy.md`](privacy.md).
 | Classify by **who had to be present** | That, not what the tool is, predicts whether a job stalls |
 | Operate UI where no API exists | A person with an account can do it; so can we |
 | A missing tool is part of the task | Degrading to a web search when the answer was "install it" is a failure |
-| Irreversible or outward-facing → ask | Publishing cannot be undone; caches and indexes outlive deletion |
+| No silent outward action | Say after, don't ask before — a gate cannot tell what was just asked for from what nobody mentioned, so it stops both and parks the row on a person |
 | General vision over per-app scripting | See-and-click works on any app; a script works on one |
 
 ## The agent session registry
@@ -326,8 +326,9 @@ inspection.
 A **pure transform** changes data; an **effecting tool** changes the world. Workers carry the
 effecting ones because that is where the work is, not because anyone above is untrusted — a
 role reaching outside its default is a sizing mistake to correct, not an intrusion to block.
-The real guardrails are [invariant 9](arch.md#invariants) and the
-[gates](#gates) below, and both are judgment.
+The real guardrails are [invariant 9](arch.md#invariants) and
+[judgment, not gates](#judgment-not-gates) below — and since 2026-08-28 that is literally
+all they are: there is no suspension anywhere, only a rung deciding and saying what it did.
 
 The external-model boundary is enforced at provider egress. Model-driven local commands may
 consume secret drive files by path, while every later provider request is projected again.
@@ -413,15 +414,27 @@ state the risk plainly, leave a trace, and act in a limited way. When something 
 blocked — a captcha, a login wall — hand that step back rather than trying to defeat it, and
 never silently retry a blocked automation.
 
-## Gates
+## Judgment, not gates
 
-Two, and they fire *inside* running work rather than before it starts:
+There are none. Sensitive, irreversible and outward-facing work is decided by the rung doing
+it, the same as everything else, and what reached the outside world is **said afterwards**
+([invariant 9](arch.md#invariants)).
 
-- **Sensitive or irreversible** — payment, deletion, outbound send, account operations. The
-  worker suspends, routes a question up, resumes. The call itself is a
-  [Decision Maker](agents.md#decision-maker)'s job — a specialized worker, not a checkpoint
-  in the path.
-- **Outward-facing publication** — staged for explicit approval, always.
+This was two gates firing *inside* running work — the worker suspending, routing a question
+up, resuming — and suspending is the part that did not survive contact. A gate has no way to
+tell the action the person just asked for from one they never mentioned, so it stopped both;
+and nothing anywhere took a row back off a person once it was parked on one, so the
+suspensions accumulated and the resume never came.
+
+A [Decision Maker](agents.md#decision-maker) is what remains of them, and it is the opposite
+of a checkpoint: a specialized worker dispatched to **make the call** so the work continues
+without the person. Reach for it where being wrong is expensive and one-way — money moving,
+something deleted, a message going out under their name that nobody asked for. Not to get
+permission; to get a decision.
+
+The person is for what only the person can do: a credential, a login wall, a code that went
+to their phone. That is a step genuinely shut to the agent, and it is the only thing that
+legitimately stops a row.
 
 ## Verification
 

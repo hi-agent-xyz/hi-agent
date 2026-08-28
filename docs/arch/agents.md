@@ -71,12 +71,14 @@ sub-second path with no model in the loop — barge-in and taught quick-actions.
 the host, in [`host.md`](host.md#reflex), which is why it has no section here.
 
 **One rule runs the length of the ladder: a gap in the request is work, not a question.**
-[Invariant 9](arch.md#invariants) says irreversible or outward-facing → ask, and that is the
-*whole* list. Not knowing something is not on it. An undefined term, a figure nobody gave, a
+[Invariant 9](arch.md#invariants) does not put a question there either — it asks for an
+outward step to be *said*, not cleared, so nothing on this ladder stops to be told it may
+proceed. Not knowing something has never been on that list. An undefined term, a figure nobody gave, a
 section with nothing behind it — every rung takes the most defensible reading, says which
 reading it took, and keeps going; a stated assumption costs a word to correct, where a
 question costs however long the person is away. Asking is the fallback for when no reading is
-defensible *and* the gap gates the work. Nothing the agent produces arrives empty because an
+defensible *and* the step is genuinely shut to the agent — a credential, a login wall — not
+for when a reading is merely hard to take. Nothing the agent produces arrives empty because an
 answer never came. The [Decision Maker](#decision-maker) is the escalation of this rule, not
 the only place it applies.
 
@@ -406,13 +408,17 @@ and it is the one kind of errand with nobody waiting to notice that it wasn't. T
 model only works if the misses are swept: getting ahead is affordable because most of it is
 discarded, and discarded has to mean *closed*.
 
-**The boundary is the one that already governs acting alone.** Reversible and invisible →
-do it now. One-way, or visible to anyone else → carry it to the door and stop there.
+**The boundary is the one that already governs acting alone**, and since 2026-08-28 that
+boundary is judgment rather than a door. Reversible and invisible → do it now. One-way and
+visible to other people → that is where being wrong is expensive, so it gets decided rather
+than assumed — and on *prepared* work the decision is nearly always **not yet**, because
+nobody has asked for this at all.
 Rendering the picture is reversible and invisible; sending it to a colleague is neither.
 Working out which chat, which credential, and proving the command runs changes nothing
-outside this machine; the message it would send does. The rule that decides what may be
-done without being asked is the same rule that decides what may be done *before* being
-asked, and being a step ahead is never a reason to relax it. There is no second safety
+outside this machine; the message it would send does. So prepare up to the outward step and
+stop short of it — not because a gate stands there, but because a speculative outward action
+is the one bet whose downside outlives being wrong about it. Same rule as acting alone,
+weighted by the fact that nobody asked. There is no second safety
 concept here, and there must not be one — a separate rule for speculative work is a second
 place for the answer to drift.
 

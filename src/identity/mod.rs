@@ -1161,8 +1161,11 @@ mod soul_tests {
 
     /// **Working ahead may not grow a safety rule of its own.** The whole argument for
     /// letting the brain start the next step before anyone asks for it is that the line it
-    /// already stops at — reversible and unseen, or one-way and public — is the *same* line,
-    /// applied a step earlier. A prompt that grants the getting-ahead without re-stating that
+    /// already weighs — reversible and unseen, or one-way and public — is the *same* line,
+    /// applied a step earlier with one thumb on the scale, since nobody asked for this yet.
+    /// The section it points back at was `# Where you stop and ask` until 2026-08-28, when
+    /// the outward gate came out and it became `# You decide, and then you say so`; the name
+    /// is pinned here because the pointer is the whole mechanism. A prompt that grants the getting-ahead without re-stating that
     /// line grants a looser one by omission: rendering a picture and sending it to a
     /// colleague are one errand to a reader who was told to prepare the next step and never
     /// told where the next step stops.
@@ -1181,7 +1184,7 @@ mod soul_tests {
         // The boundary, in the same section, pointing back at the one that already exists
         // rather than at a new one of its own.
         assert!(
-            COGNITION_BASE.contains("Where you stop and ask"),
+            COGNITION_BASE.contains("You decide, and then you say so"),
             "working ahead must name the existing boundary, not imply a second one"
         );
         assert!(
