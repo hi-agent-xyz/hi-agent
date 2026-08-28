@@ -28,6 +28,7 @@ pub mod binder;
 pub mod channels;
 pub mod drive;
 pub mod duty;
+pub mod external_sessions;
 pub mod facets;
 pub mod files;
 pub mod generated;
@@ -370,6 +371,11 @@ pub struct AppState {
     /// `auth` above, which links an account and gates nothing. See
     /// [`crate::foundation::surfaces`].
     pub surfaces: Arc<crate::foundation::surfaces::Surfaces>,
+
+    /// Short-lived, loopback-only capabilities for externally hosted one-shot sessions.
+    /// The capability authenticates a lease; its registered slug remains host-owned and is
+    /// never accepted from a caller-controlled identity header.
+    pub external_sessions: Arc<external_sessions::ExternalSessions>,
 }
 
 impl AppState {
@@ -527,6 +533,7 @@ pub fn build(
         handoffs: Mutex::new(HashMap::new()),
         face_presence: Mutex::new(FacePresence::default()),
         surfaces: surface_reach.clone(),
+        external_sessions: Arc::new(external_sessions::ExternalSessions::new()),
     });
 
     // Channels are namespaced by boundary: `/api/in/*` is the world→agent side
@@ -613,6 +620,14 @@ pub fn build(
         // that duty picks it up. Not a sense, and not the conversation's — see
         // `server::duty`.
         .route("/api/in/duty/{key}", post(duty::post_duty))
+        .route(
+            "/api/external-sessions",
+            post(external_sessions::post_register),
+        )
+        .route(
+            "/api/external-sessions/{slug}",
+            axum::routing::delete(external_sessions::delete_release),
+        )
         .route("/api/in/touch", post(stubs::post_touch))
         .route("/api/in/smell", post(stubs::post_smell))
         .route("/api/in/taste", post(stubs::post_taste))
@@ -625,6 +640,7 @@ pub fn build(
         // mind drives output and side-effects by calling tools here; routing is by
         // the X-HI-Role header the attach carries.
         .route("/mcp", post(mcp::post_mcp).get(mcp::get_mcp))
+        .route("/mcp/external", post(external_sessions::post_mcp))
         // Fire a taught quick-action reflex — recognize the current field via the
         // accessibility tree and type the stored value, no model in the loop. The
         // v1 trigger (a later hotkey/gesture would call the same path).

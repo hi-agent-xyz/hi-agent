@@ -136,6 +136,20 @@ impl Surfaces {
         &self.data_dir
     }
 
+    /// Verify a long-lived surface bearer without exposing the token to request logs.
+    ///
+    /// External-session registration is loopback-only, so it cannot rely on the normal
+    /// off-box gate. It still has to prove possession of an existing surface credential;
+    /// this method is the route-specific, secret-safe check for that boundary.
+    pub fn verify_bearer(&self, token: &str) -> bool {
+        let Some(id) = self.verify(token) else {
+            self.note_failure();
+            return false;
+        };
+        store::touch(&self.data_dir, &id);
+        true
+    }
+
     /// Mint the first credential when no surface has ever been paired, and log it
     /// once. Bootstrap only: a core with no screen and no paired app — one in
     /// Docker on a server — otherwise has no way to admit its first surface.
@@ -458,15 +472,19 @@ document.getElementById("f").addEventListener("submit", async (e) => {
 /// guessable, so argon2 would buy nothing and cost latency on every attach. The
 /// broker's argon2id use is correct because those are human passwords. Do not
 /// "fix" this to match it.
+pub(crate) fn token_hash(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
+}
+
 fn hash(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
+    let digest = token_hash(token);
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// 32 bytes of CSPRNG, base64url. Built from two v4 UUIDs rather than a new `rand`
 /// dependency — v4 is 122 bits from the OS CSPRNG, so this is 244 bits of entropy
 /// in the 32 bytes the design asks for.
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut bytes = [0u8; 32];
     bytes[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
     bytes[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());

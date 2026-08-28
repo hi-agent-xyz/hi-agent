@@ -1085,6 +1085,76 @@ pub async fn handle(
     }
 }
 
+/// Handle the narrowly-scoped MCP surface granted to an external auto-run lease.
+///
+/// External sessions are not native hi-agent sessions: they get no role-selected tool
+/// surface and no authority from identity headers. The lease capability has already been
+/// checked by the HTTP layer and supplies the registered sender slug here.
+pub async fn handle_external(
+    registry: &ToolRegistry,
+    data_dir: &std::path::Path,
+    privacy: &crate::foundation::privacy::PrivacyBoundary,
+    video_partial: &Mutex<Option<PartialMinute>>,
+    observatory: &Observatory,
+    slug: crate::foundation::registry::SessionSlug,
+    msg: &Value,
+) -> McpReply {
+    let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
+    let id = msg.get("id").cloned();
+    let Some(id) = id else {
+        return McpReply::Accepted;
+    };
+
+    match method {
+        "initialize" => {
+            let requested = msg
+                .get("params")
+                .and_then(|p| p.get("protocolVersion"))
+                .and_then(Value::as_str)
+                .unwrap_or(PROTOCOL_VERSION);
+            McpReply::Json(result(
+                id,
+                json!({
+                    "protocolVersion": requested,
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "hi-agent", "version": env!("CARGO_PKG_VERSION") },
+                }),
+            ))
+        }
+        "tools/list" => {
+            McpReply::Json(result(id, json!({ "tools": [send_message_tool()] })))
+        }
+        "tools/call" => {
+            let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+            if name != "hi_send_message" {
+                return McpReply::Json(result(
+                    id,
+                    tool_error("external sessions may call only `hi_send_message`"),
+                ));
+            }
+            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            McpReply::Json(result(
+                id,
+                dispatch_tool(
+                    registry,
+                    data_dir,
+                    privacy,
+                    video_partial,
+                    observatory,
+                    Some(slug),
+                    Some("worker"),
+                    name,
+                    &args,
+                )
+                .await,
+            ))
+        }
+        "ping" => McpReply::Json(result(id, json!({}))),
+        other => McpReply::Json(error(id, -32601, &format!("method not found: {other}"))),
+    }
+}
+
 /// Run one tool call, returning the MCP `tools/call` result shape (a content list
 /// with an `isError` flag). Tools are fire-and-forget: we forward the call to the
 /// owning loop (for side-effects or sequenced output) and ack
@@ -1211,6 +1281,9 @@ async fn dispatch_tool(
 
             return match delivery {
                 registry::Delivery::Delivered => tool_ok("delivered"),
+                registry::Delivery::UnknownSender => tool_error(
+                    "the external session is no longer registered; nothing was delivered",
+                ),
                 registry::Delivery::Unknown => tool_error(&format!(
                     "nothing live at `{}` — it may have finished. Nothing was delivered.",
                     to.trim()
@@ -3338,8 +3411,8 @@ mod surface_tests {
     /// edge was invisible while workers were not, and the inspector showed the nodes of
     /// the graph and none of its arrows.
     ///
-    /// A miss is the interesting case, so that is what this pins: nothing is live at
-    /// `99`, and the event still lands carrying `delivery: unknown`.
+    /// A forged sender is the interesting case, so that is what this pins: the sender
+    /// `7` is not live, and the event still lands carrying `delivery: unknown_sender`.
     #[tokio::test]
     async fn a_send_that_reaches_nobody_is_still_recorded_as_an_edge() {
         let dir = tempfile::tempdir().unwrap();
@@ -3368,7 +3441,7 @@ mod surface_tests {
         assert_eq!(v["event"], "message_sent");
         assert_eq!(v["from"], "7");
         assert_eq!(v["to"], "99");
-        assert_eq!(v["delivery"], "unknown");
+        assert_eq!(v["delivery"], "unknown_sender");
         assert_eq!(v["message"], "are you there");
     }
 }

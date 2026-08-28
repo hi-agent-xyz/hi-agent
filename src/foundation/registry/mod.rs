@@ -330,6 +330,10 @@ pub fn global() -> &'static Registry {
 pub enum Delivery {
     /// In the target's mailbox. It will be picked up whole on its next prompt.
     Delivered,
+    /// The sender is not a live registered session. This is distinct from an unknown
+    /// target: an address header alone is not an identity, and must never be enough to
+    /// place mail in a live mailbox.
+    UnknownSender,
     /// No live session at that address. The caller decides what that means — for a report
     /// whose owner has shut down, falling back one rung beats losing finished work.
     Unknown,
@@ -821,6 +825,30 @@ pub struct Registry {
     undelivered: Mutex<HashMap<SessionSlug, Vec<Message>>>,
 }
 
+/// Why a host-owned external registration could not be admitted.
+///
+/// Native callers use [`Registry::register`] during carefully ordered startup. External
+/// session registration is a request boundary, so it must fail instead of replacing a live
+/// entry or leaving a worker attached to a missing owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegistrationError {
+    /// The requested slug is already live.
+    Duplicate(SessionSlug),
+    /// A worker owner was named but is not currently live.
+    MissingOwner(SessionSlug),
+}
+
+impl std::fmt::Display for RegistrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Duplicate(id) => write!(f, "session {id} is already registered"),
+            Self::MissingOwner(id) => write!(f, "session owner {id} is not live"),
+        }
+    }
+}
+
+impl std::error::Error for RegistrationError {}
+
 impl Default for Registry {
     fn default() -> Self {
         let (activity, _) = watch::channel(0);
@@ -913,6 +941,76 @@ impl Registry {
         }
         self.note_activity();
         notify
+    }
+
+    /// Register through the request-boundary checks used by external sessions.
+    ///
+    /// Unlike the historical startup-oriented [`Self::register`], this path refuses a
+    /// duplicate instead of replacing the existing mailbox and verifies a worker owner
+    /// while holding the same registry lock as the insertion.
+    pub fn register_checked(
+        &self,
+        id: SessionSlug,
+        role: Role,
+        owner: Option<SessionSlug>,
+        title: String,
+        subject: Option<String>,
+    ) -> Result<std::sync::Arc<Notify>, RegistrationError> {
+        let notify = std::sync::Arc::new(Notify::new());
+        let started = Utc::now();
+        let title = headline(&title, TITLE_CHARS);
+        let owner_for_record = owner.clone();
+        {
+            let mut map = self.sessions.lock().unwrap();
+            if map.contains_key(&id) {
+                return Err(RegistrationError::Duplicate(id));
+            }
+            if role.is_worker() {
+                if let Some(owner) = owner.as_ref() {
+                    if !map.contains_key(owner) {
+                        return Err(RegistrationError::MissingOwner(owner.clone()));
+                    }
+                }
+            }
+            map.insert(
+                id.clone(),
+                Entry {
+                    role,
+                    owner,
+                    title: title.clone(),
+                    subject: subject.clone(),
+                    busy: false,
+                    held: None,
+                    turns: 0,
+                    started,
+                    state_since: started,
+                    inbox: Inbox::default(),
+                    output: String::new(),
+                    doing: None,
+                    doing_at: None,
+                    steps: std::collections::VecDeque::new(),
+                    last_turn: None,
+                    thread: None,
+                    notify: notify.clone(),
+                },
+            );
+        }
+        if let Some(subject) = subject.as_deref() {
+            self.reopening.lock().unwrap().retain(|end| end.subject.as_deref() != Some(subject));
+        }
+        if let Some(writer) = self.index.get() {
+            writer.write(&index::opened_record(
+                crate::foundation::run::id(),
+                &id,
+                role,
+                owner_for_record,
+                &title,
+                subject.as_deref(),
+                started,
+            ));
+        }
+        self.note_activity();
+        Ok(notify)
     }
 
     /// Start recording sessions to the durable directory under `data_dir`, and seed the
@@ -1198,6 +1296,13 @@ impl Registry {
     pub fn send(&self, from: &SessionSlug, to: &SessionSlug, message: String) -> Delivery {
         let delivery = {
             let mut map = self.sessions.lock().unwrap();
+
+            // A caller's address is a host-owned fact. Reject it before looking up the
+            // target or mutating any observability/mail state; accepting an unknown sender
+            // would make a forged X-HI-Session-Slug a usable identity.
+            if !map.contains_key(from) {
+                return Delivery::UnknownSender;
+            }
 
             // A worker answers to whoever asked, and to nobody else.
             if let Some(sender) = map.get(from)
@@ -1670,6 +1775,60 @@ mod tests {
         Registry::new()
     }
 
+    #[test]
+    fn an_unknown_sender_cannot_mutate_target_mail_or_traffic() {
+        let r = reg();
+        let target = mint();
+        let forged = mint();
+        r.register(target.clone(), Role::Cognition, None, "the brain".into(), None);
+
+        assert_eq!(
+            r.send(&forged, &target, "forged".into()),
+            Delivery::UnknownSender
+        );
+        assert!(r.take_pending(&target).is_none(), "the target mailbox stayed empty");
+        let (_, total) = r.traffic_between(&forged, &target, 10);
+        assert_eq!(total, 0, "a refused sender leaves no traffic record");
+    }
+
+    #[test]
+    fn checked_registration_rejects_missing_owner_and_duplicates() {
+        let r = reg();
+        let worker = mint();
+        let missing_owner = mint();
+        assert!(matches!(
+            r.register_checked(
+                worker.clone(),
+                Role::Worker(WorkerType::General),
+                Some(missing_owner.clone()),
+                "external".into(),
+                Some("task".into()),
+            ),
+            Err(RegistrationError::MissingOwner(id)) if id == missing_owner
+        ));
+
+        let owner = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the brain".into(), None);
+        r.register_checked(
+            worker.clone(),
+            Role::Worker(WorkerType::General),
+            Some(owner),
+            "external".into(),
+            Some("task".into()),
+        )
+        .expect("first checked registration");
+        assert!(matches!(
+            r.register_checked(
+                worker.clone(),
+                Role::Worker(WorkerType::General),
+                None,
+                "replacement".into(),
+                None,
+            ),
+            Err(RegistrationError::Duplicate(id)) if id == worker
+        ));
+    }
+
     /// The arrow between two cards reads this, so it has to carry both directions and
     /// nothing from anybody else.
     #[test]
@@ -1762,6 +1921,7 @@ mod tests {
         let unread_mail = mint();
         let reported = mint();
         let owner = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the owner".into(), None);
         for (id, title) in [
             (&mid_turn, "deploying"),
             (&unread_mail, "waiting on a follow-up"),
