@@ -71,15 +71,16 @@ fn stamp(t: Option<SystemTime>) -> String {
     }
 }
 
-/// Normalize a stored RFC3339 timestamp to the same `Z` spelling as [`stamp`]. Episode
-/// frontmatter records `chrono`'s `to_rfc3339()` (`…+00:00`); a value that doesn't
-/// parse is passed through verbatim rather than dropped — a debug surface shows what is
-/// on disk.
-fn normalize_ts(s: String) -> String {
-    match DateTime::parse_from_rfc3339(&s) {
-        Ok(d) => d.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true),
-        Err(_) => s,
-    }
+/// One agent-written RFC3339 timestamp in the same `Z` spelling as [`stamp`] — episode
+/// frontmatter records `chrono`'s `to_rfc3339()` (`…+00:00`) — or `None` if it does not
+/// parse. Unparseable is **absent**, never the raw string handed back
+/// (`docs/arch/data.md#reading-back-across-the-pen-line`): this value is both the sort key
+/// and the `at` the review view prints, so passing a line through unparsed put a string
+/// that is not a time in charge of the ordering and then showed it as one.
+fn normalize_ts(s: &str) -> Option<String> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true))
 }
 
 // ── list dimensions ───────────────────────────────────────────────────────────
@@ -265,9 +266,11 @@ async fn recent_episodes(data_dir: &Path, limit: usize) -> anyhow::Result<Vec<Ep
             Ok(c) => c,
             Err(_) => continue,
         };
+        // An episode with no readable timestamp keeps an empty `at`: it sorts to the
+        // far end and prints no time, rather than claiming one it does not have.
         let at = frontmatter_field(&content, "to_ts")
             .or_else(|| frontmatter_field(&content, "from_ts"))
-            .map(normalize_ts)
+            .and_then(|ts| normalize_ts(&ts))
             .unwrap_or_default();
         let dto = EpisodeDto {
             gist: strip_frontmatter(&content).trim().to_owned(),

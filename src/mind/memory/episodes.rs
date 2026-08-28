@@ -23,6 +23,7 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::{Memory, journal, layout};
@@ -214,6 +215,23 @@ pub async fn recent_gists(memory: &Memory, limit: usize) -> anyhow::Result<Vec<S
     Ok(gists)
 }
 
+/// The UTC day (`YYYY-MM-DD`) a frontmatter timestamp names, or `None` if the key is
+/// absent or the value is not RFC3339 — parsed before it is obeyed
+/// (`docs/arch/data.md#reading-back-across-the-pen-line`).
+///
+/// **A prefix slice is not a parse**, and both callers below steer the *forgetting*
+/// pass — which cold days may have their full-fidelity bytes dropped. They used to
+/// take `from.get(..10)`, ten bytes of whatever the line held. A value shorter than
+/// ten characters yielded `None`, and `unwrap_or("")` turned that into the empty
+/// string, which is `<=` every date: the lower bound of the range compare passed
+/// unconditionally. The same shape as the cursor — a value that could not be read,
+/// obeyed anyway.
+fn frontmatter_day(content: &str, key: &str) -> Option<String> {
+    let raw = frontmatter_field(content, key)?;
+    let ts = DateTime::parse_from_rfc3339(&raw).ok()?;
+    Some(layout::day_key(ts.with_timezone(&Utc)))
+}
+
 /// Episode dir-names whose covered day-range intersects `day`
 /// (`YYYY-MM-DD`), newest first — a hint the forgetting pass shows the mind: which
 /// events a cold day held, so it can judge what's worth keeping. Best-effort; an
@@ -234,16 +252,14 @@ pub async fn names_overlapping_day(data_dir: &Path, day: &str) -> anyhow::Result
             Ok(c) => c,
             Err(_) => continue,
         };
-        let (Some(from), Some(to)) =
-            (frontmatter_field(&content, "from_ts"), frontmatter_field(&content, "to_ts"))
+        let (Some(from_d), Some(to_d)) =
+            (frontmatter_day(&content, "from_ts"), frontmatter_day(&content, "to_ts"))
         else {
             continue;
         };
-        // The RFC3339 values lead with the date, so a 10-char prefix compare is a
-        // date compare: include when from_date <= day <= to_date.
-        let from_d = from.get(..10).unwrap_or("");
-        let to_d = to.get(..10).unwrap_or("");
-        if from_d <= day && day <= to_d
+        // Both are now real `YYYY-MM-DD`, so a string compare is a date compare:
+        // include when from_date <= day <= to_date.
+        if from_d.as_str() <= day && day <= to_d.as_str()
             && let Ok(name) = ent.file_name().into_string()
         {
             names.push(name);
@@ -274,10 +290,8 @@ pub async fn episode_from_dates(data_dir: &Path) -> anyhow::Result<Vec<String>> 
             Ok(c) => c,
             Err(_) => continue,
         };
-        if let Some(from) = frontmatter_field(&content, "from_ts")
-            && let Some(d) = from.get(..10)
-        {
-            dates.push(d.to_owned());
+        if let Some(d) = frontmatter_day(&content, "from_ts") {
+            dates.push(d);
         }
     }
     dates.sort();

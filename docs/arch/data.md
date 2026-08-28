@@ -87,7 +87,7 @@ agent that had lost a day — on 2026-08-27 it sent a worker off to find a WeCha
 had itself built and verified that same afternoon.
 
 Three other readers of the same kind of value had the rule right, which is why the failure was
-survivable everywhere else and why the rule is worth stating rather than re-deriving:
+survivable in those places and why the rule is worth stating rather than re-deriving:
 
 | reader | steers | parses | absent means |
 |---|---|---|---|
@@ -100,6 +100,22 @@ survivable everywhere else and why the rule is worth stating rather than re-deri
 max over a field in agent-written files, so one bad file is a bad cursor — permanently, since
 nothing that arrives later can outrank it. Deriving it over only the values that parse costs
 one filter and removes the whole class.
+
+**Three more readers had the same shape, found by walking the column instead of waiting for the
+next stall.** They are the reason the rule is written as a rule and not as a note about one
+cursor. `episodes::names_overlapping_day` and `episodes::episode_from_dates` took a ten-byte
+prefix of `from_ts`/`to_ts` — and **a slice is not a parse**: a value shorter than ten bytes
+sliced to nothing, `unwrap_or("")` made that the empty string, and `""` is `<=` every date, so
+the lower bound of the range compare passed unconditionally. `facets::normalize_ts` did parse,
+then handed back the raw string when the parse failed, leaving a value that is not a time in
+charge of the episode list's order and printing it as one.
+
+Both `episodes` readers steer the **forgetting** pass, which is the one that drops bytes, so
+their absent-direction is the load-bearing half: an unreadable span means **the day is not
+covered and its depth is not counted** — the mind is shown less reason to fade, and less fading
+is the outcome that can still be undone. `normalize_ts` is a display path, and absent there is
+an empty `at`: an episode with no readable timestamp sorts to the far end and shows no time,
+rather than claiming one it does not have.
 
 ### A name is not a key, and the answer to that is not fuzzy matching
 
