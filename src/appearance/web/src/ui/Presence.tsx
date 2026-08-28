@@ -14,7 +14,18 @@ export interface ActivitySignals {
   delegatedBusy: boolean;
 }
 
-/** Project concurrent facts into the one status shown on the face. */
+/**
+ * Project concurrent facts into the one status the face holds.
+ *
+ * Only one of the six is ever drawn — `typing`, as three dots at the foot of the
+ * conversation (`ui/Chat.tsx`). The other five resolve to no UI at all, which is
+ * what makes the precedence here load-bearing rather than cosmetic: a partial
+ * still being recognized outranks `reactionBusy`, so the dots do not appear under
+ * a sentence the person has not finished saying.
+ *
+ * There is no longer a `statusLabel`. It named all six for a read-only status
+ * button's tooltip, and went with the button.
+ */
 export function projectActivityState(signals: ActivitySignals): ActivityState {
   if (!signals.ready) return "starting";
   if (signals.listening) return "listening";
@@ -22,10 +33,6 @@ export function projectActivityState(signals: ActivitySignals): ActivityState {
   if (signals.reactionBusy) return "typing";
   if (signals.delegatedBusy) return "working";
   return "idle";
-}
-
-export function statusLabel(state: ActivityState): string {
-  return state.charAt(0).toUpperCase() + state.slice(1);
 }
 
 export type PresenceState = ActivityState;

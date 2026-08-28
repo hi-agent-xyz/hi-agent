@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectActivityState, statusLabel, type ActivitySignals } from "./Presence";
+import { projectActivityState, type ActivitySignals } from "./Presence";
 
 const idle: ActivitySignals = {
   ready: true,
@@ -47,12 +47,15 @@ describe("projectActivityState", () => {
     expect(projectActivityState(idle)).toBe("idle");
   });
 
-  it("uses user-facing labels directly", () => {
-    expect(statusLabel("starting")).toBe("Starting");
-    expect(statusLabel("listening")).toBe("Listening");
-    expect(statusLabel("speaking")).toBe("Speaking");
-    expect(statusLabel("typing")).toBe("Typing");
-    expect(statusLabel("working")).toBe("Working");
-    expect(statusLabel("idle")).toBe("Idle");
+  // The one state anything is drawn for, and the one signal it may be drawn from.
+  // Everything else on this list resolves to no UI, so a projection that silently
+  // widened `typing` would put dots at the foot of the conversation while the
+  // agent was off running an errand nobody asked to watch.
+  it("says typing for a reply being composed, and for nothing else", () => {
+    expect(projectActivityState({ ...idle, reactionBusy: true })).toBe("typing");
+    expect(projectActivityState({ ...idle, delegatedBusy: true })).not.toBe("typing");
+    expect(projectActivityState({ ...idle, reactionBusy: true, listening: true })).not.toBe(
+      "typing",
+    );
   });
 });

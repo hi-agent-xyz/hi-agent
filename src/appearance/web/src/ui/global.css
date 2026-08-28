@@ -74,13 +74,13 @@
      one dressing that is legible over anything is a dark ground with light ink on
      it. These do NOT flip with the skin, and that is the point: the pill is dark on
      white paper and dark on a night-sky poster, so a second set tuned to the light
-     skin would only be a set that fails on half the views. The accents are the dark
-     skin's, for the same reason — terracotta on a scrim lands near 3:1. */
+     skin would only be a set that fails on half the views. The accent is the dark
+     skin's, for the same reason — terracotta on a scrim lands near 3:1. (There
+     were two accents; the second was the listening status's, and went with it.) */
   --scrim-bg: rgba(24, 20, 15, 0.62);
   --scrim-ink: rgba(255, 252, 246, 0.96);
   --scrim-edge: rgba(255, 252, 246, 0.24);
   --scrim-accent: #e0975a;
-  --scrim-accent-2: #c9a06a;
 
   --selection: rgba(192, 106, 63, 0.22);
   --selfview-veil: rgba(244, 237, 224, 0.34);
@@ -1063,150 +1063,48 @@ button:where(:not([data-slot])) {
     0 8px 24px var(--shadow);
 }
 
-/* --- Combined status --------------------------------------------------
-   One read-only control at the start of the lower cluster. The paper never
-   changes with status; only this glyph carries current activity. */
-.hi-status-button {
-  position: relative;
-  flex: none;
-  width: 44px;
-  height: 44px;
+/* --- A reply being written --------------------------------------------
+   Three dots inside an agent bubble at the foot of the conversation
+   (`ui/Chat.tsx`) — the only activity the app draws anywhere. It replaced a
+   six-state read-only disc in the controls cluster, whose other five states said
+   nothing anyone could act on.
+
+   `currentColor` and nothing else, so the dots are the bubble's own ink under
+   both skins. The box is sized to one line of the bubble's `text-sm
+   leading-relaxed`, which is what keeps this bubble the same height as the
+   message that replaces it — the list does not jog when the words land. */
+.hi-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.375rem;
 }
 
-.hi-channel-separator {
-  flex: none;
-  width: 1px;
-  height: 24px;
-  margin: 0 2px;
-  background: var(--scrim-edge);
-}
-
-.hi-status-button--starting,
-.hi-status-button--working,
-.hi-status-button--typing,
-.hi-status-button--speaking {
-  color: var(--scrim-accent);
-}
-
-.hi-status-button--listening {
-  color: var(--scrim-accent-2);
-}
-
-.hi-status-glyph {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-}
-
-.hi-status-glyph--idle::before {
+.hi-typing i {
+  display: block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  content: "";
+  animation: hi-typing-dot 1.25s ease-in-out infinite;
 }
 
-.hi-status-glyph--starting::before,
-.hi-status-glyph--listening::before {
-  width: 9px;
-  height: 9px;
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-  content: "";
+.hi-typing i:nth-child(2) {
+  animation-delay: 170ms;
 }
 
-.hi-status-glyph--starting::before {
-  animation: hi-status-start 1.2s var(--ease) infinite;
+.hi-typing i:nth-child(3) {
+  animation-delay: 340ms;
 }
 
-.hi-status-glyph--listening::before {
-  animation: hi-status-listen 1.2s ease-in-out infinite;
-}
-
-.hi-status-glyph--working::before {
-  width: 14px;
-  height: 14px;
-  border: 1.7px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  content: "";
-  animation: hi-status-work 900ms linear infinite;
-}
-
-.hi-status-glyph--typing::before {
-  width: 2px;
-  height: 15px;
-  border-radius: 1px;
-  background: currentColor;
-  content: "";
-  animation: hi-status-type 850ms step-end infinite;
-}
-
-.hi-status-wave {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 18px;
-}
-
-.hi-status-wave i {
-  display: block;
-  width: 2px;
-  border-radius: 2px;
-  background: currentColor;
-  animation: hi-status-speak 720ms ease-in-out infinite alternate;
-}
-
-.hi-status-wave i:first-child {
-  height: 8px;
-}
-
-.hi-status-wave i:nth-child(2) {
-  height: 15px;
-  animation-delay: 120ms;
-}
-
-.hi-status-wave i:nth-child(3) {
-  height: 10px;
-  animation-delay: 220ms;
-}
-
-@keyframes hi-status-start {
-  0%, 100% {
-    opacity: 0.55;
-    transform: scale(0.88);
-    box-shadow: 0 0 0 3px transparent;
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-    box-shadow: 0 0 0 4px var(--accent-soft);
-  }
-}
-
-@keyframes hi-status-listen {
-  0%, 100% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 6%, transparent);
-  }
-}
-
-@keyframes hi-status-work {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes hi-status-type {
-  0%, 48% { opacity: 1; }
-  49%, 100% { opacity: 0; }
-}
-
-@keyframes hi-status-speak {
-  from { transform: scaleY(0.58); }
-  to { transform: scaleY(1.08); }
+/* Opacity alone — a matte pulse rather than a bounce, and no `transform`, so the
+   three dots hold their baseline while they breathe. The rest position (0%/100%)
+   is the dim one on purpose: under `prefers-reduced-motion` every animation is
+   cut to its first frame, and this leaves three quiet dots rather than one lit
+   dot and two dark ones. */
+@keyframes hi-typing-dot {
+  0%, 70%, 100% { opacity: 0.4; }
+  35% { opacity: 1; }
 }
 
 @media (max-width: 640px) {

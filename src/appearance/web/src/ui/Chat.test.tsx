@@ -151,6 +151,33 @@ describe("the line being written", () => {
   });
 });
 
+describe("the dots", () => {
+  // The one activity anything is drawn for. It used to be a read-only disc in the
+  // controls cluster that drew all six states; the other five are the agent's own
+  // business and are drawn nowhere now.
+  it("stands at the foot, on the agent's side, only while a reply is coming", () => {
+    const quiet = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
+    expect(quiet).not.toContain("hi-typing");
+
+    const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} typing />);
+    const message = html.indexOf("帮我看下");
+    const dots = html.indexOf("hi-typing");
+    expect(dots, "under everything already said").toBeGreaterThan(message);
+    // Drawn as a message and not an ornament: the agent's face beside it, in the
+    // agent's bubble, on the agent's side — so the reply lands in the space this
+    // was already holding.
+    expect(html).toContain("icon.svg");
+    expect(html.slice(message, dots)).toContain('data-align="start"');
+  });
+
+  // Nothing has been said yet, so there is nothing to stamp — and a time on the
+  // dots would leave a stray timestamp behind when they went away.
+  it("carries no time", () => {
+    const html = renderToStaticMarkup(<Chat messages={[]} typing />);
+    expect(html).not.toContain("<time");
+  });
+});
+
 describe("readsAsName", () => {
   it("tells a name from a minted cluster id", () => {
     expect(readsAsName("赵力")).toBe(true);

@@ -1,9 +1,4 @@
-import type { ActivityState } from "./Presence";
-import { StatusButton } from "./StatusButton";
-
 interface ChannelControlsProps {
-  /** The agent's current short-lived activity. */
-  activity: ActivityState;
   /** Whether the mic (audio input) channel is live. */
   audioOn: boolean;
   /** Flip the audio channel on/off. */
@@ -43,8 +38,16 @@ interface ChannelControlsProps {
  * present (no state-gated chrome) so a user who can't (or won't) use a given
  * channel still has a clear way in or out; the trailing reset closes the agent's
  * view, which gives the conversation the screen back.
- * Order: status · mic · speaker · text · attach · camera · views · reset, and every one
+ * Order: mic · speaker · text · attach · camera · views · reset, and every one
  * of them is always there — the cluster has no item that comes and goes.
+ *
+ * **Every control here does something, and none of them reports.** The cluster
+ * used to open with a read-only status disc that drew whichever of six activities
+ * the agent was in — a button that could not be pressed, sitting in a row of
+ * buttons. Five of those six states are the agent going about its own business
+ * and are nobody's cue to act, so they are drawn nowhere now; the sixth, a reply
+ * being composed, is a thing said in a conversation and is drawn in the
+ * conversation (`ui/Chat.tsx`).
  *
  * **One control per channel, and the text one owns the whole of its channel.**
  * There used to be two: a keyboard button that showed the input line and a
@@ -64,7 +67,6 @@ interface ChannelControlsProps {
  * back lives.
  */
 export function ChannelControls({
-  activity,
   audioOn,
   onToggleAudio,
   audioError,
@@ -82,10 +84,7 @@ export function ChannelControls({
   onToggleViews,
 }: ChannelControlsProps) {
   return (
-    <div className="hi-channels" role="group" aria-label="agent status and channels">
-      <StatusButton activity={activity} />
-      <span className="hi-channel-separator" aria-hidden="true" />
-
+    <div className="hi-channels" role="group" aria-label="channels">
       <button
         type="button"
         className={`hi-channel${audioOn ? " is-on" : ""}`}

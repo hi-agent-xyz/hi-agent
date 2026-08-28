@@ -30,7 +30,17 @@ import { SenderAvatar } from "./Avatar";
  * message appears when it is finished, because that is when a person sends one.
  * What is here instead is what a messenger has: consecutive messages from the same
  * sender grouped tight under one time, day separators, files shown as the thing that
- * was sent, and **a face beside each group**.
+ * was sent, **a face beside each group**, and three dots while a reply is being
+ * written.
+ *
+ * **The dots are the only activity this app draws anywhere.** The agent is in one
+ * of six states at any moment (`ui/Presence.tsx`) and five of them — starting,
+ * hearing a voice, speaking, running errands, idle — are it going about its own
+ * business, which is not addressed to anyone and gets no pixels. The sixth is a
+ * reply being composed, and that is not a status: it is a turn in this
+ * conversation that has begun and not yet landed. So it is drawn where the turn
+ * will land, at the foot of the messages, in the shape every messenger uses. It
+ * replaced a read-only disc in the controls cluster that drew all six.
  *
  * The face is not decoration. This agent hears a room, so the person's side of the
  * conversation is not one person: a voiceprint places one line with 赵力 and leaves
@@ -190,6 +200,38 @@ function AttachmentView({ attachment }: { attachment: NonNullable<ChatMessage["a
   );
 }
 
+/**
+ * Three dots where the reply will be.
+ *
+ * Drawn as a message and not as an ornament: the agent's own face beside it, in
+ * the agent's own bubble, on the agent's own side — so when the words arrive they
+ * land in the space this was already holding, and the list does not reflow around
+ * them. It carries no time, because nothing has been said yet.
+ *
+ * `role="status"` and nothing readable inside: a screen reader is told once that a
+ * reply is coming and is not made to sit through a decorative loop.
+ */
+function Typing() {
+  return (
+    <MessageScrollerItem>
+      <Message align="start">
+        <SenderAvatar role="agent" />
+        <MessageContent>
+          <Bubble align="start" variant="default">
+            <BubbleContent>
+              <span className="hi-typing" role="status" aria-label="writing a reply">
+                <i />
+                <i />
+                <i />
+              </span>
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    </MessageScrollerItem>
+  );
+}
+
 export interface ChatProps {
   messages: ChatMessage[];
   /** The conversation's foot — the line being written. Rendered here so it is
@@ -197,24 +239,29 @@ export interface ChatProps {
   children?: ReactNode;
   /** The live recognition partial, shown pending at the tail. */
   interim?: string | undefined;
+  /** A reply is being composed — draw the dots at the foot. */
+  typing?: boolean;
   /** Prepend a page of older messages; resolves to how many arrived. */
   onLoadOlder?: () => Promise<number>;
 }
 
-export function Chat({ messages, interim, onLoadOlder, children }: ChatProps) {
+export function Chat({ messages, interim, typing, onLoadOlder, children }: ChatProps) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  // What is at the foot right now: the newest message, and the partial being
-  // recognized under it. Either one changing means the tail moved.
-  const tail = `${messages[messages.length - 1]?.id ?? ""}|${interim ?? ""}`;
+  // What is at the foot right now: the newest message, the partial being
+  // recognized under it, and the dots under that. Any one changing means the tail
+  // moved — the dots included, or the reply they promise would appear off-screen
+  // for a reader who was sitting at the foot watching them.
+  const tail = `${messages[messages.length - 1]?.id ?? ""}|${interim ?? ""}|${typing ? "…" : ""}`;
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
       <div className="hi-chat">
         {/* One line, and it names the surface: this card is the conversation.
             Nothing else belongs in it: there is no thread to title (the record is
             one append-only list — `docs/arch/text-transcript.md`), so no "new
-            chat" to offer beside it, and the agent's current state is the status
-            button's job in the controls cluster.
+            chat" to offer beside it, and the one piece of the agent's current
+            state worth showing is shown at the foot, where the reply it is about
+            will land — not in a subtitle up here.
 
             It used to name the other side — the app's mark and "Hi Agent" — which
             is a messenger's habit and wrong here: there is exactly one agent, its
@@ -314,6 +361,11 @@ export function Chat({ messages, interim, onLoadOlder, children }: ChatProps) {
                   </Message>
                 </MessageScrollerItem>
               )}
+
+              {/* A reply, begun. Last of everything, because it is the newest
+                  thing in the room — under even the line still being recognized,
+                  which is what prompted it. */}
+              {typing && <Typing />}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton direction="end" />

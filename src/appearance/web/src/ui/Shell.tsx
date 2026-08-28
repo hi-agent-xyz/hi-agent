@@ -183,7 +183,14 @@ export function Shell() {
           data-shown={chatShown ? "true" : "false"}
           aria-hidden={chatShown ? undefined : true}
         >
-          <Chat messages={messages} interim={interim} onLoadOlder={loadOlder}>
+          {/* The one activity the person is shown, and it is shown inside the
+              conversation because that is what it is about — see `ui/Chat.tsx`. */}
+          <Chat
+            messages={messages}
+            interim={interim}
+            typing={presence.state === "typing"}
+            onLoadOlder={loadOlder}
+          >
             <Composer
               onSend={sendText}
               shown={chatShown}
@@ -216,11 +223,10 @@ export function Shell() {
             tall sheet would cover the thing being compared. */}
         {bandOpen && <ViewsBand onDismiss={() => setBandOpen(false)} />}
 
-        {/* The lower cluster starts with the activity status, then keeps every
-            channel available. Managed energy is represented only by the
-            gate-owned full-screen view. */}
+        {/* The lower cluster is controls and only controls: every channel, always
+            available, nothing that merely reports. Managed energy is represented
+            only by the gate-owned full-screen view. */}
         <ChannelControls
-          activity={presence.state}
           audioOn={ch.audioInput}
           onToggleAudio={ch.toggleAudio}
           audioError={ch.audioError}
