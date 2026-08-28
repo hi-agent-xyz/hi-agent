@@ -335,9 +335,23 @@ mod tests {
         let second: Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["dir"], "stderr");
 
-        // Session 43's frame went to session 43's file, not into 42's.
+        // Session 43's frame went to session 43's file, not into 42's. Waited for
+        // separately: 42's file landing says nothing about 43's, because they are two
+        // writes on the same writer task and draining one does not drain the other. Read
+        // eagerly, this passed alone and failed under a loaded full-suite run, where 43's
+        // line was still in flight — a green that depended on the machine being idle.
         let other = crate::mind::memory::layout::session_frames_path(dir.path(), run, &43.into());
-        let other_body = std::fs::read_to_string(&other).expect("session 43 has its own file");
+        let mut other_body = String::new();
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&other)
+                && !text.is_empty()
+            {
+                other_body = text;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!other_body.is_empty(), "session 43 has its own file at {}", other.display());
         assert_eq!(other_body.lines().count(), 1);
         assert!(other_body.contains("initialize"), "the handshake is kept too: {other_body}");
     }
