@@ -30,6 +30,8 @@ _机制:即时世界态 · 现查 + 站定关注 + pulse 主动浮现。成熟�
 
 ## 实测 2026-06-18 · origin/main 0f68aaf
 
+> 跑在旧布局上:那时"盯着"这件事写进 `self.md`,重启后从它读回来。`self.md` 已删除(见 [`docs/memory.md`](../memory.md)),站定关注现在是 **task ledger** 的一行(`memory/facets/tasks/`,每轮投影)。下面那条路径 bug 的具体形态不再存在;它要测的事——**重启不丢盯**——没有变,后面 2026-08-05 那次就是照这个测的。
+
 - ✅ **一次性 vs 盯着**区分到位:"盯着油价" → 先取基准(75.49/桶)、自报阈值($2)与节奏,并**真落了承诺**:写 self.md + `CronCreate` 每小时一查。
 - 🔴 **重启不丢盯 = 失效**:self.md 写到了非规范路径,恢复读规范路径读不到(同 [02](02-feishu-sprint-backlog.md) 的 self.md 路径 bug);加之 cron 是 session-only,随进程消失 → 重启后 pulse 读空、盯丢失。修复见 [[feedback-absolute-paths-single-file]]。
 

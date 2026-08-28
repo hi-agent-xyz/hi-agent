@@ -32,5 +32,7 @@ _机制:能力 = effector 可达(config / env)+ 按需技能(怎么用)+ drive �
 
 ## 实测 2026-06-18 · origin/main 0f68aaf
 
+> 跑在旧布局上:文中的 `self.md` 已删除(见 [`docs/memory.md`](../memory.md))。但下面那条 🟠 的**发现**没有过期——密钥永不进脑子,笔记只记它在哪(env 变量名);今天等价的落点是 facet 与 generated prompt,规矩一样。
+
 - ✅ 没把密钥念出口(口播只说"记下了,以后用这个端点");能力知识(端点/用法)有记录。
 - 🟠 **密钥进了脑子**:明文 `sk-fake-…` 被写进 self.md。违"密钥永不进脑子,笔记只记它在哪(env 变量名)"。根因:drive 笔记本/调用时解密未建,agent 把一切(含密钥)塞进 self.md。修复方向 = 建 drive 笔记本 + 一条 prompt 硬规矩(secret 永不入 memory 文件,只记 env 变量名)。

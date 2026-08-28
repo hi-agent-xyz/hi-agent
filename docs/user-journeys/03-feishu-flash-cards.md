@@ -60,6 +60,8 @@
 
 ## 实测缺口(2026-06-10/11 运行 vs 上述预期)
 
+> 下面几节跑在旧布局上:文中的 `hot.md`(机械近期摘要)与 `self.md`(常驻职责)都已删除(见 [`docs/memory.md`](../memory.md))。承诺落 **task ledger**(`memory/facets/tasks/`),情境走每个 agent 自己策展的 generated prompt。文中的 `core.local.md` 覆盖层也已删除,且是**删掉不是推迟**——prompt 没有手改杠杆,见 [`arch.md#character`](../arch/arch.md)。机制换了,这些记录里的**发现**没有变。
+
 当次运行委托、置备、校准段基本达标;以下是没达标的,即 hi-agent 待改进项:
 
 1. **补齐 19 词在 reaction turn 里干了 17 分钟**,期间不可达,且完工没交差、smuggled 失败被吞 → 派 worker + 交差应进 core 引导。
@@ -106,6 +108,8 @@
 - 监听进程归谁管:agent 自己拉起(现状,detached)还是 host 侧 transport adapter 管理?
 
 ## 实测 2026-06-18 · origin/main 0f68aaf
+
+> 同样跑在旧布局上;下面提到的 `self.md` 路径 bug 见 [02](02-feishu-sprint-backlog.md) 实测段的说明,那个文件已删除。
 
 - ✅ 接住后**主动合并**:认出与 [02](02-feishu-sprint-backlog.md) 可共用同一个飞书自建应用,不重复置备。
 - ⚠️ **没提"样稿校准"**——本 journey 的核心(公开创作类产出先发样稿给老板选、确认前对外零动作)在框架阶段未被 agent 主动提出。

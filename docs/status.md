@@ -1,910 +1,217 @@
-# Status — what is built, what has been watched, what is missing
+# Status — what has been watched running
 
-**This file is the ledger. [`docs/arch/`](arch/) is the goal state.** A design document that
-doubles as a status report goes stale in a way that makes readers distrust the design too, so
-the design carries no status and this file carries no design. Where they disagree, the design
-wins and this file is the bug.
+Code is the source of truth for what exists. [`docs/arch/`](arch/) is the goal state. `git log`
+holds how it got here, in full. **This file holds the one fact none of them can: whether a
+mechanism has ever been observed running against a live instance.**
 
-It replaces `arch-refactor.md`, the scratch file the architecture refactor ran out of. **That
-refactor is done**: the spine `world → Reaction → Cognition → workers` is in code end to end,
-every hop host-mediated by the one verb; the retired vocabulary below is gone from `src/`; and
-topology T0–T3d are deployed and live-verified through the CDN. One item is still mid-build —
-the task-ledger manager, immediately below. The full log — every rung, every reversed decision
-and the reasoning that cost a round of being wrong first — is in git:
+That is the distinction this repo keeps paying for: **built is not watched.** Nearly everything
+here typechecks and passes tests. A dead soul seed, a write-only verb, a switchboard with no
+readers and a frame log that kept nothing all shipped green.
 
-    git show 0294cde:arch-refactor.md
+So this file explains nothing. No mechanism, no rationale, no measurement, no history — those are
+code, `docs/arch/` and `git log` respectively, and a copy of any of them here is a second source of
+truth that goes wrong silently. An entry is a name, a pointer, and either the date it was watched
+or the run that would settle it. If a line here starts describing *how* something works, delete it.
 
----
+Three states:
 
-## The standard this file holds
-
-**Built is not watched.** Nearly everything here typechecks and passes tests; the question that
-has repeatedly cost us is whether it has ever run against a live instance. A mechanism that is
-described and absent typechecks. So does a dead soul seed, a write-only verb, a switchboard with
-no readers and a frame log that kept nothing — every one of those shipped green.
-
-Three states, and only the first is done:
-
-- **watched** — observed against a running instance, from ground truth *outside* the
-  conversation (`server.log`, `GET /api/sessions`, the frame log under `memory/raw/sessions/`,
-  disk artifacts) — never from what the agent said it did
+- **watched** — observed against a running instance from ground truth *outside* the conversation
+  (`server.log`, `GET /api/sessions`, the frame log under `memory/raw/sessions/`, disk artifacts) —
+  never from what the agent said it did
 - **built, never watched** — green tests, no live run
-- **no code**
+- **no code** — named in a prompt or a design, absent from `src/`
 
-Method for moving something from the second state to the first is in
-[`CLAUDE.md`](../CLAUDE.md) § *Testing user journeys live*: terse boss, don't lead the witness,
-verify every claim.
+Method for moving a row up: [`CLAUDE.md`](../CLAUDE.md) § *Testing user journeys live* — terse
+boss, don't lead the witness, verify every claim.
 
----
-
-## In flight — the task ledger gets a manager
-
-**The one item still mid-build.** Design landed 2026-08-19 in `agents.md`, `data.md` and
-`foundation.md`; the shape is **create vs change**:
-
-> **Cognition may create a ledger row. Only a Task Manager may change one.**
-
-The split is defensible where "one writer" was not, because the two are different acts: opening
-is something Cognition *witnessed* — the ask happened in the conversation it was in — and must be
-instant; closing is a claim *about the world*, which the dispatcher is worst placed to make. They
-never touch the same row-state, so they cannot contradict each other. Cognition keeps
-`CreateWorker`, so one dispatcher survives.
-
-The stamps that follow a status change (`status_since` / `completed_at` / `cancelled_at`, and the
-legacy `kind:`/`state:` spellings) are **the store's, not a mind's** — normalised on the diff pass
-that already re-reads the whole ledger every turn. Deliberately not a new verb: every agent that
-may write this ledger has a shell, so a verb is a door beside an open wall, and its failure mode
-is an absent field, indistinguishable from a task that never moved.
-
-**Built:** `WorkerType::TaskManager` + `identity/workers/task-manager.md` (real and unexercised);
-`tasks::reconcile`, run from `tasks::projection` — a dry run rewrote 58 records on the first pass
-and 0 on the second; `cognition.md` hands closing down instead of doing it.
-
-**Watched failing, 2026-08-19 — it had never once got past the 7th record.** `render` refused any
-field quoting this machine's absolute data-dir path, and the refusal aborted the whole loop, so
-the 61 subjects sorting after `ai-agent-book-reading-guide` were never reconciled: 18 with no
-`status_since` (so the *last moved — close it, ask once, or cancel it* line can never fire on
-them), 8 still on the legacy `kind:`/`state:` spellings. It said so once per brain turn, in a
-warning that named no task. **A dry run could not have caught it**: the check compared against
-the *running* data dir, so a store copied to another path passes clean. The refusal is deleted —
-item 2 below already said this pass reports what it cannot fix and never refuses — portability
-is guidance in `cognition.md` now, and the reader takes both path forms. **Built, not yet
-watched:** nothing has observed the next brain turn actually catch those 61 up.
-
-**The acceptance line is specified and almost never written — 2026-08-25.** `asked` is the
-task's acceptance criteria: what would make this right, in the person's words, plus any reading
-taken because they did not say. `cognition.md` has carried the instruction, the format and a
-worked example since the timeline shipped on 2026-08-24. Counted across one live store: **106
-records, 15 with a `## Timeline` at all, 3 with an `asked` line, 1 with a `blocked` line — and
-0 of the 4 open rows had an `asked`.** Among the 29 rows touched since the mechanism landed,
-15 grew a timeline and 4 grew an `asked`, so the vocabulary is being adopted and the acceptance
-line specifically is not.
-
-`asked` is writable at open or never — the worker is told not to edit it, the manager writes
-closings, and cognition does not re-enter a row it opened — so the prompt now says that in as
-many words, with the count. **No code check was added, deliberately:** *"this row has no
-`asked` line"* is a decisive enough test, but there is no valid response to it after open, so
-it would be a nag naming no action. The only lever is at the moment of opening, which is prose.
-
-**Guidance, therefore unenforced, therefore unproven.** Whether the next rows opened carry an
-`asked` line is a thing to count again in a week, not something any test can report. The same
-pass added the asking posture to *Working ahead*: when a fork genuinely turns on something only
-he knows, carry both branches as far as the one-way door and hand back both answers so his reply
-selects rather than starts — two branches, never five, and a fork with an obviously better arm
-is an assumption to take rather than a question to ask.
-
-**A row waiting on him stays `doing`, and the cadence stops asking it to close — 2026-08-25.**
-Seven rows went `todo → done` in one batch on a glance-up, every one of them waiting on Zhao
-Li's own decision — a KT candidate handed over for him to Run and listen to, a COS scope choice,
-a Feishu callback only he can register. Each close was correctly reasoned. The prompt had been
-told three different things about where such a row lives: `todo` waiting on them
-(`task-manager.md`), close it and it reopens when they act (same file, thirty lines later), and
-`blocked` is a line about a task that is still `doing` (same file, and `cognition.md`). No
-transition predicate existed anywhere in code to settle it — `Task::set_status` takes any status
-to any status, and every rule about *when* a row moves was prose.
-
-The pressure was in the projection, not the prose. `past_idle_boundary` keyed on `doing` + 48h
-and nothing else, so past two days a row got *"close it with what you did verify, or ask once,
-or cancel it"* on every pulse — three answers that all mean stop. With no gates anywhere on this
-ledger, that sentence is the only pressure the host applies, so a disposition it does not name
-reads as one that is not allowed. The prompt bullet licensing the close existed to relieve it.
-
-**The fix is the sentence, and the first attempt at it was too clever.** A `blocked_on()`
-classifier was built and pushed first: it read each row's running record, and a row whose most
-recent `landed`/`blocked`/`checked` line was `blocked` got a different note, a different count,
-and no *nobody on it*. Cut the same day, on Zhao Li's call — **code should do only clear and
-decisive logic**, and that was 135 lines deciding what a `blocked` line *means* on exactly the
-long-tail content it would be worst at. It also depended on a verb the managers demonstrably do
-not use: all seven of these rows were closed under a `checked` line, not a `blocked` one. What
-replaced it is one sentence — *say where it stands: close it with what you did verify, ask once
-and record what it waits on, or cancel it* — which names the recorded ask as a disposition and
-still refuses the seventh probe. Where a waiting row lives is now settled in one place only,
-`task-manager.md`, and code has no opinion about it.
-
-**Built, never watched.** Green — 982 Rust, 105 web. What a live run is the only way to settle:
-whether managers reading the widened sentence actually record the wait and leave the row in
-`doing`, and whether the relay added to `cognition.md` (a close or a new block is news, said in
-the turn the report lands) survives a busy turn — that is the half that failed here, and it is
-still only prose with nothing enforcing it. **The seven rows are still `done` on the live
-instance; nothing here reopens them.**
-
-**A worker names its task, or there is no worker — 2026-08-25.** `subject` on
-`hi_create_worker` was optional and its omission silent, so the join every ledger line is
-projected through rested on a dispatcher remembering a field while busy with the errand itself.
-Counted over every `hi_create_worker` frame in one install's `data/memory/raw/sessions/` — 474
-distinct calls: **34 of the 384 whose kind serves the ledger named no task** (9%), among them
-both live workers on screen when this was raised, each running work whose task line meanwhile
-read *nobody on it*. Four changes, one commit:
-
-- **Refused without one**, exactly as an empty `title` is, for every kind that serves the ledger.
-- **And refused unless it names a row that already exists** — `tasks::named`, which reads and
-  never writes. A dispatch that *opened* the missing row was built first and cut: it makes the
-  required field always satisfiable at the price of a ledger that fills itself, and a review
-  filed as its own task or a second row for work already tracked is a worse list than a missing
-  label. Every line on the ledger is something somebody decided was owed; opening one is a file
-  a mind writes with the shell it already has.
-- **A miss comes back with the open ledger** — up to 30 rows, `subject`, status and title — so
-  the answer to *no such row* arrives with the rows there are. That is where the joining
-  actually happens: the reviewer sees the builder's row and names it rather than coining a
-  sibling beside it.
-- **The two kinds that serve no single task are refused a subject** — `task-manager`, whose row
-  would be the whole ledger, and `person-reader`, whose subject is a person and would open a
-  task named after somebody. That closes what was item 4 here: `WorkerType::expects_a_subject`
-  had the manager on the wrong side, so **all 69 task-manager dispatches carried *not linked to
-  any task*** — the phrase that means *staff this*, flown by the one session that can never
-  satisfy it. Its line now says it serves the whole ledger.
-
-**And the list gets an owner: one promise, one row.** Two rows for one job double-count what is
-owed, split its record across two folders and invite two workers onto one job — a fault only
-visible from the whole list at once, which is what a `task-manager` reads and no rung does. It
-was forbidden from folding them (*"do not prune, merge or tidy an open task"*); it now may, and
-only it may. A fold carries everything the second row says into the survivor and closes the
-folded one `cancelled` with a line naming where the promise went — never a deleted directory,
-never a moved artifact. **Folding is not the pruning still forbidden**: pruning ends a promise, a
-fold moves one, and a merely stale row is neither. The test written into the prompt is delivery,
-not resemblance — two rows are one job when delivering either delivers the other.
-
-`Registry::has_unlinked_worker` went with all of it: a predicate whose doc named "the check that
-runs before staffing a task", with no caller anywhere and none in its history. The fence replaces
-what it was for.
-
-**The board carries what a card draws — 2026-08-26.** Two facts the record held and the
-projection dropped now ride `GET /api/tasks`:
-
-- **How long a row has stood where it stands.** `statusSince`, shown as elapsed on `todo` and
-  `doing` only, silent below a day, warning past the same 48 hours the idle boundary reads.
-  `Created` cannot stand in for it — churn is not movement.
-- **The frontmatter the schema does not know.** `systems:` (78 of 108 records), `report_to:`
-  (10), and the dated note keys the agent keeps its own ledger in. `Task::extra` preserved all
-  of it and the DTO dropped all of it. Capped for a surface that polls — 24 fields, 240
-  characters — with the count of what was cut shipped beside it, since a silent truncation
-  reads as a record with nothing more in it. Run over a copy of the live store: 110 records,
-  80 carrying `systems`, 5 with a value long enough to clip and 2 past the field cap (one has
-  144 foreign keys), and the whole list costs **39 KB of a 843 KB response**.
-
-**The caps are a loan, and the item that takes them back is named below.** They exist because
-one endpoint serves both the board and the panel, so a record's whole ledger is paid for by
-every card on every poll. A per-row endpoint retires them rather than tuning them.
-
-**A third field was built and cut the same day: `onIt`, who is working a row** — the
-switchboard join `worker_note` computes for the agent's window, projected onto the card so a
-`doing` row whose worker had died would stop looking exactly like one being worked. The fact
-was real and so was the question. Neither made the structure necessary: a field on every row of
-a polled list, a DTO and its staleness rules, a render path on card and panel, eight strings in
-two locales, CSS and five tests — priced forever, for a fact whose reader was already told it in
-the one window where a stalled row actually gets dispositioned. **Known but not shown is not a
-gap by itself**, and an audit built by listing every fact the system computes against every
-screen that does not show it produces a list of additions, each justified by what is possible
-rather than by what is needed. Deleted whole, nothing behind a flag.
-
-**And came back the same day on a carrier that costs almost nothing — 2026-08-26.** The cut
-argument turned on the last clause: nobody had been unable to act for want of it. That premise
-expired within hours. Zhao Li, looking at a `doing` row that had not moved in half an hour,
-could not tell stuck from working; the live ledger at that moment had **9 of its 11 `doing` rows
-with nobody running on them** — 3 more with a session that had gone idle, one of them 2h idle
-behind `last turn FAILED: responseStreamDisconnected 403` — all drawn identically to the two
-that were live. The fact was never the problem. Its carrier was.
-
-`GET /api/workers` already carries `subject`, `state`, `state_since`, `doing` and `last_turn`,
-and the Sessions page already joins on it for its *on ‹subject›* chip. So the board joins the
-same roster **in the view** (`onItMeta` / `bySubject` in `views/factory/tasks.jsx`): no field on
-`GET /api/tasks`, no DTO, no server staleness rules, no Rust test — one more fetch on a page
-that already polls every 8s, and 4 strings in two locales. The three states are the ones
-`tasks::worker_note` reasoned out, and the rule about which absence is worth saying is carried
-over whole: a live worker is reported wherever there is one, *nobody* only on `doing`.
-
-**Not in the timeline, and that was the proposal.** The panel puts it beside the status, in the
-meta row that already carries `created` and `standing 2d`. A live line is not a seventh
-`TimelineKind`: it has no instant that means anything, it changes on every poll, and as the
-newest node of an append-only record it would make a row that has not moved in half an hour
-read as one that just did — the exact inversion of the question being asked.
-
-**What the cheap carrier costs, and it is a real loan:** a restart's casualties are not in the
-roster at all, so cut-off work reads *nobody on it* rather than naming the restart, and the
-`Reopening` / `Lost` distinction `tasks::OnIt` draws stays on the agent's side only. Both
-readings are true and both raise the same alarm; the distinction is the input to resume-or-write
--off, which is Cognition's decision against `worker_note`, not one made on this board. **It is
-also deliberately not an attention flag** — `taskNeedsAttention` is untouched, because a
-condition that holds on 9 of 11 rows would repaint most of the column and train the eye past it.
-
-**Built, never watched.** Green — 998 Rust, 106 web. No live instance has drawn any of the three
-fields. The derivation *has* been run against the live roster and ledger — the three states and
-the failed-turn tail all came out as above from a harness over the real `/api/tasks` +
-`/api/workers` — but that is the join checked, not the board seen. What a run would settle:
-whether promoting `systems` to tags is right for records whose value is not a list of systems,
-and whether *Nobody on it* on most of the `doing` column reads as an alarm or as wallpaper.
-
-**What is still missing from that panel**, from the same audit and after the account came out
-of the fold (below): `[[…]]` cross-links render as literal brackets on the 60 records that carry
-them — `064a26e` settled the safety question, since an autolink's text is its destination and a
-wiki link has the same property, so what is left is resolving a ref without guessing at it in
-the view; the `.history/` every record keeps has no surface; `malformed` says "invalid stored
-fields" without naming which, though `is_malformed` knows; and `L.assumed` is a string in both
-locales that nothing renders. The acceptance line is its own item — still 0 of 11 open rows
-carry one.
-
-**And the list still ships records where a board needs a projection.** A card draws a title, a
-status, the latest timeline line and one date; the list sends every record's body (686 KB of
-that 843 KB), every foreign field, and every timeline entry, for 110 rows every 8 seconds. The
-per-row endpoint `02e599f` opened is most of what a split needs.
-
-**Still to build, in order:**
-
-1. **A recently-closed `serving` row keeps its place in the manager's window** — closed when,
-   carrying a `verify:`, not checked since. **The most valuable thing left here**, and the one
-   that would have caught `feishu-it-group-watcher`: cancelled 60s after a reflection named it
-   as on duty, machinery still running a day later, a failed self-heal spawning **461 orphaned
-   processes in 25 minutes** (708 MB) with nothing said — because closing had removed the only
-   `verify:` from view.
-
-   **Re-specified 2026-08-19, and the correction is the buildable part.** The first wording said
-   the store re-runs `verify:` after a close. It cannot. Every `verify:` in the live store is
-   prose — bilingual, multi-clause, naming a *result*: *"at least one has been OPENED and looked
-   at"*, *"三条齐才算活着"*, *"有一句这个空白到底在哪的判断"*. That is precisely what stops *"a
-   job with this id exists"* from passing forever, and precisely what makes the field unrunnable
-   by anything but a mind. So the store surfaces the staleness and the manager does the looking —
-   the same split as everywhere else here.
-2. **The pass reports what it cannot fix** — misfiled `verify:`, unknown status words, a task
-   directory with no row, a closed record with no instant to date it — into the manager's window
-   **as facts, never as refusals**.
-3. **The manager's own first job**, not a migration script: the 5 legacy records that came out of
-   `reconcile` closed-with-no-instant, the 2 task directories with no `facet.md` at all,
-   `kt8-070` / `ktv-doubao-ref-only` still in `done` after an audit that found neither had reached
-   the person, and `feishu-it-group-watcher` cancelled while its machinery runs.
-4. **Nothing starts a manager.** No code path creates one, nothing checks that one ran, nothing
-   notices if none ever does — `git grep TaskManager` outside the enum returns nothing. The
-   chain is *pulse fires* (code) → *Cognition starts a manager* (prompt) → *manager files*
-   (prompt), and two of the three links are prose. Same lever as (1) and it belongs beside it:
-   the window carries *"N tasks past the idle boundary; no manager has run since X"*. Cognition
-   cannot derive that by thinking harder, which is the test for earning a place in a window.
-
-**The running record got a shape, a store-written spine and a surface, 2026-08-24.** The
-2026-08-23 version was guidance only: three writers were told which parts of one prose body
-were theirs, nothing rendered differently, and nothing was ever watched writing them. It is
-now a schema. The body carries a `## Timeline` heading and, under it, dated append-only
-lines of five kinds — `asked` (Cognition, at open), `landed` / `blocked` / `checked` (the
-worker and the manager), and `moved`. Prose above the heading passes through untouched.
-
-**`moved` is written by the store**, in `Task::stamp_transition`, on the same
-`tasks::reconcile` pass that already stamps `status_since` — so the spine of every task's
-history exists whether or not an agent cooperates, and the two writers of a transition
-(code, which is told; the pass, which finds out) are kept from both claiming the same one
-by `write_task` updating `LAST_SEEN`. Nothing is backfilled: a record predating the pass
-gets a history starting at its next transition.
-
-The panel was rebuilt around it (`views/factory/tasks.jsx`): `asked` pinned at the top,
-the record newest-first, the long prose behind a disclosure, and the latest line on each
-card. That last part is why this was worth doing — median live body is 3.2 KB and the
-largest is 48 KB, all of it previously dumped into one `<div>`. (The disclosure is gone
-again as of 2026-08-26, below — it was hiding the answer.)
-
-**Watched, 2026-08-24, against a copy of the live 101-record store**: the first pass
-rewrote **0** records (the store is already canonical, so the schema costs nothing to
-adopt), no record lost a character of prose, no status moved, and no record grew a history
-it did not earn. A `todo → doing` edit made by hand then produced exactly one line —
-`- 2026-08-24T08:35:21Z moved — todo → doing`, appended below untouched prose — and the two
-passes after it wrote nothing. No live body carries a clashing `## Timeline` heading.
-
-**Also watched, 2026-08-24, and it found the one defect.** A release binary was run against
-a seeded three-task store and the board rendered in a real browser: `asked` pinned, the
-record newest-first with per-kind rails, the prose folded, and each card carrying its
-latest line. While it ran, a live rung read the ledger and **wrote a `checked` line into
-the running record unprompted, in the format the prompt specifies** — the half that had
-never been watched. The store wrote its `moved` line on the same turn.
-
-**And in the same turn it wrote `status: blocked`.** `blocked` is a *record kind*; it is
-not one of the five status words, so `TaskStatus::parse` fell back to `Todo` and a task
-that was underway and stuck came back reading *not started*. `is_malformed` caught it and
-the panel said so in red, which is the designed behaviour working — but the collision was
-introduced by this change, so the fix went where the mistake was made: all three prompts
-now say a kind is not a status and that a blocked task stays `doing`. **The re-test is
-watching a rung meet that wording** — nothing has yet.
-
-**Built, not watched:** `asked`, `landed` and `blocked` lines written by a mind (only
-`checked` has been seen), and a Task Manager appending its closing `checked` line before
-it moves the status word.
-
-**A blocked row names the door, 2026-08-26.** The `blocked` line was defined in four places
-as *the question and who owes it*, and that definition is what KT8-059 sat three days
-behind. Its line was correct — *"the ordinary native UI Run/listen accept-or-reject question
-was already handed to Zhao Li and remains unanswered"* — and he opened the panel, read his
-own name as the thing holding it up, and had nothing to go to. The URL existed in a review
-workspace and in an episode's prose as *"the native TTS playground URL"*, which is a
-description of a URL and not one; grepping the row itself for `http` returns nothing. So the
-definition grew a third element — where they answer it — in `docs/arch/data.md` and in the
-three prompts that teach it (`cognition.md`, `workers/task-manager.md`, `workers/general.md`),
-with `identity::soul_tests::a_waiting_line_names_where_the_person_acts` holding the
-three together, since one drifting from the other two is silent. (It was
-`a_blocked_line_names_where_the_person_answers_it` and asserted the phrase *where they
-answer it*, until the entry below renamed the kind and widened the phrase to *where they do
-it* — a wait can be owed labour, not only an answer.)
-
-And the panel makes it clickable. `views/factory/tasks.jsx` renders its timeline through the
-same inline vocabulary as the prose and both autolink `http(s)` — *autolink only*, never a
-markdown label with its own href, so the anchor text is always the destination. The renderer
-had refused links outright and the reason it gave was sound; what it missed is that an
-autolink cannot lie about where it sends someone, and the panel is a modal with no address
-bar, so an inert URL is one the reader has to retype off their own screen.
-
-**Watched, 2026-08-26**: a release binary on an isolated store, its ledger seeded with a
-blocked row carrying `http://127.0.0.1:19075/playground?tab=tts` mid-sentence, rendered
-through `GET /render/view` in a real Chromium and driven over CDP. The panel opened with the
-URL as an `<a>` whose text equals its `href`, `target="_blank"`, `rel="noreferrer noopener"`;
-the trailing comma stayed outside the link and `&ex=drury_timed_en` survived intact in a
-second one; `` `doing` `` rendered as code instead of literal backticks. Both skins.
-`target="_blank"` reaches the system browser through the window's existing
-`createWebViewWithConfiguration` — the path the out-of-energy card already uses.
-
-**Built, not watched:** a mind actually writing an address into a `blocked` line. The live
-KT8-059 row still carries none; nothing backfills one.
-
-**The kinds are named for the reader, 2026-08-26.** `asked` / `landed` / `blocked` /
-`checked` became `created` / `delivered` / `waiting` / `update`, and the change came out of
-counting the live ledger rather than out of taste. Two numbers decided it. **`checked` held
-154 of 263 lines** — 59% of the record, 70% of everything a mind wrote — and a sample of its
-openings was four unrelated speech acts: a real verification, a reading of the record, a
-closing rationale, and somebody else's decision arriving. A bucket holding the majority of a
-record is a default, and one calling itself `checked` claims a discipline it is not
-exercising, so it is now `update`. **And `blocked`'s 18 lines carried four meanings**: your
-answer is owed (10), a human's labour is owed (2), a technical dead end the worker was
-already routing around (4), an internal handoff the person had not been shown (3). Two of
-those clear themselves, which is exactly the confusion reported from the panel — a red line
-sitting on a row that had moved on three times since. `waiting` now means **a human must act**
-and nothing else; anything the agent can get past by itself is an `update`.
-
-**What makes a wait current is that nothing stands under it.** There is no closing kind and
-nothing to unset: the record only appends, so a `waiting` line is live exactly while no mind
-has written below it, and `moved` does not count because the store writes it on a transition
-it merely witnessed. `waitsOnPerson`/`latestSpoken` in `views/factory/tasks.jsx` are that
-rule, and they feed three things: a *Needs you* block above the record, the same words on the
-board card, and the column's attention count. An older `waiting` line goes grey rather than
-red. This is why no sixth kind was added — the gap was unstated, not unrepresentable.
-
-**A status change now reads as its verb** — started, put back, reopened, standing duty, done,
-cancelled — instead of the stored `todo → doing`. The store still writes the pair, which is
-the right thing to store and the wrong thing to show.
-
-**Old spellings parse; `render_timeline` then writes the new word.** A lazy migration, not a
-compatibility path — no file is touched until the store rewrites it anyway, after which one
-vocabulary exists. The lossy edge is named on `TimelineKind::parse`: `blocked → waiting`
-over-claims on the 6 of 18 lines that were not waits. `identity::soul_tests::a_wait_is_about_a_human_and_nothing_closes_it` holds the two
-rules in both prompts that write one, since one drifting from the other is silent.
-
-**Built, not watched:** all of it. No mind has yet written a line in the new vocabulary, and
-the *Needs you* block, the card marker, the greyed-out superseded wait and the lifecycle
-verbs have been compiled and unit-tested but never rendered in a browser. The prior entry's
-gap stands unchanged underneath: no mind has written an address into a wait either.
-
-**And the shared-folder collision is answered in prose, on purpose.** Two sessions wrote the
-same path under one task; the loser's briefing was replaced whole and the winner's file was then
-read by the loser as its own, with no error and no copy. The scan that found it: 1,635 facet
-writes over 578 paths, 95 written by more than one session, 148 whole-file shell overwrites,
-two confirmed silent losses in a week — a **floor**, since it can only resolve literal paths and
-cannot see through 326 `write_text(…)` calls or 575 `tee`s. `facets.rs`'s *last-writer-wins, and
-that is fine* was correct about `facet.md` and silently general about its siblings; that comment
-is now scoped, and `general.md` carries the write-verb rule (`apply_patch` checks, a heredoc
-does not). No gate was added and none is planned — the rejected `deliverable: <ref>` is the
-precedent: a guard on a field an agent must remember to fill is *silently* absent when it
-forgets, which reads exactly like a clean delivery.
-
-**The keeping half landed 2026-08-24, and is watched.** Guidance moves the write verb and
-cannot keep the bytes, so `mind/memory/task_history.rs` keeps them: `reconcile` — the pass
-that already re-reads every record on every window build — now copies each file in a task
-folder into `<subject>/.history/` before anything can rewrite it. It rides on that pass for
-the pass's own stated reason, that *a pass that re-reads the bytes cannot be walked around,
-because it reads whatever is actually there however it got there*. Content-addressed, so an
-edit-and-undo keeps two versions and not three; `(len, mtime)` pre-checked, so an untouched
-store costs one `stat` per file and no reads at all. **No size threshold**, deliberately: a
-cap that silently skipped the largest file would drop history for exactly the artifact most
-expensive to lose and look identical to having kept it, and every task folder in every store
-on hand holds one `facet.md`, the largest 6 KB.
-
-**Watched, by re-running the original failure.** A release binary against a seeded task
-folder: pass one kept `briefing.md` and `facet.md`; a `cat > briefing.md <<EOF` from outside
-the process replaced the file whole, exactly as the real loss did; the next pass kept the
-replacement, and the destroyed version was still on disk and readable. Five passes over a
-task the agent was actively working produced six entries and six distinct contents — no
-duplicates, nothing kept twice, 24 KB.
-
-**Three things it does not do**, none of them oversights. It does not **prevent** a
-collision — a lock or a refused write is a gate, and both writers still land. It does not
-**detect** one: the pass sees that a file changed, never who changed it, and a body changing
-without a status moving is ordinary work rather than a signal, so nothing goes in the window
-and nothing should until the writer's identity is available. And a version written *and*
-replaced between two passes was never observed, so the exposure window is one brain turn
-rather than zero — it is not zero, and no cheap mechanism makes it zero. Only files directly
-in a subject directory are covered; a nested deliverable is not.
-
-**The answer was in the record and folded shut — 2026-08-26.** A `done` row was opened a day
-after it closed: `Inspect gz-02 /data disk usage`. The panel showed what was asked, then
-`note — ledger correction`, `checked — 5,624 bytes with SHA-256 …`, `landed`, `asked`. All
-true, all housekeeping. The one paragraph saying **90% used, 72.6 GiB free, a Podman
-`knq-vision-gateway` recording growing at 36.6 GiB/day, confirm before stopping it** was in the
-body, collapsed under *Full notes* below the whole timeline — so the reader was told the errand
-had been checked, not what it found, and the answer only existed anywhere they would look in the
-conversation, which scrolls away. The record was never the problem: it carried the outcome, and
-in a count of one live store every closed row does.
-
-So the account comes out of the fold and sits above the timeline, headed *What came of it* on a
-closed row and *Where it stands* on an open one. It is clamped to 22em with the rest one click
-under it — the reason for the fold was real, and the fix for a 48 KB body is a clamp, not
-concealment. **The clamp is unconditional while collapsed**: the first cut hung the `max-height`
-on measuring overflow, and unclamped `scrollHeight` equals `clientHeight`, so nothing ever
-measured as too long and the whole account rendered — caught in a render, not in a test, which is
-the only place it was visible.
-
-**And a name the record wrote is now the file it names.** *"The completed report is
-`inspection-report.md` in this task directory"* was a pointer the one person reading it could not
-follow. `GET /api/tasks/{subject}/files/{*path}` serves a task's own folder, guarded exactly as
-`drive/` is (`safe_rel_path`, then canonicalised containment), and `TaskDto.files` lists the
-inline-code tokens the prose and the timeline spell **that are really on disk** — the account's
-own references, resolved. Not a listing of the folder, deliberately: that store holds 39,946
-files under `tasks/`, cloned repos and `__pycache__` included, and one task's top level alone
-holds 114. Two listings would mean one of them is wrong and no way to tell which.
-
-**Watched, 2026-08-26, headless-rendered against copies of two real records.** The gz-02 row:
-the whole outcome paragraph visible without a click, `inspection-report.md` a link in both the
-account and the `checked` line, the timeline still on screen. A 10.8 KB body
-(`kut-gz-gpu-deployment-planning`): clamped with the fade, *Show everything*, `What has
-happened` still above the fold. Not watched: the link followed in the real app, and the account
-of a row nobody has written prose into.
-
-**And one floor that is not a step, recorded so it stops reading as an oversight.**
-`checked_at` — the one liveness field code reads — can only ever be written by a mind. A
-manager that stamps it after a probe that came back *down* makes a dead duty read healthy,
-which is `feishu-it-group-watcher`'s own failure mode, and no pass can tell the two apart from
-the outside. What the store can do it already does: show *when* it was last confirmed, so
-staleness is visible even when honesty is not verifiable.
-
----
-
-## Watched working
-
-Against running processes, not by reading code.
-
-**Toolmaking moved off the job path — 2026-08-27, built, not yet watched.** The workshop was
-being grown by default: `equipping-a-tool.md` ended by telling the worker to write the note, and
-both rungs were told getting the tool was part of the work. That produced the 76 MB vendoring —
-a bespoke extractor built inside one job, for a shape that had happened once. A session in the
-middle of an errand cannot know it is the fifth time, so under any instruction to equip, the
-guess resolves to *build*.
-
-So the decision moved to **reflection**, which is the only rung that reads across days: a new
-step 3 in the settling pass weighs whether anything recurred often enough to pay, against a
-stated cost — a session to build, reading and trusting a note per use, and **a line in the window
-of every session from then on, including every session about something else.** All three of
-recurred / beats-inline / cheap-to-pick-up must hold, and *a stated intention is not evidence*.
-When they hold it dispatches a worker: deciding is reflection's, building is not. The job path
-keeps only the anti-stall half — get what this job needs, never hand back a worse answer while
-implying it is the answer.
-
-**And the two questions are now separate**, which is the point: whether a tool should *exist* is
-reflection's judgment over patterns; whether it is *in hand* is arithmetic over use.
-`hot_inventory` now ranks by `recent_usage` — tool calls and shell commands over 30 days, matched
-to a note by its `use:` command or its own name — with freshness demoting to a tiebreak for notes
-nobody has run. That repays the loan the previous entry named. The scan is cached in-process for
-5 minutes because sessions open far more often than usage changes; nothing is written to disk, so
-the frame logs stay the single source of truth.
-
-**The ranking half is watched.** On a live instance the agent used `browser` twice and `hi`
-three times; the next session's `baseInstructions` came back ordered `mcp-service` (3, via its
-`use: hi mcp`), `browser` (2), then the two unused notes by freshness — score-descending with
-mtime breaking only the tie, exactly as specified. Known over-credit, written into the code: one
-binary hosting several tools shares one count, because usage is recorded by program and not by
-subcommand, so `hi mcp`'s note took all three `hi` invocations.
-
-**The deciding half is unwatched.** Reflection has to fire on a real backlog for any of it to be
-observed, and it has not since the change. What to look for is a negative: that it *doesn't*
-propose tools on thin evidence.
-
-**`hi mcp` reaches a real MCP server, both transports — 2026-08-27.** `foundation::mcp::client`
-is the other direction from the server we publish to codex: `initialize` → `notifications/
-initialized` → `tools/list` / `tools/call`, over **stdio** (spawn the command) or **streamable
-HTTP** (POST, answered as JSON or SSE), told apart by whether the endpoint is a URL. Watched
-against `@modelcontextprotocol/server-everything`: `list` returned its 13 tools, `schema get-sum`
-returned the real input schema, `call get-sum {"a":17,"b":25}` answered *42* over stdio and
-*11* over HTTP, and a bad tool name came back naming what the server does publish. A `hi` shim
-sits in `bin/factory/` so a note says `use: hi mcp`, and `factory/mcp-service.md` is seeded.
-
-Two costs are in the code where they bite, not only in the design: a one-shot call **drops the
-protocol's push half** (progress, sampling, elicitation), and the reply reader matches on the
-request id so a server that emits notifications cannot desynchronise the answer.
-
-**Commands are counted by the program they ran — 2026-08-27.** `program_name` unwraps the
-`/bin/zsh -lc "…"` every command arrives in, steps over `FOO=bar` assignments, and drops the
-directory. Watched: a live errand's `sed` appeared in `commands_by_name` with its failure
-counted, where before it was an anonymous `commands: 1`. Known blind spot, pinned by a test:
-only the first stage of a pipeline is counted.
-
-**The hot level is real, and for a CLI note it means the purpose line is in the window —
-2026-08-27.** There is no schema to attach, so residency is exactly that. `hot_inventory` is
-rebuilt at every session open, never stored, capped at `HOT_BUDGET_BYTES` with a failing test,
-and says what it dropped. Watched inside the `baseInstructions` a live session actually
-received: three seeded tools with their purpose lines, and `equipping-a-tool` degrading to a
-bare name because it has no front matter — the intended failure mode.
-
-**Its ranking is a named loan.** The cut line orders by *when a note last changed*, not by
-recency-weighted **use**, which is what `tools.md` asks for. The counter now exists; wiring it
-means a frame-log scan at every session open and that cost is unmeasured. The item that takes
-this back is the first entry under `tools.md` § *Open*.
-
-**The Tool Manager is deliberately not built.** The workshop holds four notes, and at that size
-`grep -rEn "^(purpose|description):"` *is* the lookup — it is what both rungs are told to run,
-and it has been watched working. The design makes the Manager load-bearing as the only route
-*outside the hot set*, and today there is nothing outside it: the whole registry fits in the
-window. Building it now is machinery ahead of anything to manage. **What reopens it:** the
-inventory hitting its byte cap on a real install, which is the first moment a session stops
-being able to see the whole workshop.
-
-**The workshop's execution layer nests, and the collision rule holds — 2026-08-27.** `bin/` is
-the agent's own and `bin/factory/` inside it is ours, rewritten every boot; `path_entries` puts
-the learnt directory first. Watched: `browser` resolved to `bin/factory/browser`, then to a
-hand-written `bin/browser` once one existed, and a restart rewrote only the factory copy. The
-child's PATH reads `…/bin:…/bin/factory:` then the system's. `split_front_matter` is now the one
-parser of the two keys — `server::skills`'s private copy is deleted — so `GET /api/skills`
-reports `run` for a tool and uses `purpose` as the excerpt.
-
-**But the seed that was supposed to make the agent write tools does not win, and the reason is
-not prose.** `factory/equipping-a-tool.md` landed and was followed in substance — asked for a
-URL→Markdown capability, the agent delegated to workers, built something that works, exercised
-it on a client-rendered page, and left a reusable note. It wrote that note in **codex's own
-skills format**, not ours: a directory with `SKILL.md` carrying `name:`/`description:`, which
-is what `codex_skills_extension` teaches (there is a second skills tree at
-`<data_dir>/codex-home/skills`, and the runtime logs about installing into it). Consequences,
-all observed on one run:
-
-- **No `use:`**, so the registry sees an ordinary procedure and the tool has no stable name.
-  Nothing was written to `bin/`, and the note invokes `python3 scripts/extract_webpage.py` —
-  a *relative* path, which breaks under any other cwd.
-- **76 MB of vendored Python inside `skills/`**, a tree meant to hold notes, that the registry
-  greps and that forgetting skips. A vendored `LICENSE.md` now appears in the scan *as a skill*.
-- **The seeded `browser` tool was not reused** — the worker vendored its own rendering stack
-  instead.
-
-**So the container was adopted rather than fought, and re-watched the same day.** `SKILL.md` in
-a directory is now a valid note whose identity is the *directory* (`web-to-markdown`, not
-`…/SKILL`); `description:` is read as `purpose:` with `purpose` winning when both appear;
-`name:` is ignored, since the tree already addresses the note; and a directory holding a
-`SKILL.md` **ends the descent**, so a tool's payload is no longer walked as reading material.
-Both prompts scan `^(purpose|description):`.
-
-Re-run on the same errand, the reader-side half is fixed and the writer-side half is not:
-`skills/` came back **52 K instead of 76 MB** (no vendored tree, no `LICENSE.md` listed as a
-skill), the identity and the excerpt are right — and the note **still carries no `use:`**, with
-its script still under `skills/<tool>/scripts/` rather than `bin/`. Two attempts at asking for
-that key in prose, the second one explicit that it is the line that matters most, and neither
-took.
-
-**The conclusion that follows is about the design, not the wording: `use:` cannot be obtained by
-asking, and it was already the key that broke this doc's own format rule.** Front matter is only
-what code reads; nothing but a tool/skill badge ever read `use:`, while the *mind* reads it to
-run the thing. The model reliably writes `purpose`/`description` (which the registry genuinely
-needs) and reliably writes a `## Run` section (which is the invocation, in prose, where the rule
-says it belongs). Dropping `use:` to one key is the [open fork](#open-forks) now — it reverses a
-decision taken on 2026-08-26, so it is not being taken quietly.
-
-One rule *did* take, and it is worth keeping: the pathological case was **vendoring**, not code
-as such. A portable script beside its note travels with the knowledge and is fine; binaries,
-model files and vendored dependency trees are machine-specific and belong in `bin/`, which is
-the tree the note can rebuild.
-
-**A tool is found and run — 2026-08-26, isolated instance, and the first attempt failed the
-way this repo always fails.** `<data_dir>/bin` is created at boot and prepended to every
-session's PATH (`mind::skills::install_tool_bin`, `bin_dir`); `skills/factory/browser.md` is
-seeded carrying `purpose:`/`use: browser`; and `bin/browser` is a shim that defers resolution
-to call time — `--resolve-browser` prints the argv prefix, so a machine that never opens a
-page never pays the ~100 MB download, and a full Chrome is told `--headless` while a
-`chrome-headless-shell` is not. Verified on the box: the child codex process's PATH begins
-with the data dir's `bin`, and the shim returned `<title>Example Domain</title>` from a real
-Chromium.
-
-**The first live run is the finding.** Asked to read a page, Cognition ran
-`curl … | sed -n '1,90p'` itself, **never created a worker**, never scanned the workshop, and
-named the second Hacker News item as the first. The scan had been written into `general.md`
-alone — a worker prompt, on a rung that never opened. Cognition holds codex's own shell, so
-the instruction went there too, pinned by
-`identity::tests::a_worker_scans_the_workshop_before_saying_it_cannot`.
-
-**After that, watched end to end.** On a page that is only text it ran `grep -rn "^purpose:"`,
-opened `browser.md` before running anything, and then *correctly used `curl`* — which is what
-the note itself ranks first for a page that need not run. On a client-rendered page it tried
-`curl`, got the 789-byte shell, and **fell through to `browser --dump-dom`**, returning four
-FAQ questions verbatim that exist nowhere in the `curl` response. Reaching for the tool exactly
-when the cheap path fails is the behaviour the note asks for.
-
-**Not closed by this.** Cognition ran both errands itself and dispatched no worker, so the
-delegation half of [journey 07](user-journeys/07-browser-errand.md) — operate a page, click,
-fill — is still unexercised, and the prompt's *a real errand still goes to a worker* is written
-but unproven. Nothing here provisions a tool the workshop lacks; that is Phase B.
-
-**The spine.** Boot with both sceneless rungs registering synchronously · `say` adopted from the
-first turn · `show` and the first-meeting welcome · the character actually read · the frame log
-filling under a run id · Cognition woken by a hand-up and hosting its own workers · the task
-ledger written · Reflection firing on its own backoff · the session swap on all three
-long-lived rungs · Cognition resuming a standing duty after a host restart · the duty inbox
-(`POST /api/in/duty/<start_key>`) taking a burst into one handler.
-
-**A large paste is a handed artifact, not an utterance — watched 2026-08-24, one boot.** A
-61,890-byte body stayed words (`Content::Text`, text channel, 61,890 chars in the journal); a
-334,890-byte body arrived as `Content::File` on the file channel with `bytes: 334890`, a peek,
-and a blob that `cmp` reports byte-identical to what was posted. The line the mind was handed
-was `>/file handed you a file: pasted-….txt (text/plain; charset=utf-8, 327 KB) ⟨ref: …⟩`
-followed by `┆`-marked opening rows — **and 327 KB of log never entered the prompt**. Off that
-line alone the agent said *"I've got the log file you sent"*; asked afterwards how many distinct
-workers appeared in it, it opened the ref and answered *"Seven distinct workers: worker-0
-through worker-6"*, which is correct. `POST /api/in/text` streams and carries no size limit at
-all now — it inherited axum's 2 MB default before, and answered a bigger paste with a 413 the
-face discarded silently.
-
-What that boot did **not** reach: a body large enough to matter as a *stream* (the biggest was
-327 KB, so nothing has exercised writing through for minutes), the `SCAN_MAX` ceiling where the
-credential scan starts reporting `partial`, and the composer's put-the-draft-back path — the web
-suite has no DOM harness, so that one is read-only-verified. Two artifacts pasted inside the
-same second still overwrite each other; `media_rel_path` has one-second granularity and no
-uniquifier, which dragged files have always shared.
-
-**Topology.** The local shape; the directly-public acceptor; the relayed shape end to end
-through the deployed community and Tencent EdgeOne; the gate in both credential presentations,
-with CSRF, all three pairing paths, the device list and revocation; the app's roster and local
-proxy across two cores; a name claimed by a signed-in account, permanent, refused to a second
-account and to an anonymous one, surviving a wiped data directory, and released back; the
-subpath prefix, emitting its own base and serving through the tunnel; `_builtin/reach`; the
-roster screen at the app's own `/app`; and **the relayed page rendered in a real browser** —
-React mounting, views resolving through the prefixed import map, SSE reconnecting.
-
-**The privacy boundary was rebuilt around a much smaller subject, and the live run above no
-longer describes it.** It was a projector on every serialized Responses request, reached by
-pointing codex's provider at a loopback proxy inside hi-agent. The subject is now *one inbound
-human message*: `POST /api/in/text` files what a person typed, and `AgentSession::prompt`
-substitutes the file's path. The proxy, the per-boot proxy token, the `shell_environment_policy`
-exclusion and the whole-request projection are **deleted**; codex talks to the provider directly
-again over `HI_AGENT_LLM_KEY`. Two defects the proxy had shipped went with it — a header
-allowlist whose effective forward set was two headers, and a `redact-core` byte-window panic on
-Chinese text that unwound out through the axum handler. The ASCII stand-in that fixed the second
-is kept, because detection still runs.
-
-What the rewrite gives up on purpose, per [`privacy.md`](arch/privacy.md): tool results, the
-system prompt, agent-to-agent mail and **codex's own shell** are all untouched. A session that
-runs `cat` on a secret file gets the value and nothing stops it. The guarantee is against the
-person's accident, not against the agent's decision.
-
-**The four host readers are gone with it.** `hi_read_text_file`, `hi_read_journal_range`,
-`hi_read_session_log` and `hi_copy_file_to_drive` existed to keep a model-authored command
-away from `memory/raw/`, which stopped being a goal when the boundary narrowed to inbound
-text. Each was a narrower version of something the shell already does — a `cat` with a
-1 MiB cap, a `jq` over `uuidv7` ids that sort lexicographically anyway, an `ls -t | head -1`,
-a `cp` with three guardrails the design explicitly does not want. `{raw_dir}` and
-`{sessions_dir}` are back in the prompts, so a ref is a path again, as
-[`agents.md`](arch/agents.md) never stopped saying. `journal::range` went too — its only
-caller was one of the four. Net: four tools and their prompt prose out, two string
-substitutions and one sentence about `keep/` in.
-
-**Built, never watched — all of it.** Nothing in the new shape has been seen running. The unit
-and integration tests cover ingest filing, the marker, restart stability, PII being left alone,
-a key inside Chinese text, and the broker spending a filed key. Nobody has watched a real turn
-carry `⟨secret: …⟩` into a live model, nobody has watched a worker build a `cat`-based
-command from one, and nobody has watched a rung open a ref by path since the placeholders
-came back — including the `keep/` fallback for a faded original, which is the one case a
-bare path does not cover. The re-test is the 2026-08-19 journey re-run: paste a key, confirm the
-conversation still shows it and the log still holds it, then ask for it to be used against a
-real endpoint.
-
-**The cache-control rule, re-measured against the real edge.** A gated response carrying
-`public` was an auth bypass: one authorized fetch taught EdgeOne the body and the edge then
-served it to requests carrying nothing, with the core never seeing them. `401 MISS` where it was
-`200 HIT`. The rule is `topology.md` § *Nothing behind the gate is `public`*, enforced **at the
-core, not the relay** — a cache-control rewrite at the community would be the second
-authorization mechanism invariant 3 exists to prevent — and pinned by a test rather than left as
-a habit.
+The architecture refactor's own log — every rung, every reversed decision, and the reasoning that
+cost a round of being wrong first — is `git show 0294cde:arch-refactor.md`. The narrative this file
+carried until 2026-08-28 is in `git log -- docs/status.md`.
 
 ---
 
 ## Built, never watched
 
-Each of these is green and unexercised. Ordered by what breaks worst if wrong.
+Green and unexercised. Ordered by what breaks worst if wrong.
 
-| | The re-test |
+| | The run that settles it |
 |---|---|
-| **An agent-written value that steers code is parsed, and unparseable means absent** — `consolidation_cursor` considers only `to_id`s that parse as uuidv7 and `warn`s on the rest; `after_cursor` lets that same parse decide the *compare* as well as the day-scan, so an unreadable cursor sweeps from genesis instead of swallowing the frontier; and `heartbeat::consolidate` returns `Pass::Swept`/`Pass::Skipped` so `reflection::note_pass` can count passes that skipped **while new input was on the log** and say so ([`data.md` § *Reading back across the pen line*](arch/data.md), [`host.md` § *The same rule turned inward*](arch/host.md)) | **Watched failing on 2026-08-26, and it cost thirty-five hours of memory.** A worker hand-wrote an episode with `apply_patch` and put the subject slug `songguo-auto-deploy-oversight` where the journal id belonged — one file in 1,592, and no rule anywhere said it could not be there. A slug beginning with a letter outranks every `01a0…` uuidv7 under string order, so it became a cursor nothing could overtake; `after_cursor` had **already parsed it and failed** — it fell back to genesis to pick day-folders — and then compared against the raw string anyway. Every sweep returned empty, every pass logged `consolidation skipped` at `debug`, and **reflection ran zero passes across a thirty-three-hour process**: no episode written after 2026-08-26, `proactivity.md` frozen, and no owner left to rebuild a missing seed. It surfaced only as a person saying the agent felt forgetful, one day after it dispatched a worker to go find a WeChat send path it had itself built and verified that same afternoon. Unit tests now reproduce the exact file (`a_hand_written_episode_id_cannot_freeze_the_cursor`), pin the direction (`an_unparseable_cursor_sweeps_from_genesis_rather_than_returning_empty`), and cover `note_pass` five ways. **What nothing has watched is a single real consolidation pass through this code.** The re-test, on a live instance: confirm `reflection fired` within a cadence of boot and a new directory under `memory/episodes/`; then plant a hand-written episode carrying a slug `to_id` and confirm the `warn` names the file, the cursor does not move, and passes keep firing. **The backstop is real and cannot currently fire** — with the cursor fixed at its source there is no known way to stall it, which is the intended state and also means `note_pass`'s `warn` has never appeared in a log. What no test reaches: whether `STALL_WARN = 3` is right against a real conversation's cadence, since the only stall ever observed lasted 35 hours and would have tripped any threshold. **No data repair is needed and none was done** — the poisoned episode stays where it is at `data/memory/episodes/2026-08-26-songguo-result-bridge-scanner-prepared/episode.md`, and the cursor recomputes correctly around it on the next boot. That is the heal: the store fixes itself by being read properly rather than by anyone editing the agent's own file. Watch the first boot drain a day and a half of frontier, 150 signals at a time |
-| **Cognition's brief has a writer at last, and it is Reflection** — `reflection_prompt` interpolates `{cognition_memory}` to `prompts/seed/cognition.md`, `reflection.md` gains *What cognition carries forward* with the test that separates it from Reaction's (*what was it in the middle of, that it would not think to go and look for* — Cognition **can** look), `agent_window` takes `Option<&str>` so a rung without a seed says so, and `REFLECTION_AGENT` is deleted along with the comment claiming Reflection carried something forward to a path that no longer existed ([`data.md` § *Who writes a seed*](arch/data.md)) | **The file has never existed.** `agent_window` has read `prompts/seed/cognition.md` for as long as it has existed and nothing has ever written it, so Cognition's carried-forward block has been the empty string on every turn of every run — a mechanism named in a design table and present nowhere else. That is the second half of the 2026-08-27 symptom: the thread had been compacted ten times in thirty-one hours, the POC it needed was compacted out, and the one thing designed to survive exactly that had no writer. **Nobody writes their own seed** is now the rule rather than a consequence of Reaction's tool surface, and `no_rung_is_told_to_write_its_own_brief` pins it. **What nothing has watched: Reflection writing one.** The re-test, over a few settling passes: confirm the file appears, then read it against its own test — the failure mode is a *second copy of the ledger*, which is already projected into Cognition every turn and would be pure waste there. What it should carry is the shape of what is in flight. Then the real one, and it needs a restart: get work genuinely mid-flight, restart, and read Cognition's first turn — it should come back knowing what it was in the middle of instead of re-deriving it. What no test reaches: whether Reflection rewrites it at a useful cadence, since the prompt is the only thing saying *not every pass* |
-| **A name is not a key: spelling is folded, meaning is never guessed** — `work_record` resolves a task's `systems:` name against the records on file with case and `-`/`_`/space folded away, treats a fold matching two records as a miss, and on any miss says the true, weaker thing (*nothing is filed under this name*) followed by the roster of what is — the shape `hi_create_worker` already uses for a `subject` naming no ledger row ([`data.md` § *A name is not a key*](arch/data.md)) | **Watched failing on 2026-08-27.** A task carrying `systems: wechat` printed *"No record of this system yet"* at the top of a worker's brief while `systems/wecom/facet.md` held the whole 小力 procedure and the location of its credentials — an assertion of absence that had never been checked, in the brief's most-read position. **The loose-matching fix is the wrong one and the tests pin that it was not taken**: personal WeChat and WeCom are different systems, and `a_near_miss_is_not_resolved_but_the_roster_comes_back` asserts that `wechat` does *not* reach `wecom` and that the other system's credentials are never substituted. Five tests cover the fold, the near-miss, the ambiguous fold, and the empty store. **No live brief has been rendered through it.** The re-test: re-run the 2026-08-27 case — a job whose system name misses — and read the worker's first minutes in the frame log; it should read the roster and go open the right record, or say plainly it has no precedent. **The over-correction to watch for is the opposite of the original bug**: a worker handed a roster picking the nearest name on it rather than the right one, which is the guess this design refused to make in code being made by the model instead. If that shows up, the roster is the thing to cut, not the fold |
-| **An owner can see what a working session has been doing** — `record_activity` appends to a bounded per-session ring (`ACTIVITY_STEPS = 40`) as well as replacing the `doing` line, and `hi_session_messages` answers in two labelled halves: what it has **said**, and what it has **done**, oldest first, each step carrying its age ([`registry::steps`](../src/foundation/registry/mod.rs), [`session_messages_report`](../src/foundation/mcp/mod.rs)) | **Watched failing on 2026-08-27, and the failure is the reason for the shape.** A worker writes nothing until its closing summary — which is what `identity/workers/general.md` asks of it — so `messages` was empty for the whole of `general-prepare-wecom-intelligent-bot-bi`'s ten-minute life and `doing` was one 120-char line being overwritten every few seconds. Its owner, with no progress signal, built one out of `sleep 30` plus `find -exec stat` over the task folder, read a quiet folder as a stall, and cancelled a session that had already run `wecom-cli message aibot --help` — the single command the errand needed. The finding died with the session: across that run 202 of 202 worker turns that completed reported something, and **16 of 39 that were cancelled reported nothing at all**, because a turn cut before its summary has no summary to give. Green — 1023 Rust, 117 web; six tests, four of them on the rendered answer, including the silent-worker case above. **Nothing has read one against a live session.** The re-test, in one errand: hand out something that runs for minutes without writing files early — an install, a long read — then call `hi_session_messages` while it runs and confirm the steps are there, in order, with ages that move. **And the question it is really there to settle**, which is open and should not be answered from this row: *does an owner that can see its worker still take the work back?* The 2026-08-27 numbers to re-run against a later store — 43 turns dispatched a worker, 24 ended within 2 minutes of dispatching, 8 ran more than 10 minutes past it, and those 8 hold **32 cancels against 0** in all 24 that ended promptly. If the cancels and the long turns fall together, blindness was the cause and this closes it. If they hold up with the steps visible, then the grinding is a disposition and none of this touches it — that is the finding, and it is worth more than the fix |
-| **Every review surface re-reads itself** — `useLive` in `@hi/core` owns one clock for all of them (first read, skip while hidden, re-read on returning attention, a `hold` for "not now"), and the tempo is named rather than numbered: `TEMPO.watching` 2s, `TEMPO.ledger` 8s, `TEMPO.onAttention` for a reading too expensive to put on a clock. Rule 4 in `factory.rs`. `factory/upload` is deleted — the window already takes a file dropped or pasted anywhere, so the view was a door onto something that works everywhere | **Seven of these fetched once on mount and never again**, which is not showing state but showing a timestamp nobody can see. Worst of them was `reach`: the pairing finishes on the *phone*, nothing on the page hears about it, so the one moment the section exists for was the one it could not show — scan the code, the phone says paired, the list still reads "no devices", and **Done did not reload either**. 1012 lib tests, 117 web tests, and the new `every_review_surface_renders_on_a_core_that_has_nothing_yet` renders all nine in real Chromium against empty endpoints — which is also the first test harness a factory view has ever had, and it exists for a failure only a browser can see: `useLive` is imported by every surface and by no host code, so if the bundler drops it from the shared chunk or the import map stops binding `@hi/core`, nine views throw on load and every other test still passes. **Nothing has watched a tick actually fire.** The re-test, in three parts, all on one running instance. *The arrival*: open `reach`, tap Add device, pair the phone, and confirm the card appears without a click. *The hold*: open `tasks`, start dragging a card and keep holding it past 8s — the board must not move under the hand; then open `memories`, type into a facet without saving, and confirm the text is still there a minute later. *The cost*: leave `stats` open and confirm no `/api/stats` in `server.log` until the window is focused again, since that endpoint opens every frame log in the range. What no test reaches: whether 8s is a useful ledger tempo or merely a busy one |
-| **Expression is two gates, and the second one runs last** — `reaction.md` gains an increment clause on *What earns a line* (the test runs against your own previous line, not against silence), two lookup criteria for say-vs-show (count the dimensions; estimate the skipped fraction), and a new closing section — *Before it goes out: would a person say it this way?* — carrying three rules that are about wording only and never about correctness: honesty is a constraint and not a subject, say it the length it is, use their words. `person-reader.md` gains a **map of what the person knows** — one inferable sentence, never a word list, **never a not-knowing column**, with questions read as evidence of fluency rather than of ignorance. `view-builder.md`/`view-reviewer.md` gain the single first-landing-point (the visual form of *one view answers one question*) and the label-vs-identifier split | **This row is only the unwatched half — there is nothing green under it.** 200 lines of prose across four prompts, zero lines of code, and no test can reach any of it; the 106 web and 972 lib tests passing says only that nothing was broken on the way past. **But the re-test is unusually cheap, because the thing it changes was measured first.** Re-derive from `data/memory/raw/text/*/text.jsonl` after a week of real use and compare to the 2026-08-20→26 baseline: agent:person messages **3.1×**; consecutive agent messages per person turn **median 4**, with **46%** of all agent messages sitting inside bursts of ≥8 — the wall `reaction.md` already forbade in prose and did not prevent; message length **median 111 chars with 2.0% under 30**, against the person's own 25 and 54.2%; **18.4%** ending on a negative disclaimer (生产未改动 / 不会触发 / 只读不清理) and **26%** narrating verification instead of a finding; English tokens per 100 CJK chars **9.7 against the person's 1.7**; and `raw/view/` showing **28 agent pushes against 76 person pulls**, 41 of those pulls being `factory/tasks` + `factory/workers`. Any of these not moving means the prose did not land. **Three failures to watch for, all of them over-correction.** *Terse where an answer was owed* — "好" is a licensed message now, and it is the wrong one for a question; the burst count falling while questions go half-answered is a worse trade than the one this was meant to make. *Identifiers softened* — the say-side rule says use their words and the view-side rule says never touch a job id or an error code; the failure mode is the first rule eating the second and a `45000030` going out as "授权问题". *The map turning into a judgment* — `person-reader` is told to write evidence of fluency and only fluency, so what to catch in `people/*/facet.md` is any sentence describing what someone **cannot** follow, which ages into a falsehood and is readable by them in `factory/memories`. **And the one thing no measurement reaches**: whether the second gate runs at all on lines the first gate already passed. That is exactly how the audit behind this change failed on its own first pass, and it leaves no trace in the numbers |
-| **The screen answers to the conversation, in both directions** — `ViewBus::shown()` reports the agent's own trail into every turn beside `on_screen` (named views only, newest first, coarse ages, listed and not argued for), and `reaction.md` replaces *"there is no wrong moment to put one up"* — false since a show started taking every window with it — with one consideration: the screen keeps step with the subject, forwards and back ([`stage.md` § *The screen answers to the conversation…*](arch/stage.md)) | Green — the trail's shape is pinned on both sides (dedupe by destination, inline shows excluded, `live` read from the slot so a `dismiss` clears it, the rendered block, and that the block only lists), and **the behaviour it is meant to produce is one paragraph of prose with nothing pinning it.** That is the whole risk: it either changes what the agent does or it does not, and no test can tell. **The re-test, in two parts, and both need a live conversation.** *Backwards*: get a view up, talk about something else for several turns, then return to the first subject in passing — not asking to see it — and watch whether the view comes back. Then read the frame log to see whether the ref came from the new block or from further up its session, which is the only way to know the block is what did it. *Forwards*: while deep in one thread, have a worker finish something unrelated, and watch whether it lands mid-sentence or waits for an opening; then do it again with something that needs a decision. **Two failures, and the second is the likelier one.** A view that finished and never went up at all is worse than a mistimed one. And the block is a standing list of refs in the prompt: watch for the agent putting views up *because it can see them* — reaching into the list when a conversation goes quiet is the abuse this shape is written to avoid, and if it shows up, the block is the thing to cut, not the guidance |
-| **The frame is the window — nothing is reserved** — `.hi-view-fill` no longer presses an inset onto a view's root, the channel cluster wears the caption pills' scrim so it is legible over anything, and clearance became two opt-in tokens (`--hi-safe-top`, `--hi-chrome-bottom`) ([`stage.md` § *The frame is the window…*](arch/stage.md)) | Green — the frame test now pins *no padding, no border* on the layer, and the dressing was rendered in Chromium across skin × backdrop. **No live face has shown it.** Three things to watch. *The bleed*: put up a view whose picture is an `<img style="position:absolute;inset:0;object-fit:cover">` and confirm it reaches all four edges — that is the whole point of the change and it has only been proven in a harness. *The chrome*: the cluster is now a dark scrim in the light skin too, over white paper as well as over a view; nobody has judged whether eight dark discs on white read as controls or as coins. *The drift*: every view the agent wrote under the old model now paints ~28px higher into the titlebar strip, and the factory surfaces were swept but `data/views/*` was not — watch the first few old views come back up and see whether a headline lands under the traffic lights. What no test can reach: whether builders stop shipping `contain` now that the guide's mechanism section is gone |
-| **A view goes up on its first clean render, and a review renders the surface someone is on** — `STAGE` is a list of surfaces with the most recent reporter at the head, every face reports under its own id (the popover excepted, and it now says so with `?chrome=popover`), and the builder's bar is split into a machine-checkable ship gate and a refine pass that runs with the view already up ([`stage.md` § *The frame is a surface…*](arch/stage.md)) | Green — 972 lib tests, the store's own semantics pinned in `view_render`, the two prompt halves pinned in `identity` — and **not one line of it has run against a face.** The measurement it was built from, over 136 worker sessions 15–24 Aug: 36 minutes median from a builder starting to the view reaching the screen, of which the headless browser is 2.4% of builder active time and the review loop 29%; 41% of builder review calls rendered a frame under 500px that no surface ever reported, and those renders sent the builder back into the source 28% of the time against 13% for a real one. **The re-test, in three parts.** *The surface*: open the face on the phone and on the desktop, resize the desktop window, and confirm `hi_review_view` renders the frame of whichever spoke last — then open the popover and confirm it moved nothing. *The gate*: ask for a view and time the gap between the builder's first clean `hi_review_view` and the view appearing; it must be seconds, not the rest of the build. *The pass*: watch what happens after — a refined version has to reach the screen over the first one, and the thing nobody has seen is whether a replace under someone mid-read is tolerable or infuriating, which is the whole risk the split takes on. What no test can reach: whether builders actually stop inventing widths, since the prompt is the only thing that says so |
-| **One `Message` for the whole conversation** — a typed line, a spoken one, a handed file and one `say` are a single value minted at the boundary and handed unchanged to the journal, to Reaction and to the conversation; `JournalEntry` splits four ways (`Message`, `Presentation`, `Observation`, `Internal`) and lines written as `signal_in`/`signal_out` classify on the way in, with nothing on disk rewritten ([`message.md`](arch/message.md)) | 935 lib tests and every integration binary are green and **no live instance has taken one line through the new path**. The durable half is what to watch, because the legacy classifier is exercised only by fixtures *written alongside it* — and all three bugs found while building it lived exactly there: the filename parse ran straight over the `⟨ref:⟩` sitting behind it, only the **first** `⟨…⟩` marker was ever read so a voice tag positioned after a ref went unseen, and `⟨voice: 老王 ~0.82⟩` wrote the similarity score into `subject`, opening a facet named `老王 ~0.82` that no later match ever joins. Each was caught by a test asserting the old contract, not by reading the code. **The re-test, in one boot**: point a fresh instance at a *copy of a real `data/`* and read the conversation back — every message that was there must still be there, in order, with the same face beside it and no message gained a face it did not have. Then the live half: type a line, hand a file, speak one, and confirm the journal holds one `message` line per act, the file's name in its own field, and **no `⟨…⟩` in any body** — carriers set fields now, and the markers are written only into the prompt. `Appraisal` has a kind, a home and **no producer**: relevance is the thing this refactor existed to make possible and nothing computes one yet |
-| **A resumed rung is not re-seeded** — `warm_reaction_session` skips `seed_session` when the thread came back, and `AgentSession::resumed()` is how it knows | The seed opened *"Nobody has spoken yet"* and re-handed 21k chars of transcript tail, ledger and roster to a thread that had been continuous across four runs and held all of it — measured on the 2026-08-21 boot, where `resumed the previous run's thread role=reaction` at 08:31:38.160 was followed by `seeding the thread seed_chars=21324` 19ms later. Now it logs `reaction resumed its thread; no seed`. Unwatched: whether the **first real turn** is as well-oriented off a cold memo as it was off the seed — the window is re-projected into it either way, so the claim is that nothing is lost, and nobody has read that first turn |
-| **Reopening what the host ended** — every worker its owner had not closed comes back on its own thread, under its own slug, with its unread mail; mid-turn ones are handed a `(restart)` note telling them to establish what actually landed, ones that were merely waiting are handed **nothing** and go back to waiting ([`agents.md#across-a-restart`](arch/agents.md)) | Replaces the *offer*, which only fired on a crash: a clean quit recorded every live worker `Closed` and the next boot offered nothing. Measured before the change — the 2026-08-21T08:30:45 quit closed 16 live workers, 4 mid-turn (a KUT deploy among them), and the next boot logged `offering=0`. Unit tests reach the `by_host`/`interrupted`/`held` marks, the filter, the mail fold, the two ledger lines and the note's wording; **nothing has watched an errand come back.** The re-test, in one restart: with one worker mid-turn and one idle-but-open, quit and restart. Expect `reopening=2` plus `exchange=` and `owed=` on the boot line, `errand reopened on its own thread` twice with `handed=a turn` and `handed=nothing`, both keeping their old slugs. Then read the mid-turn one's first turn — it must go and check what its last steps did, not redo them — and confirm the idle one took **no turn at all**. Then the failure half: quit mid-turn, delete that thread's rollout from `data/codex-home/sessions/`, restart, and confirm it does not come back, its owner is posted why, and its task line says `could not be reopened`. And the mail half: send a worker a message while it is mid-turn, quit before it reads it, restart, and confirm the message is re-posted behind the `(restart)` gap line rather than dropped |
-| **A promise the conversation carried reaches cognition** — reflection's undelivered-promise notice is handed to `cognition`, the rung that may open a row, instead of written into the recency digest ([`reflection.md`](../src/identity/reflection.md), [`agents.md#reflection--background`](arch/agents.md)) | The prompt had gone on naming `hot.md`'s projection long after that file lost its readers and its writer — `snapshot`'s `leftover_legacy_files_are_never_inlined` pins that it can never come back, and `episodes::recent_gists` feeds only reflection's own next pass, so every promise-note reflection wrote was read by nothing. **Watched failing on 2026-08-25**: a `gz-02 /data` disk inspection ran to a full report, reflection's 06:41:31Z episode recorded the pending owner decision *and* the report's path, and across four cognition wakes no row was opened — the decision survives only in a conversation, on a disk with about 48 hours of headroom. The re-test, in one restart: take work on in conversation, let a worker get partway, restart before any row exists, and confirm reflection's next settling pass sends `cognition` the promise and that a task row stands after the following glance-up. What no test reaches: whether reflection recognises the case at all, since the prompt is the only thing that says so |
-| **The switchboard's traffic ring** — every delivered `Registry::send` kept in memory (`registry::mail`, 300 messages, 4k chars each) and read back per pair by `GET /api/workers/mail?a=&b=`, which is what an arrow on the Sessions page opens | Real, and exercised only from a test's own registry: the endpoint was driven end to end against a live server (both directions, a third session's mail correctly absent) but the sends were the test's, not an agent's. What no run has covered is the ring under a **working** agent — whether 300 is a useful window or an afternoon's traffic evicts the morning's, and whether a worker's report routinely runs past the 4k clip. Nothing refused is recorded and nothing host-posted is (`Registry::post` has no sender, so no arrow could show it) — both deliberate, both unverified against what a reader actually goes looking for |
-| **The floor** — the mouth refuses a turn whose room isn't the voice's to take (their voice sounding; a line went unheard), with a three-refusal backstop | A real partial stream. Both conditions are unit-tested; curl cannot drive a partial |
-| **The check-in** — `say(text, back_in)` arms a wake, with a floor under an open-ended silence | One errand that takes >5 minutes: hand it over, **don't ask**, watch for `check-in fired` in `server.log`, and judge whether what gets spoken is progress or "still working on it" |
-| **The duty inbox's edges** — TTL re-derivation, and a restart mid-burst | Plant a `serving` facet with a `start_key`, POST a burst, idle past the TTL, POST again; then restart mid-burst and confirm the glance-up still finds the unhandled rows |
-| **A genuinely new machine keeping its name** | Covered by `TestRegistryNameSurvivesANewMachine`, not by a live run — `device_id` is machine-derived, so two data dirs on one Mac share an account and the live run could not tell the cases apart |
-| **The Docker shape's gate** | A published port is off-box, so an existing deployment is gated from first run. Reasoned about, not exercised |
-| **Nothing opens during the drain** — `AgentLayer::session` refuses once the shutdown signal is triggered, so no rung can mint a thread while the host is winding down | The failure it fixes was watched on 2026-08-20: a cold reopen during the drain wrote a newer `thread` row for Cognition and Reaction, and the next boot resumed those 14-record shells instead of the 34.6 MB thread the run was actually spent on. The guard itself is unit-tested only. Quit with rungs live, then confirm the last `thread` row per rung in `memory/raw/sessions/index.jsonl` is still the run's own, and that the next boot logs `resuming=2` on those same two ids |
-| **A session swap that fails or times out** | Both arms are written (keep the warm session; discard the unresponsive one) and neither has been provoked |
-| **The conversation surviving every view** | `ViewTraits` and the `.geom.json` sidecar are deleted, so `stage()` no longer has a `hidden` case at all — the popover/pill pair is the whole of it. Covered by unit tests on both sides; what none of them reaches is the outage, which is the one view that ever claimed the words. Pull the vendor credential, watch the notice come up, and confirm the conversation is still there and still typeable |
-| **A show taking the window with it** | The parked window follows any show now, including a re-show of the same destination (the cursor drops on the newest history entry changing, not on its destination changing), and the server clears its `attention` on any show to match. Unit tests reach the server half only: park on an older card, have something shown, and confirm the stage moves; then re-show the same view and confirm it still moves. A dismiss deliberately moves nobody |
-| **The Sessions tree** — the roster drawn as the ownership tree it is, packed by `d3.tree()` (Reingold–Tilford as Buchheim refined it) against one **constant** card height every card is drawn to, with one rAF animator owning card positions, the arrows between them, and the fade of a session starting or ending | Checked hard, but never mounted. The pure half (`forest` + `layout` + `fitted`) was run directly against a fabricated roster — ladder order, one rank per depth, no two cards overlapping in a rank, a parent centred over its children, the synthetic root d3 needs never leaking into the drawing, an orphan and an ownership *cycle* each drawn exactly once, and narrowing that stops at the card-width floor. The published-library path was checked end to end rather than assumed: the view's bare `d3-hierarchy` specifier survives the server's own esbuild transform (`--loader=tsx`, no `--bundle`), and `make build` emits it in `dist/importmap.json` against a real 14KB chunk. The drawing was rendered in real Chrome at 980 / 1600 / 2200px in both skins, and the create/end transition sampled frame by frame off the page's own rAF (two cards cross-fade, the ended one unmounts at ~330ms, everything settles at full opacity). All of that was a standalone page carrying the real stylesheet and a stubbed `/api/workers`. **The mounted view has since been seen against a live roster** — three rungs over six workers, the arrows following the `owner` chain — which retires the "never mounted" half of this row. The 2026-08-21 card pass (one height for every card, one-line titles, a live stage a screenful tall, room under the plot for the card's own shadow) was rendered off a running instance's real `/api/workers` in headless Chrome, including the empty roster and a fifteen-card tree; that reading mounted the file directly rather than going through the server's own view pipeline, and the pass has not been seen in the app itself. `make test` still reaches none of this by default — but a factory view is no longer without a harness: `every_review_surface_renders_on_a_core_that_has_nothing_yet` renders this file among the rest through the server's own pipeline in real Chromium, and it is `#[ignore]`d only because it launches a browser. It answers "does it draw", not "does it draw *right*", so the churn reading below is still the one nothing covers. What no reading has covered is **churn** — watch a worker start under Cognition and confirm it animates rather than jumps, and confirm a tree too wide for the frame scrolls with its edge fades rather than hiding a rung.
-
-**2026-08-23 — the card is a fixed size and the arrows are controls.** Four changes, and the first three were seen rendering: the card height is now the constant `NODE_H` instead of the tallest measured card (a wrapped `doing` line used to push every card and the rank under it down 17px on a poll and back on the next), cards are 272×206 rather than 236×whatever, the meta line is clamped run-on text in both cards rather than a wrapping row of chips, and a **link arrow** is drawn from Reaction across to Cognition — the traffic edge the page never had, since Reaction creates nothing and everything it hands on goes up by `hi_send_message`. Rendered in headless Chrome through the server's own view pipeline (`ViewCompiler` + `/render/view`, not a standalone page) against a real switchboard roster of three rungs and three workers; that render also caught a live bug — a `<button>` centres its content, so with a fixed height every pill in a rank sat at a different y until the card became a flex column. **What is built and not watched: the click.** Every arrow now opens `Channel`, the exchange between the two sessions it joins — the panel itself was rendered by forcing its state open, so the *panel* has been seen with real data, but no pointer has ever hit one of the invisible fat hit paths, and no reader has focused one with a keyboard |
-| **The views band opening on the bookmarks row** | The upper row's scroll-to-*here* has been watched; the lower row's is new, and its arithmetic was only checked in a standalone page carrying the real stylesheet — not in the mounted band, where the chip appears a render after the first `listViews()` answers. Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
-| **Working ahead** — the handover carries the questions it provokes, and the reversible half of the likely next step is handed out in the same turn ([`agents.md` § *Working ahead*](arch/agents.md)) | Journey [34](user-journeys/34-a-step-ahead.md), written to be run without leading the witness. **The one that decides it**: hand over something whose next step is outward, then say nothing, and confirm it stopped at the door. This is prompt-level throughout — the identity tests pin that the prose is present and that the permission never travels without its boundary; nothing pins that the agent acts on either |
-| **The seam between the rungs** — a name in the person's words crosses down quoted, with Reaction's reading beside it rather than in place of it; the agent's own housekeeping (gate verdicts, retries, contrast ratios, which attempt this is) does not cross up at all; a commit answers *what was done* and never *what was asked*; a name matching exactly one open ledger row is survivorship, not disambiguation; an ask you simply answer opens no row; one `task-manager` serves the whole ledger, never one per row ([`agents.md` § *The hand-down*](arch/agents.md)) | All six are prose in `reaction.md` and `cognition.md`, written off one failure watched on 2026-08-24: a bare "056" went down already bound to a commit, the rung holding the ledger read only what that binding pointed at, and eleven minutes of confident, internally consistent answers described a child regression instead of the contract it was a child of — ten of the ledger's 103 rows carry that ticket number, and exactly one of the ten was open. Every step after the binding was correct work. Nothing pins that any of the six changes behaviour. **The re-test, in two parts**: ask about something whose short name is ambiguous in the ledger, then read the hand-down in the frame log — their word must be in it, quoted, and any binding marked as a guess. Then hand over work that runs through a builder/reviewer loop and count what reaches the conversation: the thing landing, and not one line about the gates |
-| **A worker names the task it serves** — `hi_create_worker` refuses a ledger-serving kind without a `subject`, refuses one that names no existing row (handing back the open ledger), and refuses one from `task-manager` / `person-reader` ([`agents.md`](arch/agents.md)) | Unit tests reach every refusal, the exemption, the offered list and the slugged lookup; **no live dispatch has gone through it.** The re-test, in one session: ask for something the ledger has never heard of and read the frames — the first `hi_create_worker` may well be refused, and what matters is what the model does next. It should either name a row from the list it was handed or write `memory/facets/tasks/<subject>/facet.md` and retry; if it instead thrashes, or names the nearest row rather than the right one, the fence costs more than the label did. Then the case the fence is really for: hand out a review or a second pass on work that already has a row, and confirm it names the parent. Also unwatched: whether the offered list (30 rows) is the right size in a store with 108 subjects. Existing compiled views re-derive *not linked to any task* from a null `subject` themselves, so a `task-manager` card keeps flying the old phrase until the roster view is rebuilt |
-| **One promise, one row** — a `task-manager` may fold a duplicate into the row it duplicates, and only it may | Prompt-level throughout (`task-manager.md` § *One promise, one row*), and the manager itself is still *real and unexercised* — nothing has ever started one, which is item 4 below. So this is guidance handed to a worker that has never run: **the first fold will also be the first pass.** What decides it is the boundary, not the mechanics — watch it fold two rows that are one job and *decline* two that merely share a subject, and read whether the cancelled row still says where the promise went |
-| **The `ahead` count** — `hi_create_worker(ahead)` → `WorkerSpawned` → `N/M errands started ahead` in the events view | It is self-reported, so it can only undercount, and a zero is two different findings wearing one number: nothing is being prepared, or nothing is marking it. Read it against the wire frames' actual `hi_create_worker` arguments on a run where working ahead plainly happened, or the count grades its own homework |
+| **An agent-written value that steers code is parsed** — `consolidation_cursor`, `after_cursor`, `heartbeat::consolidate` returning `Pass::Swept`/`Pass::Skipped`, `reflection::note_pass` | Watched failing 2026-08-26, at a cost of thirty-five hours of memory: a hand-written episode id froze the cursor and reflection ran zero passes across a thirty-three-hour process. **Nothing has watched a single real consolidation pass through the fixed code.** Confirm `reflection fired` within a cadence of boot and a new directory under `memory/episodes/`; then plant an episode carrying a slug `to_id` and confirm the `warn` names the file, the cursor does not move, and passes keep firing. The backstop cannot currently fire — `note_pass`'s `warn` has never appeared in a log, and `STALL_WARN = 3` is unproven against a real cadence. Watch the first boot drain the frontier, 150 signals at a time |
+| **Cognition's brief has a writer at last, and it is Reflection** — `reflection_prompt` interpolating `{cognition_memory}` into `prompts/seed/cognition.md` | **The file has never existed.** `agent_window` has read it for as long as it has existed and nothing ever wrote it, so Cognition's carried-forward block has been the empty string on every turn of every run. Nothing has watched Reflection write one. Over a few settling passes, confirm the file appears and read it against its own test — the failure mode is a *second copy of the ledger*, which is already projected into Cognition every turn. Then the real one, which needs a restart: get work genuinely mid-flight, restart, and read Cognition's first turn |
+| **A name is not a key** — `work_record` folding case and `-`/`_`/space on `systems:`, an ambiguous fold counting as a miss, a miss answering with the roster | Watched failing 2026-08-27: a task carrying `systems: wechat` printed *"No record of this system yet"* in the brief's most-read position while `systems/wecom/facet.md` held the whole procedure. **No live brief has rendered through the fix.** Re-run that case and read the worker's first minutes in the frame log — it should open the right record or say plainly it has no precedent. The over-correction to watch is the model making the guess the code refused: a worker picking the nearest name off the roster. If that shows up, cut the roster, not the fold |
+| **A working session's steps, readable by its owner** — `registry::steps`, `session_messages_report` | Hand out an errand that runs minutes without writing files early; call `hi_session_messages` mid-run and confirm ordered steps with ages that move. Underneath it: *does an owner that can see its worker still take the work back?* Re-run the cancel-vs-duration split against a later store |
+| **Every review surface re-reads itself** — `useLive` in `@hi/core` | Nothing has watched a tick fire. Three parts, one instance: pair a phone with `reach` open and the card must appear without a click; drag a `tasks` card past 8s and the board must not move under the hand; leave `stats` open and confirm no `/api/stats` in `server.log` until focus returns |
+| **Expression is two gates** — prose across four prompts, zero code | Re-derive from `data/memory/raw/text/*/text.jsonl` after a week and compare to the 2026-08-20→26 baseline in `git log`. Watch for over-correction: terse where an answer was owed; a job id softened into prose; `person-reader` writing what someone *cannot* follow |
+| **The screen answers to the conversation** — `ViewBus::shown()`, `reaction.md` | Two live-conversation parts. *Backwards*: get a view up, talk elsewhere for turns, return to the subject in passing — does the view come back, and did the ref come from the new block or from further up the session? *Forwards*: have a worker finish something unrelated mid-thread. Watch for views going up merely *because the agent can see the list* |
+| **The frame is the window** — `.hi-view-fill`, `--hi-safe-top` / `--hi-chrome-bottom` | No live face has shown it. Put up a view with an `inset:0` cover image and confirm it reaches all four edges; judge whether the light-skin scrim reads as controls or as coins; bring up a few pre-change `data/views/*` and see whether a headline lands under the traffic lights |
+| **A view goes up on its first clean render** — `STAGE`, `hi_review_view` | Open the face on phone and desktop, resize, and confirm `hi_review_view` renders the frame of whichever spoke last. Time the gap between first clean review and the view appearing — seconds, not the rest of the build. Then watch a refined version replace the first *under someone mid-read* |
+| **One `Message` for the whole conversation** — `JournalEntry` splitting four ways | One boot against a *copy* of a real `data/`: every message still there, in order, same face, none gaining a face it lacked. Then type a line, hand a file, speak one — one `message` line per act, the file's name in its own field, and no `⟨…⟩` in any body. `Appraisal` has a kind, a home and no producer |
+| **A resumed rung is not re-seeded** — `warm_reaction_session`, `AgentSession::resumed()` | Read the *first real turn* after a resume and judge whether it is as oriented off a cold memo as it was off the seed |
+| **Reopening what the host ended** — [`agents.md#across-a-restart`](arch/agents.md) | One restart with one worker mid-turn and one idle-but-open: expect `reopening=2`, both keeping their slugs, the mid-turn one checking what its last steps did rather than redoing them, the idle one taking no turn. Then delete a rollout from `data/codex-home/sessions/` and confirm it does not come back and its owner is told. Then the mail half: a message sent mid-turn must be re-posted behind the `(restart)` gap line |
+| **A promise the conversation carried reaches cognition** — [`reflection.md`](../src/identity/reflection.md) | Take work on in conversation, let a worker get partway, restart before any row exists; confirm reflection's settling pass sends `cognition` the promise and a row stands after the next glance-up |
+| **The switchboard's traffic ring** — `registry::mail`, `GET /api/workers/mail` | Driven end to end, but the sends were a test's. Unwatched under a *working* agent: whether 300 messages is a useful window or an afternoon evicts the morning, and whether a worker's report runs past the 4k clip |
+| **The floor** — the mouth refusing a turn whose room isn't the voice's | A real partial stream; curl cannot drive one |
+| **The check-in** — `say(text, back_in)` | One errand over 5 minutes: hand it over, **don't ask**, watch for `check-in fired` in `server.log`, and judge whether what is spoken is progress or "still working on it" |
+| **The duty inbox's edges** | Plant a `serving` facet with a `start_key`, POST a burst, idle past the TTL, POST again; then restart mid-burst and confirm the glance-up still finds the unhandled rows |
+| **A genuinely new machine keeping its name** | `device_id` is machine-derived, so two data dirs on one Mac share an account and a live run on one box cannot tell the cases apart |
+| **The Windows build** — `make exe` / `make installer` | Cross-compiles and has never been run on Windows. `write_browser_shim`'s `#[cfg(windows)]` arm mirrors the POSIX logic on paper and nothing has executed it |
+| **The Docker shape's gate** | A published port is off-box, so an existing deployment is gated from first run. Reasoned about, never exercised |
+| **Nothing opens during the drain** — `AgentLayer::session` refusing after the shutdown signal | Quit with rungs live, confirm the last `thread` row per rung in `memory/raw/sessions/index.jsonl` is still the run's own, and that the next boot logs `resuming=2` on those ids |
+| **A session swap that fails or times out** | Both arms written, neither provoked |
+| **The conversation surviving every view** | Pull the vendor credential, watch the outage notice come up, confirm the conversation is still there and still typeable |
+| **A show taking the window with it** | Park on an older card, have something shown, confirm the stage moves; re-show the same destination and confirm it still moves; a dismiss must move nobody |
+| **The Sessions tree** — `forest` / `layout` / `fitted`, `d3.tree()` | Mounted against a live roster, so it draws. What no reading covers is **churn**: watch a worker start under Cognition and confirm it animates rather than jumps, and that a too-wide tree scrolls with its edge fades rather than hiding a rung |
+| **The views band opening on the bookmarks row** | Open the band while parked on a `factory/` surface far along the row and confirm its chip is on screen |
+| **Working ahead** — journey [34](user-journeys/34-a-step-ahead.md) | Hand over something whose next step is outward, then say nothing, and confirm it stopped at the door. Prompt-level throughout; nothing pins that the agent acts on it |
+| **The seam between the rungs** — `reaction.md`, `cognition.md` | Ask about something whose short name is ambiguous in the ledger, then read the hand-down in the frame log: their word must be in it, quoted, any binding marked a guess. Then hand over builder/reviewer work and count what reaches the conversation — the thing landing, not one line about the gates |
+| **A worker names the task it serves** — `hi_create_worker` refusals, `tasks::named` | Ask for something the ledger has never heard of and read the frames: the model must name a row from the list it was handed or write the facet and retry. If it thrashes or names the nearest row, the fence costs more than the label did. Also open: whether 30 offered rows is right in a store with 108 subjects |
+| **One promise, one row** — `task-manager.md` § *One promise, one row* | Managers run (69 dispatches in one install), but folding is new prose none of them has carried, so the first fold is still ahead. Watch one fold two rows that are one job and *decline* two that merely share a subject, and read whether the cancelled row says where the promise went |
+| **The `ahead` count** — `hi_create_worker(ahead)` → `N/M errands started ahead` | Self-reported, so it can only undercount, and a zero is two findings wearing one number. Read it against the wire frames' actual `hi_create_worker` arguments on a run where working ahead plainly happened |
+| **The inbound-text privacy boundary, in its new shape** — `POST /api/in/text` filing, `AgentSession::prompt` substituting | Nothing in the new shape has run. Re-run the 2026-08-19 journey: paste a key, confirm the conversation still shows it and the log still holds it, then ask for it to be used against a real endpoint. Unwatched too: a rung opening a ref by path since the placeholders came back, including the `keep/` fallback for a faded original |
+| **`tasks::reconcile` catching up the tail it used to abort on** | Nothing has observed a brain turn reconcile the 61 records that sat behind the deleted refusal |
+| **A waiting row stays `doing`** — the widened sentence in `task-manager.md` | Whether managers record the wait and leave the row in `doing`, and whether the relay in `cognition.md` (a close or a new block is news, said in the turn the report lands) survives a busy turn. The seven wrongly-closed rows are still `done` on the live instance; nothing reopens them |
+| **The timeline vocabulary** — `created` / `delivered` / `waiting` / `update`, `waitsOnPerson` | No mind has written a line in the new vocabulary. The *Needs you* block, the card marker, the greyed superseded wait and the lifecycle verbs are unit-tested and never rendered in a browser |
+| **A `waiting` line naming where the person acts** | No mind has written an address into one. The live KT8-059 row carries none; nothing backfills |
+| **The acceptance line at open** — `created` carrying what would make this right | Counted 2026-08-25: 0 of the open rows had one. Deliberately no code check — after open there is no valid response to its absence. Count again against a later store |
+| **The board's extra fields** — `statusSince`, `systems:` / `report_to:`, the `onIt` roster join in `views/factory/tasks.jsx` | No live instance has drawn them. Settles: whether promoting `systems` to tags is right for records whose value is not a list of systems, and whether *Nobody on it* across most of the `doing` column reads as an alarm or as wallpaper |
+| **Reflection deciding what to build** — step 3 of the settling pass | The ranking half is watched; the deciding half needs reflection to fire on a real backlog, and it has not since the change. What to look for is a negative: that it *doesn't* propose tools on thin evidence |
 
 ---
 
-## No code at all
+## Watched
 
-- **A shelf for prepared things.** Working ahead has no store: a prepared artifact lives
-  wherever it naturally lives, the fact that it exists rides the worker's report into
-  Cognition's own session, and nothing carries it across a wake or a restart. **Deliberate,
-  not deferred** — a store, a budget, an expiry and a ready-line in the window are each
-  justified by a failure journey 34 has not shown yet, and machinery that exists before
-  anything is being lost is the pattern this whole file is a ledger of. What reopens it:
-  a run where prepared work is redone or forgotten, which is exactly what that journey's
-  reverse test looks for.
+Observed against running processes, dated where the date is known.
 
-- **The tool workshop beyond discovery.** What [`tools.md`](arch/tools.md) calls *finding and
-  running* a tool is built and watched (see below); the rest of it is not. **`hi mcp` has no
-  CLI and the repo has an MCP *server* but no client**, so a service speaking only MCP is
-  unreachable. **The hot level cannot exist yet**, for a narrower reason than "nothing counts":
-  `GET /api/stats` already derives `tools_by_name` from the frame logs on read — with failures,
-  per role and per worker type — but `codex::messages::kind_of` maps `mcpToolCall` to `tool`
-  and `commandExecution` to `command`, and the scan counts commands as a bare total with no
-  name. So usage is measured for exactly the tools that are already resident and is blind by
-  name to the CLI carrier the design prefers; a `browser` call cannot appear. The command text
-  is in the frames already, so this is an extraction, not new plumbing. And the **Tool
-  Manager** — which residency makes the only route to anything outside the hot set — is not a
-  rung, so today's reach is *what a scan of the workshop finds* and nothing further.
-
-- **post** — the push service, and with it waking a surface. Deliberately not next: push exists
-  to wake a surface holding no channel, and a phone browser opening the relayed address needs no
-  waking to be useful. The native iOS client changes that calculus; it has not been re-decided.
-- **Refusing to route for a surface reported lost** — the one revocation case a sleeping core
-  cannot serve.
-- **Mail for a sleeping core**, and therefore core-to-core addressing. Nothing is queued; an
-  inbound request is answered `asleep`. This is also the trigger that makes keypairs
-  non-optional.
-- **Credentials in the OS keychain, on the desktop.** The app keeps them in its config store.
-  (The iOS client already uses `KeychainStore`; the desktop app has no equivalent.)
-- **A core on iOS.** Blocked by the wire being a spawned binary, not by effort. (`app/apple/ios`
-  is a *client*, not a core.)
-- **`At(_)`** — a task's `due` is read and ordered, never fired, so a deadline is met at the next
-  glance rather than on time. This is a deliberate cost, stated once in
-  [`host.md#glancing-up`](arch/host.md), not a gap waiting on a commit. See *Settled* below.
-- **The retention question.** `data.md#keys-passwords-and-the-one-question` still describes the
-  one-time *this / all / none* choice; ingest files every detected secret automatically.
-  Because a prompt describing an unbuilt question teaches the agent to claim an answer was
-  applied, the prose was **removed** from `reaction.md`, `cognition.md` and
-  `drive-organizer.md` rather than left to rot, and
-  `identity::tests::prompts_are_honest_about_current_auto_retention` now pins the opposite: both
-  rungs must say retention is automatic and the choice is not implemented. Exchange-scoped
-  temporary secret files go with it.
-- **Any filtering outside the two seams.** Tool results, the system prompt, mail, exported
-  diagnostics, and codex's own shell output are all unfiltered, and
-  [`privacy.md`](arch/privacy.md) says so as a scope decision rather than a gap: only text a
-  person typed is the subject. Nor is anything non-text — a key spoken aloud or inside an
-  uploaded file is not detected.
+- **The spine** — boot with both sceneless rungs registering synchronously · `say` adopted from the
+  first turn · `show` and the first-meeting welcome · the character actually read · the frame log
+  filling under a run id · Cognition woken by a hand-up and hosting its own workers · the task
+  ledger written · Reflection firing on its own backoff · the session swap on all three long-lived
+  rungs · Cognition resuming a standing duty after a host restart · the duty inbox
+  (`POST /api/in/duty/<start_key>`) taking a burst into one handler.
+- **Topology T0–T3d, through the deployed CDN** — the local shape · the directly-public acceptor ·
+  the relayed shape end to end through the deployed community and Tencent EdgeOne · the gate in
+  both credential presentations, with CSRF · all three pairing paths, the device list and
+  revocation · the app's roster and local proxy across two cores · a name claimed by a signed-in
+  account, permanent, refused to a second account and to an anonymous one, surviving a wiped data
+  directory, and released back · the subpath prefix, emitting its own base and serving through the
+  tunnel · `_builtin/reach` · the roster at the app's own `/app` · the relayed page rendered in a
+  real browser, React mounting and SSE reconnecting.
+- **The cache-control rule, against the real edge** — `topology.md` § *Nothing behind the gate is
+  `public`*, enforced at the core and pinned by a test.
+- **A large paste is a handed artifact, not an utterance** — 2026-08-24, one boot.
+- **A tool is found and run** — 2026-08-26, isolated instance: `bin/browser` resolved off the
+  session PATH, `browser.md` opened before anything ran, `curl` correctly preferred on a static
+  page and `browser --dump-dom` reached for when `curl` returned a shell.
+- **The workshop's execution layer nests** — 2026-08-27: `bin/factory/` rewritten every boot, a
+  hand-written `bin/browser` winning over it, the child PATH ordered as specified.
+- **`hi mcp` reaches a real MCP server, both transports** — 2026-08-27, against
+  `@modelcontextprotocol/server-everything`.
+- **Commands counted by the program they ran** — 2026-08-27, a live errand's `sed` in
+  `commands_by_name` with its failure counted.
+- **The hot level inside a live session's `baseInstructions`** — 2026-08-27, three seeded tools with
+  their purpose lines and `equipping-a-tool` degrading to a bare name.
+- **Tool ranking by recent usage** — 2026-08-27, score-descending with mtime breaking only ties.
+- **`SKILL.md` in a directory read as a note** — 2026-08-27, re-run on the same errand: `skills/`
+  came back 52 K instead of 76 MB, identity and excerpt right.
+- **`tasks::reconcile`** — 2026-08-19 dry run, 58 records rewritten on the first pass and 0 on the
+  second; 2026-08-24 against a copy of the live 101-record store, 0 rewritten and no prose lost.
+- **The running record's schema and panel** — 2026-08-24, release binary against a seeded store in a
+  real browser, including a live rung writing an `update` line unprompted.
+- **A URL in a waiting line is clickable** — 2026-08-26, release binary rendered through
+  `GET /render/view` in real Chromium and driven over CDP, both skins.
+- **`.history/` keeps a file a second writer replaced** — re-ran the original loss: a whole-file
+  overwrite from outside the process, and the destroyed version still on disk and readable.
+- **The account above the timeline** — 2026-08-26, headless against copies of two real records.
+- **`every_review_surface_renders_on_a_core_that_has_nothing_yet`** — all nine factory views through
+  the server's own pipeline in real Chromium against empty endpoints. It answers *does it draw*,
+  not *does it draw right*.
 
 ---
 
-## Loose ends
+## No code
 
-Small, independent, none blocking. Verified against `0294cde`.
+Named in a prompt or a design, absent from `src/`.
 
-| | Where |
-|---|---|
-| `record_reflex` is **declared to no role** — the recognizer and `POST /api/reflex/invoke` are live, so a reflex can be fired but never written. Reachable by name only. This is a decision waiting, not a bug: give it a live role or drop the module | `foundation/mcp/mod.rs:972`, `body/reflex/mod.rs` |
-| `RESPONSE_SETTLE` is still a `const`, not a tunable — and it is now shared by three readers (the batch, the floor, the duty inbox), which raises the cost of it being unadjustable | `body/reaction/mod.rs:126` |
-| Vendor recovery is never announced — `note_success()`'s return is discarded with `let _` | `body/reaction/mod.rs:1950` |
-| `interrupts::mark_flush` has **no caller outside its own tests** — the barge-in stop path is client-side, and the backend hook is dead. Wire it or delete it | `body/reaction/floor.rs:497` |
-| A stale parenthetical: *"(Vision only journals; a handed file must wake the mind.)"* — vision **does** wake now, on a presence change | `foundation/server/files.rs:20` vs `vision.rs:188` |
-| The inspect views still list `deliberation` as a rung | `appearance/web/src/inspect/{SessionsView.tsx,api.ts,inspect.css}` |
-| touch / smell / taste 501 stubs — channels the architecture does not have | `types.rs:65`, `foundation/server/stubs.rs` |
-| Journeys naming retired files (`hot.md`, `commitments.md`, `self.md`): `02`, `03`, `05`, `13`, and `docs/memory.md`. These are **dated 实测 records** — the file name is part of what was observed on the day, so they want the `20`/`25` treatment (a preamble saying the mechanism was replaced and by what), not an edit to the finding. **Correct the mechanism, never the promise**, and prefer naming the concept over a path so it rots more slowly | `docs/user-journeys/` |
-
-**Unverified in this pass, carried forward rather than dropped:** whether worker reports still
-violate the absolute-path invariant, and whether bulk media is still stored twice (the
-`file-filer` worker that carried the copy instruction is gone; `drive-organizer` replaced it).
+- **Nothing notices when no Task Manager has run.** *Not* a reachability gap — dispatch is fully
+  wired: `TaskManager` is in `WorkerType::ALL` so it reaches the tool schema's `type` enum, both
+  standing rungs hold `hi_create_worker`, `registry` gives the kind its no-subject exemption, and
+  `cognition.md` § *Handing the ledger down* tells Cognition in as many words that starting one is
+  its job. Managers do get dispatched — 69 of them in one install's frame logs. What is absent is
+  the **observation**: nothing under `src/mind/` or `src/body/` reads `TaskManager` at all, so
+  nothing records that a manager ran and nothing notices when none has. `tasks::projection` already
+  counts rows past `past_idle_boundary`; it cannot add *"and no manager has run since X"* because
+  that fact is not kept anywhere. The chain is *pulse fires* (code) → *Cognition starts a manager*
+  (prompt) → *manager files* (prompt), and only the first link is code.
+- **A recently-closed `serving` row keeping its place in the manager's window** — closed when,
+  carrying a `verify:`, not checked since. The store surfaces staleness; the manager does the
+  looking, because every live `verify:` is prose no code can run. This is what would have caught
+  `feishu-it-group-watcher`.
+- **The reconcile pass reporting what it cannot fix** — misfiled `verify:`, unknown status words, a
+  task directory with no row, a closed record with no instant — as facts in the manager's window,
+  never as refusals.
+- **The Tool Manager** — the only designed route outside the hot set. Deliberately unbuilt: the
+  workshop fits in the window, so `grep -rEn "^(purpose|description):"` *is* the lookup.
+  **Reopens when** `hot_inventory` hits its byte cap on a real install.
+- **post** — the push service, and with it waking a surface.
+- **Mail for a sleeping core**, and therefore core-to-core addressing. An inbound request is
+  answered `asleep`; nothing queues. Also the trigger that makes keypairs non-optional.
+- **Refusing to route for a surface reported lost** — the revocation case a sleeping core cannot
+  serve.
+- **Credentials in the OS keychain on the desktop.** iOS has `KeychainStore`; the desktop app keeps
+  them in its config store.
+- **A core on iOS.** Blocked by the wire being a spawned binary. (`app/apple/ios` is a client.)
+- **The retention question.** `data.md#keys-passwords-and-the-one-question` describes a one-time
+  *this / all / none* choice; ingest files every detected secret automatically.
+  `identity::soul_tests::prompts_are_honest_about_current_auto_retention` pins the prompts to saying so.
+- **A shelf for prepared things.** Working ahead has no store; nothing carries a prepared artifact
+  across a wake or a restart. **Reopens when** a run redoes or forgets prepared work.
 
 ---
 
 ## Open forks
 
-- **Barge-in stop path** — core-owned or forever client-side? Today it is in the browser and the
-  backend hook is dead (above).
+- **`use:` cannot be obtained by asking.** Two attempts at getting the key in prose, neither took;
+  the model reliably writes `purpose`/`description` and a `## Run` section. Dropping `use:` to one
+  key reverses a decision taken 2026-08-26, so it is not being taken quietly.
+- **Barge-in stop path** — core-owned or forever client-side? Today it is in the browser and
+  `Floor::mark_flush` ([`floor.rs:497`](../src/body/reaction/floor.rs)) has no caller outside its own tests.
+- **`record_reflex` is declared to no role** — a reflex can be fired but never written. Give it a
+  live role or delete the module.
 - **Per-install prompt instances** — should `data/prompts/` ship knowing whose agent it is?
   Currently no: it learns by meeting them.
-- **`journal.recent()` runs per turn**, parsing the day's jsonl. Caching deliberately not added.
-- **Replay** — the frame log now has readers (`GET /api/workers/{id}/frames`,
-  `raw/sessions/index.jsonl`, and `cognition.md` tells the agent where its own stream is), so the
-  substrate has a consumer. The undecided half is gone: threads open `ephemeral: false`
-  ([`codex/process.rs`](../src/foundation/codex/process.rs)) and `thread/resume` is how Reaction
-  and Cognition come back at boot. What replay would still add is reading a *finished* session's
-  frames, which nothing does.
+- **Replay of a finished session's frames.** The frame log has live readers; nothing reads a
+  finished session back.
 
 ---
 
-## Settled — do not re-file, do not rebuild
+## Deliberately absent — do not re-file, do not rebuild
 
-Each of these was removed or refused **on purpose**, most of them after being built and lived
-with. Re-showing one costs a round trip and buys nothing.
+Each was removed or refused on purpose, most after being built and lived with. The reasoning is in
+`git log` and in [`docs/arch/`](arch/); this list exists only so it is not re-proposed.
 
 | | |
 |---|---|
-| **The clock** | Removed 2026-08-09. There is no host scheduler and there will not be one. The host's timing surface is the loops that already exist — Cognition's glance-up, the reflection backoff, the check-in deadline — and everything past that the agent arranges with the shell it already has. A `due` is read and ordered, never fired. What that costs is stated once, in [`host.md#glancing-up`](arch/host.md) |
-| **Presence-gated speaking** | Removed 2026-08-11, on the user's report from living with it. An open channel answers *is a window subscribed*, never *are you reading*, so the gate was quiet on someone sitting there and talkative to an empty desk. It was only ever load-bearing because words did not keep; the append-only conversation removes the loss and with it the reason to detect anything. Only `speaker_attached()` survives |
-| **The host marks a hand-down as owed** | Withdrawn 2026-08-19. It could not know: the host knows *a* hand-down went out, but whether *this* message answers it is a reading of message against request, and only Reaction holds both. The code set the flag on **every** turn a person spoke into — "ok" handed down too — then spent it on whichever Cognition message arrived first, so a background finding could be announced as the awaited answer while the answer behind it rendered bare. At its best it bought one sentence in a prompt with nothing enforcing it: a check that was really guidance. The rule is now a section of `reaction.md`; `agents.md`'s "the host is what knows the difference" is gone |
-| **Reflection is unaddressable** | Closed 2026-08-04. Nothing addresses it and nothing is meant to: no prompt names it as a recipient, and it wakes on its own backoff. "Unreachable" was measured against a general reachability rule it was never a client of |
-| **The room / one-capture-at-a-time** | Cut 2026-08-12. Scenes are gone from the code, so this would have been *new* machinery dressed as restoring something. What is left of it is two mics at once, and a hard slot is the wrong answer — this codebase's answer to "who is speaking" is soft evidence the agent weighs, not a winner the host picks |
-| **A name is leased** | Deleted 2026-08-13, the user's call. A lease loses you your name for going quiet, and every link and QR you handed out then points at a stranger. A name belongs to an account, permanently; the core credential went with the lease |
-| **Subdomain addressing** | `hi-agent.xyz/ana`, settled. One certificate, no wildcard issuance, no per-handle DNS. It was changed to subdomains and reverted — recorded because the failure is reusable: it was raised as a choice to *re-open* and then taken on an adjacent "sounds good". Overturning a settled decision needs the decision |
-| **Closed tasks accumulate** | Nothing prunes them. The invariant says never pruned *while open*; closed and cold ones age out like ambient identity clusters |
-| **Ping-pong is possible** | Two long-lived agents can message each other indefinitely. Guided by prompt, logged rather than blocked |
-| **A worker's `Bash` can read the auth token from its own env** | Non-hacker threat model |
-| **No hand-edit lever** on prompts | Load-bearing — see [`arch.md#character`](arch/arch.md). There is no `*.local.md` override layer either; that was deleted, not deferred |
-| **Cross-scene ambient awareness is weaker** than the old global digest | Continuity routes through Cognition instead |
+| **The clock** | Removed 2026-08-09. No host scheduler, ever. A `due` is read and ordered, never fired; the cost is stated once in [`host.md#glancing-up`](arch/host.md) |
+| **Presence-gated speaking** | Removed 2026-08-11. Only `speaker_attached()` survives |
+| **The host marking a hand-down as owed** | Withdrawn 2026-08-19. Only Reaction holds both sides of the reading. The rule is a section of `reaction.md` |
+| **Reflection being addressable** | Closed 2026-08-04. It wakes on its own backoff |
+| **The room / one-capture-at-a-time** | Cut 2026-08-12. Two mics at once, weighed as soft evidence, not a slot the host arbitrates |
+| **A name is leased** | Deleted 2026-08-13. A name belongs to an account, permanently |
+| **Subdomain addressing** | Settled: `hi-agent.xyz/ana`. Changed to subdomains once and reverted — overturning a settled decision needs the decision, not an adjacent "sounds good" |
+| **An `onIt` field on `GET /api/tasks`** | Cut 2026-08-26 and re-landed as a view-side join against `GET /api/workers`. No DTO, no server staleness rules |
+| **A `blocked_on()` classifier** | Cut 2026-08-26, same day it was built. Code should do only clear and decisive logic; that was 135 lines deciding what a `blocked` line means |
+| **A dispatch that opens the missing task row** | Cut. A ledger that fills itself is a worse list than a missing label |
+| **A gate on collision-prone facet writes** | None added, none planned. A guard on a field an agent must remember to fill is silently absent when it forgets |
+| **Filtering outside the two seams** | Tool results, the system prompt, mail, exported diagnostics and codex's own shell are unfiltered by scope decision — see [`privacy.md`](arch/privacy.md). Nothing non-text is detected |
+| **Closed tasks accumulating** | Nothing prunes them. Never pruned *while open*; closed and cold ones age out like ambient identity clusters |
+| **Ping-pong between two long-lived agents** | Possible, guided by prompt, logged rather than blocked |
+| **A worker's `Bash` reading the auth token from its own env** | Non-hacker threat model |
+| **A hand-edit lever on prompts** | Load-bearing — [`arch.md#character`](arch/arch.md). No `*.local.md` override layer either; deleted, not deferred |
 
-**Retired vocabulary — do not reintroduce.** Verified absent from `src/`:
-arbiter · delegate · ask · surface · handoff · notify · spawn · see · alarm · WorkerId ·
-ToolCallStub · FollowMailbox · `Address` (any form) · scene-as-address · Deliberation ·
-`WORKER_SYSTEM_PROMPT` · `any_host` · the ACP session vocabulary.
+**Retired vocabulary — do not reintroduce.** Verified absent from `src/`: arbiter · delegate · ask ·
+surface · handoff · notify · spawn · see · alarm · WorkerId · ToolCallStub · FollowMailbox ·
+`Address` (any form) · scene-as-address · Deliberation · `WORKER_SYSTEM_PROMPT` · `any_host` · the
+ACP session vocabulary.
 
-Each was retired **by deletion**, never by deprecation — a compatibility path kept "just until
-the replacement lands" is the thing that quietly becomes permanent.
-
----
-
-## Where each layer stands
-
-**`FOUNDATION`** — most built, and the messaging layer is not only closed but visible: every
-agent-to-agent crossing is recorded in both directions and the event log has a reader. The
-session stream is kept verbatim per session under a run **and now has consumers**. The renderer
-is proven against a real browser and has a caller (`review_view`).
-
-**`DATA`** — log, episodes, facets, skills, views, forgetting, and both ends of the task ledger.
-The stores were never the problem. Cognition is sole writer, with a test pinning that exactly one
-prompt carries the instruction.
-
-**`CORE`** — least built, and **on purpose**: the clock and the presence gate were not deferred
-but removed, so the loop paces itself inline and that is the finished shape. What is genuinely
-unfinished is behaviour, not structure — the vendor gate is half-classified, and `record_reflex`
-can never fire.
-
-**`AGENTS`** — three rungs plus workers, all real and wearing their own clothes. Every worker
-kind is a prompt file; the prompts no longer name tools nobody holds. Reflection is a standing
-rung with its own worker host.
-
-**`SURFACES`** — who may reach the core is decided: two acceptors, one credential in two
-presentations, the loopback path unchanged, and the relayed shape deployed. Text and audio solid
-end to end, and both now arrive as one `Message` the boundary mints once. Vision journals and
-wakes as *perception*, which is a kind of its own and not conversation; a handed file arrives as
-its own message carrying its name and its locator in fields rather than in prose. What is absent
-is push.
+Each was retired **by deletion**, never by deprecation — a compatibility path kept "just until the
+replacement lands" is the thing that quietly becomes permanent.
