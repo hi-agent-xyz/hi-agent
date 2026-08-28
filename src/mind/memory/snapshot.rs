@@ -191,14 +191,26 @@ pub async fn window(
 /// is projected-to because it is tools-off; Cognition is projected-to because it is the
 /// one that must not be wrong about this.
 ///
-/// `agent` is a code-supplied name ([`layout::rung_seed_path`]), never a user string.
+/// `seed` names the rung's own carried-forward file ([`layout::rung_seed_path`]) — a
+/// code-supplied name, never a user string — and is `None` for a rung that does not have
+/// one.
+///
+/// **`None` is a real answer, not an omission** (`docs/arch/data.md#prompts`). Only two
+/// rungs earn a seed, and Reflection is not one of them: each of its passes is complete in
+/// itself and the stores *are* its memory, so there is nothing for it to carry that it
+/// cannot re-read. Taking a name unconditionally meant Reflection was handed a path to a
+/// file nothing has ever written, and a comment beside it claiming the rung carried
+/// something forward — a mechanism that existed in prose and nowhere else.
 pub async fn agent_window(
     memory: &Memory,
-    agent: &str,
+    seed: Option<&str>,
     id: &crate::foundation::registry::SessionSlug,
 ) -> String {
     let data_dir = memory.data_dir();
-    let carried = carried_forward(&layout::rung_seed_path(data_dir, agent)).await;
+    let carried = match seed {
+        Some(agent) => carried_forward(&layout::rung_seed_path(data_dir, agent)).await,
+        None => String::new(),
+    };
     let owed = match tasks::projection(data_dir, &working_on_tasks()).await {
         Ok(text) => text,
         Err(err) => {
@@ -445,25 +457,61 @@ const SYSTEMS_KEY: &str = "systems";
 /// Empty is the ordinary answer and never an error: a task with no `systems:` line, a
 /// system with no record yet, a first-ever job. The worker then gets exactly what it got
 /// before this existed, which is its brief.
+///
+/// **A miss hands back the roster; it never guesses.** The name comes off a frontmatter
+/// line the agent typed while opening a row, so it is a name from a conversation and not a
+/// key — and the answer to that is not fuzzy matching. On 2026-08-27 a task carrying
+/// `systems: wechat` found nothing, because the record it wanted was filed under `wecom`;
+/// a matcher loose enough to bridge those two would have put WeCom's procedure and
+/// credentials in front of a worker that had been told to use the person's *personal*
+/// WeChat, which is a different system. **A confidently wrong record is worse than a
+/// missing one**, and code has no way to tell those two names apart — the rung reading the
+/// brief does, because it has the conversation. So a miss says what is actually on file and
+/// lets the reader resolve it, the same shape `hi_create_worker` already uses when a
+/// `subject` names no ledger row.
+///
+/// What *is* folded is spelling: case and `-`/`_`/space, so `WeCom`, `we-com` and `wecom`
+/// are one name written three ways ([`folded`]). That resolves a name; it does not guess
+/// one. A fold landing on two different records is treated as a miss for the same reason —
+/// two candidates is not an answer.
 pub async fn work_record(data_dir: &Path, subject: &str) -> String {
     let facets = layout::facets_dir(data_dir);
     let task_path = facets.join(tasks::DIMENSION).join(subject).join("facet.md");
     let task = tokio::fs::read_to_string(&task_path).await.unwrap_or_default();
 
+    let named = named_systems(&task);
+    // One scan, and only when the task named something — this runs per worker spawned,
+    // not per turn, but a directory read for a job that touches no system is still a read
+    // for nothing.
+    let on_file = if named.is_empty() { Vec::new() } else { system_records(data_dir).await };
+
     let mut sections: Vec<String> = Vec::new();
-    for name in named_systems(&task) {
-        let path = facets.join(SYSTEMS).join(&name).join("facet.md");
-        let Ok(body) = tokio::fs::read_to_string(&path).await else {
-            // Named but not written yet. Say so rather than staying silent: "we have no
-            // record of how this is operated" is the sentence that gets one written, and
-            // its absence is what let a script be re-derived from scratch.
+    let mut missed = false;
+    for name in named {
+        let Some(dir) = resolve_system(&name, &on_file) else {
+            // Named, and nothing is filed under it. Say what is actually known — that no
+            // record carries *this name* — rather than the stronger claim the old wording
+            // made, that the system has no record at all. The roster below is what makes
+            // the weaker sentence useful instead of merely honest.
+            missed = true;
             sections.push(format!(
-                "### {name}\nNo record of this system yet. If you learn how it is \
-                 operated, that is worth writing down."
+                "### {name}\nNothing is filed under this name. That is not the same as \
+                 never having operated it — it may be on file under another, so read the \
+                 list below before working on the assumption that there is no precedent. \
+                 If you work out how it is operated, that is worth writing down."
             ));
             continue;
         };
-        sections.push(format!("### {name}\n{}", clip(body.trim())));
+        let path = facets.join(SYSTEMS).join(&dir).join("facet.md");
+        let Ok(body) = tokio::fs::read_to_string(&path).await else {
+            missed = true;
+            sections.push(format!("### {name}\nNothing is filed under this name."));
+            continue;
+        };
+        sections.push(format!("### {dir}\n{}", clip(body.trim())));
+    }
+    if missed && !on_file.is_empty() {
+        sections.push(render_system_roster(&on_file));
     }
 
     let mut out = String::new();
@@ -479,6 +527,74 @@ pub async fn work_record(data_dir: &Path, subject: &str) -> String {
         out.push_str("## The record on this task\n");
         out.push_str(&clip(task));
     }
+    out
+}
+
+/// How many system names a miss lists back. Enough to be the whole roster on any store
+/// this has run on (14 records at the time of writing), small enough that it stays a list
+/// to read rather than a page to skim.
+const SYSTEM_ROSTER_LIMIT: usize = 40;
+
+/// A name with its spelling folded away: lowercase, and `-`/`_`/space dropped.
+///
+/// **Notation, not meaning.** `WeCom`, `we-com` and `wecom` are one name written three
+/// ways, and matching them is resolving a name rather than guessing one. Nothing here
+/// reaches across to a *different* word — that is the line [`work_record`] draws and the
+/// reason this is a fold and not a distance.
+fn folded(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '-' | '_' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The system records on file, by directory name, sorted. Absence is ordinary — a store
+/// that has never written one has no directory at all.
+async fn system_records(data_dir: &Path) -> Vec<String> {
+    let dir = layout::facets_dir(data_dir).join(SYSTEMS);
+    let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    while let Ok(Some(ent)) = rd.next_entry().await {
+        if !ent.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        if let Ok(name) = ent.file_name().into_string() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names
+}
+
+/// The record directory a written name resolves to, or `None` when it resolves to nothing
+/// or to more than one. Two candidates is not an answer: see [`work_record`].
+fn resolve_system(name: &str, on_file: &[String]) -> Option<String> {
+    let want = folded(name);
+    let mut hits = on_file.iter().filter(|dir| folded(dir) == want);
+    let first = hits.next()?;
+    match hits.next() {
+        None => Some(first.clone()),
+        Some(_) => None,
+    }
+}
+
+/// What is on file, for a brief whose named system missed.
+fn render_system_roster(on_file: &[String]) -> String {
+    let shown = on_file.len().min(SYSTEM_ROSTER_LIMIT);
+    let mut out = String::from("#### What is on file\n");
+    out.push_str("Records exist for: ");
+    out.push_str(
+        &on_file[..shown].iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", "),
+    );
+    if on_file.len() > shown {
+        out.push_str(&format!(", and {} more", on_file.len() - shown));
+    }
+    out.push_str(
+        ". If one of these is the system this job actually touches, read it \
+         (`memory/facets/systems/<name>/facet.md`) before deciding there is no precedent.",
+    );
     out
 }
 
@@ -910,7 +1026,7 @@ mod window_tests {
             .await
             .unwrap();
 
-        let text = agent_window(&memory, "cognition", &0.into()).await;
+        let text = agent_window(&memory, Some("cognition"), &0.into()).await;
         assert!(text.contains("Ship the flash cards"), "{text}");
         assert!(text.contains("needs sudo"), "{text}");
     }
@@ -925,7 +1041,7 @@ mod window_tests {
         heard(&memory, "把周报发我").await;
         write_conversation_prompt(dir.path(), "He is mid-migration this week.").await;
 
-        let text = agent_window(&memory, "cognition", &0.into()).await;
+        let text = agent_window(&memory, Some("cognition"), &0.into()).await;
         assert!(!text.contains("把周报发我"), "no log tail: {text}");
         assert!(!text.contains("mid-migration"), "no conversation brief: {text}");
     }
@@ -942,7 +1058,7 @@ mod window_tests {
     async fn an_empty_standing_window_carries_only_that_nothing_is_owed() {
         let dir = tempfile::tempdir().unwrap();
         let memory = Memory::open(dir.path()).await.unwrap();
-        let text = agent_window(&memory, "cognition", &0.into()).await;
+        let text = agent_window(&memory, Some("cognition"), &0.into()).await;
         assert!(text.contains("# Active tasks"), "{text}");
         assert!(text.contains("Nothing open right now"), "{text}");
         assert!(!text.contains("## What I carry forward"), "nothing written yet: {text}");
@@ -1003,13 +1119,75 @@ mod window_tests {
 
     /// A system named but never written up says so. Silence would read as "nothing to
     /// know", which is the state that gets a procedure re-derived from scratch.
+    ///
+    /// It says the weaker, true thing — nothing is filed under *this name* — because that
+    /// is all the lookup actually established.
     #[tokio::test]
     async fn a_named_system_with_no_record_says_so() {
         let dir = tempfile::tempdir().unwrap();
         write_facet(dir.path(), "tasks", "deploy-songguo", "---\nsystems: songguo\n---\nGo.").await;
 
         let text = work_record(dir.path(), "deploy-songguo").await;
-        assert!(text.contains("No record of this system yet"), "{text}");
+        assert!(text.contains("Nothing is filed under this name"), "{text}");
+    }
+
+    /// Spelling is folded, because `WeCom` and `wecom` are one name written twice.
+    #[tokio::test]
+    async fn a_name_resolves_across_case_and_separators() {
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(dir.path(), "systems", "wecom", "# WeCom\n\nUse the bot.").await;
+        write_facet(dir.path(), "tasks", "send-it", "---\nsystems: We-Com\n---\nGo.").await;
+
+        let text = work_record(dir.path(), "send-it").await;
+        assert!(text.contains("Use the bot."), "{text}");
+        assert!(text.contains("### wecom"), "the record's own name heads it: {text}");
+        assert!(!text.contains("Nothing is filed"), "{text}");
+    }
+
+    /// The 2026-08-27 miss, and the line this design draws. `wechat` must **not** reach
+    /// `wecom` — they are different systems, and a matcher loose enough to bridge them
+    /// would have handed a worker WeCom's credentials for a personal-WeChat job. What it
+    /// gets instead is the truth plus the roster, and the reader resolves it.
+    #[tokio::test]
+    async fn a_near_miss_is_not_resolved_but_the_roster_comes_back() {
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(dir.path(), "systems", "wecom", "# WeCom\n\nBot credentials live here.").await;
+        write_facet(dir.path(), "systems", "feishu", "# Feishu\n\nx").await;
+        write_facet(dir.path(), "tasks", "send-it", "---\nsystems: wechat\n---\nGo.").await;
+
+        let text = work_record(dir.path(), "send-it").await;
+        assert!(text.contains("Nothing is filed under this name"), "{text}");
+        assert!(
+            !text.contains("Bot credentials live here."),
+            "a different system's record must never be substituted: {text}"
+        );
+        assert!(text.contains("What is on file"), "{text}");
+        assert!(text.contains("`wecom`") && text.contains("`feishu`"), "{text}");
+    }
+
+    /// Two records folding to one name is not an answer, so it is a miss like any other.
+    #[tokio::test]
+    async fn an_ambiguous_fold_is_a_miss() {
+        let on_file = vec!["hi-agent".to_string(), "hi_agent".to_string()];
+        assert_eq!(resolve_system("hiagent", &on_file), None);
+        assert_eq!(resolve_system("hi-agent", &on_file), None);
+        assert_eq!(resolve_system("nothing", &on_file), None);
+        assert_eq!(
+            resolve_system("HI AGENT", &["hi-agent".to_string()]),
+            Some("hi-agent".to_string())
+        );
+    }
+
+    /// A roster is only useful where there is something on it — a store with no records at
+    /// all says nothing rather than printing an empty list.
+    #[tokio::test]
+    async fn a_miss_with_nothing_on_file_lists_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(dir.path(), "tasks", "send-it", "---\nsystems: wechat\n---\nGo.").await;
+
+        let text = work_record(dir.path(), "send-it").await;
+        assert!(text.contains("Nothing is filed under this name"), "{text}");
+        assert!(!text.contains("What is on file"), "{text}");
     }
 
     /// The ordinary case on a fresh install and on any task that names nothing: the worker

@@ -101,6 +101,37 @@ max over a field in agent-written files, so one bad file is a bad cursor — per
 nothing that arrives later can outrank it. Deriving it over only the values that parse costs
 one filter and removes the whole class.
 
+### A name is not a key, and the answer to that is not fuzzy matching
+
+The cursor was a *malformed* value. The other shape is a value that is perfectly well formed
+and still does not resolve — a **name**, written in prose while opening a row, read by code as
+a directory. `systems: wechat` on a task found nothing, because what it wanted was filed under
+`wecom`; the brief then told the worker, in its first line, *"No record of this system yet"*.
+
+The tempting fix is to match loosely, and it is the wrong one. **Personal WeChat and WeCom are
+different systems.** A matcher generous enough to bridge those two names would have put WeCom's
+procedure and bot credentials in front of a worker that had been told to send to the person's
+own WeChat — and it would have looked authoritative. That is the cursor failure wearing better
+clothes: *acting on a value you could not actually resolve*. A confidently wrong record is worse
+than a missing one, and code cannot tell the two names apart. **The rung reading the brief can,
+because it has the conversation.**
+
+So the split is between spelling and meaning, and code only gets the first:
+
+| | code's | who decides |
+|---|---|---|
+| `WeCom` / `we-com` / `wecom` | fold case and `-`/`_`/space — one name written three ways | code, because it is notation |
+| `wechat` / `wecom` | **never bridged** | the reader, handed the roster |
+| a fold matching two records | treated as a miss — two candidates is not an answer | the reader |
+
+**A miss says what it actually established and hands back what exists.** Not *"there is no
+record of this system"* — which was never checked — but *"nothing is filed under this name"*,
+followed by the names that are. This is the shape `hi_create_worker` already uses when a
+`subject` names no ledger row: refuse, hand back the ledger, let the model pick. Generalised:
+**where code cannot resolve what the agent meant, it narrows the question and gives it back.**
+Guessing and staying silent are the two ways to get it wrong, and they fail in opposite
+directions — one asserts something false, the other withholds something true.
+
 ## Decisions
 
 | Decision | Reasoning |
@@ -114,6 +145,8 @@ one filter and removes the whole class.
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
 | An agent-written value that steers code is **parsed**, and unparseable means **absent** | The writer has a shell and the field is prose; absent has to fail toward redoing work, because redundant work is visible and skipped work is silent |
+| Where code cannot resolve a name, it **narrows the question and hands it back** | Spelling is code's to fold; meaning is not. A confidently wrong record is worse than a missing one, and only the reader has the conversation |
+| **Nobody writes their own seed** | The moment a seed exists to survive is the moment that takes the judgment needed to write one. Cognition writes Reaction's; Reflection writes Cognition's |
 | A handed-over secret is retained as `drive/accounts/secrets/*.txt`; that path is its reference | The whole drive stays portable and local commands can use the file without embedding its value in model requests |
 | The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
 
@@ -192,13 +225,13 @@ is missing.
 2. **It cannot re-derive that continuity** — either it cannot read at all, or coming back cold
    it would not know what to read for.
 
-| rung | outlives the work | can re-derive | seed |
-|---|---|---|---|
-| Reaction | permanent | **no** — tools-off, it cannot go and look at anything | **yes** |
-| Cognition | permanent | can read, but out of a compaction would not know it was mid-thought | **yes** |
-| Reflection | no — each pass is complete in itself | the stores *are* its memory | no |
-| a worker | no — one task, then gone | its brief is its seed | no |
-| a worker *type* | the type does, across instances | nothing writes craft knowledge yet | not yet |
+| rung | outlives the work | can re-derive | seed | written by |
+|---|---|---|---|---|
+| Reaction | permanent | **no** — tools-off, it cannot go and look at anything | **yes** | Cognition |
+| Cognition | permanent | can read, but out of a compaction would not know it was mid-thought | **yes** | Reflection |
+| Reflection | no — each pass is complete in itself | the stores *are* its memory | no | — |
+| a worker | no — one task, then gone | its brief is its seed | no | — |
+| a worker *type* | the type does, across instances | nothing writes craft knowledge yet | not yet | — |
 
 The last row is the one slot deliberately named while empty: what `view-builder` learns about
 house style is generated, per type, and belongs at `prompts/seed/workers/view-builder.md`
@@ -342,12 +375,30 @@ contract, so it is fixed in three places at once or nowhere: the heading it is p
 under, the line telling Reflection when to regenerate it, and the `hi_update_proactivity`
 description telling it what to weigh.
 
-**Who writes a seed.** Reaction holds `hi_say` and `hi_show` and nothing else, so it has no file
-access and cannot write its own: Reaction's seed is *consumed* by Reaction and *written by*
-[Cognition](agents.md#cognition--minutes-and-beyond) — the rung that already reads around and
-works out what was asked. That falls out of the tool surfaces rather than being imposed on them.
-Reflection owns rebuilding a **missing** seed, on the pass that already regenerates
-`proactivity.md` wholesale; without an owner, "rebuildable" is a wish.
+**Who writes a seed — and nobody writes their own.** Reaction holds `hi_say` and `hi_show` and
+nothing else, so it has no file access and cannot write its own: Reaction's seed is *consumed*
+by Reaction and *written by* [Cognition](agents.md#cognition--minutes-and-beyond) — the rung
+that already reads around and works out what was asked. That falls out of the tool surfaces
+rather than being imposed on them.
+
+**Cognition's is written by [Reflection](agents.md#reflection--background), and this one does
+not fall out of tool surfaces — it is a decision.** Cognition can write; it is simply the worst
+rung to write this particular file, because *the moment a seed exists to survive is the moment
+that takes with it the judgment needed to write one*. A rung mid-thought, one turn from a
+compaction it cannot predict, is being asked to know what it will wish it had known. Reflection
+is the rung that faces inward, reads across days, and is in the middle of nothing; it already
+owns rebuilding a **missing** seed on the pass that regenerates `proactivity.md` wholesale, and
+writing Cognition's is that same job named rather than a new one. Without an owner,
+"rebuildable" is a wish — and Cognition's seed had a reader (`agent_window`) and no writer at
+all until this was decided, so the file it pointed at had never once existed.
+
+**The two briefs answer different questions, and the difference is the whole of why both
+exist.** Reaction's answers *what must it know without being able to look anything up*, because
+Reaction genuinely cannot look. Cognition **can** look, so writing down what it could go and
+read is a second copy going stale against the record. Its brief answers *what was it in the
+middle of, that it would not think to go and look for* — the approach already abandoned, the
+correction that lands an hour later, which of five open rows is the live one. A duty is a task
+row and it will find it; the shape of what is in flight is the thing nothing else carries.
 
 **Code owns the bound, the agent owns the content.**
 

@@ -697,7 +697,7 @@ async fn turn(
     pending: &[String],
     session: Arc<AgentSession>,
 ) -> anyhow::Result<()> {
-    let window = snapshot::agent_window(&reaction.inner.memory, COGNITION_AGENT, id).await;
+    let window = snapshot::agent_window(&reaction.inner.memory, Some(COGNITION_AGENT), id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")

@@ -59,15 +59,6 @@ use crate::foundation::registry::{self, Registration, TurnOutcome};
 use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
 
-/// The agent name for [`crate::mind::memory::layout::rung_seed_path`] — what
-/// Reflection carries forward between wakes, at `memory/prompts/reflection.md`.
-///
-/// It has one for the same reason Cognition does: a per-wake session remembers nothing,
-/// so whatever is worth carrying has to be written down. For the inward rung that is
-/// mostly *where it had got to* — which stores it has swept recently, what it deferred,
-/// what it noticed and could not act on yet.
-const REFLECTION_AGENT: &str = "reflection";
-
 /// Stand Reflection up. Called once from [`super::start`], which creates the
 /// `Registration` **synchronously** before spawning this, for the reason
 /// [`super::cognition::spawn`] gives: `tokio::spawn` promises no ordering, and an address
@@ -475,7 +466,7 @@ async fn turn(
         )
         .await;
 
-    let window = snapshot::agent_window(&reaction.inner.memory, REFLECTION_AGENT, &id).await;
+    let window = snapshot::agent_window(&reaction.inner.memory, None, &id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
         format!("## New messages\n{messages}")

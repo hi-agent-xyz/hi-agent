@@ -539,8 +539,22 @@ pub async fn cognition_prompt(data_dir: &Path) -> String {
 /// **inlined** as the reflection session's system prompt rather than Read by the agent
 /// — it *is* the task's instructions, so it must be present before the session can act.
 /// Read fresh each round, so an operator edit takes effect without a restart.
+///
+/// `{cognition_memory}` is interpolated to the **absolute** path of the brief Reflection
+/// writes for Cognition, for the same reason [`cognition_prompt`] interpolates its own: an
+/// agent-facing path that is relative is a path to the wrong file.
+///
+/// **Nobody writes their own seed, and that is the rule rather than a coincidence of tool
+/// surfaces** (`docs/arch/data.md#prompts`). Reaction cannot write at all, so Cognition
+/// writes Reaction's. Cognition *can* write — and is the worst-placed rung to do it, because
+/// the thing a seed exists to survive is the compaction that takes with it the judgment
+/// needed to write one. Reflection is the rung that faces inward, reads across days, and is
+/// already the owner of rebuilding a missing seed; writing Cognition's is that same job
+/// named. Reflection has none of its own: each of its passes is complete in itself.
 pub async fn reflection_prompt(data_dir: &Path) -> String {
-    role_prompt(data_dir, Role::Reflection).await
+    let text = role_prompt(data_dir, Role::Reflection).await;
+    let target = crate::mind::memory::layout::rung_seed_path(&abs(data_dir), "cognition");
+    text.replace("{cognition_memory}", &target.display().to_string())
 }
 
 /// **Reaction**'s system prompt — what reaches the person (`docs/arch/agents.md#reaction`).
@@ -1695,6 +1709,45 @@ mod soul_tests {
         assert!(
             !prompt.contains("{conversation_memory}"),
             "the placeholder must be interpolated"
+        );
+    }
+
+    /// The other half of the same rule, and the one that was missing: Cognition's own
+    /// brief has a reader (`agent_window`) and, until now, no writer at all — the file it
+    /// pointed at had never once been written. A seed nobody writes is a mechanism that
+    /// exists in a table and nowhere else.
+    #[tokio::test]
+    async fn reflection_is_pointed_at_the_brief_it_writes_for_cognition() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt = reflection_prompt(dir.path()).await;
+
+        let expected = crate::mind::memory::layout::rung_seed_path(dir.path(), "cognition");
+        assert!(expected.is_absolute(), "the target path must be absolute");
+        assert!(
+            prompt.contains(&expected.display().to_string()),
+            "the prompt must name the exact file `agent_window` reads back for Cognition"
+        );
+        assert!(
+            !prompt.contains("{cognition_memory}"),
+            "the placeholder must be interpolated"
+        );
+    }
+
+    /// Nobody writes their own seed. Cognition is pointed at Reaction's and never at its
+    /// own; Reflection is pointed at Cognition's and has none of its own to be pointed at.
+    #[test]
+    fn no_rung_is_told_to_write_its_own_brief() {
+        assert!(
+            REFLECTION_BASE.contains("{cognition_memory}"),
+            "Reflection must be pointed at the brief it writes"
+        );
+        assert!(
+            !COGNITION_BASE.contains("{cognition_memory}"),
+            "Cognition must not be told to write its own brief"
+        );
+        assert!(
+            !REFLECTION_BASE.contains("{conversation_memory}"),
+            "Reaction's brief is Cognition's to write, not Reflection's"
         );
     }
 
