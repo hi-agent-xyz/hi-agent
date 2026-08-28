@@ -781,7 +781,8 @@ lie about where it sends someone.
 **And the cadence must not exclude it, because the cadence is the only pressure there is.**
 There are no gates on this ledger, so past the idle boundary the sentence a `doing` line
 carries — *say where it stands: close it, take the decision it is stuck behind, or cancel
-it; a recorded wait is re-read, never re-asked* — is the whole of what the host asks for. A
+it; a recorded wait is re-read, never re-asked — a decision is yours to take, their judgment
+on what you built is theirs* — is the whole of what the host asks for. A
 disposition that sentence does not name reads as one that is not allowed, and one it names
 loosely reads as an instruction: the clause used to say *ask once and record what it waits
 on*, and on 2026-08-27 a single pass re-recorded the same wait on five rows.
@@ -789,9 +790,15 @@ on*, and on 2026-08-27 a single pass re-recorded the same wait on five rows.
 What it asks for is a disposition **recorded**, not a terminal one, and a wait already on the
 row is one — so it wants no second ask. It does want reading: the word covered approvals until
 2026-08-28, so a wait on an older row often names a decision the agent could have taken, and
-taking it is what ends the wait. What the boundary refuses is the seventh probe — the same
-check run again in place of a decision — and the second wait written where the first still
-stands. Not the re-read that ends either of them. Code cannot tell those two apart. It has no business trying: a
+taking it is what ends the wait. **But the re-read stops at a judgment**, and that edge cost two
+rows the day it was left out: told to end stale waits, one sweep closed KT8-056 and KT8-059 in
+the same second against lines reading *"Zhao Li must press Run, listen completely, and reply
+ACCEPT or REJECT"*, on a closing note that said in as many words that no ACCEPT/REJECT was
+inferred. Permission to *act* is about work not yet done and the instruction was already the
+answer; a judgment is about work already done and nothing the agent runs can produce it. What
+the boundary refuses is the seventh probe — the same check run again in place of a decision —
+the second wait written where the first still stands, and the close written against a judgment
+nobody gave. Not the re-read that ends a stale permission. Code cannot tell those two apart. It has no business trying: a
 classifier over prose the agent writes freely would decide what a `waiting` line *means*, and
 be wrong on the long tail in a way nobody could see. So the host supplies the words and the
 manager supplies the judgment, which is the same division the whole ledger already runs on.

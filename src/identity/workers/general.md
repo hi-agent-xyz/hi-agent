@@ -145,10 +145,14 @@ then what you are saying. Three of the words are yours:
   read and cannot act on.
 
 **`waiting` is only ever about a human doing what only they can do, and that is the whole
-test.** A credential, a login wall, a captcha, a code that went to their phone. **A decision
-is not one of those** — a call you could have made and chose to put to them instead is
+test.** A credential, a login wall, a captcha, a code that went to their phone — **and their
+judgment on something already built**: a page to look at, a result to listen to, an
+ACCEPT/REJECT only their ears can give. **A decision is not one of those** — a call somebody
+could have made and put to them instead is not a wait, it is a decision that has not been made
+yet, and the row should say what was decided. A *judgment* is the opposite: nothing you can run
+produces it. A call you could have made and chose to put to them instead is
 something you can get past yourself, so make it, do the thing, and write an `update` saying
-what you did. That includes the outward ones: a ticket you were asked to file is filed and
+what you did; a review they are owed is not, and it stays. That includes the outward ones: a ticket you were asked to file is filed and
 reported, never drafted and parked on a yes. If you can
 get past it yourself, it is an `update` — a rate limit you are backing off from, a model
 that keeps

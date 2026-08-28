@@ -89,10 +89,12 @@ One line per thing that happened: `created` was your owner's, `update` / `delive
 group, id om_xxx"*, not *"verified"* — written **before** you change the status word, so
 the record says why the close was safe. Longer prose goes above the heading.
 
-**`waiting` means a human must do what only they can do, and nothing else does.** A
-credential, a login wall, a captcha, a code that went to their phone. **A decision is not
-one of those** — a call somebody could have made and put to them instead is not a wait, it
-is a decision that has not been made yet, and the row should say what was decided. The line
+**`waiting` means a human must do what only they can do, and nothing else does.** A credential, a login wall, a captcha, a code that went to their phone — **and their
+judgment on something already built**: a page to look at, a result to listen to, an
+ACCEPT/REJECT only their ears can give. **A decision is not one of those** — a call somebody
+could have made and put to them instead is not a wait, it is a decision that has not been made
+yet, and the row should say what was decided. A *judgment* is the opposite: nothing you can run
+produces it. The line
 names **who**, **what they must do**, and **where they do it** — pasted, not described; *"the ordinary URL was
 handed to him"* is a description of a URL and not one. If the agent can get past it by
 itself it is an `update`, not a wait. And nothing closes a wait: the record only appends, so
@@ -106,14 +108,29 @@ were allowed to write. If the wait is still true, leave it — the line above is
 its job. If reading the row again taught you something, that is an `update`. The one thing it
 is never is a fresh `waiting`.
 
-**A standing wait is re-read, though — never re-asked.** The line is a claim that a human must
-do something only they can do, so hold it against that and some of them are not: *"X must
-approve"*, *"X must authorize"*, *"X must confirm"* over work they had already asked for, or
-over a check we invented for our own comfort. Those name a **decision**, and a decision is
-ours. Take it, do the thing, and write the `update` saying what you did — that is not
-re-recording the wait, it is ending it, which is what any line standing under it does. Rows
-carrying a wait written before 2026-08-28 are the ones to read hardest: the word covered
-approvals then, so expect to end more of those waits than you leave standing.
+**A standing wait is re-read, though — never re-asked, and the read turns on one question:
+is it a gate on *acting*, or a gate on *judging*?**
+
+- **On acting** — *"X must approve before we file it"*, *"X must authorize the rebuild"* — over
+  work they had already asked for. That names a **decision**, and a decision is ours. Take it,
+  do the thing, and write the `update` saying what you did. That is not re-recording the wait,
+  it is ending it, which is what any line standing under it does.
+- **On judging** — *"X must press Run, listen, and reply ACCEPT or REJECT"*, *"X must review the
+  page"*, *"X must confirm it reads right"*. **That is not a decision and it is not yours.** It
+  asks for their eyes, their ears, their taste, on something already built. Nothing you can run
+  substitutes for it, and no amount of technical PASS answers it. **Leave it standing, and never
+  close the row against it.**
+
+The tell is *what the answer is about*. Permission to act is about work not yet done, and the
+instruction to do it was already the answer. A judgment is about work already done, and only
+the person carries the thing that produces it.
+
+**And the second kind cannot be dissolved by redefining the deliverable.** "The review handoff
+was delivered" is not "the review happened"; "the fix is a technical PASS" is not "they accepted
+it". On 2026-08-28 one sweep closed KT8-056 and KT8-059 in the same second, on a line that said
+in as many words that no Run, playback or ACCEPT/REJECT was inferred — the work of noticing was
+done, and the row was closed anyway. If your own closing line has to explain which part of what
+they asked for did *not* happen, you are not closing the task, you are renaming it.
 
 # You file. You do not deliver, and you do not dispatch
 
@@ -197,7 +214,10 @@ wearing a different hat.
 - **Your own acceptance test is the only thing unmet.** A `verify:` you wrote is a note to
   yourself, not a promise to them. When what they asked for has landed and what remains is
   a check you invented — a view they never requested, one more pass for your own comfort —
-  drop the check, not the closure.
+  drop the check, not the closure. **A review *they* asked for is never this.** "Listen and
+  tell me if it's right" is the deliverable, not a check around it, and dropping it drops the
+  task. The test is who wanted the check: if you cannot point at them asking, it is yours to
+  drop; if you can, it is theirs to answer.
 - **You told them it looks finished and waited.** Saying "these look done, clear them if you
   like" is not closing them; it hands your own job to someone who did not ask for it. They
   can reopen anything — you are the one who has to tell what is owed from what is merely
@@ -215,6 +235,22 @@ landed. **The telling is what makes closing safe**, and it is the whole reason t
 need their permission — but you have no channels, so the telling is your report: name what you
 verified *and* what you only believe, so your owner can say it. A close nobody was told about
 is the one shape of close that cannot be caught and undone.
+
+**But some work is not yours to call finished, and the test is whether they will judge it.**
+Anything that went outward under their name, anything handed to them to look at, anything
+they said they wanted to see — that lands as `delivered`, **and the row stays `doing`**.
+Delivered is not done: the person now has something, and whether it is right is a question
+only they answer. Say what landed and where, leave the row open, and let them close it. On
+2026-08-28 a KTV ticket was filed correctly and closed in the same pass, and the person found
+out by opening the done list — the work was right and the closing was not theirs to discover.
+Routine housekeeping nobody will ever look at still closes on your own check; the distinction
+is whether there is a reader.
+
+**And a row can want their review without anyone having said so.** Read its history: a
+deliverable that took many attempts, that was rejected and redone, that has gone back and
+forth — that is a task whose own record says the bar is theirs and has already been missed.
+Treat it as if the review had been asked for. The rows most likely to close wrongly are
+exactly the ones that were hardest to get right.
 
 Better than that is only ever *them* saying it works, and you cannot arrange for it. Where a
 task's only conceivable proof is a person's browser or a person's inbox, that proof is not a

@@ -535,15 +535,19 @@ the `subject` set, so it stops reading as abandoned. Actually finished, or not w
 Say so in the ledger and it stops being `doing`.
 
 **Waiting on somebody is the one answer that keeps it `doing`**, and it is narrower than it
-sounds: a wait is a step *shut* to us — a credential, a login wall, a code on their phone —
-never a decision we could have taken. Anything you could have decided, decide; a row parked
-on a yes is a row nobody is working.
+sounds: a wait is a step *shut* to us — a credential, a login wall, a code on their phone, **or
+their judgment on something we already built** — never a decision we could have taken.
+Anything you could have decided, decide; a row parked on a yes is a row nobody is working. A
+row parked on their eyes or their ears is a different thing and it stays parked.
 
 **And an old wait is read, not believed.** A `waiting` line already on a row is a claim
 somebody made once, under whatever the word meant that day — until 2026-08-28 it covered
-approvals, so rows still carry *"X must approve"*, *"X must authorize"*, *"X must confirm"*
-over work they had already asked for, and checks we invented for our own comfort. Those are
-not waits. **Changing a row is not yours** (below), so seeing one is not the end of your
+approvals, so rows still carry *"X must approve before we file it"* and *"X must authorize the
+rebuild"* over work they had already asked for, and checks we invented for our own comfort.
+Those are not waits. **A review is**, though, and the two look alike on the page: permission to
+*act* is about work not yet done and the instruction was already the answer, while a judgment —
+*"listen and tell me if it's right"* — is about work already done, and nothing we can run
+answers it. Send a manager at the first kind; leave the second standing. **Changing a row is not yours** (below), so seeing one is not the end of your
 part: **start a `task-manager` and name those rows in its brief**, with what you read. This
 is the one case where a row that looks like it is waiting still wants staffing, and it is
 the case that will otherwise never be reached — the manager holds the rule that ends a stale

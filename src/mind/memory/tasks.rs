@@ -137,13 +137,20 @@ pub enum TimelineKind {
     /// The person has something now, or it went out. **Not a closing**: a standing watch
     /// delivers its first digest and keeps running. Formerly `landed`.
     Delivered,
-    /// **A human must do what only they can do before this row can move** — a credential,
-    /// a login wall, a code on their phone — and the line names who, what they must do, and
-    /// where they do it. Anything the agent can get past by itself is an [`Self::Update`],
-    /// and since 2026-08-28 that explicitly includes **a decision**: a call the agent could
-    /// have made and put to a person instead is not a wait, it is a decision that has not
-    /// been made. That is the whole of the distinction, and it is the one `blocked` did not
-    /// make.
+    /// **A human must do what only they can do before this row can move** — a credential, a
+    /// login wall, a code on their phone, or **their judgment on something already built** —
+    /// and the line names who, what they must do, and where they do it. Anything the agent can
+    /// get past by itself is an [`Self::Update`], and since 2026-08-28 that explicitly includes
+    /// **a decision**: a call the agent could have made and put to a person instead is not a
+    /// wait, it is a decision that has not been made.
+    ///
+    /// **A judgment is not a decision, and conflating the two closed two rows in one second.**
+    /// Permission to *act* is about work not yet done, and the instruction to do it was already
+    /// the answer. A judgment — *"press Run, listen, reply ACCEPT or REJECT"* — is about work
+    /// already done, and nothing the agent can run produces it. On 2026-08-28 a sweep read the
+    /// second as the first and closed KT8-056 and KT8-059 against a line that said in as many
+    /// words that no ACCEPT/REJECT had happened. That is the whole of the distinction, and it
+    /// is the one `blocked` did not make either.
     Waiting,
     /// A status transition. **Written by the store, never by a mind**, on the same pass
     /// that stamps `status_since`: a mind that has to remember to record its own
@@ -928,8 +935,9 @@ fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
         return Some(format!(
             "last moved {} — say where it stands: close it with what you did verify, take the \
              decision it is stuck behind, or cancel it; a recorded wait is re-read, never \
-             re-asked, and one naming a decision rather than a step only they can take is \
-             yours to take. Checking it again is not one of the three",
+             re-asked — one naming a decision is yours to take, one naming their judgment on \
+             what you built is theirs and the row stays open. Checking it again is not one of \
+             the three",
             ago(now, since)
         ));
     }
@@ -2269,10 +2277,12 @@ mod tests {
         // an ask re-recorded the same wait on five rows in one pass on 2026-08-27. The wait
         // has to be named as a state that is left alone.
         assert!(text.contains("a recorded wait is re-read, never re-asked"), "{text}");
-        // And the re-read has to be able to *end* the wait, or the clause that stops the
-        // re-park becomes the thing that makes a stale approval-wait permanent.
+        // The re-read has to be able to *end* a stale approval-wait, or the clause that stops
+        // the re-park is what makes one permanent — and it has to stop short of a judgment,
+        // or it closes rows whose whole remaining step is the person's own eyes and ears.
+        assert!(text.contains("naming a decision is yours to take"), "{text}");
         assert!(
-            text.contains("naming a decision rather than a step only they can take is yours"),
+            text.contains("their judgment on what you built is theirs and the row stays open"),
             "{text}"
         );
         assert!(!text.contains("open 30d"), "the age is no longer the fact: {text}");
