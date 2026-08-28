@@ -2030,7 +2030,15 @@ async fn run_reaction_turn(
     if completed {
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
-        let _ = reaction.inner.vendor.note_success();
+        //
+        // The return is the recovery edge and it is said out loud: the down side
+        // already logs `vendor down; holding mail for recovery`, so discarding this
+        // left a log that shows an outage starting and never ending — "still down"
+        // and "came back an hour ago" read identically, on the one surface this repo
+        // treats as ground truth.
+        if reaction.inner.vendor.note_success() {
+            tracing::info!("vendor recovered; turns resume");
+        }
         // Hand the turn's human request down to Cognition — the reading and thinking
         // Reaction cannot do — so it works off the floor while Reaction moves on. Its answer
         // comes back as mail, which drives a turn of its own.

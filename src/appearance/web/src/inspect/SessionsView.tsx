@@ -123,9 +123,11 @@ interface Group {
   frames: RawFrame[];
 }
 
-// The five rungs, plus a fallback. A session's identity here is its *rung* — the
+// The four rungs, plus a fallback. A session's identity here is its *rung* — the
 // connection number says which subprocess, which is not a question anyone has.
-const ROLES = ["reaction", "deliberation", "cognition", "reflection", "worker"];
+// A frame log from before `deliberation` was retired renders as `unknown`, which
+// is the fallback working: a role this binary does not have, shown and not hidden.
+const ROLES = ["reaction", "cognition", "reflection", "worker"];
 function roleClass(role: string): string {
   return ROLES.includes(role) ? role : "unknown";
 }

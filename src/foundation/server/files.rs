@@ -17,7 +17,8 @@
 //! Every door funnels into [`receive_file`], which mirrors the text path: store
 //! the bytes ([`media::store_blob`]), journal a `SignalIn`, echo to observers,
 //! and — crucially — send the `Signal` inbound so the reaction *wakes* and the
-//! agent reacts. (Vision only journals; a handed file must wake the mind.)
+//! agent reacts — as a presence change does ([`super::vision`], which journals
+//! *and* sends `Inbound::Observed`). A handed file must wake the mind.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

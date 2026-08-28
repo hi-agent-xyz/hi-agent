@@ -196,10 +196,9 @@
   text-transform: uppercase; letter-spacing: .04em;
 }
 /* One colour per rung, so the ladder is readable at a glance down the list:
-   Reaction and its reader in the accent family, the two brains in green, work
-   in amber. `unknown` is a role the binary does not know — visibly odd, not hidden. */
+   Reaction in the accent family, the two brains in green, work in amber.
+   `unknown` is a role the binary does not know — visibly odd, not hidden. */
 .skind.reaction { background: rgba(110,168,254,.18); color: var(--accent); }
-.skind.deliberation { background: rgba(110,168,254,.10); color: var(--accent); }
 .skind.cognition { background: rgba(90,209,154,.18); color: var(--ok); }
 .skind.reflection { background: rgba(90,209,154,.10); color: var(--ok); }
 .skind.worker { background: rgba(232,183,90,.18); color: var(--warn); }
