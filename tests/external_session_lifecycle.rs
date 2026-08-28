@@ -243,6 +243,26 @@ async fn external_session_accepts_a_known_agent_definition_subject() {
 }
 
 #[tokio::test]
+async fn external_session_rejects_an_unknown_subject() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let (base, _dir, seams, _owner) = spawn(Acceptor::Loopback).await;
+    let client = reqwest::Client::new();
+    let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");
+
+    let response = client
+        .post(format!("{base}/api/external-sessions"))
+        .bearer_auth(&surface_token)
+        .json(&json!({
+            "title": "weekly report auto-run",
+            "subject": "not-a-real-task-or-agent"
+        }))
+        .send()
+        .await
+        .expect("register");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn external_session_routes_refuse_off_box_even_with_surface_credentials() {
     let _lock = TEST_LOCK.lock().unwrap();
     let (base, _dir, seams, _owner) = spawn(Acceptor::OffBox).await;
