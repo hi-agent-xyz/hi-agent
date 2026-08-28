@@ -251,6 +251,21 @@ const SLUG_HINT_CHARS: usize = 32;
 /// older is replayed from the protocol's own session load.
 const OUTPUT_TAIL_CHARS: usize = 4_000;
 
+/// How many activity lines a session keeps, beyond the latest one.
+///
+/// **The latest line alone is a still frame, and an owner needs the reel.** `doing` is
+/// replaced on every step, so a session that ran nine commands in four minutes shows the
+/// ninth and no trace of the other eight — and its owner, asked "how is it going", could
+/// answer only "it is busy, on this one command". Worker `general-prepare-wecom-…` on
+/// 2026-08-27 wrote no output text at all across a ten-minute life, so
+/// [`Registry::messages`] was empty for the whole of it and this line was everything
+/// there was: the owner watched file mtimes instead, read a quiet folder as a stall, and
+/// cancelled a session that had already found what it was sent for.
+///
+/// Forty is the arc of a working turn without becoming a second transcript — the same
+/// trade [`OUTPUT_TAIL_CHARS`] makes, counted in steps because a step is the unit here.
+const ACTIVITY_STEPS: usize = 40;
+
 /// How long a "what is it doing" line may be before it is cut.
 ///
 /// It renders as one line on a roster beside the title, in a frame that is the window but
@@ -383,6 +398,19 @@ impl TurnOutcome {
 pub struct TurnEnd {
     pub outcome: TurnOutcome,
     pub at: DateTime<Utc>,
+}
+
+/// One thing a session was seen doing, kept with the moment it happened.
+///
+/// The unit of [`Registry::steps`]. Carries its own timestamp because the point of a
+/// list of these is the shape of the work over time — four commands in the last minute
+/// reads differently from four spread over twenty, and the same list without stamps
+/// cannot tell them apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    pub at: DateTime<Utc>,
+    /// Already trimmed and capped by [`Registry::record_activity`].
+    pub what: String,
 }
 
 /// What a session is and how it is doing — **metadata only, no content.**
@@ -603,6 +631,13 @@ struct Entry {
     doing: Option<String>,
     /// When `doing` was last replaced — see [`Status::doing_at`].
     doing_at: Option<DateTime<Utc>>,
+    /// The last [`ACTIVITY_STEPS`] things this session was seen doing, oldest first.
+    ///
+    /// Deliberately **not** on [`Status`]: `status` is built for every session on every
+    /// roster poll and its whole promise is that it is cheap, so a list that grows to
+    /// forty entries belongs behind its own call ([`Registry::steps`]) alongside
+    /// [`Registry::messages`], which is separate for exactly the same reason.
+    steps: std::collections::VecDeque<Step>,
     /// How the last finished turn ended — see [`Status::last_turn`].
     last_turn: Option<TurnEnd>,
     /// The codex thread hosting this session, once `thread/start` has answered. `None`
@@ -847,6 +882,7 @@ impl Registry {
                     output: String::new(),
                     doing: None,
                     doing_at: None,
+                    steps: std::collections::VecDeque::new(),
                     last_turn: None,
                     thread: None,
                     notify: notify.clone(),
@@ -1506,9 +1542,17 @@ impl Registry {
             Some((cut, _)) => format!("{}…", &what[..cut]),
             None => what.to_string(),
         };
+        let now = Utc::now();
         if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
-            e.doing = Some(line);
-            e.doing_at = Some(Utc::now());
+            e.doing = Some(line.clone());
+            e.doing_at = Some(now);
+            // Appended as well as replaced. The replace serves "is it alive and on what",
+            // which only the newest answer can; the append serves "what has it been
+            // doing", which the newest answer cannot serve at all.
+            e.steps.push_back(Step { at: now, what: line });
+            while e.steps.len() > ACTIVITY_STEPS {
+                e.steps.pop_front();
+            }
         }
     }
 
@@ -1517,6 +1561,24 @@ impl Registry {
     pub fn messages(&self, id: &SessionSlug) -> Option<String> {
         let map = self.sessions.lock().unwrap();
         map.get(id).map(|e| e.output.clone())
+    }
+
+    /// What a session has recently **done** — the last [`ACTIVITY_STEPS`] steps, oldest
+    /// first, or an empty list for a session that has not acted yet.
+    ///
+    /// **The companion to [`messages`](Self::messages), and the half that was missing.**
+    /// The two answer different questions and a session can be silent on one while busy on
+    /// the other: a worker that writes no text until its final summary — which is what the
+    /// worker prompt asks for — leaves `messages` empty for its whole life, and an owner
+    /// reading only that sees a session that has done nothing. It had run nine commands.
+    ///
+    /// Kept separate from `messages` rather than merged into it, because the reasoning
+    /// that split `doing` from `output` in the first place still holds: tool noise
+    /// interleaved into what a session *said* makes a report unreadable. Two lists, each
+    /// labelled, is not that.
+    pub fn steps(&self, id: &SessionSlug) -> Option<Vec<Step>> {
+        let map = self.sessions.lock().unwrap();
+        map.get(id).map(|e| e.steps.iter().cloned().collect())
     }
 
     /// Metadata for one session. Cheap by construction — no content crosses.
@@ -2558,6 +2620,54 @@ trace {}", "x".repeat(400))));
         assert!(!err.contains('\n'), "flattened: {err}");
         assert!(err.chars().count() <= OUTCOME_LINE_CHARS + 1, "capped: {}", err.chars().count());
         assert!(err.ends_with('…'));
+    }
+
+    /// The reel behind the still frame: `doing` keeps the newest step, `steps` keeps the
+    /// run of them, and the two never disagree about the latest.
+    #[test]
+    fn steps_keep_the_run_that_doing_overwrites() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        assert_eq!(r.steps(&id).unwrap(), vec![], "nothing done, nothing kept");
+
+        for n in 0..3 {
+            r.record_activity(&id, &format!("$ step {n}"));
+        }
+        let steps = r.steps(&id).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.what.as_str()).collect::<Vec<_>>(),
+            ["$ step 0", "$ step 1", "$ step 2"],
+            "oldest first, and the two the `doing` line threw away are still here",
+        );
+        assert_eq!(r.status(&id).unwrap().doing.as_deref(), Some("$ step 2"), "newest still replaces");
+
+        // A blank line is not activity anywhere — the same guard `doing` already had.
+        r.record_activity(&id, "   ");
+        assert_eq!(r.steps(&id).unwrap().len(), 3);
+
+        // Bounded like the output tail: a long session is a live view, not a transcript.
+        for n in 0..ACTIVITY_STEPS * 2 {
+            r.record_activity(&id, &format!("$ later {n}"));
+        }
+        let steps = r.steps(&id).unwrap();
+        assert_eq!(steps.len(), ACTIVITY_STEPS, "capped");
+        assert_eq!(steps.last().unwrap().what, format!("$ later {}", ACTIVITY_STEPS * 2 - 1));
+        assert!(!steps.iter().any(|s| s.what == "$ step 0"), "oldest dropped first");
+    }
+
+    /// Every step is capped on the way in, the same as the `doing` line — a screenful of a
+    /// shell command repeated forty times is how a live view becomes unreadable.
+    #[test]
+    fn a_long_step_is_cut_before_it_is_kept() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
+        r.record_activity(&id, &"x".repeat(ACTIVITY_LINE_CHARS + 200));
+        let steps = r.steps(&id).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].what.chars().count() <= ACTIVITY_LINE_CHARS + 1);
+        assert!(steps[0].what.ends_with('…'));
     }
 
     /// `doing` without an age says a session is alive and nothing more — the line reads the

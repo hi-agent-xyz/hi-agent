@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 
 use crate::body::capabilities::{image_gen, video_gen, view_render};
 use crate::body::reaction::{LoopControl, ToolOwner, ToolRegistry};
@@ -308,13 +309,69 @@ fn session_status_tool() -> Value {
     )
 }
 
+
+/// What `hi_session_messages` answers with: what a session has **said**, and what it has
+/// **done**, as two labelled halves.
+///
+/// **The second half is why this function exists.** `messages` alone was the whole answer,
+/// and a worker that writes nothing until its closing summary — which is exactly what
+/// `identity/workers/general.md` asks it to do — left it empty for its entire life. On
+/// 2026-08-27 an owner polled `general-prepare-wecom-intelligent-bot-bi` for ten minutes
+/// and got "that session has not said anything yet" every time. The session had run nine
+/// commands, one of which had already found the single command the whole errand needed.
+/// The owner read the silence as a stall, watched file mtimes for a progress signal
+/// instead, and cancelled it. Twice more after that, on replacements, before the finding
+/// reached anyone: across the 2026-08-27 run, 202 of 202 worker turns that ran to
+/// completion reported something, and 16 of 39 that were cancelled reported nothing at
+/// all — because a turn cut before its summary has no summary to give.
+///
+/// Two labelled lists rather than one interleaved stream, because the argument that split
+/// `doing` from `output` in `registry` still stands: tool noise threaded through what a
+/// session actually said is how a report stops being readable. Sections keep both.
+fn session_messages_report(text: &str, steps: &[registry::Step], now: DateTime<Utc>) -> String {
+    let said = text.trim();
+    let mut out = String::new();
+    out.push_str("## What it has said\n");
+    if said.is_empty() {
+        // Not "it has said nothing", which is what this used to answer on its own and is
+        // the sentence an owner read as idleness. A worker is *expected* to be silent
+        // until it reports; saying so here is the difference between "nothing is
+        // happening" and "nothing has been said yet, look below".
+        out.push_str("Nothing yet — a working session stays quiet until it reports, so this \
+                      is the ordinary state of one that is still going. What it has been \
+                      doing is below.");
+    } else {
+        out.push_str(said);
+    }
+    out.push_str("\n\n## What it has been doing\n");
+    if steps.is_empty() {
+        out.push_str("Nothing observed yet.");
+        return out;
+    }
+    // Oldest first, each with its own age: the shape over time is the whole point. Four
+    // steps inside the last minute is a session working; the same four all an hour old is
+    // one that stopped, and without the stamps those render identically.
+    for step in steps {
+        out.push_str(&format!(
+            "- {} ({})\n",
+            step.what,
+            crate::mind::memory::tasks::ago(now, step.at)
+        ));
+    }
+    out
+}
+
 fn session_messages_tool() -> Value {
     tool(
         "hi_session_messages",
-        "What a session you created has actually said, most recent last. This is real \
-         reading and it costs context, so reach for it when you want the substance — when it \
-         has finished, or when someone is asking after progress — rather than as a routine \
-         check.",
+        "What a session you created has said, and what it has been **doing** — its recent \
+         steps, oldest first, each with how long ago it happened. Real reading, and it \
+         costs context, so reach for it when you want the substance rather than as a \
+         routine check. **Silence here is not idleness**: a working session says nothing \
+         until it reports, so the steps are the progress signal while it runs, and they are \
+         a better one than anything you could infer from outside it — a session that is \
+         thinking, or part-way through an install, writes no files and says nothing while \
+         doing exactly what it was asked.",
         json!({
             "type": "object",
             "properties": { "id": { "type": "string", "description": "The session slug." } },
@@ -1339,11 +1396,11 @@ async fn dispatch_tool(
             let Some(id) = arg_str("id").trim().parse::<registry::SessionSlug>().ok() else {
                 return tool_error("hi_session_messages requires a session `id`");
             };
-            return match registry::global().messages(&id) {
-                Some(text) if !text.trim().is_empty() => tool_ok(&text),
-                Some(_) => tool_ok("that session has not said anything yet"),
-                None => tool_error(&format!("no live session {id}")),
+            let Some(text) = registry::global().messages(&id) else {
+                return tool_error(&format!("no live session {id}"));
             };
+            let steps = registry::global().steps(&id).unwrap_or_default();
+            return tool_ok(&session_messages_report(&text, &steps, chrono::Utc::now()));
         }
         "hi_create_worker" => {
             // Workers belong to the standing rungs — Cognition and Reflection, per
@@ -3313,5 +3370,71 @@ mod surface_tests {
         assert_eq!(v["to"], "99");
         assert_eq!(v["delivery"], "unknown");
         assert_eq!(v["message"], "are you there");
+    }
+}
+
+/// **The answer an owner decides on, pinned** — and the case that produced it.
+#[cfg(test)]
+mod session_messages_report_tests {
+    use super::*;
+    use crate::foundation::registry::Step;
+
+    fn now() -> DateTime<Utc> {
+        "2026-08-27T04:14:00Z".parse().unwrap()
+    }
+
+    fn step(mins: i64, what: &str) -> Step {
+        Step { at: now() - chrono::Duration::minutes(mins), what: what.to_string() }
+    }
+
+    /// The 2026-08-27 failure, reproduced. A worker ten minutes in that has written no
+    /// text: the old answer was the whole of `"that session has not said anything yet"`,
+    /// and its owner read that as a session doing nothing. It had already run the command
+    /// that answered the errand.
+    #[test]
+    fn a_silent_worker_still_shows_what_it_has_done() {
+        let steps = vec![
+            step(9, "$ cat SKILL.md"),
+            step(6, "$ npm install @wecom/aibot-node-sdk"),
+            step(5, "$ wecom-cli message aibot --help"),
+        ];
+        let out = session_messages_report("", &steps, now());
+        assert!(out.contains("$ wecom-cli message aibot --help (5m ago)"), "{out}");
+        assert!(out.contains("$ npm install @wecom/aibot-node-sdk (6m ago)"), "{out}");
+        // The half that changes the reading: silence is named as ordinary, not as idleness.
+        assert!(out.contains("stays quiet until it reports"), "{out}");
+    }
+
+    /// Oldest first, and every line carries its own age — four steps inside a minute and
+    /// the same four an hour old are the two answers this has to tell apart.
+    #[test]
+    fn steps_read_in_order_and_carry_their_ages() {
+        let fresh = session_messages_report("", &[step(2, "$ cargo test")], now());
+        let stale = session_messages_report("", &[step(70, "$ cargo test")], now());
+        assert!(fresh.contains("$ cargo test (2m ago)"), "{fresh}");
+        assert!(stale.contains("$ cargo test (1h ago)"), "{stale}");
+        assert_ne!(fresh, stale, "the two states an owner must distinguish");
+
+        let out = session_messages_report("", &[step(9, "first"), step(1, "latest")], now());
+        assert!(out.find("first").unwrap() < out.find("latest").unwrap(), "oldest first: {out}");
+    }
+
+    /// What a session said keeps its own section and is not interleaved with tool noise —
+    /// the reason `doing` and `output` were separate in the first place.
+    #[test]
+    fn what_it_said_stays_its_own_section() {
+        let out = session_messages_report("Found the blocker: auth is unauthorized.", &[step(1, "$ ls")], now());
+        let (said, done) = out.split_once("## What it has been doing").expect("both sections");
+        assert!(said.contains("Found the blocker: auth is unauthorized."), "{out}");
+        assert!(!said.contains("$ ls"), "steps must not bleed into what it said: {out}");
+        assert!(done.contains("$ ls"), "{out}");
+    }
+
+    /// A session that has genuinely done nothing says so, rather than rendering an empty
+    /// heading — a heading with nothing under it reads as a load that failed.
+    #[test]
+    fn a_session_that_has_done_nothing_says_so() {
+        let out = session_messages_report("", &[], now());
+        assert!(out.contains("Nothing observed yet."), "{out}");
     }
 }
