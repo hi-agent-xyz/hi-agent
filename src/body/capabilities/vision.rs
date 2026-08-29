@@ -114,6 +114,18 @@ pub fn init(providers: Vec<ProviderSpec>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether an explicit wire id names something [`doubao_vision`] can speak.
+///
+/// Loose on purpose, for the reason spelled out in [`crate::body::capabilities::stt`].
+/// Here the two vocabularies diverge hardest: [`doubao_vision`] is named for its vendor
+/// but is an **OpenAI Responses** client, which is precisely the wire the broker
+/// publishes `image-text-to-text` on — so `openai-responses` is a wire we speak, and
+/// skipping it as unknown is what turned vision off.
+fn speakable(wire: &str) -> bool {
+    let w = wire.trim().to_ascii_lowercase();
+    w.contains("responses") || w.contains("doubao") || w.contains("ark") || w.contains("volc")
+}
+
 /// The provider to use, and the wires passed over on the way to it.
 ///
 /// Split out of [`init`] so the rule can be tested: the backend is a write-once process
@@ -124,10 +136,12 @@ fn select(providers: &[ProviderSpec]) -> (Option<usize>, Vec<String>) {
         if p.api_key.trim().is_empty() {
             continue;
         }
-        match p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE) {
-            "doubao" => return (Some(i), skipped),
-            other => skipped.push(other.to_string()),
+        let wire =
+            p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE);
+        if speakable(wire) {
+            return (Some(i), skipped);
         }
+        skipped.push(wire.to_string());
     }
     (None, skipped)
 }
@@ -137,9 +151,7 @@ mod tests {
     use super::*;
 
     /// The list is offered best-first, so the first wire we can speak wins — and a wire
-    /// we cannot is stepped over rather than taken as the answer. `image-text-to-text`
-    /// is exactly the task a gateway is likely to serve over an OpenAI-shaped wire we
-    /// have no impl for, beside the doubao one we do.
+    /// we cannot is stepped over rather than taken as the answer.
     #[test]
     fn the_first_speakable_wire_wins_and_the_rest_are_named() {
         let spec = |wire: Option<&str>, key: &str| ProviderSpec {
@@ -148,11 +160,24 @@ mod tests {
             ..Default::default()
         };
         let (chosen, skipped) =
-            select(&[spec(Some("openai-responses"), "k"), spec(Some("doubao"), "k")]);
+            select(&[spec(Some("gemini-generate"), "k"), spec(Some("doubao"), "k")]);
         assert_eq!(chosen, Some(1));
-        assert_eq!(skipped, vec!["openai-responses"]);
+        assert_eq!(skipped, vec!["gemini-generate"]);
         assert_eq!(select(&[spec(None, "k")]).0, Some(0), "no wire named → the default");
         assert!(select(&[spec(Some("doubao"), " ")]).1.is_empty(), "no key, no complaint");
+    }
+
+    /// The name the broker actually publishes for `image-text-to-text`. Our one impl is
+    /// a Responses client wearing a vendor's name, so this is the wire it speaks — not
+    /// the OpenAI-shaped stranger it was mistaken for.
+    #[test]
+    fn the_brokers_own_spelling_is_the_wire_we_speak() {
+        let spec = |wire: Option<&str>, key: &str| ProviderSpec {
+            wire: wire.map(str::to_owned),
+            api_key: key.into(),
+            ..Default::default()
+        };
+        assert_eq!(select(&[spec(Some("openai-responses"), "k")]).0, Some(0));
     }
 }
 

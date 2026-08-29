@@ -101,6 +101,19 @@ pub fn init(providers: Vec<ProviderSpec>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether an explicit wire id names something [`volcengine_stt`] can speak.
+///
+/// Spelling is deliberately loose, by the same rule image generation follows: the broker
+/// names a wire by its **protocol** (`volc-asr-stream-async`) where this capability names
+/// its **vendor** (`volcengine`), and nobody picks a wire in Settings any more — so an
+/// exact match protects against no typo and costs the whole capability. That async
+/// BigModel socket *is* the one impl we have, and refusing it on the name is what turned
+/// speech input off.
+fn speakable(wire: &str) -> bool {
+    let w = wire.trim().to_ascii_lowercase();
+    w.contains("volc") || w.contains("bytedance")
+}
+
 /// The provider to use, and the wires passed over on the way to it.
 ///
 /// Split out of [`init`] so the rule can be tested: the backend is a write-once process
@@ -111,10 +124,12 @@ fn select(providers: &[ProviderSpec]) -> (Option<usize>, Vec<String>) {
         if p.api_key.trim().is_empty() {
             continue;
         }
-        match p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE) {
-            "volcengine" => return (Some(i), skipped),
-            other => skipped.push(other.to_string()),
+        let wire =
+            p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE);
+        if speakable(wire) {
+            return (Some(i), skipped);
         }
+        skipped.push(wire.to_string());
     }
     (None, skipped)
 }
@@ -136,13 +151,21 @@ mod tests {
     #[test]
     fn the_first_speakable_wire_wins_and_the_rest_are_named() {
         let (chosen, skipped) =
-            select(&[spec(Some("volc-asr-stream-async"), "k"), spec(Some("volcengine"), "k")]);
+            select(&[spec(Some("some-new-asr"), "k"), spec(Some("volcengine"), "k")]);
         assert_eq!(chosen, Some(1));
-        assert_eq!(skipped, vec!["volc-asr-stream-async"]);
+        assert_eq!(skipped, vec!["some-new-asr"]);
 
         // An empty wire means "the default", which is one we speak.
         assert_eq!(select(&[spec(None, "k")]).0, Some(0));
         assert_eq!(select(&[spec(Some("  "), "k")]).0, Some(0));
+    }
+
+    /// The name the broker actually publishes. It is the protocol id of the socket
+    /// [`volcengine_stt`] speaks, and reading it as a stranger is what silently turned
+    /// speech input off for every managed install.
+    #[test]
+    fn the_brokers_own_spelling_is_the_wire_we_speak() {
+        assert_eq!(select(&[spec(Some("volc-asr-stream-async"), "k")]).0, Some(0));
     }
 
     /// A keyless provider is an ordinary state (BYOK with nothing pasted yet), not a

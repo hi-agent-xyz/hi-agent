@@ -88,6 +88,17 @@ pub fn init(providers: Vec<ProviderSpec>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether an explicit wire id names something [`volcengine_tts`] can speak.
+///
+/// Loose on purpose, for the reason spelled out in [`crate::body::capabilities::stt`]:
+/// the broker names the **protocol** (`volc-tts-bidirectional`) where this capability
+/// names the **vendor** (`volcengine`), and that bidirectional V3 socket is exactly the
+/// one impl we have.
+fn speakable(wire: &str) -> bool {
+    let w = wire.trim().to_ascii_lowercase();
+    w.contains("volc") || w.contains("bytedance")
+}
+
 /// The provider to use, and the wires passed over on the way to it.
 ///
 /// Split out of [`init`] so the rule can be tested: the backend is a write-once process
@@ -98,10 +109,12 @@ fn select(providers: &[ProviderSpec]) -> (Option<usize>, Vec<String>) {
         if p.api_key.trim().is_empty() {
             continue;
         }
-        match p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE) {
-            "volcengine" => return (Some(i), skipped),
-            other => skipped.push(other.to_string()),
+        let wire =
+            p.wire.as_deref().map(str::trim).filter(|w| !w.is_empty()).unwrap_or(DEFAULT_WIRE);
+        if speakable(wire) {
+            return (Some(i), skipped);
         }
+        skipped.push(wire.to_string());
     }
     (None, skipped)
 }
@@ -125,6 +138,11 @@ mod tests {
         assert_eq!(skipped, vec!["some-new-tts"]);
         assert_eq!(select(&[spec(None, "k")]).0, Some(0), "no wire named → the default");
         assert!(select(&[spec(Some("volcengine"), " ")]).1.is_empty(), "no key, no complaint");
+        assert_eq!(
+            select(&[spec(Some("volc-tts-bidirectional"), "k")]).0,
+            Some(0),
+            "the broker's own spelling of the socket we speak"
+        );
     }
 }
 

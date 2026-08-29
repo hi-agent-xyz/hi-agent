@@ -359,7 +359,14 @@ better than guess. Two consequences follow, and they are the interface rule:
   can speak and says which it passed over.
 
 A wire nothing implements is skipped with a log line, never fatal: that list is written by
-the broker in its own vocabulary and changes without asking us. The LLM is the one
+the broker in its own vocabulary and changes without asking us. **In its own vocabulary**
+is the load-bearing half: the broker names a wire by its *protocol*
+(`volc-asr-stream-async`, `openai-responses`) where a capability names its *vendor*
+(`volcengine`, `doubao`), and one impl routinely answers to both — `doubao_vision` is a
+Responses client. So a wire id is matched **loosely**, on the token that identifies the
+shape. Matching it exactly is not caution: nobody picks a wire in Settings, so it guards
+against no typo, and the cost of reading our own wire as a stranger is the whole
+capability, silently, at boot. The LLM is the one
 deliberate exception — its wire *is* the agent runtime, so a second wire there is a second
 engine, not a second config.
 
