@@ -220,7 +220,18 @@ impl AgentConfig {
     /// boots **unconfigured** (see [`is_configured`](Self::is_configured)), the server
     /// + Settings UI come up, and prompts fail clearly until a key is set.
     pub fn resolve(data_dir: &Path) -> Self {
-        let store = crate::foundation::credentials::Credentials::load(data_dir);
+        Self::from_store(data_dir, crate::foundation::credentials::Credentials::load(data_dir))
+    }
+
+    /// [`resolve`](Self::resolve), with a failed store read kept as an error instead of
+    /// read as an unconfigured machine. The spawn path takes this one — see
+    /// [`Credentials::try_load`](crate::foundation::credentials::Credentials::try_load).
+    pub fn try_resolve(data_dir: &Path) -> anyhow::Result<Self> {
+        let store = crate::foundation::credentials::Credentials::try_load(data_dir)?;
+        Ok(Self::from_store(data_dir, store))
+    }
+
+    fn from_store(data_dir: &Path, store: crate::foundation::credentials::Credentials) -> Self {
         let llm = store.effective().map(|e| e.llm.clone()).unwrap_or_default();
         let model = llm
             .model

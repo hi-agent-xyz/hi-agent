@@ -397,13 +397,26 @@ impl Credentials {
     /// brick boot — the user re-saves from Settings. On first load a legacy
     /// `credentials.json` is imported into the DB (see [`db::load`]).
     pub fn load(data_dir: &Path) -> Self {
-        db::load(data_dir).unwrap_or_else(|e| {
+        Self::try_load(data_dir).unwrap_or_else(|e| {
             tracing::warn!(
                 path = %path(data_dir).display(), error = %format!("{e:#}"),
                 "config store unreadable; using defaults (re-save from Settings)"
             );
             Self::default()
         })
+    }
+
+    /// The same read, with the failure kept.
+    ///
+    /// [`load`](Self::load) turns any read error into [`Default`], and the default is
+    /// `Xiaoyuanzhu` with no managed bundle — which is exactly what a machine that has
+    /// never been configured looks like. A caller that can tell those two apart must
+    /// have the error, because the value cannot: on 2026-08-29 a read that lost a race
+    /// with the broker's own writer handed the agent a default config, and a codex child
+    /// was spawned against `api.openai.com` with an empty key. Callers who genuinely do
+    /// not care (Settings, the API handlers) keep using `load`.
+    pub fn try_load(data_dir: &Path) -> anyhow::Result<Self> {
+        db::load(data_dir)
     }
 
     /// Persist to `<data_dir>/config.db`, owner-only (`0600` on unix). Writes both

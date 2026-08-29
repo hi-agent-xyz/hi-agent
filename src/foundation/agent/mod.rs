@@ -109,6 +109,9 @@ struct Inner {
     /// open once the drain has begun — see the check there for why the funnel is
     /// the only place this can be enforced.
     shutdown: crate::foundation::shutdown::Shutdown,
+    /// The last credential that actually had a key, kept so a *failed* re-resolve
+    /// cannot spawn a child with no key. See [`AgentLayer::spawn_config`].
+    last_good: std::sync::Mutex<Option<AgentConfig>>,
 }
 
 impl AgentLayer {
@@ -129,8 +132,42 @@ impl AgentLayer {
                 tap,
                 registry: ProcessRegistry::new(),
                 shutdown,
+                last_good: std::sync::Mutex::new(None),
             }),
         }
+    }
+
+    /// The credential this spawn should carry: the store's current one, or the last
+    /// one that worked.
+    ///
+    /// The re-read exists so a child never carries a stale key. It must not be able to
+    /// hand over *no* key instead, and it could: [`Credentials::load`] turns any read
+    /// error into that type's [`Default`], which is indistinguishable from a machine
+    /// nobody has configured — no model, no base URL, no key.
+    ///
+    /// [`Credentials::load`]: crate::foundation::credentials::Credentials::load The child is then spawned
+    /// against the fallback `api.openai.com` with an empty `HI_AGENT_LLM_KEY`, and every
+    /// turn on that session dies at codex with "Missing environment variable" until the
+    /// process is restarted, because the empty env var lives as long as the child does.
+    ///
+    /// Seen on 2026-08-29, run `44f51d8238aa`: `config.db` is a rollback-journal store
+    /// the broker's own poll writes, and one spawn lost the race. Cognition and
+    /// reflection, resolved milliseconds apart in the same run, were fine — which is why
+    /// this is a cache and not a boot-time freeze. A key that changes under us
+    /// (broker re-mint, Settings edit, mode switch) still reaches the very next spawn.
+    fn spawn_config(&self) -> AgentConfig {
+        let fresh = match AgentConfig::try_resolve(&self.inner.data_dir) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), "credential store unreadable at spawn");
+                // Not a second `resolve`: that read would fail the same way and warn
+                // again. This *is* the value the failure means — and it is exactly the
+                // one the cache below is here to override.
+                AgentConfig::new(None, None, None, String::new(), String::new())
+            }
+        };
+        let mut last = self.inner.last_good.lock().unwrap_or_else(|e| e.into_inner());
+        pick_credential(fresh, &mut last)
     }
 
     /// Spawn a dedicated subprocess and open its single thread.
@@ -185,7 +222,7 @@ impl AgentLayer {
         // Merge the current upstream credential onto the static env at spawn time, so this
         // child always carries the freshest key from the store (broker re-mint, Settings
         // edit, mode switch) — never a stale boot-time snapshot.
-        let cfg = AgentConfig::resolve(&self.inner.data_dir);
+        let cfg = self.spawn_config();
         let spawn = &self.inner.spawn;
         let mut env = spawn.env.clone();
         env.extend(cfg.auth_child_env());
@@ -423,6 +460,80 @@ fn reaction_permissions() -> (&'static str, serde_json::Value) {
         REACTION_PERMISSION_PROFILE,
         json!({ "default_tools_enabled": false, "sandbox": Sandbox::ReadOnly.as_str() }),
     )
+}
+
+/// Which of the two the spawn takes, and the bookkeeping that keeps the cache warm.
+///
+/// Split out of [`AgentLayer::spawn_config`] so the rule can be tested: the layer owns a
+/// subprocess spawner and a data dir, and a test that had to build one could not reach
+/// this decision at all.
+///
+/// A configured read always wins and always refreshes the cache — that is what keeps a
+/// re-minted key arriving on the next spawn. Only an *unconfigured* read consults the
+/// cache, and a first-ever unconfigured read (nothing cached) is passed through: that is
+/// an ordinary state, not a failure.
+fn pick_credential(fresh: AgentConfig, last: &mut Option<AgentConfig>) -> AgentConfig {
+    if fresh.is_configured() {
+        *last = Some(fresh.clone());
+        return fresh;
+    }
+    match last.clone() {
+        Some(cfg) => {
+            tracing::error!(
+                "the store resolved to no LLM credential; spawning on the last one that worked \
+                 (a key really removed in Settings takes effect at restart)"
+            );
+            cfg
+        }
+        // Genuinely unconfigured: BYOK before a key is pasted, or a first boot the broker
+        // has not answered yet. Boot already said so; the session opens inert.
+        None => fresh,
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    fn cfg(key: &str) -> AgentConfig {
+        AgentConfig::new(
+            Some("gpt-5.6-sol".into()),
+            None,
+            None,
+            "https://songguo.example/v1".into(),
+            key.into(),
+        )
+    }
+
+    /// The failure this exists for: a store read that came back empty must not be able to
+    /// spawn a child with no key, because that child then fails every turn until the
+    /// process restarts.
+    #[test]
+    fn an_empty_resolve_falls_back_to_the_last_one_that_worked() {
+        let mut last = None;
+        assert_eq!(pick_credential(cfg("key-A"), &mut last).upstream_key, "key-A");
+        let recovered = pick_credential(cfg(""), &mut last);
+        assert_eq!(recovered.upstream_key, "key-A");
+        assert_eq!(recovered.upstream_base_url, "https://songguo.example/v1");
+    }
+
+    /// The re-read's whole purpose is a fresh key each spawn; the cache must never
+    /// outrank a real one.
+    #[test]
+    fn a_configured_resolve_always_wins_and_refreshes_the_cache() {
+        let mut last = Some(cfg("key-A"));
+        assert_eq!(pick_credential(cfg("key-B"), &mut last).upstream_key, "key-B");
+        assert_eq!(last.as_ref().unwrap().upstream_key, "key-B");
+    }
+
+    /// An unconfigured machine is an ordinary state — BYOK before a key is pasted — and
+    /// must open inert rather than invent a credential.
+    #[test]
+    fn nothing_cached_and_nothing_stored_stays_unconfigured() {
+        let mut last = None;
+        assert!(!pick_credential(cfg(""), &mut last).is_configured());
+        assert!(last.is_none(), "an empty read must not be cached as good");
+    }
 }
 
 #[cfg(test)]
