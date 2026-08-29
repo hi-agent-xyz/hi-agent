@@ -206,7 +206,9 @@ mod tests {
 
         assert!(source.contains("Your energy is used up"));
         assert!(source.contains("hi-agent.xyz"));
-        assert!(source.contains("消息都已保留"));
+        // Both languages ship in the one file: the view picks between them at render
+        // time from the app language, and there is no second copy to fall back to.
+        assert!(source.contains("能量已经用完了"));
     }
 
     /// **Every worker specialism is named on the roster, or it shows up as a bare `Worker`.**

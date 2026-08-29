@@ -28,6 +28,7 @@ pub mod channel_log;
 pub mod community;
 pub mod config;
 pub mod credentials;
+pub mod energy_history;
 pub mod energy_state;
 pub mod machine_id;
 pub mod mcp;

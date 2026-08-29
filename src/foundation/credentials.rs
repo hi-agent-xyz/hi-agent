@@ -53,6 +53,25 @@ pub fn all_settings(data_dir: &Path) -> std::collections::HashMap<String, String
     db::all_settings(data_dir).unwrap_or_default()
 }
 
+/// Append one observed balance to the sample log and prune past `keep_since`. The
+/// retention window and what counts as worth recording are policy, and live in
+/// [`crate::foundation::energy_history`]; this is only the store.
+pub fn record_energy_sample(
+    data_dir: &Path,
+    at: &str,
+    remaining: i64,
+    total: i64,
+    tier: &str,
+    keep_since: &str,
+) -> anyhow::Result<()> {
+    db::record_energy_sample(data_dir, at, remaining, total, tier, keep_since)
+}
+
+/// Recorded `(at, remaining, total)` samples at or after `since`, oldest first.
+pub fn energy_samples_since(data_dir: &Path, since: &str) -> anyhow::Result<Vec<(String, i64, i64)>> {
+    db::energy_samples_since(data_dir, since)
+}
+
 /// Parse a stored mode string, case-insensitive (`byok` | `xiaoyuanzhu`). The
 /// legacy values `free`/`login` map to `xiaoyuanzhu` (the mode that absorbed
 /// both). Unknown → None. The Settings UI / config store is the sole authority for
@@ -326,7 +345,9 @@ pub struct Energy {
     pub remaining: i64,
     pub total: i64,
     pub resets_at: String,
-    /// Tier the broker reports: "free" or "sub".
+    /// Tier the broker reports, in its own vocabulary: `standard` (the included
+    /// allowance every account gets) | `pro` | `max`. Carried through as text — the
+    /// broker owns this list, and a tier we don't recognize must still display.
     pub tier: String,
 }
 
@@ -499,6 +520,16 @@ mod db {
             energy_total      INTEGER,
             energy_resets_at  TEXT,
             energy_tier       TEXT
+        );
+        -- One row per observed balance, so the level can be drawn over time. The
+        -- `account` row above holds only the latest, which cannot answer 'where did
+        -- today's energy go'. Keyed by the sample instant (RFC3339 UTC): a poll that
+        -- lands in the same second is the same observation, not a second one.
+        CREATE TABLE IF NOT EXISTS energy_sample (
+            at        TEXT PRIMARY KEY,
+            remaining INTEGER NOT NULL,
+            total     INTEGER NOT NULL,
+            tier      TEXT NOT NULL DEFAULT ''
         );
     ";
 
@@ -739,6 +770,48 @@ mod db {
             map.insert(k, v);
         }
         Ok(map)
+    }
+
+    /// Append one observed balance and drop everything older than `keep_since`, so
+    /// the table stays bounded by the retention window rather than by uptime.
+    pub fn record_energy_sample(
+        data_dir: &Path,
+        at: &str,
+        remaining: i64,
+        total: i64,
+        tier: &str,
+        keep_since: &str,
+    ) -> anyhow::Result<()> {
+        let conn = open(data_dir)?;
+        conn.execute(
+            "INSERT INTO energy_sample (at, remaining, total, tier) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(at) DO UPDATE SET
+                 remaining = excluded.remaining,
+                 total     = excluded.total,
+                 tier      = excluded.tier",
+            params![at, remaining, total, tier],
+        )?;
+        conn.execute("DELETE FROM energy_sample WHERE at < ?1", params![keep_since])?;
+        Ok(())
+    }
+
+    /// Every sample at or after `since`, oldest first.
+    pub fn energy_samples_since(
+        data_dir: &Path,
+        since: &str,
+    ) -> anyhow::Result<Vec<(String, i64, i64)>> {
+        let conn = open(data_dir)?;
+        let mut stmt = conn.prepare(
+            "SELECT at, remaining, total FROM energy_sample WHERE at >= ?1 ORDER BY at ASC",
+        )?;
+        let rows = stmt.query_map(params![since], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// The `(wire, base_url, api_key, model, small)` tuple for one `(mode, feature)`,

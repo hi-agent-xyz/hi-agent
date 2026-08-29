@@ -20,16 +20,29 @@ const KEY_LINK_NONCE: &str = "link_nonce";
 
 #[derive(serde::Deserialize, Default)]
 pub struct EnergyQuery {
-    /// Backward-compatible explicit refresh for older clients. The process-wide vendor
-    /// gate now owns timely recovery polling, so the current web face never needs this.
+    /// Poll the broker before answering, instead of reading the last cached balance.
+    /// The vendor gate owns *timely recovery* on its own, so nothing needs this to get
+    /// unstuck — it exists for the energy view's Refresh, where the point is that a
+    /// person asked and expects the number under their finger to be current.
     #[serde(default)]
     refresh: bool,
+    /// Include the last day of observed balances (see
+    /// [`crate::foundation::energy_history`]). Off by default: the recovery poller
+    /// reads this endpoint on a timer and has no use for a series.
+    #[serde(default)]
+    history: bool,
 }
 
-/// `GET /api/account/energy` — whether the account is currently out of energy, plus
-/// the reset time. `out_of_energy` is the live managed-energy level
+/// `GET /api/account/energy` — the account's standing with the managed budget: who it
+/// is, which tier, what's left of what, when the window resets, and (on request) how
+/// the level moved over the last day. `out_of_energy` is the live managed-energy level
 /// ([`crate::foundation::energy_state`]); presentation is owned by the vendor gate,
 /// not this endpoint.
+///
+/// Every field here is about *this* device's own account, and the surface gate
+/// ([`crate::foundation::surfaces::gate`]) already answers an off-box request only with
+/// a credential — so the identity is shown to the person who owns the core, not to the
+/// network. Nothing token-shaped is served.
 pub async fn get_energy(
     State(state): State<Arc<AppState>>,
     Query(query): Query<EnergyQuery>,
@@ -37,12 +50,26 @@ pub async fn get_energy(
     if query.refresh {
         let _ = crate::foundation::broker::poll_energy_now(&state.data_dir).await;
     }
-    let energy = Credentials::load(&state.data_dir).energy.unwrap_or_default();
+    let creds = Credentials::load(&state.data_dir);
+    let managed = creds.mode == crate::foundation::credentials::Mode::Xiaoyuanzhu;
+    let energy = creds.energy.clone().unwrap_or_default();
+    let identity = creds.identity.as_ref();
     axum::Json(serde_json::json!({
         "out_of_energy": crate::foundation::energy_state::is_out(),
+        // BYOK draws on the user's own vendor accounts, so there is no balance to
+        // report and the view says so rather than drawing an empty gauge.
+        "managed": managed,
+        "signed_in": identity.is_some(),
+        "name": identity.map(|i| i.name.clone()).unwrap_or_default(),
+        "email": identity.map(|i| i.email.clone()).unwrap_or_default(),
         "tier": energy.tier,
+        "remaining": energy.remaining,
+        "total": energy.total,
         "resets_at": energy.resets_at,
         "resets_in": crate::body::reaction::humanize_until_reset(&energy.resets_at),
+        "history": query
+            .history
+            .then(|| crate::foundation::energy_history::recent(&state.data_dir)),
     }))
 }
 

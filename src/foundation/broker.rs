@@ -717,6 +717,7 @@ pub async fn refresh(data_dir: &Path, bearer: Option<&str>) {
         // Balance is recovery-only. Calls run until a managed provider actually
         // returns 402; a later positive balance emits Resume.
         crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
+        crate::foundation::energy_history::record(data_dir, &en);
     }
 
     // Tokens were obtained → the account exists and is healthy, even if a vendor
@@ -769,6 +770,9 @@ pub async fn poll_energy_now(data_dir: &Path) -> Option<Energy> {
                 return None;
             }
             crate::foundation::energy_state::reconcile(data_dir, en.remaining, en.total);
+            // Every observed balance is also a point on the day's curve. This is the
+            // frequent poll, so it is what gives the series its resolution.
+            crate::foundation::energy_history::record(data_dir, &en);
             // Keeps the Settings page's "last checked" fresh between full refreshes.
             record_status(data_dir, true, "");
             Some(en)
