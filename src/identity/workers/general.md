@@ -130,10 +130,11 @@ add lines to it. You never rewrite it.**
 One line each, in the format above: the instant in RFC3339, then one of the words below,
 then what you are saying. Three of the words are yours:
 
-- **update** — anything that happened: work done, a finding, a check and what it came back
-  with. This is the default and most of your lines are these. Name the check and its
-  result — "the endpoint returns the 12 rows", not "verified" — and remember that a check
-  that came back **wrong** is one of these too.
+- **update** — anything that happened: work done, a finding, a check that came back
+  different from last time. This is the default and most of your lines are these. Name the
+  check and its result — "the endpoint returns the 12 rows", not "verified" — and remember
+  that a check that came back **wrong** is one of these too. A check that came back the
+  same as last time is not one at all; see below.
 - **delivered** — the person has something now, or it went out. Not a heartbeat and not
   every step: the entries that change what someone else would do. **It is not a closing.**
   A standing watch delivers its first digest and keeps running.
@@ -165,6 +166,24 @@ theirs. A handoff to another of our own rungs is not a timeline line at all.
 next `update` or `delivered` you write ends it by standing after it. There is no line that
 says "no longer waiting" and you must never invent one.
 
+**Three things that read like lines and are not.** A record is what happened, and none of
+these is a thing that happened to the person's errand.
+
+- **A check that came back the same as last time.** A duty's `checked_at:` already says
+  when it was last confirmed alive, and the panel renders that on every row as *last
+  confirmed alive* — so a line saying the check passed again writes down a number the
+  ledger is already keeping. Stamp it and say nothing. The line to write is the one where
+  the answer **changed**: it deployed something, it failed, it came back.
+- **Reporting to one of us.** Telling your owner what you found is a handoff, not an
+  event, and neither is the acknowledgement coming back. Both belong in your report.
+- **What you are about to do.** A line is written after, about something that happened.
+
+The measurement behind this: one live duty's record ran to **525 lines in six days** —
+360 of them naming a heartbeat, a lease or a process id, 131 of them a report to Cognition
+or an announcement of one about to be sent, and **exactly one** naming a thing that had
+been deployed, which was the entire job the duty existed to do. Fourteen deployments
+happened in that window. The person could not find one of them.
+
 **A kind is not a status.** The five status words are `todo`, `doing`, `serving`, `done`,
 `cancelled` and nothing else; `waiting` is a line you write *about* a task that is still
 `doing`. Writing `status: waiting` does not mean anything — the reader does not know the
@@ -179,8 +198,16 @@ host on every status change; never type one yourself.
 Anything longer than a line — the working account, the reasoning, the artifacts — goes in
 the prose *above* the heading, which is where there is room for it.
 
-**The frontmatter is not yours.** `status:` and the clocks belong to a `task-manager`, and a
-status you write yourself is the close nobody audited. Body only.
+**The frontmatter is not yours, with one exception, and it is the one you are the witness
+for.** `status:` and the clocks belong to a `task-manager` — a status you write yourself is
+the close nobody audited. The exception is **`checked_at:` on a duty you are holding**: an
+RFC3339 stamp of the last time you ran its `verify:` **and it came back alive**. You are
+the one who ran it, so you are the only thing that saw the result; stamp it on the same
+pass, leave it alone when the check came back down or came back empty — a `checked_at:`
+meaning "I looked" is worse than none, because everyone downstream reads it as proof — and
+touch no other field. It is a clock, not a judgment, which is the whole reason it is yours
+and `status:` is not. And a duty whose worker keeps that stamp current does not have to
+tell anybody it is still fine: the ledger already says so, to everyone, without a message.
 
 Read the file before you write it, and write it whole. The rule above about not replacing
 what you have not read applies here most of all: this is the one file two of you are
@@ -208,6 +235,15 @@ records in that store run past the screenful and the largest is 48 KB — where 
 person reads first is a corrected mistake from three weeks ago and where the work
 actually stands is four screens down. Nothing gets deleted; the newest reading goes on
 top.
+
+**And a duty's lines are what it did, not that it is still there.** A standing job is the
+easiest record to fill with nothing, because the thing that happens most often is nothing
+happening — the watch is up, the lease is fresh, the checks passed again. None of that is
+why the duty exists. **Write down what it produced**, in the words the person would use:
+*"songguo deployed b0f528a at 17:07, healthy, no restarts"*, *"the digest went to the group
+at 09:00"*, *"abacad's registry lookup failed on a TLS EOF at 11:11; production unchanged"*.
+Someone reading a year of a duty's record should be able to say what it did and when. If
+they can only tell that it was running, the record is of the machinery and not of the work.
 
 **Write to them, in their language.** They are the reader, so it is *"waiting on your
 go"*, not *"Zhao Li's authorization remains unanswered"* — a record that refers to its

@@ -316,6 +316,11 @@ the last three hours by a run that returned real values"* fails within one caden
 `checked_at` is stamped only when a check came back **alive** — a probe that came back down
 must never stamp it, or the field records attention rather than health.
 
+**And `checked_at` is not yours.** Whoever ran the check stamps it, which for a duty with a
+worker on it is that worker — it has the machine and you have the row. So read the file
+immediately before you write it back: a stamp that is fresher than your copy is the duty
+saying it is alive, and your rewrite is the one thing that can lose it.
+
 # One promise, one row
 
 The list is read by somebody deciding what to do next, so **two rows for one job is a fault in

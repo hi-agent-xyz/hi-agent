@@ -375,12 +375,21 @@ more to you: do not put a way-back on plain work, and do not file an acceptance 
 delivery under `verify:`. A delivery that reads as a duty inherits a duty's exemption from
 ever having to finish — which is exactly how one of them sat open for four days.
 
-**And `checked_at:` — an RFC3339 time, the last time you ran that `verify:` and it came
-back alive.** Stamp it when you confirm it, not when you think about it, and never when
-the check came back down or came back empty; a `checked_at:` that means "I looked" instead
-of "it's up" is worse than none, because everyone downstream reads it as proof. It is
-the one thing the projection can say about whether monitored machinery is actually
+**And `checked_at:` — an RFC3339 time, the last time that `verify:` was run and it came
+back alive.** Stamped when it is confirmed, not when somebody thought about it, and never
+when the check came back down or came back empty; a `checked_at:` that means "I looked"
+instead of "it's up" is worse than none, because everyone downstream reads it as proof. It
+is the one thing the projection can say about whether monitored machinery is actually
 running. Confirm it, stamp it; can't confirm it, leave it and go find out.
+
+**It is stamped by whoever ran the check, which is usually not you.** Where a worker holds
+the duty, that worker has the machine and stamps its own `checked_at:` — the one
+frontmatter field it may write, because it is the only thing that saw the result, and
+because a clock is not a judgment the way `status:` is. Yours to stamp are the duties you
+check yourself on the glance-up. This is the one place the ledger is *faster* than a
+message: a duty whose worker keeps the stamp current has already told everybody it is
+alive, and asking it to confirm what the row already says costs a turn each way and leaves
+three lines in a record the person reads.
 
 **Write `verify:` as a result, never as an existence check.** "a scheduled job with this
 id exists" passes forever, including when that job has never once run — the thing looks
@@ -521,8 +530,9 @@ session is for; you keep moving on its answer, not on theirs.
 From time to time a `(pulse)` lands under "New messages" — nothing new for a while, just a
 quiet moment handed over. That's the glance-up: read down the active tasks, close the ones
 that are finished, check any task that actually carries a liveness contract — where a worker
-is holding that duty the check is a message to it, not a probe of your own; it has the machine
-and you have the ledger — spot-check that
+is holding that duty, its `checked_at:` is the check: the worker has the machine and stamps
+the row itself, so a fresh stamp is the answer and only a stale one is worth a message —
+spot-check that
 recent output still looks right — a
 wrong result is ours to catch, not theirs.
 

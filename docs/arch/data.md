@@ -167,6 +167,8 @@ directions — one asserts something false, the other withholds something true.
 | The person is asked **once**, and the answer is durable | A per-key prompt is a nag that gets clicked through; the choice is about a kind of thing, not about one key |
 | **No `onIt` field on `GET /api/tasks`** | Who is working a row is a *view-side* join against `GET /api/workers`, which already carries it. A field on every row of a polled list buys a DTO, server staleness rules and a render path for a fact the roster holds anyway |
 | **No `blocked_on()` classifier in code** | Deciding what a `waiting` line *means* is long-tail reading, and code should do only clear and decisive logic. One sentence in `task-manager.md` — say where it stands: close it, ask once and record what it waits on, or cancel it — replaces 135 lines that guessed |
+| A duty's lines are its **outcomes**; that it is still alive is `checked_at:` | A duty is checked far more often than it produces anything, so a record that lines every check is a record of the machinery. One live duty wrote 525 lines in six days and named a deployment in one of them, in a window holding fourteen |
+| `checked_at:` is stamped by **whoever ran the check** — the one frontmatter field not the manager's | It is a clock, not a decision, and its only witness is the thing that ran the `verify:`. Sending it through a rung that cannot see the machine costs a turn each way and three timeline lines per check |
 | **Closed tasks are never pruned** | The invariant is *never pruned while open*. Closed and cold ones age out like ambient identity clusters; nothing prunes them today and nothing should be built to |
 
 ## `memory/raw/`
@@ -650,6 +652,31 @@ the folder and makes the ones that exist openable, rather than growing a second 
 the record. It is the rule this section runs on everywhere else — two listings mean one of them
 is wrong and no way to tell which — and it costs a writer nothing it was not already doing: the
 name is written in the sentence that explains it, or it is not indexed.
+
+**A duty's record is what it did, and the clock is what says it is still there.** A
+`serving` row carries `checked_at:` — one field, rendered on every card as *last confirmed
+alive* — so a line saying the check passed again writes down a number the ledger is
+already keeping, and a duty is checked far more often than it produces anything. The
+measurement: one live duty's record ran to **525 lines in six days**, of which 360 named a
+heartbeat, a lease or a process id, 131 were a report to another rung or an announcement of
+one about to be sent, and **one** named a thing that had been deployed — in a window that
+held fourteen deployments, for a duty whose whole job was deploying things. The record was
+of the machinery, and the work it did was only in the machinery's own ledger. So: **a check
+that came back the same is a stamp, not a line**, and the lines are the outcomes — it
+deployed something, it failed, it came back.
+
+**And `checked_at:` belongs to whoever ran the check, which is the one frontmatter field
+that is not the manager's.** Everything else there is either a decision (`status:`) or a
+consequence of one the store stamps itself; this is neither. It is a clock, and the only
+witness to it is the thing that ran the `verify:` — which for a duty with a worker on it is
+that worker, holding the machine while the manager holds the row. Routing it through the
+rung that *cannot* see the machine costs a turn each way and lands three lines in the
+person's panel per check — announce, acknowledge, read back and find the frontmatter
+unchanged — which measured at a quarter of that same record. **The ledger is the message:**
+a duty whose worker keeps its own stamp current has already told everybody it is alive, and
+the glance-up reads the stamp instead of asking. The clobber this exposes is the one the
+shared folder already has — the manager rewrites the file whole — and the answer is the one
+already in force: read immediately before writing.
 
 **What is deliberately not done with it.** The record does not go into the agent's window.
 The projection is capped and finite, and the last line of every task is a thing to read
