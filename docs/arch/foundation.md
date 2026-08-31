@@ -347,8 +347,8 @@ its adaptation) and a **vendor** (one API implementation of it). No shared-vendo
 no cross-capability references.
 
 **A capability holds every vendor configured for it, not one.** One task is commonly served
-over several wires at once — the same gateway answers `text-to-image` on both an images
-endpoint and a Responses one — so the credential layer carries a *list* per capability and
+over several wires at once — one gateway's images endpoint and another vendor's beside it —
+so the credential layer carries a *list* per capability and
 never picks on the capability's behalf. Which HTTP shapes can actually be spoken is
 knowledge that exists only inside the capability, and a chooser upstream of it can do no
 better than guess. Two consequences follow, and they are the interface rule:
@@ -357,6 +357,15 @@ better than guess. Two consequences follow, and they are the interface rule:
   at once — one tool, a wider menu. Adding a wire adds models, never a second tool.
 - Where the caller **names nothing** (speech, vision), the capability keeps the first wire it
   can speak and says which it passed over.
+
+**Image generation is the Images API, both halves of it** — `POST /images/generations` and
+`POST /images/edits`, the two calls the vendor publishes for its image models. A second
+adapter that reached the same model through the Responses API, as an `image_generation`
+tool argument inside a turn, was built and is deleted. It cost a mainline *carrier* model
+whose tokens billed on top of the picture, it could not edit at all, and the carrier was a
+configuration item no menu had a value for — so the models it published were unreachable
+and said so only in a startup warning. Where a gateway offers a model over both, it is the
+images wire we take.
 
 A wire nothing implements is skipped with a log line, never fatal: that list is written by
 the broker in its own vocabulary and changes without asking us. **In its own vocabulary**

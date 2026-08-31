@@ -140,12 +140,6 @@ struct WireDto {
     api_key: String,
     #[serde(default)]
     models: Vec<ModelDto>,
-    /// The mainline model that carries a hosted tool, on a wire whose work happens
-    /// inside a turn rather than at its own endpoint (`openai-responses` serving
-    /// `text-to-image`). Absent on every other wire, and the capability that needs one
-    /// refuses to start without it rather than inventing a model to bill.
-    #[serde(default)]
-    carrier: String,
 }
 
 /// GET /api/agent/configs — a three-layer menu: HF task name → wire name →
@@ -217,7 +211,6 @@ fn managed_from(c: &ConfigsDto) -> Managed {
                     base_url: w.url.trim().to_string(),
                     api_key: w.api_key.clone(),
                     model: best.map(|m| m.model.trim().to_string()).filter(|s| !s.is_empty()),
-                    carrier: w.carrier.trim().to_string(),
                     models: w
                         .models
                         .iter()
@@ -896,20 +889,20 @@ mod tests {
     }
 
     /// **The regression this shape exists for.** songguo served `text-to-image` over two
-    /// wires — seedream on `openai-images`, `gpt-image-2` on `openai-responses` — and the
-    /// old collapse kept whichever wire sorted first *by name*, so `gpt-image-2` was
-    /// invisible to the agent and nothing said so. Every wire now survives the trip.
+    /// wires at once and the old collapse kept whichever sorted first *by name*, so every
+    /// model behind the other was invisible to the agent and nothing said so. Every wire
+    /// now survives the trip, ranked by what it serves rather than what it is called.
     #[test]
     fn every_wire_a_task_offers_survives() {
         let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
             "text-to-image": {
-                "openai-images": {
-                    "url": "https://songguo.example/v1/images/generations",
+                "ark/images": {
+                    "url": "https://ark.example/api/v3/images/generations",
                     "api_key": "tok",
                     "models": [{ "model": "doubao-seedream-5.0-lite", "quality": 75 }]
                 },
-                "openai-responses": {
-                    "url": "https://songguo.example/v1/responses",
+                "openai-images": {
+                    "url": "https://songguo.example/v1/images/generations",
                     "api_key": "tok",
                     "models": [{ "model": "gpt-image-2", "quality": 96 }]
                 }
@@ -919,12 +912,12 @@ mod tests {
 
         let image = managed_from(&configs).image;
         assert_eq!(image.len(), 2, "neither wire may be dropped");
-        // Ranked by the best model on offer, not by the wire's name — `openai-images`
+        // Ranked by the best model on offer, not by the wire's name — `ark/images`
         // sorts first alphabetically and would have won under the old rule.
-        assert_eq!(image[0].wire, "openai-responses");
+        assert_eq!(image[0].wire, "openai-images");
         assert_eq!(image[0].model.as_deref(), Some("gpt-image-2"));
-        assert_eq!(image[0].base_url, "https://songguo.example/v1/responses");
-        assert_eq!(image[1].wire, "openai-images");
+        assert_eq!(image[0].base_url, "https://songguo.example/v1/images/generations");
+        assert_eq!(image[1].wire, "ark/images");
         assert_eq!(image[1].model.as_deref(), Some("doubao-seedream-5.0-lite"));
         // Each wire keeps its own menu; the lists are not merged.
         assert_eq!(image[0].models.len(), 1);

@@ -70,11 +70,9 @@ impl Config {
 /// Only `WxH` is checked — `"auto"` and any other token is left for the API to judge,
 /// since a client-side allowlist would reject next month's valid value.
 ///
-/// Shared with [`super::openai_responses_image_gen`]: the rule belongs to the *model*,
-/// not to the endpoint it is reached through, so gpt-image-2's edges are multiples of
-/// 16 on either wire. Two copies would drift, and the drifting one would reject a size
-/// the API accepts.
-pub(crate) fn check_size(model: &str, size: Option<&str>) -> anyhow::Result<()> {
+/// The rule belongs to the *model*, not to the endpoint it is reached through — both
+/// halves of the Images API take the same sizes, so generations and edits share it.
+fn check_size(model: &str, size: Option<&str>) -> anyhow::Result<()> {
     let Some(size) = size.map(str::trim).filter(|s| !s.is_empty()) else { return Ok(()) };
     if !model.starts_with("gpt-image-2") {
         return Ok(());

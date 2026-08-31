@@ -110,7 +110,6 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
                 wire: v.wire_opt().map(str::to_owned),
                 base_url: v.base_url_opt().map(str::to_owned),
                 api_key: v.key_opt().unwrap_or_default().to_owned(),
-                carrier: v.carrier_opt().map(str::to_owned),
                 default_model: v.model_opt().map(str::to_owned),
                 models: v
                     .models

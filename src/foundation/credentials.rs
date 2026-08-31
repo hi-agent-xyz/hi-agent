@@ -215,15 +215,6 @@ pub struct VendorKey {
     /// Model override; None → the vendor's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// The mainline model that carries a hosted tool on wires where the work is done
-    /// *inside a turn* rather than by its own endpoint — today only `openai-responses`
-    /// for `text-to-image`, where the picture comes from an `image_generation` tool.
-    ///
-    /// A property of the wire, not of a model: it says which model hosts the turn, and
-    /// the models list still names what the agent may draw with. Empty everywhere else,
-    /// and never defaulted — a carrier we picked would bill for a choice nobody made.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub carrier: String,
     /// Every model this endpoint serves, as the broker published them. **Empty under
     /// BYOK**, where there is no menu — only the key its owner pasted.
     ///
@@ -271,12 +262,6 @@ impl VendorKey {
         self.model.as_deref().map(str::trim).filter(|m| !m.is_empty())
     }
 
-    /// The tool-carrying mainline model if set, else `None`.
-    pub fn carrier_opt(&self) -> Option<&str> {
-        let c = self.carrier.trim();
-        if c.is_empty() { None } else { Some(c) }
-    }
-
     /// The configured wire id if set, else `None` (use the feature default).
     pub fn wire_opt(&self) -> Option<&str> {
         let w = self.wire.trim();
@@ -290,8 +275,9 @@ impl VendorKey {
 ///
 /// **Every capability slot is a list, because the broker's menu is a list.** Its
 /// `/configs` is task → *wire* → endpoint, and songguo routinely offers a task over
-/// more than one wire (`text-to-image` over both `openai-images` and `openai-responses`;
-/// `text-generation` over both `openai-responses` and `anthropic-messages`). Collapsing
+/// more than one wire (`text-generation` over both `openai-responses` and
+/// `anthropic-messages`; `text-to-image` over a gateway's images endpoint and Ark's).
+/// Collapsing
 /// that to one wire per task threw away every model served over the others — silently,
 /// since the survivor was whichever wire sorted first by name. The capability, which is
 /// the only layer that knows which shapes it can actually speak, now decides.
@@ -517,9 +503,6 @@ mod db {
             -- `capabilities::init` loads back, so anything not written is simply
             -- gone by the time the capability asks.
             models   TEXT,
-            -- The mainline model that carries a hosted tool, on the wires that need
-            -- one (openai-responses image generation). Empty on every other wire.
-            carrier  TEXT,
             -- Keyed by wire as well as feature: one capability holds one row per wire
             -- its source offers, and the capability picks among them. See `Managed`.
             PRIMARY KEY (mode, feature, wire)
@@ -588,10 +571,8 @@ mod db {
         if !column_exists(conn, "credential", "models")? {
             conn.execute_batch("ALTER TABLE credential ADD COLUMN models TEXT")?;
         }
-        if !column_exists(conn, "credential", "carrier")? {
-            conn.execute_batch("ALTER TABLE credential ADD COLUMN carrier TEXT")?;
-        }
         widen_credential_key(conn)?;
+        drop_credential_carrier(conn)?;
         Ok(())
     }
 
@@ -617,15 +598,26 @@ mod db {
                  model    TEXT,
                  small    TEXT,
                  models   TEXT,
-                 carrier  TEXT,
-                 PRIMARY KEY (mode, feature, wire)
+                      PRIMARY KEY (mode, feature, wire)
              );
-             INSERT INTO credential_new (mode, feature, wire, base_url, api_key, model, small, models, carrier)
-                 SELECT mode, feature, wire, base_url, api_key, model, small, models, carrier FROM credential;
+             INSERT INTO credential_new (mode, feature, wire, base_url, api_key, model, small, models)
+                 SELECT mode, feature, wire, base_url, api_key, model, small, models FROM credential;
              DROP TABLE credential;
              ALTER TABLE credential_new RENAME TO credential;
              COMMIT;",
         )?;
+        Ok(())
+    }
+
+    /// Drop the `carrier` column left by the Responses image wire.
+    ///
+    /// That wire is deleted — image generation is the Images API, both halves of it —
+    /// and a column nothing reads is a vestige that reads as a feature. Guarded on
+    /// `table_info`, so this is a no-op on a fresh DB and runs once on an older one.
+    fn drop_credential_carrier(conn: &Connection) -> anyhow::Result<()> {
+        if column_exists(conn, "credential", "carrier")? {
+            conn.execute_batch("ALTER TABLE credential DROP COLUMN carrier")?;
+        }
         Ok(())
     }
 
@@ -860,7 +852,7 @@ mod db {
 
     fn read_vendors(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<Vec<VendorKey>> {
         let mut stmt = conn.prepare(
-            "SELECT wire, base_url, api_key, model, models, carrier FROM credential
+            "SELECT wire, base_url, api_key, model, models FROM credential
              WHERE mode = ?1 AND feature = ?2 ORDER BY rowid",
         )?;
         let rows = stmt.query_map(params![mode_str(mode), feature], |r| {
@@ -873,7 +865,6 @@ mod db {
                     .get::<_, Option<String>>(4)?
                     .and_then(|s| serde_json::from_str(&s).ok())
                     .unwrap_or_default(),
-                carrier: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -928,12 +919,11 @@ mod db {
             let models =
                 if vk.models.is_empty() { None } else { Some(serde_json::to_string(&vk.models)?) };
             conn.execute(
-                "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small, models, carrier)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8)
+                "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small, models)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
                  ON CONFLICT(mode, feature, wire) DO UPDATE SET
                      base_url = excluded.base_url, api_key = excluded.api_key,
-                     model = excluded.model, models = excluded.models,
-                     carrier = excluded.carrier",
+                     model = excluded.model, models = excluded.models",
                 params![
                     mode_str(mode),
                     feature,
@@ -942,7 +932,6 @@ mod db {
                     vk.api_key,
                     vk.model.as_deref(),
                     models,
-                    vk.carrier_opt()
                 ],
             )?;
         }
@@ -1287,8 +1276,8 @@ mod tests {
         c.managed = Some(Managed {
             image: vec![
                 VendorKey {
-                    wire: "openai-responses".into(),
-                    base_url: "https://songguo.example/v1/responses".into(),
+                    wire: "ark/images".into(),
+                    base_url: "https://ark.example/api/v3/images/generations".into(),
                     api_key: "k".into(),
                     model: Some("gpt-image-2".into()),
                     models: vec![ModelOffer {
@@ -1297,7 +1286,6 @@ mod tests {
                         speed: 45,
                         price: 90,
                     }],
-                    carrier: "gpt-5.4".into(),
                 },
                 VendorKey {
                     wire: "openai-images".into(),
@@ -1310,7 +1298,6 @@ mod tests {
                         speed: 80,
                         price: 40,
                     }],
-                    carrier: String::new(),
                 },
             ],
             ..Default::default()
@@ -1320,13 +1307,9 @@ mod tests {
         let back = Credentials::load(dir.path());
         let image = &back.managed.as_ref().unwrap().image;
         assert_eq!(image.len(), 2, "the second wire overwrote the first");
-        assert_eq!(image[0].wire, "openai-responses", "rank must survive the round-trip");
+        assert_eq!(image[0].wire, "ark/images", "rank must survive the round-trip");
         assert_eq!(image[1].wire, "openai-images");
         assert_eq!(image[1].models[0].name, "doubao-seedream-5.0-lite");
-        // The carrier rides with its wire, and only with the wire that has one.
-        assert_eq!(image[0].carrier_opt(), Some("gpt-5.4"));
-        assert_eq!(image[1].carrier_opt(), None);
-
         // A later refresh that drops a wire must drop its row too, not leave it behind
         // as a provider the broker has stopped offering.
         let mut fewer = back;
@@ -1334,7 +1317,7 @@ mod tests {
         fewer.save(dir.path()).unwrap();
         let after = Credentials::load(dir.path());
         assert_eq!(after.managed.as_ref().unwrap().image.len(), 1);
-        assert_eq!(after.managed.as_ref().unwrap().image[0].wire, "openai-responses");
+        assert_eq!(after.managed.as_ref().unwrap().image[0].wire, "ark/images");
     }
 
     /// **The upgrade path, on a store that already exists.** Every other test here
@@ -1377,7 +1360,7 @@ mod tests {
         // instead of replacing it.
         let mut grown = loaded;
         grown.managed.as_mut().unwrap().image.push(VendorKey {
-            wire: "openai-responses".into(),
+            wire: "ark/images".into(),
             api_key: "k".into(),
             ..Default::default()
         });
