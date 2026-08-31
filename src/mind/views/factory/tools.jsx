@@ -31,9 +31,8 @@ const T = {
       worker: ["the working layer", "the one sent out to do a job — the only rung that touches the screen and makes things"],
       reflection: ["the memory-keeping layer", "looks back, writes into memory"],
       cognition: ["the thinking layer", "doesn't do the work itself — hands it out, then watches for the answer"],
-      deliberation: ["the pondering layer", "can only hand a thought back"],
       reaction: ["the speaking layer", "speaks up when someone is there, puts things on the screen; does no work"],
-      other: ["other", "deliberately empty — a fake realtime capability used to hang here"],
+      other: ["other", "a session that named no role — deliberately empty, rather than lending it someone else's kit"],
     },
   },
   zh: {
@@ -44,9 +43,8 @@ const T = {
       worker: ["干活的那层", "被派出去做事的那一层 —— 只有它动屏幕，也只有它出东西"],
       reflection: ["整理记忆的那层", "回头看，写进记忆"],
       cognition: ["想事情的那层", "自己不动手，派活出去、盯着回音"],
-      deliberation: ["琢磨的那层", "只能把想法递回去"],
       reaction: ["说话的那层", "在场时开口、把东西放到屏幕上；不干活"],
-      other: ["其他", "刻意空着 —— 曾经这里挂着一份假的实时能力"],
+      other: ["其他", "没说自己是哪一层的会话 —— 刻意空着，而不是借它一套别人的工具"],
     },
   },
 };
