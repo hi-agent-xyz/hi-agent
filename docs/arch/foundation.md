@@ -358,14 +358,22 @@ better than guess. Two consequences follow, and they are the interface rule:
 - Where the caller **names nothing** (speech, vision), the capability keeps the first wire it
   can speak and says which it passed over.
 
-**Image generation is the Images API, both halves of it** — `POST /images/generations` and
-`POST /images/edits`, the two calls the vendor publishes for its image models. A second
-adapter that reached the same model through the Responses API, as an `image_generation`
-tool argument inside a turn, was built and is deleted. It cost a mainline *carrier* model
+**Image generation follows the vendor's own API, and drawing and editing are two
+questions.** A Responses-API adapter that reached an image model as an `image_generation`
+tool argument inside a turn was built and is deleted: it cost a mainline *carrier* model
 whose tokens billed on top of the picture, it could not edit at all, and the carrier was a
 configuration item no menu had a value for — so the models it published were unreachable
-and said so only in a startup warning. Where a gateway offers a model over both, it is the
-images wire we take.
+and said so only in a startup warning.
+
+What replaced it is **two tasks, not one**: `text-to-image` names the wires that can draw
+and `image-text-to-image` the wires that can edit, and neither is derived from the other.
+Deriving was tried in both directions and is wrong both ways — OpenAI publishes a second
+endpoint (`POST /images/edits`, multipart) while Ark publishes none and edits on the
+generations endpoint by adding an `image` field, so a URL guessed from the other vendor's
+shape points at nothing. A source may also serve one and not the other, which only a
+separate list can say. Under BYOK the two collapse back to one provider: one person pasted
+one key, both halves of that vendor's API answer to it, and Settings grows no second
+field.
 
 A wire nothing implements is skipped with a log line, never fatal: that list is written by
 the broker in its own vocabulary and changes without asking us. **In its own vocabulary**

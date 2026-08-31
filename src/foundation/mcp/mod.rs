@@ -857,11 +857,22 @@ fn model_property(menu: Vec<MenuEntry>, default: Option<String>, verb: &str) -> 
 }
 
 fn image_model_property(verb: &str) -> Value {
-    let menu = image_gen::models()
+    image_menu(image_gen::models(), image_gen::default_model(), verb)
+}
+
+/// The editing menu, which is its own list — a model that can be drawn is not
+/// necessarily one that can be edited, and offering the drawing menu here would name
+/// models whose edit call has nowhere to go.
+fn image_edit_model_property() -> Value {
+    image_menu(image_gen::edit_models(), image_gen::edit_default_model(), "edit")
+}
+
+fn image_menu(models: Vec<image_gen::ModelInfo>, default: Option<String>, verb: &str) -> Value {
+    let menu = models
         .into_iter()
         .map(|m| MenuEntry { name: m.name, quality: m.quality, speed: m.speed, price: m.price })
         .collect();
-    model_property(menu, image_gen::default_model(), verb)
+    model_property(menu, default, verb)
 }
 
 fn video_model_property() -> Value {
@@ -913,7 +924,7 @@ fn image_to_image_tool() -> Value {
             "properties": {
                 "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. vision/2026-06-25/14/23-07.jpg or drive/generated/2026-06-25/142307-a-red-bicycle.png." },
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
-                "model": image_model_property("edit"),
+                "model": image_edit_model_property(),
                 "size": { "type": "string", "description": "Optional output size." },
                 "quality": { "type": "string", "description": "Optional cost/quality dial: \"low\", \"medium\", \"high\"." },
                 "n": { "type": "integer", "description": "Optional: how many variants to return. Default one." },

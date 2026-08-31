@@ -66,10 +66,11 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
     use crate::foundation::credentials::VendorKey;
     let eff = creds.effective();
     let none: &[VendorKey] = &[];
-    let (stt_wires, tts_wires, vision_wires, image_wires, video_wires) = match eff.as_ref() {
-        Some(e) => (e.stt, e.tts, e.vision, e.image, e.video),
-        None => (none, none, none, none, none),
-    };
+    let (stt_wires, tts_wires, vision_wires, image_wires, image_edit_wires, video_wires) =
+        match eff.as_ref() {
+            Some(e) => (e.stt, e.tts, e.vision, e.image, e.image_edit, e.video),
+            None => (none, none, none, none, none, none),
+        };
 
     stt::init(
         stt_wires
@@ -103,8 +104,8 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
             })
             .collect(),
     )?;
-    image_gen::init(
-        image_wires
+    let image_specs = |wires: &[VendorKey]| -> Vec<image_gen::ProviderSpec> {
+        wires
             .iter()
             .map(|v| image_gen::ProviderSpec {
                 wire: v.wire_opt().map(str::to_owned),
@@ -122,8 +123,9 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
                     })
                     .collect(),
             })
-            .collect(),
-    )?;
+            .collect()
+    };
+    image_gen::init(image_specs(image_wires), image_specs(image_edit_wires))?;
     video_gen::init(
         video_wires
             .iter()

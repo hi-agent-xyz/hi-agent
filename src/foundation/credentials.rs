@@ -297,6 +297,13 @@ pub struct Managed {
     pub vision: Vec<VendorKey>,
     #[serde(deserialize_with = "one_or_many")]
     pub image: Vec<VendorKey>,
+    /// The wires that can **edit** an image, which is a different question from the
+    /// wires that can draw one and is answered by its own task in the broker menu.
+    /// One vendor publishes a second endpoint for it and another edits on the same
+    /// one it generates from; a third may not edit at all. Defaulted so a menu minted
+    /// before the task existed loads as "no editing" rather than failing the store.
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub image_edit: Vec<VendorKey>,
     #[serde(deserialize_with = "one_or_many")]
     pub video: Vec<VendorKey>,
 }
@@ -350,6 +357,11 @@ pub struct Effective<'a> {
     pub tts: &'a [VendorKey],
     pub vision: &'a [VendorKey],
     pub image: &'a [VendorKey],
+    /// **Under BYOK this is the same provider as `image`.** One person pasted one image
+    /// key, and both halves of that vendor's API answer to it — so editing is offered
+    /// wherever generating is, and Settings grows no second field. Only the broker,
+    /// which serves many vendors, has to say which wires edit.
+    pub image_edit: &'a [VendorKey],
     pub video: &'a [VendorKey],
 }
 
@@ -365,6 +377,7 @@ impl Credentials {
                 tts: std::slice::from_ref(&self.tts),
                 vision: std::slice::from_ref(&self.vision),
                 image: std::slice::from_ref(&self.image),
+                image_edit: std::slice::from_ref(&self.image),
                 video: std::slice::from_ref(&self.video),
             }),
             Mode::Xiaoyuanzhu => self.managed.as_ref().map(|m| Effective {
@@ -373,6 +386,7 @@ impl Credentials {
                 tts: &m.tts,
                 vision: &m.vision,
                 image: &m.image,
+                image_edit: &m.image_edit,
                 video: &m.video,
             }),
         }
@@ -731,6 +745,7 @@ mod db {
             write_vendors(conn, Mode::Xiaoyuanzhu, "tts", &m.tts)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "vision", &m.vision)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "image", &m.image)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "image_edit", &m.image_edit)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "video", &m.video)?;
         }
         write_account(conn, c)?;
@@ -899,6 +914,7 @@ mod db {
             tts: read_vendors(conn, Mode::Xiaoyuanzhu, "tts")?,
             vision: read_vendors(conn, Mode::Xiaoyuanzhu, "vision")?,
             image: read_vendors(conn, Mode::Xiaoyuanzhu, "image")?,
+            image_edit: read_vendors(conn, Mode::Xiaoyuanzhu, "image_edit")?,
             video: read_vendors(conn, Mode::Xiaoyuanzhu, "video")?,
         }))
     }

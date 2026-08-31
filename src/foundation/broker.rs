@@ -251,6 +251,12 @@ fn managed_from(c: &ConfigsDto) -> Managed {
         tts: wires_for("text-to-speech"),
         vision: wires_for("image-text-to-text"),
         image: wires_for("text-to-image"),
+        // A separate task because it is a separate question. `text-to-image` says who
+        // can draw; only this says who can *edit*, and the two do not coincide — Ark
+        // publishes no edits endpoint at all yet edits on its generations one, while
+        // the OpenAI shape has a second endpoint for it. Deriving one from the other
+        // was tried and is wrong in both directions.
+        image_edit: wires_for("image-text-to-image"),
         video: wires_for("text-to-video"),
     }
 }

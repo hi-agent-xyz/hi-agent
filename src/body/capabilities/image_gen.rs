@@ -25,12 +25,14 @@
 //! first to declare the model wins, so the choice is the broker's editorial ranking
 //! rather than an accident.
 //!
-//! **Image generation is the Images API, both halves of it.** `POST /images/generations`
-//! and `POST /images/edits` are the two calls OpenAI publishes for `gpt-image-*`, and
-//! this capability speaks exactly those. A Responses-API adapter that reached the same
-//! model as an `image_generation` tool argument lived here briefly and is deleted: it
-//! needed a mainline carrier model whose tokens billed on top of the picture, and it
-//! could not edit at all.
+//! **Drawing and editing are two capabilities behind one module, each with its own
+//! provider list.** Which wires can draw does not tell you which can edit: OpenAI
+//! publishes a second endpoint (`POST /images/edits`, multipart) while Ark publishes
+//! none and edits on the generations endpoint by adding an `image` field — and a
+//! gateway may front one vendor for drawing and another for editing, or offer no
+//! editing at all. So the two arrive as two lists from two tasks, and neither is
+//! derived from the other. Deriving was tried in both directions and is wrong both
+//! ways.
 //!
 //! The capability is a module of free functions over a process-global,
 //! once-initialized registry. The registry never appears in a signature. A
@@ -180,17 +182,15 @@ impl Provider {
         family_of(model).or(self.declared_wire).unwrap_or(OPENAI_WIRE)
     }
 
-    /// Whether editing is implemented for `model`'s shape. A fact about *our* code,
-    /// not about what the vendor could do: Ark's edit parameter is unconfirmed, so the
-    /// doubao arm refuses rather than guessing a field name.
-    fn can_edit(&self, model: &str) -> bool {
-        self.wire_for(model) == OPENAI_WIRE
-    }
 }
 
 struct Registry {
     client: reqwest::Client,
-    providers: Vec<Provider>,
+    /// Wires that draw (`text-to-image`).
+    generate: Vec<Provider>,
+    /// Wires that edit (`image-text-to-image`). Empty is an ordinary state: a source
+    /// may serve drawing and no editing, and the tool says so at the point of use.
+    edit: Vec<Provider>,
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
@@ -237,10 +237,13 @@ fn wire_named(wire: &str) -> Option<&'static str> {
 /// with nothing pasted yet), not a misconfiguration. A wire we don't recognise is
 /// logged and the model name decides instead — see [`wire_named`] for why an
 /// unfamiliar string must not be fatal here.
-pub fn init(specs: Vec<ProviderSpec>) -> anyhow::Result<()> {
-    let providers = build_providers(specs);
+pub fn init(generate: Vec<ProviderSpec>, edit: Vec<ProviderSpec>) -> anyhow::Result<()> {
     let client = reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build()?;
-    let _ = REGISTRY.set(Registry { client, providers });
+    let _ = REGISTRY.set(Registry {
+        client,
+        generate: build_providers(generate),
+        edit: build_providers(edit),
+    });
     Ok(())
 }
 
@@ -272,29 +275,53 @@ fn build_providers(specs: Vec<ProviderSpec>) -> Vec<Provider> {
     providers
 }
 
-/// The live registry, or the one error an operator can act on.
-fn registry() -> anyhow::Result<&'static Registry> {
+/// The providers that draw, or the one error an operator can act on.
+fn generators() -> anyhow::Result<(&'static Registry, &'static [Provider])> {
     match REGISTRY.get() {
-        Some(r) if !r.providers.is_empty() => Ok(r),
+        Some(r) if !r.generate.is_empty() => Ok((r, &r.generate)),
         _ => anyhow::bail!("image generation not configured (set an image key in Settings)"),
     }
 }
 
-/// Whether any provider is configured.
+/// The providers that edit. A separate list and so a separate absence: a source can
+/// serve drawing and no editing, and "nothing here edits" is a different problem from
+/// "no image key", with a different fix.
+fn editors() -> anyhow::Result<(&'static Registry, &'static [Provider])> {
+    match REGISTRY.get() {
+        Some(r) if !r.edit.is_empty() => Ok((r, &r.edit)),
+        Some(_) => anyhow::bail!(
+            "no configured wire can edit an image — this source serves drawing only"
+        ),
+        None => anyhow::bail!("image generation not configured (set an image key in Settings)"),
+    }
+}
+
+/// Whether anything can draw.
 pub fn available() -> bool {
-    registry().is_ok()
+    generators().is_ok()
+}
+
+/// Whether anything can edit.
+pub fn edit_available() -> bool {
+    editors().is_ok()
 }
 
 /// Every model reachable right now, best-quality first — the menu the tool
 /// description is built from. Empty *with* a provider configured means BYOK: no menu
 /// was published, and any name the agent gives is passed through.
 pub fn models() -> Vec<ModelInfo> {
-    registry().map(published_models).unwrap_or_default()
+    generators().map(|(_, ps)| published_models(ps)).unwrap_or_default()
 }
 
-fn published_models(reg: &Registry) -> Vec<ModelInfo> {
+/// The same menu for editing, which is a different set — a model that can be drawn is
+/// not necessarily one that can be edited.
+pub fn edit_models() -> Vec<ModelInfo> {
+    editors().map(|(_, ps)| published_models(ps)).unwrap_or_default()
+}
+
+fn published_models(providers: &[Provider]) -> Vec<ModelInfo> {
     let mut all: Vec<ModelInfo> =
-        reg.providers.iter().flat_map(|p| p.models.iter().cloned()).collect();
+        providers.iter().flat_map(|p| p.models.iter().cloned()).collect();
     all.sort_by(|a, b| b.quality.cmp(&a.quality).then_with(|| a.name.cmp(&b.name)));
     // Keep the best-ranked entry per name. `dedup_by` would not do: it only drops
     // *adjacent* duplicates, and two gateways fronting one model rate it differently,
@@ -306,7 +333,12 @@ fn published_models(reg: &Registry) -> Vec<ModelInfo> {
 
 /// The model used when a caller names none: the first configured provider's default.
 pub fn default_model() -> Option<String> {
-    registry().ok()?.providers.first()?.default_model.clone()
+    generators().ok()?.1.first()?.default_model.clone()
+}
+
+/// The model used when an edit names none.
+pub fn edit_default_model() -> Option<String> {
+    editors().ok()?.1.first()?.default_model.clone()
 }
 
 /// Resolve `model` to the provider that should serve it and the model name to send.
@@ -317,30 +349,36 @@ pub fn default_model() -> Option<String> {
 /// 3. Otherwise it is a mistake worth naming, listing what *is* reachable. Silently
 ///    substituting a model that happens to be configured would be recorded as the
 ///    model that was asked for.
-fn pick<'a>(reg: &'a Registry, model: Option<&str>) -> anyhow::Result<(&'a Provider, String)> {
+fn pick<'a>(
+    providers: &'a [Provider],
+    model: Option<&str>,
+) -> anyhow::Result<(&'a Provider, String)> {
     let Some(name) = model.map(str::trim).filter(|m| !m.is_empty()) else {
-        let p = &reg.providers[0];
+        let p = &providers[0];
         let Some(default) = p.default_model.clone() else {
             anyhow::bail!(
                 "no model named and the configured provider has no default — \
                  pass `model` (reachable: {})",
-                model_names(reg)
+                model_names(providers)
             )
         };
         return Ok((p, default));
     };
 
-    if let Some(p) = reg.providers.iter().find(|p| p.models.iter().any(|m| m.name == name)) {
+    if let Some(p) = providers.iter().find(|p| p.models.iter().any(|m| m.name == name)) {
         return Ok((p, name.to_string()));
     }
-    if reg.providers.len() == 1 {
-        return Ok((&reg.providers[0], name.to_string()));
+    if providers.len() == 1 {
+        return Ok((&providers[0], name.to_string()));
     }
-    anyhow::bail!("no configured provider serves model {name:?} (reachable: {})", model_names(reg))
+    anyhow::bail!(
+        "no configured provider serves model {name:?} (reachable: {})",
+        model_names(providers)
+    )
 }
 
-fn model_names(reg: &Registry) -> String {
-    let names: Vec<String> = published_models(reg).into_iter().map(|m| m.name).collect();
+fn model_names(providers: &[Provider]) -> String {
+    let names: Vec<String> = published_models(providers).into_iter().map(|m| m.name).collect();
     if names.is_empty() { "none published".to_string() } else { names.join(", ") }
 }
 
@@ -355,8 +393,8 @@ pub async fn text_to_image(
     if prompt.trim().is_empty() {
         anyhow::bail!("text-to-image needs a prompt");
     }
-    let reg = registry()?;
-    let (provider, model) = pick(reg, params.model.as_deref())?;
+    let (reg, providers) = generators()?;
+    let (provider, model) = pick(providers, params.model.as_deref())?;
     let client = &reg.client;
     match provider.wire_for(&model) {
         DOUBAO_WIRE => {
@@ -381,17 +419,15 @@ pub async fn image_to_image(
     if prompt.trim().is_empty() {
         anyhow::bail!("image-to-image needs a prompt saying what to change");
     }
-    let reg = registry()?;
-    let (provider, model) = pick(reg, params.model.as_deref())?;
-    if !provider.can_edit(&model) {
-        anyhow::bail!(
-            "editing is not implemented for {model} (the {} wire) — name a gpt-image model \
-             instead (reachable: {})",
-            provider.wire_for(&model),
-            model_names(reg)
-        );
+    let (reg, providers) = editors()?;
+    let (provider, model) = pick(providers, params.model.as_deref())?;
+    let client = &reg.client;
+    match provider.wire_for(&model) {
+        DOUBAO_WIRE => {
+            doubao_image_gen::edit(client, &provider.doubao, &model, source, prompt, params).await
+        }
+        _ => openai_image_gen::edit(client, &provider.openai, &model, source, prompt, params).await,
     }
-    openai_image_gen::edit(&reg.client, &provider.openai, &model, source, prompt, params).await
 }
 
 // ── shared adapter helpers ────────────────────────────────────────────────────
@@ -458,13 +494,11 @@ mod tests {
                 ModelInfo { name: "gpt-image-2".into(), ..Default::default() },
             ],
         }]);
-        let p = &r.providers[0];
+        let p = &r.generate[0];
 
         assert_eq!(p.wire_for("doubao-seedream-5.0-lite"), DOUBAO_WIRE, "the model wins");
         assert_eq!(p.wire_for("gpt-image-2"), OPENAI_WIRE);
         // One credential, both families — which is the case the gateway exists for.
-        assert!(!p.can_edit("doubao-seedream-5.0-lite"));
-        assert!(p.can_edit("gpt-image-2"));
 
         // A name we don't know falls back to what the gateway called itself.
         assert_eq!(p.wire_for("something-new"), OPENAI_WIRE);
@@ -512,8 +546,14 @@ mod tests {
         }
     }
 
+    /// A registry whose two lists are the same providers — the ordinary case for a
+    /// source that serves both tasks, and the one the older tests were written against.
     fn reg(specs: Vec<ProviderSpec>) -> Registry {
-        Registry { client: reqwest::Client::new(), providers: build_providers(specs) }
+        Registry {
+            client: reqwest::Client::new(),
+            generate: build_providers(specs.clone()),
+            edit: build_providers(specs),
+        }
     }
 
     /// A blank key is "nothing pasted yet" — an ordinary state, not something to
@@ -553,19 +593,19 @@ mod tests {
                 }],
             },
         ]);
-        assert_eq!(r.providers.len(), 2);
+        assert_eq!(r.generate.len(), 2);
 
-        let (p, model) = pick(&r, Some("doubao-seedream-5.0-lite")).unwrap();
+        let (p, model) = pick(&r.generate, Some("doubao-seedream-5.0-lite")).unwrap();
         assert_eq!(p.wire_for(&model), DOUBAO_WIRE);
         assert_eq!(p.default_model.as_deref(), Some("doubao-seedream-5.0-lite"), "the ark one");
 
         // The published menu is the union, so the agent is shown both.
-        let names: Vec<String> = published_models(&r).into_iter().map(|m| m.name).collect();
+        let names: Vec<String> = published_models(&r.generate).into_iter().map(|m| m.name).collect();
         assert_eq!(names, vec!["gpt-image-2", "doubao-seedream-5.0-lite"]);
 
         // No model named → the first provider's default. The composition root hands
         // them over best-first, so "first" is the best on offer.
-        let (_, model) = pick(&r, None).unwrap();
+        let (_, model) = pick(&r.generate, None).unwrap();
         assert_eq!(model, "gpt-image-2");
     }
 
@@ -601,18 +641,16 @@ mod tests {
         let ark = wire("ark/images", "https://ark.example/api/v3/images/generations");
 
         let r = reg(vec![ark.clone(), images.clone()]);
-        let (p, model) = pick(&r, Some("acme-diffusion-1")).unwrap();
+        let (p, model) = pick(&r.generate, Some("acme-diffusion-1")).unwrap();
         assert_eq!(p.wire_for(&model), DOUBAO_WIRE, "first to declare it wins");
 
-        // Reverse the ranking and the same request takes the images wire instead —
-        // and regains editing, which only that wire implements.
+        // Reverse the ranking and the same request takes the images wire instead.
         let r = reg(vec![images, ark]);
-        let (p, model) = pick(&r, Some("acme-diffusion-1")).unwrap();
+        let (p, model) = pick(&r.generate, Some("acme-diffusion-1")).unwrap();
         assert_eq!(p.wire_for(&model), OPENAI_WIRE);
-        assert!(p.can_edit(&model));
 
         // Either way the menu shows the model once, not twice.
-        let names: Vec<String> = published_models(&r).into_iter().map(|m| m.name).collect();
+        let names: Vec<String> = published_models(&r.generate).into_iter().map(|m| m.name).collect();
         assert_eq!(names, vec!["acme-diffusion-1"]);
     }
 
@@ -650,17 +688,17 @@ mod tests {
             spec("oai-key", Some("gpt-image-2"), &["gpt-image-2", "gpt-image-1.5"]),
         ]);
 
-        let (p, model) = pick(&r, Some("gpt-image-2")).unwrap();
+        let (p, model) = pick(&r.generate, Some("gpt-image-2")).unwrap();
         assert_eq!(model, "gpt-image-2");
         assert_eq!(p.wire_for(&model), OPENAI_WIRE);
         assert_eq!(p.default_model.as_deref(), Some("gpt-image-2"), "the second provider");
 
-        let (p, model) = pick(&r, Some("doubao-seedream-5.0-lite")).unwrap();
+        let (p, model) = pick(&r.generate, Some("doubao-seedream-5.0-lite")).unwrap();
         assert_eq!(model, "doubao-seedream-5.0-lite");
         assert_eq!(p.wire_for(&model), DOUBAO_WIRE);
 
         // No model named → the first provider's default, not a search.
-        let (p, model) = pick(&r, None).unwrap();
+        let (p, model) = pick(&r.generate, None).unwrap();
         assert_eq!(model, "doubao-seedream-5.0-lite");
         assert_eq!(p.wire_for(&model), DOUBAO_WIRE);
     }
@@ -670,7 +708,7 @@ mod tests {
     #[test]
     fn an_unlisted_model_passes_through_to_a_sole_provider() {
         let r = reg(vec![spec("oai-key", Some("gpt-image-2"), &[])]);
-        let (_, model) = pick(&r, Some("gpt-image-3-unreleased")).unwrap();
+        let (_, model) = pick(&r.generate, Some("gpt-image-3-unreleased")).unwrap();
         assert_eq!(model, "gpt-image-3-unreleased");
     }
 
@@ -682,7 +720,7 @@ mod tests {
             spec("ark-key", Some("doubao-seedream-5.0-lite"), &["doubao-seedream-5.0-lite"]),
             spec("oai-key", Some("gpt-image-2"), &["gpt-image-2"]),
         ]);
-        let err = pick(&r, Some("midjourney")).err().expect("must not substitute").to_string();
+        let err = pick(&r.generate, Some("midjourney")).err().expect("must not substitute").to_string();
         assert!(err.contains("midjourney"), "{err}");
         assert!(err.contains("gpt-image-2") && err.contains("doubao-seedream"), "{err}");
     }
@@ -695,23 +733,54 @@ mod tests {
             spec("a", Some("gpt-image-1.5"), &["gpt-image-1.5"]),
             spec("b", Some("gpt-image-2"), &["gpt-image-2", "gpt-image-1.5"]),
         ]);
-        let names: Vec<String> = published_models(&r).into_iter().map(|m| m.name).collect();
+        let names: Vec<String> = published_models(&r.generate).into_iter().map(|m| m.name).collect();
         assert_eq!(names, vec!["gpt-image-1.5", "gpt-image-2"]);
     }
 
-    /// "This vendor can't" and "nothing is configured" are different problems with
-    /// different fixes, and only one of them is answered by opening Settings.
-    #[tokio::test]
-    async fn editing_on_a_wire_that_cannot_says_so_and_names_one_that_can() {
-        let r = reg(vec![
-            spec("ark-key", Some("doubao-seedream-5.0-lite"), &["doubao-seedream-5.0-lite"]),
-            spec("oai-key", Some("gpt-image-2"), &["gpt-image-2"]),
-        ]);
-        let (p, model) = pick(&r, Some("doubao-seedream-5.0-lite")).unwrap();
-        assert!(!p.can_edit(&model));
-        let (p2, m2) = pick(&r, Some("gpt-image-2")).unwrap();
-        assert!(p2.can_edit(&m2));
-        assert_eq!(model, "doubao-seedream-5.0-lite");
-        assert!(model_names(&r).contains("gpt-image-2"));
+    /// **Being drawable does not make a model editable.** The two lists come from two
+    /// tasks and need not agree — one vendor publishes an edits endpoint, another edits
+    /// on its generations one, a third does neither — so a model only the drawing list
+    /// serves is refused here by name, with the editable ones listed. Sending it anyway
+    /// would report our own routing mistake as the model's failure.
+    #[test]
+    fn a_model_that_can_be_drawn_but_not_edited_is_refused_by_name() {
+        let r = Registry {
+            client: reqwest::Client::new(),
+            generate: build_providers(vec![
+                spec("k1", Some("gpt-image-2"), &["gpt-image-2"]),
+                spec("k2", Some("acme-diffusion-1"), &["acme-diffusion-1"]),
+            ]),
+            edit: build_providers(vec![
+                spec("k1", Some("gpt-image-2"), &["gpt-image-2"]),
+                spec("k3", Some("gpt-image-1.5"), &["gpt-image-1.5"]),
+            ]),
+        };
+
+        assert!(pick(&r.generate, Some("acme-diffusion-1")).is_ok(), "it can be drawn");
+        let err = match pick(&r.edit, Some("acme-diffusion-1")) {
+            Ok(_) => panic!("a model no edit wire serves must not resolve"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("acme-diffusion-1"), "{err}");
+        assert!(err.contains("gpt-image-2"), "names what can edit instead: {err}");
+
+        // And a model both lists serve is reachable from either.
+        assert!(pick(&r.edit, Some("gpt-image-2")).is_ok());
+    }
+
+    /// The menus are separate all the way out to the tool description: offering the
+    /// drawing menu on the edit tool would name models whose edit call has nowhere to go.
+    #[test]
+    fn the_two_menus_are_published_separately() {
+        let r = Registry {
+            client: reqwest::Client::new(),
+            generate: build_providers(vec![spec("k", Some("acme-1"), &["acme-1"])]),
+            edit: build_providers(vec![spec("k", Some("gpt-image-2"), &["gpt-image-2"])]),
+        };
+        let names = |ps: &[Provider]| -> Vec<String> {
+            published_models(ps).into_iter().map(|m| m.name).collect()
+        };
+        assert_eq!(names(&r.generate), vec!["acme-1"]);
+        assert_eq!(names(&r.edit), vec!["gpt-image-2"]);
     }
 }

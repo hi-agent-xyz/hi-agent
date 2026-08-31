@@ -14,18 +14,23 @@
 //! (`prompt` / `size` / `response_format` / `seed` / `watermark`, response is a
 //! `data` array of `url` or `b64_json`).
 //!
-//! **Generation only — no `edit`.** Ark's editing parameter is not confirmed against
-//! the docs (they are unreachable from the dev box), so
-//! [`image_gen::image_to_image`](crate::body::capabilities::image_gen::image_to_image)
-//! refuses on this wire and names one that can rather than guessing a field name and
-//! reporting the 400 as the model's failure.
+//! **Editing is the same endpoint, plus an `image` field.** Ark publishes no
+//! `/images/edits`; `POST {api_base}/images/generations` carries the source picture as
+//! an `image` member of the same JSON body and returns the edited one. Confirmed live
+//! on 2026-08-31 against the plan endpoint with `doubao-seedream-5.0-lite`: a red
+//! circle went in, `change the circle to green` came back green, composition intact.
+//! Note `size` here is Ark's own vocabulary — `WIDTHxHEIGHT`, `2k`, `3k`, `4k`; `1K` is
+//! rejected — and is passed through rather than validated, since the accepted set is
+//! the vendor's to change.
 
 use anyhow::Context;
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::body::capabilities::image_gen::{GeneratedImage, ImageParams, sniff_mime};
+use crate::body::capabilities::image_gen::{
+    GeneratedImage, ImageParams, SourceImage, sniff_mime,
+};
 
 /// The plan endpoint. The bare `/api/v3` variant bills as extra (per the docs),
 /// so it is intentionally not the default.
@@ -114,8 +119,65 @@ pub async fn generate(
     prompt: &str,
     params: &ImageParams,
 ) -> anyhow::Result<Vec<GeneratedImage>> {
-    let body = build_request(model, prompt, params)?;
+    post(client, cfg, build_request(model, prompt, params)?).await
+}
 
+/// Edit `source` under `prompt` — the same call as [`generate`] with the picture added.
+///
+/// The source always goes up as a data URL, including when the caller had a URL: Ark
+/// may well accept a bare link, but that is untested here and a link it cannot reach
+/// fails as the model's refusal rather than as a fetch we could have done ourselves.
+pub async fn edit(
+    client: &reqwest::Client,
+    cfg: &Config,
+    model: &str,
+    source: &SourceImage,
+    prompt: &str,
+    params: &ImageParams,
+) -> anyhow::Result<Vec<GeneratedImage>> {
+    let (bytes, mime) = match source {
+        SourceImage::Bytes { bytes, mime } => (bytes.clone(), mime.clone()),
+        SourceImage::Url(url) => {
+            let bytes = client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("fetching source image {url}"))?
+                .error_for_status()?
+                .bytes()
+                .await
+                .with_context(|| format!("reading source image {url}"))?;
+            let mime = sniff_mime(&bytes);
+            (bytes, mime)
+        }
+    };
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    );
+
+    post(client, cfg, build_edit_request(model, prompt, &data_url, params)?).await
+}
+
+/// The edit body: the generation body with the source picture added. Pure, so the one
+/// thing that distinguishes an edit from a draw on this wire is unit-testable.
+fn build_edit_request(
+    model: &str,
+    prompt: &str,
+    image: &str,
+    params: &ImageParams,
+) -> anyhow::Result<Value> {
+    let mut body = build_request(model, prompt, params)?;
+    body.as_object_mut().expect("json object").insert("image".into(), json!(image));
+    Ok(body)
+}
+
+/// The one request both calls make: same endpoint, same key, same response shape.
+async fn post(
+    client: &reqwest::Client,
+    cfg: &Config,
+    body: Value,
+) -> anyhow::Result<Vec<GeneratedImage>> {
     let resp = client
         .post(&cfg.endpoint)
         .bearer_auth(&cfg.api_key)
@@ -256,6 +318,26 @@ mod tests {
         // n=1 is what everyone means by "one image" — not a refusal.
         let params = ImageParams { n: Some(1), ..Default::default() };
         assert!(build_request("doubao-seedream-5.0-lite", "a cat", &params).is_ok());
+    }
+
+    /// **Editing on this wire is the generation call with one more field.** Ark
+    /// publishes no `/images/edits`; the source rides the same JSON body as `image`,
+    /// and everything else about the request is unchanged. Verified live on
+    /// 2026-08-31 against the plan endpoint: a red circle in, a green one back.
+    #[test]
+    fn an_edit_is_the_generation_body_plus_the_source_image() {
+        let params = ImageParams { size: Some("2k".into()), ..Default::default() };
+        let body =
+            build_edit_request("doubao-seedream-5.0-lite", "make it green", "data:image/png;base64,AAA", &params)
+                .unwrap();
+        assert_eq!(body["model"], "doubao-seedream-5.0-lite");
+        assert_eq!(body["prompt"], "make it green");
+        assert_eq!(body["image"], "data:image/png;base64,AAA");
+        assert_eq!(body["size"], "2k", "Ark's own size vocabulary, passed through");
+        assert_eq!(body["response_format"], "b64_json");
+        // The endpoint is the generations one — there is no second URL to get wrong.
+        let cfg = Config::new("k", None);
+        assert!(cfg.endpoint.ends_with("/images/generations"), "{}", cfg.endpoint);
     }
 
     #[test]
