@@ -105,6 +105,11 @@ impl Liveness {
 /// owns. Everything above it is the writer's own prose and passes through untouched.
 const TIMELINE_HEADING: &str = "## Timeline";
 
+/// What a rendered line costs beyond its own text: the bullet, the instant, the kind word
+/// and the dash. Approximate on purpose — [`Task::recent_record`] is deciding how much of
+/// a record to carry, not laying anything out.
+const TIMELINE_LINE_OVERHEAD: usize = 40;
+
 /// What a line in a task's running record is saying.
 ///
 /// **Four words a mind writes, and they answer the reader's questions rather than naming
@@ -421,6 +426,54 @@ impl Task {
             out.push_str(render_timeline(&self.timeline).trim_end());
         }
         out
+    }
+
+    /// The newest of the running record within `budget` characters, plus the `created`
+    /// line however far back it sits, and a marker saying how much was left out.
+    ///
+    /// [`Self::record`] is all of it, which is right for somebody who came to read it. A
+    /// prompt is not that reader. **A duty's record grows for as long as the duty is
+    /// kept** — one live record reached 525 lines and 375 KB, all of it pasted into every
+    /// cold open of its handler — and what a handler needs from it is why the row exists
+    /// and what has happened lately. The rest is a file it can open, and the marker is
+    /// what tells it there is a rest: a session that cannot tell a cut record from a
+    /// short one reads the second as the whole history.
+    ///
+    /// The newest line is always kept, however long it is alone. A budget that can refuse
+    /// everything hands back nothing at exactly the moment the record is most worth
+    /// reading.
+    pub fn recent_record(&self, budget: usize) -> String {
+        if self.timeline.is_empty() {
+            return String::new();
+        }
+        let mut first = self.timeline.len() - 1;
+        let mut spent = 0usize;
+        for (index, entry) in self.timeline.iter().enumerate().rev() {
+            spent += entry.text.chars().count() + TIMELINE_LINE_OVERHEAD;
+            if spent > budget {
+                break;
+            }
+            first = index;
+        }
+        let created = self.timeline.iter().position(|entry| entry.kind == TimelineKind::Created);
+        let mut kept: Vec<TimelineEntry> = Vec::new();
+        if let Some(index) = created.filter(|index| *index < first) {
+            kept.push(self.timeline[index].clone());
+        }
+        let dropped = first - usize::from(created.is_some_and(|index| index < first));
+        if dropped > 0 {
+            // A `Note` renders without a kind word, which is what this is: not a line
+            // anybody wrote, and never written back — this text only ever reaches a prompt.
+            kept.push(TimelineEntry {
+                at: None,
+                kind: TimelineKind::Note,
+                text: format!(
+                    "[\u{2026} {dropped} earlier lines are in this task's own `facet.md`]"
+                ),
+            });
+        }
+        kept.extend(self.timeline[first..].iter().cloned());
+        render_timeline(&kept).trim_end().to_owned()
     }
 
     /// Why this row exists, in their words — the first thing a person catching up on
@@ -1891,6 +1944,72 @@ mod tests {
         assert!(is_timeline_heading("###   timeline  "));
         assert!(!is_timeline_heading("## Timeline of the outage"));
         assert!(!is_timeline_heading("Timeline"));
+    }
+
+    /// A record with no end is carried into a prompt by its newest lines, and it says how
+    /// many it left behind — a session that cannot tell a cut record from a short one
+    /// reads the second as the whole history.
+    #[test]
+    fn a_long_record_is_carried_by_its_newest_lines() {
+        let mut task = Task::new("Watch the ops group", TaskStatus::Serving);
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Created,
+            Utc.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap(),
+            "the digest goes to the group, not to me",
+        ));
+        for line in 0..200 {
+            task.timeline.push(TimelineEntry::new(
+                TimelineKind::Update,
+                Utc.with_ymd_and_hms(2026, 7, 2, 9, 0, 0).unwrap(),
+                format!("line {line} {}", "x".repeat(300)),
+            ));
+        }
+
+        let carried = task.recent_record(6_000);
+        assert!(carried.len() < 8_000, "the cap holds: {}", carried.len());
+        assert!(carried.contains("line 199"), "the newest are kept");
+        assert!(!carried.contains("line 0 "), "the oldest are not");
+        assert!(
+            carried.contains("the digest goes to the group"),
+            "and why the row exists is pinned however far back it sits"
+        );
+        assert!(carried.contains("earlier lines"), "it says what it left out");
+    }
+
+    /// Under the cap it is the whole record, with no marker claiming lines were dropped.
+    #[test]
+    fn a_short_record_is_carried_whole() {
+        let mut task = Task::new("Watch the ops group", TaskStatus::Serving);
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Created,
+            Utc.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap(),
+            "the digest goes to the group",
+        ));
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Delivered,
+            Utc.with_ymd_and_hms(2026, 7, 2, 9, 0, 0).unwrap(),
+            "today's is in the group",
+        ));
+
+        let carried = task.recent_record(6_000);
+        assert!(carried.contains("the digest goes to the group"));
+        assert!(carried.contains("today's is in the group"));
+        assert!(!carried.contains("earlier lines"), "nothing was left out: {carried}");
+        assert_eq!(carried, render_timeline(&task.timeline).trim_end());
+    }
+
+    /// The newest line is kept whatever it costs. A budget that can refuse everything
+    /// hands back nothing at the moment the record is most worth reading.
+    #[test]
+    fn the_newest_line_survives_any_budget() {
+        let mut task = Task::new("Watch the ops group", TaskStatus::Serving);
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Update,
+            Utc.with_ymd_and_hms(2026, 7, 2, 9, 0, 0).unwrap(),
+            "a very long finding ".repeat(50),
+        ));
+        assert!(task.recent_record(10).contains("a very long finding"));
+        assert!(Task::new("Nothing yet", TaskStatus::Todo).recent_record(6_000).is_empty());
     }
 
     /// every task is unattended. `doing` rows then carry "nobody on it", which is correct.

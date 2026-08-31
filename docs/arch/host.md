@@ -431,7 +431,13 @@ decides whether it is worth saying, Reaction decides when the room is right.
 
 The handler is a **cache, not the carrier.** What persists is the ledger entry and the
 listener's rows; the session is re-derivable from both, and **the facet is the brief** on
-a cold open. So it may be closed once its errand is done or die with the process, and the binding
+a cold open — capped, like the arrival it is pasted above. A duty's record has no end: one
+live facet reached 375 KB, all of it carried into every cold open beside an arrival clipped
+at 8,000 characters. The cost that matters is not the tokens. **A handler's example of how
+to write a line is the last few hundred it was shown**, so an uncapped record teaches each
+new session to write the record it already is. What rides is the head of the account (whose
+newest reading is on top), the tail of the running record, the `created` line however far
+back it sits, and a count of what was left out — the rest is a file the session can open. So it may be closed once its errand is done or die with the process, and the binding
 from key to session is held in memory and never written down — a delivery to a session
 that has gone is not an error but the signal to open a fresh one. A burst therefore
 continues in one warm session with full context, and a message the next morning starts

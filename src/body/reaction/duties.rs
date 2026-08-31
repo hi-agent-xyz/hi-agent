@@ -91,6 +91,21 @@ const DUTY_MAX_WAIT: Duration = Duration::from_secs(5);
 /// listener's ledger — which has all of it — is where it reads the rest.
 const DISPATCH_CHARS: usize = 8_000;
 
+/// Caps on how much of the duty's own record rides in a cold open's brief — the account
+/// above the heading, and the running record under it.
+///
+/// **The facet is the brief, and for a duty that has been kept a while the facet is the
+/// largest thing in the process.** One live record reached 375 KB — a 138 KB account and
+/// 525 timeline lines — and every cold open pasted all of it above an arrival that was
+/// clipped at [`DISPATCH_CHARS`]. The token bill is the smaller half of that. The larger
+/// half is that **a handler's example of how to write a line is the last few hundred it
+/// was shown**, so a record that has drifted into machine noise teaches every session
+/// that opens it to write the same again, and the drift sustains itself. What the handler
+/// needs is why the row exists and what has happened lately; the rest is a file it can
+/// open, and [`Task::recent_record`] tells it how much it is not being shown.
+const BRIEF_ACCOUNT_CHARS: usize = 6_000;
+const BRIEF_RECORD_CHARS: usize = 6_000;
+
 /// What has accumulated for one key since its last dispatch.
 struct Pending {
     lines: Vec<String>,
@@ -213,7 +228,11 @@ async fn dispatch(
     key: &str,
     batch: Pending,
 ) {
-    let arrived = clip(&batch.lines.join("\n"), DISPATCH_CHARS);
+    let arrived = clip(
+        &batch.lines.join("\n"),
+        DISPATCH_CHARS,
+        "the rest is in this duty's own ledger",
+    );
     let count = batch.lines.len();
 
     // A live handler takes it straight. No rung wakes, nothing is projected, and the
@@ -371,12 +390,27 @@ fn brief_for(task: &Task, arrived: &str) -> String {
     brief.push_str("## ");
     brief.push_str(&task.title);
     brief.push('\n');
-    // `record()`, not `body`: the running record is half of what the ledger knows about
-    // this duty — what was asked for, what has landed, what was checked and when it last
-    // moved — and a handler reopened after a restart has nothing else to read.
-    let record = task.record();
-    if !record.trim().is_empty() {
-        brief.push_str(record.trim());
+    // Both halves, because the running record is half of what the ledger knows about this
+    // duty — what was asked for, what has landed, what was checked and when it last moved
+    // — and a handler reopened after a restart has nothing else to read. Both capped,
+    // because a duty's record has no end: see `BRIEF_ACCOUNT_CHARS`.
+    //
+    // The account is cut from its head and the record from its tail, and that is not an
+    // inconsistency: the prose above the heading carries its newest reading on top and the
+    // dated lines under it run oldest first, so each keeps its own current end.
+    let account = task.body.trim();
+    if !account.is_empty() {
+        brief.push_str(&clip(
+            account,
+            BRIEF_ACCOUNT_CHARS,
+            "older readings are in this duty's own `facet.md`",
+        ));
+        brief.push('\n');
+    }
+    let record = task.recent_record(BRIEF_RECORD_CHARS);
+    if !record.is_empty() {
+        brief.push('\n');
+        brief.push_str(&record);
         brief.push('\n');
     }
     brief.push_str("\n## Just arrived\n");
@@ -385,14 +419,14 @@ fn brief_for(task: &Task, arrived: &str) -> String {
     brief
 }
 
-/// Clip on a char boundary, saying so, so a handler can tell a truncated burst from a
-/// short one and go read the listener's ledger for the rest.
-fn clip(text: &str, max: usize) -> String {
+/// Clip on a char boundary, saying so and saying where the rest is, so a handler can tell
+/// a truncated text from a short one and go and read the whole of it.
+fn clip(text: &str, max: usize, rest: &str) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
     let kept: String = text.chars().take(max).collect();
-    format!("{kept}\n[… clipped; the rest is in this duty's own ledger]")
+    format!("{kept}\n[… clipped; {rest}]")
 }
 
 #[cfg(test)]
@@ -479,9 +513,10 @@ mod tests {
     #[test]
     fn a_clipped_burst_says_so() {
         let long = "x".repeat(DISPATCH_CHARS + 100);
-        let clipped = clip(&long, DISPATCH_CHARS);
+        let clipped = clip(&long, DISPATCH_CHARS, "the rest is in this duty's own ledger");
         assert!(clipped.contains("clipped"), "{clipped}");
-        assert!(clip("short", DISPATCH_CHARS) == "short");
+        assert!(clipped.contains("this duty's own ledger"), "{clipped}");
+        assert!(clip("short", DISPATCH_CHARS, "elsewhere") == "short");
     }
 
     /// The facet is the brief — that is the whole reason a handler may die freely. If the
@@ -496,6 +531,43 @@ mod tests {
         assert!(brief.contains("Watch the ops group"), "{brief}");
         assert!(brief.contains("File anything about billing"), "{brief}");
         assert!(brief.contains("alice: the gateway is 502ing"), "{brief}");
+    }
+
+    /// And the brief is capped, because a duty's record has no end. The regression is not
+    /// a crash — it is a cold open that pastes hundreds of kilobytes above an arrival
+    /// clipped at 8,000 characters, and hands the handler the record's own worst lines as
+    /// the example to write the next one by.
+    #[test]
+    fn a_duty_kept_for_months_still_briefs_in_one_screen() {
+        use crate::mind::memory::tasks::{TimelineEntry, TimelineKind};
+        let then = chrono::Utc::now();
+
+        let mut task = Task::new("Watch the ops group", TaskStatus::Serving);
+        task.body = format!("THE CURRENT READING.\n\n{}", "a superseded reading. ".repeat(2_000));
+        task.timeline.push(TimelineEntry::new(
+            TimelineKind::Created,
+            then,
+            "the digest goes to the group, not to me",
+        ));
+        for line in 0..400 {
+            task.timeline.push(TimelineEntry::new(
+                TimelineKind::Update,
+                then,
+                format!("line {line} {}", "x".repeat(300)),
+            ));
+        }
+        assert!(task.record().len() > 100_000, "the record this is protecting against");
+
+        let brief = brief_for(&task, "alice: the gateway is 502ing");
+
+        assert!(brief.len() < 20_000, "the caps hold: {}", brief.len());
+        assert!(brief.contains("THE CURRENT READING"), "the account's newest reading");
+        assert!(brief.contains("the digest goes to the group"), "why the row exists");
+        assert!(brief.contains("line 399"), "the newest of the record");
+        assert!(!brief.contains("line 0 "), "and not the oldest");
+        assert!(brief.contains("alice: the gateway is 502ing"), "what just arrived");
+        assert!(brief.contains("clipped"), "and it says both were cut");
+        assert!(brief.contains("earlier lines"), "{brief}");
     }
 
     /// The routing key arrived over HTTP and never reaches a prompt. What the handler is
