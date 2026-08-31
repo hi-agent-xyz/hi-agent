@@ -17,6 +17,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
+use crate::foundation::community;
 use crate::foundation::server::AppState;
 use crate::foundation::surfaces;
 
@@ -80,19 +81,7 @@ pub async fn post_session(
 /// it crosses to a device with no keyboard worth using.
 pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let code = state.surfaces.mint_pairing_code();
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
-    let scheme = if surfaces::over_tls(&headers) { "https" } else { "http" };
-    // No trailing slash on a prefixed address: `https://hi-agent.xyz/ana` is what
-    // the community calls this core, and what a person reads off a QR should be
-    // the same string, not a variant of it. Only a core at its own root gets the
-    // bare `/`, because `https://host` with no path at all is a stranger thing to
-    // hand someone than `https://host/`.
-    let prefix = surfaces::base_path(&headers);
-    let url = if prefix.is_empty() {
-        format!("{scheme}://{host}/")
-    } else {
-        format!("{scheme}://{host}{prefix}")
-    };
+    let url = public_base_url(&state.data_dir, &headers).await;
     let app_url = pairing_app_url(&url, &code);
     tracing::info!("pairing code minted");
     axum::Json(serde_json::json!({
@@ -102,6 +91,47 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
         "expires_in": 600
     }))
     .into_response()
+}
+
+/// The address to hand another device — the one a phone should dial, not the one
+/// the asking request happened to arrive on.
+///
+/// **The claimed name comes first, and that is the whole point of this function.**
+/// A QR is only ever read by a *different* machine, and the panel that shows it is
+/// opened from the app on this one, over loopback — so the request's own `Host` is
+/// `127.0.0.1`, which is the one address that cannot work anywhere else. The
+/// community says where this core is (`Handle::base_url`, e.g.
+/// `https://hi-agent.xyz/ana`), and the name on the same screen is read from the
+/// same place, so the QR and the address a person can see now agree.
+///
+/// The request falls back to naming itself when there is no name yet, no account,
+/// or no community reachable: a core with no name is a normal core, and pairing
+/// from the same network still works if the browser reached it by an address that
+/// is not loopback. That address is the best guess available, not a good one — a
+/// core with no name has nothing better to say about where it is.
+///
+/// Never a trailing slash except on a root address, because `https://hi-agent.xyz/ana`
+/// is what a person reads off the screen and what they scan should be the same
+/// string, while a bare `https://host` is a stranger thing to hand someone than
+/// `https://host/`. Both come out of `Url`'s own normalisation.
+pub(crate) async fn public_base_url(
+    data_dir: &std::path::Path,
+    headers: &HeaderMap,
+) -> String {
+    let named = community::current(data_dir).await.ok().and_then(|names| {
+        names
+            .handles
+            .first()
+            .map(|h| h.base_url.trim().trim_end_matches('/').to_string())
+            .filter(|base| !base.is_empty())
+    });
+    let raw = named.unwrap_or_else(|| {
+        let host =
+            headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
+        let scheme = if surfaces::over_tls(headers) { "https" } else { "http" };
+        format!("{scheme}://{host}{}", surfaces::base_path(headers))
+    });
+    url::Url::parse(&raw).map(|u| u.to_string()).unwrap_or(raw)
 }
 
 fn pairing_app_url(core_url: &str, code: &str) -> String {
@@ -147,7 +177,25 @@ pub async fn delete_surface(
 
 #[cfg(test)]
 mod pairing_url_tests {
-    use super::pairing_app_url;
+    use super::{HeaderMap, header, pairing_app_url, public_base_url};
+
+    /// A core with no account cannot ask the community where it is, so it names
+    /// itself off the request — and the root case keeps its trailing slash while
+    /// a prefixed one does not, because those are the two strings a person is
+    /// handed.
+    #[tokio::test]
+    async fn with_no_name_the_pairing_address_is_what_the_request_says() {
+        let dir = std::env::temp_dir().join(format!("hi-pair-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp data dir");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "127.0.0.1:12358".parse().unwrap());
+        assert_eq!(public_base_url(&dir, &headers).await, "http://127.0.0.1:12358/");
+
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        headers.insert("x-forwarded-prefix", "/ana".parse().unwrap());
+        assert_eq!(public_base_url(&dir, &headers).await, "https://127.0.0.1:12358/ana");
+    }
 
     #[test]
     fn the_app_pairing_url_round_trips_a_prefixed_core_and_code() {

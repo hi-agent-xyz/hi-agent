@@ -371,23 +371,22 @@ pub async fn post_file(
 }
 
 /// `POST /api/handoff` — mint a short-lived upload token and return the
-/// `/up/<token>` URL (absolute, built from the request's `Host`) for the built-in
-/// view to render as a QR. Reusable until it expires.
+/// `/up/<token>` URL (absolute) for the built-in view to render as a QR. Reusable
+/// until it expires.
+///
+/// The address comes from [`crate::foundation::server::surfaces::public_base_url`]
+/// for the reason written there: the panel showing the QR is open on this machine,
+/// over loopback, and the phone about to scan it cannot reach `127.0.0.1`.
 pub async fn post_handoff(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
     let token = Uuid::now_v7().to_string();
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-    // Under the community's subpath the core is not at the origin's root, and
-    // this URL is about to be scanned off a screen by a phone that has no other
-    // way to guess.
-    let prefix = crate::foundation::surfaces::base_path(&headers);
-    let url = format!("{scheme}://{host}{prefix}/up/{token}");
+    let base = crate::foundation::server::surfaces::public_base_url(&state.data_dir, &headers)
+        .await
+        .trim_end_matches('/')
+        .to_string();
+    let url = format!("{base}/up/{token}");
 
     {
         let mut map = state.handoffs.lock().unwrap();

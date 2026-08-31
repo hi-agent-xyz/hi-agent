@@ -40,7 +40,7 @@ const T = {
     revoke: "Revoke",
     revoking: "Revoking…",
     addDevice: "Add a device",
-    pairWith: "Open your agent on the other device and enter this code. It lasts ten minutes.",
+    pairWith: "Open this address on the other device and enter this code. It lasts ten minutes.",
     pairAt: "or scan with the Hi Agent app",
     done: "Done",
   },
@@ -62,7 +62,7 @@ const T = {
     revoke: "收回",
     revoking: "收回中…",
     addDevice: "加一台设备",
-    pairWith: "在另一台设备上打开你的 agent，输入这个码。十分钟内有效。",
+    pairWith: "在另一台设备上打开这个地址，输入这个码。十分钟内有效。",
     pairAt: "或者用 Hi Agent App 扫码",
     done: "好了",
   },
@@ -259,6 +259,12 @@ function Devices({ list, reload }) {
 
       {pairing ? (
         <div style={S.pair}>
+          {/* The address as well as the code, because the other device needs both
+              and the QR is the only other place it appears — unreadably. `url` is
+              what the core says it is reachable at (`public_base_url`), so showing
+              it here means a wrong one is visible instead of encoded in a QR that
+              silently fails to pair. */}
+          {pairing.url && <div style={S.pairAddress}>{pairing.url}</div>}
           <div style={S.code}>{pairing.code}</div>
           <div style={S.hint}>{L.pairWith}</div>
           {pairing.url && (
@@ -357,6 +363,8 @@ const S = {
   pair: { background: "var(--surface-strong)", borderRadius: 14, boxShadow: "var(--v-shadow)",
     padding: "16px 18px", display: "flex", flexDirection: "column", alignItems: "flex-start",
     gap: 4, marginTop: 4 },
+  pairAddress: { fontFamily: "var(--font-mono)", fontSize: 13.5, fontWeight: 650,
+    color: "var(--fg)", wordBreak: "break-all", marginBottom: 2 },
   code: { fontFamily: "var(--font-mono)", fontSize: 15, fontWeight: 700, letterSpacing: ".02em",
     color: "var(--accent)", wordBreak: "break-all" },
   qr: { width: 168, height: 168, marginTop: 10, borderRadius: 10, background: "#fff", padding: 8 },

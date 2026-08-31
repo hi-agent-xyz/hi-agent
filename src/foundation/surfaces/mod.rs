@@ -442,7 +442,9 @@ const PAIRING_PAGE: &str = r##"<!doctype html>
 </style></head>
 <body><form id="f">
   <h1>Pair this surface</h1>
-  <p>Enter the pairing code from a device that is already connected.</p>
+  <p>On a device that already has access, open Hi Agent and go to
+     <b>Reach &rarr; Devices &rarr; Add a device</b>. Paste the code it shows here.
+     It is long, and it lasts ten minutes.</p>
   <input id="code" name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
          autofocus placeholder="pairing code">
   <button type="submit">Connect</button>
