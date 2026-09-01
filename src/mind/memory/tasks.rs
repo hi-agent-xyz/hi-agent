@@ -216,18 +216,47 @@ pub struct TimelineEntry {
     pub text: String,
 }
 
+/// Which of the three hands on row-state performed a transition.
+///
+/// **The distinction was always in the code and was thrown away on the way to the page.**
+/// `set_status` is reached only from `PATCH /api/tasks/<subject>`, which is the board's own
+/// buttons and therefore the person; [`reconcile`] witnesses a `status:` a mind edited into
+/// the file behind the store's back. Both funnelled into one actorless line, and a reader
+/// could not tell the person's own close from anybody's.
+///
+/// It cost a row. On 2026-09-01 the person moved `resolve-kt8-111-…` to `done` on the board
+/// at 02:31:48Z; fifteen minutes later a manager sweep re-read it, found — in its own words —
+/// "only the stored host-style entry `moved — doing → done`" with no disposition it could
+/// attribute, correctly applied *delivered is not done*, and put the row back to `doing`.
+/// Nothing malfunctioned. The line simply did not say whose the decision was, so the one
+/// hand that is allowed to close anything read as the one hand that is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hand {
+    /// The person, through the board. Their ledger, and the only hand this schema does not
+    /// constrain — see `docs/arch/data.md`.
+    Board,
+    /// A mind's own edit to `status:`, found by the pass that re-reads the bytes. Says
+    /// nothing about which mind: the store did not watch it happen, it read the result.
+    Witnessed,
+}
+
 impl TimelineEntry {
     pub fn new(kind: TimelineKind, at: DateTime<Utc>, text: impl Into<String>) -> Self {
         Self { at: Some(at), kind, text: text.into() }
     }
 
     /// The one entry the store writes for itself.
-    fn moved(before: TaskStatus, after: TaskStatus, at: DateTime<Utc>) -> Self {
-        Self::new(
-            TimelineKind::Moved,
-            at,
-            format!("{} \u{2192} {}", before.as_str(), after.as_str()),
-        )
+    ///
+    /// A [`Hand::Board`] transition is marked and a witnessed one is not, because the mark
+    /// is only ever read as *this one was theirs* — an unmarked line is either of the other
+    /// two hands and claims nothing. The store states the fact and stops there; what a reader
+    /// owes it is in `task-manager.md`, which is the division this ledger already runs on.
+    fn moved(before: TaskStatus, after: TaskStatus, at: DateTime<Utc>, hand: Hand) -> Self {
+        let mut text = format!("{} \u{2192} {}", before.as_str(), after.as_str());
+        if hand == Hand::Board {
+            text.push_str(" (on the board)");
+        }
+        Self::new(TimelineKind::Moved, at, text)
     }
 }
 
@@ -328,13 +357,18 @@ impl Task {
     }
 
     /// Apply a lifecycle transition and keep its closing timestamps coherent.
-    pub fn set_status(&mut self, status: TaskStatus, at: DateTime<Utc>) {
+    ///
+    /// `hand` is passed rather than assumed. In production this is only ever reached from
+    /// the board's `PATCH`, so a default would be right today and silently wrong the first
+    /// time a second caller appears — and its wrongness would be a line claiming the person
+    /// decided something they did not.
+    pub fn set_status(&mut self, status: TaskStatus, at: DateTime<Utc>, hand: Hand) {
         if self.status == status {
             return;
         }
         let before = self.status;
         self.status = status;
-        self.stamp_transition(before, at);
+        self.stamp_transition(before, at, hand);
     }
 
     /// Write down that this record's **current** status was reached at `at`.
@@ -351,10 +385,15 @@ impl Task {
     /// have to remember. `status_since` answers *how long has it been like this*; the
     /// entry answers *what happened, and when* — the second question the first one has
     /// never been able to reach, because a scalar is overwritten by the next transition.
-    fn stamp_transition(&mut self, before: TaskStatus, at: DateTime<Utc>) {
+    ///
+    /// **And the entry says which hand.** The two callers already knew — that is the whole
+    /// of the paragraph above — and dropping it on the way to the line left the person's own
+    /// close indistinguishable from a rung ruling on its own errand. [`Hand`] carries it the
+    /// last few feet.
+    fn stamp_transition(&mut self, before: TaskStatus, at: DateTime<Utc>, hand: Hand) {
         self.status_since = Some(at);
         self.timeline
-            .push(TimelineEntry::moved(before, self.status, at));
+            .push(TimelineEntry::moved(before, self.status, at, hand));
         match self.status {
             TaskStatus::Todo | TaskStatus::Doing | TaskStatus::Serving => {
                 self.completed_at = None;
@@ -709,7 +748,9 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         }
 
         match previous {
-            Some(before) if before != task.status => task.stamp_transition(before, Utc::now()),
+            Some(before) if before != task.status => {
+                task.stamp_transition(before, Utc::now(), Hand::Witnessed)
+            }
             _ => {
                 task.derive_stamps();
             }
@@ -1811,13 +1852,17 @@ mod tests {
         reconcile(dir.path()).await.unwrap();
 
         let mut task = read_task(dir.path(), "via-code").await.unwrap().unwrap();
-        task.set_status(TaskStatus::Done, Utc::now());
+        task.set_status(TaskStatus::Done, Utc::now(), Hand::Board);
         write_task(dir.path(), &task).await.unwrap();
         reconcile(dir.path()).await.unwrap();
 
         let task = read_task(dir.path(), "via-code").await.unwrap().unwrap();
         assert_eq!(task.timeline.len(), 1, "{:?}", task.timeline);
-        assert_eq!(task.timeline[0].text, "doing \u{2192} done");
+        assert_eq!(
+            task.timeline[0].text,
+            "doing \u{2192} done (on the board)",
+            "recorded once, and by the hand that actually did it",
+        );
     }
 
     /// Cold — no previous reading — so nothing is known about when it moved, and nothing
@@ -2045,6 +2090,29 @@ mod tests {
         task
     }
 
+    #[test]
+    fn the_board_signs_its_own_transition_and_a_witnessed_one_claims_nobody() {
+        let mut from_the_board = task("kt8-111", TaskStatus::Doing);
+        from_the_board.set_status(TaskStatus::Done, at(1, 2), Hand::Board);
+        assert_eq!(from_the_board.timeline.last().unwrap().text, "doing \u{2192} done (on the board)");
+
+        let mut found = task("kt8-111", TaskStatus::Done);
+        found.stamp_transition(TaskStatus::Doing, at(1, 2), Hand::Witnessed);
+        assert_eq!(found.timeline.last().unwrap().text, "doing \u{2192} done");
+    }
+
+    #[tokio::test]
+    async fn the_marked_line_survives_the_round_trip() {
+        let mut from_the_board = task("kt8-111", TaskStatus::Doing);
+        from_the_board.set_status(TaskStatus::Done, at(1, 2), Hand::Board);
+        let back = parse("kt8-111", &render(&from_the_board));
+        assert_eq!(
+            back.timeline.last().unwrap().text,
+            "doing \u{2192} done (on the board)",
+            "the one mark saying the close was his must not be lost to a rewrite",
+        );
+    }
+
     fn staffed(task: &Task, w: WorkingOnIt) -> std::collections::HashMap<String, OnIt> {
         std::collections::HashMap::from([(task.subject.clone(), OnIt::Live(w))])
     }
@@ -2261,7 +2329,7 @@ mod tests {
 
         let mut task = read_task(dir.path(), "google-login").await.unwrap().unwrap();
         assert_eq!(task.status, TaskStatus::Doing, "legacy wip reads as doing");
-        task.set_status(TaskStatus::Done, at(11, 10));
+        task.set_status(TaskStatus::Done, at(11, 10), Hand::Board);
         write_task(dir.path(), &task).await.unwrap();
 
         let raw = facets::read_facet(dir.path(), DIMENSION, "google-login")
@@ -2443,7 +2511,7 @@ mod tests {
         task.status_since = Some(now() - Duration::days(4));
         assert!(task.past_idle_boundary(now()));
 
-        task.set_status(TaskStatus::Done, now());
+        task.set_status(TaskStatus::Done, now(), Hand::Board);
         assert_eq!(task.status_since, Some(now()), "the clock moves with the status");
         write_task(dir.path(), &task).await.unwrap();
         let got = read_task(dir.path(), "ship-google-login").await.unwrap().unwrap();
@@ -2529,20 +2597,20 @@ mod tests {
     #[test]
     fn transitions_stamp_and_clear_closing_times() {
         let mut task = task("ship", TaskStatus::Doing);
-        task.set_status(TaskStatus::Done, at(28, 9));
+        task.set_status(TaskStatus::Done, at(28, 9), Hand::Board);
         assert_eq!(task.completed_at, Some(at(28, 9)));
         assert!(task.cancelled_at.is_none());
 
-        task.set_status(TaskStatus::Todo, at(28, 10));
+        task.set_status(TaskStatus::Todo, at(28, 10), Hand::Board);
         assert!(task.completed_at.is_none());
         assert!(task.cancelled_at.is_none());
 
-        task.set_status(TaskStatus::Cancelled, at(28, 11));
+        task.set_status(TaskStatus::Cancelled, at(28, 11), Hand::Board);
         assert_eq!(task.cancelled_at, Some(at(28, 11)));
         assert!(task.completed_at.is_none());
 
         // Standing a duty up reopens it as surely as `todo` or `doing` does.
-        task.set_status(TaskStatus::Serving, at(28, 12));
+        task.set_status(TaskStatus::Serving, at(28, 12), Hand::Board);
         assert!(task.cancelled_at.is_none());
         assert!(task.completed_at.is_none());
     }

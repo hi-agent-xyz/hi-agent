@@ -473,7 +473,7 @@ pub async fn patch_task(
 
     if let Some(value) = &patch.status {
         match parse_status(value) {
-            Some(status) => task.set_status(status, Utc::now()),
+            Some(status) => task.set_status(status, Utc::now(), tasks::Hand::Board),
             None => {
                 return err("status must be todo, doing, serving, done or cancelled");
             }

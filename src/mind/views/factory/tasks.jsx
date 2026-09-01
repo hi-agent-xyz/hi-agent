@@ -119,6 +119,7 @@ const T = {
       done: "done",
       cancelled: "cancelled",
     },
+    byHand: "by you",
     monitoring: "Liveness",
     verify: "Check",
     restart: "If it stops",
@@ -205,6 +206,7 @@ const T = {
       done: "完成",
       cancelled: "取消",
     },
+    byHand: "你改的",
     monitoring: "运行检查",
     verify: "检查方式",
     restart: "停止后",
@@ -736,6 +738,7 @@ function Detail({ task, busy, onStatus, onClose }) {
                     <span className="hi-tasks__moment-head">
                       <span className="hi-tasks__moment-kind">
                         {life || L.moment[moment.kind] || moment.kind}
+                        {life && byHand(moment.text) ? ` \u00b7 ${L.byHand}` : ""}
                       </span>
                       {moment.at && (
                         <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
@@ -904,7 +907,10 @@ function lifecycleWord(text) {
   const parts = String(text || "").split("\u2192");
   if (parts.length < 2) return null;
   const from = parts[0].trim();
-  const to = parts[parts.length - 1].trim();
+  // The store signs the transitions made from this board — `done (on the board)` — so a
+  // reader can tell their own close from a rung's. The mark is the tail of the line and not
+  // the status, so it comes off before the word is looked up; `byHand` shows it separately.
+  const to = parts[parts.length - 1].replace(/\s*\(on the board\)\s*$/, "").trim();
   if (to === "todo") {
     return from === "done" || from === "cancelled" ? L.life.reopened : L.life.putBack;
   }
@@ -913,6 +919,12 @@ function lifecycleWord(text) {
       to
     ] || null
   );
+}
+
+// Whether the store signed this transition as the reader's own. Shown out loud, because a
+// bare verb reads as the agent's doing and some of these were done by the person reading.
+function byHand(text) {
+  return /\(on the board\)\s*$/.test(String(text || ""));
 }
 
 function dueMeta(task) {

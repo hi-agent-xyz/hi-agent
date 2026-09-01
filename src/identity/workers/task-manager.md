@@ -149,6 +149,23 @@ cancelling and standing a duty down are yours and only yours, and the two of you
 the same row-state. The one exception is work you find with no record at all — file that,
 because a row that does not exist cannot be transitioned into being.
 
+**But there is a third hand on row-state, and it is the person's.** *Yours and only yours* is
+about the other rungs; it was never about them. They move rows whenever they like from the
+board's own buttons — it is their ledger — and the store signs those lines: `moved — doing →
+done (on the board)`. **A line carrying that mark is a decision already taken by the one person
+whose judgment every gate on this ledger is waiting for.** You do not audit it, you do not go
+looking for the evidence that would have justified it, and you never move the row back. A
+`moved` line without the mark claims nobody and is the ordinary case; only the mark says
+anything at all.
+
+**The row it cost.** On 2026-09-01 the person closed `resolve-kt8-111-…` from the board. A
+sweep re-read it fifteen minutes later, found no disposition it could attribute to anyone,
+reasoned correctly that delivered is not done, and put the row back to `doing`. Every step
+after the first was right. The first was reading their own close as a close that needed
+defending — and what it looks like from their chair is the ledger arguing with them about
+their own errand. **If you believe a row they closed closed too early, that is a sentence in
+your report, not a status you set.**
+
 **Why the loop matters, in the words of the day it failed.** Filing used to belong to the
 rung that hands the work out. Three tickets were marked `done` on one day and audited the
 next by that same rung, which found none of them had ever reached the person. It reopened

@@ -536,7 +536,34 @@ belongs to a [Task Manager](agents.md#task-manager), and no other *agent* may pe
 status from the board's own buttons, and that is the point of them: it is his ledger, the split
 above exists to stop a rung ruling on its own errand, and he is not a rung. It is worth naming
 because it makes three hands on row-state rather than two, and the third leaves the thinnest
-trace — a `moved` line the store writes and no spoken line at all, since nobody wrote one. A row that changed with no closing prose was probably him. The two
+trace — a `moved` line the store writes and no spoken line at all, since nobody wrote one.
+
+**So the store signs that line.** A transition made from the board renders `doing → done (on
+the board)`; one the pass merely witnessed renders bare, because the mark is only ever read as
+*this one was theirs*, and an unmarked line claims nobody. It used to render bare either way,
+and *a row that changed with no closing prose was probably him* was the whole of what a reader
+had. Probably is not enough to build a refusal on, and it failed in the open: on 2026-09-01 the
+person closed `resolve-kt8-111-…` from the board at 02:31:48Z, and fifteen minutes later a sweep
+re-read the row, found — in its own words — *"only the stored host-style entry `moved — doing →
+done`"*, could attribute the transition to nobody, correctly applied *delivered is not done*, and
+put it back to `doing`. The rule it followed is the right rule. It was applied to the one hand
+the rule was never about, and what the person saw was their own ledger arguing with them about
+their own errand.
+
+**The distinction was never new information — it was dropped in the last few feet.** `set_status`
+is *told* and `reconcile` *finds out*, two callers that already knew which hand they were, and one
+actorless line downstream of both. So [`Hand`](../../src/mind/memory/tasks.rs) is threaded to where
+the entry is built. It is passed rather than defaulted: only the board's `PATCH` reaches
+`set_status` today, and a default would be right today and silently wrong the first time a second
+caller appears — wrong in the shape of a line claiming he decided something he did not.
+
+**The mark is a fact and stops there; the obligation is the manager's.** What a reader owes a
+signed line is in [task-manager.md](../../src/identity/workers/task-manager.md): their transition
+is a decision already made, no agent reverts one, and a manager that thinks they closed too early
+says so in its report. The same division the rest of this ledger runs on — the host supplies the words,
+the manager supplies the judgment.
+
+The two
 writers cannot contradict each other because they never touch the same row-state: one turns
 nothing into `todo` or `doing`, the other owns everything after that. Splitting them is not tidiness — it breaks the loop where
 whoever did the work also rules on whether it landed, and that loop has already failed in the
