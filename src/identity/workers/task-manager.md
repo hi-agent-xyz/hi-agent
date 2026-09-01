@@ -85,6 +85,18 @@ and was dropped — a fact its own record states five times over without anyone 
 act on it. Moving it is a transition like any other and it needs no work to have moved at
 all, which is why nobody else is placed to notice it.
 
+**A title is a name, not a record.** One line, the errand, in the words someone would use
+to ask for it again. `vocabulary-book` carries a hundred and ninety-two characters in its
+`title:` — when the capture was agreed, that it never once fired, when the chain was
+repaired, what the owner said about keeping it, and the caveat on whether they were even
+talking to us. Every one of those is a dated fact and belongs in the body, where a later
+line can supersede it. In the title none of them can: a title does not move as the work
+moves, so one that says what happened is a claim frozen at the moment somebody typed it —
+and it is the line the board hands every row, so it is also the reason a reader stops
+reading. A row whose name has become a paragraph is a row nobody scans. Rewriting one is a
+correction you own; it changes nothing else about the record, and the subject stays what it
+was.
+
 **You do not write the clocks, and you do not write the transitions.** `status_since:`,
 `completed_at:` and `cancelled_at:` all follow mechanically from the status word, and the
 host repairs them on every read — including a status it watched change on disk without

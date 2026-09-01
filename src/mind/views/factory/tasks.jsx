@@ -1,21 +1,32 @@
-// purpose: 任务 — the task ledger as one board: todo / doing / serving / done / cancelled.
-// The full canvas is organized by the one durable lifecycle. `serving` is its own column
-// because a duty being kept up is not work in progress: it has no finish, so a Done button
-// on it asks the wrong question, and its age means nothing while "last confirmed alive"
-// means everything. Liveness detail is how a duty is checked; the status is what makes it
-// one.
+// purpose: 任务 — the task ledger, weighted by what is still owed. Three columns of live
+// work — todo / doing / serving — and one ledger rail for everything that has closed.
+// `serving` is its own column because a duty being kept up is not work in progress: it has
+// no finish, so a Done button on it asks the wrong question, and its age means nothing
+// while "last confirmed alive" means everything.
 //
-// The board is the whole page — five columns, each scrolling on its own, nothing
-// hidden behind a filter. A card is therefore a *glance*: a clamped title, the one or
-// two facts that decide whether it needs you, and the actions. Everything long —
-// the untruncated title, the prose, the liveness contract — lives in the detail panel
-// a card opens. Titles arrive as whatever the agent wrote, and some are paragraphs;
-// the card truncates rather than letting one task eat the column.
+// **Five equal columns were the defect this replaced, and it was a defect of proportion.**
+// On the live store that exposed it, 130 of 140 rows were closed: done and cancelled held
+// 93% of the ledger, 40% of the width, and — because every closed card printed the word its
+// own column already said, a stamp, and a Reopen button nobody presses — they were also the
+// busiest thing on the screen. The nine rows that were actually owed sat in three columns
+// that were mostly air. Reading it meant searching the quiet half for the point. Closed work
+// is not hidden now, it is *thin*: one line each in a rail, newest first, no verb of its own.
 //
-// A status change is a card moved between columns, and dragging one there is the
-// gesture the layout already promises. It is never the *only* way: HTML5 drag does not
-// exist on touch and cannot be driven from a keyboard, so every card keeps its buttons
-// and the drag is the shortcut on top of them.
+// So the canvas is spent on what is unfinished, and the rail carries what is done in the
+// space one line deserves. Nothing is behind a filter; the archive is simply not shouting.
+//
+// A card is a *glance*: a clamped title, the **one** fact that decides whether it needs you,
+// and at most one verb. Everything long — the untruncated title, the prose, the liveness
+// contract, every other transition — lives in the detail panel a card opens. A clipped
+// sentence is not one of the facts: "进展 The current frontier carries no n…" costs a line
+// and cannot be read, so prose reaches the card only when it is a *wait*, which is the one
+// case where the fragment is what tells you to act.
+//
+// A status change is a card moved between columns, and dragging one there is the gesture
+// the layout already promises — the rail takes a drop too, which is how you finish something
+// without opening it. It is never the *only* way: HTML5 drag does not exist on touch and
+// cannot be driven from a keyboard, so the primary verb stays on the card and every
+// remaining transition is in the panel, which opens by click, tap and Enter alike.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { useLive, TEMPO } from "@hi/core";
 
@@ -44,8 +55,10 @@ const T = {
     title: "Tasks",
     activeN: (n) => `${n} active`,
     servingN: (n) => `${n} serving`,
-    totalN: (n) => `${n} ${n === 1 ? "task" : "tasks"}`,
     board: "Task board",
+    closed: "Closed",
+    ledger: "Closed work",
+    dropDone: "Drop to finish",
     category: {
       todo: "Todo",
       doing: "Doing",
@@ -57,10 +70,10 @@ const T = {
       todo: "Nothing queued.",
       doing: "Nothing in progress.",
       serving: "No standing duties.",
-      done: "Nothing finished yet.",
-      cancelled: "Nothing cancelled.",
+      closed: "Nothing has closed yet.",
     },
     attentionN: (n) => `${n} need attention`,
+    needsYouN: (n) => `${n} waiting on you`,
     created: (at) => `Created ${at}`,
     completed: (at) => `Completed ${at}`,
     cancelled: (at) => `Cancelled ${at}`,
@@ -75,15 +88,9 @@ const T = {
     standDown: "Stand down",
     cancel: "Cancel",
     reopen: "Reopen",
-    // Short forms for the card, where a column is a few hundred pixels wide. The
-    // full wording above stays as the button's label for anyone not reading pixels.
-    shortStart: "Start",
-    shortServe: "Serve",
-    shortTodo: "Todo",
+    // The one label a card is too narrow for in full. Every other verb the card shows is
+    // already one word; the panel has room and says what the click means.
     shortDone: "Done",
-    shortStandDown: "Stand down",
-    shortCancel: "Cancel",
-    shortReopen: "Reopen",
     details: "Open details",
     close: "Close",
     malformed: "This task has invalid stored fields. Changing its status will rewrite the recognized fields.",
@@ -138,8 +145,10 @@ const T = {
     title: "任务",
     activeN: (n) => `${n} 件进行中`,
     servingN: (n) => `${n} 项值守`,
-    totalN: (n) => `${n} 件任务`,
     board: "任务看板",
+    closed: "已结束",
+    ledger: "已结束的任务",
+    dropDone: "拖到这里＝完成",
     category: {
       todo: "待办",
       doing: "进行中",
@@ -151,10 +160,10 @@ const T = {
       todo: "没有待办。",
       doing: "没有进行中的。",
       serving: "没有值守中的事。",
-      done: "还没有完成的。",
-      cancelled: "没有已取消的。",
+      closed: "还没有结束的任务。",
     },
     attentionN: (n) => `${n} 件需要留意`,
+    needsYouN: (n) => `${n} 件等你`,
     created: (at) => `创建于 ${at}`,
     completed: (at) => `完成于 ${at}`,
     cancelled: (at) => `取消于 ${at}`,
@@ -169,13 +178,7 @@ const T = {
     standDown: "撤下值守",
     cancel: "取消",
     reopen: "重新打开",
-    shortStart: "开始",
-    shortServe: "值守",
-    shortTodo: "待办",
     shortDone: "完成",
-    shortStandDown: "撤下",
-    shortCancel: "取消",
-    shortReopen: "重开",
     details: "查看详情",
     close: "关闭",
     malformed: "这条任务包含无效字段。修改状态时会重写可识别的字段。",
@@ -238,13 +241,18 @@ function words() {
 }
 const [L, LOCALE] = words();
 
-const STATUSES = [
+// The columns are the *unfinished* lifecycle. Done and cancelled are still on this page —
+// in the rail, by time rather than by which of the two closes they were — because "what
+// happened recently" is one question and splitting it across two columns answered it twice
+// at forty percent of the width. Which close it was is a mark on the row and a word in the
+// panel; it is not worth a column.
+const LIVE_COLUMNS = [
   { id: "todo", label: L.category.todo, tone: "mute" },
   { id: "doing", label: L.category.doing, tone: "accent" },
   { id: "serving", label: L.category.serving, tone: "serving" },
-  { id: "done", label: L.category.done, tone: "secondary" },
-  { id: "cancelled", label: L.category.cancelled, tone: "danger" },
 ];
+
+const CLOSED = ["done", "cancelled"];
 
 // A running-record line is read by its kind before its text, so the kind carries the
 // colour: `waiting` is the one that should catch an eye crossing the panel, `delivered`
@@ -357,13 +365,12 @@ export default function Tasks() {
     return (
       <div className="hi-tasks">
         <style>{CSS}</style>
-        <Header activeCount={0} servingCount={0} totalCount={0} />
+        <Header activeCount={0} servingCount={0} needsYou={0} />
         <div className="hi-tasks__loading" aria-label={L.title}>
           <span />
           <span />
           <span />
-          <span />
-          <span />
+          <span data-rail="true" />
         </div>
       </div>
     );
@@ -374,6 +381,10 @@ export default function Tasks() {
   // number moved only when a duty was retired.
   const activeCount = tasks.filter((task) => task.status === "todo" || task.status === "doing").length;
   const servingCount = tasks.filter((task) => task.status === "serving").length;
+  // The one count that is somebody else's move, so it is the one the heading leads with when
+  // it is not zero. Every other number here says how much there is; this one says whether the
+  // person reading has to do anything before any of it moves.
+  const needsYou = tasks.filter(waitsOnPerson).length;
   // The roster read, carried on the row rather than threaded through every component that
   // draws one. `undefined` while no roster has landed, `null` once one has and nobody is on
   // this — the two say different things and `onItMeta` answers only the second.
@@ -387,14 +398,10 @@ export default function Tasks() {
   return (
     <div className="hi-tasks">
       <style>{CSS}</style>
-      <Header
-        activeCount={activeCount}
-        servingCount={servingCount}
-        totalCount={tasks.length}
-      />
+      <Header activeCount={activeCount} servingCount={servingCount} needsYou={needsYou} />
 
       <div className="hi-tasks__board" aria-label={L.board}>
-        {STATUSES.map((column) => (
+        {LIVE_COLUMNS.map((column) => (
           <Column
             key={column.id}
             column={column}
@@ -408,6 +415,13 @@ export default function Tasks() {
             onDrop={dropOn}
           />
         ))}
+        <Ledger
+          tasks={rows.filter((task) => CLOSED.includes(task.status))}
+          busy={busy}
+          drag={drag}
+          onOpen={setOpenSubject}
+          onDrop={dropOn}
+        />
       </div>
 
       {open && (
@@ -422,23 +436,37 @@ export default function Tasks() {
   );
 }
 
-function Header({ activeCount, servingCount, totalCount }) {
+// The count of everything ever filed used to sit here, alone on the right, in the one
+// position on the page the eye lands on first — and "140 tasks" is the least actionable
+// number this surface knows. What is owed leads instead, and the size of the archive is a
+// number on the archive.
+function Header({ activeCount, servingCount, needsYou }) {
   return (
     <header className="hi-tasks__header">
       <div className="hi-tasks__heading">
         <h1>{L.title}</h1>
+        {needsYou > 0 && (
+          <span className="hi-tasks__heading-needs">{L.needsYouN(needsYou)}</span>
+        )}
         <span>{L.activeN(activeCount)}</span>
         {servingCount > 0 && (
           <span className="hi-tasks__heading-serving">{L.servingN(servingCount)}</span>
         )}
       </div>
-      <div className="hi-tasks__total">{L.totalN(totalCount)}</div>
     </header>
   );
 }
 
 function Column({ column, tasks, busy, drag, onStatus, onOpen, onDragStart, onDragEnd, onDrop }) {
   const attention = tasks.filter(taskNeedsAttention).length;
+  // A row that will not move until the person does goes to the top of its column. It was
+  // drawn at the weight of everything else and in whatever order the ledger happened to
+  // hold, which on the store that exposed this put the single task waiting on a human
+  // fourth in the middle column. Sort is stable, so within each half the ledger's own
+  // order survives — this only lifts, it does not reshuffle.
+  const ordered = [...tasks].sort(
+    (a, b) => Number(taskNeedsAttention(b)) - Number(taskNeedsAttention(a)),
+  );
   const [over, setOver] = useState(false);
   // Only a card from another column can land here. Without this the source column also
   // lights up as a target, which reads as "this does something" when it does not.
@@ -484,7 +512,7 @@ function Column({ column, tasks, busy, drag, onStatus, onOpen, onDragStart, onDr
         <div className="hi-tasks__empty">{L.empty[column.id]}</div>
       ) : (
         <div className="hi-tasks__cards">
-          {tasks.map((task) => (
+          {ordered.map((task) => (
             <Card
               key={task.subject}
               task={task}
@@ -502,15 +530,89 @@ function Column({ column, tasks, busy, drag, onStatus, onOpen, onDragStart, onDr
   );
 }
 
+// The archive, at the width one line is worth. Done and cancelled share one list, newest
+// close first, because the question this half answers is *what has been happening* and the
+// answer is chronological. Which of the two closes it was is the mark on the left and a word
+// in the panel — it was never worth a column of its own, and as a column it doubled the cost
+// of the answer.
+//
+// **No verb on a row.** Reopen was a hundred and thirty buttons for a transition taken
+// perhaps twice a year, and it was the heaviest thing on every closed card. It lives in the
+// panel a row opens, next to the record that makes reopening a decision rather than a
+// mis-click.
+//
+// It still takes a drop, and only into `done`: finishing a card by throwing it at the
+// archive is the gesture the five columns used to carry, and it is the one worth keeping.
+// Cancelling is a judgment about work that did not happen, which is not a flick.
+function Ledger({ tasks, busy, drag, onOpen, onDrop }) {
+  const [over, setOver] = useState(false);
+  const takes = Boolean(drag) && !CLOSED.includes(drag.status);
+  const rows = [...tasks].sort((a, b) => closedStamp(b) - closedStamp(a));
+
+  return (
+    <section
+      className="hi-tasks__ledger"
+      data-drop={takes && over ? "true" : undefined}
+      aria-label={`${L.ledger} (${tasks.length})`}
+      onDragOver={(event) => {
+        if (!takes) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!takes) return;
+        event.preventDefault();
+        setOver(false);
+        onDrop(event.dataTransfer.getData("text/plain") || drag.subject, "done");
+      }}
+    >
+      <div className="hi-tasks__column-head">
+        <span className="hi-tasks__column-dot" aria-hidden="true" />
+        <h2 className="hi-tasks__column-label">{L.closed}</h2>
+        {takes && <span className="hi-tasks__ledger-hint">{L.dropDone}</span>}
+        <span className="hi-tasks__column-count">{tasks.length}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="hi-tasks__empty">{L.empty.closed}</div>
+      ) : (
+        <div className="hi-tasks__ledger-rows">
+          {rows.map((task) => (
+            <button
+              key={task.subject}
+              type="button"
+              className="hi-tasks__ledger-row"
+              data-status={task.status}
+              aria-busy={busy === task.subject}
+              // One line clips hard, and these titles run to paragraphs — so the whole one
+              // is on the hover, exactly as it is on a card.
+              title={`${task.title || task.subject}\n\n${L.details}`}
+              onClick={() => onOpen(task.subject)}
+            >
+              <span className="hi-tasks__ledger-mark" aria-hidden="true" />
+              <span className="hi-tasks__ledger-title">{task.title || task.subject}</span>
+              <span className="hi-tasks__ledger-when">{formatDay(closedStamp(task))}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }) {
-  const notes = cardNotes(task);
-  // The last thing that happened, clamped to one line. A board of titles says what each
-  // task *is* and nothing about where any of it stands, which is the question somebody
-  // scanning this actually has.
-  const latest = latestMoment(task);
-  // The board's copy of the same two rules the panel uses: a status change reads as its
-  // verb, and a wait keeps the alarm colour only while it is the last word.
-  const latestLife = latest?.kind === "moved" ? lifecycleWord(latest.text) : null;
+  // **Exactly one line under the title**, and which line it is decides the card. A wait is
+  // the only case where prose reaches the board: "this will not move until you do" is not
+  // actionable without saying what is wanted, and the sentence is the cheapest true answer.
+  // Everything else is a *note* — short, whole, and never a clipped sentence. The board used
+  // to print the last record line whatever it was, which produced a column of fragments
+  // ("进展 The current frontier carries no n…") that cost a line each and could not be read.
+  const waiting = waitsOnPerson(task) ? latestSpoken(task) : null;
+  const note = waiting ? null : cardNote(task);
   // A drag that ends on the card it started from still delivers a `click`, which would
   // open the panel on a gesture the person meant as "put it back".
   const dragged = useRef(false);
@@ -520,6 +622,7 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
       className="hi-tasks__card"
       draggable
       data-malformed={task.malformed ? "true" : undefined}
+      data-needs={waiting ? "true" : undefined}
       data-dragging={dragging ? "true" : undefined}
       aria-busy={busy}
       style={{ "--task-status": STATUS_TONE[task.status] || "var(--fg-mute)" }}
@@ -551,31 +654,20 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
         }}
       >
         <span className="hi-tasks__card-title">{task.title || task.subject}</span>
-        {latest && (
-          <span
-            className="hi-tasks__card-latest"
-            style={{ "--moment": momentTone(latest, waitsOnPerson(task)) }}
-          >
-            <span className="hi-tasks__moment-kind">
-              {latestLife || L.moment[latest.kind] || latest.kind}
-            </span>
-            {!latestLife && (
-              <span className="hi-tasks__card-latest-text">{inline(latest.text, "latest")}</span>
-            )}
+        {waiting && (
+          <span className="hi-tasks__card-wait">
+            <span className="hi-tasks__card-wait-flag">{L.needsYou}</span>
+            <span className="hi-tasks__card-wait-text">{waiting.text}</span>
           </span>
         )}
-        {notes.length > 0 && (
-          <span className="hi-tasks__card-notes">
-            {notes.map((note) => (
-              <span key={note.text} data-warn={note.warn ? "true" : undefined}>
-                {note.text}
-              </span>
-            ))}
+        {note && (
+          <span className="hi-tasks__card-note" data-warn={note.warn ? "true" : undefined}>
+            {note.text}
           </span>
         )}
       </button>
 
-      <Actions task={task} busy={busy} onStatus={onStatus} short />
+      <Actions task={task} busy={busy} onStatus={onStatus} card />
     </article>
   );
 }
@@ -801,15 +893,18 @@ function Detail({ task, busy, onStatus, onClose }) {
   );
 }
 
-// `short` swaps the card's cramped labels in while keeping the full wording as the
-// accessible name — a column is too narrow for "Move to todo", a screen reader is not.
+// A card's verb may carry a shorter label than the panel's, with the full wording kept as
+// the accessible name — a column is too narrow for "Mark done", a screen reader is not.
 //
-// A card carries three buttons at most; the fourth transition on work — "keep this as a
-// standing duty" — is a decision, not a flick, and it lives in the detail panel where
-// there is room to name it. That panel is reachable by keyboard and by touch, so drag
-// stays the shortcut it was always meant to be rather than the only way into `serving`.
-function Actions({ task, busy, onStatus, short }) {
-  const button = (kind, status, label, shortLabel) => (
+// **A card carries one verb, and only where that verb is a flick**: start this, finish this.
+// Three buttons on every card was a strip of chrome heavier than the sentence above it, on
+// a surface whose whole job is to be scanned — and on the closed columns it was a hundred
+// and thirty Reopens for a transition nobody takes. Cancelling, standing a duty down, and
+// keeping something as a standing duty are *decisions*: they belong next to the record, in
+// the panel, which is reachable by click, tap and Enter alike. Drag remains the shortcut it
+// was meant to be rather than the only way anywhere.
+function Actions({ task, busy, onStatus, card }) {
+  const button = (kind, status, label, cardLabel) => (
     <button
       type="button"
       className={`hi-tasks__button hi-tasks__button--${kind}`}
@@ -818,16 +913,40 @@ function Actions({ task, busy, onStatus, short }) {
       title={label}
       onClick={() => onStatus(task.subject, status)}
     >
-      {short ? shortLabel : label}
+      {card && cardLabel ? cardLabel : label}
     </button>
   );
 
   // `draggable={false}` so pressing a button never starts a drag of the card around it:
   // a draggable element otherwise hands its whole subtree to the drag.
+  // Ghost, not primary. A filled button is the loudest thing it sits near, and a column of
+  // five of them competes with the one card on the board that is actually asking for
+  // something. The card's verb is there when it is wanted; it is not the point of the card.
+  // The panel still fills its own primary, where there is one action among four.
+  if (card) {
+    if (task.status === "todo") {
+      return (
+        <div className="hi-tasks__actions" draggable={false}>
+          {button("ghost", "doing", L.start)}
+        </div>
+      );
+    }
+    if (task.status === "doing") {
+      return (
+        <div className="hi-tasks__actions" draggable={false}>
+          {button("ghost", "done", L.markDone, L.shortDone)}
+        </div>
+      );
+    }
+    // A duty has no flick: it ends by being stood down, which is a decision about something
+    // that has been running for weeks. Closed rows are in the rail and carry no verb at all.
+    return null;
+  }
+
   if (task.status === "done" || task.status === "cancelled") {
     return (
       <div className="hi-tasks__actions" draggable={false}>
-        {button("ghost", "todo", L.reopen, L.shortReopen)}
+        {button("ghost", "todo", L.reopen)}
       </div>
     );
   }
@@ -837,9 +956,9 @@ function Actions({ task, busy, onStatus, short }) {
   if (task.status === "serving") {
     return (
       <div className="hi-tasks__actions" draggable={false}>
-        {button("ghost", "todo", L.moveTodo, L.shortTodo)}
-        {button("danger", "cancelled", L.cancel, L.shortCancel)}
-        {button("primary", "done", L.standDown, L.shortStandDown)}
+        {button("ghost", "todo", L.moveTodo)}
+        {button("danger", "cancelled", L.cancel)}
+        {button("primary", "done", L.standDown)}
       </div>
     );
   }
@@ -847,13 +966,35 @@ function Actions({ task, busy, onStatus, short }) {
   return (
     <div className="hi-tasks__actions" draggable={false}>
       {task.status === "todo"
-        ? button("ghost", "doing", L.start, L.shortStart)
-        : button("ghost", "todo", L.moveTodo, L.shortTodo)}
-      {!short && button("ghost", "serving", L.serve, L.shortServe)}
-      {button("danger", "cancelled", L.cancel, L.shortCancel)}
-      {button("primary", "done", L.markDone, L.shortDone)}
+        ? button("ghost", "doing", L.start)
+        : button("ghost", "todo", L.moveTodo)}
+      {button("ghost", "serving", L.serve)}
+      {button("danger", "cancelled", L.cancel)}
+      {button("primary", "done", L.markDone)}
     </div>
   );
+}
+
+// The instant a row closed, for ordering the rail. `statusSince` is the fallback because a
+// record written before those stamps existed has neither, and a row with no time at all must
+// not sort to the top as though it had just happened.
+function closedStamp(task) {
+  const at = task.completedAt || task.cancelledAt || task.statusSince || task.createdAt;
+  const ms = at ? new Date(at).getTime() : NaN;
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+// Day granularity, deliberately. A rail a hundred rows long is read for *when roughly*, and
+// at that density the minute is noise; the panel still carries the full stamp.
+function formatDay(ms) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(LOCALE, {
+    month: "numeric",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "2-digit" }),
+  }).format(date);
 }
 
 function formatStamp(value) {
@@ -867,13 +1008,6 @@ function formatStamp(value) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
-}
-
-// The last line of the running record, whatever kind it is. `moved` counts: "this went
-// to done an hour ago" is exactly as much news as anything a mind wrote.
-function latestMoment(task) {
-  const timeline = task.timeline || [];
-  return timeline.length > 0 ? timeline[timeline.length - 1] : null;
 }
 
 // The newest line a *mind* wrote. `moved` is excluded because the store writes it on a
@@ -1061,51 +1195,38 @@ function taskNeedsAttention(task) {
   );
 }
 
-// One clipped line under the title, so what earns the space is what would make someone
-// act: a warning first, then the one date that means anything for this status.
-function cardNotes(task) {
-  const notes = [];
-  // Before anything else on the card, because it is the only note here that is somebody
-  // else's move. Every other warning says the agent has a problem; this one says the row
-  // will not advance until the reader does something, and it should not need a modal to
-  // be discovered.
-  if (waitsOnPerson(task)) notes.push({ text: L.needsYou, warn: true });
-  if (task.malformed) notes.push({ text: L.malformedShort, warn: true });
+// **The one line the card gets** — the single fact that would make someone act on this row,
+// or reassure them that nobody has to. It used to be a stack: a warning, then a date, on top
+// of a clipped record line above it, which is three lines of small type per card and no
+// order to read them in.
+//
+// The order below is the priority, and it is a priority precisely because only the first
+// survives. A warning outranks everything: on a `doing` row the record is exactly what a
+// task whose worker died keeps looking fine by, so the dead worker is the line. With nothing
+// wrong, the reassuring half of that same question takes the space — this one is alive —
+// and only then a date.
+//
+// A wait never reaches here; the card renders that itself, with the sentence, because
+// "somebody is waiting on you" without saying what for is an alarm with no verb attached.
+function cardNote(task) {
+  if (task.malformed) return { text: L.malformedShort, warn: true };
+  const on = onItMeta(task);
+  const age = ageMeta(task);
   const due = dueMeta(task);
   const health = healthMeta(task);
-  const age = ageMeta(task);
-  // First, when it is the alarm: on a `doing` card every other note here is about the record,
-  // and the record is exactly what a row whose worker died keeps looking fine by.
-  const on = onItMeta(task);
-  if (on?.warn) notes.push(on);
-  if (age?.warn) notes.push(age);
-  if (due?.warn) notes.push(due);
-  if (health?.warn) notes.push(health);
-  if (notes.length === 0) {
-    // A running worker is the reassuring half of the same question, so it takes the space only
-    // when nothing is wrong — which on a `doing` card is the whole point: this one is alive.
-    if (on) notes.push(on);
-    else if (due) notes.push(due);
-    else if (health) notes.push(health);
+  for (const note of [on, age, due, health]) {
+    if (note?.warn) return note;
   }
-  if (task.status === "done" && task.completedAt) {
-    notes.push({ text: L.completed(formatStamp(task.completedAt)) });
-  } else if (task.status === "cancelled" && task.cancelledAt) {
-    notes.push({ text: L.cancelled(formatStamp(task.cancelledAt)) });
-  } else if (task.status === "serving") {
-    // Never "Created Aug 3": a watch is supposed to be old, so its age is the one fact
-    // here that means nothing. Whether it is still up is the only one that does.
-    if (health && !notes.includes(health)) notes.push(health);
-  } else if (age) {
-    // Two dates on one clipped line is one too many, and of the two this is the one that
-    // moved: "created Aug 3" and "doing for 6d" are the same row's story, but only the
-    // second says it has been sitting. Same guard as the duty above — past the boundary it
-    // is already on the line as a warning, and it must not be written there twice.
-    if (!notes.includes(age)) notes.push(age);
-  } else if (task.createdAt) {
-    notes.push({ text: L.created(formatStamp(task.createdAt)) });
-  }
-  return notes;
+  // Never "Created Aug 3" on a duty: a watch is supposed to be old, so its age is the one
+  // fact about it that means nothing. Whether it is still up is the only one that does.
+  if (task.status === "serving") return health || on || null;
+  if (on) return on;
+  if (due) return due;
+  // "Created Aug 3" and "doing for 6d" are the same row's story, and only the second says it
+  // has been sitting.
+  if (age) return age;
+  if (task.createdAt) return { text: L.created(formatStamp(task.createdAt)) };
+  return null;
 }
 
 // What is left of a body once `split_timeline` has taken the dated lines out of it: the
@@ -1440,8 +1561,7 @@ const CSS = `
     letter-spacing: 0;
   }
 
-  .hi-tasks__heading span,
-  .hi-tasks__total {
+  .hi-tasks__heading span {
     color: var(--fg-dim);
     font-size: 13px;
     font-weight: 650;
@@ -1452,14 +1572,28 @@ const CSS = `
     color: var(--task-serving);
   }
 
-  /* The board is the page: five columns that fill the height and never scroll it.
-     Below ~1300px the columns keep a readable floor and the board scrolls sideways
-     instead of squeezing every card into a ribbon. */
+  /* The only count that is somebody else's move, so it is the only one that gets a
+     ground of its own. Zero of these renders nothing at all — a badge that is usually
+     empty is worth more than one that is usually a nought. */
+  .hi-tasks__heading .hi-tasks__heading-needs {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--danger-wash);
+    color: var(--danger);
+    font-weight: 780;
+  }
+
+  /* The board is the page: three columns of live work and the ledger rail, filling the
+     height and never scrolling it. The rail is deliberately the narrow one — a row in it is
+     one line, and the three that hold what is still owed get the rest. Below ~1000px the
+     tracks keep a readable floor and the board scrolls sideways rather than squeezing every
+     card into a ribbon; below 760px it stops being a board at all (see the tail of this
+     sheet). */
   .hi-tasks__board {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: repeat(5, minmax(236px, 1fr));
+    grid-template-columns: repeat(3, minmax(236px, 1fr)) minmax(228px, 0.8fr);
     gap: 12px;
     /* A board is the case the bottom token exists for: a card half under a control
        disc is a lost row, not texture passing behind glass. */
@@ -1468,7 +1602,8 @@ const CSS = `
     overflow-y: hidden;
   }
 
-  .hi-tasks__column {
+  .hi-tasks__column,
+  .hi-tasks__ledger {
     --column-tone: var(--fg-mute);
     min-width: 0;
     min-height: 0;
@@ -1486,7 +1621,8 @@ const CSS = `
   .hi-tasks__column[data-tone="danger"] { --column-tone: var(--danger); }
 
   /* Only the column a held card would actually land in lights up. */
-  .hi-tasks__column[data-drop="true"] {
+  .hi-tasks__column[data-drop="true"],
+  .hi-tasks__ledger[data-drop="true"] {
     border-color: var(--accent-line);
     background: var(--accent-wash);
     box-shadow: inset 0 0 0 1px var(--accent-line);
@@ -1562,9 +1698,9 @@ const CSS = `
     overflow-y: auto;
   }
 
-  /* The floating dock sits over the bottom-right corner of the surface, which is the
-     last column's tail. Only that column pays for the clearance. */
-  .hi-tasks__column:last-child .hi-tasks__cards {
+  /* The floating dock sits over the bottom-right corner of the surface, which is the rail's
+     tail now that the rail is the last track. Only it pays for the clearance. */
+  .hi-tasks__ledger .hi-tasks__ledger-rows {
     padding-bottom: 76px;
   }
 
@@ -1585,6 +1721,21 @@ const CSS = `
     border-top-color: var(--line-strong);
     border-right-color: var(--line-strong);
     border-bottom-color: var(--line-strong);
+  }
+
+  /* A row that will not move until the person does. It sorts to the top of its column and
+     it is the one card on the board wearing a ground — the alarm was a line of red 11px type
+     in the fourth card down, which is a thing you find rather than a thing you see. */
+  .hi-tasks__card[data-needs="true"] {
+    border-color: var(--danger-line);
+    border-left-color: var(--danger);
+    background: var(--danger-wash);
+  }
+
+  .hi-tasks__card[data-needs="true"]:hover {
+    border-top-color: var(--danger-line);
+    border-right-color: var(--danger-line);
+    border-bottom-color: var(--danger-line);
   }
 
   .hi-tasks__card[data-malformed="true"] {
@@ -1623,9 +1774,10 @@ const CSS = `
     overflow-wrap: anywhere;
   }
 
-  /* One line, clamped: a card is a glance, and a second line of record would cost the
-     column a card. The panel is where the rest of it is. */
-  .hi-tasks__card-latest {
+  /* The wait: the flag, then as much of the sentence as fits on one line. Two lines,
+     because this is the one thing on the board somebody has to read rather than glance at,
+     and a single ellipsised line of it is a demand with the reason cut off. */
+  .hi-tasks__card-wait {
     display: flex;
     align-items: baseline;
     gap: 6px;
@@ -1633,23 +1785,33 @@ const CSS = `
     min-width: 0;
   }
 
-  .hi-tasks__card-latest-text {
+  .hi-tasks__card-wait-flag {
+    flex: none;
+    color: var(--danger);
+    font-size: 11.5px;
+    line-height: 1.4;
+    font-weight: 800;
+  }
+
+  .hi-tasks__card-wait-text {
     flex: 1;
     min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     color: var(--fg-dim);
     font-size: 11.5px;
     line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-weight: 620;
+    overflow-wrap: anywhere;
   }
 
-  .hi-tasks__card-notes {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
+  .hi-tasks__card-note {
+    margin-top: 6px;
     overflow: hidden;
     color: var(--fg-dim);
+    text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 11.5px;
     line-height: 1.4;
@@ -1657,14 +1819,90 @@ const CSS = `
     font-variant-numeric: tabular-nums;
   }
 
-  .hi-tasks__card-notes span {
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .hi-tasks__card-note[data-warn="true"] {
+    color: var(--danger);
   }
 
-  .hi-tasks__card-notes [data-warn="true"] {
+  /* A closed row is a line, not a card: no border, no ground, no verb — the hover is the
+     only chrome it gets, and it is there to say the row opens. Three columns of grid so the
+     dates line up down the right edge and the eye can read the rail as the chronology it
+     is, without the dates jittering behind titles of different lengths. */
+  .hi-tasks__ledger-rows {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 6px;
+    overflow-y: auto;
+  }
+
+  .hi-tasks__ledger-row {
     flex: none;
-    color: var(--danger);
+    display: grid;
+    grid-template-columns: 6px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    text-align: left;
+    transition: background 160ms var(--ease);
+  }
+
+  .hi-tasks__ledger-row:hover {
+    background: var(--surface);
+  }
+
+  /* Which of the two closes it was, in the smallest mark that can carry it: sage for
+     finished, a muted red for cancelled. It was a column and a word on every card. */
+  .hi-tasks__ledger-mark {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-2);
+  }
+
+  .hi-tasks__ledger-row[data-status="cancelled"] .hi-tasks__ledger-mark {
+    background: var(--danger);
+    opacity: 0.5;
+  }
+
+  .hi-tasks__ledger-title {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--fg-dim);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-weight: 680;
+  }
+
+  .hi-tasks__ledger-row[data-status="cancelled"] .hi-tasks__ledger-title {
+    color: var(--fg-mute);
+  }
+
+  .hi-tasks__ledger-when {
+    color: var(--fg-mute);
+    font-size: 11px;
+    line-height: 1.45;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Only while a card is in the air, because that is the only moment the rail is a target
+     and the only moment the gesture needs naming. */
+  .hi-tasks__ledger-hint {
+    margin-left: auto;
+    padding-right: 2px;
+    color: var(--accent);
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 750;
+    white-space: nowrap;
   }
 
   .hi-tasks__actions {
@@ -2163,7 +2401,7 @@ const CSS = `
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: repeat(5, minmax(236px, 1fr));
+    grid-template-columns: repeat(3, minmax(236px, 1fr)) minmax(228px, 0.8fr);
     gap: 12px;
     padding: 14px clamp(16px, 2.4vw, 30px) 16px;
     overflow: hidden;
@@ -2175,14 +2413,16 @@ const CSS = `
     background: color-mix(in srgb, var(--surface) 42%, var(--bg-0));
   }
 
-  /* **A phone is not a small desktop.** Five columns side by side on a 390px
-     screen is a board you read by dragging sideways one and a half columns at a
-     time — which is the one thing a board exists to save you from, and it hides
-     four fifths of the ledger behind a gesture nothing on screen suggests.
-     Below 760px the columns stack and the board scrolls vertically as one page:
-     the lifecycle is still the order, now top to bottom, and nothing is behind a
-     filter. Each column keeps its head, its count and its own empty line, so an
-     empty Todo still reads as answered rather than absent. */
+  /* **A phone is not a small desktop.** Columns side by side on a 390px screen is a board
+     you read by dragging sideways one and a half columns at a time — which is the one thing
+     a board exists to save you from, and it hides most of the ledger behind a gesture
+     nothing on screen suggests. Below 760px the tracks stack and the page scrolls
+     vertically as one: the lifecycle is still the order, now top to bottom, and nothing is
+     behind a filter. Each section keeps its head, its count and its own empty line, so an
+     empty Todo still reads as answered rather than absent.
+     The rail is the reason this stack is now finishable at all. Stacked as cards, a
+     hundred and thirty closed rows were a hundred and thirty card-heights below the live
+     work; as lines they are a scroll rather than an expedition, and they are last. */
   @media (max-width: 760px) {
     .hi-tasks__header {
       min-height: 56px;
@@ -2200,10 +2440,6 @@ const CSS = `
       font-size: 21px;
     }
 
-    .hi-tasks__total {
-      display: none;
-    }
-
     .hi-tasks__board,
     .hi-tasks__loading {
       display: flex;
@@ -2215,17 +2451,19 @@ const CSS = `
     }
 
     /* A column becomes a section: it grows to its cards and the board is the
-       one scroller, rather than five boxes each owning a scroller inside a
+       one scroller, rather than four boxes each owning a scroller inside a
        screen with room for none of them. */
     .hi-tasks__column,
-    .hi-tasks__cards {
+    .hi-tasks__ledger,
+    .hi-tasks__cards,
+    .hi-tasks__ledger-rows {
       flex: none;
       overflow: visible;
     }
 
-    /* The dock's clearance moved to the board's own tail above, so the last
-       column no longer pays for it — stacked, it is simply the last section. */
-    .hi-tasks__column:last-child .hi-tasks__cards {
+    /* The dock's clearance moved to the board's own tail above, so the rail no
+       longer pays for it — stacked, it is simply the last section. */
+    .hi-tasks__ledger .hi-tasks__ledger-rows {
       padding-bottom: 10px;
     }
 
