@@ -54,3 +54,13 @@ _机制:`image_gen`/`video_gen` 两个能力 + `drive/` 产物家 + `drive/<path
 - Reaction 开口 / 派单那段通了以后,整条"老板说一句 → 图上屏"要重跑。
 - gpt-image-2:等 broker 菜单里有,或粘一把 OpenAI key。
 - 视频两条(`hi_text_to_video`/`hi_image_to_video`)以及"几分钟后消息送回"那条回路,一次没跑过。
+
+## 复测 2026-08-31 · 主实例(本机 `data/`,xiaoyuanzhu 开箱账号)
+
+**没重跑,是翻一轮真发生过的**:老板正看着 `factory/tools`,问 "what models do you have for gen/edit image?"。整轮帧日志里,四个生成工具一次没被碰过。
+
+- ❌ **没派 worker**:Reaction 09:20:06 把问题递给 Cognition,brief 里已经写死了方向 —— "inspect the local imagegen skill/provider configuration";Cognition 09:21:04 直接开 shell 去 grep `data/codex-home/skills/.system/imagegen`,读的是 **codex 自带的系统 skill**(8-28 随 runtime 自动装进 `CODEX_HOME`),不是自己的工具。两层都没想到派个 worker 去读它自己的 `tools/list`。
+- ❌ **于是答案是别人的**:回给老板的是"内置 `image_gen`(模型名不对外暴露)、`gpt-image-2`、`gpt-image-1.5`" —— 逐句出自那个 skill 的 `SKILL.md` / `references/cli.md` / `references/image-api.md`。它甚至如实说了 `gpt-image-1`/`-1-mini`"只出现在参考文本里",却把同一份文本里的其余型号当成了本机可用。本机真打得通的 `doubao-seedream-5.0-lite` 一个字没提;`gpt-image-1.5` 则根本不可达(那条 CLI 要 `OPENAI_API_KEY`,`child_env` 不给)。
+- **根因不在 image_gen,在提示词**:`hi_text_to_image` / `hi_image_to_image` / `hi_text_to_video` / `hi_image_to_video` / `hi_video_text_to_text` 五个工具,**任何一份 prompt 都没提过一个字** —— 只有 worker 的 `tools/list` 里有。会说话的那层不知道自己有手,就去找了别人的手。这也解释了 2026-08-12 待复测里那句"Reaction 没派 worker":不是不肯派,是不知道有什么可派。
+- ✅ 已改:`reaction.md` 加 "What the rest of you can make"(四件事 + 常见说法 + "不是菜单、也不是能力边界"),`cognition.md` 加"别去研究自己的身体 —— 谁拿着工具谁才看得见当下可达的模型",`workers/general.md` 补上四个生成工具与 drive/ref 那条链;顺带修掉一个早不存在的工具名(`watch` → `hi_video_text_to_text`),并加了个测试:prompt 里写的每个 `hi_` 名字都必须是真声明过的工具。
+- ⏳ **整条链路仍未实跑**:2026-08-12 的三条待复测(老板一句话 → 图上屏、gpt-image-2 真调用、两条视频)一条都没动;这次只是把"派不出去"的原因拆掉了。

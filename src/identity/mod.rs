@@ -812,6 +812,42 @@ mod soul_tests {
         }
     }
 
+    /// **A prompt may not name a tool that does not exist.** `watch` sat in the general
+    /// worker's prompt long after that capability became `hi_video_text_to_text`, and a
+    /// named-but-absent mechanism reads to the rung holding it exactly like a real one —
+    /// it will reach for it, get nothing, and conclude the capability is missing. So every
+    /// `hi_`-prefixed name written in any prompt or craft page has to be a tool some role
+    /// actually declares. The runtime spelling is stripped first: `mcp__hi_agent__hi_say`
+    /// is the same claim as `hi_say`, not a claim about a tool called `hi_agent`.
+    #[test]
+    fn no_prompt_names_a_tool_that_does_not_exist() {
+        let declared: std::collections::HashSet<String> =
+            ["reaction", "cognition", "reflection", "worker"]
+                .into_iter()
+                .flat_map(|r| crate::foundation::mcp::tools_for_role(Some(r)))
+                .filter_map(|t| t["name"].as_str().map(str::to_string))
+                .collect();
+        let pages = Role::ALL
+            .iter()
+            .map(|r| (r.prompt_name(), r.base()))
+            .chain(CRAFT_PAGES.iter().copied());
+        for (name, text) in pages {
+            let text = text.replace("mcp__hi_agent__", "");
+            for (at, _) in text.match_indices("hi_") {
+                let tail = &text[at..];
+                let end = tail
+                    .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(tail.len());
+                let named = &tail[..end];
+                assert!(
+                    declared.contains(named),
+                    "{name} names `{named}`, which no role declares — a described, absent \
+                     tool is indistinguishable from a real one to the rung reading it"
+                );
+            }
+        }
+    }
+
     /// Every role is self-contained: it opens with its own character rather than a
     /// pointer to a file it must go and fetch. This is the property the seed did not
     /// have — the seed's instruction to Read was *conditional*, and nothing checked it.

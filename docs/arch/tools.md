@@ -313,6 +313,32 @@ by nothing else. So:
   do. "Add tools continuously" is pressure on exactly this tier, and a budget that is not a
   test is not a budget.
 
+### A rung is told what the others' bundled tools make
+
+Reaction cannot go and look, and [`agents.md`](agents.md#reaction--one-generation) sets the test
+for that rung: **projected = what Reaction must know without reading**. What the body *makes* is
+on the near side of that line. A mouth that does not know its own hands makes the one error that
+costs — it hedges at *"can you draw me something"*, or sends the question off to be researched,
+and what comes back is whatever else on the machine can answer it. That is not hypothetical:
+[journey 30](../user-journeys/30-make-a-picture.md) records a run where the image question was
+answered out of the agent runtime's own bundled skill, naming a vendor's models, while
+`hi_text_to_image` sat bundled one rung down and was never called. The tools were built. No
+prompt had ever named one.
+
+**This is not the middle tier this doc cuts.** That ban is about the [workshop](#the-registry) —
+unbounded, per-install, growing without us, where any summary is a surface that can be consulted
+and found empty. The bundled half is the opposite object on every axis: authored here, fixed at
+compile time, identical on every install, and small enough to name *whole*. Named whole, it
+cannot be found short. And it is written as what the body **makes**, never as the edge of what it
+can do, so a miss is still *hand it on* rather than a "no".
+
+**Only the bundled half may be written into a prompt.** Hot is derived per install and the
+workshop grows on machines we never see; a prompt naming either is a claim that goes stale
+somewhere else. What ships in the binary changes only when we change it — and
+`no_prompt_names_a_tool_that_does_not_exist` fails the build if a prompt names an `hi_` tool no
+role declares, which is what makes the naming safe rather than another thing to keep in step by
+hand.
+
 Reaction is the one rung whose surface is enforced rather than sized, and that is a fact about
 what a voice is for — a voice holding a shell writes code reviews as message text instead of
 speaking. It constrains Reaction, not the ladder.
@@ -407,6 +433,7 @@ fits in a window.
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
 | A tool is **an investment reflection decides**, not a job-time reflex | Only the rung reading across days can see recurrence; inside one job the guess always resolves to build |
 | **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
+| **Bundled tools may be named in another rung's prompt**; hot and the workshop may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
 
 ## What this deliberately does not have
 
@@ -428,6 +455,13 @@ because it stored something derivable, or gave a wrong answer a place to look ri
   key that broke this doc's own format rule — front matter is only what code reads, and nothing
   but a badge ever read `use:` while the *mind* reads it to run the thing. Dropping it to one key
   reverses a decision taken 2026-08-26, so it is not to be taken quietly.
+- **The runtime ships a workshop of its own.** codex installs a `.system` skill set into
+  `CODEX_HOME` on upgrade — `imagegen`, `openai-docs`, `skill-creator` and more — and advertises
+  it to every rung in a system prompt we never see on the wire. So every session carries a second
+  workshop we did not author, do not version, and cannot read from here. On 2026-08-31 it is what
+  answered a question about the body's own image models, with another vendor's model list.
+  Naming what the body makes fixes *not knowing*; whether the ambient set should be wiped at boot
+  is undecided.
 - **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
   the same verbs mean two things, and *whose body* becomes something a note must say.
 
