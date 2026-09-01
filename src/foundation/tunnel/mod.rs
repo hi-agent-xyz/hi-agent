@@ -181,6 +181,51 @@ pub fn stop() {
     }
 }
 
+/// `app_settings` key holding which of the account's names *this machine* serves.
+pub const KEY_HANDLE: &str = "handle";
+
+/// The name this core serves, as last chosen here. `None` on a core that has
+/// never claimed one.
+pub fn chosen(data_dir: &std::path::Path) -> Option<String> {
+    crate::foundation::credentials::get_setting(data_dir, KEY_HANDLE)
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+}
+
+/// Remember that this machine serves `handle` — what a claim calls, alongside
+/// [`serve`].
+///
+/// **An account owns names; a machine serves one of them.** The registry hands
+/// back every name the account holds, oldest first, and reading the served name
+/// off the front of that list made a rename look like nothing had happened: the
+/// new name was dialled at once, but the next start went back to the oldest one
+/// and the page kept printing it. Which name this core answers to is a fact
+/// about this machine, so this machine is what records it.
+pub fn remember(data_dir: &std::path::Path, handle: &str) {
+    if let Err(e) = crate::foundation::credentials::set_setting(data_dir, KEY_HANDLE, handle) {
+        tracing::warn!(handle, error = %format!("{e:#}"), "could not record the served name");
+    }
+}
+
+/// Forget the served name — what giving it up calls, so the next start does not
+/// try to dial a name this account no longer owns.
+pub fn forget(data_dir: &std::path::Path) {
+    let _ = crate::foundation::credentials::set_setting(data_dir, KEY_HANDLE, "");
+}
+
+/// Which of `held` this core serves: the remembered one while the account still
+/// owns it, and otherwise the oldest — the only answer available to a core that
+/// claimed its name before this was recorded, or that has been handed an account
+/// whose names it did not choose.
+pub fn choose<'a>(data_dir: &std::path::Path, held: &'a [community::Handle]) -> Option<&'a str> {
+    let chosen = chosen(data_dir);
+    chosen
+        .as_deref()
+        .and_then(|want| held.iter().find(|h| h.handle == want))
+        .or_else(|| held.first())
+        .map(|h| h.handle.as_str())
+}
+
 /// `app_settings` key holding whether this core dials the community at all.
 pub const KEY_RELAY: &str = "relay";
 
@@ -226,8 +271,8 @@ pub async fn set_on(data_dir: &std::path::Path, on: bool) -> anyhow::Result<()> 
         return Ok(());
     }
     match community::current(data_dir).await {
-        Ok(names) => match names.handles.first() {
-            Some(first) => serve(&first.handle),
+        Ok(names) => match choose(data_dir, &names.handles) {
+            Some(handle) => serve(handle),
             None => tracing::info!("reachability turned on; no handle claimed yet"),
         },
         Err(e) => tracing::info!(error = %format!("{e:#}"), "reachability turned on; no name to serve yet"),
@@ -291,8 +336,8 @@ pub async fn start(data_dir: &std::path::Path, router: Router) {
     }
 
     match community::current(data_dir).await {
-        Ok(names) => match names.handles.first() {
-            Some(first) => serve(&first.handle),
+        Ok(names) => match choose(data_dir, &names.handles) {
+            Some(handle) => serve(handle),
             None => tracing::info!("no handle claimed; reachable from this machine only"),
         },
         Err(e) => tracing::debug!(error = %format!("{e:#}"), "no handle to serve (this core is local-only)"),

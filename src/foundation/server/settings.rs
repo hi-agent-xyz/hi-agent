@@ -316,7 +316,12 @@ fn local_reach(data_dir: &Path) -> ReachState {
 async fn reach_state(data_dir: &Path) -> ReachState {
     let relay = local_reach(data_dir).relay;
     match community::current(data_dir).await {
-        Ok(names) => match names.handles.into_iter().next() {
+        // The name this machine answers to. An account may hold three; taking the
+        // first of the list showed the oldest, so a rename never appeared here.
+        Ok(names) => match tunnel::choose(data_dir, &names.handles)
+            .and_then(|serving| names.handles.iter().find(|h| h.handle == serving))
+            .cloned()
+        {
             Some(h) => ReachState {
                 relay,
                 handle: Some(h.handle),

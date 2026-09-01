@@ -30,6 +30,8 @@ const T = {
     rename: "Rename",
     namePlaceholder: "a name",
     nameRules: "lowercase letters, digits and hyphens",
+    unreachable: "Your agent did not answer. Nothing was claimed.",
+    alsoYours: (names) => `Also yours, not answered to here: ${names.join(", ")}`,
     // — the devices
     devices: "Devices",
     devicesWhy: "What may reach your agent. Each was let in once and can be taken back here.",
@@ -53,6 +55,8 @@ const T = {
     rename: "改名",
     namePlaceholder: "起个名字",
     nameRules: "小写字母、数字和连字符",
+    unreachable: "你的 agent 没有回应，名字没有取成。",
+    alsoYours: (names) => `也是你的，但这台机器不用：${names.join("、")}`,
     devices: "设备",
     devicesWhy: "能找到它的东西。每一个都是你放进来的，也可以在这里收回。",
     noDevices: "还没放进来过任何设备。",
@@ -129,7 +133,12 @@ function Name({ state, onChanged }) {
 
   if (state === null) return <Section title={L.name} why={L.nameWhy} />;
 
-  const held = state.handles?.[0];
+  // The name this core answers to, which is not the same as the first name the
+  // account ever took — an account may hold three. `serving` is the core's own
+  // answer; the fallback is for an older core that does not send it yet.
+  const all = state.handles || [];
+  const held = all.find((h) => h.handle === state.serving) || all[0];
+  const others = all.filter((h) => h.handle !== held?.handle).map((h) => h.handle);
 
   async function claim() {
     const name = draft.trim().toLowerCase();
@@ -150,7 +159,10 @@ function Name({ state, onChanged }) {
         onChanged();
       }
     } catch {
-      setRefused("");
+      // The core did not answer at all. Clearing the message here left the hint
+      // line reading the naming rules, which is what a *successful* claim looks
+      // like — a failure that reads as nothing having gone wrong.
+      setRefused(L.unreachable);
     } finally {
       setBusy(false);
     }
@@ -163,6 +175,10 @@ function Name({ state, onChanged }) {
       ) : (
         <div style={S.note}>{state.why || L.unnamed}</div>
       )}
+      {/* A name is permanent, so renaming does not give the old one back — it is
+          still theirs, and saying so is the difference between a rename that
+          looks like it lost something and one that reads as what it is. */}
+      {others.length > 0 && <div style={S.note}>{L.alsoYours(others)}</div>}
       <div style={S.row}>
         <input
           style={S.input}

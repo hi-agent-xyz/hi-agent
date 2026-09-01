@@ -354,6 +354,14 @@ small number of handles per account, and an account you have to be able to sign 
 The account may be free and must be — see the decision above — but it cannot be anonymous,
 because permanence you cannot recover is not permanence.
 
+**An account owns names; a machine serves one of them, and records which.** The registry
+answers with every name the account holds and cannot know which machine answers to which, so
+the core keeps that choice itself — written when it claims a name, and read back at every
+start. Renaming is then what the word means: the core dials the new name at once and still
+dials it after a restart, while the old name stays claimed and permanent, simply unserved.
+Picking off the registry's list instead — the oldest name, the newest, any of them — makes a
+rename a thing that undoes itself the next time the machine boots.
+
 **One body per person.** Two machines running one handle would be one identity with two
 memories, two ledgers and two presences. A second machine is either a second person or a
 migration — never a second body.

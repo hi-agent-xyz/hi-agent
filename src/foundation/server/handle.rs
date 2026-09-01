@@ -26,7 +26,16 @@ struct ClaimBody {
 /// reachable from its own machine only.
 pub async fn get_handle(State(state): State<Arc<AppState>>) -> Response {
     match community::current(&state.data_dir).await {
-        Ok(h) => axum::Json(h).into_response(),
+        // Which one of them this machine answers to rides along, because the list
+        // alone does not say: an account may hold three names and a core serves
+        // one. Reading the first of the list instead is what made a rename look
+        // like it had done nothing.
+        Ok(h) => {
+            let serving = crate::foundation::tunnel::choose(&state.data_dir, &h.handles);
+            let mut body = serde_json::to_value(&h).unwrap_or_else(|_| serde_json::json!({}));
+            body["serving"] = serde_json::json!(serving);
+            axum::Json(body).into_response()
+        }
         // No account, or no community to ask: this core has no name, which is a
         // normal state and not a failure. Answering with an error would make a
         // first run look broken on a screen whose whole job is to say what is
@@ -56,6 +65,12 @@ pub async fn post_handle(State(state): State<Arc<AppState>>, body: String) -> Re
     match community::claim(&state.data_dir, &handle).await {
         Ok(h) => {
             tracing::info!(handle = %h.handle, base_url = %h.base_url, "handle claimed");
+            // Recorded before it is dialled, and recorded whether or not it is:
+            // a claim is this machine choosing which of the account's names it
+            // answers to, and that choice has to survive a restart. Without it
+            // the next start read the oldest name off the registry's list, so a
+            // rename came back on its own at the first restart.
+            crate::foundation::tunnel::remember(&state.data_dir, &h.handle);
             // Reachable now, not at the next restart. The registry knows the name
             // the moment it is claimed, so the community starts routing it — and
             // a core that has not dialled answers that routing with "asleep".
@@ -84,9 +99,9 @@ pub async fn post_handle(State(state): State<Arc<AppState>>, body: String) -> Re
 /// nothing else takes one back: not an expiry, not a quiet month, not the
 /// community. So this exists, and `community::release` had no caller until it did.
 ///
-/// Stops serving immediately. The registry frees the name on return, and a tunnel
-/// left open would be this core still answering to a name it no longer owns —
-/// which the relay would then route to it.
+/// Stops serving immediately, if this was the name being served. The registry
+/// frees the name on return, and a tunnel left open would be this core still
+/// answering to a name it no longer owns — which the relay would then route to it.
 pub async fn delete_handle(State(state): State<Arc<AppState>>, body: String) -> Response {
     let Ok(req) = serde_json::from_str::<ClaimBody>(&body) else {
         return (StatusCode::BAD_REQUEST, "expected {handle}\n").into_response();
@@ -95,7 +110,20 @@ pub async fn delete_handle(State(state): State<Arc<AppState>>, body: String) -> 
     match community::release(&state.data_dir, &handle).await {
         Ok(()) => {
             tracing::info!(handle = %handle, "handle released");
-            crate::foundation::tunnel::stop();
+            // Only the name this machine was answering to. An account may hold
+            // three, and giving up one it was not serving is not a request to go
+            // unreachable.
+            match crate::foundation::tunnel::chosen(&state.data_dir) {
+                Some(served) if served == handle => {
+                    crate::foundation::tunnel::forget(&state.data_dir);
+                    crate::foundation::tunnel::stop();
+                }
+                Some(_) => {}
+                // Claimed before this core recorded which name it serves, so it
+                // cannot tell whether this was the one. Stop, as it always did:
+                // still answering to a released name is the worse of the two.
+                None => crate::foundation::tunnel::stop(),
+            }
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {

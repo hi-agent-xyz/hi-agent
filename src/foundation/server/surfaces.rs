@@ -118,10 +118,15 @@ pub(crate) async fn public_base_url(
     data_dir: &std::path::Path,
     headers: &HeaderMap,
 ) -> String {
+    // The name this core *serves*, not the first one the account ever took: a QR
+    // carrying a name nothing is dialling is a pairing that fails with "asleep"
+    // on the other device, which reads as the app being broken.
     let named = community::current(data_dir).await.ok().and_then(|names| {
+        let serving = crate::foundation::tunnel::choose(data_dir, &names.handles)?;
         names
             .handles
-            .first()
+            .iter()
+            .find(|h| h.handle == serving)
             .map(|h| h.base_url.trim().trim_end_matches('/').to_string())
             .filter(|base| !base.is_empty())
     });
