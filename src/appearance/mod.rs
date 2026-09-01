@@ -346,19 +346,63 @@ fn inject_importmap(html: String) -> String {
     }
 }
 
-/// Splice an import map script before the first `<script type="module"` in
-/// `html`. Pure (no embed access) so the ordering invariant is unit-testable.
-/// Returns `html` unchanged if it has no module script.
+/// Splice an import map script — and the preloads for what a view will import
+/// through it — before the first `<script type="module"` in `html`. Pure (no
+/// embed access) so the ordering invariant is unit-testable. Returns `html`
+/// unchanged if it has no module script.
 fn splice_importmap(html: &str, map_json: &str) -> String {
     let needle = "<script type=\"module\"";
     let Some(idx) = html.find(needle) else {
         return html.to_string();
     };
-    let tag = format!("<script type=\"importmap\">\n{map_json}\n    </script>\n    ");
+    let tag = format!(
+        "<script type=\"importmap\">\n{map_json}\n    </script>\n    {}",
+        view_preload_links(map_json)
+    );
     let mut out = String::with_capacity(html.len() + tag.len());
     out.push_str(&html[..idx]);
     out.push_str(&tag);
     out.push_str(&html[idx..]);
+    out
+}
+
+/// The specifiers **every** compiled view resolves through the map, whatever
+/// else it does: `react/jsx-runtime` because the compiler runs esbuild with
+/// `--jsx=automatic`, `react` because a view with state imports hooks, and
+/// `@hi/core` because a review surface re-reads itself with `useLive`.
+///
+/// Deliberately not the whole map. `motion/react` is 183 kB and two bundled
+/// views use it; the shadcn entries are a component library nobody loads all of.
+/// Preloading either would trade a round trip for bytes on a connection where
+/// bytes are the scarcer thing.
+const VIEW_PRELOAD_SPECIFIERS: [&str; 3] = ["react/jsx-runtime", "react", "@hi/core"];
+
+/// `<link rel="modulepreload">` for [`VIEW_PRELOAD_SPECIFIERS`].
+///
+/// **What this buys is a round trip, not bytes.** The three shims are ~1.7 kB
+/// between them and their own dependencies are already in the page's preload
+/// list. The cost they carry is *when they are discovered*: nothing in the
+/// document mentions them, so the browser learns they exist only after it has
+/// fetched and parsed a compiled view — which does not happen until the agent
+/// shows one. Relayed, every request on that chain is a full trip out through
+/// the community and back down the core's tunnel, and the face's cold path
+/// already runs six of them end to end. This deletes one of the last two,
+/// after which a shown view's module is the only thing still outstanding.
+///
+/// Emitted as root-absolute paths so `reroot` moves them under the community's
+/// subpath along with everything else the page emits.
+fn view_preload_links(map_json: &str) -> String {
+    let Ok(map) = serde_json::from_str::<serde_json::Value>(map_json) else {
+        return String::new();
+    };
+    let Some(imports) = map.get("imports").and_then(|imports| imports.as_object()) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for specifier in VIEW_PRELOAD_SPECIFIERS {
+        let Some(url) = imports.get(specifier).and_then(|url| url.as_str()) else { continue };
+        out.push_str(&format!("<link rel=\"modulepreload\" crossorigin href=\"{url}\">\n    "));
+    }
     out
 }
 
@@ -561,5 +605,62 @@ mod tests {
     fn splice_importmap_noops_without_module_script() {
         let html = "<head></head>";
         assert_eq!(splice_importmap(html, "{}"), "<head></head>");
+    }
+
+    /// **What a view will import is discovered from the document, not from the
+    /// view.** Nothing in the page names the shims a compiled view resolves
+    /// through the map, so without these links the browser cannot know they
+    /// exist until it has parsed a module that only arrives when the agent shows
+    /// something — an extra round trip on the relayed path, taken at the one
+    /// moment somebody is waiting to see a view.
+    ///
+    /// The absences are the other half of the rule: this is the three shims a
+    /// view always needs, not the map. `motion/react` is 183 kB.
+    #[test]
+    fn the_shims_every_view_needs_are_preloaded_and_the_rest_of_the_map_is_not() {
+        let map = r#"{"imports":{"@hi/core":"/assets/share-core.js",
+            "react":"/assets/share-react.js","react/jsx-runtime":"/assets/share-jsx.js",
+            "motion/react":"/assets/share-motion.js","@/components/ui/card":"/assets/ui-card.js"}}"#;
+        let html = r#"<head><script type="module" crossorigin src="/x.js"></script></head>"#;
+        let out = splice_importmap(html, map);
+
+        for preloaded in ["/assets/share-core.js", "/assets/share-react.js", "/assets/share-jsx.js"] {
+            assert!(
+                out.contains(&format!(r#"<link rel="modulepreload" crossorigin href="{preloaded}">"#)),
+                "{preloaded} is imported by every compiled view and must be preloaded: {out}"
+            );
+        }
+        assert!(!out.contains(r#"modulepreload" crossorigin href="/assets/share-motion.js""#));
+        assert!(!out.contains(r#"modulepreload" crossorigin href="/assets/ui-card.js""#));
+
+        // Still ahead of the module script, and after the map it belongs to.
+        let map_pos = out.find("type=\"importmap\"").expect("import map present");
+        let link_pos = out.find("modulepreload").expect("preload present");
+        let mod_pos = out.find("type=\"module\"").expect("module script present");
+        assert!(map_pos < link_pos && link_pos < mod_pos, "{out}");
+    }
+
+    /// The preloads are root-absolute like everything else the page emits, so
+    /// the community's subpath moves them with the rest. A link left at `/assets`
+    /// under `/ana` asks the *community* for the shim and preloads a 404 — which
+    /// is silent, and costs exactly the round trip the link was added to save.
+    #[test]
+    fn a_preload_follows_the_page_under_a_subpath() {
+        let map = r#"{"imports":{"react":"/assets/share-react.js"}}"#;
+        let html = r#"<head><script type="module" src="/x.js"></script></head>"#;
+        let out = reroot(&splice_importmap(html, map), "/ana");
+        assert!(
+            out.contains(r#"<link rel="modulepreload" crossorigin href="/ana/assets/share-react.js">"#),
+            "{out}"
+        );
+    }
+
+    /// A debug build's map, or a malformed one, must cost the page nothing more
+    /// than the preloads it cannot name.
+    #[test]
+    fn an_unreadable_map_yields_no_preloads() {
+        assert_eq!(view_preload_links("not json"), "");
+        assert_eq!(view_preload_links("{}"), "");
+        assert_eq!(view_preload_links(r#"{"imports":{"lodash":"/assets/l.js"}}"#), "");
     }
 }
