@@ -532,6 +532,17 @@ one tidying it may do, because a fold moves a promise where pruning would end on
 So every transition of a row that already exists — closing, reopening, standing a duty down —
 belongs to a [Task Manager](agents.md#task-manager), and no other *agent* may perform one.
 
+**One of those transitions is re-judging what kind of row it is.** The status word describes
+the promise, not the phase the work is in: a commitment with no ending is `serving` from the
+turn it is accepted, and a gate the person puts on its machinery — *not until I have seen a
+draft* — delays what may be installed, not what the row is. Filed the other way round it
+reads as a build project, and a build is finishable, so nothing downstream ever asks it for
+a way back or whether its machinery is alive. Cognition answers this once, in the turn it
+opens the row, and may not revisit it; so the second look is the manager's, on the evidence
+any sweep already holds — the title against the `created` line. It is the only transition
+that turns on no change in the work at all, which is why it needs saying: every other one
+has something that happened to prompt it.
+
 **The person is not one of the writers this constrains.** `PATCH /api/tasks/<subject>` sets any
 status from the board's own buttons, and that is the point of them: it is his ledger, the split
 above exists to stop a rung ruling on its own errand, and he is not a rung. It is worth naming

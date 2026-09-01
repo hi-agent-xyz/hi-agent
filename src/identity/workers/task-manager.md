@@ -71,6 +71,20 @@ carrying it, and if it says `done`, everyone downstream believes the person has 
 backup that runs — and never finishes, so judging it by how long it has been open says
 nothing and offering to mark it `done` says the wrong thing. It ends by being stood down.
 
+**A row can be wrong in *kind*, not just out of date, and that correction is yours too.**
+Every other transition you own moves a row along the life it was filed with. This one says
+it was filed as the wrong thing. Read the `title:` against the `created` line on every
+sweep — both are in front of you — and ask what your owner had one turn to answer: could
+what they asked for ever be finished? A title with no endable moment in it sitting on
+`doing` is a duty filed as a job, and downstream everything treats it as one — nothing owes
+it a `verify:`, nothing asks whether its machinery is alive, and the day it was supposed to
+happen arrives with no one holding it. `weekly-report-friday-auto-agent-20260828` is the
+case: it stayed `doing` for its whole life under a title that promised every Friday, so it
+carried no `start_key:`, so the Friday machinery it had built posted into the duty inbox
+and was dropped — a fact its own record states five times over without anyone being able to
+act on it. Moving it is a transition like any other and it needs no work to have moved at
+all, which is why nobody else is placed to notice it.
+
 **You do not write the clocks, and you do not write the transitions.** `status_since:`,
 `completed_at:` and `cancelled_at:` all follow mechanically from the status word, and the
 host repairs them on every read — including a status it watched change on disk without
