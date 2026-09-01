@@ -19,10 +19,6 @@ interface ChannelControlsProps {
   voiceOn: boolean;
   /** Mute/unmute the agent's voice. */
   onToggleVoice: () => void;
-  /** Open the system file picker as the keyboard/touch alternative to dropping. */
-  onPickFiles: () => void;
-  /** A file batch is currently being uploaded. */
-  fileSending: boolean;
   /** Close the agent's view — the conversation takes the screen back. */
   onCloseViews: () => void;
   /** Whether the views band is open. */
@@ -38,8 +34,18 @@ interface ChannelControlsProps {
  * present (no state-gated chrome) so a user who can't (or won't) use a given
  * channel still has a clear way in or out; the trailing reset closes the agent's
  * view, which gives the conversation the screen back.
- * Order: mic · speaker · text · attach · camera · views · reset, and every one
- * of them is always there — the cluster has no item that comes and goes.
+ * Order: mic · speaker · text · camera · views · reset, and every one of them is
+ * always there — the cluster has no item that comes and goes.
+ *
+ * **Handing over a file is not a channel, so it is not in the cluster.** There was
+ * an attach button that opened the system file picker, sitting between the text
+ * control and the camera as though files were a fifth channel to turn on. They are
+ * not: a file is a handed artifact, and the window already takes one dropped or
+ * pasted anywhere on it (`hooks/useHandoff`), so the button was a second door onto
+ * something that works everywhere — the same reason `factory/upload` was deleted.
+ * The cost is named rather than hidden: a touch device has no drop and no paste, so
+ * on a phone there is now no way to hand over a file at all. `/api/handoff` and
+ * `/up/<token>` are still standing and still have no caller.
  *
  * **Every control here does something, and none of them reports.** The cluster
  * used to open with a read-only status disc that drew whichever of six activities
@@ -77,8 +83,6 @@ export function ChannelControls({
   onToggleText,
   voiceOn,
   onToggleVoice,
-  onPickFiles,
-  fileSending,
   onCloseViews,
   viewsOpen,
   onToggleViews,
@@ -129,17 +133,6 @@ export function ChannelControls({
         aria-label={textOn ? "put the conversation away" : "open the conversation"}
       >
         <KeyboardGlyph />
-      </button>
-
-      <button
-        type="button"
-        className="hi-channel"
-        onClick={onPickFiles}
-        disabled={fileSending}
-        title={fileSending ? "sending files" : "attach files"}
-        aria-label={fileSending ? "files are uploading" : "attach files"}
-      >
-        <AttachGlyph />
       </button>
 
       <button
@@ -251,20 +244,6 @@ function KeyboardGlyph() {
         stroke="currentColor"
         strokeWidth="1.6"
         strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function AttachGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-      <path
-        d="m9 12 5.8-5.8a3 3 0 1 1 4.2 4.2l-7.5 7.5a5 5 0 0 1-7.1-7.1L12 3.2"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
       />
     </svg>
   );

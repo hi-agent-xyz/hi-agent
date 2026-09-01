@@ -328,10 +328,12 @@ export function useHandoff({
     };
   }, [clearStatusTimer]);
 
+  // No `sendFiles` and no `isSending`: both existed for the attach button's file
+  // picker, and files now arrive only by drop or paste, which this hook handles
+  // itself. What it still hands back is what the host actually renders — the
+  // feedback overlay and its two verbs.
   return {
     feedback,
-    isSending: feedback?.state === "sending",
-    sendFiles,
     retry,
     dismiss,
     onFileDragEnter,

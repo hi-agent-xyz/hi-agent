@@ -62,7 +62,6 @@ export function Shell() {
   const [bandOpen, setBandOpen] = useState(false);
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   // Stable, because the composer's start-typing-to-open listener depends on it.
   const openConversation = useCallback(() => setTextChannel(true), [setTextChannel]);
@@ -237,8 +236,6 @@ export function Shell() {
           onToggleText={() => setTextChannel(!ch.text)}
           voiceOn={ch.audioOutput}
           onToggleVoice={ch.toggleAudioOutput}
-          onPickFiles={() => fileInputRef.current?.click()}
-          fileSending={handoff.isSending}
           onCloseViews={clear}
           viewsOpen={bandOpen}
           onToggleViews={() => setBandOpen((open) => !open)}
@@ -250,18 +247,6 @@ export function Shell() {
           onDismiss={handoff.dismiss}
         />
       </div>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          const files = event.target.files;
-          if (files?.length) void handoff.sendFiles(Array.from(files));
-          event.target.value = "";
-        }}
-      />
     </div>
   );
 }
