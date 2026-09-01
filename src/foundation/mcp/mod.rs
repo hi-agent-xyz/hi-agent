@@ -540,7 +540,9 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 "hi_read_facet",
                 "Read your current understanding of one subject before you rewrite it, so you fold new \
                  episodes into what you already know instead of starting blank. Returns the facet's \
-                 current text, or a note that none exists yet.",
+                 current text, or — when nothing is filed under that name — the subjects that ARE \
+                 filed in that dimension, near-name matches first, so you write the existing subject \
+                 rather than coining a sibling beside it.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -2097,7 +2099,10 @@ async fn reflection_read_facet(data_dir: &std::path::Path, args: &Value) -> Valu
     }
     match crate::mind::memory::facets::read_facet(data_dir, dim, subject).await {
         Ok(Some(content)) => tool_ok(&content),
-        Ok(None) => tool_ok("(no facet yet — this subject has no recorded understanding)"),
+        // A miss hands back the subjects that *are* filed, near-name matches first. Saying
+        // only "no facet yet" is the refusal that gets answered by coining a near-duplicate
+        // — see [`crate::mind::memory::facets::miss`] for the ledger row it cost.
+        Ok(None) => tool_ok(&crate::mind::memory::facets::miss(data_dir, dim, subject).await),
         Err(err) => tool_error(&err.to_string()),
     }
 }
@@ -2114,8 +2119,19 @@ async fn reflection_update_facet(data_dir: &std::path::Path, args: &Value) -> Va
     if content.trim().is_empty() {
         return tool_error("hi_update_facet requires non-empty `content`");
     }
+    // Whether this write opens a subject or rewrites one, established before the write that
+    // erases the difference. A first write to `tasks/` opens a ledger row — a promise the
+    // list now says is owed — and a result reading "updated facet" is how one gets opened
+    // without the writer ever seeing that it did.
+    let existed = crate::mind::memory::facets::facet_exists(data_dir, dim, subject).await;
     match crate::mind::memory::facets::update_facet(data_dir, dim, subject, content).await {
-        Ok(refname) => tool_ok(&format!("updated facet {refname}")),
+        Ok(refname) if existed => tool_ok(&format!("updated facet {refname}")),
+        Ok(refname) if refname.starts_with("tasks/") => tool_ok(&format!(
+            "opened a NEW ledger row {refname} — the list now says this is owed. If it \
+             duplicates a row already filed, the fold is a task manager's: carry this into \
+             the survivor and close this one `cancelled`.",
+        )),
+        Ok(refname) => tool_ok(&format!("created facet {refname} (no facet existed under that name)")),
         Err(err) => tool_error(&err.to_string()),
     }
 }

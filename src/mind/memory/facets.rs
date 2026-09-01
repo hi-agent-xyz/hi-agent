@@ -73,6 +73,126 @@ pub async fn read_facet(
     }
 }
 
+/// Whether `dim`/`subject` has prose filed under it. A subject "exists" once it has a
+/// [`FACET_FILE`] — a `people` dir holding only biometric galleries is a cluster the mind
+/// has not modeled, the same rule [`facet_subject_index`] applies.
+pub async fn facet_exists(data_dir: &Path, dim: &str, subject: &str) -> bool {
+    tokio::fs::try_exists(facet_path(data_dir, dim, subject)).await.unwrap_or(false)
+}
+
+/// How many unrelated subjects a miss lists back before it starts counting them instead.
+/// Near-name matches are never subject to this — they are the answer, and one live store
+/// carries 140 subjects under `tasks/`, so a flat alphabetical cut would hide the sibling
+/// it exists to surface.
+const OFFERED_SUBJECTS: usize = 30;
+
+/// The subjects filed under one dimension, sorted. Empty when the dimension has none —
+/// which is not an error: a dimension is a directory that appears when something is
+/// written into it.
+pub async fn subjects_in(data_dir: &Path, dim: &str) -> Vec<String> {
+    let dir = layout::facets_dir(data_dir).join(slug(dim));
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    while let Ok(Some(ent)) = entries.next_entry().await {
+        if !ent.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+            continue; // a stray file under <dim>/ is not a subject
+        }
+        let Ok(subject) = ent.file_name().into_string() else {
+            continue;
+        };
+        if subject.is_empty() || subject.starts_with('.') {
+            continue;
+        }
+        if tokio::fs::try_exists(ent.path().join(FACET_FILE)).await.unwrap_or(false) {
+            out.push(subject);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Two subject slugs that are plausibly the same thing written twice.
+///
+/// The shapes that actually collide here are the ones the store itself mints: a
+/// [`super::tasks::fresh_subject`] sibling (`base`, `base-2`) and a dated row
+/// (`base-20260901`), so one slug being a prefix of the other is the strong signal. The
+/// token rule catches the looser case — the same name reached by a different route, where
+/// neither is a prefix — and takes two shared words rather than one so that a `weekly-…`
+/// row does not claim every other `weekly-…` row as its twin.
+fn near(a: &str, b: &str) -> bool {
+    if a.starts_with(b) || b.starts_with(a) {
+        return true;
+    }
+    let rhs: Vec<&str> = b.split('-').filter(|t| !t.is_empty()).collect();
+    a.split('-').filter(|t| !t.is_empty() && rhs.contains(t)).count() >= 2
+}
+
+/// What to say when nothing is filed under `dim`/`subject`.
+///
+/// **A miss says what it actually established and hands back what exists** — the rule
+/// [`data.md`](../../../docs/arch/data.md) generalises from `hi_create_worker`'s refusal:
+/// where code cannot resolve what the agent meant, it narrows the question and gives it
+/// back. The line this replaced ("no facet yet — this subject has no recorded
+/// understanding") asserted the half that was never checked, and handed back nothing.
+///
+/// It cost a duplicate ledger row on 2026-09-01: reflection asked for
+/// `tasks/explain-nyquist-theorem-one-pager`, was told there was no understanding of it,
+/// and wrote one — opening a second `doing` row for a job already filed one directory
+/// away as `explain-nyquist-theorem-one-pager-20260901`, and already `done`. Every fact
+/// needed to prevent that was on disk at the moment of the miss.
+///
+/// **Any status, not just the open ones.** [`super::tasks::named`] offers the *open*
+/// ledger, which is right for a dispatch looking for a row to staff. It is wrong here:
+/// the row that gets duplicated is most often one that was just closed.
+pub async fn miss(data_dir: &Path, dim: &str, subject: &str) -> String {
+    use std::fmt::Write as _;
+
+    let dim_s = slug(dim);
+    let subj_s = slug(subject);
+    let mut out = format!("nothing is filed under `{dim_s}/{subj_s}`.");
+
+    let subjects = subjects_in(data_dir, &dim_s).await;
+    if subjects.is_empty() {
+        let _ = write!(out, " Nothing is filed under `{dim_s}/` at all.");
+        return out;
+    }
+
+    let (close, rest): (Vec<_>, Vec<_>) =
+        subjects.iter().partition(|s| near(s.as_str(), &subj_s));
+    if !close.is_empty() {
+        let _ = write!(out, "
+
+Filed under `{dim_s}/` and close to that name:");
+        for s in &close {
+            let _ = write!(out, "
+- `{dim_s}/{s}`");
+        }
+        let _ = write!(
+            out,
+            "
+
+If one of those is the same subject, write that one instead of coining a              sibling beside it."
+        );
+    }
+    if !rest.is_empty() {
+        let _ = write!(out, "
+
+Also filed under `{dim_s}/`:");
+        for s in rest.iter().take(OFFERED_SUBJECTS) {
+            let _ = write!(out, "
+- `{dim_s}/{s}`");
+        }
+        if rest.len() > OFFERED_SUBJECTS {
+            let _ = write!(out, "
+- (and {} more)", rest.len() - OFFERED_SUBJECTS);
+        }
+    }
+    out
+}
+
 /// Write `content` as the whole facet for `dim`/`subject` (regenerate, don't
 /// patch). Returns the canonical `<dim>/<subject>` ref (post-[`slug`]) so the
 /// caller can confirm where it landed. Atomic: a temp sibling is renamed into
@@ -417,5 +537,69 @@ mod tests {
         update_facet(dir.path(), "projects", "Kyoto Trip", "x").await.unwrap();
         let idx = facet_subject_index(dir.path()).await.unwrap();
         assert_eq!(idx, vec!["people/alice", "people/bob", "projects/kyoto-trip"]);
+    }
+
+    /// The 2026-09-01 duplicate, as the store saw it: the row was filed under a dated
+    /// subject and closed, and the miss that preceded the second row named the undated
+    /// stem. The answer has to carry the dated row even though it is no longer open.
+    #[tokio::test]
+    async fn miss_offers_the_dated_sibling_of_a_closed_row() {
+        let dir = tempfile::tempdir().unwrap();
+        update_facet(dir.path(), "tasks", "explain-nyquist-theorem-one-pager-20260901", "done")
+            .await
+            .unwrap();
+        update_facet(dir.path(), "tasks", "manage-auto-deployer-lifecycle", "serving")
+            .await
+            .unwrap();
+
+        let answer = miss(dir.path(), "tasks", "explain-nyquist-theorem-one-pager").await;
+        assert!(answer.starts_with("nothing is filed under `tasks/explain-nyquist-theorem-one-pager`."));
+        let (close, also) = answer.split_once("Also filed under").unwrap();
+        assert!(close.contains("`tasks/explain-nyquist-theorem-one-pager-20260901`"));
+        assert!(!close.contains("manage-auto-deployer-lifecycle"));
+        assert!(also.contains("`tasks/manage-auto-deployer-lifecycle`"));
+    }
+
+    #[tokio::test]
+    async fn miss_says_only_what_it_established_when_the_dimension_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let answer = miss(dir.path(), "people", "alice").await;
+        assert!(answer.contains("nothing is filed under `people/alice`"));
+        assert!(answer.contains("Nothing is filed under `people/` at all."));
+    }
+
+    /// The unrelated-subject list is capped; the near matches it exists to surface are not.
+    #[tokio::test]
+    async fn miss_caps_the_unrelated_list_but_never_the_near_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 0..OFFERED_SUBJECTS + 5 {
+            update_facet(dir.path(), "tasks", &format!("unrelated-row-{n:03}"), "x").await.unwrap();
+        }
+        update_facet(dir.path(), "tasks", "deploy-songguo-20260821", "x").await.unwrap();
+        update_facet(dir.path(), "tasks", "deploy-songguo-2", "x").await.unwrap();
+
+        let answer = miss(dir.path(), "tasks", "deploy-songguo").await;
+        let (close, also) = answer.split_once("Also filed under").unwrap();
+        assert!(close.contains("deploy-songguo-20260821"));
+        assert!(close.contains("deploy-songguo-2"));
+        assert!(also.contains("(and 5 more)"));
+    }
+
+    #[tokio::test]
+    async fn near_needs_two_shared_words_when_neither_is_a_prefix() {
+        assert!(near("explain-nyquist-theorem-one-pager-20260901", "explain-nyquist-theorem-one-pager"));
+        assert!(near("weekly-report-humanize-20260823", "humanize-weekly-report"));
+        // One shared word is how every `weekly-…` row would claim every other one.
+        assert!(!near("weekly-report-20260817", "weekly-groceries"));
+    }
+
+    #[tokio::test]
+    async fn facet_exists_tracks_prose_not_the_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!facet_exists(dir.path(), "people", "alice").await);
+        tokio::fs::create_dir_all(subject_dir(dir.path(), "people", "alice")).await.unwrap();
+        assert!(!facet_exists(dir.path(), "people", "alice").await);
+        update_facet(dir.path(), "people", "alice", "x").await.unwrap();
+        assert!(facet_exists(dir.path(), "people", "alice").await);
     }
 }
