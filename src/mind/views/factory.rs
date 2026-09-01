@@ -99,6 +99,9 @@ const PEOPLE_REVIEW: &str = include_str!("factory/people-review.jsx");
 /// same idea in its own voice, and owns the canvas like every other bundled system
 /// surface.
 const WELCOME: &str = include_str!("factory/welcome.jsx");
+/// The ref the agent shows it under, and the ref the inventory leaves out of the
+/// bookmarks row (`GET /api/views`). Named here because both readers must agree.
+pub const WELCOME_REF: &str = "factory/welcome";
 /// The real, sealed "hi" mark (red h + blue i, white die-cut, soft shadow) the welcome
 /// poster shows — the exact app icon, served from the views tree at
 /// `/views/factory/hi-mark.svg`, never re-typed in a system font.
@@ -170,18 +173,66 @@ pub fn out_of_energy_view() -> &'static str {
 /// each on every boot so a binary update reseeds the latest (mirrors
 /// [`crate::identity::install_prompts`]). The views tree is disposable, so
 /// re-seeding is the point, not a hazard.
+///
+/// **Seeding is a replace, not an add: a file this binary does not ship is deleted.**
+/// Overwriting alone made retiring a surface impossible — `factory/upload` was deleted
+/// from the binary in the commit that removed the door, and every instance that had
+/// booted before it kept `upload.jsx` on disk forever, where the inventory
+/// (`GET /api/views`) went on reading it as a system view and the band went on offering
+/// `Upload` in the bookmarks row. A door the binary no longer has cannot be a place a
+/// person is sent. Only `factory/` is swept, and only what this function wrote is kept;
+/// `_`-prefixed entries are left alone, being tool dirs rather than views, and the
+/// agent's own work lives under `<project>/`, not here.
 pub fn install_factory_views(data_dir: &Path) -> io::Result<()> {
     let dir = data_dir.join("views").join("factory");
     rename_legacy_dir(&data_dir.join("views").join("_builtin"), &dir);
     std::fs::create_dir_all(&dir)?;
+    let mut shipped: Vec<String> = vec![
+        "people-review.jsx".to_string(),
+        "welcome.jsx".to_string(),
+        "hi-mark.svg".to_string(),
+        "vendor-outage.jsx".to_string(),
+    ];
     std::fs::write(dir.join("people-review.jsx"), PEOPLE_REVIEW)?;
     std::fs::write(dir.join("welcome.jsx"), WELCOME)?;
     std::fs::write(dir.join("hi-mark.svg"), WELCOME_MARK)?;
     std::fs::write(dir.join("vendor-outage.jsx"), OUT_OF_ENERGY)?;
     for (name, source) in REVIEW_VIEWS {
-        std::fs::write(dir.join(format!("{name}.jsx")), source)?;
+        let file = format!("{name}.jsx");
+        std::fs::write(dir.join(&file), source)?;
+        shipped.push(file);
     }
+    sweep_retired(&dir, &shipped);
     Ok(())
+}
+
+/// Delete everything in `factory/` that this binary did not just write.
+///
+/// Best-effort: a sweep that cannot read the directory, or cannot remove one entry,
+/// leaves the rest of the boot alone — a stale surface in the row is a smaller failure
+/// than a core that will not start. It is not silent, though; each removal is logged,
+/// because the one thing that could be wrong here is deleting something a person wanted.
+fn sweep_retired(dir: &Path, shipped: &[String]) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // `_compiled/`, `_shots/` and whatever tool dir comes next are not views.
+        if name.starts_with('_') || shipped.iter().any(|kept| kept == &name) {
+            continue;
+        }
+        let path = entry.path();
+        let removed = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match removed {
+            Ok(()) => tracing::info!(view = %name, "removed a retired factory view"),
+            Err(error) => tracing::warn!(view = %name, %error, "could not remove a retired factory view"),
+        }
+    }
 }
 
 /// Move a pre-rename `_builtin/` tree to `factory/`, once, if it is still there.
@@ -264,6 +315,37 @@ mod tests {
         // Reseeding is idempotent (overwrite, not append) — a second boot is clean.
         install_factory_views(dir.path()).unwrap();
         assert_eq!(std::fs::read_to_string(builtin.join("welcome.jsx")).unwrap(), WELCOME);
+    }
+
+    /// **A retired surface leaves the tree.** `factory/upload` was deleted from the
+    /// binary and stayed on disk on every instance that had already booted, because
+    /// seeding only ever overwrote. The inventory kept reading it as a system view, so
+    /// the bookmarks row kept offering a door the binary no longer had.
+    #[test]
+    fn a_view_this_binary_no_longer_ships_is_swept_out() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_views(dir.path()).unwrap();
+        let factory = dir.path().join("views").join("factory");
+
+        // A surface from an older binary, and a stale directory beside it.
+        std::fs::write(factory.join("upload.jsx"), "// purpose: retired\n").unwrap();
+        std::fs::create_dir_all(factory.join("old")).unwrap();
+        std::fs::write(factory.join("old").join("entry.jsx"), "// purpose: retired\n").unwrap();
+        // A tool dir, which is not a view and must survive.
+        std::fs::create_dir_all(factory.join("_compiled")).unwrap();
+
+        install_factory_views(dir.path()).unwrap();
+
+        assert!(!factory.join("upload.jsx").exists(), "a retired view is still on disk");
+        assert!(!factory.join("old").exists(), "a retired directory is still on disk");
+        assert!(factory.join("_compiled").is_dir(), "a tool dir was swept");
+        // And everything this binary does ship is still there.
+        assert!(factory.join("welcome.jsx").is_file());
+        assert!(factory.join("hi-mark.svg").is_file());
+        assert!(factory.join("vendor-outage.jsx").is_file());
+        for (name, _) in REVIEW_VIEWS {
+            assert!(factory.join(format!("{name}.jsx")).is_file(), "{name} was swept");
+        }
     }
 
     #[test]

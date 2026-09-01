@@ -136,6 +136,13 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
 /// taken down by [`ViewBus::reconcile`](super::ViewBus::reconcile) against a live
 /// process level, and offering it as a place a person can go would let them summon a
 /// vendor outage that isn't happening.
+///
+/// **And so is the welcome poster, for the same reason.** `factory/welcome` is a moment,
+/// not a place: the agent shows it the once, on a genuine first meeting, while it says
+/// the same thing in its own voice. Listed, it sat in the bookmarks row beside Tasks and
+/// Drive — a standing door back to being greeted for the first time, which is the one
+/// thing that cannot happen twice. It is still seeded and still shown; it is just not
+/// somewhere a person is offered.
 pub async fn list_views(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
@@ -299,6 +306,7 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
                 .join("/");
             if !crate::mind::views::valid_ref(&view_ref)
                 || view_ref == crate::mind::views::factory::OUT_OF_ENERGY_REF
+                || view_ref == crate::mind::views::factory::WELCOME_REF
             {
                 continue;
             }
@@ -546,5 +554,24 @@ mod tests {
         let mut refs: Vec<String> = found.into_iter().map(|v| v.view_ref).collect();
         refs.sort();
         assert_eq!(refs, vec!["factory/tasks".to_string(), "notes/board".to_string()]);
+    }
+
+    /// The two the host owns the timing of: the condition notice, which would let a
+    /// person summon an outage that isn't happening, and the welcome poster, which is a
+    /// first meeting and cannot be gone back to. Both are still seeded and still shown —
+    /// they are just not places the row offers.
+    #[tokio::test]
+    async fn the_hosts_own_two_are_not_places_a_person_can_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("views");
+        std::fs::create_dir_all(root.join("factory")).unwrap();
+        for name in ["tasks", "welcome", "vendor-outage"] {
+            std::fs::write(root.join(format!("factory/{name}.jsx")), "x").unwrap();
+        }
+
+        let mut found = Vec::new();
+        collect_views(&root, &root, &mut found).await;
+        let refs: Vec<String> = found.into_iter().map(|v| v.view_ref).collect();
+        assert_eq!(refs, vec!["factory/tasks".to_string()]);
     }
 }
