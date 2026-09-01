@@ -409,11 +409,20 @@ export function useAgentSession(): AgentSession {
   // AudioBus to already exist (built in startSession).
   const enableAudio = useCallback(async () => {
     const audioBus = busRef.current;
-    // No session yet, already live, or a start is already in flight. The
-    // micStartingRef check closes the async gap below: micRef is only set after
-    // two awaits, so without it a concurrent second call would slip past and
-    // open a duplicate socket.
-    if (!audioBus || micRef.current || micStartingRef.current) return;
+    // Web Audio itself never came up (`startSession`'s catch — no AudioContext
+    // constructor at all). Say so rather than returning into the void: a tap
+    // that changes nothing on screen is indistinguishable from a broken button,
+    // and this guard silently swallowing every tap is exactly how a dead mic
+    // looked from the outside.
+    if (!audioBus) {
+      setAudioError("audio is unavailable here");
+      return;
+    }
+    // Already live, or a start is already in flight. The micStartingRef check
+    // closes the async gap below: micRef is only set after two awaits, so
+    // without it a concurrent second call would slip past and open a duplicate
+    // socket.
+    if (micRef.current || micStartingRef.current) return;
     micStartingRef.current = true;
     const gen = ++micGenRef.current;
     // True once a teardown (disableAudio/unmount) has superseded this start.
@@ -423,9 +432,13 @@ export function useAgentSession(): AgentSession {
       // may have been parked since the last time we looked (autoplay policy at
       // startup, or WebKit interrupting it while the window was in the
       // background), and a mic wired into a parked context renders nothing while
-      // reporting itself on. A rejected resume is not a mic failure — the
-      // watchdog below keeps trying.
-      await audioBus.resume().catch(() => {});
+      // reporting itself on. Not awaited: this call is the one that runs inside
+      // the tap, which is the gesture iOS wants, but WebKit's answer to a resume
+      // it won't honour is a promise that never settles — and waiting on that
+      // would strand the acquisition here, before `getUserMedia` is ever
+      // reached. A resume that doesn't take is not a mic failure; the watchdog
+      // below keeps trying.
+      void audioBus.resume().catch(() => {});
       const stream = await navigator.mediaDevices.getUserMedia({
         // echoCancellation MUST stay on: with the mic and speaker both open, the
         // agent's own TTS loops back into the mic and gets re-transcribed. (We
@@ -539,7 +552,10 @@ export function useAgentSession(): AgentSession {
       busy = true;
       try {
         if (!bus.running) {
-          await bus.resume().catch(() => {});
+          // Fire and let the next tick judge it — awaiting a resume WebKit has
+          // decided not to honour never returns, and `busy` would stay set,
+          // which kills the watchdog for the rest of the session.
+          void bus.resume().catch(() => {});
           return;
         }
         console.debug("[mic] audio thread went quiet — re-acquiring the device");
@@ -672,19 +688,33 @@ export function useAgentSession(): AgentSession {
     void (async () => {
       try {
         const audioBus = new AudioBus();
-        await audioBus.resume();
-        if (audioBus.ctx.state !== "running") {
-          const events = ["pointerdown", "keydown", "touchstart"];
-          // Capture, so this is a sensor for *any* interaction rather than a key
-          // handler: keys typed into host chrome stop at the document and never
-          // reach the window (`lib/keyboard.ts`), and the first thing a person
-          // does is often type a message.
-          const resumeOnGesture = () => {
-            void audioBus.resume();
-            for (const ev of events) window.removeEventListener(ev, resumeOnGesture, true);
-          };
-          for (const ev of events) window.addEventListener(ev, resumeOnGesture, true);
-        }
+        // Kicked, never waited on. iOS WebKit refuses to start an AudioContext
+        // outside a user gesture — `AudioContext::constructCommon` takes the
+        // restriction from the page's "requires a user gesture for audio
+        // playback", which an iOS WKWebView sets by default and a macOS one
+        // does not, and which is why only the phone showed this. It refuses by
+        // rejecting or by never settling the promise at all.
+        // Awaiting it here made that refusal fatal to everything below: `busRef`
+        // stayed null, and every later mic tap hit `enableAudio`'s `!audioBus`
+        // guard and returned — a button that did nothing, said nothing, and
+        // never prompted, on a face whose camera worked (vision touches no
+        // AudioContext). A parked context is a normal state, not a failure; the
+        // gesture listener below and `enableAudio`'s own resume un-park it.
+        void audioBus.resume().catch(() => {});
+        // Unconditional: a context is `suspended` the instant it is built and
+        // the resume above has not settled yet, so there is nothing to test.
+        // The listener is a self-removing one-shot and resuming a running
+        // context is a no-op, so arming it when it wasn't needed costs nothing.
+        const events = ["pointerdown", "keydown", "touchstart"];
+        // Capture, so this is a sensor for *any* interaction rather than a key
+        // handler: keys typed into host chrome stop at the document and never
+        // reach the window (`lib/keyboard.ts`), and the first thing a person
+        // does is often type a message.
+        const resumeOnGesture = () => {
+          void audioBus.resume().catch(() => {});
+          for (const ev of events) window.removeEventListener(ev, resumeOnGesture, true);
+        };
+        for (const ev of events) window.addEventListener(ev, resumeOnGesture, true);
         const voice = new VoicePlayer(
           audioBus,
           () => setTtsPlaying(true),

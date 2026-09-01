@@ -191,7 +191,12 @@ function AttachmentView({ attachment }: { attachment: NonNullable<ChatMessage["a
     );
   }
   if (attachment.mime.startsWith("video/")) {
-    return <video src={src} controls className="max-h-80 w-auto max-w-full rounded-[10px]" />;
+    // `playsInline` for the same reason the self-view carries it: without it an
+    // iPhone takes any playing video to its own fullscreen player, and an
+    // attachment is part of the message it arrived in, not a place to be sent.
+    return (
+      <video src={src} controls playsInline className="max-h-80 w-auto max-w-full rounded-[10px]" />
+    );
   }
   return (
     <a href={src} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">

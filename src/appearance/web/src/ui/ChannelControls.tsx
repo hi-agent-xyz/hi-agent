@@ -83,11 +83,23 @@ export function ChannelControls({
   viewsOpen,
   onToggleViews,
 }: ChannelControlsProps) {
+  // A channel that refused to open has to say so where it can be read. `title`
+  // is the desktop half of that and nothing at all on a phone, where a tap that
+  // leaves the button exactly as it was is the entire report — which is how a
+  // mic that never opened read as a button that ignored presses.
+  const note = audioError ?? videoError ?? null;
+
   return (
     <div className="hi-channels" role="group" aria-label="channels">
+      {note && (
+        <p className="hi-channel-note" role="status">
+          {note}
+        </p>
+      )}
+
       <button
         type="button"
-        className={`hi-channel${audioOn ? " is-on" : ""}`}
+        className={`hi-channel${audioOn ? " is-on" : ""}${audioError ? " is-error" : ""}`}
         onClick={onToggleAudio}
         title={audioError ?? (audioOn ? "mic on — tap to mute" : "mic off — tap to listen")}
         aria-pressed={audioOn}
@@ -132,7 +144,7 @@ export function ChannelControls({
 
       <button
         type="button"
-        className={`hi-channel${videoOn ? " is-on" : ""}`}
+        className={`hi-channel${videoOn ? " is-on" : ""}${videoError ? " is-error" : ""}`}
         onClick={onToggleVideo}
         title={videoError ?? (videoOn ? "camera on — tap to turn off" : "camera off — tap to turn on")}
         aria-pressed={videoOn}

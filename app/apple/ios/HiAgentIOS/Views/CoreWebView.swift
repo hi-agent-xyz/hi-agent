@@ -22,6 +22,24 @@ struct CoreWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        // Both of these are permissive by default on macOS and restrictive on
+        // iOS, which is the whole reason the same face behaves differently here.
+        //
+        // `mediaTypesRequiringUserActionForPlayback` defaults to
+        // `WKAudiovisualMediaTypeAudio` on iOS and to none on macOS — audio,
+        // and on this SDK only audio, needs a user gesture. That is not just
+        // about `<audio>`: WebKit hangs the same restriction on the page's
+        // AudioContext, which is the graph the *microphone* runs through. The
+        // face builds that context on load, where there is no gesture, so the
+        // mic had nothing to attach to while the camera — which touches no
+        // AudioContext, and isn't gated here anyway — worked. The agent's own
+        // voice is silenced by it too.
+        //
+        // `allowsInlineMediaPlayback` is false on iOS: video plays fullscreen
+        // instead of in the element, which would throw the camera self-view out
+        // of the page the moment it starts.
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.allowsInlineMediaPlayback = true
         configuration.userContentController.add(
             context.coordinator,
             name: Coordinator.sessionMessageName

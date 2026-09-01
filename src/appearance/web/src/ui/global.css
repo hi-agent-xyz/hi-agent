@@ -81,6 +81,9 @@
   --scrim-ink: rgba(255, 252, 246, 0.96);
   --scrim-edge: rgba(255, 252, 246, 0.24);
   --scrim-accent: #e0975a;
+  /* The dark skin's danger, for the same reason the accent is: the disc is dark
+     under both skins, and the light skin's deeper red lands too close to it. */
+  --scrim-danger: #ff7b78;
 
   --selection: rgba(192, 106, 63, 0.22);
   --selfview-veil: rgba(244, 237, 224, 0.34);
@@ -1061,6 +1064,41 @@ button:where(:not([data-slot])) {
   border-color: var(--scrim-accent);
   box-shadow: 0 0 0 1px var(--accent-soft), 0 1px 3px var(--shadow-strong),
     0 8px 24px var(--shadow);
+}
+
+/* A channel that was asked to open and couldn't. It reads as off — because it is
+   off — with the ring saying the difference between "off" and "wouldn't open",
+   which is the whole distinction a tap that appears to do nothing destroys. The
+   words are in the note above the cluster; this is what points at which control
+   they are about. */
+.hi-channel.is-error {
+  color: var(--scrim-danger);
+  border-color: var(--scrim-danger);
+}
+
+/* The note itself: one line of plain words above the cluster, in the same scrim
+   the discs wear, for the same reason — it floats over whatever the agent
+   painted. `role="status"` on the element, so it is spoken as well as shown.
+   Absolutely placed against the fixed cluster, so it never widens the row or
+   pushes a control off the corner. */
+.hi-channel-note {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  max-width: min(64vw, 320px);
+  margin: 0;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--scrim-edge);
+  background: var(--scrim-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--scrim-ink);
+  box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: right;
+  text-wrap: balance;
 }
 
 /* --- A reply being written --------------------------------------------
