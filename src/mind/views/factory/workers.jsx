@@ -513,7 +513,7 @@ export default function Workers() {
 
       {open?.kind === "session" && <Session addr={open} onClose={() => setOpen(null)} />}
       {open?.kind === "channel" && (
-        <Channel key={`${open.a} ${open.b}`} pair={open} onClose={() => setOpen(null)} />
+        <Channel key={`${open.a}\u0000${open.b}`} pair={open} onClose={() => setOpen(null)} />
       )}
     </div>
   );
@@ -1844,7 +1844,7 @@ const CSS = `
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-    padding: max(28px, var(--hi-safe-top)) clamp(16px, 3vw, 44px) 0;
+    padding: max(20px, var(--hi-safe-top)) clamp(14px, 4vw, 44px) 0;
   }
 
   /* What is running, given the whole frame whether or not it needs it — and taller than the
@@ -1913,7 +1913,7 @@ const CSS = `
 
   .hi-workers__h1 {
     margin: 0;
-    font-size: 30px;
+    font-size: clamp(22px, 6vw, 30px);
     font-weight: 800;
   }
 
@@ -2356,7 +2356,10 @@ const CSS = `
 
   .hi-workers__band-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+    /* min(), so the floor yields to a narrower container instead of taking it: a
+       bare 228px does not overflow on a phone, it quietly leaves one card per row
+       at whatever width the row is, which reads as a layout choice. */
+    grid-template-columns: repeat(auto-fill, minmax(min(228px, 100%), 1fr));
     grid-auto-rows: var(--w-ended-h);
     gap: var(--w-gap);
   }

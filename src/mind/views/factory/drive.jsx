@@ -173,10 +173,10 @@ function short(iso) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   head: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 20 },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0 },
   count: { fontSize: 13, color: "var(--fg-mute)", fontWeight: 600 },
 
   empty: { padding: "46px 8px", textAlign: "center" },
@@ -190,13 +190,17 @@ const S = {
   shelfEmpty: { fontSize: 13, color: "var(--fg-mute)", padding: "2px 2px 4px" },
 
   list: { display: "flex", flexDirection: "column", gap: 6 },
-  row: { display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit",
+  // The row wraps, and the filename claims a floor of 150px before it will shrink.
+  // Four fixed-width children on a phone left the name — the only part of the row
+  // anyone is reading for — with about 40px and an ellipsis; letting size and date
+  // fall to a second line costs a line and keeps the file identifiable.
+  row: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, textDecoration: "none", color: "inherit",
     background: "var(--surface-strong)", borderRadius: 13, boxShadow: "var(--v-shadow)",
     padding: "11px 14px", cursor: "pointer" },
   ext: { flex: "none", width: 40, fontSize: 10.5, fontWeight: 800, letterSpacing: ".04em",
     textTransform: "uppercase", color: "var(--accent)", background: "var(--accent-wash)",
     borderRadius: 7, padding: "5px 0", textAlign: "center" },
-  name: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-.01em",
+  name: { flex: "1 1 150px", minWidth: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-.01em",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   size: { flex: "none", fontSize: 12.5, color: "var(--fg-mute)", width: 64, textAlign: "right" },
   when: { flex: "none", fontSize: 12.5, color: "var(--fg-mute)", width: 82, textAlign: "right" },

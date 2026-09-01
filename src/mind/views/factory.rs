@@ -8,11 +8,11 @@
 //! ordinary `.jsx` in the (disposable, re-seeded) tree. They live under
 //! `factory/` so they never collide with the agent's own `<project>/` work.
 //!
-//! # Four rules every view in here follows
+//! # Five rules every view in here follows
 //!
 //! These hold for the *system* surfaces only. An agent-authored content view is
-//! deliberately free of all three — `aesthetic.md` says its look comes from its subject
-//! and there is no house style on purpose.
+//! deliberately free of every one of them — `aesthetic.md` says its look comes from its
+//! subject and there is no house style on purpose.
 //!
 //! **1. Colour comes from the host's theme tokens, or from nothing.** The vocabulary is
 //! whatever `ui/global.css` actually defines: `--fg` / `--fg-dim` / `--fg-mute`,
@@ -67,6 +67,20 @@
 //! what was wrong with it — the word was. The page lists every live session on the ladder
 //! with its workers nested underneath, and the ended ones; "Workers" named the bottom rung
 //! and dropped the rest. Its id is still `workers`, because that is the endpoint it reads.
+//!
+//! **5. These are read on a phone, and the phone is the full frame.** The iPhone client
+//! runs the face edge to edge in a `WKWebView` (`app/apple/ios`, `CoreStageView`) — no
+//! native bar above it — so a bundled surface gets the whole ~390 CSS px, safe insets
+//! included, and has to answer for them. The two failures are specific and both shipped:
+//! a **fixed column count** that turns a board into something read by dragging sideways
+//! one and a half columns at a time (the task board's five), and a **track floor pinned
+//! in bare pixels**, which does not overflow — it silently drops `auto-fill` to one
+//! column, and a 168px floor against 353px of room is how the People grid came to show
+//! one person per screen at twice life size. So: a multi-column layout carries the
+//! narrow-width answer with it. `stats` does it with `@container`, `tasks` with
+//! `@media`, and the views styled inline — which can express no query at all — do it
+//! with `clamp()`, `min()` and a flex basis that is allowed to wrap.
+//! [`no_bundled_view_pins_an_auto_fill_track_in_bare_pixels`] holds the second half.
 //!
 //! And one that is about honesty rather than style: a surface carries only the verbs its
 //! endpoint can actually honour. Workers is read-only because the registry has no stop —
@@ -452,6 +466,87 @@ mod tests {
             tasks.contains("/files/${token"),
             "and its destination is built from that token, never from a separate binding"
         );
+    }
+
+    /// **A bundled view is text, and one control character is enough to stop it being
+    /// text.** `workers.jsx` carried a literal NUL inside a template literal — a separator
+    /// in a React key, typed as the byte rather than as the six-character escape
+    /// for it. It ran
+    /// correctly, and every grep over that file silently answered nothing: not "binary
+    /// file matches", just nothing, because the pattern genuinely did not match any
+    /// *text* line. That is 2,700 lines invisible to every audit anyone has run here,
+    /// including the toolbox's own `grep -n "^// purpose:"` scan
+    /// ([`docs/arch/data.md#views`]), which is how the agent learns a view exists at
+    /// all — so a view can be bundled, seeded, compiled, and still absent from the one
+    /// list the builder reads before authoring anything.
+    ///
+    /// Checked on the whole tree rather than on the review surfaces, because the
+    /// property is about the bytes and not about what the file is for.
+    #[test]
+    fn every_bundled_view_is_text_a_grep_can_read() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
+        for entry in std::fs::read_dir(&builtin).unwrap().flatten() {
+            let path = entry.path();
+            let bytes = std::fs::read(&path).unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if let Some(at) = bytes.iter().position(|b| *b == 0) {
+                let line = bytes[..at].iter().filter(|b| **b == b'\n').count() + 1;
+                panic!(
+                    "{name}: a NUL byte at line {line} makes the whole file binary to \
+                     grep — write the escape sequence, not the byte"
+                );
+            }
+        }
+    }
+
+    /// Rule 5, the half of it a text check can hold: **an `auto-fill` track floor is
+    /// written `minmax(min(<floor>, 100%), …)`, never `minmax(<floor>, …)`.**
+    ///
+    /// A bare floor does not overflow, which is why nothing caught it. The track simply
+    /// stops fitting and the grid falls to one column: People asked for
+    /// `minmax(168px, 1fr)` with an 18px gap, which is 354px of demand against the 353px
+    /// a 390px phone leaves after its padding — one pixel — so every person filled the
+    /// screen with a face crop blown up 2x, and the surface still "worked".
+    ///
+    /// `min(floor, 100%)` fixes both ends of that: the track collapses to the container
+    /// when the container is smaller, and a single card can never be wider than the
+    /// window either, which `auto-fill` alone does not promise.
+    ///
+    /// The *other* half of the rule — a fixed column count needs a narrow-width
+    /// breakpoint — is not checked here. It cannot be read off the text: `tasks` pins
+    /// five columns and is correct, because its `@media (max-width: 760px)` block
+    /// replaces the whole board with a stack. Rendering at phone width is what settles
+    /// that, and `hi_review_view` takes a `width`.
+    #[test]
+    fn no_bundled_view_pins_an_auto_fill_track_in_bare_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_views(dir.path()).unwrap();
+        let builtin = dir.path().join("views").join("factory");
+        let mut names: Vec<&str> = vec!["people-review", "welcome", "vendor-outage"];
+        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
+        for name in names {
+            let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
+            // Matched on the CSS token rather than the bare word: `auto-fill` also
+            // appears in the prose above the rule it documents, and a check that
+            // fails on its own explanation teaches people to delete the comment.
+            for (at, _) in source.match_indices("repeat(auto-fi") {
+                // The track that follows, up to the end of that `repeat(`'s first
+                // argument — enough to see whether the floor is guarded.
+                let rest = &source[at..];
+                let track: String = rest.chars().take(60).collect();
+                let Some(floor_at) = track.find("minmax(") else {
+                    panic!("{name}.jsx: an auto-fill track with no minmax: {track}")
+                };
+                assert!(
+                    track[floor_at..].starts_with("minmax(min("),
+                    "{name}.jsx pins an auto-fill track floor in bare pixels, which drops \
+                     the grid to one column on a phone instead of overflowing where \
+                     someone would see it — write `minmax(min(<floor>,100%),…)`: {track}"
+                );
+            }
+        }
     }
 
     /// Rule 4: every review surface re-reads itself.

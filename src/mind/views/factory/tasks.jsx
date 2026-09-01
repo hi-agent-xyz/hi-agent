@@ -2175,10 +2175,21 @@ const CSS = `
     background: color-mix(in srgb, var(--surface) 42%, var(--bg-0));
   }
 
+  /* **A phone is not a small desktop.** Five columns side by side on a 390px
+     screen is a board you read by dragging sideways one and a half columns at a
+     time — which is the one thing a board exists to save you from, and it hides
+     four fifths of the ledger behind a gesture nothing on screen suggests.
+     Below 760px the columns stack and the board scrolls vertically as one page:
+     the lifecycle is still the order, now top to bottom, and nothing is behind a
+     filter. Each column keeps its head, its count and its own empty line, so an
+     empty Todo still reads as answered rather than absent. */
   @media (max-width: 760px) {
     .hi-tasks__header {
       min-height: 56px;
-      padding: 12px 16px;
+      /* Still max(…, var(--hi-safe-top)): a notch is a phone's problem, so the
+         phone breakpoint is the last place the inset may be dropped. Flattening
+         this to a plain 12px is what put the heading under the status bar. */
+      padding: max(12px, var(--hi-safe-top)) 16px 12px;
     }
 
     .hi-tasks__heading {
@@ -2189,14 +2200,38 @@ const CSS = `
       font-size: 21px;
     }
 
-    .hi-tasks__board,
-    .hi-tasks__loading {
-      gap: 10px;
-      padding: 12px 14px 14px;
-    }
-
     .hi-tasks__total {
       display: none;
+    }
+
+    .hi-tasks__board,
+    .hi-tasks__loading {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 14px calc(14px + var(--hi-chrome-bottom));
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    /* A column becomes a section: it grows to its cards and the board is the
+       one scroller, rather than five boxes each owning a scroller inside a
+       screen with room for none of them. */
+    .hi-tasks__column,
+    .hi-tasks__cards {
+      flex: none;
+      overflow: visible;
+    }
+
+    /* The dock's clearance moved to the board's own tail above, so the last
+       column no longer pays for it — stacked, it is simply the last section. */
+    .hi-tasks__column:last-child .hi-tasks__cards {
+      padding-bottom: 10px;
+    }
+
+    .hi-tasks__loading span {
+      flex: none;
+      height: 92px;
     }
   }
 `;

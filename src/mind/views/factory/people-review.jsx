@@ -415,9 +415,9 @@ const S = {
   page: { "--ppl-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     "--ppl-shadow-lift": "0 4px 10px var(--shadow),0 22px 55px var(--shadow-strong)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 26 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0, marginBottom: "clamp(16px,4vw,26px)" },
   // Everything that responds to a click is a real <button>, so it is reachable by tab
   // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
   reset: { appearance: "none", border: "none", background: "none", font: "inherit",
@@ -427,7 +427,15 @@ const S = {
   emptyBig: { fontSize: 17, fontWeight: 600, color: "var(--fg-dim)" },
   emptySub: { fontSize: 13.5, color: "var(--fg-mute)", marginTop: 7, lineHeight: 1.55,
     maxWidth: 460, marginLeft: "auto", marginRight: "auto" },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(168px,1fr))", gap: 18, alignItems: "start" },
+  // **`min(140px, 100%)`, not a bare 140px.** This view has no stylesheet and so no
+  // breakpoints — every responsive decision in here is made by a CSS function, which
+  // is why the sizes are `clamp`ed rather than fixed. The track floor matters most:
+  // at 168px a 390px phone came to 354px of demand against 353px of room and fell to
+  // ONE column, so every person filled the screen with a face crop blown up 2x. The
+  // `min()` also keeps a single card from overflowing a window narrower than the
+  // floor, which `auto-fill` alone does not.
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(140px,100%),1fr))",
+    gap: "clamp(10px,3vw,18px)", alignItems: "start" },
   // `display:block` + full width: as a <button> this would otherwise shrink-wrap its
   // contents and centre them, instead of filling its grid cell the way the div did.
   card: { display: "block", width: "100%", background: "var(--surface-strong)", borderRadius: 22,
@@ -444,22 +452,24 @@ const S = {
 
   review: { gridColumn: "1 / -1", background: "var(--surface-strong)", borderRadius: 28,
     boxShadow: "var(--ppl-shadow-lift)", overflow: "hidden" },
-  revHead: { display: "flex", gap: 22, padding: "26px 28px 22px", alignItems: "center", borderBottom: "1px solid var(--line)" },
-  revPoster: { width: 108, height: 108, borderRadius: 24, backgroundSize: "cover", backgroundPosition: "center",
+  revHead: { display: "flex", gap: "clamp(12px,3vw,22px)", padding: "clamp(16px,4vw,26px) clamp(15px,4vw,28px) clamp(14px,3vw,22px)",
+    alignItems: "center", borderBottom: "1px solid var(--line)" },
+  revPoster: { width: "clamp(72px,20vw,108px)", height: "clamp(72px,20vw,108px)", borderRadius: "clamp(16px,5vw,24px)",
+    backgroundSize: "cover", backgroundPosition: "center",
     backgroundRepeat: "no-repeat", flex: "none", backgroundColor: "var(--line-strong)" },
   revMeta: { flex: 1, minWidth: 0 },
-  nameInput: { font: "inherit", fontSize: 27, fontWeight: 800, letterSpacing: "-.03em", color: "var(--fg)",
+  nameInput: { font: "inherit", fontSize: "clamp(19px,5vw,27px)", fontWeight: 800, letterSpacing: "-.03em", color: "var(--fg)",
     background: "transparent", border: "none", outline: "none", width: "100%", padding: "2px 0", borderBottom: "2px solid transparent" },
   mergeHint: { fontSize: 13, color: "var(--accent)", marginTop: 8, minHeight: 17, fontWeight: 500 },
   close: { flex: "none", width: 34, height: 34, borderRadius: "50%", border: "none", background: "var(--line)",
     color: "var(--fg)", fontSize: 16, cursor: "pointer", alignSelf: "flex-start" },
-  revBody: { padding: "4px 28px 28px" },
+  revBody: { padding: "4px clamp(15px,4vw,28px) clamp(18px,4vw,28px)" },
   modsec: { paddingTop: 18 },
   modsecTop: { borderTop: "1px solid var(--line)", marginTop: 8 },
   secttl: { fontSize: 14, fontWeight: 700, margin: "14px 0", display: "flex", alignItems: "center", justifyContent: "space-between" },
   cnt: { color: "var(--fg-mute)", fontWeight: 500, marginLeft: 6 },
   regroup: { fontSize: 12.5, fontWeight: 600, color: "var(--fg-dim)", cursor: "pointer", padding: "6px 12px", borderRadius: 999 },
-  clips: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(86px,1fr))", gap: 10 },
+  clips: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(72px,100%),1fr))", gap: 10 },
   clip: { position: "relative", borderRadius: 13, overflow: "hidden", backgroundColor: "var(--line-strong)", aspectRatio: "1/1",
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
     transition: "transform .18s,opacity .3s" },
@@ -474,11 +484,11 @@ const S = {
     background: "rgba(0,0,0,.5)", color: "#fff", fontSize: 11, cursor: "pointer", display: "flex",
     alignItems: "center", justifyContent: "center", zIndex: 2 },
 
-  proposal: { marginTop: 14, background: "var(--accent-wash)", borderRadius: 20, padding: "20px 22px" },
+  proposal: { marginTop: 14, background: "var(--accent-wash)", borderRadius: 20, padding: "clamp(15px,4vw,20px) clamp(15px,4vw,22px)" },
   plead: { fontSize: 14, color: "var(--fg)", opacity: 0.75, marginBottom: 16, lineHeight: 1.5 },
   link: { color: "var(--accent)", cursor: "pointer", marginLeft: 6, fontWeight: 600 },
   piles: { display: "flex", gap: 14, flexWrap: "wrap" },
-  pile: { flex: 1, minWidth: 170, background: "var(--surface-strong)", borderRadius: 16, padding: 15, boxShadow: "var(--ppl-shadow)" },
+  pile: { flex: 1, minWidth: "min(170px,100%)", background: "var(--surface-strong)", borderRadius: 16, padding: 15, boxShadow: "var(--ppl-shadow)" },
   pileKeep: { outline: "2px solid var(--accent)" },
   pileHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 11, fontSize: 14, fontWeight: 700 },
   keepTag: { fontSize: 11, fontWeight: 700, color: "var(--accent)" },

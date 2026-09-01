@@ -292,13 +292,13 @@ function short(iso) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   // Everything that responds to a click is a real <button>, so it is reachable by tab
   // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
   reset: { appearance: "none", border: "none", background: "none", font: "inherit",
     color: "inherit", textAlign: "left", cursor: "pointer" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 20 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0, marginBottom: 20 },
   sect: { fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", color: "var(--fg-mute)",
     margin: "28px 0 11px" },
 
@@ -314,7 +314,13 @@ const S = {
   dimN: { fontSize: 11.5, color: "var(--fg-mute)", fontWeight: 600 },
 
   split: { display: "flex", gap: 16, alignItems: "stretch", flexWrap: "wrap" },
-  side: { flex: "0 0 190px", display: "flex", flexDirection: "column", gap: 2, maxHeight: 380, overflowY: "auto" },
+  // `1 1 190px`, not `0 0 190px`: the pane beside it has a 320px basis, so on a phone
+  // it wraps to its own line — and a rigid 190px left the subject list as a narrow
+  // column with an empty half-row beside it instead of taking the width it had.
+  // The height cap follows suit; 380px of list before a phone reaches the facet it
+  // was opened to read is most of the screen.
+  side: { flex: "1 1 190px", display: "flex", flexDirection: "column", gap: 2,
+    maxHeight: "min(380px, 42vh)", overflowY: "auto" },
   subj: { display: "flex", alignItems: "center", gap: 7, width: "100%", fontSize: 13.5, fontWeight: 600,
     padding: "8px 11px", borderRadius: 10, color: "var(--fg-dim)" },
   subjName: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },

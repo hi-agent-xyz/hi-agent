@@ -193,9 +193,9 @@ function ageOf(modified) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 22 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0, marginBottom: 22 },
   // Everything that responds to a click is a real <button>, so it is reachable by tab
   // and by Enter/Space for free. This strips the UA chrome back to the div it replaced.
   reset: { appearance: "none", border: "none", background: "none", font: "inherit",

@@ -343,9 +343,9 @@ function ago(iso) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0, marginBottom: 26 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0, marginBottom: 26 },
 
   section: { marginBottom: 30, maxWidth: 620 },
   h2: { fontSize: 16, fontWeight: 750, letterSpacing: "-.02em" },

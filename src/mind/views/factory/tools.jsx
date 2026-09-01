@@ -131,10 +131,10 @@ function firstSentence(s) {
 const S = {
   page: { "--v-shadow": "0 1px 2px var(--shadow),0 8px 22px var(--shadow)",
     width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
-    padding: "max(28px, var(--hi-safe-top)) clamp(20px,3vw,44px) 128px",
+    padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px",
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   head: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 },
-  h1: { fontSize: 30, fontWeight: 800, letterSpacing: 0 },
+  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0 },
   count: { fontSize: 13, color: "var(--fg-mute)", fontWeight: 600 },
 
   group: { marginBottom: 24 },
@@ -145,9 +145,13 @@ const S = {
   emptyRole: { fontSize: 13, color: "var(--fg-mute)", padding: "4px 0 2px" },
 
   list: { display: "flex", flexDirection: "column", gap: 6 },
-  row: { display: "flex", gap: 12, alignItems: "baseline", background: "var(--surface-strong)",
+  // Two columns while there is room for two, one over the other when there is not:
+  // the tool's name is what the row is indexed by, so it keeps its 148px rather than
+  // being ellipsised to make space for a sentence that reads fine on its own line.
+  row: { display: "flex", gap: "4px 12px", flexWrap: "wrap", alignItems: "baseline",
+    background: "var(--surface-strong)",
     borderRadius: 12, boxShadow: "var(--v-shadow)", padding: "10px 14px" },
-  name: { flex: "0 0 148px", fontSize: 13, fontWeight: 700, letterSpacing: "-.01em",
+  name: { flex: "1 1 148px", fontSize: 13, fontWeight: 700, letterSpacing: "-.01em",
     color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  desc: { flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--fg-dim)" },
+  desc: { flex: "3 1 210px", minWidth: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--fg-dim)" },
 };
