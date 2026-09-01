@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::foundation::server::AppState;
 use crate::foundation::server::headers::AuthBearer;
+use crate::foundation::server::view_bus;
 use crate::types::{Channel, JournalEntry, Sender};
 
 #[derive(serde::Deserialize)]
@@ -315,11 +316,26 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
     }
 }
 
+/// Where to put the screen. Exactly one of these says it: a named view by `ref`, a past
+/// inline artifact by `module`, or `live` for back to what the agent has up.
 #[derive(serde::Deserialize)]
 pub struct OpenViewRequest {
-    /// The durable ref to open, e.g. `factory/drive`.
-    #[serde(rename = "ref")]
-    pub view_ref: String,
+    /// The durable ref to open, e.g. `factory/drive`. Re-resolved and recompiled every
+    /// time, which is what makes opening `factory/tasks` land on today's board.
+    #[serde(default, rename = "ref")]
+    pub view_ref: Option<String>,
+    /// The compiled module of a past inline view — a card in the trail with no durable
+    /// name. Nothing is compiled for one: it is only ever the artifact it already is.
+    #[serde(default)]
+    pub module: Option<String>,
+    /// What the view was shown as. Names an inline destination, whose module hash names
+    /// nothing.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Back to what the agent has up. The cursor drops and every window falls through to
+    /// the content slot.
+    #[serde(default)]
+    pub live: bool,
 }
 
 /// A view compiled for the person to mount locally.
@@ -329,31 +345,71 @@ pub struct OpenedView {
     pub module_url: String,
 }
 
-/// `POST /api/views/open` — compile a named view so this window can mount it, **without
-/// touching the content slot**.
+/// `POST /api/views/open` — put the screen on a view.
 ///
-/// This is the person's path onto the screen and it is deliberately not a third writer
-/// of the appearance. The slot stays the agent's — what it showed is still what a second
-/// device shows and still what it will refer to out loud. Where *this* window is looking
-/// is this window's own business, like the conversation's scroll position, and like that
-/// it is never reported back.
+/// **This is the person's write of the appearance, and the second of two.** The agent's
+/// is `hi_show`, which owns the content slot; this one moves the cursor over the same
+/// history, so every attached window converges on it exactly the way they converge on a
+/// show. There is one screen and both hands reach it — `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
+/// It used to be deliberately *not* a writer of the appearance, which is what left a
+/// phone and a desktop looking at different things with no way to say so.
 ///
-/// It resolves the ref every time rather than handing back a remembered module, which is
-/// what makes opening `factory/tasks` show today's board. An inline view has no ref and
-/// cannot be opened this way at all; the client mounts its recorded artifact directly.
+/// A named view is re-resolved and recompiled every time, which is what makes opening
+/// `factory/tasks` land on today's board rather than the module it happened to compile to
+/// when it was last shown. An inline view has no ref and is only ever the artifact it
+/// already is, so `module` names it and nothing is compiled.
 ///
-/// It also re-takes the surface's picture, which is how a view the agent never shown
+/// It also re-takes a named surface's picture, which is how a view the agent never showed
 /// gets a face in the band at all, and how the shipped surfaces stop showing the board
-/// they had the first time anyone looked. Bounded by the same staleness rule every
-/// other surface capture uses, so opening the same view five times is one render.
+/// they had the first time anyone looked. Bounded by the same staleness rule every other
+/// surface capture uses, so opening the same view five times is one render.
+///
+/// **It does not drive a turn.** Walking the band through five tiles must not produce
+/// five turns; the move wakes the windows and goes to the journal, and the next turn
+/// reads it as context — which is the moment it matters. That is why there is no
+/// `state.inbound.send` here, unlike every other write the person makes.
 pub async fn open_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
     axum::Json(body): axum::Json<OpenViewRequest>,
 ) -> impl IntoResponse {
-    let view_ref = body.view_ref.trim().to_string();
-    tracing::info!(auth = ?auth, view_ref = %view_ref, "POST /api/views/open");
+    let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let module = body.module.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    tracing::info!(auth = ?auth, view_ref = ?view_ref, module = ?module, live = body.live, "POST /api/views/open");
 
+    // Back to live: nothing to resolve, and the content slot is always mountable.
+    if body.live {
+        if state.views.go_to(None).await {
+            record_move(&state, "came back to the live view").await;
+        }
+        return axum::http::StatusCode::ACCEPTED.into_response();
+    }
+
+    // A past inline artifact. It compiles to nothing and resolves to nothing — the
+    // module *is* the view — so this is a cursor move and no more.
+    if view_ref.is_none() {
+        let Some(module) = module else {
+            // A move to nowhere is a client bug, and answering 202 to it would hide the
+            // bug behind a screen that silently never moves.
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "a move needs a ref or a module, unless it is back to live",
+            )
+                .into_response();
+        };
+        let id = body.id.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(module);
+        let dest = view_bus::RetainedView {
+            id: id.to_owned(),
+            module_url: module.to_owned(),
+            view_ref: None,
+        };
+        if state.views.go_to(Some(dest)).await {
+            record_move(&state, &format!("went to \"{id}\"")).await;
+        }
+        return axum::http::StatusCode::ACCEPTED.into_response();
+    }
+
+    let view_ref = view_ref.unwrap_or_default().to_string();
     let Some(render) = crate::mind::views::render_context() else {
         return (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -369,6 +425,14 @@ pub async fn open_view(
     };
     match render.compiler.compile(&source).await {
         Ok(module_url) => {
+            let dest = view_bus::RetainedView {
+                id: view_ref.clone(),
+                module_url: module_url.clone(),
+                view_ref: Some(view_ref.clone()),
+            };
+            if state.views.go_to(Some(dest)).await {
+                record_move(&state, &format!("went to \"{view_ref}\"")).await;
+            }
             // Going somewhere is the moment its picture is worth re-taking: the person
             // is looking at the board right now, so whatever the browser sees a second
             // later is what they saw. Off the response path — this returns before the
@@ -382,8 +446,7 @@ pub async fn open_view(
                     tokio::spawn(async move { bus.note_shot().await });
                 },
             );
-            axum::Json(OpenedView { id: view_ref, module_url })
-            .into_response()
+            axum::Json(OpenedView { id: view_ref, module_url }).into_response()
         }
         Err(error) => (
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
@@ -393,96 +456,25 @@ pub async fn open_view(
     }
 }
 
-/// Where a window just went. Either `live`, or a destination named by `ref` (a named
-/// view) or `module` (an inline one) — the same two-way split the history dedupes by.
-#[derive(serde::Deserialize)]
-pub struct WentToRequest {
-    #[serde(default, rename = "ref")]
-    pub view_ref: Option<String>,
-    /// The compiled module URL, for an inline view that has no ref.
-    #[serde(default)]
-    pub module: Option<String>,
-    /// What the view was shown as. Only used to name an inline destination, whose
-    /// module hash names nothing.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// The person is on what the agent currently has up. Then there is nothing to tell
-    /// the agent about where they are, and the fact is cleared rather than recorded.
-    #[serde(default)]
-    pub live: bool,
-}
-
-/// `POST /api/in/view` — the person went to a view.
+/// Journal one move of the screen, and echo it to the channel inspector.
 ///
-/// The inbound half of a channel that used to only go out, and the one thing about the
-/// screen that does not come from the agent. It exists because the next thing they say is
-/// usually about what they are looking at: "这个数字不对" is unreadable if the agent
-/// believes its own last show is in front of them, and it answers confidently about the
-/// wrong board.
-///
-/// **It records where they went, never which window went there.** The cursor stays the
-/// window's — a phone that went back must not move the desktop — so nothing here touches
-/// the appearance: no version bump, no snapshot, and `GET /api/out/view` is unchanged.
-/// This is a perception, not a third writer of the content slot.
-///
-/// **And it does not drive a turn.** Walking the band through five tiles must not produce
-/// five turns; the move goes to the journal and to the view bus, and the next turn reads
-/// it as context — which is the moment it matters. That is why there is no
-/// `state.inbound.send` here, unlike every other `/api/in/*` handler.
-pub async fn post_in_view(
-    State(state): State<Arc<AppState>>,
-    AuthBearer(auth): AuthBearer,
-    axum::Json(body): axum::Json<WentToRequest>,
-) -> impl IntoResponse {
-    let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let module = body.module.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    // The destination, by the same rule the history dedupes by: the ref when there is
-    // one, else the compiled module.
-    let key = match (body.live, view_ref.or(module)) {
-        (true, _) => String::new(),
-        (false, Some(key)) => key.to_owned(),
-        // A move to nowhere is a client bug, and answering 202 to it would hide the
-        // bug behind a context line that silently never appears.
-        (false, None) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "a move needs a ref or a module, unless it is back to live",
-            )
-                .into_response();
-        }
-    };
-    let name = view_ref
-        .or(body.id.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-        .unwrap_or(&key)
-        .to_owned();
-
-    tracing::info!(auth = ?auth, dest = %name, live = body.live, "POST /api/in/view");
-
-    // A re-click of the tile they are already on moved nobody, and the log is a record
-    // of moves.
-    if !state.views.note_went_to(key, name.clone(), body.live).await {
-        return axum::http::StatusCode::ACCEPTED.into_response();
-    }
-
-    let line = if body.live {
-        "came back to the live view".to_owned()
-    } else {
-        format!("went to \"{name}\"")
-    };
+/// The person acting on the agent's own surface is something the agent noticed them do —
+/// a perception, read into the next turn's context rather than answered. It rides here,
+/// on the write that moves the screen, rather than on an inbound channel of its own: a
+/// second path would be a second thing to keep in step with the first.
+async fn record_move(state: &Arc<AppState>, line: &str) {
     let ts = Utc::now();
-    crate::foundation::channel_log::inbound(Channel::View, &line);
+    crate::foundation::channel_log::inbound(Channel::View, line);
 
     // Addressed, like text: this is the person acting on the agent's own surface,
     // through a control nobody else can reach. Labelled `owner` rather than written
     // bare — see `docs/arch/signal-attribution.md`.
     let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
-    // Perception, not conversation: the person walking the band is something the
-    // agent noticed them do, read into the next turn's context rather than answered.
     let entry = JournalEntry::Observation {
         id: Uuid::now_v7().to_string(),
         ts,
         channel: Channel::View,
-        body: line.clone(),
+        body: line.to_owned(),
         stream: None,
         media: None,
         sender: Some(sender),
@@ -491,17 +483,15 @@ pub async fn post_in_view(
         tracing::warn!(error = %format!("{err:#}"), "view move: journal append failed");
     }
 
-    // The inspector's live tap sees both halves of the channel now. Not the
-    // conversation: `transcript::from_journal` drops `View` on both directions, because
-    // going somewhere is not something anybody said.
+    // The inspector's live tap sees both halves of the channel. Not the conversation:
+    // `transcript::from_journal` drops `View` on both directions, because going
+    // somewhere is not something anybody said.
     let _ = state.input_echo.send(crate::foundation::server::InputEcho {
         channel: Channel::View,
-        text: line,
+        text: line.to_owned(),
         is_final: true,
         ts,
     });
-
-    axum::http::StatusCode::ACCEPTED.into_response()
 }
 
 #[cfg(test)]

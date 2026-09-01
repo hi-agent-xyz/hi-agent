@@ -23,12 +23,13 @@ export interface WireView {
   slot?: "content" | "condition";
 }
 
-/** One past show, as the server recorded it.
+/** One place the screen has been, as the server recorded it — the agent's shows and the
+ * person's own moves, in one list.
  *
  * `view_ref` decides what re-opening means. A named view is re-resolved from its
- * current source, so `factory/tasks` comes back as today's board — reopen it through
- * `openView(ref)`. An inline view has no ref and can only come back as the artifact it
- * compiled to, so mount its `module_url` directly. */
+ * current source, so `factory/tasks` comes back as today's board — go there through
+ * `goToView({viewRef})`. An inline view has no ref and can only come back as the
+ * artifact it compiled to, named by `module_url`. */
 export interface WireHistoryEntry {
   id: string;
   module_url: string;
@@ -50,10 +51,19 @@ export interface WireHistoryEntry {
 export interface ViewState {
   version: number;
   views: WireView[];
-  /** The recent shows, oldest first; the last is what is on the stage now. Absent on
-   * a server older than the history — read as empty, which reads as "nowhere to go
-   * back to", which is the truthful answer from a server that isn't recording. */
+  /** Where the screen has been, oldest first. Absent on a server older than the history
+   * — read as empty, which reads as "nowhere to go back to", which is the truthful
+   * answer from a server that isn't recording. */
   history?: WireHistoryEntry[];
+  /** The destination the screen is parked on, absent when it is live. **This is the
+   * whole of one screen**: every window mounts the history entry it names in place of
+   * `views`' content layer, so going back on the phone is going back on the desktop.
+   * Absent on a server that keeps the cursor per window, where every window is live. */
+  cursor?: string;
+  /** The destination the agent has up in the content slot, absent when the room is
+   * empty. Sent rather than inferred from the newest history entry, which is no longer
+   * necessarily a show. */
+  live?: string;
 }
 
 /** One view that exists on disk and can be opened by name — `GET /api/views`. */
@@ -87,32 +97,49 @@ export async function listViews(): Promise<ListedView[]> {
   return (await res.json()) as ListedView[];
 }
 
-/** What one window needs to mount a named view locally. */
-export interface OpenedView {
-  id: string;
-  module_url: string;
+/** Where to put the screen: a named view, a past inline artifact, or back to live. */
+export interface Destination {
+  /** A named view, re-resolved and recompiled so it lands on today's board. */
+  viewRef?: string;
+  /** The compiled module of a past inline view, which is only ever the artifact it is. */
+  moduleUrl?: string;
+  /** What that inline view was shown as — its module hash names nothing. */
+  id?: string;
+  /** Back to what the agent has up. */
+  live?: boolean;
 }
 
-/** Compile a named view for this window to mount.
+/** Put the screen on a view.
  *
- * Deliberately does not touch the content slot: the stage stays what the agent showed,
- * so a second device is unaffected and the agent's "as you can see here" stays true of
- * what it put up. Where this window is looking is this window's own, like scroll
- * position. */
-export async function openView(viewRef: string): Promise<OpenedView> {
+ * **This writes the appearance**, which is the whole of one screen: the cursor is the
+ * server's, so every attached window follows this the way they follow a show, and a
+ * person who was reading on the phone finds the desktop where they left it. Nothing is
+ * mounted from the response — the long-poll delivers the move, to this window like any
+ * other. It used to compile a view for *this* window alone and leave every other one
+ * where it was.
+ *
+ * Rejects on a ref that no longer resolves or no longer compiles. Nothing else here
+ * throws: going back to an artifact and going live cannot fail. */
+export async function goToView(dest: Destination): Promise<void> {
   const res = await fetch(url("/api/views/open"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-HI-Surface": "1" },
-    body: JSON.stringify({ ref: viewRef }),
+    body: JSON.stringify({
+      ref: dest.viewRef,
+      module: dest.moduleUrl,
+      id: dest.id,
+      live: dest.live ?? false,
+    }),
   });
   if (!res.ok) throw new Error(`/api/views/open failed: ${res.status} ${res.statusText}`);
-  return (await res.json()) as OpenedView;
 }
 
 /** Keep a named view in the bookmarks row, or drop it out of it.
  *
- * Server-side because a bookmark has to be the same on the desktop and the phone —
- * unlike the cursor, which is each window's own. Only a named, non-system view can be
+ * Server-side because a bookmark has to be the same on the desktop and the phone — like
+ * the cursor, and unlike it in what it outlives: a bookmark is a decision that has to
+ * survive an upgrade, so it is kept in the config store rather than in the appearance.
+ * Only a named, non-system view can be
  * bookmarked: an inline view is only ever the disposable artifact it compiled to, and
  * a system view is in the row already. */
 export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
@@ -122,44 +149,6 @@ export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
     body: JSON.stringify({ ref: viewRef, on }),
   });
   if (!res.ok) throw new Error(`/api/views/bookmarks failed: ${res.status} ${res.statusText}`);
-}
-
-/** Where this window just went — the inbound half of the view channel.
- *
- * **This is not the cursor, and reporting it is not reporting the cursor.** Which entry
- * a window is parked on stays the window's own and never leaves it: nothing here moves
- * the stage, bumps the appearance version or reaches a second device. What goes is the
- * *move*, as something the agent perceives, because the next thing the person says is
- * usually about what they are looking at — an agent that thinks its own last show is in
- * front of them answers confidently about the wrong board.
- *
- * Fire-and-forget, like the stage lane: a dropped report costs the next turn one line of
- * context, and nothing else. It does not drive a turn either, so walking the band never
- * makes the agent pipe up.
- */
-export function reportWentTo(dest: {
-  /** The durable ref, for a named view. */
-  viewRef?: string;
-  /** The compiled module, for an inline view that has no ref — the same fallback the
-   * history dedupes destinations by. */
-  moduleUrl?: string;
-  /** What the view was shown as, to name an inline destination in a prompt. */
-  id?: string;
-  /** They are back on what the agent has up. Clears the fact rather than recording one. */
-  live?: boolean;
-}): void {
-  void fetch(url("/api/in/view"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-HI-Surface": "1" },
-    body: JSON.stringify({
-      ref: dest.viewRef,
-      module: dest.moduleUrl,
-      id: dest.id,
-      live: dest.live ?? false,
-    }),
-  }).catch(() => {
-    /* the next turn goes without the line; nothing else depends on it */
-  });
 }
 
 export interface SubscribeViewOpts {

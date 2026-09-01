@@ -27,12 +27,13 @@
 //! because compiled views are content-addressed on disk and never collected
 //! (see [`crate::mind::views`]).
 //!
-//! The state also carries `history`: the recent shows, oldest first, so a person
-//! can go back to something the agent has moved past. It is the *record of shows*,
-//! not of anybody's navigation — a window's position in it is that window's own and
-//! is never reported here, exactly as scroll position is never reported for the
-//! conversation. There is one list and one cursor per window, and because a show
-//! only ever appends, no navigation can be truncated by one arriving.
+//! The state also carries `history` — where the screen has been, oldest first — and
+//! `cursor`, which entry of it the screen is on. Both hands write the list: the agent
+//! by showing, the person by going somewhere, each entry marked with which. There is
+//! **one** cursor for the install, not one per window, so going back on the phone is
+//! going back on the desktop; a window keeps nothing but its scroll position. Because
+//! appending is the only thing that ever happens to the list, no navigation can be
+//! truncated by a show arriving. See `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,41 +50,25 @@ use crate::types::{ViewEnvelope, ViewOp};
 #[derive(Clone)]
 pub struct ViewBus {
     inner: Arc<Mutex<Appearance>>,
-    /// Where the person last went, if that is not what the agent has up.
-    ///
-    /// **Deliberately outside [`Appearance`].** Everything in there is the appearance:
-    /// it is versioned, it goes out on `GET /api/out/view`, and it is snapshotted. This
-    /// is none of those things — it is a perception the turn reads, and the moment it
-    /// lived beside the slots someone would serialize it and a phone would start moving
-    /// the desktop. Its own lock is the cheapest way to make that impossible rather
-    /// than merely discouraged. See
-    /// `docs/arch/stage.md#where-they-went-is-reported-the-cursor-still-is-not`.
-    attention: Arc<Mutex<Option<Attention>>>,
     /// The memory data dir; snapshots live under `raw/appearance/`.
     data_dir: PathBuf,
 }
 
-/// Where the person went, and when.
+/// Which hand put the screen somewhere.
 ///
-/// One value for the whole install, not one per window: one person owns an install
-/// (`docs/arch/topology.md`), so two windows are two of their eyes, and the newest move
-/// is the best available answer to where they are looking.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Attention {
-    /// What identifies the *place*, by the same rule the history dedupes by: the
-    /// durable ref when there is one, else the compiled module. Never rendered — it
-    /// exists so a show onto the same place can recognize itself and clear this.
-    pub key: String,
-    /// What to call the destination in a prompt — the ref when it has one, else the
-    /// id the inline view was shown as. The module hash names nothing.
-    pub name: String,
-    /// When they went there. Rendered as an age, never as a claim about now: a window
-    /// that reloaded is live again and never says so, so this fact can outlive the
-    /// looking and the turn has to be able to weigh it.
-    pub at: DateTime<Utc>,
+/// One list, two writers, and the mark is what lets a second window be taken along
+/// without being told the agent showed something. `Show` is the serde default so every
+/// snapshot written before the person could write this list reloads as what it was:
+/// a record of shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Hand {
+    #[default]
+    Show,
+    Move,
 }
 
-/// One past show the agent can put back up. See [`ViewBus::shown`].
+/// One place the screen has been, and who put it there. See [`ViewBus::shown`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown {
     /// The durable ref, which is what `hi_show` takes. An entry without one is not in
@@ -92,12 +77,27 @@ pub struct Shown {
     /// The name the person meets this view under, on its card in the band and in the
     /// inventory — so agent and person are talking about the same thing by the same word.
     pub label: String,
-    /// When the screen last held it. Rendered as a coarse age for the same reason
-    /// [`Attention::at`] is: a live figure would rewrite this block every turn.
+    /// When the screen last held it. Rendered as a coarse age, because the block is
+    /// `Cadence::OnChange` and a live figure would rewrite it every turn.
     pub at: DateTime<Utc>,
     /// Whether this is what is up right now — the newest *show* is not the answer once
     /// a `dismiss` has cleared the slot under it.
     pub live: bool,
+    /// Whether the agent put the screen here or the person did. The agent can put any
+    /// of these back up; only some of them are things it ever showed.
+    pub by: Hand,
+}
+
+/// Where the screen is parked, for the turn to read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cursor {
+    /// What to call the destination in a prompt — the ref when it has one, else the id
+    /// the inline view was shown as. The module hash names nothing.
+    pub name: String,
+    /// Which hand put the screen here. Only ever [`Hand::Move`] today, because a show
+    /// drops the cursor — but read from the entry rather than assumed, so the day a
+    /// third writer appears this reports it instead of lying.
+    pub by: Hand,
 }
 
 /// The screen: two fixed slots, not a stack.
@@ -124,9 +124,18 @@ struct Appearance {
     content: Option<RetainedView>,
     /// The host's condition layer over the content (e.g. a vendor outage).
     condition: Option<RetainedView>,
-    /// What has been shown into `content`, oldest first — the newest entry is
-    /// what is up now. See [`record_show`].
+    /// Where the screen has been, oldest first, each entry marked with the hand that
+    /// put it there. See [`record_entry`].
     history: Vec<HistoryEntry>,
+    /// Which destination the screen is parked on, when that is not what the agent has
+    /// in `content`. `None` = live.
+    ///
+    /// **One for the install, not one per window.** One person owns an install
+    /// (`docs/arch/topology.md`), so two windows are two of their eyes; going back on
+    /// the phone is going back on the desktop. It is in here rather than beside it
+    /// because it *is* the appearance — every window renders it — and it is the one
+    /// field a person writes.
+    cursor: Option<String>,
     /// Bumped on every state change; the long-poll's `since` compares against it.
     version: u64,
     /// Pulsed whenever `version` bumps so parked readers re-check.
@@ -140,23 +149,29 @@ struct Appearance {
 /// resending it whole on every version bump stays the right design.
 const HISTORY_MAX: usize = 24;
 
-/// One show, and when it happened.
+/// One place the screen went, when, and by whose hand.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct HistoryEntry {
     view: RetainedView,
     at: DateTime<Utc>,
+    /// Absent in every snapshot written while this list was the record of shows alone,
+    /// which is exactly what [`Hand::Show`] means — so the default is the migration.
+    #[serde(default)]
+    by: Hand,
 }
 
+/// One view the screen has held. Public because [`ViewBus::go_to`] takes one: putting the
+/// screen somewhere it has never been has to be able to describe the place.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct RetainedView {
-    id: String,
-    module_url: String,
+pub struct RetainedView {
+    pub id: String,
+    pub module_url: String,
     /// The view's durable name — see [`ViewEnvelope::view_ref`]. A snapshot records
     /// it so [`ViewBus::refresh_sources`] can recompile the view on the next boot
     /// instead of resurrecting the module it happened to compile to. `None` for an
     /// inline-source view, and for every snapshot written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    view_ref: Option<String>,
+    pub view_ref: Option<String>,
 }
 
 /// On-disk whole-state snapshot of the appearance at a moment, with `as_of` so
@@ -181,6 +196,12 @@ struct Snapshot {
     /// is nowhere to go back to until the agent shows something.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     history: Vec<HistoryEntry>,
+    /// Where the screen was parked. Rides in the snapshot so a restart comes back where
+    /// the person left it — but a *move* never writes one (see [`ViewBus::go_to`]), so
+    /// what comes back is the cursor as of the last thing the agent did. Approximate,
+    /// and approximate towards the agent's own last show, which is the safe end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
     #[serde(default, rename = "views", skip_serializing_if = "Vec::is_empty")]
     legacy_views: Vec<RetainedView>,
 }
@@ -247,9 +268,21 @@ pub struct WireHistoryEntry {
 pub struct ViewState {
     pub version: u64,
     pub views: Vec<WireView>,
-    /// The recent shows, oldest first. The last entry is what is on the stage now,
-    /// which is what makes "the person is at the end" mean "the person is live".
+    /// Where the screen has been, oldest first — the agent's shows and the person's own
+    /// moves in one list.
     pub history: Vec<WireHistoryEntry>,
+    /// The destination the screen is parked on, or absent when it is live. Every window
+    /// renders this, which is the whole of *one screen*: a window mounts the history
+    /// entry it names in place of `views`' content layer, keeping the condition layer
+    /// over it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// The destination the agent has up in the content slot, absent when the room is
+    /// empty. Sent rather than inferred from the newest history entry: since the person
+    /// writes that list too, its head is no longer necessarily a show, and a dismiss
+    /// leaves the room empty with the entry still in it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live: Option<String>,
 }
 
 impl ViewBus {
@@ -260,61 +293,111 @@ impl ViewBus {
         let state = match newest_snapshot(&app_dir) {
             // A legacy flat list restores as its top-most view only; see
             // `Snapshot::legacy_views`.
-            Some(snap) => Appearance {
-                content: snap.content.or_else(|| snap.legacy_views.last().cloned()),
-                condition: snap.condition,
-                history: snap.history,
-                version: snap.version,
-                notify: Arc::new(Notify::new()),
-            },
+            Some(snap) => {
+                let mut restored = Appearance {
+                    content: snap.content.or_else(|| snap.legacy_views.last().cloned()),
+                    condition: snap.condition,
+                    history: snap.history,
+                    cursor: snap.cursor,
+                    version: snap.version,
+                    notify: Arc::new(Notify::new()),
+                };
+                // A cursor whose entry fell off the end of a bounded list points nowhere;
+                // the screen is live rather than blank.
+                drop_dangling_cursor(&mut restored);
+                restored
+            }
             None => Appearance::default(),
         };
-        Self {
-            inner: Arc::new(Mutex::new(state)),
-            // In-memory only, and not restored: after a restart the agent has no idea
-            // where anybody is looking, which is the truth.
-            attention: Arc::new(Mutex::new(None)),
-            data_dir: data_dir.to_path_buf(),
-        }
+        Self { inner: Arc::new(Mutex::new(state)), data_dir: data_dir.to_path_buf() }
     }
 
-    /// The person went to `name` — the inbound half of the view channel.
+    /// Put the screen on `dest` — the person's write of the appearance, and the only one
+    /// that is not the agent's.
     ///
-    /// Returns whether this actually moved them, so the caller can journal a move and
-    /// stay quiet about a re-click of the tile they are already on.
+    /// `None` is going live: the cursor drops and every window falls back to the content
+    /// slot. Otherwise the destination is parked on, and **appended to the history only if
+    /// it is not already there**. That asymmetry is the row's rule, not an optimization:
+    /// going back to a card must not re-time it and reshuffle the strip under a finger
+    /// that is browsing it, while going somewhere the screen has never been is arriving
+    /// somewhere and earns a card.
     ///
-    /// `live` says the destination is what the agent currently has up, which is not a
-    /// place to be told about: it clears the fact instead of recording one, so the
-    /// turn's context says nothing rather than saying something it would have to
-    /// qualify away.
-    pub async fn note_went_to(&self, key: String, name: String, live: bool) -> bool {
-        let mut slot = self.attention.lock().await;
-        if live {
-            return slot.take().is_some();
+    /// Returns whether this actually moved the screen, so the caller can journal a move
+    /// and stay quiet about a re-tap of the tile they are already on.
+    ///
+    /// **An arrival persists; a cursor move does not**, and the line between them is the
+    /// same one above. Adding a card changes where the screen has *been*, which is a
+    /// durable fact and belongs in the archive under `raw/appearance/`. Sliding the
+    /// cursor between cards already in the row does not: writing for that would put a
+    /// state in the appearance history identical to its predecessor and dated later,
+    /// which is exactly the noise reflection has to read past — [`note_shot`](Self::note_shot)'s
+    /// reason, and it still holds for the half it was written about.
+    ///
+    /// *Split on September 1, 2026, after watching it.* Neither half wrote a snapshot at
+    /// first, on the argument that the archive is the record of what the *agent*
+    /// expressed. That is true of the cursor and false of the row: on a core where the
+    /// agent has not yet shown anything, nothing had ever been persisted, so a restart
+    /// took away every place the person had been — the whole row, not an approximate
+    /// cursor. A promise of one screen that a restart quietly empties is not one.
+    pub async fn go_to(&self, dest: Option<RetainedView>) -> bool {
+        let mut map = self.inner.lock().await;
+        let entry = &mut *map;
+        let mut next = dest.as_ref().map(destination_of);
+        // Going to what the agent already has up is going live, not parking on a copy of
+        // it. Settled here rather than by the caller, because "live" is a fact about the
+        // content slot and this is the only place that holds it — a client deciding it
+        // would be deciding it from a snapshot that may be one show out of date.
+        if next.is_some() && next == entry.content.as_ref().map(destination_of) {
+            next = None;
         }
-        if slot.as_ref().is_some_and(|a| a.key == key) {
+        let moved = entry.cursor != next;
+        let mut changed = moved;
+        let mut arrived = false;
+        let known = next
+            .as_ref()
+            .and_then(|key| entry.history.iter().position(|h| &destination_of(&h.view) == key));
+        if let (Some(view), true) = (dest, next.is_some()) {
+            match known {
+                // Already a card in the row: take the freshly compiled module — opening
+                // `factory/tasks` has to land on today's board, including when it is the
+                // board they are already on — and leave its time and its place alone,
+                // which is what keeps going back from reshuffling the row.
+                Some(at) => {
+                    changed |= entry.history[at].view.module_url != view.module_url;
+                    entry.history[at].view.module_url = view.module_url;
+                }
+                None => {
+                    record_entry(entry, view, Utc::now(), Hand::Move);
+                    changed = true;
+                    arrived = true;
+                }
+            }
+        }
+        if !changed {
             return false;
         }
-        *slot = Some(Attention { key, name, at: Utc::now() });
-        true
+        entry.cursor = next;
+        entry.version += 1;
+        entry.notify.notify_waiters();
+        if arrived {
+            persist(&self.data_dir, entry).await;
+        }
+        moved
     }
 
-    /// Forget where they went, because the agent just shown something.
-    ///
-    /// This is the client's own rule for being live again — a show takes the window with
-    /// it, whatever it had gone back to (`docs/arch/stage.md`) — made here, in the same
-    /// call that records the show, so the two cannot drift. It used to clear only when the
-    /// show landed on the very destination they had gone to, which was right while a
-    /// parked window stayed put and is wrong now that none does: the alternative is telling
-    /// the agent they are away reading something it has just taken them off.
-    async fn caught_up_by_show(&self) {
-        *self.attention.lock().await = None;
-    }
-
-    /// Where the person went, if they went anywhere and have not been caught up with.
-    /// Read into each turn beside [`on_screen`](Self::on_screen).
-    pub async fn attention(&self) -> Option<Attention> {
-        self.attention.lock().await.clone()
+    /// Where the screen is parked, if it is not live. Read into each turn beside
+    /// [`on_screen`](Self::on_screen), so the agent answers about the board in front of
+    /// them rather than the one it last put up.
+    pub async fn cursor(&self) -> Option<Cursor> {
+        let map = self.inner.lock().await;
+        let key = map.cursor.as_ref()?;
+        map.history
+            .iter()
+            .find(|h| &destination_of(&h.view) == key)
+            .map(|h| Cursor {
+                name: h.view.view_ref.clone().unwrap_or_else(|| h.view.id.clone()),
+                by: h.by,
+            })
     }
 
     /// Fold one reaction-emitted envelope into the **content** slot.
@@ -344,8 +427,11 @@ impl ViewBus {
             return;
         }
         if let Some(shown) = &next {
-            record_show(&mut entry.history, shown.clone(), Utc::now());
-            self.caught_up_by_show().await;
+            record_entry(entry, shown.clone(), Utc::now(), Hand::Show);
+            // A show takes every window with it, whatever any of them had gone back to.
+            // One write, in the same call that records the show, so the rule and the
+            // record cannot drift.
+            entry.cursor = None;
             // Take the picture now, while this *is* the screen. Off the write path
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
@@ -504,13 +590,18 @@ impl ViewBus {
     /// "forget what you showed me" — and a clear that also wiped the way back to the
     /// view being cleared would make the reclaim the most destructive control in the
     /// product.
+    /// The cursor goes with it. Reclaiming the screen means the empty room, and a clear
+    /// that left the cursor up would clear the slot and visibly do nothing — the past
+    /// view the screen was parked on would stay. It is also the way home from a bookmark
+    /// opened on an instance that has never shown anything: there is no live card to tap.
     pub async fn clear(&self) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
-        if entry.content.is_none() {
+        if entry.content.is_none() && entry.cursor.is_none() {
             return;
         }
         entry.content = None;
+        entry.cursor = None;
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, entry).await;
@@ -583,6 +674,7 @@ impl ViewBus {
                     label: label_for(&h.view),
                     at: h.at,
                     live: live.as_deref() == Some(destination_of(&h.view).as_str()),
+                    by: h.by,
                 })
             })
             .collect()
@@ -624,6 +716,8 @@ impl ViewBus {
                             shot_url: shot_for(&self.data_dir, &h.view),
                         })
                         .collect(),
+                    cursor: entry.cursor.clone(),
+                    live: entry.content.as_ref().map(destination_of),
                 };
             }
             // Enroll on the notify *while still holding the lock* so a
@@ -673,7 +767,7 @@ fn resolve_slot(
     }
 }
 
-/// Record one show at the end of `history`, dropping any earlier entry for the same
+/// Record one arrival at the end of `history`, dropping any earlier entry for the same
 /// destination and trimming the oldest away past [`HISTORY_MAX`].
 ///
 /// **Appending is the only thing that ever happens to this list**, and that is what
@@ -681,8 +775,8 @@ fn resolve_slot(
 /// stack destroys its forward entries when you navigate from a back position, and it
 /// can afford to because you are its only navigator; here the agent shows views too,
 /// and losing the entry a person was on their way back to because the agent spoke
-/// would be indefensible. So a show never truncates, and a person's position is just
-/// a cursor over the list — there is no branch to destroy.
+/// would be indefensible. So neither hand ever truncates, and the cursor is just a
+/// pointer over the list — there is no branch to destroy.
 ///
 /// **Same destination, one entry.** A destination is the `view_ref` when there is one
 /// and the `module_url` when there isn't, which is precisely the identity that decides
@@ -706,19 +800,33 @@ fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
         .or_else(|| super::view_shots::url_for(data_dir, &view.module_url))
 }
 
-fn record_show(history: &mut Vec<HistoryEntry>, view: RetainedView, at: DateTime<Utc>) {
+fn record_entry(entry: &mut Appearance, view: RetainedView, at: DateTime<Utc>, by: Hand) {
     let key = destination_of(&view);
-    history.retain(|h| destination_of(&h.view) != key);
-    history.push(HistoryEntry { view, at });
-    let overflow = history.len().saturating_sub(HISTORY_MAX);
-    history.drain(..overflow);
+    entry.history.retain(|h| destination_of(&h.view) != key);
+    entry.history.push(HistoryEntry { view, at, by });
+    let overflow = entry.history.len().saturating_sub(HISTORY_MAX);
+    entry.history.drain(..overflow);
+    drop_dangling_cursor(entry);
+}
+
+/// A cursor is a pointer into a bounded list, so trimming can cut the ground from under
+/// it. Rather than render a destination nobody can reach, the screen goes live — the
+/// content slot is always mountable, which is the property that makes it the fallback.
+fn drop_dangling_cursor(entry: &mut Appearance) {
+    let Some(key) = entry.cursor.as_deref() else {
+        return;
+    };
+    if !entry.history.iter().any(|h| destination_of(&h.view) == key) {
+        entry.cursor = None;
+    }
 }
 
 /// What identifies a *destination*: the durable ref when there is one, else the compiled
 /// module. Two shows of `factory/tasks` are one place because both re-resolve to the same
-/// recompiled board; two different inline views are two artifacts and both stay. The client
-/// keys its cursor by the same rule (`destinationOf` in `core/views.tsx`) and the inbound
-/// half of the view channel reports it, so all three agree on what "the same place" means.
+/// recompiled board; two different inline views are two artifacts and both stay. It is what
+/// the cursor holds and what `POST /api/views/open` names, and the client reads the same
+/// rule off the wire (`destinationOf` in `core/trail.ts`), so everything agrees on what
+/// "the same place" means.
 fn destination_of(view: &RetainedView) -> String {
     view.view_ref.clone().unwrap_or_else(|| view.module_url.clone())
 }
@@ -820,6 +928,7 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
         content: entry.content.clone(),
         condition: entry.condition.clone(),
         history: entry.history.clone(),
+        cursor: entry.cursor.clone(),
         legacy_views: Vec::new(),
     };
     let bytes = match serde_json::to_vec_pretty(&snap) {
@@ -887,73 +996,234 @@ mod tests {
         state.history.iter().map(|h| h.id.as_str()).collect()
     }
 
-    /// The person going somewhere is a perception and nothing else: it must not reach
-    /// the appearance. If this ever fails, a phone that went back is moving the desktop.
+    /// A destination for [`ViewBus::go_to`] — what the person's own path onto the screen
+    /// hands over.
+    fn dest(id: &str, url: &str, view_ref: Option<&str>) -> RetainedView {
+        RetainedView {
+            id: id.into(),
+            module_url: url.into(),
+            view_ref: view_ref.map(str::to_owned),
+        }
+    }
+
+    /// How many whole-state snapshots are on disk — the archive a move must not grow.
+    fn snapshot_count(data_dir: &Path) -> usize {
+        let root = layout::raw_root(data_dir).join("appearance");
+        std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|day| day.path().is_dir())
+            .map(|day| std::fs::read_dir(day.path()).into_iter().flatten().flatten().count())
+            .sum()
+    }
+
+    /// The person going somewhere *is* a change to the appearance — that is the whole of
+    /// one screen. If this ever fails, the phone and the desktop have come apart again.
     #[tokio::test]
-    async fn a_move_changes_nothing_about_the_appearance() {
+    async fn a_move_takes_every_window_with_it() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show("a", "/m/a.mjs")).await;
         let before = bus.wait_state(None).await;
 
-        assert!(bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
+        assert!(bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await);
 
         let after = bus.wait_state(None).await;
-        assert_eq!(after.version, before.version, "a move is not a state change");
-        assert_eq!(ids(&after), ids(&before));
-        assert_eq!(history_ids(&after), history_ids(&before));
+        assert!(after.version > before.version, "a move is a state change");
+        assert_eq!(after.cursor.as_deref(), Some("factory/drive"));
+        assert_eq!(after.live.as_deref(), Some("/m/a.mjs"), "the slot is still the agent's");
+        assert_eq!(ids(&after), vec!["a"], "and what it holds is unchanged");
     }
 
-    /// The log records moves, so a re-click of the tile they are already on is not one.
+    /// Somewhere the screen has never been earns a card; going back to one it already has
+    /// does not re-time it, because the row must not reshuffle under a finger browsing it.
+    #[tokio::test]
+    async fn arriving_somewhere_new_appends_and_going_back_does_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+        bus.apply(show_ref("drive", "/m/drive.mjs", "factory/drive")).await;
+
+        // Never been here: a card, marked as the person's.
+        bus.go_to(Some(dest("mem", "/m/mem.mjs", Some("factory/memories")))).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(history_ids(&state), vec!["tasks", "drive", "mem"]);
+        assert_eq!(state.cursor.as_deref(), Some("factory/memories"));
+
+        // Back to a card already in the row: the cursor moves, the row does not.
+        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(
+            history_ids(&state),
+            vec!["tasks", "drive", "mem"],
+            "going back is a cursor move, not an arrival",
+        );
+        assert_eq!(state.cursor.as_deref(), Some("factory/tasks"));
+    }
+
+    /// An arrival is a durable fact about where the screen has been, so it is archived.
+    /// Sliding the cursor between cards already in the row is not, so it is not — it
+    /// only wakes the windows. Both halves matter: the first is what survives a restart,
+    /// the second is what keeps the appearance history from filling with states
+    /// identical to their predecessor and dated later.
+    #[tokio::test]
+    async fn arriving_is_archived_and_going_back_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show("a", "/m/a.mjs")).await;
+
+        let before = snapshot_count(tmp.path());
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        assert!(snapshot_count(tmp.path()) > before, "a new card changed the row");
+
+        let after_arrival = snapshot_count(tmp.path());
+        let version = bus.wait_state(None).await.version;
+        bus.go_to(None).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        assert!(bus.wait_state(None).await.version > version, "parked readers still wake");
+        assert_eq!(
+            snapshot_count(tmp.path()),
+            after_arrival,
+            "walking the row is not a state worth archiving",
+        );
+    }
+
+    /// The hole this closed, watched on a live instance: on a core the agent has never
+    /// shown anything on, nothing had ever been persisted — so a restart took away every
+    /// place the person had been, not merely an approximate cursor.
+    #[tokio::test]
+    async fn a_row_the_person_built_alone_survives_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+            bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+        }
+
+        let state = ViewBus::load(tmp.path()).wait_state(None).await;
+        assert_eq!(history_ids(&state), vec!["drive", "tasks"]);
+        assert_eq!(state.cursor.as_deref(), Some("factory/tasks"));
+    }
+
+    /// Going where the screen already is moved nobody, so the caller has nothing to log.
     #[tokio::test]
     async fn going_where_they_already_are_is_not_a_move() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
 
-        assert!(bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
-        assert!(!bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await);
-        assert!(bus.note_went_to("factory/tasks".into(), "factory/tasks".into(), false).await);
-        assert_eq!(bus.attention().await.unwrap().name, "factory/tasks");
+        let drive = || Some(dest("drive", "/m/drive.mjs", Some("factory/drive")));
+        assert!(bus.go_to(drive()).await);
+        assert!(!bus.go_to(drive()).await);
+        assert!(bus.go_to(None).await, "and going live from somewhere is a move");
+        assert!(!bus.go_to(None).await, "coming back twice is one move");
     }
 
-    /// Back on what the agent has up is not somewhere to tell it about.
+    /// Going to what the agent has up is going live, not parking on a copy of it. Parking
+    /// there looks identical and then reads as *away* on the next show.
     #[tokio::test]
-    async fn coming_back_to_live_clears_the_fact() {
+    async fn going_to_the_live_view_is_going_live() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
 
-        bus.note_went_to("factory/drive".into(), "factory/drive".into(), false).await;
-        assert!(bus.note_went_to(String::new(), String::new(), true).await);
-        assert!(bus.attention().await.is_none());
-        // And coming back twice is one move, like any other repeat.
-        assert!(!bus.note_went_to(String::new(), String::new(), true).await);
+        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+        assert!(bus.wait_state(None).await.cursor.is_none());
     }
 
-    /// Any show catches up with them, not only one onto the place they went. The window
-    /// follows a show, so a fact saying they are elsewhere is not stale — it is false, and
-    /// the agent would answer the wrong board confidently on the strength of it.
+    /// Any show takes every window with it, not only one onto the place they had gone.
     #[tokio::test]
-    async fn any_show_catches_up_with_them() {
+    async fn any_show_takes_them_along() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", None))).await;
 
-        // Somewhere else entirely: they are taken there, so the fact goes.
+        // Somewhere else entirely: they are taken there, so the cursor goes.
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
-        assert!(bus.attention().await.is_none());
+        let state = bus.wait_state(None).await;
+        assert!(state.cursor.is_none());
+        assert_eq!(ids(&state), vec!["tasks"]);
     }
 
-    /// A dismiss is not a show: it clears the slot rather than putting a window on
-    /// something, so there is nowhere it could have taken them and the fact stands.
+    /// A dismiss takes a window nowhere, so it leaves the cursor where it is: the person
+    /// keeps reading what they went back to, over an empty slot.
     #[tokio::test]
-    async fn a_dismiss_leaves_where_they_went_alone() {
+    async fn a_dismiss_leaves_the_cursor_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
-        bus.note_went_to("/m/drive.mjs".into(), "drive".into(), false).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", None))).await;
 
         bus.apply(dismiss("tasks")).await;
-        assert!(bus.attention().await.is_some());
+        assert_eq!(bus.wait_state(None).await.cursor.as_deref(), Some("/m/drive.mjs"));
+    }
+
+    /// Reclaiming the screen is the way home: the slot and the cursor go together, or the
+    /// control clears the slot and visibly does nothing.
+    #[tokio::test]
+    async fn clearing_the_screen_drops_the_cursor_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+
+        bus.clear().await;
+        let state = bus.wait_state(None).await;
+        assert!(state.cursor.is_none(), "and from a bookmark with nothing live to tap");
+        assert!(state.views.is_empty());
+    }
+
+    /// The cursor points into a bounded list, so trimming can cut the ground from under
+    /// it. Rendering a destination nobody can reach would be worse than going live.
+    #[tokio::test]
+    async fn a_cursor_trimmed_out_of_the_history_goes_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.go_to(Some(dest("first", "/m/first.mjs", None))).await;
+        for n in 0..HISTORY_MAX {
+            bus.apply(show(&format!("v{n}"), &format!("/m/v{n}.mjs"))).await;
+        }
+        assert!(bus.wait_state(None).await.cursor.is_none());
+    }
+
+    /// The cursor is part of the appearance, so it rides in the snapshot and comes back
+    /// with it. A move writes no snapshot of its own, so what is restored is the cursor as
+    /// of the last state change that did — here an outage landing over it. That is the
+    /// stated approximation, tested rather than assumed.
+    #[tokio::test]
+    async fn the_cursor_rides_in_the_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+            bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+            bus.reconcile(show("vendor-outage", "/m/energy.mjs")).await;
+        }
+
+        let reloaded = ViewBus::load(tmp.path());
+        let state = reloaded.wait_state(None).await;
+        assert_eq!(
+            state.cursor.as_deref(),
+            Some("factory/drive"),
+            "a restart comes back where the screen was",
+        );
+        assert_eq!(state.live.as_deref(), Some("factory/tasks"));
+    }
+
+    /// A restored cursor whose card did not survive with it points nowhere. Going live is
+    /// the only answer that always mounts.
+    #[tokio::test]
+    async fn a_restored_cursor_with_no_card_goes_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("appearance-000000Z.json"),
+            br#"{"version":7,"as_of":"2026-09-01T00:00:00Z","cursor":"factory/gone"}"#,
+        )
+        .unwrap();
+
+        let bus = ViewBus::load(tmp.path());
+        assert!(bus.wait_state(None).await.cursor.is_none());
     }
 
     #[tokio::test]
@@ -1106,8 +1376,8 @@ mod tests {
         bus.apply(show("a", "/m/a.mjs")).await;
         bus.apply(show("b", "/m/b.mjs")).await;
         bus.apply(show("c", "/m/c.mjs")).await;
-        // The person is parked on "a" — a cursor this bus never hears about. The
-        // agent showing "d" must not disturb anything between there and the end.
+        // The person is parked on "a". The agent showing "d" takes them along, and must
+        // not disturb anything between there and the end on the way.
         bus.apply(show("d", "/m/d.mjs")).await;
 
         let state = bus.wait_state(None).await;

@@ -13,8 +13,9 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * being compared. Choosing dismisses it for the same reason.
  *
  * **Two rows, because there are two ways to want a view.** The upper row is the trail:
- * where this window can go back to, **newest first** — the shows the server recorded
- * and the places the person opened themselves, one card per destination. Newest first
+ * where the screen can go back to, **newest first** — the shows the server recorded and
+ * the places the person opened themselves, in one list, one card per destination.
+ * Tapping a card moves the screen for every attached window, not this one. Newest first
  * because the row overflows and only ever scrolls from its start, so oldest-first put
  * the live view, of all things, off the right-hand edge. The lower row is bookmarks —
  * the surfaces we ship, plus whatever the person kept — which exists because a dozen
@@ -47,7 +48,7 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  *
  * The card *is* the picture: the label sits on the shot's bottom edge over a gradient
  * rather than in a line below it, so every pixel of the card's height is the thing that
- * identifies the view, and nothing is drawn around it — where this window is now is
+ * identifies the view, and nothing is drawn around it — where the screen is now is
  * marked by tinting that caption, not by a ring, because a frame around a screenshot
  * reads as part of the screenshot. The show time is not printed at all — the row is
  * already ordered by it, and nobody asks for a view by when it was put up.
@@ -246,7 +247,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
               type="button"
               className="hi-views-go"
               onClick={() => {
-                openRef(view.view_ref, view.label);
+                openRef(view.view_ref);
                 onDismiss();
               }}
             >

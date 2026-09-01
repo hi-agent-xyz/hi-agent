@@ -1907,7 +1907,7 @@ async fn run_reaction_turn(
     // to a topic instead of only forward to a new one.
     let on_screen = render_on_screen(
         &reaction.inner.views.on_screen().await,
-        reaction.inner.views.attention().await.as_ref(),
+        reaction.inner.views.cursor().await.as_ref(),
         &reaction.inner.views.shown().await,
     );
 
@@ -2231,32 +2231,34 @@ mod turn_context_tests {
         assert!(second.contains("## New signals"), "{second}");
     }
 
-    /// The whole point of the inbound view channel: when the person has gone somewhere,
-    /// the turn says so, so "这个数字不对" is read against the board they are looking at
-    /// rather than the one the agent last shown.
+    /// The whole point of the cursor being the screen's: when the person has taken it
+    /// somewhere, the turn says so flatly, so "这个数字不对" is read against the board in
+    /// front of them rather than the one the agent last shown.
     #[test]
-    fn the_screen_block_says_where_the_person_went() {
-        use crate::foundation::server::view_bus::Attention;
-        let went = Attention {
-            key: "factory/drive".into(),
-            name: "factory/drive".into(),
-            at: Utc::now(),
-        };
+    fn the_screen_block_says_where_they_took_the_screen() {
+        use crate::foundation::server::view_bus::{Cursor, Hand};
+        let cursor = Cursor { name: "factory/drive".into(), by: Hand::Move };
 
-        let parked = render_on_screen(&["tasks".to_string()], Some(&went), &[]);
+        let parked = render_on_screen(&["tasks".to_string()], Some(&cursor), &[]);
         assert!(parked.contains("factory/drive"), "{parked}");
-        assert!(parked.contains("just now"), "{parked}");
-        assert!(parked.contains("not at what you have up"), "{parked}");
+        assert!(parked.contains("not what you have up"), "{parked}");
+        // No age, and nothing to weigh: the server holds the cursor, so there is no
+        // window whose reload could have made this stale behind our back.
+        for hedge in ["just now", "a few minutes ago", "a while back", "some hours ago"] {
+            assert!(!parked.contains(hedge), "the cursor is not a fact with an age: {parked}");
+        }
 
         // Nothing shown: there is no "instead" to draw, and claiming one would be a
         // contradiction of the line right above it.
-        let clear = render_on_screen(&[], Some(&went), &[]);
+        let clear = render_on_screen(&[], Some(&cursor), &[]);
         assert!(clear.contains("the room is clear"), "{clear}");
         assert!(clear.contains("factory/drive"), "{clear}");
-        assert!(!clear.contains("not at what you have up"), "{clear}");
+        assert!(!clear.contains("not what you have up"), "{clear}");
 
-        // And with nobody having gone anywhere, the block is exactly what it was.
-        assert!(!render_on_screen(&["tasks".to_string()], None, &[]).contains("The person went"));
+        // And with the screen live, the block is exactly what it was.
+        assert!(
+            !render_on_screen(&["tasks".to_string()], None, &[]).contains("took the screen")
+        );
     }
 
     /// The half of the screen the agent could not see: what it has already put up and can
@@ -2264,19 +2266,29 @@ mod turn_context_tests {
     /// slot is wearing is no help.
     #[test]
     fn the_screen_block_lists_what_can_be_put_back_up() {
-        use crate::foundation::server::view_bus::Shown;
+        use crate::foundation::server::view_bus::{Hand, Shown};
         let trail = vec![
             Shown {
                 view_ref: "trip/itinerary".into(),
                 label: "Itinerary".into(),
                 at: Utc::now(),
                 live: true,
+                by: Hand::Show,
             },
             Shown {
                 view_ref: "spend/august".into(),
                 label: "August".into(),
                 at: Utc::now() - chrono::Duration::minutes(20),
                 live: false,
+                by: Hand::Show,
+            },
+            // Equally reachable by ref, and not something the agent ever showed.
+            Shown {
+                view_ref: "factory/drive".into(),
+                label: "Drive".into(),
+                at: Utc::now() - chrono::Duration::minutes(20),
+                live: false,
+                by: Hand::Move,
             },
         ];
 
@@ -2284,6 +2296,7 @@ mod turn_context_tests {
         assert!(block.contains("Already shown"), "{block}");
         assert!(block.contains("`trip/itinerary` — Itinerary — up now"), "{block}");
         assert!(block.contains("`spend/august` — August — last up a while back"), "{block}");
+        assert!(block.contains("`factory/drive` — Drive — they opened it a while back"), "{block}");
 
         // Nothing shown yet: no heading offering an empty list.
         let first = render_on_screen(&[], None, &[]);
@@ -2305,6 +2318,7 @@ mod turn_context_tests {
                 label: "August".into(),
                 at: Utc::now(),
                 live: false,
+                by: crate::foundation::server::view_bus::Hand::Show,
             }],
         );
         for nudge in ["right move", "comes back round", "instant", "nothing is rebuilt"] {
@@ -2946,7 +2960,7 @@ fn join_sections(sections: &[&str]) -> String {
 /// here would answer it a second time in the one place that sees the list.
 fn render_on_screen(
     ids: &[String],
-    attention: Option<&crate::foundation::server::view_bus::Attention>,
+    cursor: Option<&crate::foundation::server::view_bus::Cursor>,
     shown: &[crate::foundation::server::view_bus::Shown],
 ) -> String {
     use std::fmt::Write as _;
@@ -2959,23 +2973,34 @@ fn render_on_screen(
         }
         s.push_str("(these are the views currently up, top-most last; dismiss one by its id)");
     }
-    if let Some(went) = attention {
-        let instead = if ids.is_empty() { "" } else { ", not at what you have up" };
+    // Stated flatly, with no age and nothing to weigh, because the cursor is the screen
+    // rather than a report about it: there is one, the server holds it, and a window
+    // that reloaded reads it like every other window. It used to arrive as a fact that
+    // could outlive the looking — "they went to X a few minutes ago" — and had to be
+    // hedged accordingly. Nothing here can go stale against itself.
+    if let Some(cursor) = cursor {
+        let instead = if ids.is_empty() { "" } else { ", not what you have up" };
         let _ = write!(
             s,
-            "\nThe person went to \"{}\" {} and is looking at that{instead} — what they say \
-next is most likely about it.",
-            went.name,
-            went_ago(Utc::now() - went.at),
+            "\nThey took the screen to \"{}\", so that is what is in front of them{instead} \
+— what they say next is most likely about it.",
+            cursor.name,
         );
     }
     if !shown.is_empty() {
         s.push_str("\n\n### Already shown, newest first (yours to put back up by ref)\n");
         for view in shown {
-            let when = if view.live {
-                " — up now".to_string()
-            } else {
-                format!(" — last up {}", went_ago(Utc::now() - view.at))
+            // Whose hand put the screen there, because the list is no longer only yours:
+            // the person opens views too, and every one of them is equally reachable by
+            // ref. Saying so keeps "already shown" from being a claim that isn't true.
+            let when = match (view.live, view.by) {
+                (true, _) => " — up now".to_string(),
+                (false, crate::foundation::server::view_bus::Hand::Show) => {
+                    format!(" — last up {}", went_ago(Utc::now() - view.at))
+                }
+                (false, crate::foundation::server::view_bus::Hand::Move) => {
+                    format!(" — they opened it {}", went_ago(Utc::now() - view.at))
+                }
             };
             let _ = writeln!(s, "- `{}` — {}{when}", view.view_ref, view.label);
         }
@@ -2983,7 +3008,7 @@ next is most likely about it.",
     s
 }
 
-/// How long ago they went there, in words, and deliberately coarse.
+/// How long ago the screen was last on a view, in words, and deliberately coarse.
 ///
 /// The `screen` block is [`Cadence::OnChange`](snapshot::Cadence) — it is sent only when
 /// its text differs from what this thread was last told — so a live "40s ago" would make

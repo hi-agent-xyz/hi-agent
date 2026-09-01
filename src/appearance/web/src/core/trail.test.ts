@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { destinationOf, trailOf } from "./trail";
 import type { WireHistoryEntry } from "../channels/out/view";
 
-function show(over: Partial<WireHistoryEntry> & { at: string }): WireHistoryEntry {
+function entry(over: Partial<WireHistoryEntry> & { at: string }): WireHistoryEntry {
   return {
     id: over.view_ref ?? "inline",
     module_url: "/views/_compiled/abc.mjs",
@@ -13,50 +13,40 @@ function show(over: Partial<WireHistoryEntry> & { at: string }): WireHistoryEntr
 
 describe("trailOf", () => {
   it("puts the newest first, because the row scrolls from its start", () => {
-    const trail = trailOf(
-      [
-        show({ view_ref: "factory/path", label: "Path", at: "2026-08-17T09:00:00Z" }),
-        show({ view_ref: "factory/tasks", label: "Tasks", at: "2026-08-19T11:00:00Z" }),
-      ],
-      [],
-    );
+    const trail = trailOf([
+      entry({ view_ref: "factory/path", label: "Path", at: "2026-08-17T09:00:00Z" }),
+      entry({ view_ref: "factory/tasks", label: "Tasks", at: "2026-08-19T11:00:00Z" }),
+    ]);
     expect(trail.map((e) => e.label)).toEqual(["Tasks", "Path"]);
   });
 
-  it("counts a window's own open as being there, and dates the card by it", () => {
-    const trail = trailOf(
-      [show({ view_ref: "factory/tasks", at: "2026-08-17T09:00:00Z", shot_url: "/s/a.png" })],
-      [show({ view_ref: "factory/tasks", at: "2026-08-19T12:00:00Z" })],
-    );
-    expect(trail).toHaveLength(1);
-    expect(trail[0]!.at).toBe("2026-08-19T12:00:00Z");
-    // The visit knows where it went, not what the picture of it was.
-    expect(trail[0]!.shot_url).toBe("/s/a.png");
-  });
-
-  it("keeps a show that came after the open as the card's time", () => {
-    const trail = trailOf(
-      [show({ view_ref: "factory/tasks", at: "2026-08-19T12:00:00Z" })],
-      [show({ view_ref: "factory/tasks", at: "2026-08-19T09:00:00Z" })],
-    );
-    expect(trail).toHaveLength(1);
-    expect(trail[0]!.at).toBe("2026-08-19T12:00:00Z");
-  });
-
-  it("holds two inline views apart and folds two shows of one ref together", () => {
-    const trail = trailOf(
-      [
-        show({ module_url: "/views/_compiled/one.mjs", at: "2026-08-19T09:00:00Z" }),
-        show({ module_url: "/views/_compiled/two.mjs", at: "2026-08-19T10:00:00Z" }),
-        show({ view_ref: "factory/tasks", at: "2026-08-19T11:00:00Z" }),
-        show({ view_ref: "factory/tasks", at: "2026-08-19T12:00:00Z" }),
-      ],
-      [],
-    );
+  // The server already holds one card per destination, whichever hand put it there, so
+  // there is nothing left here to fold together — and nothing of this window's own to
+  // fold in. What arrives is the row.
+  it("is the server's list and does not dedupe it a second time", () => {
+    const trail = trailOf([
+      entry({ module_url: "/views/_compiled/one.mjs", at: "2026-08-19T09:00:00Z" }),
+      entry({ module_url: "/views/_compiled/two.mjs", at: "2026-08-19T10:00:00Z" }),
+      entry({ view_ref: "factory/tasks", at: "2026-08-19T12:00:00Z" }),
+    ]);
     expect(trail.map(destinationOf)).toEqual([
       "factory/tasks",
       "/views/_compiled/two.mjs",
       "/views/_compiled/one.mjs",
     ]);
+  });
+
+  it("leaves the list it was handed alone", () => {
+    const history = [entry({ view_ref: "factory/tasks", at: "2026-08-19T11:00:00Z" })];
+    trailOf(history);
+    expect(history[0]!.view_ref).toBe("factory/tasks");
+    expect(history).toHaveLength(1);
+  });
+});
+
+describe("destinationOf", () => {
+  it("is the ref when there is one and the module when there isn't", () => {
+    expect(destinationOf(entry({ view_ref: "factory/tasks", at: "x" }))).toBe("factory/tasks");
+    expect(destinationOf(entry({ module_url: "/m/a.mjs", at: "x" }))).toBe("/m/a.mjs");
   });
 });

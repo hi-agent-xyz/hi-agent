@@ -34,11 +34,13 @@ pub enum Channel {
     /// (and so it doesn't show the same thing twice).
     ///
     /// **Inbound it is the person going to a view** — the band's history, a
-    /// bookmark, or back to live. Addressed, so it carries the owner by default
-    /// like `text` does; deliberately *not* turn-driving, because walking the band
-    /// through five tiles must not produce five turns. It is read into the next
-    /// turn's context instead, which is the moment it matters. See
-    /// `docs/arch/stage.md#where-they-went-is-reported-the-cursor-still-is-not`.
+    /// bookmark, or back to live. That move writes the screen's cursor, so it is
+    /// also the one place the appearance changes without the agent: one screen,
+    /// two hands. Addressed, so it carries the owner by default like `text` does;
+    /// deliberately *not* turn-driving, because walking the band through five tiles
+    /// must not produce five turns. It is read into the next turn's context
+    /// instead, which is the moment it matters. See
+    /// `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
     View,
     /// The host noticing the time: today a check-in coming due, and nothing else since
     /// Reaction's pulse was cut.

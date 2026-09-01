@@ -11,8 +11,7 @@ import {
 import {
   subscribeViewState,
   clearViewState,
-  openView,
-  reportWentTo,
+  goToView,
   type WireHistoryEntry,
 } from "../channels/out/view";
 import { destinationOf, trailOf } from "./trail";
@@ -40,23 +39,22 @@ interface ViewsValue {
    * device + a refresh converge on the cleared screen; the empty state arrives
    * via the same long-poll. */
   clear: () => void;
-  /** Where this window can go back to, **newest first**: what the agent showed, plus
-   * the places this window went on its own, one entry per destination. */
+  /** Where the screen can go back to, **newest first** — the agent's shows and the
+   * person's own moves, one entry per destination. The server's list, whole. */
   trail: WireHistoryEntry[];
-  /** The destination the agent has up now — the newest *show*, which is not
-   * necessarily the head of the trail: a bookmark opened after it sits above it. */
+  /** The destination the agent has up in the content slot, or `null` for an empty room.
+   * Not necessarily the head of the trail: a bookmark opened after it sits above it. */
   live: string | null;
-  /** The destination this window is parked on, or `null` when it is on the live one.
-   * Local to this window and never reported, exactly like the conversation's scroll
-   * position: a phone that went back must not move the desktop. **The move that put it
-   * here is reported** — that is a different fact, and the agent needs it to read what
-   * the person says next; see `reportWentTo`. */
+  /** The destination the screen is parked on, or `null` when it is live. **The
+   * server's, not this window's**: going back on the phone is going back on the
+   * desktop, because there is one screen and both hands reach it. */
   parked: string | null;
-  /** Park on one past show. */
+  /** Take the screen to one past destination. */
   goTo: (entry: WireHistoryEntry) => void;
-  /** Park on a named view from the inventory, and put it at the head of the trail:
-   * going somewhere is arriving somewhere, whether the agent took you or you went. */
-  openRef: (viewRef: string, label: string) => void;
+  /** Take the screen to a named view from the inventory, which puts it at the head of
+   * the trail if it has never been there: going somewhere is arriving somewhere,
+   * whether the agent took you or you went. */
+  openRef: (viewRef: string) => void;
 }
 
 const ViewsContext = createContext<ViewsValue>({
@@ -92,21 +90,11 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     { id: string; moduleUrl: string; slot?: string }[]
   >([]);
   const [history, setHistory] = useState<WireHistoryEntry[]>([]);
-  /** Places this window went that the agent did not take it to — a bookmark opened.
-   *
-   * Local, and dies with the window. Not because the move is a secret — it is posted as
-   * a perception the moment it happens, see `reportWentTo` — but because the server's
-   * list is the record of *shows*, and its newest entry is what is on the stage:
-   * appending to it would tell the desktop the agent had shown something because a
-   * phone tapped a bookmark. So that list stays what it is and this rides alongside it
-   * into the row. */
-  const [visits, setVisits] = useState<WireHistoryEntry[]>([]);
-  /** Where this window is looking, when that is not the live view. */
-  const [parked, setParked] = useState<{ key: string; view: ActiveView } | null>(null);
-  const parkedRef = useRef<{ key: string; view: ActiveView } | null>(null);
-  useEffect(() => {
-    parkedRef.current = parked;
-  }, [parked]);
+  /** Where the screen is parked, and what the agent has in the content slot. Both come
+   * off the wire, so this window holds no opinion of its own about either: it renders
+   * the screen rather than keeping one. */
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [liveKey, setLiveKey] = useState<string | null>(null);
 
   useEffect(() => {
     playingRef.current = reactive;
@@ -117,18 +105,11 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     }
   }, [reactive]);
 
+  // Clearing is about the room, not only the agent's slot — so the server drops the
+  // cursor with it, and this is one call. It used to take two, and the two could
+  // disagree: the slot cleared and the past view the window was holding stayed up.
   const clear = useCallback(() => {
     void clearViewState();
-    // Clearing is about the room, not only the server's slot. A parked window renders its
-    // cursor in preference to the wire, so the control that says "the conversation takes
-    // the screen back" cleared the slot and then visibly did nothing — the past show it
-    // was holding stayed up. Dropping the cursor is also this window's way home when there
-    // is no live card to tap: a bookmark opened on an instance that has never shown
-    // anything parks with nothing in the trail to go back to.
-    if (parkedRef.current) {
-      setParked(null);
-      reportWentTo({ live: true });
-    }
   }, []);
 
   useEffect(() => {
@@ -187,6 +168,11 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
               })),
             );
             setHistory(state.history ?? []);
+            // The cursor arrives with the slots, in the same snapshot and under the
+            // same version, so there is no second sync path that could disagree with
+            // the first about where the screen is.
+            setCursor(state.cursor ?? null);
+            setLiveKey(state.live ?? null);
           }
         } catch {
           if (cancelled || ctrl.signal.aborted) break;
@@ -201,123 +187,53 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     };
   }, [woken]);
 
-  // The live destination is the newest show, because every show appends one.
-  const newest = history.length > 0 ? history[history.length - 1]! : null;
-  const liveKey = newest ? destinationOf(newest) : null;
-  // The identity of the *show*, not of the place it leads to. A re-show of the same
-  // destination is still the agent putting something on the screen — the entry moves to
-  // the end of the list and takes a new timestamp — and it has to take the window with it
-  // just the same, which keying on the destination alone would miss.
-  const liveShow = newest ? `${liveKey}|${newest.at}` : null;
-  // Read by the navigation callbacks, which must not re-create on every show: going to
-  // the newest card is going *live*, and the report says so rather than telling the agent
-  // the person wandered off to the thing it just put up.
-  const liveKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    liveKeyRef.current = liveKey;
-    // A show takes the window with it, wherever it had gone back to — see
-    // `docs/arch/stage.md`. Dropping the cursor is the whole of it: `views` prefers the
-    // wire the moment there is nothing parked, so the show is what is on screen.
-    if (parkedRef.current) setParked(null);
-    // `liveKey` is read here but must not be a dependency: it is unchanged by a re-show
-    // of the same destination, and that is a show the window still has to follow.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveShow]);
-
+  // Both navigations are the same act — put the screen here — and neither mounts
+  // anything itself. The server writes the cursor and the long-poll delivers it, to this
+  // window like any other, which is what makes the phone and the desktop agree. Going to
+  // the card marked *live* is going live; the server settles that, because "live" is a
+  // fact about the content slot and the slot is what holds it.
   const goTo = useCallback((entry: WireHistoryEntry) => {
-    const key = destinationOf(entry);
-    const live = key === liveKeyRef.current;
-    // Told before the mount, not after: the report is what the agent reads to know
-    // where they are, and a compile that hangs must not make it late.
-    reportWentTo({
+    void goToView({
       viewRef: entry.view_ref,
       moduleUrl: entry.module_url,
       id: entry.id,
-      live,
-    });
-    // Tapping the card marked *live* is going live, not parking on a copy of it —
-    // `parked` means "somewhere other than the live one" and nothing else clears it
-    // until the live destination CHANGES. Parking here looked identical on screen and
-    // then, on the next show, the window read as away: it kept the old view and put a
-    // dot on the return control instead of following the show it was standing on.
-    if (live) {
-      setParked(null);
-      return;
-    }
-    // An inline view has no durable name and is only ever the artifact it compiled
-    // to, so it mounts straight from the record.
-    if (!entry.view_ref) {
-      setParked({ key, view: { id: entry.id, moduleUrl: entry.module_url } });
-      return;
-    }
-    // A named view is re-resolved, so going back to `factory/tasks` lands on today's
-    // board rather than a module compiled against a schema the app has moved past.
-    void openView(entry.view_ref).then(
-      (opened) =>
-        setParked({
-          key,
-          view: { id: opened.id, moduleUrl: opened.module_url },
-        }),
-      () =>
-        // Source gone, or no longer compiling. The artifact it was shown as is still
-        // on disk and still mounts: a stale view beats an empty room, which is the
-        // same call `ViewBus::refresh_sources` makes on the server.
-        setParked({ key, view: { id: entry.id, moduleUrl: entry.module_url } }),
-    );
+      // Nothing the person can act on, and blanking the screen would be worse than
+      // leaving them where they are. A named view whose source is gone keeps its card:
+      // the artifact it was shown as is still on disk, which is the same call
+      // `ViewBus::refresh_sources` makes on the server.
+    }).catch((error) => console.warn("going to a view failed", error));
   }, []);
 
-  const openRef = useCallback((viewRef: string, label: string) => {
-    const live = viewRef === liveKeyRef.current;
-    reportWentTo({ viewRef, live });
-    // Same as `goTo`: opening the bookmark the agent already has up is being live. The
-    // server holds that view on the stage, so there is nothing to resolve and nothing to
-    // add to the trail — the show is already a card in it.
-    if (live) {
-      setParked(null);
-      return;
-    }
-    void openView(viewRef).then(
-      (opened) => {
-        setParked({
-          key: viewRef,
-          view: { id: opened.id, moduleUrl: opened.module_url },
-        });
-        // Only on arrival: a request that failed is not a place anyone went.
-        setVisits((was) => [
-          ...was.filter((v) => v.view_ref !== viewRef),
-          {
-            id: opened.id,
-            module_url: opened.module_url,
-            view_ref: viewRef,
-            label,
-            at: new Date().toISOString(),
-          },
-        ]);
-      },
-      // Nothing the person can act on, and blanking the stage would be worse than
-      // leaving them where they are.
-      (error) => console.warn("opening a view failed", error),
-    );
+  const openRef = useCallback((viewRef: string) => {
+    void goToView({ viewRef }).catch((error) => console.warn("opening a view failed", error));
   }, []);
 
-  // What the agent showed and where this window went, as one row. See `trailOf`.
-  const trail = useMemo(() => trailOf(history, visits), [history, visits]);
+  // The server's list, head-first. See `trailOf`.
+  const trail = useMemo(() => trailOf(history), [history]);
 
   const value = useMemo<ViewsValue>(() => {
     const bare = ({ id, moduleUrl }: (typeof wire)[number]): ActiveView => ({ id, moduleUrl });
-    const views = parked
-      ? [parked.view, ...wire.filter((v) => v.slot === "condition").map(bare)]
+    // Parked: the cursor's card takes the content layer's place, and the condition layer
+    // stays over it — an outage must still cover whatever the screen went back to.
+    const parkedOn = cursor
+      ? history.find((entry) => destinationOf(entry) === cursor)
+      : undefined;
+    const views = parkedOn
+      ? [
+          { id: parkedOn.id, moduleUrl: parkedOn.module_url },
+          ...wire.filter((v) => v.slot === "condition").map(bare),
+        ]
       : wire.map(bare);
     return {
       views,
       clear,
       trail,
       live: liveKey,
-      parked: parked?.key ?? null,
+      parked: cursor,
       goTo,
       openRef,
     };
-  }, [wire, parked, clear, trail, liveKey, goTo, openRef]);
+  }, [wire, cursor, history, clear, trail, liveKey, goTo, openRef]);
   return <ViewsContext.Provider value={value}>{children}</ViewsContext.Provider>;
 }
 

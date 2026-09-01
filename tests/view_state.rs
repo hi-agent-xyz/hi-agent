@@ -192,11 +192,11 @@ async fn appearance_survives_restart() {
     assert_eq!(after, before);
 }
 
-/// The inbound half of the view channel: the person going somewhere is a perception and
-/// **not** a write. A move must leave the appearance byte-for-byte where it was — the
-/// moment it bumps a version, a phone that went back is moving the desktop.
+/// One screen: the person going somewhere **is** a write of the appearance, and a poll
+/// parked in another window wakes on it. The moment this stops being true, the phone and
+/// the desktop are looking at different things with no way to say so.
 #[tokio::test]
-async fn a_move_is_perceived_and_never_applied() {
+async fn a_move_takes_every_window_with_it() {
     let dir = tempdir().expect("tempdir");
     let (base, seams) = spawn_server_at(dir.path()).await;
     emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
@@ -204,47 +204,75 @@ async fn a_move_is_perceived_and_never_applied() {
     let before = get_state(&base, None, Duration::from_millis(500))
         .await
         .expect("state");
+    let version = before["version"].as_u64().expect("version");
+
+    // A second window, parked on the state it has already rendered.
+    let waiting = {
+        let base = base.clone();
+        tokio::spawn(async move { get_state(&base, Some(version), Duration::from_secs(2)).await })
+    };
+    tokio::task::yield_now().await;
 
     let client = reqwest::Client::new();
     let moved = client
-        .post(format!("{base}/api/in/view"))
-        .json(&serde_json::json!({ "ref": "factory/drive" }))
+        .post(format!("{base}/api/views/open"))
+        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
         .send()
         .await
         .expect("send");
     assert_eq!(moved.status(), 202);
 
-    // A poll that is already in sync still parks: nothing changed for anyone else.
-    let parked = get_state(&base, Some(1), Duration::from_millis(250)).await;
-    assert!(parked.is_err(), "a move woke the appearance poll; got {parked:?}");
-    let after = get_state(&base, None, Duration::from_millis(500))
-        .await
-        .expect("state");
-    assert_eq!(after, before);
-}
+    let after = waiting.await.expect("join").expect("the parked window woke");
+    assert_eq!(after["cursor"], "/m/drive.mjs", "the other window follows");
+    // The slot is still the agent's: what it showed is what it will refer to out loud.
+    assert_eq!(ids(&after), vec!["card"]);
+    assert_eq!(after["live"], "/m/card.mjs");
 
-/// A move to nowhere is a client bug. Answering 202 to it would hide the bug behind a
-/// context line that silently never appears.
-#[tokio::test]
-async fn a_move_with_no_destination_is_refused() {
-    let dir = tempdir().expect("tempdir");
-    let (base, _seams) = spawn_server_at(dir.path()).await;
-
-    let client = reqwest::Client::new();
-    let empty = client
-        .post(format!("{base}/api/in/view"))
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .expect("send");
-    assert_eq!(empty.status(), 400);
-
-    // …but coming back to live needs no destination, because it names none.
+    // And going live drops the cursor rather than clearing the screen.
     let live = client
-        .post(format!("{base}/api/in/view"))
+        .post(format!("{base}/api/views/open"))
         .json(&serde_json::json!({ "live": true }))
         .send()
         .await
         .expect("send");
     assert_eq!(live.status(), 202);
+    let home = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+    assert!(home["cursor"].is_null());
+    assert_eq!(ids(&home), vec!["card"]);
+}
+
+/// A show takes every window with it, whatever any of them had gone back to.
+#[tokio::test]
+async fn a_show_catches_up_with_a_parked_screen() {
+    let dir = tempdir().expect("tempdir");
+    let (base, seams) = spawn_server_at(dir.path()).await;
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
+
+    reqwest::Client::new()
+        .post(format!("{base}/api/views/open"))
+        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
+        .send()
+        .await
+        .expect("send");
+
+    emit_view(&seams, "next", ViewOp::Show, Some("/m/next.mjs")).await;
+    let state = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+    assert!(state["cursor"].is_null(), "the show took them along; got {state:?}");
+    assert_eq!(ids(&state), vec!["next"]);
+}
+
+/// A move to nowhere is a client bug. Answering 202 to it would hide the bug behind a
+/// screen that silently never moves.
+#[tokio::test]
+async fn a_move_with_no_destination_is_refused() {
+    let dir = tempdir().expect("tempdir");
+    let (base, _seams) = spawn_server_at(dir.path()).await;
+
+    let empty = reqwest::Client::new()
+        .post(format!("{base}/api/views/open"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(empty.status(), 400);
 }

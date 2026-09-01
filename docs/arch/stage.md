@@ -39,7 +39,13 @@ picture*. **Amended August 26, 2026 — the screen answers to the conversation i
 directions:** a show is an interruption, so its *timing* is the agent's read of what the
 person is doing rather than a readiness event; and the agent is told its own trail, so the
 screen can follow the talk back to a topic and not only forward to a new one. Argued in
-*The screen answers to the conversation, in both directions*.
+*The screen answers to the conversation, in both directions*. **Amended September 1, 2026
+— one screen, and the cursor is on it:** the cursor moves out of the window and into the
+appearance, so going back on the phone is going back on the desktop and a person who was
+reading on one finds the other where they left it; the inbound view channel and the
+staleness apparatus around it are deleted, because a fact the server holds cannot go stale
+against itself. Argued in *One screen, and the cursor is on it*, which reverses *Where they
+went is reported; the cursor still is not*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -410,13 +416,13 @@ gap showed up the moment the bookmarks row overflowed: going to `factory/tools` 
 its chip as here and left the chip off the right-hand edge, which is the exact failure
 the paragraph exists to prevent, one row down.*
 
-**The trail's own half stays in the window.** A visit is not appended to the server's
-list — a separate question from whether the *move* is reported, which it is (*Where they
-went is reported; the cursor still is not*, below): the newest entry in that list is what
-is on the stage, so appending to it would tell the desktop the agent had shown something
-because a phone tapped a bookmark. The server's list is the record of shows; the window merges its own
-visits into the row it draws and forgets them when it closes, exactly as it forgets where
-it was parked.
+**The trail is one list, and both hands write it.** *Reversed September 1, 2026. It read
+"the trail's own half stays in the window", because appending a visit to the server's list
+would tell the desktop the agent had shown something because a phone tapped a bookmark —
+the newest entry being what is on the stage.* That hazard is real and the answer to it is
+not two lists but one field: an entry records **whose hand moved the screen**, a show or a
+move, so the desktop can be taken along without being told a show happened. The window
+merges nothing and forgets nothing when it closes.
 
 **One list, and appending is the only thing that happens to it.** A browser's back stack
 destroys its forward entries when you navigate from a back position, and can afford to
@@ -425,10 +431,14 @@ someone was on their way back to because the agent spoke would be indefensible. 
 appends; the person moves a cursor. There is no branch, so nothing can be truncated, and
 the stack and the history are the same object.
 
-**The cursor is the window's, and is never reported.** Which entry a window is parked on
-is that window's own, exactly like the conversation's scroll position — a phone that went
-back must not move the desktop. The content slot stays the agent's: what it showed is
-still what a second device shows and still what it will refer to out loud.
+**The cursor is the stage's, and there is one of it.** *Reversed September 1, 2026 — it
+read "the cursor is the window's, and is never reported", on the ground that a phone that
+went back must not move the desktop; argued in* One screen, and the cursor is on it,
+*below.* Which entry the screen is parked on is appearance state like the slots: it rides
+`GET /api/out/view`, every attached window renders it, and going back on the phone is
+going back on the desktop. What stays the window's own is everything below the
+destination — scroll position, which presentation the conversation is drawn in, the skin,
+the frame.
 
 **A show takes the window with it.** Whatever the person had gone back to, the thing the
 agent puts up is what is in front of them a moment later — on every window, parked or not.
@@ -531,55 +541,99 @@ deliberately is not:
   cannot act on only invites it to try — the same rule that keeps the condition layer out
   of `on_screen`. What has been *shown* is the journal's record, and Cognition reads it
   there.
-- **Not the cursor.** Where the person went is still theirs and still arrives separately,
-  as `Attention`. This is where the *agent* has been.
+- **Not the cursor.** The cursor is which entry the screen is on *now*; this is the list it
+  points into. Since *One screen, and the cursor is on it* the person's own opens are in
+  that list too, marked by whose hand moved the screen — so an entry the agent can put back
+  up is not necessarily one it put up.
 - **Not a new bound.** It is the same `history` the band draws, at the same `HISTORY_MAX`,
   through a second reader.
 
-**Ages are coarse here for the reason they are coarse in `Attention`:** the block is
-`Cadence::OnChange`, so a live figure would put the whole screen back in the prompt every
-turn.
+**Ages are coarse here:** the block is `Cadence::OnChange`, so a live figure would put the
+whole screen back in the prompt every turn.
 
-### Where they went is reported; the cursor still is not
+### One screen, and the cursor is on it
 
-Amended August 19, 2026. Those two read as one fact and are opposite in kind, which is why
-the paragraph above could be right and still leave the agent blind.
+Amended September 1, 2026, reversing *where they went is reported; the cursor still is
+not*. That section split one question into an **event** the agent perceives and **state**
+the window keeps, and defended the second half with a rule: *reporting it would let a phone
+move the desktop.* The split was right about the agent and wrong about the person, and
+what was wrong with it only shows up when one person actually uses two surfaces.
 
-*Which entry this window is parked on* is **state**, it is the window's, and reporting it
-would let a phone move the desktop. That stands exactly as written. *That the person went
-somewhere* is an **event**, and an event on the agent's own surface is something the agent
-should perceive — because the next thing they say is usually about it. "这个数字不对" is
-unreadable if the agent believes its own last show is what is in front of them, and the
-failure is silent: it answers confidently, about the wrong board.
+**A window is already moved by something that happened elsewhere.** *A show takes the
+window with it* (August 21) ended the property that rule was protecting; what was left of
+it was protecting someone from their own other hand. And the identity argument the same
+section leans on runs the other way — *two windows are two of their eyes and not two
+people*. If the newest move is the best available answer to where they are looking, which
+is the whole reason the agent is told it, it is the best available answer for the screen
+too.
 
-**So a move posts, and posts as a perception.** `POST /api/in/view` is the inbound half of
-a channel that until now only went out. It carries *where they went* and never *which
-window went there*, and it changes nothing about the appearance: `GET /api/out/view` is
-what it was, no version bump, no snapshot, and a second device still shows what the agent
-shown. The report is read, not applied — the content slot is still the agent's alone, and
-this is still not a second writer of it.
+**What the split costs is the ordinary way one person uses two devices.** They read on the
+phone for ten minutes, put it down, sit at the desktop, and the desktop is on whatever the
+agent last showed. Nothing is broken on either screen and there is nothing to report,
+which is the tell: the person believes they have one screen, the product has one per
+window, and every explanation of the behaviour has to teach them a seam before it can
+begin. The failure the old rule prevents is being moved once; the failure it causes is
+never being followed at all.
 
-**It does not drive a turn.** Someone walking the band through five tiles must not produce
-five turns, and an agent that remarks on every tile you touch is unusable. The move lands
-in the log and is read into the next turn's context, which is exactly when it is needed:
-the moment the person speaks. Same shape as the frame on the stage lane — the window tells
-the backend something true about itself, and nothing happens until something else asks.
+**So the cursor is appearance state, and `POST /api/views/open` writes it.** It rides
+`GET /api/out/view` beside the slots, bumps the version, and every attached window
+converges on it exactly the way they already converge on a show. The line the old section
+drew — `POST /api/views/open` is *"deliberately not a third writer of the appearance"* —
+is gone. There are two writers of the screen, the agent and the person, which is what a
+screen they share was always going to mean.
 
-**The newest move wins, across every window.** One person owns an install
-([`topology.md`](topology.md#identity)), so two windows are two of their eyes and not two
-people, and the last place they went is the best available answer to where they are
-looking. **Any show clears it**, because that is the client's own rule for going live again
-— a show takes every window with it — made in the same place the show is recorded, so the
-two cannot drift. It used to clear only on a show onto the very destination they had gone
-to, which was right while a parked window stayed put: now that none does, a fact saying they
-are elsewhere is not stale but false, and the agent would answer the wrong board on the
-strength of it. A *dismiss* is not a show and leaves it alone — it takes a window nowhere.
+**One list, and an entry says whose hand.** A person's open appends to the same history a
+show does, marked as a move rather than a show, and the cursor is a pointer into that
+list. That mark is what lets the desktop follow the phone without being told the agent
+showed something — the hazard the old design answered by keeping two lists and merging
+them per window (`trail.ts`). The list keeps every property it had: append-only, no
+branch, one entry per destination, oldest first on disk and newest first in the row.
 
-**It goes stale, and says so instead of pretending.** A window that reloads is live again
-and never announces it, so the fact can outlive the looking. The turn therefore reads it
-with its age attached — *they went to `factory/drive` 40s ago* — which the agent can weigh,
-unlike a bare assertion about where someone is. And it is in-memory: after a restart the
-agent has no idea where anybody is looking, which is the truth.
+**A show still takes the window with it, and now that is one sentence instead of two.**
+The show appends and moves the cursor; the person's open appends and moves the cursor.
+*Any show clears it* was a client rule mirrored by a server rule, kept in the same call
+precisely so the two could not drift; there is now nothing to keep in step.
+
+**It still does not drive a turn.** Someone walking the band through five tiles must not
+produce five turns, and an agent that remarks on every tile you touch is unusable. A move
+bumps the version and lands in the log; it wakes windows, never the reaction, and is read
+into the next turn's context at the moment the person speaks. Same shape as the frame on
+the stage lane — the window tells the backend something true, and nothing happens until
+something else asks.
+
+**An arrival is archived; walking the row is not.** The snapshots under `raw/appearance/`
+are the record of what has been on screen, so adding a card belongs in it and sliding the
+cursor between cards already there does not — that would put a state in the appearance
+history identical to its predecessor and dated later, which is exactly the noise
+reflection has to read past. This is `note_shot`'s rule, applied to the half of the
+person's move it is true of.
+
+*Both halves went unwritten in the first draft, on the argument that the archive is the
+record of what the **agent** expressed — and that was caught by running it rather than by
+reading it.* On a core where the agent has never shown anything, nothing had ever been
+persisted, so a restart took away not an approximate cursor but **the entire row**: every
+place the person had been, gone, on a screen the amendment above promises is one. A
+person's arrival is a fact about where the screen has been, and the list stopped being the
+agent's alone at the top of this section. What stays approximate is only the cursor's
+position *within* a row that survives whole — and it is approximate towards the last card
+anyone arrived at, which is the safe end.
+
+**What this deletes**, all of it machinery for reconciling a fact the server could not
+observe:
+
+- `POST /api/in/view`, and the `Attention` state held outside `Appearance` behind its own
+  lock — whose comment explains that it is kept apart so nobody can serialize it and let
+  a phone start moving the desktop. The move is still journalled as a perception, by the
+  write that moves the screen.
+- ***It goes stale, and says so*** — the age carried on the fact, and the paragraph
+  explaining that a reloaded window is live again and never announces it. A window that
+  reloads reads the cursor. There is nothing left for it to be stale against.
+- `trailOf`'s two-list merge, and the window's `visits` and `parked` state.
+
+**The cost, stated as a cost.** You are at the desktop, you poke your phone, the desktop
+moves. That is real and it is accepted — it is the same thing a show already does to you,
+by your own hand rather than the agent's. What it buys is a screen that agrees with itself
+when you are not touching it, which is most of the time.
 
 **Same destination, one entry** — the ref when there is one, the module when there isn't.
 Two shows of `factory/tasks` are one place, because both re-resolve to the same
@@ -590,9 +644,10 @@ a named view comes back as what it *is now*, an inline one only ever as what it 
 **The person may go to a place; the agent decides what to show.** A dozen views ship with
 no way to reach any of them except asking, which is the interaction cost of a chatbot
 sitting on top of what is otherwise an app. `GET /api/views` is the inventory and
-`POST /api/views/open` compiles one for a window to mount — deliberately not a third
-writer of the appearance. The condition view is not in the inventory: it is the host's,
-and offering it would let a person summon an outage that isn't happening.
+`POST /api/views/open` mounts one — *and moves the screen, since September 1, 2026; it
+used to be "deliberately not a third writer of the appearance"*. The condition view is not
+in the inventory: it is the host's, and offering it would let a person summon an outage
+that isn't happening.
 
 **The row is a person-owned subset, not the inventory** — amended August 18, 2026,
 because the condition this document set for adding one arrived. It said there was no
@@ -609,12 +664,15 @@ on a history card keeps a view, the cross on a chip drops it. `GET /api/views` s
 reports the whole tree — the inventory is the truth about what exists — and now marks
 each entry `system` and `bookmarked`; `POST /api/views/bookmarks` is the one write.
 
-**A bookmark is server state, and the cursor is not.** They look alike and are opposite:
-which entry a window is parked on is that window's own, like scroll position, while a
-bookmark is a thing the person decided once and must find again on the phone. Kept refs
-live in the config store rather than the views tree, which is disposable and re-seeded on
-every boot — an upgrade replaces `factory/` wholesale and must not take the person's row
-with it.
+**A bookmark and the cursor are both server state, and they differ in what they outlive.**
+*Amended September 1, 2026 — this read "a bookmark is server state, and the cursor is
+not", which was the whole of the difference until the cursor moved.* A bookmark is a thing
+the person decided once and must find again on the phone, so kept refs live in the config
+store rather than the views tree, which is disposable and re-seeded on every boot — an
+upgrade replaces `factory/` wholesale and must not take the person's row with it. The
+cursor is where they are right now, so it lives in the appearance and comes back from its
+snapshot; a version that came back on the wrong card is wrong only until the next thing
+anybody does.
 
 **Only a named view can be kept.** An inline view is only ever the content-addressed
 artifact it compiled to, in a cache that prunes; a bookmark to one would be a bookmark to
@@ -1196,6 +1254,33 @@ Built on `design/stage`, in this order:
    `height` stay, for the deliberate second look, but the default is the surface. The builder
    prompt splits its bar into the ship gate and the refine pass, and the reviewer's round
    moves behind the show, replacing on the same id.
+
+12. **One screen, and the cursor is on it (September 1)** — *designed, not built.* Each
+   step compiles and passes on its own.
+
+   1. **The cursor becomes appearance state.** `Appearance` gains `cursor` and each
+      `history` entry gains the hand that moved the screen; `note_went_to` stops writing the
+      `Attention` slot and writes `inner` instead, bumping the version and notifying, and —
+      like `note_shot` — persisting nothing. `Attention`, its `Arc<Mutex<_>>` and
+      `caught_up_by_show` are deleted. Snapshots already on disk reload with the cursor live
+      and every entry a show, through the same one-way `#[serde(default)]` lever the history
+      itself came in on.
+   2. **The person's open moves the screen.** `POST /api/views/open` writes the cursor and
+      appends its entry; `POST /api/in/view` goes with its route, its handler and its
+      journal write — which moves, unchanged, onto `views/open`, so the `view` channel keeps
+      the addressed sender [`signal-attribution.md`](signal-attribution.md) gives it.
+   3. **The prompt reads one state.** The turn takes the cursor from the same place as
+      `on_screen`, and says what the screen is on and whose hand put it there instead of
+      *they went to `factory/drive` 40s ago*. The age goes; so does the sentence teaching the
+      agent to weigh it. `shown()` keeps its ref-only filter.
+   4. **The window stops keeping a copy.** `visits` and `parked` leave `core/views.tsx`,
+      `reportWentTo` leaves `channels/out/view.ts`, and `trailOf` collapses to a dedupe and a
+      sort over one list. `trail.test.ts` loses the merge cases and gains the hand;
+      `layout.test.ts` is untouched — nothing here reaches the compositor.
+   5. **Watched on two faces.** Two attached surfaces against one core on the Mac mini: move
+      on one, watch the other follow; reload one and check it lands on the cursor rather than
+      the last show; restart and check the approximate case is the show, not a blank. Into
+      [`docs/user-journeys/`](../user-journeys/), because built is not watched.
 
 **Left:** the camera is placed by `stage()` but is not yet described as the `self` role in
 the wire vocabulary — it has no server-side existence to name, so this is naming, not
