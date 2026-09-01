@@ -114,6 +114,11 @@ const T = {
       waiting: "waiting",
       moved: "moved",
       note: "update",
+      // Not kinds the store writes — the switchboard's line, built by `liveMoment`. The
+      // word is deliberately not a past-tense one: everything else on this list happened,
+      // and this is happening.
+      live: "now",
+      failed: "last turn failed",
     },
     // A status change reads as the verb for it. The stored text is the pair the store
     // wrote — `todo → doing` — which is the transition spelled out for a machine, and
@@ -136,10 +141,10 @@ const T = {
     moreFields: (n) => `+${n} more, in the record`,
     standing: (label, span) => `${label} for ${span}`,
     agoUnits: { m: "m", h: "h", d: "d" },
+    ago: (span) => `${span} ago`,
     nobodyOnIt: "Nobody on it",
     onItRunning: (span) => `Running for ${span}`,
     onItIdle: (span) => `Worker idle ${span}`,
-    onItDoing: (what) => `\u2014 ${what}`,
   },
   zh: {
     title: "任务",
@@ -200,6 +205,8 @@ const T = {
       waiting: "等人",
       moved: "状态",
       note: "进展",
+      live: "此刻",
+      failed: "上一轮失败",
     },
     life: {
       started: "开始",
@@ -219,10 +226,10 @@ const T = {
     moreFields: (n) => `还有 ${n} 条，在记录里`,
     standing: (label, span) => `${label} ${span}`,
     agoUnits: { m: "分钟", h: "小时", d: "天" },
+    ago: (span) => `${span}前`,
     nobodyOnIt: "无人在做",
     onItRunning: (span) => `已跑 ${span}`,
     onItIdle: (span) => `执行者停了 ${span}`,
-    onItDoing: (what) => `— ${what}`,
   },
 };
 
@@ -269,6 +276,10 @@ const MOMENT_TONE = {
   update: "var(--fg-dim)",
   moved: "var(--fg-mute)",
   note: "var(--fg-mute)",
+  // The switchboard's two, which are the status colours and not record colours: `live` is
+  // the same `--accent` the word `Doing` is drawn in, because that is what it qualifies.
+  live: "var(--accent)",
+  failed: "var(--danger)",
 };
 
 // A `waiting` line is a dated sentence in an append-only record, and nothing ever clears
@@ -687,11 +698,11 @@ function Detail({ task, busy, onStatus, onClose }) {
   const due = dueMeta(task);
   const health = healthMeta(task);
   const age = ageMeta(task);
-  // Beside the status, never inside the record below it. "Somebody is on this" is a qualifier
-  // on the word `Doing`, not a seventh kind of timeline entry: it has no instant that means
-  // anything, it changes on every poll, and sat at the top of an append-only record it would
-  // make a row that has not moved in half an hour read as one that just did.
-  const on = onItMeta(task, true);
+  // Whether anybody is on this, beside the status: "somebody is on this" is a qualifier on the
+  // word `Doing`. Only the fact and its clock live here — *what* the worker is doing is the
+  // newest line of the record below, where it fits whole (see `liveMoment`).
+  const on = onItMeta(task);
+  const live = liveMoment(task);
   // What they asked for is pinned rather than scrolled to: it is the first thing somebody
   // catching up on their own errand wants, and it does not move for the life of the task.
   // It is a **reading, not a gate** — nothing here waits on it and no task is held open
@@ -812,10 +823,27 @@ function Detail({ task, busy, onStatus, onClose }) {
           ) : null}
 
           <div className="hi-tasks__moments-title">{L.timeline}</div>
-          {moments.length === 0 ? (
+          {moments.length === 0 && !live ? (
             <div className="hi-tasks__none">{L.noTimeline}</div>
           ) : (
             <ol className="hi-tasks__moments">
+              {live && (
+                <li
+                  className="hi-tasks__moment"
+                  data-live={live.kind}
+                  style={{ "--moment": momentTone(live) }}
+                >
+                  <span className="hi-tasks__moment-head">
+                    <span className="hi-tasks__moment-kind">{L.moment[live.kind]}</span>
+                    {live.ago && <span className="hi-tasks__moment-at">{live.ago}</span>}
+                  </span>
+                  {/* Through `linked` and not `inline`, for the reason a field value is: this
+                      is a command line the worker is running, so its backticks and asterisks
+                      are its own characters and not markup. A URL in it is still worth a
+                      click — the panel has no address bar. */}
+                  <span className="hi-tasks__moment-text">{linked(live.text, "live")}</span>
+                </li>
+              )}
               {moments.map((moment, index) => {
                 // A status change is shown as the word for it and nothing else: the stored
                 // `todo → doing` is the transition spelled for a machine, and repeating
@@ -1158,27 +1186,56 @@ function bySubject(workers) {
 // **`idle` on a `doing` row is a warning, not a state.** It is the same word a worker waiting
 // for its next instruction reports, so the row that should read as stalled reads as patient —
 // but on `doing` the turn ended and nothing moved the row, which is the stall itself.
-function onItMeta(task, detail) {
+function onItMeta(task) {
   const worker = task.onIt;
   if (worker === undefined) return null;
   if (!worker) return task.status === "doing" ? { text: L.nobodyOnIt, warn: true } : null;
   const span = elapsed(worker.state_since);
   const stamp = span ? `${span.n}${span.unit}` : "";
   const running = worker.state === "running";
-  let text = running ? L.onItRunning(stamp) : L.onItIdle(stamp);
-  if (detail) {
-    // What it is *doing*, not what it has said: a worker four minutes into a shell command has
-    // produced no output, and that silence is what is most easily mistaken for death. Beside
-    // it, the other reading of a quiet worker — a turn that ended badly. Never both: while a
-    // worker is busy, what it is doing now is the answer and last turn's ending is stale.
-    const doing = running ? worker.doing : worker.last_turn?.error;
-    // One line, clipped. A worker's activity tail is whatever it is running, verbatim — a
-    // heredoc'd Python script arrives with its newlines in it — and this chip sits in a row of
-    // short meta beside the created date. What earns the space is which command, not all of it.
-    const said = (doing || "").replace(/\s+/g, " ").trim();
-    if (said) text += ` ${L.onItDoing(said.length > 72 ? `${said.slice(0, 71)}\u2026` : said)}`;
-  }
-  return { text, warn: task.status === "doing" && !running };
+  return {
+    text: running ? L.onItRunning(stamp) : L.onItIdle(stamp),
+    warn: task.status === "doing" && !running,
+  };
+}
+
+// The switchboard's line as the newest entry of the record — in the panel, which is the one
+// place with room to print it whole.
+//
+// **This is not a seventh stored kind and must never read as one.** Nothing appends it, nothing
+// keeps it, and it changes on every poll; headed with a wall clock at the top of an append-only
+// record it would make a row that has not moved in half an hour read as one that just did. So
+// it carries no instant, only an age — *2m ago* — which is the one phrasing that cannot be
+// mistaken for something written down.
+//
+// **That age is the line's own clock and not the worker's**, which is what stops it repeating
+// the status chip two inches above it. The chip answers how long this session has been running;
+// `doing_at` answers when this step last changed, and the gap between those two numbers is the
+// difference between a worker working and one hung — the thing neither field says alone.
+//
+// What it prints is what used to hang off the status chip, clipped to 72 characters with its
+// newlines collapsed. The line arrives already bounded — `registry::record_activity` cuts it at
+// `ACTIVITY_LINE_CHARS` (120), and a turn's `error` at `OUTCOME_LINE_CHARS` — so the 72 was the
+// chip's own limit and not the wire's: a shell command reached this panel with its second half
+// gone, which is the half naming the file. Here it wraps like every other entry, and the status
+// chip goes back to the one fact it can hold — alive or not, and for how long.
+//
+// The running/quiet split is `onItMeta`'s and holds for its reason: while a worker is busy,
+// what it is doing now is the answer and last turn's ending is stale. Never both.
+function liveMoment(task) {
+  const worker = task.onIt;
+  if (!worker) return null;
+  const running = worker.state === "running";
+  const said = ((running ? worker.doing : worker.last_turn?.error) || "").trim();
+  if (!said) return null;
+  const at = running ? worker.doing_at : worker.last_turn?.at;
+  const span = at ? elapsed(at) : null;
+  return {
+    kind: running ? "live" : "failed",
+    text: said,
+    // Read by the panel in place of `at`, which stays absent on purpose.
+    ago: span ? L.ago(`${span.n}${span.unit}`) : "",
+  };
 }
 
 // Every duty gets this line, including one with no `liveness` recorded — a duty nobody
@@ -2196,6 +2253,42 @@ const CSS = `
     gap: 4px 10px;
     padding-left: 11px;
     border-left: 2px solid color-mix(in srgb, var(--moment) 55%, transparent);
+  }
+
+  /* The one entry nobody wrote, so it is the one entry drawn at full strength: a solid
+     stripe against every stored line's 55%, and a dot on the kind word. The dot is what
+     carries "this is a reading, not a record" at a glance. */
+  .hi-tasks__moment[data-live] {
+    border-left-color: var(--moment);
+  }
+
+  .hi-tasks__moment[data-live] .hi-tasks__moment-kind::before {
+    content: "";
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--moment);
+    vertical-align: middle;
+  }
+
+  /* Only the running one breathes, and slowly enough to be noticed only when looked at.
+     A dead worker's last error is as still as anything else on the list — a pulse there
+     would say the opposite of what the line says. */
+  .hi-tasks__moment[data-live="live"] .hi-tasks__moment-kind::before {
+    animation: hi-tasks-live 2.4s ease-in-out infinite;
+  }
+
+  @keyframes hi-tasks-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hi-tasks__moment[data-live="live"] .hi-tasks__moment-kind::before {
+      animation: none;
+    }
   }
 
   .hi-tasks__moment-head {
