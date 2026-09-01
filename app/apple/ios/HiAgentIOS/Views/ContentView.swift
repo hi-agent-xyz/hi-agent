@@ -141,9 +141,18 @@ private struct WelcomeView: View {
 
 // MARK: - Stage
 
-/// The attached core, full height, under a slim bar that names it and gets out
-/// of the way. The bar is a safe-area inset rather than an overlay so it never
-/// covers the face's own header.
+/// The attached core, edge to edge. **The face gets the whole screen**, including
+/// the strip under the status bar: it is a full-bleed surface that publishes
+/// `--hi-safe-top` from `env(safe-area-inset-top)` and holds its own content clear,
+/// so a native bar above it was subtracting a device-height's worth of the very
+/// thing the app exists to show — and doing it permanently, to say a name that
+/// does not change.
+///
+/// So the app's own chrome is transient. It shows itself while the core is being
+/// opened, whenever the core is not answering, and for a moment after the face
+/// first paints — and then leaves. A drag down from the top edge brings it back;
+/// the grabber that appears once it is gone is the only thing left on screen
+/// saying so.
 private struct CoreStageView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var model: AppModel
@@ -156,6 +165,18 @@ private struct CoreStageView: View {
     @State private var isLoading = false
     @State private var webViewState = WebViewState.loading
     @State private var reloadToken = 0
+    /// Whether the chrome has been asked for. Independent of the states that show
+    /// it unconditionally — see `chromeShown`.
+    @State private var chromeCalled = true
+    /// Bumped every time the chrome is called, so a second call restarts the
+    /// dwell rather than being swallowed by the first one's countdown.
+    @State private var chromeCallToken = 0
+
+    /// The chrome is on screen when it has something to say, or when it was just
+    /// asked for. A ready face that nobody has reached for keeps the whole screen.
+    private var chromeShown: Bool {
+        chromeCalled || webViewState != .ready || !network.isConnected
+    }
 
     var body: some View {
         ZStack {
@@ -163,7 +184,7 @@ private struct CoreStageView: View {
                 CoreWebView(session: session, reloadToken: reloadToken) { event in
                     handle(event)
                 }
-                .ignoresSafeArea(edges: .bottom)
+                .ignoresSafeArea()
                 .opacity(webViewState == .ready ? 1 : 0)
             }
 
@@ -199,12 +220,23 @@ private struct CoreStageView: View {
         .animation(.easeInOut(duration: 0.25), value: webViewState)
         .animation(.easeInOut(duration: 0.25), value: network.isConnected)
         .hiCanvas()
-        .safeAreaInset(edge: .top, spacing: 0) {
-            StageBar(
+        // The reach-for-it strip, under the chrome in z-order so a visible
+        // capsule takes its own taps. Live only while the chrome is away — with
+        // it up, the top of the screen belongs to the face again.
+        .overlay(alignment: .top) {
+            ChromeReveal(onCall: callChrome)
+                .opacity(chromeShown ? 0 : 1)
+                .allowsHitTesting(!chromeShown)
+                .ignoresSafeArea()
+        }
+        .overlay(alignment: .top) {
+            StageChrome(
                 entry: entry,
+                shown: chromeShown,
                 onOpenRoster: onOpenRoster,
                 onReload: {
                     Haptic.tap()
+                    callChrome()
                     if webViewState == .ready {
                         reloadToken += 1
                     } else {
@@ -212,6 +244,16 @@ private struct CoreStageView: View {
                     }
                 }
             )
+        }
+        .animation(.smooth(duration: 0.28), value: chromeShown)
+        // One countdown per call, keyed on the call token: an earlier dwell that
+        // is still running is cancelled rather than hiding the chrome out from
+        // under the hand that just asked for it.
+        .task(id: chromeCallToken) {
+            guard chromeCalled else { return }
+            try? await Task.sleep(for: .seconds(2.6))
+            guard !Task.isCancelled else { return }
+            chromeCalled = false
         }
         .task(id: "\(entry.id)-\(model.credentialRevision)") {
             await open()
@@ -235,6 +277,12 @@ private struct CoreStageView: View {
                 }
             }
         }
+    }
+
+    /// Put the chrome up and restart its dwell.
+    private func callChrome() {
+        chromeCalled = true
+        chromeCallToken += 1
     }
 
     private func open() async {
@@ -264,6 +312,11 @@ private struct CoreStageView: View {
         case .ready:
             errorMessage = nil
             webViewState = .ready
+            // The dwell starts when the face paints, not when the view appeared:
+            // opening a relayed core can take seconds, and a countdown spent
+            // behind the loading veil would hand over a screen whose chrome had
+            // already come and gone.
+            callChrome()
         case .sessionExpired:
             Task {
                 await open()
@@ -316,10 +369,17 @@ private struct CoreStageView: View {
     }
 }
 
-/// The only chrome over the face: which core you are talking to, whether it is
+/// The app's chrome over the face: which core you are talking to, whether it is
 /// answering, and the two things you might want — switch, or reload.
-private struct StageBar: View {
+///
+/// A pair of floating capsules rather than a bar, because it comes and goes: a
+/// full-width bar with a rule under it reads as part of the screen's structure
+/// and is jarring when it leaves, while a capsule reads as something that was
+/// handed to you. Nothing below it moves when it appears — it rides over the
+/// face rather than displacing it, which is what makes the face full-bleed.
+private struct StageChrome: View {
     let entry: RosterEntry
+    let shown: Bool
     let onOpenRoster: () -> Void
     let onReload: () -> Void
 
@@ -336,12 +396,13 @@ private struct StageBar: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
-                .padding(.leading, 6)
+                .padding(.leading, 8)
                 .padding(.trailing, 12)
-                .padding(.vertical, 7)
+                .padding(.vertical, 8)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .background(.regularMaterial, in: Capsule())
             .accessibilityLabel("\(entry.label), \(entry.health.title). Switch core")
 
             Spacer(minLength: 0)
@@ -350,18 +411,53 @@ private struct StageBar: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 36, height: 36)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .background(.regularMaterial, in: Circle())
             .accessibilityLabel("Reload the face")
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
-        .background(.bar)
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.5)
-        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : -14)
+        .allowsHitTesting(shown)
+        .accessibilityHidden(!shown)
+    }
+}
+
+/// How the chrome is called back once it has gone: a drag down from the top
+/// edge, and a grabber saying there is something to drag.
+///
+/// The strip lives in the status-bar inset, which is the one band of the screen
+/// the face keeps clear of by construction (`--hi-safe-top`), so taking touches
+/// here costs the view nothing. It is a drag rather than a tap because a tap at
+/// the top of a scrolling surface already means scroll-to-top on iOS.
+private struct ChromeReveal: View {
+    let onCall: () -> Void
+
+    var body: some View {
+        Capsule()
+            .fill(.primary.opacity(0.18))
+            .frame(width: 34, height: 4)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 6)
+            .frame(height: 44, alignment: .top)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 6)
+                    .onEnded { drag in
+                        guard drag.translation.height > 0 else { return }
+                        Haptic.tap()
+                        onCall()
+                    }
+            )
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Show which core this is")
+            .accessibilityAction { onCall() }
     }
 }
 

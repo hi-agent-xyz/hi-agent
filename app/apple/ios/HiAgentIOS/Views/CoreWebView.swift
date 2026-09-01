@@ -41,6 +41,11 @@ struct CoreWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
+        // The face runs edge to edge and reads the insets itself, out of
+        // `env(safe-area-inset-*)` — which WebKit fills from this view's own
+        // safe area regardless of this setting. Letting UIKit *also* inset the
+        // scroll view would apply the notch twice.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         context.coordinator.install(session, in: webView)
