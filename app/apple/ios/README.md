@@ -76,8 +76,31 @@ The app currently supports:
    connection error states.
 9. Granting camera and microphone capture only to the paired core's exact web
    origin.
+10. Showing the agent your screen from a button — the phone's half of the desktop's
+    ⌘⌘ "come and see this".
 
 Push notifications, physical-device coverage, and release packaging remain
 separate follow-up work.
+
+## Showing your screen
+
+`ShowScreenIntent` ("Show My Screen") is an App Intent that takes an image, hands it
+to the attached core on the `file` channel with a note saying it is the person's
+screen, and opens the app. The person wires it to a button themselves:
+
+    Take Screenshot  →  Show My Screen        (a shortcut)
+    Settings → Action Button → Shortcut       (or Back Tap, or Control Centre)
+
+**The intent takes the picture as a parameter rather than capturing one, because no
+iOS app can photograph another app's screen.** The Shortcuts *Take Screenshot* action
+can, and the Action Button runs a shortcut over whatever app is in front without
+leaving it — so the OS holds the screen and this app is only the carrier. The order
+matters for the same reason: the screenshot has to exist before `openAppWhenRun`
+brings Hi Agent forward, or the picture is of Hi Agent.
+
+`ShowScreenSetupView` (Cores sheet → *Show your screen with a button*) is the
+in-app instructions. A signed `.shortcut` file served from the website would collapse
+its first three steps into one import tap; that needs a Mac to sign it and somewhere
+to host it, and is not built.
 
 The app does not host a core on iOS.

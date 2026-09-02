@@ -390,6 +390,51 @@ async fn a_handed_file_becomes_a_message_with_its_bytes_reachable() {
     assert_eq!(fetched.bytes().await.unwrap().as_ref(), b"not really a png");
 }
 
+/// A carrier that hands something over on purpose can say so. The phone's Action
+/// Button is the case this exists for: it takes a screenshot of whatever the person
+/// was looking at, and without a line saying what that PNG *is*, Reaction — which
+/// never opens a file — has nothing to decide on. The note is the person's own
+/// message and comes first; the file follows as its own.
+#[tokio::test]
+async fn a_carriers_note_precedes_the_file_it_frames() {
+    let (base, _dir, _seams, _memory) = spawn_server().await;
+    let mut feed = Feed::open(&base).await;
+    assert!(feed.next().await.reset().is_empty());
+
+    const BOUNDARY: &str = "hiagentnoteboundary";
+    let body = format!(
+        "--{BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"note\"\r\n\r\n\
+         Here's my phone screen right now.\r\n\
+         --{BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"screen.png\"\r\n\
+         Content-Type: image/png\r\n\r\n\
+         not really a png\r\n\
+         --{BOUNDARY}--\r\n"
+    );
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/in/file"))
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .expect("post file with a note");
+    assert!(response.status().is_success(), "{:?}", response.status());
+
+    let said = feed.next().await.appended();
+    assert_eq!(said.role, "user");
+    assert_eq!(said.text, "Here's my phone screen right now.");
+    assert!(said.attachment.is_none(), "the note is a line, not an artifact");
+
+    let handed = feed.next().await.appended();
+    assert_eq!(handed.role, "user");
+    assert!(handed.text.contains("screen.png"), "the file is its own message: {}", handed.text);
+    assert_eq!(handed.attachment.expect("the file rides along").mime, "image/png");
+}
+
 /// A rolling recognition partial is a preview of a message, not a message: it
 /// never enters the list, and the settled line clears it.
 #[tokio::test]

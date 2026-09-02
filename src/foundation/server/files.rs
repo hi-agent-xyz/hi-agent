@@ -14,6 +14,15 @@
 //!   (`GET /api/qr`). A phone opens `GET /up/<token>` (a tiny uploader) and posts
 //!   to `POST /api/up/<token>`.
 //!
+//! A carrier may say *why* it is handing something over: a plain `note` part on
+//! the multipart body is the line the person effectively said as they did it, and
+//! it lands as their own message just ahead of the artifact. Drag-drop sends none —
+//! a dragged document has no accompanying sentence — while a screen handed over on
+//! purpose does ("Here's my phone screen right now"), which is the same field the
+//! macOS ⌘⌘ gesture fills in-process ([`receive_screenshot`]). The framing is the
+//! carrier's because the carrier is the rung that knows what the gesture *was*; the
+//! core cannot tell a screenshot from any other PNG.
+//!
 //! Every door funnels into [`receive_file`], which mirrors the text path: store
 //! the bytes ([`media::store_blob`]), journal a `SignalIn`, echo to observers,
 //! and — crucially — send the `Signal` inbound so the reaction *wakes* and the
@@ -273,21 +282,15 @@ pub async fn get_media(
         .into_response()
 }
 
-/// Receive one handed file (drag-drop / picker / phone handoff) — a neutral
-/// document handoff, framed as such.
-async fn receive_file(
-    state: &AppState,
-    name: &str,
-    mime: &str,
-    bytes: &Bytes,
-) -> Result<(), String> {
-    ingest_file(state, name, mime, bytes, None).await
-}
-
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
 /// Command; see [`crate::body::gesture`]). Same `file` channel, same wake — only the
 /// framing differs: this is the user's current screen, handed over to look at and
 /// help with, not a neutral document.
+///
+/// **In-process because this carrier is in-process.** The iPhone makes the same
+/// gesture with its Action Button and arrives at the same place by writing the same
+/// sentence into the `note` part of `POST /api/in/file` — it is off-box, so it says
+/// so over the wire. Nothing here is macOS-specific except who takes the picture.
 ///
 /// **First person, because the gesture is the user's.** ⌘⌘ is a shortcut they pressed —
 /// the same act as dragging an image into the box — so writing it as their own line is a
@@ -315,29 +318,44 @@ pub(crate) async fn receive_screenshot(
 
 /// Drain a multipart body, storing every file part. A failed file does not hide
 /// siblings that already landed or prevent later parts from being attempted.
+///
+/// A plain `note` part is the carrier's framing — see the module header. It is
+/// **positional**: it applies to the file parts that follow it, and is spent on the
+/// first of them. That is what "one arrival, one message per thing communicated"
+/// requires when a carrier hands over several files at once — the person said one
+/// line and then gave you three things, not the same line three times. A carrier
+/// that wants the note read as said *before* the files must therefore write it
+/// first, which is the order a form is built in anyway.
 async fn drain_multipart(
     state: &AppState,
     mut mp: Multipart,
 ) -> Result<UploadResult, (StatusCode, String)> {
     let mut result = UploadResult::default();
+    let mut note: Option<String> = None;
     loop {
         match mp.next_field().await {
             Ok(Some(field)) => {
                 // Only parts that carry a filename are files; skip plain fields,
                 // but still drain their bytes so the stream advances.
+                let field_name = field.name().map(str::to_owned);
                 let name = field.file_name().map(str::to_owned);
                 let mime = field
                     .content_type()
                     .map(str::to_owned)
                     .unwrap_or_else(|| "application/octet-stream".to_string());
                 let Some(name) = name else {
-                    let _ = field.bytes().await;
+                    let text = field.text().await.ok();
+                    if field_name.as_deref() == Some("note") {
+                        note = text
+                            .map(|t| t.trim().to_string())
+                            .filter(|t| !t.is_empty());
+                    }
                     continue;
                 };
                 let index = result.attempted;
                 result.attempted += 1;
                 match field.bytes().await {
-                    Ok(bytes) => match receive_file(state, &name, &mime, &bytes).await {
+                    Ok(bytes) => match ingest_file(state, &name, &mime, &bytes, note.take()).await {
                         Ok(()) => result.received += 1,
                         Err(error) => {
                             tracing::error!(file = %name, %error, "file upload failed");

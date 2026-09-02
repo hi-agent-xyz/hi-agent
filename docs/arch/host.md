@@ -36,7 +36,8 @@ lives here so that none of it exists above.
 **There is no context-isolation key.** One Reaction, one
 [Cognition](agents.md#cognition--minutes-and-beyond), one memory, one continuous thread —
 the same conversation whether it arrives by voice from a
-browser tab, by a screenshot from the ⌘⌘ gesture, or by a file from a phone. Everything
+browser tab, by a screenshot from the ⌘⌘ gesture or the phone's Action Button, or by a
+file from a phone. Everything
 inbound joins it; everything outbound reaches every attached client.
 
 Signals reach Reaction, which is the mind's front door. Everything deeper is reached by

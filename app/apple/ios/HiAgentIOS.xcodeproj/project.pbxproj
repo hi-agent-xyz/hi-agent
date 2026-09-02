@@ -21,6 +21,10 @@
 		A1000000000000000000000C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* Theme.swift */; };
 		A1000000000000000000000D /* RosterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* RosterView.swift */; };
 		A1000000000000000000000E /* PairCoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* PairCoreView.swift */; };
+		A1000000000000000000000F /* ShowScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* ShowScreen.swift */; };
+		A10000000000000000000010 /* ShowScreenIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* ShowScreenIntent.swift */; };
+		A10000000000000000000011 /* ShowScreenBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* ShowScreenBanner.swift */; };
+		A10000000000000000000012 /* ShowScreenSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ShowScreenSetupView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +43,10 @@
 		B1000000000000000000000D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		B1000000000000000000000E /* RosterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000F /* PairCoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairCoreView.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* ShowScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreen.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* ShowScreenIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenIntent.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* ShowScreenBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenBanner.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* ShowScreenSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenSetupView.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* HiAgentIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HiAgentIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -71,6 +79,8 @@
 				B10000000000000000000005 /* AppModel.swift */,
 				B1000000000000000000000A /* PairingRequest.swift */,
 				B1000000000000000000000C /* NetworkMonitor.swift */,
+				B10000000000000000000010 /* ShowScreen.swift */,
+				B10000000000000000000011 /* ShowScreenIntent.swift */,
 				E10000000000000000000004 /* Views */,
 				B10000000000000000000009 /* Assets.xcassets */,
 				B10000000000000000000008 /* Info.plist */,
@@ -95,6 +105,8 @@
 				B1000000000000000000000D /* Theme.swift */,
 				B1000000000000000000000E /* RosterView.swift */,
 				B1000000000000000000000F /* PairCoreView.swift */,
+				B10000000000000000000012 /* ShowScreenBanner.swift */,
+				B10000000000000000000013 /* ShowScreenSetupView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -179,6 +191,10 @@
 				A1000000000000000000000C /* Theme.swift in Sources */,
 				A1000000000000000000000D /* RosterView.swift in Sources */,
 				A1000000000000000000000E /* PairCoreView.swift in Sources */,
+				A1000000000000000000000F /* ShowScreen.swift in Sources */,
+				A10000000000000000000010 /* ShowScreenIntent.swift in Sources */,
+				A10000000000000000000011 /* ShowScreenBanner.swift in Sources */,
+				A10000000000000000000012 /* ShowScreenSetupView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

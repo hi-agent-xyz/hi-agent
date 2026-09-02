@@ -12,10 +12,7 @@ struct ContentView: View {
     @State private var showingRoster = false
 
     private var current: RosterEntry? {
-        if let selectedID = model.selectedID, let entry = model.entry(id: selectedID) {
-            return entry
-        }
-        return model.entries.first(where: { $0.attached }) ?? model.entries.first
+        model.attachedEntry
     }
 
     var body: some View {
@@ -36,6 +33,16 @@ struct ContentView: View {
             }
         }
         .animation(.smooth(duration: 0.35), value: current?.id)
+        // Above the stage rather than inside it: a screen shown before this device
+        // was ever paired has no stage to sit on, and that is exactly the case where
+        // the person most needs to be told why nothing happened.
+        .overlay(alignment: .bottom) {
+            ShowScreenBanner(
+                state: model.showScreenState,
+                onRetry: { Task { await model.retryShowScreen() } },
+                onDismiss: { model.dismissShowScreen() }
+            )
+        }
         .sheet(isPresented: $showingRoster) {
             RosterView()
                 .environmentObject(model)

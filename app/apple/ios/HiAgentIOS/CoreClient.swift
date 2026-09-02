@@ -98,6 +98,88 @@ enum CoreClient {
         return (exchange, cookie)
     }
 
+    /// Hand a file to a core through its `file` channel — the same door a drag-drop
+    /// onto the face goes through (`POST /api/in/file`). `note` is the line the
+    /// person effectively said as they handed it over; the core makes it their own
+    /// message just ahead of the artifact.
+    ///
+    /// The long-lived credential is presented directly as a Bearer token instead of
+    /// being exchanged for a session first. A session exists so a `WKWebView` can
+    /// carry something a cookie jar understands; this is one request from native
+    /// code, and exchanging first would cost a round trip and a CSRF header to say
+    /// exactly what the Bearer already says.
+    static func hand(
+        at baseURL: URL,
+        credential: String,
+        data: Data,
+        filename: String,
+        mime: String,
+        note: String?
+    ) async throws {
+        let boundary = "hi-agent.\(UUID().uuidString)"
+        var request = URLRequest(url: endpoint(baseURL, path: "api/in/file"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        // A screenshot over a phone connection is not a 4-second request; the health
+        // check's timeout would fail a send that was going to land.
+        request.timeoutInterval = 60
+        request.httpBody = multipart(
+            boundary: boundary,
+            note: note,
+            data: data,
+            filename: filename,
+            mime: mime
+        )
+
+        let (body, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CoreClientError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw CoreClientError.rejected(
+                status: http.statusCode,
+                detail: String(data: body, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            )
+        }
+    }
+
+    /// One multipart body: the note first — the core spends it on the file that
+    /// follows — then the bytes.
+    ///
+    /// Hand-rolled because `URLSession` has no multipart encoder and this body has
+    /// one shape. `filename` and `mime` are never user text: the caller builds the
+    /// name and reads the type from the file's UTI, so neither can carry a quote or
+    /// a newline into a header.
+    private static func multipart(
+        boundary: String,
+        note: String?,
+        data: Data,
+        filename: String,
+        mime: String
+    ) -> Data {
+        var body = Data()
+        func append(_ text: String) {
+            body.append(Data(text.utf8))
+        }
+        if let note, !note.isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"note\"\r\n\r\n")
+            append(note)
+            append("\r\n")
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(mime)\r\n\r\n")
+        body.append(data)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
     static func health(at baseURL: URL) async -> HealthState {
         var request = URLRequest(url: endpoint(baseURL, path: "healthz"))
         request.httpMethod = "GET"

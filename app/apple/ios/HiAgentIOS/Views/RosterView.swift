@@ -6,6 +6,7 @@ import SwiftUI
 struct RosterView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
+    @State private var showingScreenSetup = false
 
     var body: some View {
         NavigationStack {
@@ -44,6 +45,30 @@ struct RosterView: View {
                 } footer: {
                     Text("Pull down to re-check whether each core is answering.")
                         .font(.footnote)
+                }
+
+                // The one thing this device can do that the face cannot offer,
+                // because it is set up outside the app entirely.
+                Section {
+                    Button {
+                        Haptic.tap()
+                        showingScreenSetup = true
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show your screen with a button")
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                Text("Action Button, Back Tap, or Control Centre")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "rectangle.on.rectangle.angled")
+                                .foregroundStyle(Theme.ink)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .listStyle(.insetGrouped)
@@ -91,6 +116,9 @@ struct RosterView: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(.regularMaterial)
         .presentationCornerRadius(28)
+        .sheet(isPresented: $showingScreenSetup) {
+            ShowScreenSetupView()
+        }
     }
 
     private func select(_ entry: RosterEntry) {
