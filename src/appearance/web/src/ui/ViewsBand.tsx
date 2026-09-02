@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
+import { url } from "../lib/base";
 import { scrollToShow } from "../lib/strip";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
@@ -195,7 +196,12 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
                     {shot ? (
                       <img
                         className="hi-views-shot"
-                        src={shot}
+                        // The backend hands back a root-absolute `/views/_shots/…`,
+                        // and an `<img src>` is not carried by the `fetch` seam that
+                        // rebases everything else — so under the community's subpath
+                        // this asked the community for the picture and every tile in
+                        // the row fell back to its mark.
+                        src={url(shot)}
                         alt=""
                         onError={() => setBroken((was) => new Set(was).add(shot))}
                       />

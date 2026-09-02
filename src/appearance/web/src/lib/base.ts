@@ -9,10 +9,13 @@
 // it onto the page; this reads it back. Empty is the normal case and costs
 // nothing.
 //
-// Through an app this is always empty: the app proxies from its own root, holds
-// the credential, and the face never learns where the core actually is. The
-// prefix exists for the one case where a browser is pointed straight at a
-// relayed core.
+// Through the *desktop* app this is always empty: `crates/hi-app` proxies from
+// its own root, holds the credential, and the face never learns where the core
+// actually is. **The iPhone app does not.** `CoreWebView` loads the paired
+// address itself — which is what the QR carried, `https://hi-agent.xyz/ana` —
+// with the session cookie set on that origin, so on a phone the prefix is not
+// the exceptional case, it is the normal one. Anything below that only holds
+// "when the prefix is empty" is broken on every phone, and only on phones.
 
 declare global {
   interface Window {
@@ -72,8 +75,17 @@ export function inCore(pathname: string = window.location.pathname): string {
  * A no-op when there is no prefix, which is every ordinary shape.
  *
  * Not covered, because there is no interception point: what a view puts in an
- * attribute (`<img src>`, `<a href>`) and a `WebSocket` built from
- * `location.host`. Those call `url()` by hand.
+ * attribute (`<img src>`, `<a href>`), a CSS `background-image`, a `new Audio(…)`,
+ * and a `WebSocket` built from `location.host`. Those call `url()` by hand.
+ *
+ * That gap is not theoretical. Three call sites shipped without it — the face
+ * crops and voice clips in `people-review`, the picture on every tile of the
+ * views band, and the task-file links — and each was invisible on a desktop and
+ * blank on a phone, where the prefix is the ordinary case. A regex over the
+ * sources would not have caught the band: the path came from the backend and sat
+ * in a variable (`src={shot}`), which reads like every correct call site. The
+ * only fix that closes the class is for the phone to stop being served under a
+ * prefix at all — an iOS-side local proxy, the way `crates/hi-app` already works.
  */
 export function installBase(): void {
   if (!base()) return;

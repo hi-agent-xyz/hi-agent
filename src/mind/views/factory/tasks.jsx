@@ -28,7 +28,7 @@
 // cannot be driven from a keyboard, so the primary verb stays on the card and every
 // remaining transition is in the panel, which opens by click, tap and Enter alike.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useLive, TEMPO } from "@hi/core";
+import { url, useLive, TEMPO } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -719,10 +719,15 @@ function Detail({ task, busy, onStatus, onClose }) {
   const linkFile = useCallback(
     (token) =>
       (task.files || []).some((file) => file.path === token)
-        ? `/api/tasks/${encodeURIComponent(task.subject)}/files/${token
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/")}`
+        ? // Through `url()` because this becomes an `<a href>`, which the seam that
+          // rebases `fetch` never sees — under the community's subpath a bare
+          // `/api/tasks/…` link leaves this core for the community's own root.
+          url(
+            `/api/tasks/${encodeURIComponent(task.subject)}/files/${token
+              .split("/")
+              .map(encodeURIComponent)
+              .join("/")}`,
+          )
         : null,
     [task.subject, task.files],
   );
@@ -1353,20 +1358,23 @@ function linked(text, keyBase) {
       out.push(part);
       continue;
     }
-    const url = address(part);
+    // `href`, not `url`: this file imports `url()` from `@hi/core`, and a local of
+    // the same name here is a trap for the next reader — an outside address is
+    // exactly the thing that must *not* be rebased onto this core.
+    const href = address(part);
     out.push(
       <a
         key={key}
         className="hi-tasks__link"
-        href={url}
+        href={href}
         target="_blank"
         rel="noreferrer noopener"
         onClick={(event) => event.stopPropagation()}
       >
-        {url}
+        {href}
       </a>,
     );
-    if (url.length < part.length) out.push(part.slice(url.length));
+    if (href.length < part.length) out.push(part.slice(href.length));
   }
   return out;
 }
