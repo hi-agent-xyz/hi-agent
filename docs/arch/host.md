@@ -500,7 +500,12 @@ before. The rule is the cheaper one:
 - **What code can repair, code repairs; what it cannot, it says loudly.** Re-deriving a
   cursor over only the ids that parse is repair. Anything past that is a `warn`, in the
   log, where [diagnostics belong](../../src/foundation/server) — never a card in front of
-  the person.
+  the person. **And loud is once, not every pass.** A defect in a file the loop merely
+  reads does not change between reads, so a `warn` re-emitted on the loop's own schedule
+  adds nothing after the first and costs the thing it was for: a line that reprints
+  forever is one a reader learns to scroll past, and being scrolled past is how the
+  `debug` above hid a stalled sweep for thirty-five hours. Report a standing defect once
+  per boot, per thing.
 
 **A self-healing system whose only healer is the agent has no floor.** Reflection is the
 rung whose whole job is the agent's own house, and reflection is what broke;

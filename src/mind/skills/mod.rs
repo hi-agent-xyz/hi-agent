@@ -525,16 +525,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&nested).unwrap(), "ffmpeg -ss ...");
     }
 
-    /// One front-matter key, via the shared parser the workshop API also uses.
-    fn front_matter(note: &str, key: &str) -> Option<String> {
-        let (fm, _) = split_front_matter(note);
-        match key {
-            "purpose" => fm.purpose,
-            "use" => fm.run,
-            other => panic!("no such front-matter key: {other}"),
-        }
-    }
-
     #[test]
     fn front_matter_is_read_and_the_body_survives_it() {
         let (fm, body) = split_front_matter("---\npurpose: do a thing\nuse: thing\n---\n\n# T\n\nprose\n");

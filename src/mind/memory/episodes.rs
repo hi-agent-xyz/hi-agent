@@ -21,12 +21,27 @@
 //! unconsolidated signals, resolves the range from raw, and advances the cursor
 //! by exactly that many — so the mind never handles a raw signal id.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::{Memory, journal, layout};
+
+/// Episode dirs already reported by [`consolidation_cursor`] as carrying a `to_id` that is
+/// not a journal id. Keyed by path so the line is printed once per bad file per boot; see
+/// that function's docs for why the repetition is worth suppressing.
+static REPORTED_BAD_TO_ID: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+/// Whether this episode dir's bad `to_id` is being reported for the first time this boot.
+fn first_report(episode_dir: &Path) -> bool {
+    REPORTED_BAD_TO_ID
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(episode_dir.to_path_buf())
+}
 
 /// How many unconsolidated signals one reflection round reads from
 /// the frontier (oldest first). Both the reflection orchestration's seeding and
@@ -55,6 +70,14 @@ pub const REFLECTION_TAIL_LIMIT: usize = 150;
 /// file is the agent's, and the cursor it should have contributed is recomputed from what
 /// is left. The `warn` is what makes the bad file findable — silently skipping it would
 /// trade a frozen cursor for an invisible one.
+///
+/// **Once per bad file per boot, not once per read.** The read runs on every reflection
+/// round and every fade pass, and the file it is complaining about is inert between them,
+/// so the second line and the ten-thousandth carry nothing the first did not. A `warn`
+/// nobody can clear from inside the process is one a reader learns to scroll past, which is
+/// the same blindness — at a louder level — that let a `debug` hide a stalled sweep for
+/// thirty-five hours (`docs/arch/host.md`). A file that appears mid-run still says so
+/// immediately; only the repetition is dropped.
 pub async fn consolidation_cursor(data_dir: &Path) -> anyhow::Result<Option<String>> {
     let dir = layout::episodes_dir(data_dir);
     let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -75,11 +98,13 @@ pub async fn consolidation_cursor(data_dir: &Path) -> anyhow::Result<Option<Stri
             continue;
         };
         if journal::uuidv7_ts(&to_id).is_none() {
-            tracing::warn!(
-                episode = %ent.file_name().to_string_lossy(),
-                to_id = %to_id,
-                "episode `to_id` is not a journal id; ignored for the consolidation cursor",
-            );
+            if first_report(&ent.path()) {
+                tracing::warn!(
+                    episode = %ent.file_name().to_string_lossy(),
+                    to_id = %to_id,
+                    "episode `to_id` is not a journal id; ignored for the consolidation cursor",
+                );
+            }
             continue;
         }
         if max.as_deref().is_none_or(|m| to_id.as_str() > m) {
@@ -514,5 +539,20 @@ mod reflection_tests {
             .await
             .unwrap();
         assert_eq!(tail.len(), 3, "an unreadable cursor must not swallow the frontier");
+    }
+
+    /// The bad file is inert between reads, so it is worth one line per boot, not one per
+    /// reflection round and fade pass forever. A `warn` that reprints on a schedule is one a
+    /// reader learns to skip, and this store's last stall hid behind exactly that habit.
+    #[test]
+    fn a_bad_to_id_is_reported_once_per_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        let episode = dir.path().join("2026-08-26-written-by-a-worker");
+
+        assert!(first_report(&episode));
+        assert!(!first_report(&episode));
+
+        // A different file that goes bad later still gets its own line.
+        assert!(first_report(&dir.path().join("2026-08-27-also-written-by-a-worker")));
     }
 }
