@@ -51,9 +51,10 @@ export type Camera = "fill" | "pip";
 export interface StageInput {
   /** The agent has a view up. */
   content: boolean;
-  /** The person put the conversation away — the text channel's own on/off. A
-   * window preference, never server state, so a phone cannot collapse a
-   * desktop's. */
+  /** The conversation is not up — the text channel's own on/off. True on a fresh
+   * page (the channel starts off, `hooks/useAgentSession.ts`) and true again once
+   * the person puts the panel away. A window preference, never server state, so a
+   * phone cannot collapse a desktop's. */
   collapsed: boolean;
 }
 
@@ -72,9 +73,9 @@ export interface Stage {
  *
  * The conversation yields the *frame* to whatever the agent puts up, and never the
  * *screen*: it stands in its panel over the view rather than degrading, because it
- * is the one surface that keeps — see `docs/arch/text-transcript.md`. It collapses
- * to the pill only when the person asks, and disappears only when a view has taken
- * over rendering the words.
+ * is the one surface that keeps — see `docs/arch/text-transcript.md`. It is at the
+ * pill until the person opens it and back at the pill when they put it away, and
+ * nothing else moves it: not the agent, not a view.
  *
  * **What is on the stage no longer moves it.** The pass used to answer `stage` on
  * an empty room and `popover` once a view or the camera was up — two boxes, two

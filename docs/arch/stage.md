@@ -45,7 +45,11 @@ appearance, so going back on the phone is going back on the desktop and a person
 reading on one finds the other where they left it; the inbound view channel and the
 staleness apparatus around it are deleted, because a fact the server holds cannot go stale
 against itself. Argued in *One screen, and the cursor is on it*, which reverses *Where they
-went is reported; the cursor still is not*.
+went is reported; the cursor still is not*. **Amended September 2, 2026 — the conversation
+opens when it is reached for:** the text channel starts off, so a page that has just loaded
+is the room and its controls rather than the chat over them; the panel is one press or one
+printable key away, and neither being up nor being away outlives the page. Argued in *The
+conversation opens when it is reached for*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -113,8 +117,8 @@ whole stage again in every state — the conversation covers it rather than shor
 
 | Presentation | When | What is on screen |
 |---|---|---|
-| **popover** | the person has not put it away | the chat in a fixed-measure panel in the controls' corner, over the content if there is any and over the room if there is not; full scrollback, and the line being written standing in its foot |
-| **pill** | the person put the popover away | the newest line, floating over whatever is behind it while it is fresh, then gone — a caption |
+| **popover** | the person opened it and has not put it away | the chat in a fixed-measure panel in the controls' corner, over the content if there is any and over the room if there is not; full scrollback, and the line being written standing in its foot |
+| **pill** | a page that has just loaded, or the person put the popover away | the newest line, floating over whatever is behind it while it is fresh, then gone — a caption |
 
 *Three until August 19: a **stage** presentation held the card centred in the room while
 `content` was empty, and the panel was what it became when something went up. That is the
@@ -147,9 +151,9 @@ the whole window than across most of it. A popover charges the same width only w
 open, and the person opens it exactly when they want to read.
 
 What the rail was actually protecting — *the record must never disappear because the agent
-decided to show something* — is untouched: the panel is up by default when content appears,
-carries the full scrollback and the input, and the pill carries the newest line behind it
-for as long as it is worth reading. The conversation still never degrades; it now stops
+decided to show something* — is untouched: nothing the agent does closes the panel or moves
+it, it carries the full scrollback and the input whenever it is up, and the pill carries the
+newest line behind it for as long as it is worth reading. The conversation still never degrades; it now stops
 charging rent.
 
 | | |
@@ -209,9 +213,10 @@ and a 420px panel in the corner rather than a wide card in the middle. That is a
 and it is the price. It buys a conversation that is exactly where it was left — and the
 room was never the thing that had to be defended; the record was.
 
-**What did not change:** the panel is still up by default, still carries the whole
-scrollback and the line, still dismissable, still comes back on any printable key. The pill
-is unchanged. A view that owns the conversation still stands the whole surface down.
+**What did not change:** the panel still carries the whole scrollback and the line, is still
+dismissable, still comes on any printable key. The pill is unchanged. *(It was also still up
+by default here, until September 2 moved the start to the pill — see* The conversation opens
+when it is reached for.*)* A view that owns the conversation still stands the whole surface down.
 
 ## The pill is timed
 
@@ -249,6 +254,48 @@ a placement question, so `stage()` does not answer it and does not learn a clock
 says where the pill goes, the shell says how long it stays. Nor is the line unmounted when
 it expires — the dock fades and the line stays in it, so the next thing said cross-fades
 with it instead of appearing into a box that just collapsed.
+
+## The conversation opens when it is reached for
+
+*September 2: the text channel used to start **on**, so every page that loaded put the chat
+up before anyone had asked for it. It starts **off**. `textOn` is `useState(false)`
+(`hooks/useAgentSession.ts`), `stage()` reads that as `collapsed`, and a fresh page is
+therefore at the pill — the room, the controls, and the newest line if there is a fresh one.*
+
+**The old default was right about a window and wrong about a screen.** On a desktop window
+the panel is 420px in a corner: arriving with it up costs the view nothing and answers,
+before anyone asks, where what was said is kept. Under 420px it is not that shape at all —
+`.hi-stage` resolves to the window minus its margins and takes the full height
+(`ui/global.css`), because at that size *the panel is the face*. So the same default that
+was a helpful corner on a desktop was the chat covering the room on a phone and in the
+menu-bar popover, on every load.
+
+**And a phone loads constantly.** The iOS client mints a fresh session cookie on each
+`AppModel.open`, `CoreWebView.install` sees the cookie change and re-navigates the web view,
+and that runs on every cold launch. So the put-away that was designed to be "this screen's
+for a minute" never lived past the minute: the app re-asserted the panel every time it was
+opened, which is the complaint that produced this amendment. Fixing it in the client — hold
+the session, don't reload — would have made the put-away *stick*, and that is the setting
+this document has twice refused to keep. The default was the thing that was wrong.
+
+**What is on screen instead.** The room: presence and the atmosphere on the ground plane,
+the controls in their corner, and the pill if the conversation has just been added to. The
+pill's clock runs from the line's own `ts` and not from when this window saw it
+(`ui/caption.ts`), so arriving mid-conversation gives you the live tail and arriving an hour
+later gives you the room — a load never flashes a spent sentence.
+
+**Getting in is one gesture, and it is the gesture you were making anyway.** Any printable
+key opens the panel and seeds the line with that key (`ui/Composer.tsx`), so *open the
+popover and start typing* costs exactly what it cost before. On a phone, where there is no
+keyboard until something asks for one, it is the text control in the cluster — one tap, the
+same tap that used to land in the input line. The pointer path on the desktop is the only
+one that pays: a press on the control before there is a box to click into.
+
+**Not persisted, and now symmetric.** Neither state outlives the page. That was already
+true of a put-away and is the reason the `localStorage` pref was deleted in August; the
+change here is that being *up* stops outliving the page too, which is what made the old
+default a setting in everything but name — one that reinstalled itself on every launch and
+that no put-away could turn off.
 
 ## The line is inside the conversation
 
@@ -333,7 +380,7 @@ conversation away*, below.
 ## Who decides the presentation
 
 - **By default, nobody:** it is derived — up → the popover, wherever the person left it;
-  put away → pill. There is no third case.
+  not up → pill, which is where a fresh page starts. There is no third case.
 - **The person** shows the conversation or puts it away from the text channel's control in
   the cluster — one control, in every state — and dismisses the popover with Escape or a
   press behind it.
@@ -1172,6 +1219,11 @@ the agent can read but not act on.
   `useMessages` and the pill renders one message, so the divergence is bounded to styling.
 - Popover width is a host constant, not a preference. If it becomes one, it is a window
   preference like the collapse — never appearance state.
+- **A page that has just loaded shows no scrollback.** Someone opening a window to check
+  what was said reaches for the panel first, and on the desktop that is a press rather than
+  the keystroke a reply already costs. Taken because the reverse — the panel arriving unasked
+  — is paid on every load by every surface where the panel is the whole screen (*The
+  conversation opens when it is reached for*).
 
 ## Work
 
@@ -1217,7 +1269,7 @@ Built on `design/stage`, in this order:
    grows, Shift+Enter breaks a line, and the send button lives in the box. Deleted:
    `.hi-kbd` and its four rules, the two `:has(.hi-kbd)` lifts, `Stage.input` with its
    `Input` type, `ChannelControls`' conversation button and glyph, and the text channel's
-   `localStorage` pref — it starts on, and a put-away is this screen's for a minute rather
+   `localStorage` pref — what this screen is showing is this screen's for a minute rather
    than a setting still in force tomorrow. `.hi-chat` takes the card recipe off
    `.hi-stage--popover`, which is left holding placement alone, and gains the title row.
 
