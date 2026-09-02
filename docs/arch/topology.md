@@ -295,6 +295,12 @@ there."* No cursor, no per-device state, nothing for a phone to keep.
 Push tokens travel this way too: the app hands its token to the **core**, which passes it to
 post when it wants to notify. The app never registers anything with the community.
 
+**One direction on this wire runs the other way round.** The app owns the platform's
+capability mechanisms, so a core that wants a screen frame, a synthesized click or the
+accessibility tree has to *ask the app* — the only case in the system where the core is the
+one asking. It stays on this wire and the app still dials, because a core that had to dial an
+app could not reach one behind NAT. See [`mechanisms.md`](mechanisms.md).
+
 ### core ↔ community — the tunnel
 
 One outbound connection, dialed by the core, held open. It carries two kinds of traffic:

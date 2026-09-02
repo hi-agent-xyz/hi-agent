@@ -125,7 +125,9 @@ The biometric/ML layer is **already correctly engine-resident and cross-platform
 
 ### The engine's new interface
 
-The engine's outbound API grows from config CRUD into a **bidirectional perceive/act protocol**, part of it **streaming** (frames, audio are continuous): shell→engine carries user input, config, and capability *results*; engine→shell carries perceive/act *requests*. This streaming perception surface (persistent channel — WebSocket / gRPC-stream / IPC) is the **biggest new design object** in the refactor — bigger than the Settings migration. Name and design it as its own thing.
+The engine's outbound API grows from config CRUD by exactly one direction: **the engine has to be able to ask the shell for something.** That is designed in [docs/arch/mechanisms.md](docs/arch/mechanisms.md), and it turned out much smaller than this section used to claim.
+
+This paragraph previously called it a bidirectional *streaming* protocol — "frames, audio are continuous" — and named it the biggest design object in the refactor. Two thirds of that was wrong. **Audio needs nothing new**: `WS /api/in/audio/stream` already exists and the browser mic already uses it, so a shell streaming PCM is the same endpoint with a different client. **Frames are not continuous**: perception is pulled ([surfaces.md](docs/arch/surfaces.md)), a still frame is the capability's irreducible primitive, and a live encode is cast-to-view — separate work. What is genuinely missing is **initiative**: nothing in the system lets the core originate a request to an app. One inversion on the existing app↔core wire, not a new protocol.
 
 ### Permission model (macOS; analogous elsewhere)
 
@@ -143,7 +145,7 @@ The engine's outbound API grows from config CRUD into a **bidirectional perceive
 
 **Status: Phase 1 is built — do not rebuild it.** [vendors/macos_swift_settings.rs](src/foundation/vendors/macos_swift_settings.rs) bridges a SwiftUI Settings window ([app/apple/macos/HiSettings.swift](app/apple/macos/HiSettings.swift)) that reads and writes settings **over the loopback config API**, not via FFI into engine state; the only FFI is the single `hi_settings_open` entry point, which `build.rs` compiles and links on macOS. The objc2 window it replaced — and the BYOK `NSAlert` that window opened, whose only caller it was — are deleted; the one survivor is `apply_app_theme`, now in [vendors/macos_window.rs](src/foundation/vendors/macos_window.rs) beside the window-level theme read it must stay in step with. `crates/hi-app` and the native iOS client prove the same boundary from the other side.
 
-**Phase 2 — flipping process ownership to Swift — is not started**, and the streaming perceive/act protocol it needs (the biggest design object in the refactor) has no design yet.
+**Phase 2 — flipping process ownership to Swift — is not started.** The seam it needs is now designed ([docs/arch/mechanisms.md](docs/arch/mechanisms.md)) and nothing implements it; that doc's § *Open* carries the three questions deliberately left unresolved, of which **"does the reflex path survive the process boundary"** is the one that could change the shape and wants measuring before any of it is built.
 
 ## Testing user journeys live (Mac mini)
 

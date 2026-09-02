@@ -165,6 +165,7 @@ Each is a statement we can test, and each has a real failure behind it.
 |---|---|
 | [`topology.md`](topology.md) | core, app and community — where the parts run, how a person is addressed, how an app proves it may reach one |
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
+| [`mechanisms.md`](mechanisms.md) | the one seam where the core does the asking — reaching an app's screen, input and accessibility across the process boundary |
 | [`signal-attribution.md`](signal-attribution.md) | who a signal came from — the three source classes, the owner, and keeping "unknown" |
 | [`host.md`](host.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |

@@ -42,11 +42,15 @@ belongs, and it is the Rust side of the seam that has yet to move.
 
 ## What has to exist before the rest can follow
 
-The engine↔shell **perceive/act protocol**, which has no design. Config is already
-request/response over the API in [core-shell-config-api.md](../core-shell-config-api.md);
-what is missing is the streaming half — microphone PCM and screen frames — plus the
-engine→shell direction for act requests. Until that exists the capability mechanisms
-above cannot leave the engine, because they have nothing to talk back through.
+**Mechanism calls** — the one seam where the core does the asking, designed in
+[../arch/mechanisms.md](../arch/mechanisms.md) and built nowhere. Until an app can answer
+`screen.grab` and `input.perform`, the capabilities above cannot leave the engine, because
+they would have nothing to talk back through.
+
+The half that is *not* missing is worth knowing before anyone plans for it: microphone and
+camera already have cross-platform inbound endpoints (`WS /api/in/audio/stream`,
+`WS /api/in/vision/stream`) that the web face uses today, so a shell that captures mic bytes
+is a new client of an existing socket, not new protocol.
 
 ## Not part of this app
 
