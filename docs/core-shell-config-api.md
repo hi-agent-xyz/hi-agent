@@ -12,9 +12,9 @@ The engine already is the authority; today the *native window mutates the store 
 
 1. **Transport: plain JSON/REST over the existing local server** (`server/mod.rs build()`), handler style `async fn(State<Arc<AppState>>, …) -> impl IntoResponse` returning `Json`. No new channel, no streaming — config is request/response. The streaming protocol is a separate Phase-2 object.
 2. **Loopback-gated, per-handler.** The server binds `0.0.0.0` (LAN-reachable) and has **no global auth gate** — every route is public today. These endpoints read/write **credentials and account state**, so each one must reject non-loopback peers, exactly like `account::get_link_callback` does (`ConnectInfo<SocketAddr>` + `peer.ip().is_loopback()`, `account.rs:98,103`). Factor that check into one extractor/helper and apply it to the whole config group. (Open Q below: whether to also require a shell-held token.)
-3. **Secrets never leave the engine.** The read surface returns `configured: bool` (+ non-secret `base_url`, `model`) for each feature — **never the `api_key`**. This matches what the current UI shows ("configured / not set") and holds even over loopback. Writes accept a key; a blank/omitted key **keeps the existing** one (current `write_fields` semantics, `macos_account.rs:151-153`).
+3. **Secrets never leave the engine.** The read surface returns `configured: bool` (+ non-secret `base_url`, `model`) for each feature — **never the `api_key`**. This matches what the current UI shows ("configured / not set") and holds even over loopback. Writes accept a key; a blank/omitted key **keeps the existing** one (`settings::put_feature`).
 4. **One snapshot GET + granular writes.** `GET /api/settings` returns everything the window needs in one call (mirrors the window's `present()` re-sync). Writes are small, targeted PUTs so a single control change is one request.
-5. **Explicit apply semantics in the contract.** Every setting declares whether it applies `live` or on `restart`, so the UI can render "takes effect on restart" truthfully instead of guessing. (Theme = live; language, gestures = restart — per `macos_settings.rs`.)
+5. **Explicit apply semantics in the contract.** Every setting declares whether it applies `live` or on `restart`, so the UI can render "takes effect on restart" truthfully instead of guessing. (Theme = live; language, gestures = restart.)
 6. **Core persists, shell applies OS effects.** The API's job for theme is to *persist the value and return*; applying `NSAppearance` is a **shell** action (it owns the app). The engine no longer calls `apply_app_theme`. During Phase 1 (Rust still owns the process) the in-process apply can remain as a temporary bridge, but the contract is "core stores, shell applies" so Phase 2 needs no reshaping.
 
 ## Endpoints
@@ -71,7 +71,7 @@ Loopback-gated unless noted. `⟳reuse` = already exists, keep as-is.
 
 - Appearance reads/writes → `credentials::get_setting` / `set_setting` on `KEY_THEME`/`KEY_LANGUAGE`/`KEY_GESTURES`; option lists from `config::THEMES`/`LANGUAGES`; gestures via `config::flag_on`.
 - Mode → read `Credentials::load(data_dir).mode`; write = set `.mode` + `.save(data_dir)`.
-- Feature status/write → project `Credentials` fields to `FeatureStatus` via the per-feature `key_opt()`/`feature_key_set` predicate (`credentials.rs:200`, `macos_settings.rs:460`); write reuses `macos_account::write_fields` semantics (blank key keeps).
+- Feature status/write → project `Credentials` fields to `FeatureStatus` via the per-feature `key_opt()` predicate (`credentials.rs:200`); a blank key keeps the stored one.
 - Energy → snapshot from `Credentials.energy`; refresh calls `broker::poll_energy_now(data_dir)`; hint endpoint already reads `energy_state::is_out()`.
 - Subscribe / sign-in → `broker::subscribe_url(data_dir, Some("/account"))`; link start already implemented.
 
@@ -94,4 +94,7 @@ New handlers live alongside `server/account.rs` (e.g. `server/settings.rs`), reg
 1. Lock this contract (types + routes + gating helper).
 2. Add the loopback-gated `GET /api/settings` + the three writes + `POST /api/account/energy/refresh`; unit-test against a temp `--data-dir`.
 3. Build the **native SwiftUI** Settings window as a client of this API (`swift/HiSettings.swift`), compiled + linked by `build.rs` on macOS, opened from the tray via the `hi_settings_open` FFI entry. Settings goes straight to native — the point of the native-presentational decision — not through a web page.
-4. Retire the objc2 preferences window once the SwiftUI one is at parity (keep `apply_app_theme`; the SwiftUI window applies theme live via `NSApp.appearance` too).
+4. Retire the objc2 preferences window and the BYOK `NSAlert` it opened, keeping only
+   `apply_app_theme` — which moves to `vendors/macos_window.rs`, beside the window-level
+   theme read it must stay in step with, and is boot-only: the SwiftUI window sets
+   `NSApp.appearance` itself in Swift.

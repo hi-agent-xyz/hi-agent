@@ -17,8 +17,6 @@ pub mod insightface_face;
 #[cfg(target_os = "macos")]
 pub mod macos_accessibility;
 #[cfg(target_os = "macos")]
-pub mod macos_account;
-#[cfg(target_os = "macos")]
 pub mod macos_audio_capture;
 #[cfg(target_os = "macos")]
 pub mod macos_desktop_context;
@@ -30,8 +28,6 @@ pub mod macos_input;
 pub mod macos_popover;
 #[cfg(target_os = "macos")]
 pub mod macos_screencast;
-#[cfg(target_os = "macos")]
-pub mod macos_settings;
 #[cfg(target_os = "macos")]
 pub mod macos_swift_settings;
 #[cfg(target_os = "macos")]

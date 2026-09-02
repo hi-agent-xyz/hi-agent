@@ -1,8 +1,9 @@
 //! Bridge to the native SwiftUI Settings window ([`swift/HiSettings.swift`]).
 //!
 //! Phase 1 of the UI-arch refactor (see CLAUDE.md § "UI architecture"): the SwiftUI
-//! window replaces the hand-laid objc2 preferences window while the Rust process still
-//! owns the app. The window is a **client of the engine's local config API** — it
+//! window is the only preferences UI — it replaced a hand-laid objc2 one, now deleted,
+//! while the Rust process still owns the app. It is a **client of the engine's local
+//! config API** — it
 //! reads/writes settings over HTTP, not via FFI into engine state. The only FFI is the
 //! single entry point [`hi_settings_open`], which Swift implements (`@_cdecl`) and
 //! `build.rs` compiles + links on macOS.
@@ -28,7 +29,7 @@ unsafe extern "C" {
 }
 
 /// Record the data dir so [`open`] can resolve the server port. Called once from the
-/// tray setup, mirroring where the old `macos_settings::install` was wired.
+/// tray setup, before any menu action can fire.
 pub fn init(data_dir: PathBuf) {
     let _ = DATA_DIR.set(data_dir);
 }

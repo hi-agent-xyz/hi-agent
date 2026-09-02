@@ -556,8 +556,8 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
 
     // Force the app-wide appearance from the stored theme before any window installs, so
     // the face window's pre-paint bar color reads the right light/dark from the start
-    // (System → follow the OS). See [`super::macos_settings::apply_app_theme`].
-    super::macos_settings::apply_app_theme(mtm, &data_dir);
+    // (System → follow the OS). See [`super::macos_window::apply_app_theme`].
+    super::macos_window::apply_app_theme(mtm, &data_dir);
 
     // The face window's web view loads the base URL; moved into `install` below. The
     // menu target no longer needs it (the "Open" action just shows the window).

@@ -64,7 +64,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent, NSEventType,
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent, NSEventType,
     NSWindowCollectionBehavior, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowDelegate,
     NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
 };
@@ -106,6 +107,37 @@ const TRAFFIC_LIGHT_W: f64 = 78.0;
 // as one surface with the web content below it.
 // ---------------------------------------------------------------------------
 
+/// Force the whole app's `NSAppearance` from [`KEY_THEME`]: `light` → Aqua, `dark` →
+/// DarkAqua, anything else (incl. `system` / unset) → `None`, which lets every window
+/// follow the OS. Setting it on `NSApplication` cascades to all our windows *and* makes
+/// each `WKWebView`'s `prefers-color-scheme` track the choice, so the face + its native
+/// bar re-theme together. **Boot only** — called once from [`super::macos_tray::run`],
+/// before this window installs, so its pre-paint bar colour reads the right appearance.
+///
+/// Live re-apply on a picker change is not this function's job: the SwiftUI Settings
+/// window sets `NSApp.appearance` itself in Swift (`applyTheme` in
+/// [`swift/HiSettings.swift`](swift/HiSettings.swift)), because it runs in the same
+/// process and reaching back through FFI for one assignment buys nothing. So the same
+/// two-line policy exists twice, once per language — a duplication that ends when the
+/// shell owns `NSApplication` and this Rust copy goes away with the rest of the tray.
+///
+/// This is the app-wide half of the same choice [`resolved_is_dark`] reads for the
+/// window's own paper/ink; the two live together so they cannot drift.
+pub fn apply_app_theme(mtm: MainThreadMarker, data_dir: &Path) {
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: main-thread AppKit calls; the named appearances are process-lived system
+    // singletons and `setAppearance:` accepts nil (= follow the OS).
+    unsafe {
+        let appearance: Option<Retained<NSAppearance>> =
+            match get_setting(data_dir, KEY_THEME).as_deref().map(str::trim) {
+                Some("light") => NSAppearance::appearanceNamed(NSAppearanceNameAqua),
+                Some("dark") => NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua),
+                _ => None,
+            };
+        app.setAppearance(appearance.as_deref());
+    }
+}
+
 /// Whether the OS is in dark mode. Reads the global `AppleInterfaceStyle` default —
 /// `"Dark"` in dark mode, absent in light. Used only for the `system` theme (follow the
 /// OS); a forced Light/Dark theme is decided by [`resolved_is_dark`] before this is
@@ -119,8 +151,8 @@ fn os_is_dark() -> bool {
 
 /// Whether the face's paper/ink bar should paint dark right now, honoring the user's
 /// theme choice ([`KEY_THEME`]): a forced `dark`/`light` wins; `system` / unset follows
-/// the OS ([`os_is_dark`]). Kept in step with [`super::macos_settings::apply_app_theme`],
-/// which forces the matching `NSApp.appearance` so the web content re-themes the same way.
+/// the OS ([`os_is_dark`]). Kept in step with [`apply_app_theme`] above, which forces the
+/// matching `NSApp.appearance` so the web content re-themes the same way.
 fn resolved_is_dark(data_dir: &Path) -> bool {
     match get_setting(data_dir, KEY_THEME).as_deref().map(str::trim) {
         Some("dark") => true,
