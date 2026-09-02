@@ -539,7 +539,7 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 |---|---|---|
 | **Reaction** | one, process-wide, long-lived | a turn fails |
 | **Cognition** | one, process-wide, long-lived | a turn fails |
-| **Reflection** | **one per pass** | never — the pass ends |
+| **Reflection** | one, process-wide, long-lived | a turn or a pass fails |
 | Workers | one per errand | **its owner closes it** |
 
 **Nothing in this column is about size.** Context growth is bounded by the underlying agent,
@@ -583,7 +583,7 @@ permanently unclosable — its owner had been told it was gone, so it would neve
 owner cannot be held responsible for a lifetime it was lied to about. **A "nothing there" must
 mean the session has ended, never that it has not begun.**
 
-**The two thinking rungs are long-lived from creation.** A rung that reopens each time cannot
+**All three rungs are long-lived from creation.** A rung that reopens each time cannot
 remember what it was in the middle of — and that is not something the ledger can hand back,
 because the ledger records what is **owed**, not what has already been tried, ruled out, or
 half-arranged. The failure this prevents is specific and was observed: a rung that arranged a
@@ -591,10 +591,25 @@ mechanism, forgot it had, woke to a ledger entry warning that the mechanism was 
 deleted it as redundant. The ledger was correct at every step; the rung had no memory of its own
 authorship.
 
-**Reflection is the deliberate exception.** Its pass is self-contained — it sweeps, writes, and
-is done — and its backoff can reach hours, so a resident session would only rot between passes.
-Per-pass is not a lesser version of long-lived here; it is the right shape for work that has no
-thread to keep.
+**Reflection used to be the deliberate exception, and is not any more.** The argument for
+per-pass was that its pass is self-contained — it sweeps, writes, and is done — so there was no
+thread worth keeping. That was true of a rung that only swept. It stopped being true when this
+rung became a dispatcher: nothing durable may reference a session slug, and the frontier cursor
+that re-drives a dead pass records the store's position and not one thing about which workers
+the rung opened. So every pass woke knowing nothing about what the pass before it had already
+arranged, which is the same failure the paragraph above describes for Cognition, reached by a
+different road. Observed: three `person-reader` sessions for one person, opened by three
+consecutive passes against a prompt that says *one reader per person*, none closed, all
+reopened on the next boot.
+
+The cost that argument named is real and is paid: a resident session accumulates, and a
+consolidation pass puts a whole frontier into the thread on a cadence measured in minutes. It
+is bounded the way every other rung's is — the agent compacts in place — and **the state most
+worth keeping is deliberately not trusted to it**. A rung's live children are *projected* into
+the pass prompt, rebuilt every wake, for the same reason everything else is projected: memory
+is what a compaction may drop and a restart certainly does, and projection is what shows a
+straggler the current session never opened. Residency and projection answer different halves,
+and this rung needed both.
 
 **Losing a long-lived session is always survivable**, and that is what makes this safe rather
 than a new dependency: every rung's state is *re-projected into every turn* — what is owed, what

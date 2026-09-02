@@ -41,20 +41,50 @@
 //!    The clock is its own — an adaptive backoff pacing a loop inside this subsystem,
 //!    which is the only shape of timing the host has (`docs/arch/host.md#glancing-up`).
 //!
-//! ## Sessions per wake, registration per process
+//! ## One long-lived session; registration per process
 //!
-//! Same rule as Cognition, for the same reason: an address must be stable, a session must
-//! be disposable (`docs/arch/host.md` — *"continuity lives in `data/`, not in a
-//! process"*). A consolidation pass and a mail turn each open one and drop it.
+//! The address is registered **once, for the life of the process**; the agent session is
+//! opened once and **held across wakes**, replaced only when it breaks. Same split as
+//! Cognition, for the same reason: an address must be stable, a session is replaceable
+//! (`docs/arch/host.md` — *"continuity lives in `data/`, not in a process"*).
+//!
+//! **This reverses the per-wake session this rung shipped with, and the reason is a failure
+//! that was observed rather than predicted.** The note here used to read *"a consolidation
+//! pass and a mail turn each open one and drop it"*, and `agents.md` justified it: the pass
+//! is self-contained, so there is no thread worth keeping. That was written for a rung that
+//! only swept. It stopped being true the moment this rung became a dispatcher — no cursor
+//! points at which workers it opened, and nothing durable may reference a session slug, so
+//! every pass woke knowing nothing about what the last one had already arranged. Observed:
+//! three `person-reader` sessions for the same person, opened by three consecutive passes
+//! against a prompt that says *one reader per person*, none of them closed, all of them
+//! reopened on the next boot.
+//!
+//! **Residency is half the answer; projection is the other half.** The held session keeps a
+//! pass from re-deciding what the pass before it decided. The reach block now built into
+//! the consolidation prompt ([`heartbeat`]) is what survives a compaction and a restart,
+//! and it is the only one of the two that can show a straggler *this* session never opened.
+//! Cognition has both; this rung had neither.
+//!
+//! The objection residency carries is answered rather than dismissed, the same way
+//! [`super::cognition`] answers it: a session that dies mid-turn leaves a handle failing
+//! every later prompt with nothing above it to notice. So a failed turn — and a pass that
+//! comes back [`heartbeat::Pass::Failed`] — **drops the session**, and a wedged one cannot
+//! outlive the wake that wedged it.
 //!
 //! One red line survives from the old wording and is not negotiable: reflection may
 //! **archive verbatim and write pointers, never paraphrase stored bytes**.
+
+use std::sync::Arc;
 
 use tokio::time::Instant;
 
 use tokio::sync::mpsc;
 
+use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
+use crate::foundation::observatory::EventKind;
 use crate::foundation::registry::{self, Registration, TurnOutcome};
+use crate::identity::Role;
+use crate::mind::memory::snapshot;
 
 use super::tools::{LoopControl, ToolOwner, ToolSink};
 use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, heartbeat, workers};
@@ -98,6 +128,12 @@ async fn run(reaction: Reaction, registration: Registration) {
 
     let mut workers = workers::WorkerRegistry::new(report_tx);
     let mut pending: Vec<String> = Vec::new();
+    // **One session, held across wakes** (`docs/arch/agents.md#session-lifetime-per-rung`).
+    // Opened lazily rather than warmed at startup the way Cognition's is: nobody is waiting
+    // on this rung's first word, and the first pass is a cadence away, so holding a
+    // subprocess from boot buys nothing. `None` after a failure means the next wake
+    // cold-opens.
+    let mut session: Option<Arc<AgentSession>> = None;
 
     // The clock. Unchanged in behaviour from the free-standing loop this replaces:
     // anchored on the last completed pass, base cadence while anything saw fresh input,
@@ -253,16 +289,35 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // A settling pass is the longest thing this rung does and the place it
                 // dispatches most — one `person-reader` per person present in the stretch.
                 // Every one of those calls is made from inside this await.
-                let pass = serving_control(
-                    &reaction,
-                    &mut workers,
-                    &mut control_rx,
-                    heartbeat::consolidate(&reaction, &id),
-                )
-                .await;
+                let pass = match ensure_session(&reaction, id.clone(), &mut session).await {
+                    Ok(live) => {
+                        serving_control(
+                            &reaction,
+                            &mut workers,
+                            &mut control_rx,
+                            heartbeat::consolidate(&reaction, &id, live),
+                        )
+                        .await
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            reflection = %id,
+                            error = %format!("{err:#}"),
+                            "reflection could not open a session; pass skipped",
+                        );
+                        heartbeat::Pass::Skipped
+                    }
+                };
+                // A handle that broke must not outlive the wake that broke it — see the
+                // module note. Energy is not breakage and comes back `Skipped`.
+                if pass == heartbeat::Pass::Failed {
+                    session = None;
+                }
                 // A settling pass has no `Result` to read: `consolidate` handles its own
-                // failures internally and the pass is over either way. What it does report
-                // is whether it swept anything, which is the half this loop can judge.
+                // failures internally and the pass is over either way. What it reports is
+                // whether it swept — the half this loop judges cadence on — and, since the
+                // session became the loop's, whether the failure was the session's. Stall
+                // accounting reads a failed pass as one that swept nothing, which it is.
                 stalled = note_pass(stalled, fresh_input, pass);
                 registry::global().finish_turn(&id, TurnOutcome::Completed);
             }
@@ -293,13 +348,18 @@ async fn run(reaction: Reaction, registration: Registration) {
         // busy here, and `start_turn` is deliberately idempotent.
         registry::global().start_turn(&id);
         workers.reap();
-        let turned = serving_control(
-            &reaction,
-            &mut workers,
-            &mut control_rx,
-            turn(&reaction, id.clone(), &pending),
-        )
-        .await;
+        let turned = match ensure_session(&reaction, id.clone(), &mut session).await {
+            Ok(live) => {
+                serving_control(
+                    &reaction,
+                    &mut workers,
+                    &mut control_rx,
+                    turn(&reaction, id.clone(), &pending, live),
+                )
+                .await
+            }
+            Err(err) => Err(err),
+        };
         let outcome = match &turned {
             Ok(()) => TurnOutcome::Completed,
             Err(err) => TurnOutcome::Failed(err.to_string()),
@@ -308,16 +368,90 @@ async fn run(reaction: Reaction, registration: Registration) {
             Ok(()) => pending.clear(),
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
+                //
+                // **Drop the session too, unless it was energy.** A managed 402 left the
+                // handle good — `SessionRun::wait` restored the prompt receiver — so the
+                // same session retries this batch after Resume. Anything else is the
+                // session, and holding it would make this rung quietly deaf.
                 if crate::foundation::energy_state::is_402_error(&err)
                     && crate::foundation::energy_state::is_out()
                 {
                     energy_paused = true;
+                } else {
+                    session = None;
                 }
                 tracing::warn!(reflection = %id, error = %format!("{err:#}"), "reflection turn failed; mail held");
             }
         }
         registry::global().finish_turn(&id, outcome);
     }
+}
+
+/// Open Reflection's session — the one it holds across wakes.
+///
+/// **One cwd, and it is the data dir.** The two wakes used to open their own and disagree
+/// about this: a mail turn passed the data dir, a consolidation pass passed nothing. Absent
+/// is not none — [`crate::foundation::codex::CodexProcess::open_thread`] falls back to
+/// `std::env::current_dir()`, so the longest-running half of this rung's work ran with its
+/// file tools pointed at whatever directory the binary was launched from, while two
+/// comments in [`heartbeat`] explained the prompt's shape by saying it had no cwd at all.
+async fn open_session(
+    reaction: &Reaction,
+    id: registry::SessionSlug,
+) -> anyhow::Result<Arc<AgentSession>> {
+    let data_dir = reaction.inner.memory.data_dir();
+    // One file, whole — see `cognition.rs` for why the seed went.
+    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
+
+    let opened = Arc::new(
+        reaction
+            .inner
+            .agent
+            .session(
+                Role::Reflection,
+                Some(id),
+                SessionOpts {
+                    system_prompt: Some(system_prompt),
+                    // Its whole job is the tree under it.
+                    cwd: Some(data_dir.to_path_buf()),
+                    ..Default::default()
+                },
+            )
+            .await?,
+    );
+
+    reaction
+        .inner
+        .observatory
+        .record(
+            EventKind::SessionOpened {
+                kind: Role::Reflection,
+                id: opened.id().to_string(),
+            },
+        )
+        .await;
+
+    Ok(opened)
+}
+
+/// Reuse the held session, or open one — first wake after start, or after a failure or
+/// wedge dropped it.
+///
+/// **Split out of the wakes so the loop holds the handle while one runs**, which is
+/// [`super::cognition::ensure_session`]'s reason and applies harder here: a settling pass
+/// is the longest thing this rung does, and a session owned by the future running it is
+/// unreachable for as long as that takes.
+async fn ensure_session(
+    reaction: &Reaction,
+    id: registry::SessionSlug,
+    held: &mut Option<Arc<AgentSession>>,
+) -> anyhow::Result<Arc<AgentSession>> {
+    if let Some(existing) = held.as_ref() {
+        return Ok(existing.clone());
+    }
+    let opened = open_session(reaction, id).await?;
+    *held = Some(opened.clone());
+    Ok(opened)
 }
 
 /// Await `work` **while going on serving `control_rx`** — the shape Cognition already
@@ -379,8 +513,8 @@ fn note_pass(stalled: u32, fresh_input: bool, pass: heartbeat::Pass) -> u32 {
             }
             0
         }
-        heartbeat::Pass::Skipped if !fresh_input => stalled,
-        heartbeat::Pass::Skipped => {
+        heartbeat::Pass::Skipped | heartbeat::Pass::Failed if !fresh_input => stalled,
+        heartbeat::Pass::Skipped | heartbeat::Pass::Failed => {
             let stalled = stalled.saturating_add(1);
             if stalled == STALL_WARN
                 || (stalled > STALL_WARN && (stalled - STALL_WARN) % STALL_REWARN == 0)
@@ -426,46 +560,8 @@ async fn turn(
     reaction: &Reaction,
     id: registry::SessionSlug,
     pending: &[String],
+    session: Arc<AgentSession>,
 ) -> anyhow::Result<()> {
-    use std::sync::Arc;
-
-    use crate::foundation::codex::{SessionOpts, SessionUpdate};
-    use crate::identity::Role;
-    use crate::foundation::observatory::EventKind;
-    use crate::mind::memory::snapshot;
-
-    let data_dir = reaction.inner.memory.data_dir();
-    // One file, whole — see `cognition.rs` for why the seed went.
-    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
-
-    let session = Arc::new(
-        reaction
-            .inner
-            .agent
-            .session(
-                Role::Reflection,
-                Some(id.clone()),
-                SessionOpts {
-                    system_prompt: Some(system_prompt),
-                    // The data dir: its whole job is the tree under it.
-                    cwd: Some(data_dir.to_path_buf()),
-                    ..Default::default()
-                },
-            )
-            .await?,
-    );
-
-    reaction
-        .inner
-        .observatory
-        .record(
-            EventKind::SessionOpened {
-                kind: Role::Reflection,
-                id: session.id().to_string(),
-            },
-        )
-        .await;
-
     let window = snapshot::agent_window(&reaction.inner.memory, None, &id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {

@@ -580,6 +580,14 @@ fn link_note(e: &Entry) -> String {
 ///
 /// Empty when there is nobody — an empty section is worse than none, because a heading
 /// with nothing under it reads as a load that failed rather than as an honest "no one".
+/// The heading [`render_reachable`] writes above the roster.
+///
+/// Named rather than inlined because a role prompt now tells a rung to *read* this block
+/// before it opens a second worker on work it already has one on (`reflection.md`), and a
+/// prompt pointing at a heading is a prompt that can point at the wrong one. One spelling,
+/// pinned from the prompt sweep in [`crate::identity`].
+pub const REACHABLE_HEADING: &str = "Who you can reach right now";
+
 pub fn render_reachable(who: &[(String, SessionSlug)]) -> String {
     if who.is_empty() {
         return String::new();
@@ -590,9 +598,7 @@ pub fn render_reachable(who: &[(String, SessionSlug)]) -> String {
     // `live agent path not found` on its own stderr and delivered nothing. This block is
     // rebuilt into every rung's window on every turn, so an unqualified verb here outvotes
     // whatever the prompt says.
-    let mut s = String::from(
-        "## Who you can reach right now\nSend with `hi_send_message`, using the id.\n",
-    );
+    let mut s = format!("## {REACHABLE_HEADING}\nSend with `hi_send_message`, using the id.\n");
     for (label, id) in who {
         s.push_str(&format!("- `{id}` — {label}\n"));
     }

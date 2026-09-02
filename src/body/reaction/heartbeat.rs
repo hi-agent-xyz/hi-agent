@@ -44,17 +44,16 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::foundation::codex::SessionOpts;
-use crate::identity::Role;
 use crate::body::capabilities::{face, voiceprint};
+use crate::foundation::codex::AgentSession;
+use crate::foundation::registry;
 use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
 use crate::mind::memory::{decay, episodes, facets, layout, people_vectors};
-use crate::foundation::observatory::EventKind;
-use crate::foundation::registry;
 use crate::types::{Channel, JournalEntry, Origin};
 use crate::foundation::vendors::ffmpeg_frame;
 
@@ -118,18 +117,36 @@ struct Frontier {
 pub(super) enum Pass {
     /// A session was opened on a frontier that had something on it.
     Swept,
-    /// The frontier was under [`MIN_REFLECT_SIGNALS`], or the pass failed. Nothing was
-    /// consolidated either way, which is the fact the caller is watching.
+    /// The frontier was under [`MIN_REFLECT_SIGNALS`]. Nothing was consolidated, which is
+    /// the fact the caller is watching.
     Skipped,
+    /// The pass failed on something other than energy.
+    ///
+    /// **Split out of `Skipped` because the session is now the caller's.** While a pass
+    /// opened its own session, "the pass failed" and "nothing was consolidated" were the
+    /// same fact and either word would do. Held across wakes, a handle that failed once
+    /// will usually fail every later prompt, and a rung gone quietly deaf is the failure
+    /// mode residency has to answer — so the loop needs to hear that *the session* broke,
+    /// not merely that the frontier did not move. Stall accounting still reads it as a
+    /// pass that swept nothing.
+    Failed,
 }
 
 /// Consolidate the one conversation's unconsolidated frontier into episodes and
 /// facets in a dedicated "sleep" pass. Reads the raw log after its
-/// [`episodes::consolidation_cursor`], opens one reflection session, and drives
-/// it to completion. Run from the global reflection clock (see
-/// [`super::reflection`]). A crash leaves the frontier for the next tick.
-pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug) -> Pass {
-    match run_consolidation(reaction, id).await {
+/// [`episodes::consolidation_cursor`], and drives Reflection's session to completion on
+/// it. Run from the global reflection clock (see [`super::reflection`]). A crash leaves
+/// the frontier for the next tick.
+///
+/// **The session is handed in rather than opened here**, and that is the whole of this
+/// rung's residency at this seam: a pass is one prompt on the session Reflection holds
+/// across wakes, not a session of its own.
+pub(super) async fn consolidate(
+    reaction: &Reaction,
+    id: &registry::SessionSlug,
+    session: Arc<AgentSession>,
+) -> Pass {
+    match run_consolidation(reaction, id, session).await {
         Ok(pass) => pass,
         Err(err) => {
             // A pass already in flight when shutdown began fails because its child took
@@ -140,7 +157,17 @@ pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug)
             } else {
                 tracing::warn!(error = %format!("{err:#}"), "consolidation failed");
             }
-            Pass::Skipped
+            // A managed 402 is the vendor saying "not now", not the session breaking:
+            // `SessionRun::wait` has already restored the prompt receiver, so the handle
+            // is still good and the loop parks on the energy gate rather than paying a
+            // cold open for a balance problem. Everything else costs the session.
+            if crate::foundation::energy_state::is_402_error(&err)
+                && crate::foundation::energy_state::is_out()
+            {
+                Pass::Skipped
+            } else {
+                Pass::Failed
+            }
         }
     }
 }
@@ -148,6 +175,7 @@ pub(super) async fn consolidate(reaction: &Reaction, id: &registry::SessionSlug)
 async fn run_consolidation(
     reaction: &Reaction,
     id: &registry::SessionSlug,
+    session: Arc<AgentSession>,
 ) -> anyhow::Result<Pass> {
     let data_dir = reaction.inner.memory.data_dir();
 
@@ -200,47 +228,38 @@ async fn run_consolidation(
     // instead of coining a near-duplicate.
     let subjects = facets::facet_subject_index(data_dir).await.unwrap_or_default();
 
-    // The current proactivity read, folded into the prompt so the pass can
-    // regenerate it from old-plus-new — the session has no cwd to read the file
-    // itself, so it goes in (and back out through `update_proactivity`) like facets.
+    // The current proactivity read, folded into the prompt so the pass can regenerate it
+    // from old-plus-new, and written back through `update_proactivity` — the same
+    // whole-text round trip facets take, for the same reason: the pass rewrites the file
+    // rather than patching it. Two comments here used to justify this with "the session
+    // has no cwd to read the file itself", which was never true: an absent `cwd` falls to
+    // `std::env::current_dir()` ([`CodexProcess::open_thread`]), so the pass ran with its
+    // file tools pointed at whatever directory the process was launched from. It now runs
+    // on Reflection's session, whose cwd is the data dir.
     let current_proactivity = crate::mind::memory::proactivity::read(data_dir).await.ok().flatten();
 
-    let prompt = build_consolidation_prompt(&frontier, &subjects, current_proactivity.as_deref());
-    // The same prompt a Reflection *mail* turn opens with — one self-contained file. It
-    // was the role layer alone until `cd008a6`, then seed-plus-layer; it is now neither,
-    // because `reflection.md` carries the whole thing.
-    let system_prompt = crate::identity::reflection_prompt(data_dir).await;
+    // **What this rung has running, rebuilt every pass.** The one thing a settling pass
+    // could not see was its own dispatch: a worker is addressed by a slug that lives on the
+    // switchboard, nothing durable may reference one, and no cursor points at it — so a
+    // pass had no way to learn that the pass before it had already sent a reader for this
+    // person, or that four of them are still open. The held session remembers within a run;
+    // this is what survives a compaction and a restart, and the only thing that can show a
+    // straggler *this* session never opened. Same block Cognition gets on every turn
+    // ([`snapshot::agent_window`]), for the rung that dispatches as much and remembered
+    // none of it.
+    let reach = registry::render_reachable(&registry::global().reachable(id));
+    let prompt =
+        build_consolidation_prompt(&frontier, &subjects, current_proactivity.as_deref(), &reach);
 
-
-    // **The pass runs under Reflection's standing id**, handed in by the loop that owns
-    // it ([`super::reflection`]). It used to mint its own registration scoped to this
-    // function, which made the rung addressable only *during* a pass and, worse, meant a
-    // worker it dispatched outlived the session that asked — the report came back to an
-    // address that had already been dropped. The note that used to sit here said exactly
-    // that and pointed at a later item; this is that item.
-    //
-    // The standing reflection session has no conversation identity. Its role
-    // header is enough for MCP routing.
-    let session = reaction
-        .inner
-        .agent
-        .session(
-            Role::Reflection,
-            Some(id.clone()),
-            SessionOpts { system_prompt: Some(system_prompt), ..Default::default() },
-        )
-        .await?;
-    reaction
-        .inner
-        .observatory
-        .record(
-            EventKind::SessionOpened {
-                kind: Role::Reflection,
-                id: session.id().to_string(),
-            },
-        )
-        .await;
-
+    // **The pass runs under Reflection's standing id and on Reflection's standing
+    // session**, both owned by the loop ([`super::reflection`]). The registration moved out
+    // first: minting one here made the rung addressable only *during* a pass and meant a
+    // worker it dispatched outlived the session that asked, so the report came back to an
+    // address already dropped. The session followed for the other half of the same fault —
+    // a pass that opened its own thread could not remember the pass before it, so it
+    // re-dispatched readers it had already dispatched and could not close what it had
+    // opened. `reflection.md` and the role prompt ride the session, so neither is built
+    // here any more.
     let run = session.prompt(prompt).await?;
     run.wait().await?;
 
@@ -254,6 +273,7 @@ fn build_consolidation_prompt(
     frontier: &Frontier,
     subjects: &[String],
     current_proactivity: Option<&str>,
+    reach: &str,
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
@@ -263,9 +283,9 @@ fn build_consolidation_prompt(
     }
     render_frontier(&mut s, frontier);
     s.push('\n');
-    // The current proactivity read goes in so the pass regenerates it from
-    // old-plus-new (it can't read the file itself — no cwd). What to do with it
-    // lives in reflection.md; this just carries the data.
+    // The current proactivity read goes in so the pass regenerates it from old-plus-new
+    // as one whole text. What to do with it lives in reflection.md; this just carries
+    // the data.
     s.push_str(PROACTIVITY_HEADING);
     match current_proactivity {
         Some(c) if !c.trim().is_empty() => {
@@ -275,6 +295,13 @@ fn build_consolidation_prompt(
         _ => s.push_str("(none yet)\n\n"),
     }
     s.push_str(CONSOLIDATION_TOOLS);
+    // Last, the way `agent_window` puts it last: it is the state of the machine, read after
+    // the work. Empty when nothing is live, and then it says nothing rather than saying so.
+    if !reach.trim().is_empty() {
+        s.push('\n');
+        s.push_str(reach.trim());
+        s.push('\n');
+    }
     s
 }
 
@@ -862,14 +889,15 @@ mod cooccur_tests {
     fn prompt_annotates_a_sole_co_occurring_face() {
         let tail = vec![vision(at(0), None), audio(at(1), None)];
         let g = frontier(tail, faces(&[(0, "ff32ce3w")]));
-        let p = build_consolidation_prompt(&g, &[], None);
+        let p = build_consolidation_prompt(&g, &[], None, "");
         assert!(p.contains("⟨one face present: ff32ce3w⟩"), "prompt was:\n{p}");
     }
 
     #[test]
     fn global_subjects_appear_once_above_the_groups() {
         let a = frontier(vec![audio(at(0), None), audio(at(1), None), audio(at(2), None), audio(at(3), None)], HashMap::new());
-        let p = build_consolidation_prompt(&a, &["people/alice".into(), "places/office".into()], None);
+        let p =
+            build_consolidation_prompt(&a, &["people/alice".into(), "places/office".into()], None, "");
         assert_eq!(p.matches("Subjects you already model").count(), 1, "prompt was:\n{p}");
         assert!(p.contains("people/alice, places/office"), "prompt was:\n{p}");
     }

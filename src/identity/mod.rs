@@ -1898,6 +1898,34 @@ mod soul_tests {
         );
     }
 
+    /// **The rung that dispatches most had no sentence about finishing.** `hi_close_worker`
+    /// has been in Reflection's tool surface and named in `hi_create_worker`'s own schema
+    /// text the whole time, and neither reached the role prompt — which said to hand work out
+    /// "freely" and never once said how an errand ends. A settling pass opened readers every
+    /// wake and closed none, and because the host puts back what it closed on the way down,
+    /// each one returned on the next boot having done nothing, forever.
+    ///
+    /// Three halves, and the rule is worth nothing without all three: the verb, the *moment*
+    /// it is said (a rule with no moment is one a pass gets to do "later", and later is a pass
+    /// that no longer remembers the session), and the roster to read before opening a second
+    /// worker on a person who already has one.
+    #[test]
+    fn reflection_closes_the_workers_it_opens() {
+        assert!(
+            REFLECTION_BASE.contains("`hi_close_worker`"),
+            "reflection.md must name the verb; nothing else ends a working session"
+        );
+        assert!(
+            REFLECTION_BASE.contains("close it in the turn you read the report"),
+            "the rule needs its moment, or closing is a later that never comes"
+        );
+        assert!(
+            REFLECTION_BASE.contains(crate::foundation::registry::REACHABLE_HEADING),
+            "reflection.md must point at the roster block by the name it is actually written \
+             under, or a pass is told to read a heading that is not there"
+        );
+    }
+
     /// **A prompt that calls a required argument optional teaches a call that gets refused.**
     /// `subject` stopped being a nicety when `hi_create_worker` began refusing a
     /// ledger-serving worker without one ([`WorkerType::expects_a_subject`]); a rung still

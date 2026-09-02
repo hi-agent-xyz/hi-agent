@@ -477,14 +477,20 @@ pub fn thread_record(
 
 /// The roles whose thread the next boot resumes, and the only ones.
 ///
-/// **Residency is the whole criterion.** Both are one session for the life of the process,
-/// so "the last one" is unambiguous and picking it needs no judgment. Reflection is excluded
-/// because a pass that died is re-driven by the frontier cursor, which already points where
-/// it stopped; workers are excluded because whether a dead errand is still worth finishing is
-/// a judgment, and `agents.md` gives it to Cognition rather than to a list in code. Both
-/// still *have* threads — a worker's is on its row for the boot glance to offer. This governs
-/// what resumes **by itself**.
-const RESUMED_AT_BOOT: [Role; 2] = [Role::Reaction, Role::Cognition];
+/// **Residency is the whole criterion.** All three are one session for the life of the
+/// process, so "the last one" is unambiguous and picking it needs no judgment. Workers are
+/// excluded because whether a dead errand is still worth finishing is a judgment, and
+/// `agents.md` gives it to Cognition rather than to a list in code — a worker still *has* a
+/// thread, on its row for the boot glance to offer and for
+/// [`crate::body::reaction::reopen_interrupted`] to name explicitly. This governs what
+/// resumes **by itself**.
+///
+/// Reflection was excluded here on the ground that "a pass that died is re-driven by the
+/// frontier cursor, which already points where it stopped". That is true of consolidation
+/// state and of nothing else: the cursor does not record which workers the rung opened, so
+/// the half of its state that a restart dropped was exactly the half nothing else carried.
+/// It joined the list when it became resident.
+const RESUMED_AT_BOOT: [Role; 3] = [Role::Reaction, Role::Cognition, Role::Reflection];
 
 /// The errands the last restart killed — what the boot glance offers Cognition.
 ///
@@ -607,6 +613,12 @@ mod tests {
     /// its row — that is what lets the boot glance offer it — but must never come back on
     /// its own, because whether a dead errand is still worth finishing is Cognition's
     /// judgment (`agents.md`).
+    ///
+    /// **Reflection is on this list, and used to be the counter-example.** This assertion
+    /// read `plan.get("reflection").is_none()` with the reason *"a dead pass is re-driven by
+    /// the frontier cursor"* — which covers where the store stopped and nothing else. The
+    /// cursor never recorded which workers the rung had opened, so a restart dropped exactly
+    /// the state nothing else carried.
     #[test]
     fn only_the_resident_rungs_resume_themselves() {
         let mut text = String::new();
@@ -624,7 +636,11 @@ mod tests {
 
         assert_eq!(plan.get("reaction").map(String::as_str), Some("th-1"));
         assert_eq!(plan.get("cognition").map(String::as_str), Some("th-2"));
-        assert!(plan.get("reflection").is_none(), "a dead pass is re-driven by the frontier cursor");
+        assert_eq!(
+            plan.get("reflection").map(String::as_str),
+            Some("th-3"),
+            "reflection is resident now; the cursor never carried what it had dispatched"
+        );
         assert!(plan.get("worker").is_none(), "picking an errand back up is Cognition's call");
     }
 
