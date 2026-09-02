@@ -378,9 +378,14 @@ impl WorkerRegistry {
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     cwd: Some(reaction.inner.views_dir.clone()),
-                    // The only place in the codebase that sets this. A failed resume falls
-                    // back to a cold open inside the agent layer, so an offer that has gone
-                    // stale on disk costs the errand its context and never its existence.
+                    // The only place in the codebase that sets this, and it does **not**
+                    // fall back. A comment here used to say it did; the agent layer's
+                    // errand branch propagates instead ([`AgentLayer::session`]), because a
+                    // session that opened cold cannot tell it opened cold and would carry
+                    // the `(restart)` note — *check what your last steps actually did* —
+                    // into a thread that has never done anything. The error travels to
+                    // [`could_not_put_back`], which is the code that would be unreachable
+                    // if the fallback the old comment described existed.
                     resume,
                     ..Default::default()
                 },
