@@ -117,7 +117,8 @@ fn send_message_tool() -> Value {
     tool(
         "hi_send_message",
         "Send a message to another agent session. One direction — it does not wait for a \
-         reply, and the return value only tells you whether it was delivered. If you want an \
+         reply. The return says whether it was delivered, and whether the target takes it on \
+         its next prompt or waits behind a turn it is already in the middle of. If you want an \
          answer, the other side sends you one the same way; your identity travels with the \
          message so it knows where to reach you. `to` is always a **session slug**. The three \
          standing rungs are `reaction` (what reaches the person), `cognition` (the brain) and `reflection` \
@@ -1279,6 +1280,12 @@ async fn dispatch_tool(
                     to.trim()
                 ));
             };
+            // Read *before* the push, because the question the receipt answers is whether a
+            // turn was already running when this landed — and after the push the target may
+            // have woken on this very message. A turn ending in the window between makes the
+            // receipt over-warn: the caller stops something already idle and is told "nothing
+            // to stop", which costs nothing. The reverse is the silence this exists to end.
+            let arrival = registry::global().status(&target);
             let delivery = registry::global().send(&from, &target, message.clone());
 
             // The edge, observed. Attributed to the **sender's** conversation, because that is
@@ -1293,7 +1300,9 @@ async fn dispatch_tool(
                 .await;
 
             return match delivery {
-                registry::Delivery::Delivered => tool_ok("delivered"),
+                registry::Delivery::Delivered => {
+                    tool_ok(&delivered_line(to.trim(), arrival.as_ref(), chrono::Utc::now()))
+                }
                 registry::Delivery::UnknownSender => tool_error(
                     "the external session is no longer registered; nothing was delivered",
                 ),
@@ -2701,6 +2710,40 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
+/// What a delivered message's receipt says — two answers, because they are two different
+/// next moves.
+///
+/// `"delivered"` was the same word for a message the target picks up on its next prompt and
+/// one that waits behind a turn already forty minutes long. Measured on 2026-09-02: an order
+/// relayed from the person — *rebase onto the latest `main`* — reached a worker's mailbox 33
+/// seconds after that worker had opened a turn, sat unread for 36 minutes, and its sender,
+/// holding a receipt that said `delivered`, told the person it had already interrupted the
+/// work. It had: 33 seconds earlier, for the *previous* message, and that cancel was spent.
+/// Nothing on the wire could have said so, though [`registry::Registry::send`] computes
+/// exactly this fact one line above the return and drops it.
+///
+/// The refusals stay one status between them because they mean one thing — fix it and send
+/// again. These two do not, and that is the whole rule: leave it alone, or stop the turn.
+/// `hi_cancel_worker` splits its two outcomes for the same reason, and its comment names the
+/// same trap — the tempting summary that leaves a caller waiting on what is not coming.
+///
+/// The distinction leads, rather than trailing a sentence about arrival, because a receipt is
+/// skimmed and what survives compaction is the front of it.
+fn delivered_line(to: &str, arrival: Option<&registry::Status>, now: DateTime<Utc>) -> String {
+    match arrival {
+        Some(st) if st.busy => format!(
+            "delivered — but `{to}` opened a turn {} and reads its inbox only when that turn \
+             ends. `hi_cancel_worker` it if this has to land now: it keeps its context, and \
+             everything waiting is taken together on its next prompt.",
+            crate::mind::memory::tasks::ago(now, st.state_since)
+        ),
+        // No status for a target `send` just accepted means it registered in the window above.
+        // Say what is known and claim nothing about when it will be read.
+        None => format!("delivered to `{to}`."),
+        Some(_) => format!("delivered — `{to}` is idle, so it takes this on its next prompt."),
+    }
+}
+
 fn tool_ok(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": false })
 }
@@ -3536,5 +3579,60 @@ mod session_messages_report_tests {
     fn a_session_that_has_done_nothing_says_so() {
         let out = session_messages_report("", &[], now());
         assert!(out.contains("Nothing observed yet."), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod delivered_line_tests {
+    use super::*;
+    use crate::foundation::registry::Status;
+
+    fn now() -> DateTime<Utc> {
+        "2026-09-02T06:42:25Z".parse().unwrap()
+    }
+
+    fn status(busy: bool, turn_opened_secs: i64) -> Status {
+        Status {
+            id: registry::mint(Role::Worker(WorkerType::General), Some("kt8-059")),
+            role: Role::Worker(WorkerType::General),
+            owner: None,
+            title: "恢复 KT8-059 测试入口".into(),
+            subject: Some("kt8-059".into()),
+            busy,
+            queued: false,
+            turns: 7,
+            started: now() - chrono::Duration::hours(2),
+            state_since: now() - chrono::Duration::seconds(turn_opened_secs),
+            doing: None,
+            doing_at: None,
+            last_turn: None,
+        }
+    }
+
+    /// The 2026-09-02 failure, in one line. The rebase order landed 33 seconds after the
+    /// worker opened a turn and waited 36 minutes; the receipt said `delivered`, and its
+    /// sender told the person it had already interrupted the work.
+    #[test]
+    fn a_message_landing_behind_a_running_turn_says_so_and_names_the_way_out() {
+        let out = delivered_line("general-kt8-059", Some(&status(true, 33)), now());
+        assert!(out.contains("opened a turn"), "{out}");
+        assert!(out.contains("hi_cancel_worker"), "{out}");
+        assert!(!out.starts_with("delivered — `general"), "the warning leads: {out}");
+    }
+
+    #[test]
+    fn a_message_landing_on_a_quiet_session_promises_the_next_prompt() {
+        let out = delivered_line("general-kt8-059", Some(&status(false, 600)), now());
+        assert!(out.contains("is idle"), "{out}");
+        assert!(!out.contains("hi_cancel_worker"), "nothing to stop: {out}");
+    }
+
+    /// A target that registered inside the window between the read and the push. Delivery is
+    /// known; when it will be read is not, and the receipt must not invent it.
+    #[test]
+    fn an_unknown_arrival_claims_only_delivery() {
+        let out = delivered_line("general-kt8-059", None, now());
+        assert!(out.contains("delivered to `general-kt8-059`"), "{out}");
+        assert!(!out.contains("idle") && !out.contains("turn"), "{out}");
     }
 }
