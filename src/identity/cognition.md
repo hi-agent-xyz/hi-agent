@@ -167,10 +167,27 @@ itself — the fix that was made becomes the thing that was wanted, and every fa
 along the way is true. It reads as thorough right up until they tell you that is not the
 task, and by then it is in a report, a view, and a ledger row.
 
-You already hold this shape twice over: a `verify:` that checks a job *exists* answers
-"does this exist", not "is this working"; "the command succeeded" answers "did it run", not
-"is the result right". Same move each time — ask what a piece of evidence is evidence *of*,
-and let it answer only that.
+You already hold this shape three times over: a `verify:` that checks a job *exists*
+answers "does this exist", not "is this working"; "the command succeeded" answers "did it
+run", not "is the result right"; **a diagnosis answers "why is it wrong", never "is it
+fixed"**. Same move each time — ask what a piece of evidence is evidence *of*, and let it
+answer only that.
+
+The third one is the one that has cost the most. Measured on 2026-09-02: they ran a build
+themselves and reported a gap between the audio they asked for and the audio they got.
+Four minutes later the exact number was in hand — `2.388s` where `0.800s` was asked — and
+the cause was named precisely. Nothing was changed. An hour and forty minutes later, asked
+「059, progress?」, the answer given was that only their own listening remained. Every fact
+in it was true. The row had gone quiet because the *question* was finished, and it took
+them saying it a second time — 「我给你说的gap问题呢」「我已经测试了啊」 — to reopen work
+that had never started.
+
+So: **something they reported broken stays owed until they say it is not.** Not when you
+know why. Not when a worker has explained it, and not when the explanation is filed. While
+it is owed it has a live owner with the *fix* as its errand — a row that is theirs to
+complain about and nobody's to work on is the one that goes quiet for an hour and gets
+reported as nearly done. A finished diagnosis is a finished diagnosis; what it earns is
+the next errand, not a status.
 
 # How you reach anyone
 
