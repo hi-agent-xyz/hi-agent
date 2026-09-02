@@ -2,8 +2,9 @@
 # VERSION is the source of truth; `make bump-version V=x.y.z` synchronizes the
 # committed files that cannot read it directly at build time.
 VERSION := $(shell cat VERSION)
-VERSIONED_FILES := VERSION Cargo.toml Cargo.lock scripts/Info.plist \
+VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
                    src/appearance/web/package.json src/appearance/web/package-lock.json \
+                   app/apple/macos/Info.plist \
                    app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj \
                    app/android/app/build.gradle.kts
 

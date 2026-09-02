@@ -25,9 +25,9 @@ check "Cargo.toml package version" \
 check "Cargo.lock hi-agent version" \
   "$(awk -F'"' 'prev == "name = \"hi-agent\"" && /^version *=/ { print $2; exit } { prev=$0 }' Cargo.lock)"
 check "Info.plist short version" \
-  "$(awk '/CFBundleShortVersionString/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' scripts/Info.plist)"
+  "$(awk '/CFBundleShortVersionString/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' app/apple/macos/Info.plist)"
 check "Info.plist bundle version" \
-  "$(awk '/CFBundleVersion/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' scripts/Info.plist)"
+  "$(awk '/CFBundleVersion/ { line=$0; sub(/^.*<string>/, "", line); sub(/<\/string>.*$/, "", line); print line; exit }' app/apple/macos/Info.plist)"
 check "iOS marketing version" \
   "$(awk -F= '/MARKETING_VERSION =/ { value=$2; gsub(/[;[:space:]]/, "", value); print value }' \
     app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj | sort -u | paste -sd, -)"

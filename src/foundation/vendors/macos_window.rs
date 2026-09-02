@@ -116,7 +116,7 @@ const TRAFFIC_LIGHT_W: f64 = 78.0;
 ///
 /// Live re-apply on a picker change is not this function's job: the SwiftUI Settings
 /// window sets `NSApp.appearance` itself in Swift (`applyTheme` in
-/// [`swift/HiSettings.swift`](swift/HiSettings.swift)), because it runs in the same
+/// `app/apple/macos/HiSettings.swift`), because it runs in the same
 /// process and reaching back through FFI for one assignment buys nothing. So the same
 /// two-line policy exists twice, once per language — a duplication that ends when the
 /// shell owns `NSApplication` and this Rust copy goes away with the rest of the tray.

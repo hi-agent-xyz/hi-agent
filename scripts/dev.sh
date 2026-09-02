@@ -104,7 +104,7 @@ trap cleanup INT TERM EXIT
 #   1. A bundle IDENTITY. TCC only prompts for a client that is a real .app: an
 #      Info.plist carrying NSCamera/NSMicrophoneUsageDescription plus a code
 #      signature. A loose Mach-O has no Info.plist, so TCC can't even present the
-#      prompt. → We wrap the binary in a minimal HiAgent.app (scripts/Info.plist)
+#      prompt. → We wrap the binary in a minimal HiAgent.app (app/apple/macos/Info.plist)
 #      and codesign it on every rebuild.
 #
 #   2. Being its own RESPONSIBLE PROCESS. TCC attributes a request to the launching
@@ -130,7 +130,7 @@ if [ "$(uname -s)" = "Darwin" ] && [ -z "${HI_AGENT_DEV_NO_BUNDLE:-}" ]; then
   APP="target/dev-app/HiAgent.app"
   EXE="$APP/Contents/MacOS/hi-agent"
   mkdir -p "$APP/Contents/MacOS"
-  cp scripts/Info.plist "$APP/Contents/Info.plist"
+  cp app/apple/macos/Info.plist "$APP/Contents/Info.plist"
   SIGN_ID="$(./scripts/ensure-dev-signing-id.sh)"
   if [ "$SIGN_ID" = "-" ]; then
     echo ">> native dev window: signing bundle ad-hoc — camera/mic will re-prompt each rebuild"

@@ -39,8 +39,8 @@ edit Cargo.lock '
   prev ~ /^name = "hi-agent"$/ && /^version *=/ { sub(/"[^"]*"/, "\"" new "\"") }
   { prev=$0; print }'
 
-# scripts/Info.plist — both CFBundle*Version keys carry the value on their line.
-edit scripts/Info.plist '
+# app/apple/macos/Info.plist — both CFBundle*Version keys carry the value on their line.
+edit app/apple/macos/Info.plist '
   /<key>CFBundleShortVersionString<\/key>/ || /<key>CFBundleVersion<\/key>/ {
     sub(/<string>[^<]*<\/string>/, "<string>" new "</string>") }
   { print }'
@@ -71,7 +71,7 @@ edit src/appearance/web/package-lock.json '
   { print }'
 
 echo "bumped version to $NEW in:"
-echo "  VERSION, Cargo.toml, Cargo.lock, scripts/Info.plist,"
+echo "  VERSION, Cargo.toml, Cargo.lock, app/apple/macos/Info.plist,"
 echo "  src/appearance/web/package.json, src/appearance/web/package-lock.json,"
 echo "  app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj,"
 echo "  app/android/app/build.gradle.kts"

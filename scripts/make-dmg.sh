@@ -59,7 +59,7 @@ env_get() {  # env_get KEY -> value from .env with one layer of quotes stripped
 IDENTITY="${CODESIGN_IDENTITY:-$(env_get CODESIGN_IDENTITY)}"
 IDENTITY="${IDENTITY:--}"                    # default ad-hoc
 NOTARY_PROFILE="${NOTARY_PROFILE:-$(env_get NOTARY_PROFILE)}"
-ENT="$ROOT/scripts/hi-agent.entitlements"
+ENT="$ROOT/app/apple/macos/hi-agent.entitlements"
 VERSION="$(cat VERSION)"
 
 OUT="$ROOT/target/dmg"
@@ -84,7 +84,7 @@ cp "$BIN" "$MACOS/hi-agent"
 
 # Static bundle metadata. Its committed version is synchronized from VERSION by
 # `make bump-version`.
-cp "$ROOT/scripts/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/app/apple/macos/Info.plist" "$APP/Contents/Info.plist"
 
 # --- 3. provision the bundled dependencies ---------------------------------
 # Run the just-built binary to download + lay out runtime/models/ffmpeg into
@@ -104,7 +104,7 @@ fi
 # App icon: drop in the .icns generated from the hi logo. Placed after
 # provisioning so the REUSE_RESOURCES path (which replaces Resources) can't
 # clobber it, and before codesign so it gets sealed into the bundle.
-cp "$ROOT/scripts/HiAgent.icns" "$RES/AppIcon.icns"
+cp "$ROOT/app/apple/macos/HiAgent.icns" "$RES/AppIcon.icns"
 
 # --- 4. codesign, inside-out -----------------------------------------------
 sign_one() {
@@ -142,7 +142,7 @@ fi
 
 # --- 6. build the .dmg ------------------------------------------------------
 APPNAME="$(basename "$APP")"          # "Hi Agent.app" — Finder shows it as "Hi Agent"
-BG_DIR="$ROOT/scripts/dmg"
+BG_DIR="$ROOT/app/apple/macos/dmg"
 
 # Plain image: the .app + an Applications symlink, no window styling. Used
 # everywhere the styled path can't run (headless/SSH) so a build never fails.
@@ -156,7 +156,7 @@ build_plain_dmg() {
   rm -rf "$DMGROOT"
 }
 
-# Styled image: brand background (scripts/dmg/background*.png) with the app and
+# Styled image: brand background (app/apple/macos/dmg/background*.png) with the app and
 # Applications icons pinned either side of a drag arrow. Driving Finder needs a
 # real desktop session (window server + Automation permission), so this is
 # skipped over SSH and falls back to the plain image. Window math: the art is
@@ -250,7 +250,7 @@ styled=false
 if [ -n "${SSH_CONNECTION:-}" ]; then
   echo ">> styled DMG skipped (headless / SSH — no window server); building plain image."
 elif [ ! -f "$BG_DIR/background.png" ] || [ ! -f "$BG_DIR/background@2x.png" ]; then
-  echo ">> styled DMG skipped (missing scripts/dmg/background*.png); building plain image."
+  echo ">> styled DMG skipped (missing app/apple/macos/dmg/background*.png); building plain image."
 elif build_styled_dmg; then
   styled=true
   echo ">> styled DMG built (brand background + drag-to-Applications layout)."

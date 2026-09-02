@@ -35,7 +35,7 @@ echo ">> assembling $APP …"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN" "$APP/Contents/MacOS/hi-agent"
-cp "$ROOT/scripts/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/app/apple/macos/Info.plist" "$APP/Contents/Info.plist"
 
 # Ad-hoc signature — gives the bundle a stable-enough code identity for TCC to
 # attribute (and remember) the camera/mic grants on this machine. No entitlements:

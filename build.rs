@@ -30,16 +30,16 @@ fn main() {
     }
 }
 
-/// Compile `swift/HiSettings.swift` into a static lib and emit the link directives that
-/// pull it (plus AppKit/SwiftUI/Foundation and the OS Swift runtime) into the binary.
+/// Compile `app/apple/macos/HiSettings.swift` into a static lib and emit the link
+/// directives that pull it (plus AppKit/SwiftUI/Foundation and the OS Swift runtime)
+/// into the binary.
 ///
-/// UNBUILT-caveat: written without a macOS toolchain to test against. The static Swift
-/// link is the most likely fix-forward point — if the linker can't resolve the Swift
-/// runtime symbols, options are (a) add the toolchain's lib path from
-/// `swiftc -print-target-info`, or (b) switch to a dynamic library + an @rpath and
-/// bundle the dylib. SwiftUI itself is an OS framework (never statically linked).
+/// The source lives under `app/` with the other native clients rather than beside the
+/// Rust that links it, because that is what it is: a macOS app surface that happens to
+/// still be linked into the engine's binary. The link is the leftover — when Swift owns
+/// `NSApplication` this function goes away and the file stays where it is.
 fn build_swift_settings() {
-    let swift = "src/foundation/vendors/swift/HiSettings.swift";
+    let swift = "app/apple/macos/HiSettings.swift";
     println!("cargo:rerun-if-changed={swift}");
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");

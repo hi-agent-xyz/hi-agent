@@ -169,7 +169,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSColor",
     # Boot-time app-wide light/dark (`macos_window::apply_app_theme`), forced from the
     # stored theme so the face's pre-paint bar reads the right appearance. Preferences
-    # themselves are SwiftUI now (`swift/HiSettings.swift`), which is why no table,
+    # themselves are SwiftUI now (`app/apple/macos/HiSettings.swift`), which is why no table,
     # tab, popup-button or alert class appears in this list.
     "NSAppearance",
 ] }

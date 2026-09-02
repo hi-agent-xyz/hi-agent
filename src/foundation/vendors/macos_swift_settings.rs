@@ -1,4 +1,4 @@
-//! Bridge to the native SwiftUI Settings window ([`swift/HiSettings.swift`]).
+//! Bridge to the native SwiftUI Settings window ([`app/apple/macos/HiSettings.swift`]).
 //!
 //! Phase 1 of the UI-arch refactor (see CLAUDE.md § "UI architecture"): the SwiftUI
 //! window is the only preferences UI — it replaced a hand-laid objc2 one, now deleted,
@@ -21,7 +21,7 @@ use crate::foundation::credentials::{get_setting, KEY_SERVER_PORT};
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 unsafe extern "C" {
-    /// Open (or focus) the SwiftUI Settings window. Defined in `swift/HiSettings.swift`.
+    /// Open (or focus) the SwiftUI Settings window. Defined in `app/apple/macos/HiSettings.swift`.
     /// Must be called on the main thread (the caller — a tray menu action — already is;
     /// Swift also re-dispatches to main defensively). `port` is the local HTTP server's
     /// port, used to build the API base URL.
