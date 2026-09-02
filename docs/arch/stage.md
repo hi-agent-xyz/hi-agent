@@ -49,7 +49,12 @@ went is reported; the cursor still is not*. **Amended September 2, 2026 — the 
 opens when it is reached for:** the text channel starts off, so a page that has just loaded
 is the room and its controls rather than the chat over them; the panel is one press or one
 printable key away, and neither being up nor being away outlives the page. Argued in *The
-conversation opens when it is reached for*.
+conversation opens when it is reached for*. **Amended the same day — the phone stacks
+pages:** on a screen that is narrow *and* touched, the conversation and the views navigator
+are pushed pages, full bleed, swiped back off the left edge — not panels floating over a
+room, which is a window's arrangement and a phone is not a window; and the channel controls
+are a finger's size there rather than the menu-bar popover's, which a `max-width` rule had
+been quietly imposing on both. Argued in *The phone stacks pages*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -119,6 +124,10 @@ whole stage again in every state — the conversation covers it rather than shor
 |---|---|---|
 | **popover** | the person opened it and has not put it away | the chat in a fixed-measure panel in the controls' corner, over the content if there is any and over the room if there is not; full scrollback, and the line being written standing in its foot |
 | **pill** | a page that has just loaded, or the person put the popover away | the newest line, floating over whatever is behind it while it is fresh, then gone — a caption |
+
+*The popover has a second **drawing** on the phone — full bleed, pushed, swiped back — and it
+is not a third presentation: the state is the same `popover`, `stage()` is not told, and the
+row above is unchanged. See* The phone stacks pages.
 
 *Three until August 19: a **stage** presentation held the card centred in the room while
 `content` was empty, and the panel was what it became when something went up. That is the
@@ -218,6 +227,89 @@ dismissable, still comes on any printable key. The pill is unchanged. *(It was a
 by default here, until September 2 moved the start to the pill — see* The conversation opens
 when it is reached for.*)* A view that owns the conversation still stands the whole surface down.
 
+## The phone stacks pages
+
+*September 2, 2026.*
+
+Everything above this section is written for a **window**. The popover argument — charge
+the view its width only while someone is reading, dismiss by pressing what is behind —
+assumes there is a window with a corner to spare and something behind worth pressing. On a
+390px phone none of those hold. There is no *behind*, because whatever is worth looking at
+is already the whole screen. There is no spare corner. And the pointer is a thumb that
+arrives from the bottom edge, expecting a surface it can push away rather than one it
+dismisses by tapping past.
+
+So on the phone the host's two openable surfaces — **the conversation and the views
+navigator** — are pages on a stack: full bleed, arriving from the right, leaving the same
+way under the finger.
+
+| | |
+|---|---|
+| What a phone is | narrow **and** coarse — `(max-width: 640px) and (pointer: coarse)`, published as `<html data-shape="phone">` ([`lib/shape.ts`](../../src/appearance/web/src/lib/shape.ts)) |
+| The stack | the **room** (presence, the agent's view, the caption, the controls) with up to two pages on it: the conversation, and the views page over it |
+| Going back | drag from the left twenty points; the page tracks the finger and leaves on distance **or** a flick ([`ui/PageEdge.tsx`](../../src/appearance/web/src/ui/PageEdge.tsx)). The chevron in the page's bar does the same thing without the gesture |
+| The bar | the same six channel controls, laid as the page's head instead of the room's corner. The text control is drawn as the chevron there, because from inside the page that is what it does |
+
+**Width alone cannot say what a phone is, and assuming it could is the defect this closes.**
+The menu-bar popover is ~380×540, so a `max-width: 420px` block written for it — tighten
+everything, the whole face has to fit — was also the block a 393px iPhone matched. It took
+the channel discs from 38px to 32 on the one host where the pointer is a finger and 44 is
+the floor. The popover hovers and a phone does not; pointer type is the half of the question
+that width never answered. On the phone the discs are 44px in both positions.
+
+**One flag, not two.** The shape is on `<html>` rather than left as a media query, because
+the gesture that goes with it is JavaScript: the same query written once in CSS and again in
+`matchMedia` is two answers waiting to disagree, and the disagreement looks like a page that
+swipes back on a screen the stylesheet is still drawing as a popover.
+
+**It is placement, and only placement — the rule this document has held since August 11.**
+`<Chat>` is the same component in the same element, mounted once, keeping its scroll position
+and every page of already-fetched scrollback across every push and pop. `stage()` is not told
+about any of this and does not learn a width again: the presentation is still `popover`, and
+what changed is how that box is *drawn* and how it *moves*. No new plane, either — a page is
+on `cover`, where the conversation and the controls have always been, and the agent's view is
+still underneath it.
+
+**The controls move because the alternative was worse, not because chrome may wander.** A
+fixed corner cluster over a full-bleed page lands on top of the line being written; six 44px
+discs and a composer cannot share the bottom row of a 390px screen. Standing the cluster
+down while a page is up would have broken the older rule that every channel is always
+reachable — on a phone the mic is the main way in, and "go back to the room to unmute" is a
+tax on the thing people do most. So the cluster rides in the page's head, inside the page, so
+the drag carries it: a bar that held still while its own page slid out from under it would
+say the two were separate things.
+
+**The keyboard is the phone's own problem, and `dvh` does not solve it.** The line is on the
+last row of the screen now, which is exactly where the software keyboard lands. WebKit
+overlays the keyboard on a layout viewport that never changed, so `100dvh` is still the whole
+screen with a keyboard sitting on it, and `interactive-widget=resizes-content` — which says
+precisely what we want — is not implemented there. The page's floor is
+`visualViewport`-derived instead ([`lib/softKeyboard.ts`](../../src/appearance/web/src/lib/softKeyboard.ts)),
+so the whole page shrinks and the tail of the conversation stays readable above the keys
+rather than only the line clearing them.
+
+**The iPhone client stops claiming the same edge.** `allowsBackForwardNavigationGestures` was
+on in `CoreWebView.swift` for a face that is one page with nothing to navigate back to; what
+it did have was a screen-edge recognizer on the left twenty points, competing with this
+gesture for the same touches. It is off.
+
+### Accepted, as costs
+
+- **A tap in the leftmost twenty points of a page does nothing.** It lands on the gesture
+  strip. That is the trade iOS makes for its own edge, and the pages' content starts inboard
+  of it.
+- **The conversation page has no written title.** The bar is its head, and a phone screen
+  cannot spend one row on "Conversation" and another on the controls. The views page keeps
+  its title, because a grid of thumbnails does not say what it is.
+- **The room's controls are not drawn during a back-drag** — only what is behind the page,
+  which is usually the agent's view. They are there the moment the pop lands. Fixing it would
+  mean two clusters in the tree at once, which is a worse thing to have than a 200ms gap.
+- **A card chosen in the views page dismisses it without the slide.** Choosing has always
+  dismissed immediately, on every host; only the swipe is animated.
+
+What one run of this is supposed to look like, and whether anyone has watched one:
+[`37-hold-it-in-one-hand.md`](../user-journeys/37-hold-it-in-one-hand.md).
+
 ## The pill is timed
 
 *August 18: the pill used to hold the newest line indefinitely — until another line
@@ -269,6 +361,12 @@ before anyone asks, where what was said is kept. Under 420px it is not that shap
 (`ui/global.css`), because at that size *the panel is the face*. So the same default that
 was a helpful corner on a desktop was the chat covering the room on a phone and in the
 menu-bar popover, on every load.
+
+*Later the same day, the phone half of that sentence got sharper rather than weaker: there
+the panel is not merely full-width, it is a **page** pushed onto a stack — see* The phone
+stacks pages. *A page arriving unasked is more wrong than a full-width panel was, not less,
+so the two amendments hold each other up: the room is what a phone loads into, and the
+conversation is what a tap pushes onto it.*
 
 **And a phone loads constantly.** The iOS client mints a fresh session cookie on each
 `AppModel.open`, `CoreWebView.install` sees the cookie change and re-navigates the web view,

@@ -9,6 +9,8 @@ import { installKeyPlanes } from "./lib/keyboard";
 import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
 import { installNativeFeel } from "./lib/nativeFeel";
+import { installShape } from "./lib/shape";
+import { installSoftKeyboard } from "./lib/softKeyboard";
 import { installStageReport } from "./lib/stageReport";
 import "./ui/tailwind.css";
 import "./ui/global.css";
@@ -25,6 +27,18 @@ installAuthGate();
 // Native chrome the page has to keep clear of (the desktop window's titlebar).
 // Read before the first render so nothing paints in the strip and then jumps.
 applyHostChrome();
+
+// And which shape of screen this is — narrow AND pointed at with a finger, or
+// anything else. Read here for the same reason the chrome flag is: the phone
+// arrangement is a different geometry for the whole cover plane, and a face that
+// painted itself as a window and then re-laid as a stack of pages would be seen
+// doing it. It keeps listening after this, because a phone rotates.
+installShape();
+
+// And how much of the window the software keyboard is standing on, which the
+// conversation page's foot subtracts so the line stays above it. Zero everywhere
+// there is no such keyboard.
+installSoftKeyboard();
 
 // Tell the backend how big this window is, so `hi_review_view` renders a view at the
 // frame the person actually has. Gated on the titlebar flag `applyHostChrome` just

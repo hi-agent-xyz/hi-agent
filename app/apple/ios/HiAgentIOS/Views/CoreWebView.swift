@@ -53,7 +53,15 @@ struct CoreWebView: UIViewRepresentable {
         )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.allowsBackForwardNavigationGestures = true
+        // The face has no back list to swipe through — it is one page, and every
+        // surface in it is shown by state rather than by navigating — so this
+        // gesture never had anything to do here. What it does have is a screen-edge
+        // recognizer sitting on the left twenty points, which is exactly where the
+        // face's own back-swipe begins on a phone: the conversation and the views
+        // page are pushed onto a stack there and popped by dragging from that edge
+        // (`ui/PageEdge.tsx`). Two recognizers over one strip means WebKit delays
+        // the touches and the page's drag starts late, or not at all.
+        webView.allowsBackForwardNavigationGestures = false
         // Let the canvas show through until the face paints, so opening a core
         // in dark appearance does not flash a white page.
         webView.isOpaque = false

@@ -3,6 +3,9 @@ import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
 import { url } from "../lib/base";
 import { scrollToShow } from "../lib/strip";
+import { useIsPhone } from "../lib/shape";
+import { BackGlyph } from "./ChannelControls";
+import { PageEdge } from "./PageEdge";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
 /**
@@ -65,9 +68,21 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * someone shows an interest in the view, and the first interest is usually the band
  * opening; the shot lands a second or two later, and this is what carries it onto the
  * card the person is already looking at.
+ *
+ * **On the phone it is not a band.** Everything above is an argument about a
+ * surface floating over a window that has room for both it and the thing being
+ * compared, and a 390px screen has no such room: a band there is a short letterbox
+ * of a strip with two cards in it, sitting on top of the view it was opened to
+ * compare against and covering most of it anyway. So on the phone shape it is a
+ * page pushed onto the stack, swiped back off the same way the conversation is
+ * (`docs/arch/stage.md`), and the two rows spend the whole screen — history as a
+ * grid of pictures big enough to recognise, bookmarks as chips that wrap. The
+ * shortness was the compromise, not the goal; the goal was *what has been shown,
+ * and where you can go*, which a page serves better than a strip.
  */
 export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   const { trail, live, parked, goTo, openRef } = useViews();
+  const phone = useIsPhone();
   const [inventory, setInventory] = useState<ListedView[]>([]);
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */
@@ -88,6 +103,15 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   // there. `scrollLeft` rather than `scrollIntoView`, which would also scroll whatever
   // ancestor it decided was interesting, and would animate.
   useLayoutEffect(() => {
+    if (phone) {
+      // The page scrolls down, not the rows across, so the same job is a vertical
+      // one and `scrollIntoView` is the right tool for it here: the ancestor it
+      // would otherwise scroll by surprise *is* the page, which is the box that
+      // has to move. Still once, and still for the same reason.
+      show(hereCard.current, placedCards);
+      show(hereChip.current, placedChips);
+      return;
+    }
     place(strip.current, hereCard.current, placedCards);
     place(chips.current, hereChip.current, placedChips);
   });
@@ -153,7 +177,31 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   const bookmarks = inventory.filter((view) => view.system || view.bookmarked);
 
   return (
-    <div className="hi-views-band" role="group" aria-label="views">
+    <div
+      className="hi-views-band"
+      data-page={phone ? "true" : undefined}
+      role="group"
+      aria-label="views"
+    >
+      {phone && (
+        <>
+          {/* The page's bar. One control, and it is the way back — there is
+              nothing else a person does to this page except leave it or pick
+              something off it. */}
+          <div className="hi-views-bar">
+            <button
+              type="button"
+              className="hi-channel hi-channel--back"
+              onClick={onDismiss}
+              aria-label="back"
+            >
+              <BackGlyph />
+            </button>
+            <span className="hi-views-bar-title">Views</span>
+          </div>
+          <PageEdge onBack={onDismiss} />
+        </>
+      )}
       <div className="hi-views-section">
         <span className="hi-views-heading">history</span>
         <span className="hi-views-rule" aria-hidden="true" />
@@ -293,6 +341,16 @@ function place(
   done.current = true;
   const at = scrollToShow(row, item);
   if (at !== null) row.scrollLeft = at;
+}
+
+/** The page's version of the same job: bring the item marked *here* onto the
+ * screen, once, by scrolling the page down to it. `center` rather than `start`,
+ * because a card at the very top of the frame reads as the head of the list and
+ * this one is somewhere in the middle of one. */
+function show(item: HTMLElement | null, done: { current: boolean }): void {
+  if (done.current || !item) return;
+  done.current = true;
+  item.scrollIntoView({ block: "center" });
 }
 
 /** How often the band re-reads the inventory while it is up — long enough not to be a

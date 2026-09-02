@@ -4,6 +4,8 @@ import { useViews } from "../core/views";
 import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
 import { onHostKey } from "../lib/keyboard";
+import { useIsPhone } from "../lib/shape";
+import { PageEdge } from "./PageEdge";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
 import { Chat } from "./Chat";
@@ -46,6 +48,17 @@ import { ViewsBand } from "./ViewsBand";
  * `ViewSlot` or a conditional branch — re-mounting `<CameraPreview>` re-acquires
  * the camera and blacks out the feed, and re-mounting `<Chat>` throws away the
  * scroll position and every page of scrollback already fetched.
+ *
+ * **On the phone the cover plane's surfaces are pages, not panels**
+ * (`docs/arch/stage.md` — *The phone stacks pages*). That is a placement change
+ * and only a placement change: the same `<Chat>`, in the same box element, mounted
+ * in the same place — the box is drawn full-bleed and slides in from the right
+ * instead of rising out of a corner, and `<PageEdge>` gives it the swipe back. The
+ * one thing that does move is the controls cluster, which is the page's head bar
+ * while a page is up and the room's corner cluster when it is not; it is rendered
+ * in one of two places for that, which is safe here and nowhere else on this plane
+ * — `ChannelControls` is a pure function of its props, holding no stream, no
+ * scroll position and no state to throw away.
  */
 export function Shell() {
   const presence = usePresence();
@@ -56,6 +69,11 @@ export function Shell() {
   const { setTextChannel } = ch;
   const sendText = useSendText();
   const { views, clear } = useViews();
+  // Whether this is the held-in-a-hand shape. Read once here and handed down,
+  // rather than each surface asking: what it decides is one arrangement of the
+  // cover plane, and two components disagreeing about it would put the back
+  // chevron on a page that is still a popover.
+  const phone = useIsPhone();
   // Whether the views band is open. A window preference like the text channel's
   // own on/off, and never server state for the same reason: it says what this
   // window is showing the person, not what the agent expressed.
@@ -144,6 +162,28 @@ export function Shell() {
       ? [{ id: 0, text: newest.text, speaker: newest.role === "user" ? "user" : "agent" }]
       : [];
 
+  // The cluster, named once and placed twice: it is the conversation page's head
+  // bar while that page is up on the phone, and the room's corner cluster the rest
+  // of the time. Every control is in it in both positions — see `ChannelControls`
+  // for why the text one is a chevron in the bar.
+  const channels = {
+    audioOn: ch.audioInput,
+    onToggleAudio: ch.toggleAudio,
+    audioError: ch.audioError,
+    videoOn: ch.videoInput,
+    onToggleVideo: ch.toggleVideo,
+    videoError: ch.videoError,
+    textOn: ch.text,
+    onToggleText: () => setTextChannel(!ch.text),
+    voiceOn: ch.audioOutput,
+    onToggleVoice: ch.toggleAudioOutput,
+    onCloseViews: clear,
+    viewsOpen: bandOpen,
+    onToggleViews: () => setBandOpen((open) => !open),
+  };
+  /** The conversation is a page on the stack right now, and owns the bar. */
+  const asPage = phone && chatShown;
+
   return (
     <div
       className="hi-root"
@@ -180,8 +220,16 @@ export function Shell() {
           ref={popoverRef}
           className="hi-stage"
           data-shown={chatShown ? "true" : "false"}
+          data-page={phone ? "true" : undefined}
           aria-hidden={chatShown ? undefined : true}
         >
+          {/* The page's head bar and its way back, both only while this box is a
+              page. Inside the box on purpose: the drag moves the box, and a bar
+              fixed to the window would sit still while the page it belongs to slid
+              out from under it. */}
+          {asPage && <ChannelControls bar {...channels} />}
+          {asPage && <PageEdge onBack={() => setTextChannel(false)} />}
+
           {/* The one activity the person is shown, and it is shown inside the
               conversation because that is what it is about — see `ui/Chat.tsx`. */}
           <Chat
@@ -224,22 +272,12 @@ export function Shell() {
 
         {/* The lower cluster is controls and only controls: every channel, always
             available, nothing that merely reports. Managed energy is represented
-            only by the gate-owned full-screen view. */}
-        <ChannelControls
-          audioOn={ch.audioInput}
-          onToggleAudio={ch.toggleAudio}
-          audioError={ch.audioError}
-          videoOn={ch.videoInput}
-          onToggleVideo={ch.toggleVideo}
-          videoError={ch.videoError}
-          textOn={ch.text}
-          onToggleText={() => setTextChannel(!ch.text)}
-          voiceOn={ch.audioOutput}
-          onToggleVoice={ch.toggleAudioOutput}
-          onCloseViews={clear}
-          viewsOpen={bandOpen}
-          onToggleViews={() => setBandOpen((open) => !open)}
-        />
+            only by the gate-owned full-screen view.
+
+            Stood down exactly when the conversation page has taken it into its own
+            bar above — never otherwise, so the room always has its cluster and no
+            state can leave the face with no way in or out. */}
+        {!asPage && <ChannelControls {...channels} />}
 
         <HandoffOverlay
           feedback={handoff.feedback}

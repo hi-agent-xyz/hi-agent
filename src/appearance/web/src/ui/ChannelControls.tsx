@@ -25,6 +25,12 @@ interface ChannelControlsProps {
   viewsOpen: boolean;
   /** Open/close the views band. */
   onToggleViews: () => void;
+  /** Draw the cluster as the head bar of a pushed page rather than as a corner
+   * cluster floating over the room — the phone shape, where the conversation is
+   * a page and this row is its nav bar. Placement only: the same six controls,
+   * re-laid. See the note on the text control below for the one that changes
+   * shape with it. */
+  bar?: boolean;
 }
 
 /**
@@ -65,6 +71,16 @@ interface ChannelControlsProps {
  * and the line. What is left is what the cluster was always for — mic, speaker,
  * text, camera, one apiece.
  *
+ * **On the phone the same cluster is the page's bar, and the text control is the
+ * back chevron.** The conversation there is a page pushed onto the stack rather
+ * than a panel in a corner (`docs/arch/stage.md`), so the row rides in its head
+ * instead of floating over the room — and the control that owns the text channel
+ * is, in that position, the control that takes the page back off the stack. It is
+ * drawn as a chevron because that is what it does from there; it is the same
+ * button, doing the same one thing it has always done, which is why the cluster
+ * still has no item that comes and goes. A second dismissal button beside a
+ * keyboard glyph that meant "close this" would have been two doors onto one act.
+ *
  * **Nothing here signals a show, because a show is not something to be signalled about.**
  * There was a return-to-live button, and then a dot on the views control in its place, both
  * standing in for a window that had gone back and would not follow the agent onto the
@@ -86,6 +102,7 @@ export function ChannelControls({
   onCloseViews,
   viewsOpen,
   onToggleViews,
+  bar = false,
 }: ChannelControlsProps) {
   // A channel that refused to open has to say so where it can be read. `title`
   // is the desktop half of that and nothing at all on a phone, where a tap that
@@ -94,7 +111,7 @@ export function ChannelControls({
   const note = audioError ?? videoError ?? null;
 
   return (
-    <div className="hi-channels" role="group" aria-label="channels">
+    <div className={`hi-channels${bar ? " hi-channels--bar" : ""}`} role="group" aria-label="channels">
       {note && (
         <p className="hi-channel-note" role="status">
           {note}
@@ -125,14 +142,21 @@ export function ChannelControls({
 
       <button
         type="button"
-        className={`hi-channel${textOn ? " is-on" : ""}`}
+        className={`hi-channel${textOn && !bar ? " is-on" : ""}${bar ? " hi-channel--back" : ""}`}
         onClick={onToggleText}
         title={textOn ? "conversation — tap to put away" : "conversation — tap to open"}
-        aria-pressed={textOn}
+        aria-pressed={bar ? undefined : textOn}
         aria-expanded={textOn}
         aria-label={textOn ? "put the conversation away" : "open the conversation"}
       >
-        <KeyboardGlyph />
+        {/* In the page's bar this button is the way back, so it is drawn as the
+            way back — and it drops the on-state with the glyph. The tint means
+            "this channel is open"; on a chevron in the bar of the very page that
+            channel opened, it says nothing and reads as a back button that has
+            somehow been selected. `aria-pressed` goes for the same reason: a
+            chevron announced as a pressed toggle is a lie about what pressing it
+            does, and the label already says what it does. */}
+        {bar ? <BackGlyph /> : <KeyboardGlyph />}
       </button>
 
       <button
@@ -231,6 +255,24 @@ function SpeakerGlyph({ muted }: { muted: boolean }) {
           strokeLinecap="round"
         />
       )}
+    </svg>
+  );
+}
+
+/** The way back off the stack — the text control's glyph while the cluster is a
+ * pushed page's bar, and the views page's own back button (`ui/ViewsBand.tsx`).
+ * A bare chevron, at the weight the platform draws one. Exported so there is one
+ * chevron in the application rather than one per page that has a way back. */
+export function BackGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <path
+        d="M15 5l-7 7 7 7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
