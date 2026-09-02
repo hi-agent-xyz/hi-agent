@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the iOS `LaunchBackground` colour set, so the first frame on
+         either platform is the same near-white rather than a system default. -->
+    <color name="launch_background">#FFF7F8FA</color>
+    <!-- The sealed mark is a white die-cut tile. The adaptive icon's background
+         layer is that white; the foreground is the mark itself, reused from the
+         iOS app icon rather than retraced. -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+</resources>

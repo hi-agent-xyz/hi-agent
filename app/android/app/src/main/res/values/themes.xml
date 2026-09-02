@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The activity draws everything itself in Compose. This theme only has to
+         hand over a window that is transparent behind the system bars, so the
+         face, which reads `env(safe-area-inset-top)` and holds its own content
+         clear, really does get the whole screen. -->
+    <style name="Theme.HiAgent" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowBackground">@color/launch_background</item>
+    </style>
+</resources>

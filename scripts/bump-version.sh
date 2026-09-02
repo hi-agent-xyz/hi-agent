@@ -52,6 +52,13 @@ edit app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj '
     sub(/MARKETING_VERSION = [^;]*;/, "MARKETING_VERSION = " new ";") }
   { print }'
 
+# Android target — `versionCode` is derived from this string at configuration
+# time, so the semver is the only thing that needs stamping.
+edit app/android/app/build.gradle.kts '
+  /^val hiAgentVersion = / {
+    sub(/"[^"]*"/, "\"" new "\"") }
+  { print }'
+
 # web/package.json — the only `"version": "…"` is the package version.
 edit src/appearance/web/package.json '
   !done && /"version":/ { sub(/"version": *"[^"]*"/, "\"version\": \"" new "\""); done=1 }
@@ -66,6 +73,7 @@ edit src/appearance/web/package-lock.json '
 echo "bumped version to $NEW in:"
 echo "  VERSION, Cargo.toml, Cargo.lock, scripts/Info.plist,"
 echo "  src/appearance/web/package.json, src/appearance/web/package-lock.json,"
-echo "  app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj"
+echo "  app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj,"
+echo "  app/android/app/build.gradle.kts"
 ./scripts/check-version.sh
 echo "review with: git diff"

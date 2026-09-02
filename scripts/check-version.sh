@@ -31,6 +31,9 @@ check "Info.plist bundle version" \
 check "iOS marketing version" \
   "$(awk -F= '/MARKETING_VERSION =/ { value=$2; gsub(/[;[:space:]]/, "", value); print value }' \
     app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj | sort -u | paste -sd, -)"
+check "Android version name" \
+  "$(awk -F'"' '/^val hiAgentVersion = / { print $2; exit }' \
+    app/android/app/build.gradle.kts)"
 check "web package version" \
   "$(awk -F'"' '/"version":/ { print $4; exit }' src/appearance/web/package.json)"
 check "web lock package version" \

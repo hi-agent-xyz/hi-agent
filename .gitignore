@@ -7,3 +7,7 @@ src/appearance/web/dist/
 .env.local
 .claude/
 xcuserdata/
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties

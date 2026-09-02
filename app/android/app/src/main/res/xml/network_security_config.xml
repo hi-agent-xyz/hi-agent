@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is permitted here and then *narrowed in app code* — the opposite of
+  how this file is usually written, and deliberately so.
+
+  iOS gets this for free: ATS's `NSAllowsLocalNetworking` exempts local hostnames
+  and private address literals while still refusing plain HTTP to a public host.
+  Android has no such category. A `domain-config` matches by name, and a name is
+  the one thing a LAN core does not have — you reach it at `192.168.1.24:12358`,
+  and network-security-config cannot express an address range.
+
+  So the choice is between permitting cleartext everywhere at the platform layer
+  or dropping LAN pairing, which iOS supports today. We permit it here and
+  enforce the iOS-equivalent rule in `CoreClient.normalizeBaseUrl`, which is
+  already the single place every address the app will ever dial is parsed: an
+  `http://` address is accepted only for loopback, a private-range literal, a
+  single-label hostname, or a `.local` name. A public host over plain HTTP is
+  rejected before it can reach the roster, so nothing in the app can dial it.
+
+  The narrowing lives in Kotlin rather than XML because that is where the
+  distinction is expressible at all. It is not defence in depth; it is the same
+  policy, written at the only rung that can state it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

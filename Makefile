@@ -4,13 +4,14 @@
 VERSION := $(shell cat VERSION)
 VERSIONED_FILES := VERSION Cargo.toml Cargo.lock scripts/Info.plist \
                    src/appearance/web/package.json src/appearance/web/package-lock.json \
-                   app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj
+                   app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj \
+                   app/android/app/build.gradle.kts
 
 # Keep the former `VERSION=x.y.z` spelling working for callers while matching
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test docker dmg app ios exe installer bump-version version
+.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe installer bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -60,6 +61,12 @@ ios: ## build the iPhone/iPad client for the simulator (requires macOS and Xcode
 		-configuration Debug \
 		CODE_SIGNING_ALLOWED=NO \
 		build
+
+android: check-version ## build + unit-test the Android client (debug APK; requires the Android SDK)
+	cd app/android && ./gradlew --no-daemon assembleDebug testDebugUnitTest
+
+android-apk: check-version ## build the unsigned release APK for self-hosted distribution
+	cd app/android && ./gradlew --no-daemon assembleRelease
 
 # `make exe` is a Windows *build check*: it cross-compiles the binary from a
 # mac/linux host (proving the Windows code paths compile + link) without running
