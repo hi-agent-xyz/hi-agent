@@ -35,6 +35,7 @@ pub mod generated;
 pub mod handle;
 pub mod headers;
 pub mod mcp;
+pub mod mechanisms;
 pub mod observe;
 pub mod people;
 pub mod reflex;
@@ -336,6 +337,12 @@ pub struct AppState {
     /// surface moved to the native tray. `None` ⇒ sign-in unavailable (free tier).
     pub auth: Option<Arc<crate::foundation::auth::AuthState>>,
 
+    /// The apps offering their hands, and the calls in flight to them. The one
+    /// seam where the core does the asking — see
+    /// [`crate::foundation::server::mechanisms`] and `docs/arch/mechanisms.md`.
+    /// Nothing calls into it yet; the capabilities still reach macOS in-process.
+    pub mechanisms: mechanisms::Mechanisms,
+
     /// The tool sink. The `/mcp` handler routes a tool call to the reaction loop
     /// through it; the reaction registers the sink as it stands the loop up. See
     /// [`crate::body::reaction::ToolRegistry`].
@@ -527,6 +534,7 @@ pub fn build(
         privacy,
         data_dir,
         auth: auth.clone(),
+        mechanisms: mechanisms::Mechanisms::new(),
         tool_registry,
         floor,
         attachments,
@@ -695,6 +703,13 @@ pub fn build(
         .route("/api/settings/relay", put(settings::put_relay))
         .route("/api/settings/credentials/{feature}", put(settings::put_feature))
         .route("/api/account/energy/refresh", post(settings::post_energy_refresh))
+        // The one seam where the core does the asking: an app dials in, declares the
+        // OS mechanisms it holds, and answers calls for them. Loopback-gated for the
+        // same reason as the config surface above. The GET is the plain debug view of
+        // who is attached. See mechanisms.rs and docs/arch/mechanisms.md.
+        .route("/api/mechanisms", get(mechanisms::get_mechanisms))
+        .route("/api/mechanisms/attached", get(mechanisms::get_attached))
+        .route("/api/mechanisms/call", post(mechanisms::post_call))
         // Web→device account link: `start` opens the browser to the site with a
         // loopback callback + CSRF nonce; the site hands a device-ticket back to
         // `callback`, which redeems it at the broker to adopt the signed-in account.
