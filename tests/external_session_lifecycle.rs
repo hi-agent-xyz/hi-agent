@@ -15,6 +15,18 @@ use tokio::net::TcpListener;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serialize these tests without letting one failure impersonate four.
+///
+/// They share one process-wide registry, so they must not overlap — but a plain
+/// `lock().unwrap()` means the first test to panic *while holding the lock* poisons it, and
+/// every test after that dies on the unwrap instead of running. The count then depends on
+/// scheduling: one stale assertion in this file reported as 2, 3 or 4 failures across
+/// consecutive runs, and none of the extra three named anything real. Recovering the guard
+/// keeps the mutual exclusion and lets exactly the broken test be the broken one.
+fn serialized() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 struct SessionGuard(SessionSlug);
 
 impl Drop for SessionGuard {
@@ -83,7 +95,7 @@ async fn spawn_with_subject(
 
 #[tokio::test]
 async fn external_session_is_scoped_and_released() {
-    let _lock = TEST_LOCK.lock().unwrap();
+    let _lock = serialized();
     let (base, _dir, seams, owner) = spawn(Acceptor::Loopback).await;
     let client = reqwest::Client::new();
     let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");
@@ -159,7 +171,16 @@ async fn external_session_is_scoped_and_released() {
         .await
         .expect("message JSON");
     assert_eq!(body["result"]["isError"], false);
-    assert_eq!(body["result"]["content"][0]["text"], "delivered");
+    // The receipt names *which* delivery this was: the owner here is idle, so the message is
+    // taken on its next prompt rather than waiting behind a turn already open. Asserting the
+    // whole sentence rather than a `delivered` prefix is the point — the two answers were one
+    // word until `delivered_line` split them, and a prefix match would pass for either.
+    // Built from the slug the test already holds, because the number in it is assigned by the
+    // process-wide registry and so depends on what else has registered.
+    assert_eq!(
+        body["result"]["content"][0]["text"],
+        format!("delivered — `{}` is idle, so it takes this on its next prompt.", owner.0.as_str())
+    );
 
     let pending = registry::global()
         .take_pending(&owner.0)
@@ -213,7 +234,7 @@ async fn external_session_is_scoped_and_released() {
 
 #[tokio::test]
 async fn external_session_accepts_a_known_agent_definition_subject() {
-    let _lock = TEST_LOCK.lock().unwrap();
+    let _lock = serialized();
     let (base, _dir, seams, _owner) = spawn_with_subject(Acceptor::Loopback, false).await;
     let client = reqwest::Client::new();
     let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");
@@ -244,7 +265,7 @@ async fn external_session_accepts_a_known_agent_definition_subject() {
 
 #[tokio::test]
 async fn external_session_rejects_an_unknown_subject() {
-    let _lock = TEST_LOCK.lock().unwrap();
+    let _lock = serialized();
     let (base, _dir, seams, _owner) = spawn(Acceptor::Loopback).await;
     let client = reqwest::Client::new();
     let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");
@@ -264,7 +285,7 @@ async fn external_session_rejects_an_unknown_subject() {
 
 #[tokio::test]
 async fn external_session_routes_refuse_off_box_even_with_surface_credentials() {
-    let _lock = TEST_LOCK.lock().unwrap();
+    let _lock = serialized();
     let (base, _dir, seams, _owner) = spawn(Acceptor::OffBox).await;
     let client = reqwest::Client::new();
     let (_surface_id, surface_token) = seams.state.surfaces.mint("test").expect("surface");

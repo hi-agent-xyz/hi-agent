@@ -137,9 +137,28 @@ mod tests {
         (now - Duration::minutes(minutes_ago)).to_rfc3339()
     }
 
+    /// A fixed instant sitting exactly on a [`BUCKET`] boundary.
+    ///
+    /// [`summarize`] buckets on the **absolute epoch** (`at.rem_euclid(bucket_ms)`), not
+    /// relative to `now`. So a `now` read off the wall clock lands every relative offset
+    /// below at an arbitrary position inside its bucket, and whether two samples share one
+    /// is then a fact about what time the suite happened to run: the 65/62/61-minute
+    /// samples span four minutes, so they share a bucket for six wall-clock minutes in ten
+    /// and straddle a boundary for the other four. That is a test that fails 40% of the
+    /// time for a reason having nothing to do with the code under it — measured, on an
+    /// unmodified checkout: green at :38, :39 and :40, red at :41.
+    ///
+    /// Pinning it here leaves the bucket arithmetic as the only variable in the assertion,
+    /// which is the thing these tests are actually about. Derived rather than written as a
+    /// literal so the alignment is visible instead of being a constant to go verify.
+    fn aligned_now() -> DateTime<Utc> {
+        let secs = 1_700_000_000 - 1_700_000_000 % BUCKET.num_seconds();
+        DateTime::from_timestamp(secs, 0).expect("a fixed epoch inside chrono's range")
+    }
+
     #[test]
     fn samples_in_one_bucket_collapse_to_the_last_level() {
-        let now = Utc::now();
+        let now = aligned_now();
         let samples = vec![
             (at(now, 65), 900_i64, 1000_i64),
             (at(now, 62), 800, 1000),
@@ -152,7 +171,7 @@ mod tests {
 
     #[test]
     fn a_reset_stays_in_the_series_as_a_rise() {
-        let now = Utc::now();
+        let now = aligned_now();
         let samples = vec![
             (at(now, 200), 500_i64, 1000_i64),
             (at(now, 150), 100, 1000),
@@ -165,7 +184,7 @@ mod tests {
 
     #[test]
     fn a_gap_stays_a_gap() {
-        let now = Utc::now();
+        let now = aligned_now();
         let samples = vec![
             (at(now, 600), 900_i64, 1000_i64),
             (at(now, 30), 400, 1000), // nothing observed for nine and a half hours
@@ -178,7 +197,7 @@ mod tests {
 
     #[test]
     fn nothing_observed_yet_is_an_empty_series_not_a_zero_line() {
-        let history = summarize(&[], Utc::now());
+        let history = summarize(&[], aligned_now());
         assert!(history.points.is_empty());
         assert_eq!(history.window_hours, 24, "the window is stated even with nothing in it");
     }

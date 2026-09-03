@@ -539,7 +539,18 @@ mod tests {
             2,
             "a link in this panel is the autolinker's or the record's own filename, and nothing else"
         );
-        assert!(tasks.contains("href={url}") && tasks.contains("{url}\n      </a>"));
+        // Compared with the whitespace removed, because the property is the *binding* and
+        // not the layout. This previously pinned `{url}\n      </a>` — six spaces of JSX
+        // indentation — and went red when the local was renamed to `href`. The rename was
+        // right and is argued for at the call site: `url()` is imported from `@hi/core`, so
+        // a local of that name shadows the one function that must never rebase an outside
+        // address onto this core. The property never lapsed; only its spelling moved, and a
+        // reformat would have broken the assertion in exactly the same way.
+        let compact: String = tasks.split_whitespace().collect();
+        assert!(
+            compact.contains("href={href}") && compact.contains("{href}</a>"),
+            "the autolinker's anchor text is the same binding as its destination"
+        );
         assert!(
             tasks.contains("href={href}") && tasks.contains("<code>{token}</code>"),
             "the file link's anchor text is the token it opens"

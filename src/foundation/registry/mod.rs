@@ -1712,7 +1712,15 @@ impl Registry {
     /// creator holds.
     pub fn session_of_role(&self, role: Role) -> Option<Status> {
         let map = self.sessions.lock().unwrap();
-        let (id, e) = map.iter().filter(|(_, e)| e.role == role).min_by_key(|(_, e)| e.started)?;
+        // Ordered exactly like `statuses()` below — `started`, then id. The id half is not
+        // decoration: `started` is `Utc::now()`, two registrations can land on one instant,
+        // and `min_by_key` on `started` alone then returns whichever the `HashMap` happened
+        // to yield first, which is randomized per process. That is the arbitrary answer the
+        // comment above says this must not give.
+        let (id, e) = map
+            .iter()
+            .filter(|(_, e)| e.role == role)
+            .min_by(|(a_id, a), (b_id, b)| a.started.cmp(&b.started).then_with(|| a_id.cmp(b_id)))?;
         Some(e.status(id.clone()))
     }
 
@@ -2690,6 +2698,19 @@ mod tests {
     /// path that skipped it.
     #[test]
     fn every_state_change_moves_its_clock_and_nothing_else_does() {
+        /// Outrun the clock between transitions. `state_since` is `Utc::now()`, and in a
+        /// release build two of these calls complete well inside one tick — so a stamping
+        /// path and a skipping one both leave `state_since` equal to what it was, and the
+        /// `>` assertions below go red for a reason that has nothing to do with stamping.
+        ///
+        /// Sleeping rather than relaxing to `>=` on purpose: `>=` holds whether or not the
+        /// path stamped, which is the entire property under test. This keeps `>`
+        /// discriminating, and it strengthens the `==` assertions too — time has definitely
+        /// passed across a non-transition, so an unwanted restamp cannot hide in the tick.
+        fn tick() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
         let r = reg();
         let id = mint();
         r.register(id.clone(), Role::Worker(WorkerType::General), None, String::new(), None);
@@ -2697,32 +2718,38 @@ mod tests {
         assert_eq!(registered.state_since, registered.started, "idle since it existed");
 
         // idle → waiting
+        tick();
         r.post(&id, "go".into());
         let waiting = r.status(&id).unwrap();
         assert!(waiting.queued && !waiting.busy);
         assert!(waiting.state_since > registered.state_since);
 
         // A second letter onto an already-queued inbox is not a state change.
+        tick();
         r.post(&id, "and also".into());
         assert_eq!(r.status(&id).unwrap().state_since, waiting.state_since, "still waiting");
 
         // waiting → running
+        tick();
         r.take_pending(&id);
         let running = r.status(&id).unwrap();
         assert!(running.busy);
         assert!(running.state_since > waiting.state_since);
 
         // Mail landing mid-turn leaves it running, so the clock holds.
+        tick();
         r.post(&id, "one more".into());
         assert_eq!(r.status(&id).unwrap().state_since, running.state_since, "still running");
 
         // running → idle
+        tick();
         r.finish_turn(&id, TurnOutcome::Completed);
         let done = r.status(&id).unwrap();
         assert!(!done.busy);
         assert!(done.state_since > running.state_since);
 
         // A second finish is not a transition.
+        tick();
         r.finish_turn(&id, TurnOutcome::Completed);
         assert_eq!(r.status(&id).unwrap().state_since, done.state_since);
     }
