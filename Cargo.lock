@@ -1810,7 +1810,6 @@ dependencies = [
  "directories",
  "dotenvy",
  "futures",
- "hi-app",
  "hi-wire",
  "hyper",
  "hyper-util",
@@ -1846,27 +1845,6 @@ dependencies = [
  "url",
  "uuid",
  "yamux",
-]
-
-[[package]]
-name = "hi-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "futures",
- "hi-wire",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tower",
- "tracing",
- "uuid",
 ]
 
 [[package]]
