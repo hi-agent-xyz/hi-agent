@@ -17,7 +17,7 @@ The Android app owns:
 The core remains the authority for identity, credential issuance and
 revocation, memory, cognition, and channel behavior.
 
-It is a standalone Gradle build. It does not link the Rust core, `hi-app`, or
+It is a standalone Gradle build. It does not link the Rust core or
 `hi-wire`, and shares no client code with the Apple target — the two speak the
 same documented API and are otherwise unrelated, which is the same independence
 [`apple-ios.md`](apple-ios.md) describes.

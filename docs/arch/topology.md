@@ -89,23 +89,36 @@ between apps, and revocation is per-core.
   [`foundation.md`](foundation.md).
 - Supervision of local cores. A remote core cannot be supervised, only observed.
 
-**The face never knows where the core is.** The web face talks only to the app's local
-proxy; the app routes that to the attached core — loopback or tunnel — and attaches the
-credential upstream. Three things follow, and the third is the point:
+**The app holds the long-lived credential; the webview gets a short-lived session, and
+loads the core's own address.** The app presents its credential once at
+`POST <core>/api/session`, takes the `hi_surface` cookie that comes back, installs it in
+the webview's cookie store, and navigates the webview at the core. Three things follow,
+and the third is the point:
 
-- the webview never holds a credential;
-- switching who you are with is the app repointing its proxy, with no face involvement;
+- the webview never holds the long-lived credential — only a session that expires and can
+  be revoked at the core that issued it;
+- switching who you are with is loading a different URL, with no face involvement;
 - **desktop and mobile run identical face code**, which is what "no architectural
   difference between them" has to mean concretely.
 
-**On iOS it is the same local port**, not a `WKURLSchemeHandler`. A custom scheme is not
-a secure context, so a page served through one gets no microphone and no camera — which
-is most of why a phone is an interesting surface at all — while `http://127.0.0.1` is
-potentially trustworthy and does. The second reason is that a loopback listener is the
-proxy an app already has: `crates/hi-app` builds for `aarch64-apple-ios` as it stands, so
-the roster, the session exchange and the credential rules have one implementation rather
-than a Swift retelling of them. Credentials live in the OS keychain, never a plist or
-`localStorage`.
+**Not a local proxy — that was tried and lost.** Until 2026-09-03 this said the face talked
+only to a loopback proxy the app ran (`crates/hi-app`), which forwarded to the attached core
+and attached the credential upstream. Both shapes keep the credential out of the page, and
+the proxy cost a listener, a second port, a roster table and 1,200 lines to do it. What
+settled it is that the mobile clients never adopted it: iOS shipped the session exchange in
+`CoreClient.swift` and Android in `CoreClient.kt`, both loading the core directly, and the
+paragraph claiming one Rust implementation spared "a Swift retelling" was describing a
+sharing that never happened — neither project links any Rust. On the desktop the proxy was
+attaching a credential to reach a loopback listener that is
+[ungated by construction](#auth), so it bought nothing there either. Deleted rather than
+kept: the session exchange is the design, on every platform.
+
+**A page must be served from a potentially-trustworthy origin**, which is the constraint
+underneath all of this and the reason a `WKURLSchemeHandler` is not an option. A custom
+scheme is not a secure context, so a page served through one gets no microphone and no
+camera — which is most of why a phone is an interesting surface at all. `https://` for a
+remote core and `http://127.0.0.1` for one on this machine both qualify. Credentials live
+in the OS keychain, never a plist or `localStorage`.
 
 **Host and client are capabilities of an app instance, never properties of a platform.** An
 app asks "can I host a core here?" and a mobile app answers no. When that answer changes,
@@ -170,10 +183,20 @@ because a core serves agent-generated code, and the usual mitigation is unavaila
 deliberately resolve bare imports through the page's import map to the **host's shared React
 instance**, so they cannot be moved to a sandboxed origin without redesigning that.
 
-The scope this is safe in is the scope the app already draws. **Through an app the browser
-holds nothing** — it talks to the app's local proxy, the app holds the credentials, and no
-core's session is ever in a page. The shared jar exists only for a browser pointed straight
-at `hi-agent.xyz/ana`, which is the owner visiting their own agent.
+**An app narrows this but no longer removes it, and that is a cost of dropping the proxy.**
+The app holds the long-lived credential and the page never sees it, so what is exposed is a
+session — short-lived, scoped to one core, revocable at the core that issued it. But it *is*
+in the page now, where the proxy design kept it out entirely. Two relayed cores reached from
+one app therefore share a jar exactly as two browser tabs would.
+
+Stated as a cost rather than a caveat because it is one. It is accepted for two reasons:
+the exposure was already live in both mobile clients, which never implemented the proxy, so
+the proxy was buying this only on the desktop and only by keeping the desktop on a design
+neither phone shared; and the mitigation is cheap and belongs to the app either way — **clear
+the webview's cookie store on detach**, so a jar never holds two cores' sessions at once.
+The remaining window is one core's own agent-generated views against that core's own
+session, which is the same trust boundary a browser pointed straight at `hi-agent.xyz/ana`
+already sits inside.
 
 Two smaller consequences: `__Host-` cookies require `Path=/` and are therefore incompatible
 with per-core path scoping (take the scoping), and a LAN address like

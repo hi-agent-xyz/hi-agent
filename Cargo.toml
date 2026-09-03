@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hi-app", "crates/hi-wire"]
+members = ["crates/hi-wire"]
 
 [package]
 name = "hi-agent"
@@ -18,7 +18,6 @@ path = "src/main.rs"
 
 [dependencies]
 # The app half, in its own crate because a phone links it and cannot link a core.
-hi-app = { path = "crates/hi-app" }
 # The names the two halves have to agree on.
 hi-wire = { path = "crates/hi-wire" }
 

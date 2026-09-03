@@ -54,8 +54,10 @@ is a new client of an existing socket, not new protocol.
 
 ## Not part of this app
 
-- `crates/hi-app` is the cross-platform **app role** (roster + loopback proxy) that
-  the core binary mounts on a second port. It is Rust, it is not macOS, and it does
-  not move here. The shared name is unfortunate; see `docs/arch/topology.md`.
+- The roster and the credential exchange, when the desktop grows them. Deleting
+  `crates/hi-app` took the desktop's second port and its roster with it, so today
+  the face loads `http://127.0.0.1:<port>/` and there is one core. Attaching to a
+  remote core comes back as Swift, alongside the iOS one — `CoreClient.swift` is
+  the shape to copy.
 - `src/foundation/machine_id.rs`'s macOS arm reads `ioreg` over the CLI — no
   framework, no TCC — and is deliberately engine-side.

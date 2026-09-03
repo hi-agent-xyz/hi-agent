@@ -11,7 +11,7 @@ This target owns the iOS shell and client state:
 - the authenticated `WKWebView` that renders the core face.
 
 The client talks directly to a core over its HTTP API. It does not link the
-Rust core, `hi-app`, `hi-wire`, or an FFI layer.
+Rust core, `hi-wire`, or an FFI layer.
 
 ## Open
 

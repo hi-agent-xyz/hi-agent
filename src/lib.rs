@@ -31,11 +31,6 @@ pub struct Config {
     /// one socket cannot tell loopback from the world, and that distinction is
     /// the whole of the trust model (`docs/arch/topology.md`, invariant 6).
     pub off_box: Option<std::net::SocketAddr>,
-    /// Where the **app** listens, if this install is one. The face talks only
-    /// here; the app forwards to whichever core its roster is attached to and
-    /// adds the credential on the way out. Unset on a headless core (Docker),
-    /// which is a core and nothing else. See [`app`].
-    pub app_port: Option<u16>,
     pub data_dir: PathBuf,
     pub agent: foundation::config::AgentConfig,
     pub auth: foundation::auth::AuthConfig,
@@ -482,35 +477,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         }
     }
 
-    // The app, when this install is one: a loopback proxy in front of a roster.
-    // Started after the core's listeners so its first entry — the core on this
-    // machine — is reachable the moment it is written.
-    let app_server = match config.app_port {
-        Some(app_port) => {
-            hi_app::roster::ensure_local(&config.data_dir, config.port)
-                .context("seeding the roster with the core on this machine")?;
-            let app = Arc::new(hi_app::App::new(config.data_dir.clone())?);
-            let listener = TcpListener::bind(("127.0.0.1", app_port))
-                .await
-                .with_context(|| format!("binding the app on 127.0.0.1:{app_port}"))?;
-            tracing::info!(
-                "the app is at http://127.0.0.1:{app_port} — open this, not the core; \
-                 its roster is at http://127.0.0.1:{app_port}/app"
-            );
-            let router = hi_app::proxy::router(app);
-            let shutdown = shutdown.clone();
-            Some(tokio::spawn(async move {
-                let r = axum::serve(listener, router)
-                    .with_graceful_shutdown(shutdown_requested(shutdown))
-                    .await;
-                if let Err(e) = r {
-                    tracing::error!(error = %e, "the app's proxy stopped");
-                }
-            }))
-        }
-        None => None,
-    };
-
     // Hold a tunnel open if this core has a name, so it is reachable by that name
     // from anywhere. Off the boot path: it dials the community, and a community
     // that is slow or down must not delay a core that works locally.
@@ -617,12 +583,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             task.abort();
         }
     }
-    if let Some(mut task) = app_server {
-        if tokio::time::timeout(SHUTDOWN_GRACE, &mut task).await.is_err() {
-            tracing::warn!("the app's drain grace elapsed; aborting its connections");
-            task.abort();
-        }
-    }
 
     // Reap every codex subprocess (one per live session) so none
     // are orphaned. Bounded so a stuck child can't hang exit.
@@ -679,14 +639,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
 #[cfg(target_os = "macos")]
 pub fn run_with_tray(
     port: u16,
-    app_port: Option<u16>,
     data_dir: PathBuf,
     build_config: impl FnOnce() -> anyhow::Result<Config> + Send + 'static,
 ) -> anyhow::Result<()> {
-    // "Open" opens the **app**, which is the thing with a face; the core's own
-    // port is an internal address the app forwards to. They are the same process
-    // today and will not always be.
-    let url = format!("http://127.0.0.1:{}/", app_port.unwrap_or(port));
+    // "Open" loads the core's own address. Loopback is ungated
+    // (`foundation::surfaces`), so the face needs nothing attached to reach it — and
+    // `http://127.0.0.1` is a potentially-trustworthy origin, which is what keeps
+    // `getUserMedia` available to the page.
+    let url = format!("http://127.0.0.1:{port}/");
     let shutdown = Arc::new(Notify::new());
 
     // The tray's Account submenu reads/writes the credential store, so it needs the

@@ -11,7 +11,7 @@ This target owns the Android shell and client state:
 - the authenticated `WebView` that renders the core face.
 
 The client talks directly to a core over its HTTP API. It does not link the Rust
-core, `hi-app`, `hi-wire`, or an FFI layer, and shares no code with the Apple
+core, `hi-wire`, or an FFI layer, and shares no code with the Apple
 client.
 
 See [`docs/platforms/android.md`](../../docs/platforms/android.md) for the
