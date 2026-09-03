@@ -296,6 +296,41 @@ body {
   isolation: isolate;
 }
 
+/* --- An app surface, not a document: the touch half ----------------------
+   `lib/nativeFeel.ts` cancels the two *pointer* affordances that read as wrong
+   in a window with no address bar — double-click word-select and the right-click
+   page menu. What follows is the finger's side of the same argument, and it is
+   CSS rather than JavaScript because each of these is a browser gesture a page
+   can only decline by declaring so in advance; there is no event to cancel.
+
+   Set unconditionally rather than under `[data-shape="phone"]`. They cost a
+   pointer host nothing — it has no tap, no pull-to-refresh and no rotation to
+   inflate type on — and the app's phone test is narrow AND coarse
+   (`lib/shape.ts`), so gating on it would hand the browser's behaviour back to
+   the same iPhone the moment it was turned sideways. */
+html {
+  /* No grey flash under a finger. The face draws its own press states, and
+     WebKit's default paints a second one over them — a beat late, in a colour
+     from no theme here. Inherited, so once at the root covers every control. */
+  -webkit-tap-highlight-color: transparent;
+  /* No text inflation on rotation. iOS enlarges type in a column it judges too
+     narrow to read, which on a face laid out in `dvh` and safe-area insets shows
+     up as the whole conversation changing size when the phone is turned. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* No pull-to-refresh and no rubber-band past the ends. A page here is not a
+   document you can drag out of the way to reload — and reloading is exactly what
+   the face must not do on a stray downward flick, since the scrollback is the
+   surface a thumb is most likely to fling. Both elements, because they carry
+   their overscroll separately and a chain that stops at `body` still leaves the
+   viewport free to bounce. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 ::selection {
   background: var(--selection);
   color: var(--fg);
@@ -318,6 +353,19 @@ button:where(:not([data-slot])) {
   cursor: pointer;
 }
 
+/* A control's label is not text you read — it is part of the control. Left
+   selectable, a press held a moment too long on a phone puts a blue highlight and
+   two grab handles on the word inside a button, which is the browser announcing
+   that this is a document. Every control, including shadcn's (hence no `:where`
+   escape hatch here): the reset above exempts them because they bring their own
+   *dressing*, and this is not dressing. Only the controls — the conversation
+   stays selectable, because copying what was said is the point of having it. */
+button,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* --- Root shell ------------------------------------------------------- */
 .hi-root {
   position: relative;
@@ -327,6 +375,16 @@ button:where(:not([data-slot])) {
   /* The one stacking context everything else lives inside, so nothing outside
      can interleave with the three planes below. */
   isolation: isolate;
+
+  /* No double-tap-to-zoom, and with it no 300ms wait before a tap counts as one —
+     the delay is the browser holding every press open to see whether a second one
+     is coming, so removing the gesture removes the wait. `manipulation` declines
+     that gesture and nothing else: panning and pinch both stay, so every scroller
+     in the face still scrolls and the page can still be zoomed deliberately.
+     Declared once here rather than per control, because the browser resolves
+     touch-action by walking up from the touched node — and a descendant needing
+     more still overrides it (`.hi-page-edge` takes `none` for its drag). */
+  touch-action: manipulation;
 
   /* The three planes, and the only global z-indexes in the application. They are
      0, 1, 2 with no gaps on purpose: there is no room between two planes, so a
@@ -677,6 +735,23 @@ button:where(:not([data-slot])) {
   font-size: 14px;
   letter-spacing: 0.01em;
   color: var(--fg);
+}
+
+/* **16px, because that is the number iOS zooms below.** Focusing a field whose
+   text is smaller than 16px makes mobile WebKit scale the page up to make it
+   readable — and then leaves it there, so tapping the line once enlarges the
+   whole face and the person has to pinch back out of it. Nothing in the viewport
+   meta prevents this: `user-scalable=no` is honoured in a `WKWebView` and ignored
+   in Safari, and neither of them stops the *focus* zoom. The field's own size is
+   the only thing the rule reads. 14px stays right where there is a mouse — no
+   such zoom exists there, and the line should sit quietly at the foot of the
+   panel — so this is the touch host's number, not a new global one.
+
+   Off `data-pointer`, not `data-shape`: the zoom does not care how wide the
+   screen is, and the shape flag is narrow AND coarse (`lib/shape.ts`), so the
+   same iPhone in landscape would fall back to 14px and start zooming again. */
+:root[data-pointer="coarse"] .hi-composer textarea {
+  font-size: 16px;
 }
 
 /* The focus state the app has always drawn on its text line. It is set here

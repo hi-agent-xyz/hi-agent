@@ -26,31 +26,49 @@ import { useSyncExternalStore } from "react";
 // stylesheet is still drawing as a popover.
 export const PHONE = "(max-width: 640px) and (pointer: coarse)";
 
-/** The live match, or `false` where there is no `matchMedia` (the render worker,
- * tests). Kept as one object so both the flag on `<html>` and the hook below read
- * the same list. */
-function query(): MediaQueryList | null {
-  return typeof window === "undefined" || !window.matchMedia ? null : window.matchMedia(PHONE);
+// The other half on its own. Some of what a finger changes is not about the
+// arrangement at all and so does not follow the shape: the browser's own touch
+// gestures, and the 16px floor under which iOS zooms the page when a text field
+// is focused (`.hi-composer textarea` in `ui/global.css`). Those are facts about
+// the input method, and they hold at any width — **the same iPhone turned
+// sideways is 852px and is no longer `phone`, and it still zooms.** Hanging them
+// off the shape flag would have handed the browser's behaviour back on rotation.
+//
+// Published as `<html data-pointer="coarse|fine">` for the same reason the shape
+// is: one place asks the question, everywhere else reads the answer.
+export const COARSE = "(pointer: coarse)";
+
+/** A live match, or `null` where there is no `matchMedia` (the render worker,
+ * tests). Kept as objects so the flags on `<html>` and the hook below read the
+ * same lists. */
+function query(list: string): MediaQueryList | null {
+  return typeof window === "undefined" || !window.matchMedia ? null : window.matchMedia(list);
 }
 
-const phoneQuery = query();
+const phoneQuery = query(PHONE);
+const coarseQuery = query(COARSE);
 
 /**
- * Hoist the shape onto `<html>`, and keep it there. Called once from `main.tsx`
- * before the first render, alongside the other host facts.
+ * Hoist the shape — and the pointer — onto `<html>`, and keep them there. Called
+ * once from `main.tsx` before the first render, alongside the other host facts.
  *
- * It re-reads on change rather than only at boot, because every input to the
+ * They re-read on change rather than only at boot, because every input to the
  * answer moves under a running page: a phone rotates into landscape (still
  * coarse, now 852px wide, so the room is a room again), an iPad splits its screen
- * down to a 507px column, a desktop window is dragged narrow. The flag would
- * otherwise be a fact about how the app happened to open.
+ * down to a 507px column, a desktop window is dragged narrow, a 2-in-1 laptop has
+ * its keyboard folded back. The flags would otherwise be facts about how the app
+ * happened to open.
  */
 export function installShape(): void {
-  if (!phoneQuery) return;
-  const write = () =>
-    document.documentElement.setAttribute("data-shape", phoneQuery.matches ? "phone" : "wide");
-  write();
-  phoneQuery.addEventListener("change", write);
+  write(phoneQuery, "data-shape", "phone", "wide");
+  write(coarseQuery, "data-pointer", "coarse", "fine");
+}
+
+function write(list: MediaQueryList | null, attr: string, on: string, off: string): void {
+  if (!list) return;
+  const set = () => document.documentElement.setAttribute(attr, list.matches ? on : off);
+  set();
+  list.addEventListener("change", set);
 }
 
 function subscribe(onChange: () => void): () => void {

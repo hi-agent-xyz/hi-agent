@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PHONE } from "./shape";
+import { COARSE, PHONE } from "./shape";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
 const CSS = readFileSync(join(SRC, "ui/global.css"), "utf8");
@@ -30,5 +30,29 @@ describe("the phone shape", () => {
   // own media block on a 390px phone.
   it("holds the popover's shrink off the phone", () => {
     expect(CSS).toContain(':root:not([data-shape="phone"]) .hi-channel {');
+  });
+});
+
+describe("the pointer", () => {
+  // The half of the question that is not about width at all. Rules that follow
+  // the *input method* — the browser's touch gestures, the 16px floor under which
+  // iOS zooms a focused field — hold on a phone turned sideways, where the shape
+  // flag has already gone back to `wide`.
+  it("asks about the pointer alone, never the width", () => {
+    expect(COARSE).toContain("pointer: coarse");
+    expect(COARSE).not.toContain("width");
+  });
+
+  // Same rule as the shape flag: the stylesheet reads the answer, it does not
+  // re-ask the question. Two copies of one media query is two answers waiting to
+  // disagree.
+  it("is the stylesheet's only way to ask", () => {
+    expect(CSS).toContain('[data-pointer="coarse"]');
+    expect(CSS).not.toContain("pointer: coarse");
+  });
+
+  // The line the whole flag was added for: below 16px, tapping it zooms the face.
+  it("puts the text line at the iOS zoom floor", () => {
+    expect(CSS).toContain(':root[data-pointer="coarse"] .hi-composer textarea {');
   });
 });
