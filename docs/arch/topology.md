@@ -23,6 +23,7 @@ person**, never many people behind one surface, and never one person split acros
 | Three roles, not two | The client and the agent are separate processes with an API between them. Collapse them and "reach a core that runs elsewhere" cannot be said at all |
 | The core is headless and location-independent | It already compiles to exactly this shape on Linux/Docker. Making location a parameter costs one field; assuming locality costs a rewrite |
 | An app renders a core; it never *is* one | Identity lives in one place. An app that could be a person would need memory, a handle, and a life |
+| **A platform with no webview cannot run an app** | The face is a web app everywhere on purpose, and an agent-generated view is a compiled ESM module mounted into that page. A platform that cannot render a page can only be given a second face — hand-written, permanently drifting, and still unable to run a view. tvOS is the case that forced this |
 | **An address is a base URL** | `http://localhost:12358` and `https://hi-agent.xyz/ana` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
 | **The core checks auth; the community never does** | In two of the three shapes the community is not in the path at all. Auth at the community would not replace core-side auth, only add to it — two mechanisms to keep in agreement |
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
@@ -123,6 +124,24 @@ in the OS keychain, never a plist or `localStorage`.
 **Host and client are capabilities of an app instance, never properties of a platform.** An
 app asks "can I host a core here?" and a mobile app answers no. When that answer changes,
 nothing structural does.
+
+**The one platform fact that does bind is the webview, and no page at all is where an app
+stops being possible. tvOS is that case, and an Apple TV client was declined on 2026-09-03
+rather than deferred.** tvOS ships no WebKit: there is no `WKWebView`, no browser and no
+HTML rendering on Apple TV at any deployment target, so this is not a version to wait for.
+The wire itself would carry one — an app presents the bearer header and needs no cookie at
+all ([Auth](#auth)), `GET /api/out/text` is the whole conversation, and a client holding
+`GET /api/out/audio` is counted as a speaker by
+[`Attachments::speaker_attached`](../../src/body/attachments.rs), which a television in a
+living room genuinely is. What defeats it is what would sit on top: **a second face,
+written by hand, drifting behind the web one for as long as both exist** — and one that
+still could not run an agent-generated view, because a view is a compiled ESM module
+mounted into a page. The nearest thing available is a photograph: `view_shots.rs` already
+renders every show through headless Chromium at 480px for the band's tiles, so a
+television could show a picture of what the agent put up and never the thing itself. Voice
+in the room and the last few things said are real, and they are not worth a face that
+permanently disagrees with the real one. A television is reachable without a client
+anyway, by mirroring the phone onto it — untried, and needing no code either way.
 
 ## Community
 
