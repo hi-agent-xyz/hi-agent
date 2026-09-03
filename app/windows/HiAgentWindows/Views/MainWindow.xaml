@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="HiAgent.Windows.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls">
+
+    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+        <!--
+            The face. One WebView2 for the whole window: the core serves the UI,
+            and an agent-generated view is a compiled ESM module mounted into
+            that page, so there is nothing here for native chrome to add.
+        -->
+        <controls:WebView2 x:Name="Face" Visibility="Collapsed" />
+
+        <!--
+            What is shown instead of the face, and only ever instead of it:
+            starting up, waiting, or a sentence about what went wrong. It is not
+            an overlay on a live face — a half-loaded agent behind a spinner
+            reads as a hung one.
+        -->
+        <Grid x:Name="Stage" Padding="48">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16" MaxWidth="420">
+                <ProgressRing x:Name="Spinner" IsActive="True" Width="32" Height="32" />
+                <TextBlock x:Name="StageTitle"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"
+                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                           Text="Starting the agent…" />
+                <TextBlock x:Name="StageDetail"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Opacity="0.7"
+                           Visibility="Collapsed" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                    <Button x:Name="RetryButton" Content="Try again" Click="OnRetry" Visibility="Collapsed" />
+                    <Button x:Name="AddCoreButton" Content="Add a core…" Click="OnAddCore" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

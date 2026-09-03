@@ -6,13 +6,14 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
                    src/appearance/web/package.json src/appearance/web/package-lock.json \
                    app/apple/macos/Info.plist \
                    app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj \
-                   app/android/app/build.gradle.kts
+                   app/android/app/build.gradle.kts \
+                   app/windows/HiAgentWindows/HiAgentWindows.csproj
 
 # Keep the former `VERSION=x.y.z` spelling working for callers while matching
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe installer bump-version version
+.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe win-app installer bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -87,6 +88,17 @@ exe: check-version ## cross-compile a Windows .exe build check (see WIN_TARGET; 
 	PATH="$(WIN_LLVM_BIN):$$PATH" RUSTFLAGS="-Lnative=$(WIN_SHIM)" XWIN_ACCEPT_LICENSE=1 \
 		cargo xwin build --release --target $(WIN_TARGET)
 	@echo "built target/$(WIN_TARGET)/release/hi-agent.exe"
+
+# The Windows shell — the app, as opposed to `exe`, which is the engine. Unlike
+# every other target here this one needs a real Windows host: WinUI 3 links the
+# Windows App SDK and its XAML compiler runs nowhere else. There is no cross
+# build to fall back on, which is why the shell is the one part of this repo
+# with no build check on the machines it is written from.
+WIN_SHELL_PROJECT := app/windows/HiAgentWindows/HiAgentWindows.csproj
+WIN_SHELL_RID     := win-x64
+
+win-app: check-version ## publish the Windows shell (requires Windows + .NET SDK 8)
+	dotnet publish $(WIN_SHELL_PROJECT) -c Release -r $(WIN_SHELL_RID)
 
 installer: check-version ## build hi-agent-<version>-windows-x64.exe
 	./scripts/make-installer.sh

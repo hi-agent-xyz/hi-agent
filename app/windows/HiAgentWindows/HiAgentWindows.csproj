@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Windows shell. A standalone .NET/WinUI 3 build that speaks the core's
+    documented HTTP API and links no Rust — the same independence
+    `app/android` and `app/apple/ios` have from each other.
+
+    Unpackaged (`WindowsPackageType=None`) on purpose: the app is delivered by
+    the per-user NSIS installer `scripts/make-installer.sh` already builds, not
+    by MSIX from the Store. Self-contained twice over — the .NET runtime
+    (`SelfContained`) and the Windows App SDK (`WindowsAppSDKSelfContained`) —
+    so the installer stays a single download with no prerequisite chain. The
+    one runtime dependency left is the WebView2 Evergreen runtime, which ships
+    with Windows 11 and arrived on Windows 10 with Edge; `CoreWebView` says what
+    happens when it is missing.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>HiAgent.Windows</RootNamespace>
+    <!-- Stamped by `make bump-version`; VERSION is the source of truth. -->
+    <Version>0.1.0</Version>
+    <!-- The shell, beside the engine's `hi-agent.exe` in the same directory. -->
+    <AssemblyName>HiAgent</AssemblyName>
+    <Platforms>x64;arm64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>Assets\HiAgent.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The face is the UI. A console window behind it would be a second one. -->
+    <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Version wildcards rather than pins. Nothing here has ever been restored:
+      there is no Windows host and no .NET SDK on any machine this repo is
+      developed on, so an exact version would be a guess that reads like a
+      decision. Pin all three the first time a Windows box restores them.
+    -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
+    <!--
+      The tray. Hand-rolling `Shell_NotifyIcon` means a message-only window, a
+      subclassed WndProc and icon lifetime across explorer restarts — all of it
+      the kind of code that looks right and is not, which is the wrong thing to
+      write with no way to run it.
+    -->
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\HiAgent.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

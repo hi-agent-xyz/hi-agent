@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="HiAgent.Windows.Views.PairCoreWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="28" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <StackPanel Spacing="14">
+            <TextBlock Style="{ThemeResource SubtitleTextBlockStyle}" Text="Add a core" />
+            <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                       Text="A core's address is a URL — http://localhost:12358 for one on this machine, or https://hi-agent.xyz/name for one you reach from anywhere. The pairing code comes from that core." />
+
+            <TextBox x:Name="AddressBox" Header="Address" PlaceholderText="https://hi-agent.xyz/name" />
+            <TextBox x:Name="CodeBox" Header="Pairing code" />
+            <TextBox x:Name="LabelBox" Header="Call it" PlaceholderText="Home" />
+
+            <TextBlock x:Name="ErrorText"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed"
+                       Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" VerticalAlignment="Center" />
+                <Button Content="Cancel" Click="OnCancel" />
+                <Button x:Name="AddButton" Content="Add" Style="{ThemeResource AccentButtonStyle}" Click="OnAdd" />
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

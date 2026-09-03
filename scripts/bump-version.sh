@@ -59,6 +59,12 @@ edit app/android/app/build.gradle.kts '
     sub(/"[^"]*"/, "\"" new "\"") }
   { print }'
 
+# Windows shell — the single <Version> element in the csproj.
+edit app/windows/HiAgentWindows/HiAgentWindows.csproj '
+  !done && /<Version>/ {
+    sub(/<Version>[^<]*<\/Version>/, "<Version>" new "</Version>"); done=1 }
+  { print }'
+
 # web/package.json — the only `"version": "…"` is the package version.
 edit src/appearance/web/package.json '
   !done && /"version":/ { sub(/"version": *"[^"]*"/, "\"version\": \"" new "\""); done=1 }
@@ -74,6 +80,7 @@ echo "bumped version to $NEW in:"
 echo "  VERSION, Cargo.toml, Cargo.lock, app/apple/macos/Info.plist,"
 echo "  src/appearance/web/package.json, src/appearance/web/package-lock.json,"
 echo "  app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj,"
-echo "  app/android/app/build.gradle.kts"
+echo "  app/android/app/build.gradle.kts,"
+echo "  app/windows/HiAgentWindows/HiAgentWindows.csproj"
 ./scripts/check-version.sh
 echo "review with: git diff"

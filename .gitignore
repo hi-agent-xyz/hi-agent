@@ -11,3 +11,6 @@ app/android/.gradle/
 app/android/build/
 app/android/app/build/
 app/android/local.properties
+app/windows/**/bin/
+app/windows/**/obj/
+app/windows/.vs/

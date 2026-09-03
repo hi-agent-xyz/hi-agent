@@ -34,6 +34,9 @@ check "iOS marketing version" \
 check "Android version name" \
   "$(awk -F'"' '/^val hiAgentVersion = / { print $2; exit }' \
     app/android/app/build.gradle.kts)"
+check "Windows shell version" \
+  "$(awk -F'[<>]' '/<Version>/ { print $3; exit }' \
+    app/windows/HiAgentWindows/HiAgentWindows.csproj)"
 check "web package version" \
   "$(awk -F'"' '/"version":/ { print $4; exit }' src/appearance/web/package.json)"
 check "web lock package version" \

@@ -7,11 +7,19 @@
 ; (Node + codex + esbuild + ffmpeg + models) is NOT bundled here -- the binary
 ; auto-provisions it into the OS cache on first launch (the "it runs" tier).
 ;
+; The shell (app/windows, WinUI 3) is carried only when SHELLDIR is defined,
+; because it can only be built on a Windows host and this installer is built on
+; the Mac mini. Without it the installer still produces a working install: the
+; shortcuts point at hi-agent.exe and the person gets a headless core they open
+; in a browser. With it they point at HiAgent.exe and the engine becomes the
+; shell's child. One installer, two payload tiers, no second script.
+;
 ; Driven entirely by /D defines from scripts/make-installer.sh:
 ;   VERSION   display version, e.g. 0.1.0       (default below)
 ;   VERSION4  four-part numeric, e.g. 0.1.0.0   (for VIProductVersion)
 ;   SRCEXE    path to the built hi-agent.exe
 ;   ICON      path to HiAgent.ico
+;   SHELLDIR  optional: `dotnet publish` output of the WinUI shell
 ;   OUTFILE   output Setup.exe path
 
 Unicode true
@@ -39,6 +47,22 @@ SetCompressor /SOLID lzma
 !define APPNAME    "Hi Agent"
 !define PUBLISHER  "Human Interface"
 !define EXENAME    "hi-agent.exe"
+!define SHELLEXE   "HiAgent.exe"
+
+; What the shortcuts start. The shell when there is one; the engine alone
+; otherwise, which is a core with no face on this machine but still a core.
+!ifdef SHELLDIR
+  !define LAUNCHER "${SHELLEXE}"
+!else
+  !define LAUNCHER "${EXENAME}"
+!endif
+
+; Program files go in a subdirectory of the chosen install location, never
+; directly in it. The uninstaller can then remove that subdirectory whole --
+; the shell publishes hundreds of files and listing them here would rot -- and
+; a person who picked an existing folder on the directory page does not have it
+; deleted out from under them.
+!define APPDIR "$INSTDIR\app"
 ; Add/Remove-Programs key (per-user). Stable id, not the display name.
 !define ARP_KEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\hi-agent"
 
@@ -72,14 +96,22 @@ VIAddVersionKey "LegalCopyright"  "(C) ${PUBLISHER}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
-  SetOutPath "$INSTDIR"
+  SetOutPath "${APPDIR}"
   File "/oname=${EXENAME}" "${SRCEXE}"
   File "/oname=HiAgent.ico" "${ICON}"
 
-  ; Shortcuts (icon from the .ico, since the exe carries none yet).
-  CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\HiAgent.ico"
-  CreateShortcut "$DESKTOP\${APPNAME}.lnk"    "$INSTDIR\${EXENAME}" "" "$INSTDIR\HiAgent.ico"
+  ; The shell, beside the engine rather than under it: the shell resolves
+  ; hi-agent.exe from its own directory (AppPaths.EngineExe), which is what
+  ; makes the pair need no configuration to find each other.
+!ifdef SHELLDIR
+  File /r "${SHELLDIR}/"
+!endif
 
+  ; Shortcuts (icon from the .ico, since neither exe carries one yet).
+  CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "${APPDIR}\${LAUNCHER}" "" "${APPDIR}\HiAgent.ico"
+  CreateShortcut "$DESKTOP\${APPNAME}.lnk"    "${APPDIR}\${LAUNCHER}" "" "${APPDIR}\HiAgent.ico"
+
+  SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "Software\hi-agent" "InstallDir" "$INSTDIR"
 
@@ -87,7 +119,7 @@ Section "Install"
   WriteRegStr   HKCU "${ARP_KEY}" "DisplayName"     "${APPNAME}"
   WriteRegStr   HKCU "${ARP_KEY}" "DisplayVersion"  "${VERSION}"
   WriteRegStr   HKCU "${ARP_KEY}" "Publisher"       "${PUBLISHER}"
-  WriteRegStr   HKCU "${ARP_KEY}" "DisplayIcon"     "$INSTDIR\HiAgent.ico"
+  WriteRegStr   HKCU "${ARP_KEY}" "DisplayIcon"     "${APPDIR}\HiAgent.ico"
   WriteRegStr   HKCU "${ARP_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr   HKCU "${ARP_KEY}" "UninstallString"      '"$INSTDIR\uninstall.exe"'
   WriteRegStr   HKCU "${ARP_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
@@ -106,8 +138,8 @@ Section "Uninstall"
   ; left untouched -- uninstalling the app must not delete the user's life DB.
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
-  Delete "$INSTDIR\${EXENAME}"
-  Delete "$INSTDIR\HiAgent.ico"
+  ; Only the subdirectory this installer created, never $INSTDIR itself.
+  RMDir /r "${APPDIR}"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "${ARP_KEY}"

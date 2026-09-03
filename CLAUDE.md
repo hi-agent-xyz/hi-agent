@@ -58,6 +58,7 @@ The working tree may hold the user's in-progress work that is unrelated to your 
 | `make docker` | build the docker image |
 | `make dmg` / `make app` | macOS `.dmg` / local ad-hoc-signed `.app` |
 | `make exe` / `make installer` | Windows cross-compile build check / installer |
+| `make win-app` | publish the WinUI shell — **needs a real Windows host** |
 | `make bump-version V=x.y.z` / `make version` | version stamps / cut a release |
 | `make help` | the authoritative list — read it instead of guessing |
 
@@ -86,7 +87,9 @@ A **core** installs in two shapes:
 
 **Surfaces are a separate axis from install shapes.** `app/apple/ios` and `app/android` are native phone/tablet clients — API clients holding no engine state; they attach to a core, they are not one. They share no code and are not meant to: they speak the wire in [docs/api/client.md](docs/api/client.md) and are otherwise unrelated builds. Each does the same thing with a credential: hold it in the OS keychain, exchange it once at `POST <core>/api/session`, put the returned cookie in its webview, and load the core's address directly. There is no local proxy — `crates/hi-app` was one and is deleted; see the App section of [docs/arch/topology.md](docs/arch/topology.md) for why it lost.
 
-`app/apple/macos` is the same slot for the desktop, and it is **the only one that is not a standalone build**: it holds the `.app` bundle definition and the SwiftUI Settings window, while every macOS capability that needs the OS session is still Rust inside the core binary. It fills up as Phase 2 proceeds — see [docs/platforms/apple-macos.md](docs/platforms/apple-macos.md) for what is there and what still is not.
+`app/windows` is the desktop's other client, and the **first one written in the target shape**: a standalone .NET/WinUI 3 build that owns the process and runs `hi-agent.exe` as its supervised child. That costs nothing extra because Windows never had a shell to migrate — every macOS-native crate is `cfg`-gated and `main.rs` already routes a non-macOS start to the plain server path. It has **never been compiled**: there is no Windows machine and no .NET SDK on any host this repo is developed from. See [docs/platforms/windows.md](docs/platforms/windows.md).
+
+`app/apple/macos` is the same slot for the Mac, and it is **the only one that is not a standalone build**: it holds the `.app` bundle definition and the SwiftUI Settings window, while every macOS capability that needs the OS session is still Rust inside the core binary. It fills up as Phase 2 proceeds — see [docs/platforms/apple-macos.md](docs/platforms/apple-macos.md) for what is there and what still is not.
 
 The managed runtime (codex + esbuild) auto-installs into the OS cache on first run, so a bundled app needs no separate runtime install. Both are native binaries that merely ship through the npm registry, so provisioning is an HTTPS GET of each platform tarball plus `tar -x` — **there is no Node and no npm** in this path. On a dev box with a pin-matching `codex` on PATH, the **system runtime** is used instead (esbuild is then provisioned separately — see [runtime::ensure_view_esbuild](src/runtime/mod.rs)). The agent is `codex app-server`, a native binary hi-agent talks JSON-RPC to over stdio.
 
@@ -147,7 +150,9 @@ This paragraph previously called it a bidirectional *streaming* protocol — "fr
 
 **Status: Phase 1 is built — do not rebuild it.** [vendors/macos_swift_settings.rs](src/foundation/vendors/macos_swift_settings.rs) bridges a SwiftUI Settings window ([app/apple/macos/HiSettings.swift](app/apple/macos/HiSettings.swift)) that reads and writes settings **over the loopback config API**, not via FFI into engine state; the only FFI is the single `hi_settings_open` entry point, which `build.rs` compiles and links on macOS. The objc2 window it replaced — and the BYOK `NSAlert` that window opened, whose only caller it was — are deleted; the one survivor is `apply_app_theme`, now in [vendors/macos_window.rs](src/foundation/vendors/macos_window.rs) beside the window-level theme read it must stay in step with. The native iOS client proves the same boundary from the other side.
 
-**Phase 2 — flipping process ownership to Swift — is not started.** The seam it needs is now designed ([docs/arch/mechanisms.md](docs/arch/mechanisms.md)) and nothing implements it; that doc's § *Open* carries the questions deliberately left unresolved. **Latency is not among them** — a loopback round trip measured 0.012 ms for a call and 0.29 ms for a 2 MB screen grab on an M4, three to four orders of magnitude under the mechanisms themselves, so the process boundary is never the thing to optimize on this seam. Keep `TCP_NODELAY` on; it is the one detail that turns those microseconds into tens of milliseconds.
+**On Windows the shell already owns the process**, because there was nothing to flip: `app/windows` starts `hi-agent.exe` as a child, passes it `--port` and `--data-dir`, and holds it in a job object so it cannot outlive the shell. It has no capability mechanisms — those wait on the same seam macOS does — so what it demonstrates is the ownership arrangement, not the mechanism calls. It is also unbuilt in the strongest sense: never compiled, no Windows host exists.
+
+**Phase 2 on macOS — flipping process ownership to Swift — is not started.** The seam it needs is now designed ([docs/arch/mechanisms.md](docs/arch/mechanisms.md)) and nothing implements it; that doc's § *Open* carries the questions deliberately left unresolved. **Latency is not among them** — a loopback round trip measured 0.012 ms for a call and 0.29 ms for a 2 MB screen grab on an M4, three to four orders of magnitude under the mechanisms themselves, so the process boundary is never the thing to optimize on this seam. Keep `TCP_NODELAY` on; it is the one detail that turns those microseconds into tens of milliseconds.
 
 ## Testing user journeys live (Mac mini)
 
