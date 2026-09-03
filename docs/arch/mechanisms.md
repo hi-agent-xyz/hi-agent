@@ -21,6 +21,7 @@ mechanisms to the app. What has never existed is the call that crosses between t
 | **Audio is the only thing that streams, and it already does** | `WS /api/in/audio/stream` exists and the browser mic uses it today. A shell streaming PCM is that endpoint with a different client, not a new design |
 | **Pixels ride binary frames** | A PNG is bytes. Base64 inside a JSON frame costs a third again and a copy, on the one payload big enough for either to matter |
 | **What an app can do is what it declared when it dialed** | `available()` stops being a compile-time `cfg` and becomes a fact about who is attached — and one that changes while running, when a laptop sleeps |
+| **The hop costs nothing worth designing around** | Measured, below. The mechanism is thousands of times more expensive than the call that asks for it, so the boundary is never the thing to optimize |
 
 ## Why this is smaller than it looked
 
@@ -103,6 +104,46 @@ on goes verbatim into the channel they are actually on. A mechanism the core can
 answered the same way — the agent says it cannot see the screen right now, which is true and
 useful, rather than a capability erroring into a turn.
 
+## The hop is not the cost
+
+The obvious worry about putting a process boundary under a capability is latency, and the
+sharpest version of it is the bottom of the tempo ladder: the reflex rung runs *because* a
+generation is too slow, so anything added to its path is spent from a budget that has a
+person's patience at the end of it.
+
+**Measured on an M4, loopback, warm connection, payload round-tripped:**
+
+| Frame | Median | p99 |
+|---|---|---|
+| 64 B — a call like `input.perform` | 0.012 ms | 0.053 ms |
+| 4 KB — an accessibility tree | 0.013 ms | 0.018 ms |
+| 2 MB — a screen grab | 0.288 ms | 0.580 ms |
+
+A reflex is *recognize the field, click it, type the value* — one `ax.inspect` and a handful
+of `input.perform`s, so roughly a dozen round trips, or **under a fifth of a millisecond of
+transport**. The mechanisms themselves are three to four orders of magnitude more expensive:
+a window capture is tens of milliseconds before anything is sent anywhere. The boundary is
+noise against its own payload.
+
+Two things that measurement does *not* say, because they are the ways it could still go
+wrong in practice:
+
+- **It bounds the transport, not the implementation.** It excludes frame masking, JSON
+  encoding, and the mechanism's own work. Those are all either negligible or already paid
+  today. It is also Python on both ends, so a Rust or Swift peer lands at or below these
+  numbers — the figures are pessimistic, which is the direction to be wrong in.
+- **`TCP_NODELAY` is load-bearing.** These numbers are with Nagle off. Left on, a small
+  frame waiting for an ACK is the classic path from twelve microseconds to forty
+  milliseconds — the one implementation detail on this seam that can turn a non-issue into
+  the exact problem this section rules out.
+
+**And barge-in was never the case at risk.** Stopping when someone starts talking is decided
+at the mouth — [the floor](host.md#the-floor) — from inbound voice activity, and both of its
+ends already cross a socket today: the mic arrives on
+`WS /api/in/audio/stream`, and the voice leaves on `GET /api/out/audio` to whatever is
+playing it — the browser, already, on every desktop. Moving capture into a native shell adds
+no hop that path does not already take.
+
 ## What this does not change
 
 The biometric and ML layer stays in the core and is untouched — `buffalo_l`, `CAM++`,
@@ -126,12 +167,12 @@ resolves; nothing about them needs the app's hands.
    attached. That is a subscription, and modelling it as a fire-and-forget call gives an app
    that reconnects a stale tray until the next change.
 
-3. **Whether the reflex path survives the process boundary.** `host.md` holds that the
-   reflex path never reaches a model because stopping when someone starts talking cannot
-   wait a generation. Today the key tap is in-process. Moving it to the shell puts an IPC
-   hop inside a sub-second budget that already has a person's patience at the end of it.
-   **Measure this before committing to it** — if barge-in misses its budget, the tap is the
-   one mechanism that has to stay wherever the reflex lives.
+3. **Where the attention gesture's discrimination lives.** The key tap is mechanism and the
+   double-tap-versus-hold machine is policy, which puts the two on opposite sides of the
+   wire — and the *hold* is a duration measured between two edges. Timing it in the core
+   means timing it from arrival stamps rather than from the events themselves. Latency is
+   not the problem (it is microseconds, above); a shell that is briefly busy and delivers
+   two edges late but adjacent is, because that reads as a double-tap.
 
 ## See also
 
