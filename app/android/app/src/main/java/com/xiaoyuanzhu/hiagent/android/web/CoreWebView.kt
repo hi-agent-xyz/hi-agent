@@ -129,13 +129,26 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
         navigationFailed = false
 
         val manager = CookieManager.getInstance()
-        // The raw `Set-Cookie` line goes over unmodified rather than being
-        // rebuilt from its parts: the core owns the cookie's attributes — Path,
-        // Max-Age, SameSite — and reconstructing them here would be this app
-        // quietly having an opinion about a policy it does not set.
-        manager.setCookie(nextSession.baseUrl.toString(), nextSession.cookie.setCookieHeader) {
-            manager.flush()
-            webView.post { webView.loadUrl(nextSession.baseUrl.toString()) }
+        // Empty the jar before filling it, so it never holds two cores' sessions at once.
+        // Relayed cores share one origin — `hi-agent.xyz/ana` and `hi-agent.xyz/bob` are
+        // the same site to a cookie store, and `Path=` decides only what is *sent* where,
+        // not what is readable. Leaving the previous core's cookie behind would put it
+        // inside the next core's agent-generated views. Required by the App section of
+        // `docs/arch/topology.md`, which is what lets the session live in the page at all.
+        //
+        // Everything, not just the session cookie: this WebView shows one core and the face
+        // keeps its state server-side, so nothing here is worth carrying across a switch.
+        // `removeAllCookies` is asynchronous, so the new cookie is set from its callback —
+        // setting alongside it would race the removal and could clear what was just put in.
+        manager.removeAllCookies {
+            // The raw `Set-Cookie` line goes over unmodified rather than being
+            // rebuilt from its parts: the core owns the cookie's attributes — Path,
+            // Max-Age, SameSite — and reconstructing them here would be this app
+            // quietly having an opinion about a policy it does not set.
+            manager.setCookie(nextSession.baseUrl.toString(), nextSession.cookie.setCookieHeader) {
+                manager.flush()
+                webView.post { webView.loadUrl(nextSession.baseUrl.toString()) }
+            }
         }
     }
 

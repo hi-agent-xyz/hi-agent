@@ -140,9 +140,34 @@ struct CoreWebView: UIViewRepresentable {
 
             installedCookieValue = nextSession.cookie.value
             renewalRequested = false
-            webView.configuration.websiteDataStore.httpCookieStore.setCookie(nextSession.cookie) {
-                DispatchQueue.main.async {
-                    webView.load(URLRequest(url: nextSession.baseURL))
+
+            // Empty the jar before filling it, so it never holds two cores' sessions at
+            // once. Relayed cores share one origin — `hi-agent.xyz/ana` and
+            // `hi-agent.xyz/bob` are the same site to a cookie store, and `Path=` decides
+            // only what is *sent* where, not what is readable. Leaving the previous core's
+            // cookie behind would put it inside the next core's agent-generated views. See
+            // the App section of `docs/arch/topology.md`, which requires this clear and is
+            // the reason the session may live in the page at all.
+            //
+            // Everything, not just the session cookie: this webview shows one core and the
+            // face keeps its state server-side, so nothing in here is worth carrying across
+            // a switch, and "clear the store" is a rule with no edges to get wrong.
+            let store = webView.configuration.websiteDataStore.httpCookieStore
+            store.getAllCookies { stale in
+                let cleared = DispatchGroup()
+                for cookie in stale {
+                    cleared.enter()
+                    store.delete(cookie) { cleared.leave() }
+                }
+                // Install only once the jar is actually empty — `delete` is asynchronous,
+                // so setting inside the loop could race a pending delete and drop the new
+                // cookie instead of an old one.
+                cleared.notify(queue: .main) {
+                    store.setCookie(nextSession.cookie) {
+                        DispatchQueue.main.async {
+                            webView.load(URLRequest(url: nextSession.baseURL))
+                        }
+                    }
                 }
             }
         }
