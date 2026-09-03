@@ -72,6 +72,27 @@ of the five inbound channels and has no business inventing a sixth.
 PCM on `WS /api/in/audio/stream`, camera on `WS /api/in/vision/stream`, a handed screenshot
 on `POST /api/in/file`.
 
+### "Come and see this" is not a mechanism call
+
+Worth stating outright, because the two are easy to confuse and the confusion invents a
+problem that does not exist.
+
+**Handing the agent your screen is app-initiated.** The person fires it — a Shortcut on the
+phone, the ⌘⌘ gesture on the desktop — and the app that ran the gesture is, by construction,
+the app holding the screen in question. It arrives as a file with a note, on the door that
+already exists, and the core is told rather than asked. Nothing about it needs this
+connection, and it works today.
+
+**`screen.grab` is for the other thing: the agent driving a machine** — the look→act loop
+that captures pixels, decides, and synthesizes a click. That one the core originates,
+because nobody else can.
+
+The distinction settles targeting, which is otherwise the obvious worry when two apps are
+attached. A handed screen names its own device by arriving from it. A core-initiated grab
+names its device as an argument, chosen from the attachments the core already knows — and in
+practice the choice is nearly always made for it, because a phone cannot capture another
+app's window or synthesize input at all and will never declare either mechanism.
+
 ## The connection
 
 One long-lived WebSocket, dialed by the app, held open: `WS /api/mechanisms`. Loopback-gated
@@ -156,11 +177,12 @@ resolves; nothing about them needs the app's hands.
 
 ## Open
 
-1. **Which app has the hands when several are attached.** A desktop and a phone may both
-   declare `screen`, and *"look at my screen"* then names no machine. The conversation's
-   current locus is the obvious tiebreak and `desktop.context()` is evidence for it, but
-   picking wrong means quietly showing the agent the wrong machine — a consequential fork,
-   and unresolved here on purpose.
+1. **What a core-initiated call defaults to when it names no app and two could serve it.**
+   Naming one is a parameter, not a policy — the core knows its attachments. The only real
+   question is the default, and it is small: two desktops attached at once is the case, a
+   phone cannot serve these mechanisms at all, and one desktop leaves nothing to decide.
+   (This entry previously claimed *"look at my screen"* was ambiguous. It is not — see
+   *"Come and see this" is not a mechanism call* above.)
 
 2. **Whether tray state belongs on this connection at all.** `set_listening` and `set_text`
    are push-shaped: the app wants the current value, including the value from before it
