@@ -59,7 +59,7 @@ struct RosterView: View {
                                 Text("Show your screen with a button")
                                     .font(.body)
                                     .foregroundStyle(.primary)
-                                Text("Action Button, Back Tap, or Control Centre")
+                                Text(ShowScreenPlacement.current.summary)
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -107,6 +107,7 @@ struct RosterView: View {
                 .controlSize(.large)
                 .buttonBorderShape(.roundedRectangle(radius: 14))
                 .padding(.horizontal, 16)
+                .hiMeasure()
                 .padding(.top, 10)
                 .padding(.bottom, 8)
                 .background(.bar)

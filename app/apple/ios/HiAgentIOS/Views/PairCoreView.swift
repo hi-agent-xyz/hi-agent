@@ -43,6 +43,7 @@ struct PairCoreView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
+                .hiMeasure()
                 .animation(.smooth(duration: 0.25), value: errorMessage)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -220,6 +221,7 @@ struct PairCoreView: View {
         .disabled(isPairing || !canPair)
         .animation(.easeOut(duration: 0.2), value: canPair)
         .padding(.horizontal, Theme.gutter)
+        .hiMeasure()
         .padding(.top, 10)
         .padding(.bottom, 8)
         .background(.bar)

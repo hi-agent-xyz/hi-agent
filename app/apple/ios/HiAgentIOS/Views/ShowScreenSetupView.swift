@@ -15,6 +15,8 @@ import UIKit
 struct ShowScreenSetupView: View {
     @Environment(\.dismiss) private var dismiss
 
+    private let placement = ShowScreenPlacement.current
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -48,22 +50,16 @@ struct ShowScreenSetupView: View {
                             )
                             Step(
                                 number: 4,
-                                title: "Give it the Action Button",
-                                detail: "Settings → Action Button → Shortcut, then pick it."
+                                title: placement.stepTitle,
+                                detail: placement.stepDetail
                             )
                         }
                     }
 
-                    Text(
-                        """
-                        No Action Button on this iPhone? The same shortcut works from \
-                        Back Tap (Settings → Accessibility → Touch), from a button on \
-                        the Lock Screen, or from Control Centre.
-                        """
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(placement.alternatives)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Text(
                         """
@@ -79,6 +75,7 @@ struct ShowScreenSetupView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
+                .hiMeasure()
             }
             .hiCanvas()
             .navigationTitle("Show your screen")
@@ -105,6 +102,7 @@ struct ShowScreenSetupView: View {
                 .controlSize(.large)
                 .buttonBorderShape(.roundedRectangle(radius: 14))
                 .padding(.horizontal, 16)
+                .hiMeasure()
                 .padding(.top, 10)
                 .padding(.bottom, 8)
                 .background(.bar)

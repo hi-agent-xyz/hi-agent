@@ -24,6 +24,7 @@ struct ShowScreenBanner: View {
             if let state {
                 content(for: state)
                     .padding(.horizontal, 14)
+                    .hiMeasure()
                     .padding(.bottom, 14)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }

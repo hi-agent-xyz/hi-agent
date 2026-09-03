@@ -65,6 +65,76 @@ enum ShowScreen {
     }
 }
 
+/// Which button the gesture can actually live on here.
+///
+/// The setup is four steps in two other apps and none of them can be done for the
+/// person, so the instructions are the whole feature — and the last step differs by
+/// device. **An iPad has no Action Button and no Back Tap.** Told to open
+/// Settings → Action Button, an iPad owner goes looking for a row that is not there
+/// and concludes the app is for something else. Naming a control the device does not
+/// have is worse than naming none.
+///
+/// Decided on `userInterfaceIdiom` rather than on the size class `Theme` uses for
+/// layout, because this is the one question here that really is about the hardware:
+/// an iPad squeezed into a narrow Split View column wants the phone's *layout* and
+/// still has no Action Button.
+enum ShowScreenPlacement {
+    case actionButton
+    case controlCentre
+
+    @MainActor
+    static var current: ShowScreenPlacement {
+        UIDevice.current.userInterfaceIdiom == .pad ? .controlCentre : .actionButton
+    }
+
+    /// The last setup step: having made the shortcut, where to put it.
+    var stepTitle: String {
+        switch self {
+        case .actionButton:
+            return "Give it the Action Button"
+        case .controlCentre:
+            return "Put it within reach"
+        }
+    }
+
+    var stepDetail: String {
+        switch self {
+        case .actionButton:
+            return "Settings → Action Button → Shortcut, then pick it."
+        case .controlCentre:
+            return "In Shortcuts, share it and choose Add to Home Screen."
+        }
+    }
+
+    /// The other ways in, for a device that does not have the one named above.
+    var alternatives: String {
+        switch self {
+        case .actionButton:
+            return """
+            No Action Button on this iPhone? The same shortcut works from Back Tap \
+            (Settings → Accessibility → Touch), from a button on the Lock Screen, or \
+            from Control Centre.
+            """
+        case .controlCentre:
+            return """
+            An iPad has no Action Button and no Back Tap, so the shortcut needs \
+            somewhere to live: the Home Screen, a Shortcuts widget, or — on iPadOS 18 \
+            and later — Control Centre. Siri runs it by name too.
+            """
+        }
+    }
+
+    /// One line naming the same places, for the row that opens the instructions.
+    var summary: String {
+        switch self {
+        case .actionButton:
+            return "Action Button, Back Tap, or Control Centre"
+        case .controlCentre:
+            return "Home Screen, a widget, or Control Centre"
+        }
+    }
+}
+
 /// One screen on its way to a core — kept whole so a send that failed can be tried
 /// again from the banner rather than asking the person to make the gesture twice.
 struct PendingScreen: Equatable {

@@ -47,6 +47,25 @@ enum Theme {
     static let tileRadius: CGFloat = 16
     static let gutter: CGFloat = 24
 
+    /// The widest the shell's own content is allowed to get.
+    ///
+    /// Every native screen here is one column — a mark, a sentence, three fields,
+    /// a button. On a phone the column *is* the screen and the distinction never
+    /// comes up, so the layout was written as "fill the width" and was right. On an
+    /// iPad the same code draws a 1200pt-wide button under a sentence stretched
+    /// across a desk: not a larger version of the phone screen but a worse one,
+    /// because a line that wide is read by moving your head and a control that wide
+    /// has no shape.
+    ///
+    /// So the column keeps its measure and the extra width becomes margin. Sized a
+    /// little over the widest phone rather than to a typographic ideal — the point
+    /// is that it is *the same column*, on a bigger sheet of paper, which is also
+    /// why this is one constant and not a per-screen judgement.
+    ///
+    /// It is deliberately wider than every iPhone, so `hiMeasure()` is a no-op
+    /// there and the phone layout is untouched by anything the iPad needed.
+    static let measure: CGFloat = 460
+
     // MARK: Type
 
     /// Rounded for anything that carries the product's voice — it is the
@@ -159,6 +178,30 @@ extension View {
     /// Full-bleed app canvas. Applied once per native screen.
     func hiCanvas() -> some View {
         background(Theme.canvas, ignoresSafeAreaEdges: .all)
+    }
+
+    /// Hold this content to one column and centre it in whatever room it is given.
+    /// See `Theme.measure`. Applied to the *content* of a native screen — never to
+    /// the canvas under it, which stays full-bleed.
+    func hiMeasure() -> some View {
+        frame(maxWidth: Theme.measure)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+extension EnvironmentValues {
+    /// Whether this is the roomy shape — an iPad, or an iPad-sized slice of one.
+    ///
+    /// Derived from the size class rather than from `UIDevice.userInterfaceIdiom`,
+    /// because the question is always about the room on screen and never about the
+    /// hardware: an iPad in a narrow Split View column is a compact-width screen and
+    /// wants the phone's layout, while the same iPad a second later at full width
+    /// does not. The idiom answers "iPad" to both.
+    ///
+    /// Same distinction the web face draws for itself, and for the same reason —
+    /// `lib/shape.ts` reads a media query live rather than deciding once at boot.
+    var isRoomy: Bool {
+        horizontalSizeClass == .regular
     }
 }
 

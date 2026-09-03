@@ -91,6 +91,7 @@ struct ContentView: View {
 /// First run. One mark, one sentence, one obvious thing to do — and no modal
 /// thrown at the reader before they have looked at the screen.
 private struct WelcomeView: View {
+    @Environment(\.isRoomy) private var isRoomy
     let onScan: () -> Void
     let onManual: () -> Void
 
@@ -115,34 +116,51 @@ private struct WelcomeView: View {
             }
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 10)
+
+            // On a tablet the two buttons come along with the column they belong
+            // to. Pinned to the bottom edge they are right on a phone — that edge
+            // is where the thumb already is — and wrong on an iPad, where it is
+            // just the part of the screen furthest from what it is answering.
+            if isRoomy {
+                actions
+                    .padding(.top, 12)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .hiMeasure()
+        .frame(maxHeight: .infinity)
         .hiCanvas()
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 14) {
-                Button(action: onScan) {
-                    Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .buttonBorderShape(.roundedRectangle(radius: 14))
-
-                Button("Enter details manually", action: onManual)
-                    .font(.subheadline.weight(.medium))
-                    .tint(Theme.ink)
+            if !isRoomy {
+                actions
+                    .padding(.bottom, 20)
             }
-            .padding(.horizontal, Theme.gutter)
-            .padding(.bottom, 20)
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 16)
         }
         .task {
             withAnimation(.smooth(duration: 0.6)) {
                 appeared = true
             }
         }
+    }
+
+    private var actions: some View {
+        VStack(spacing: 14) {
+            Button(action: onScan) {
+                Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .buttonBorderShape(.roundedRectangle(radius: 14))
+
+            Button("Enter details manually", action: onManual)
+                .font(.subheadline.weight(.medium))
+                .tint(Theme.ink)
+        }
+        .padding(.horizontal, Theme.gutter)
+        .hiMeasure()
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 16)
     }
 }
 
@@ -384,7 +402,14 @@ private struct CoreStageView: View {
 /// and is jarring when it leaves, while a capsule reads as something that was
 /// handed to you. Nothing below it moves when it appears — it rides over the
 /// face rather than displacing it, which is what makes the face full-bleed.
+///
+/// On a roomy screen the two capsules are grouped at the leading edge instead of
+/// pushed to opposite corners. Full width is what makes them read as one strip on a
+/// phone; on a 13-inch iPad the same rule puts a core's name and its reload button
+/// a foot apart, where they stop looking like one control and start looking like
+/// two unrelated things that happen to float at the same height.
 private struct StageChrome: View {
+    @Environment(\.isRoomy) private var isRoomy
     let entry: RosterEntry
     let shown: Bool
     let onOpenRoster: () -> Void
@@ -412,7 +437,9 @@ private struct StageChrome: View {
             .background(.regularMaterial, in: Capsule())
             .accessibilityLabel("\(entry.label), \(entry.health.title). Switch core")
 
-            Spacer(minLength: 0)
+            if !isRoomy {
+                Spacer(minLength: 0)
+            }
 
             Button(action: onReload) {
                 Image(systemName: "arrow.clockwise")
@@ -424,6 +451,10 @@ private struct StageChrome: View {
             .buttonStyle(.plain)
             .background(.regularMaterial, in: Circle())
             .accessibilityLabel("Reload the face")
+
+            if isRoomy {
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
@@ -442,6 +473,13 @@ private struct StageChrome: View {
 /// the face keeps clear of by construction (`--hi-safe-top`), so taking touches
 /// here costs the view nothing. It is a drag rather than a tap because a tap at
 /// the top of a scrolling surface already means scroll-to-top on iOS.
+///
+/// The band that takes the drag is held to `Theme.measure` rather than to the
+/// screen: "the face keeps this strip clear" is a claim about the phone-width
+/// layout the face draws, and a tablet-width face has its own content out at the
+/// corners that a full-width recognizer would start intercepting. On every iPhone
+/// the measure is wider than the screen, so this is the same full-width strip it
+/// has always been there.
 private struct ChromeReveal: View {
     let onCall: () -> Void
 
@@ -452,7 +490,11 @@ private struct ChromeReveal: View {
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, 6)
             .frame(height: 44, alignment: .top)
-            .frame(maxWidth: .infinity)
+            // Measured *before* `contentShape`, so the recognizer covers the column
+            // and not the screen. `hiMeasure()` ends with the centring
+            // `maxWidth: .infinity`, which would hand the hit area the whole width
+            // straight back, so the two halves are spelled out here instead.
+            .frame(maxWidth: Theme.measure)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 6)
@@ -462,6 +504,7 @@ private struct ChromeReveal: View {
                         onCall()
                     }
             )
+            .frame(maxWidth: .infinity)
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Show which core this is")
             .accessibilityAction { onCall() }
@@ -555,10 +598,11 @@ struct StatusScreen: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, Theme.gutter)
+            .hiMeasure()
 
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxHeight: .infinity)
         .hiCanvas()
     }
 }

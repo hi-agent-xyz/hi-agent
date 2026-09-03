@@ -16,7 +16,9 @@ Rust core, `hi-wire`, or an FFI layer.
 ## Open
 
 Open `HiAgentIOS.xcodeproj` on a Mac with Xcode. The target supports both iPhone
-and iPad through the same iOS target.
+and iPad through the same iOS target — see
+[docs/platforms/apple-ios.md](../../../docs/platforms/apple-ios.md) for what the
+tablet changes and what it deliberately does not.
 
 Set a development team and bundle identifier in Xcode before installing on a
 device. The default bundle identifier is `com.xiaoyuanzhu.hiagent.ios`.
@@ -78,6 +80,9 @@ The app currently supports:
    origin.
 10. Showing the agent your screen from a button — the phone's half of the desktop's
     ⌘⌘ "come and see this".
+11. Fitting an iPad: one column at `Theme.measure` rather than a stretched phone
+    screen, the stage chrome grouped, and show-your-screen instructions that name
+    buttons the device actually has.
 
 Push notifications, physical-device coverage, and release packaging remain
 separate follow-up work.
