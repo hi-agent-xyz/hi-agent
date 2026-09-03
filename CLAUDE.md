@@ -14,6 +14,8 @@ Bias to action. Make the engineering calls you can make yourself and start build
 
 **Be specific, not literary.** Name the function, the file, and the failing condition — "nothing calls `take_pending(id)`, so messages sit in the inbox forever", not "it needs a drain". Metaphor is fine after the mechanism, never instead of it. And keep "the design says X" clearly separate from "the code currently does X".
 
+**A fix is a change to a general idea, never a rule about the case that failed.** The cheap move after something goes wrong is to write down what should have happened *that time*. That rule fires on one shape, goes stale with it, and adds weight to exactly the documents — `src/identity/*.md` above all — that only work if they can be held whole. So before adding anything, go find out whether the idea is already there. On 2026-09-02, four rules drafted after a botched WeChat delivery turned out to be four narrower restatements of rules `cognition.md` already stated more generally — and that the same session had run straight past. **A rule already written and lost does not need a second copy; it needs to reach the case that beat it.** Re-aim or extend what states it, and fold enumerated instances into the axis they share rather than adding one more. When a rule genuinely is new, the axis is the rule and the incident is the evidence filed under it, never the other way round.
+
 ## What the refactor learned — rules that outlived it
 
 Four disciplines paid for repeatedly, in mechanisms that looked done. Every one of them typechecked.
