@@ -42,6 +42,10 @@ pub struct AgentSession {
     /// which was said to a thread carrying 144 turns of conversation on every boot for as long
     /// as rungs have resumed.
     resumed: bool,
+    /// How full the window was on the last request any turn of this session made — see
+    /// [`WindowFill`]. Lives on the session rather than the run because the moment to act
+    /// on it is *after* a turn, when the [`SessionRun`] that measured it is gone.
+    window: Arc<std::sync::Mutex<Option<WindowFill>>>,
 }
 
 /// Why a turn stopped.
@@ -186,6 +190,36 @@ pub struct PromptResult {
 /// with the turn object — it means "accepted", not "done" — so the terminal event is the
 /// `turn/completed` notification. That is the one structural difference from the ACP
 /// path, where the `session/prompt` response *was* the end of the turn.
+/// How full the model's context window was on the most recent request — the fraction the
+/// next request starts from, not a total spent over time.
+///
+/// **This is the fact a compaction policy runs on, and until now it crossed the wire and
+/// was dropped.** `thread/tokenUsage/updated` carries `last.inputTokens` against
+/// `modelContextWindow` on every request; the message projection keeps only the turn's
+/// cumulative `total.totalTokens`, which answers "what has this cost" and never "how much
+/// room is left". Measured on 2026-09-02: five long-lived sessions sat between 83% and 94%
+/// of a 258400 window all day, which is the state codex answers by compacting whenever it
+/// happens to notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowFill {
+    /// Input tokens on the last request, cached ones included — they occupy the window
+    /// whether or not they were re-read.
+    pub used: u64,
+    /// The window those tokens are measured against, as codex reports it.
+    pub total: u64,
+}
+
+impl WindowFill {
+    /// How full, 0–100. Saturates rather than dividing by zero: a missing window is
+    /// reported as empty, so nothing compacts on a number nobody sent.
+    pub fn percent(&self) -> u8 {
+        if self.total == 0 {
+            return 0;
+        }
+        ((self.used.min(self.total) * 100) / self.total) as u8
+    }
+}
+
 pub struct SessionRun {
     rx_slot: Arc<Mutex<Option<mpsc::UnboundedReceiver<Value>>>>,
     rx: Option<mpsc::UnboundedReceiver<Value>>,
@@ -212,6 +246,38 @@ pub struct SessionRun {
     /// Text chunks observed so far, so `wait()` can return a completed assembly without
     /// forcing the caller to also pull updates.
     text_buf: String,
+    /// Shared with the session, so the fill outlives the turn that measured it — the
+    /// moment a compaction policy can act is *after* a turn, when the run is gone.
+    window: Arc<std::sync::Mutex<Option<WindowFill>>>,
+}
+
+#[cfg(test)]
+mod window_fill_tests {
+    use super::*;
+
+    /// The 2026-09-02 readings, which is what a policy has to be able to tell apart: five
+    /// long-lived sessions between 83% and 94% of a 258400 window, and eleven short ones
+    /// under 36%.
+    #[test]
+    fn a_reading_says_how_full_not_how_much_was_spent() {
+        assert_eq!(WindowFill { used: 243_373, total: 258_400 }.percent(), 94);
+        assert_eq!(WindowFill { used: 47_665, total: 258_400 }.percent(), 18);
+    }
+
+    /// A window codex did not report is not an empty one, but reporting it as full would
+    /// compact every session on a number nobody sent. Empty is the answer that does nothing.
+    #[test]
+    fn a_missing_window_reads_as_empty_rather_than_dividing_by_zero() {
+        assert_eq!(WindowFill { used: 1_000, total: 0 }.percent(), 0);
+    }
+
+    /// Cached input still occupies the window, so `used` can meet or pass the reported
+    /// total; the percentage saturates instead of wrapping past 100.
+    #[test]
+    fn a_reading_at_or_over_the_window_saturates() {
+        assert_eq!(WindowFill { used: 258_400, total: 258_400 }.percent(), 100);
+        assert_eq!(WindowFill { used: 300_000, total: 258_400 }.percent(), 100);
+    }
 }
 
 impl SessionRun {
@@ -270,6 +336,21 @@ impl SessionRun {
                     if let Some(err) = turn.and_then(|t| t.get("error")).filter(|e| !e.is_null()) {
                         self.note_error(err);
                     }
+                }
+            }
+            // The one number a compaction policy runs on, kept on the session so it
+            // outlives this run. `last` rather than `total`: what matters is how much room
+            // the *next* request starts with, not what the turn has cost so far.
+            "thread/tokenUsage/updated" => {
+                let usage = params.and_then(|p| p.get("tokenUsage"));
+                let used = usage
+                    .and_then(|u| u.get("last"))
+                    .and_then(|l| l.get("inputTokens"))
+                    .and_then(Value::as_u64);
+                let total = usage.and_then(|u| u.get("modelContextWindow")).and_then(Value::as_u64);
+                if let (Some(used), Some(total)) = (used, total) {
+                    *self.window.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some(WindowFill { used, total });
                 }
             }
             // Emitted for upstream failures (model errors, quota) and may precede the
@@ -370,7 +451,14 @@ impl AgentSession {
             data_dir,
             secrets,
             resumed,
+            window: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// How full the context window was on this session's most recent request, or `None`
+    /// before it has made one. The reading a compaction policy acts on.
+    pub fn window_fill(&self) -> Option<WindowFill> {
+        *self.window.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub fn id(&self) -> &str {
@@ -442,7 +530,64 @@ impl AgentSession {
             error: None,
             data_dir: self.data_dir.clone(),
             text_buf: String::new(),
+            window: self.window.clone(),
         })
+    }
+
+    /// Compact this thread's history **in place** — codex rewrites the older turns into a
+    /// summary, and the thread id, its rollout and `thread/resume` all survive it. This is
+    /// not a re-thread and there is no seed to author: the mind stays where it is, smaller.
+    ///
+    /// **It is a turn, not a side call**, and that is the whole reason this method waits.
+    /// `thread/compact/start` answers `{}` in under a millisecond and *then* opens one —
+    /// measured against the 0.147 pin: `turn/started`, an `item/started` of type
+    /// `contextCompaction`, and a terminal `turn/completed` 9.2s later. So it takes the
+    /// session's one in-flight-turn slot exactly as [`prompt`](Self::prompt) does. Returning
+    /// on the empty RPC response would hand a caller a session that looks free and refuses
+    /// the next `prompt` for being mid-turn, so the slot is held here until the turn ends.
+    ///
+    /// **Returns whether the compaction turn completed rather than failed.** Failing is
+    /// ordinary — it is a model call, and it can 401, time out, or be refused — and it must
+    /// never be fatal to the caller: a thread whose compaction failed is exactly as usable
+    /// as it was, only still large. What it must not be is silent, because a caller that
+    /// believes it compacted stops watching a window that is still full.
+    pub async fn compact(&self) -> anyhow::Result<bool> {
+        let mut rx = {
+            let mut slot = self.rx.lock().await;
+            slot.take().ok_or_else(|| anyhow!("session already has an in-flight turn"))?
+        };
+
+        // Restore the receiver if the call is refused, so one rejected compaction does not
+        // wedge the session for good — the same care `prompt` takes for `turn/start`.
+        if let Err(err) = self
+            .process
+            .request("thread/compact/start", json!({ "threadId": self.id }))
+            .await
+        {
+            *self.rx.lock().await = Some(rx);
+            return Err(err);
+        }
+
+        // The response carries no turn id, so the end is read off the stream. Holding `rx`
+        // is what makes "any `turn/completed`" unambiguous rather than sloppy: a session has
+        // at most one turn in flight, this call owns that slot, so the completion that
+        // arrives is this one's. Frames seen here are dropped rather than projected — a
+        // compaction is housekeeping on the thread, not something the session said — and the
+        // wire tap still records every one of them.
+        let completed = loop {
+            let Some(note) = rx.recv().await else { break false };
+            if note.get("method").and_then(Value::as_str) == Some("turn/completed") {
+                break note
+                    .get("params")
+                    .and_then(|p| p.get("turn"))
+                    .and_then(|t| t.get("status"))
+                    .and_then(Value::as_str)
+                    == Some("completed");
+            }
+        };
+
+        *self.rx.lock().await = Some(rx);
+        Ok(completed)
     }
 
     /// Interrupt the turn currently running. The in-flight [`SessionRun`] resolves with
@@ -591,6 +736,7 @@ mod tests {
             error: None,
             data_dir: PathBuf::from("/nonexistent"),
             text_buf: String::new(),
+            window: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
