@@ -40,20 +40,27 @@ interface ComposerProps {
  * which the single-line `<input>` this replaced could not offer at all. Sending
  * leaves it open: it is a channel, not a one-shot.
  *
- * **Any printable key opens the conversation and seeds the line**, so a keyboard
- * user never has to reach for the control — and, now that the same control puts
- * the whole conversation away, this is also the way back from having done so.
+ * **Any printable key puts the caret in the line and seeds it** — opening the
+ * conversation first if it was away — so a keyboard user never has to reach for
+ * the control, and, now that the same control puts the whole conversation away,
+ * this is also the way back from having done so. That key, and a paste, are the
+ * *only* things that move the caret here: **the conversation coming up does not
+ * focus the line.** See the focus effect.
  */
 export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastPasteIdRef = useRef(0);
   const lastTypingPingRef = useRef(0);
-  // Whether the conversation was already up when this window opened. A window that
-  // starts with it up must not also start with the caret in the line: on a phone
-  // that opens the on-screen keyboard over the conversation the person came to
-  // read. Focus is for the transition — they asked for the line just now.
+  // Whether the conversation was already up a render ago, so the focus effect can
+  // tell it coming up from it merely being up.
   const wasShownRef = useRef(shown);
+  // Somebody asked for the caret while the conversation was still down — they
+  // typed a character at the room. Held across the opening because the line is
+  // mounted the whole time but not on screen yet, and focusing a hidden field
+  // does nothing. Nothing else sets it: a conversation that simply comes up
+  // arrives with no caret in it.
+  const wantsCaretRef = useRef(false);
 
   // Report that a line is being written, so the agent waits for the thought
   // rather than answering the part of it that already landed. Throttled rather
@@ -66,8 +73,10 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
     postInTextTyping();
   };
 
-  // Start-typing-to-open: a single printable key brings the conversation back and
-  // seeds the line. Only active while it is away.
+  // Start-typing: a single printable key puts the caret in the line and seeds it,
+  // bringing the conversation back first if it was away. **This is now the whole
+  // reason the caret ever moves on its own** — see the focus effect below — so it
+  // runs in both states rather than only while the conversation is down.
   //
   // Through `onHostKey`, so it fires for the room and for chrome's own controls
   // but never while a view holds the focus — a view that binds a letter to page
@@ -75,30 +84,56 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
   // printable by this test (`\S`, and a name longer than one character), so a
   // deck keeps them whenever the person is not typing into chrome.
   useEffect(() => {
-    if (shown || !onOpen) return;
+    if (!shown && !onOpen) return;
     return onHostKey((e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // Someone else already owns the keystroke — a view's own input, say.
+      // Someone else already owns the keystroke — the line itself once the caret
+      // is in it, or a view's own input.
       if (isEditableTarget(e.target)) return;
       if (e.key.length === 1 && /\S/.test(e.key)) {
-        // Swallow it. Opening focuses the line inside this same keydown, so the
+        // Swallow it. Focus lands in the line inside this same keydown (or on the
+        // next frame, when the conversation has to come up first), so the
         // browser's default insertion would land in the field we just seeded and
         // type the character twice ("h" → "hh"). It is also the host's claim on
         // the key, which is what keeps it from reaching the view underneath.
         e.preventDefault();
-        setText(e.key);
+        // Appended, not assigned. The line keeps a half-written draft through a
+        // put-away on purpose, and while the conversation is up the caret can
+        // simply be elsewhere — a control in chrome — with a sentence already
+        // sitting in the box. Either way the character is the next one in what is
+        // being written, so overwriting the draft with it would throw away the
+        // thing this component exists to hold on to.
+        setText((prev) => prev + e.key);
         // The first character of a line counts as typing too — this is the path
         // that opens the conversation, so it is where most drafts actually start.
         noteTyping();
-        onOpen();
+        if (shown) {
+          inputRef.current?.focus();
+        } else {
+          // The line is mounted but inside a surface that is not up yet; focusing
+          // it here would be focusing something hidden. Claim the caret and let
+          // the effect below take it once the conversation is on screen.
+          wantsCaretRef.current = true;
+          onOpen?.();
+        }
       }
     });
   }, [shown, onOpen]);
 
+  // The caret follows the ask for the *line*, never the opening of the
+  // conversation. Opening it used to focus here unconditionally, which on a phone
+  // means the software keyboard rises over the conversation the person just
+  // tapped to read — half the screen spent on a box they did not ask for. So the
+  // only two paths that move the caret are the ones where writing is the point:
+  // typing a printable key (above) and pasting (below). Tapping the line itself
+  // is a third, and it needs no code.
   useEffect(() => {
     const was = wasShownRef.current;
     wasShownRef.current = shown;
-    if (shown && !was) inputRef.current?.focus();
+    if (shown && !was && wantsCaretRef.current) inputRef.current?.focus();
+    // Spent either way: a claim is for the one opening it was made during, and a
+    // conversation put away and brought back is a new one to arrive with.
+    wantsCaretRef.current = false;
   }, [shown]);
 
   useEffect(() => {
