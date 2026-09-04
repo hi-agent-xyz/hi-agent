@@ -252,9 +252,27 @@ it every wake, and re-deriving it from a ledger that reads "still owed" is how a
 or, worse, undone.
 
 Long-lived sessions rot — every turn appends, until early context is crowded out or the
-window overflows. **Bounding that is the underlying agent's job, not ours.** The agent behind a
-session compacts its own context in place, automatically, near its real window. We do not
-duplicate it, and there is no ceiling, counter, or swap in this codebase.
+window overflows. **Bounding that is the underlying agent's job. Choosing the moment is
+ours.** The agent behind a session compacts its own context in place, automatically, near its
+real window; that automatic trigger stays, and stays as the last resort. What was added is a
+request for the same operation at a moment somebody picked — `thread/compact/start`, at the
+end of a turn with nothing queued, when codex's own token accounting says the window is 70%
+full. There is still no ceiling of our own, no character counter, and no swap.
+
+**Why that is not the mechanism this section retired**, and the difference is two facts about
+the wire rather than a change of mind. Both halves of "we cannot" below were true when they
+were written and are not now. We *can* see the context: `thread/tokenUsage/updated` reports
+`last.inputTokens` against `modelContextWindow` on every request — codex's own count of the
+whole thing, system prompt and tool schemas included, not the drifting fraction a byte
+counter out here could reach. And we *can* compact in place: `thread/compact/start` runs the
+same in-thread compaction codex runs itself, keeping the thread id, its rollout and
+`thread/resume` (verified against the 0.147 pin). Nothing is summarized out here, nothing is
+reopened, and the working thread a long-lived rung exists to keep is the thing that survives.
+
+What that buys is only timing, and timing was the whole complaint: codex compacts when it
+notices, which on 2026-09-02 was 29 times across eight sessions, six of them inside a single
+worker's turns. Asking early costs a model call at a moment nothing is waiting; being asked
+late costs one in the middle of the work.
 
 That is a correction, not an omission. A host-side hot-swap existed: it counted the characters
 *we* sent and received and, past a ceiling, asked the session to brief its own replacement. It
@@ -267,7 +285,10 @@ fought the rungs being long-lived — swapping threw away exactly the working th
 rung exists to keep.
 
 If a wire ever genuinely lacks auto-compaction, bound it **in that adapter**, where the real
-numbers are visible. Do not re-introduce a character counter at this layer.
+numbers are visible. Do not re-introduce a character counter at this layer, and do not let
+the timing request above grow into one: it thresholds on a number the agent reports about
+itself, and the moment it starts thresholding on anything we counted, it is the retired
+mechanism wearing a new name.
 
 What still replaces a session from out here is **failure, not size**: a turn that errors discards
 the possibly-wedged session and the next one cold-opens. That is always survivable, because

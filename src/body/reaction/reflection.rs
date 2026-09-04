@@ -383,6 +383,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tracing::warn!(reflection = %id, error = %format!("{err:#}"), "reflection turn failed; mail held");
             }
         }
+        super::compact_if_full(&id, session.as_deref()).await;
         registry::global().finish_turn(&id, outcome);
     }
 }

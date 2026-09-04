@@ -458,6 +458,7 @@ async fn run(reaction: Reaction, registration: Registration) {
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         last_turn = Instant::now();
+        super::compact_if_full(&id, session.as_deref()).await;
         registry::global().finish_turn(&id, outcome);
     }
 }

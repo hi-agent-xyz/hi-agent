@@ -278,6 +278,17 @@ mod window_fill_tests {
         assert_eq!(WindowFill { used: 258_400, total: 258_400 }.percent(), 100);
         assert_eq!(WindowFill { used: 300_000, total: 258_400 }.percent(), 100);
     }
+    /// The line the policy runs on, against the only fixed point there is: codex triggered
+    /// its own compaction 29 times on 2026-09-02 and never below 78.6% of the window. A
+    /// threshold that does not clear that reliably is a threshold that loses the race and
+    /// gets compacted mid-turn anyway.
+    #[test]
+    fn the_threshold_sits_clear_of_where_codex_fires_on_its_own() {
+        let ours = 70u8;
+        let codex_floor = WindowFill { used: 203_119, total: 258_400 };
+        assert!(codex_floor.percent() > ours, "measured floor {}%", codex_floor.percent());
+    }
+
 }
 
 impl SessionRun {

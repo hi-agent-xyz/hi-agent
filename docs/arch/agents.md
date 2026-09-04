@@ -542,8 +542,9 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 | Workers | one per errand | **its owner closes it** |
 
 **Nothing in this column is about size.** Context growth is bounded by the underlying agent,
-which compacts in place; see [`host.md`](host.md#session-layer) for why that is not ours to
-do. A session is replaced here only because it **broke**.
+which compacts in place — the host asks for that same in-place compaction at a chosen moment
+rather than duplicating it, and never replaces a session over size; see
+[`host.md`](host.md#session-layer). A session is replaced here only because it **broke**.
 
 **A worker's lifetime belongs to the rung that created it, and nothing reclaims one on a
 clock.** This row used to read "the errand ends, or an idle TTL", and the TTL is now gone
