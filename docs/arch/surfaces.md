@@ -42,7 +42,7 @@ zero knowledge of the wire.
 | Channel | Direction | Carried as |
 |---|---|---|
 | text | in / out | content block · the `hi_say` call |
-| audio | in | text after STT today; an audio block once we model paralinguistics |
+| audio | in | text after STT, plus what the sound itself was like; an audio block once we model paralinguistics properly |
 | audio | out | the same `hi_say` call, rendered by TTS host-side |
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
@@ -56,6 +56,17 @@ zero knowledge of the wire.
 all. That is a property of
 how the signal arrived and never of what it says:
 [`signal-attribution.md`](signal-attribution.md).
+
+**An ambient channel also says what the sensing was like.** A microphone in a room hears
+the whole room, and the difference between a sentence said into it and a remark from the
+next table is physics well before it is meaning — how many voices are around, whether
+this one is the near one, whether it arrived buried in the room it crossed, whether it
+landed on top of someone else's turn. Those ride the signal as `⟨room: …⟩`, and only in
+terms that survive an unknown microphone gain: a difference of two levels from one
+capture, or this speaker measured against the others in the same room. They are
+**evidence for the mind and never a gate in the channel** — perception stays mechanical
+and hands up everything it heard
+([`31-hear-the-room`](../user-journeys/31-hear-the-room.md)).
 
 ### Why a ref and not the bytes
 

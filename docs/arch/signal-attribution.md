@@ -106,6 +106,34 @@ So `owner` is defeasible: positive evidence beats it. A voice recognized as some
 an ambient channel is that person; a carrier that states its sender is believed over the
 default. What may **not** defeat it is content — see below.
 
+## Recognition is a read, and one match is not a sender
+
+**Amended September 4, 2026.** Basis `cluster` was being written on evidence that could
+not carry it, by a mechanism that manufactured its own.
+
+**Identifying somebody may not enrol them.** The people store's match and its write ran
+as one call, so every fragment the microphone caught was filed under whoever it scored
+nearest and then counted as evidence for the next fragment. A gallery graded against
+samples it admitted on the strength of the last guess has no floor under it, and nothing
+in the record says which samples a person ever vouched for. Reading and writing are two
+verbs, and the write is asked for deliberately.
+
+**A single match is soft evidence and is not a sender.** Spontaneous speech scores a
+genuine match not far above where a stranger sits, so `cluster` now takes three things
+together: a score clearing the modality's floor, a margin over the runner-up — two
+subjects that close is one ambiguous answer, not a winner — and, on the live
+microphone, agreement across more than one of that speaker's turns. Anything short of
+all three is `unknown`, which this document already holds to be a complete answer.
+
+**An observation the store cannot place is written nowhere.** Between "confidently this
+person" and "nobody we hold" there is a band, and the only two things to do with a
+sample in it are a wrong append and an invented person. Both were happening: one
+person's gallery sat at its thousand-sample ceiling while two dozen one-second
+fragments had become two dozen one-sample "people".
+
+The accepted consequence is **fewer senders and more `unknown`** — the same trade this
+document already takes, applied to the sense that was quietly exempt from it.
+
 ## Sender is not subject
 
 Attribution answers *who sent this*. It never answers *who this is about*.
