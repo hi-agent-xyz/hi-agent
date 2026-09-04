@@ -347,8 +347,9 @@ fires on a period: the upkeep sweep, which wakes no agent to think.**
 #### The upkeep sweep
 
 Every ten minutes, host code walks the sessions the switchboard already holds and looks for
-one that is quiet, has been quiet about an hour, and whose window is at least half full. It
-rings that session's bell; the loop that owns the session compacts at its own next pass.
+one that is quiet, has been quiet about an hour, and whose window is at least half full, and
+compacts it. Every session is in scope — a worker genuinely idle an hour with a full window
+is as worth tidying as a rung.
 
 **Why this is not the cadence removed three times over.** Those woke a rung to *judge* —
 read the ledger and decide, look at the room and decide whether to speak — and the wake was

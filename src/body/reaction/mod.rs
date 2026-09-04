@@ -1273,9 +1273,9 @@ enum Woke {
     /// The process-wide vendor gate changed level. Re-read [`Vendor::turn_gate`];
     /// the notification carries no state and therefore cannot go stale.
     Vendor,
-    /// A deadline came up: a vendor-recovery probe, or Reaction's own check-in
-    /// ([`tools::NextWord`]). Which one is worked out on the far side, from the
-    /// deadlines themselves, so both keep one arm.
+    /// A deadline came up. There is one kind left — the vendor-recovery probe — since
+    /// nothing in this host fires at a named time any more; the arm stays because recovery
+    /// still has a deadline of its own.
     Timer,
     /// Process shutdown began while this loop was idle — stop waiting and exit.
     Shutdown,

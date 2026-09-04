@@ -9,18 +9,16 @@
 //! and it produces a model call only when one is genuinely owed, for work with no judgment
 //! in it.
 //!
-//! **It decides *whether*; the loop that owns the session decides *when*.** That split is
-//! not tidiness, it is the only race-free shape available: a compaction takes the session's
-//! single in-flight-turn slot, so a sweep holding the handle itself would collide with the
-//! loop's own `prompt` — and a rung whose prompt fails *drops its long-lived session and
-//! cold-opens* ([`super::cognition`]), losing the thread that whole design exists to keep.
+//! **It calls the session directly**, which took two things that are not about compaction:
+//! a directory of live sessions (below), because `docs/arch/host.md` said sessions were
+//! host-owned while a rung's handle was a local in its own loop; and a turn permit rather
+//! than a race, because losing the single in-flight-turn slot used to be an *error*, and a
+//! rung whose prompt errors drops its long-lived session and cold-opens — so maintenance
+//! touching a session from outside could destroy the thread it was tidying.
 //!
-//! **It crosses on the control channel each rung already has**, as one more
-//! [`LoopControl`](super::tools::LoopControl) variant, for the reason that enum exists at
-//! all: the loop owns the state each of its messages touches. There is no second map of
-//! handles and no extra `select!` arm — the arm that already carries `CreateWorker` carries
-//! this, and a rung with no live sink is skipped, which is what a rung that is not up
-//! should be.
+//! With both, this is an ordinary call: [`AgentSession::compact`] steps aside if a turn
+//! holds the session, and a turn arriving mid-compaction waits for it instead of failing.
+//! Maintenance is never urgent, so it is never the one that waits.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -131,8 +129,8 @@ mod tests {
     use super::*;
 
     /// The threshold this sweep filters on is the one the loop decides with — two numbers
-    /// here would let the sweep ring for sessions the far side always declines, which is a
-    /// wake for nothing and the exact cost this whole design removed three cadences over.
+    /// here would let the sweep pick sessions the compaction call always declines, which is
+    /// work for nothing and the exact cost this design removed three cadences over.
     #[test]
     fn the_sweep_and_the_decision_share_one_threshold() {
         assert_eq!(super::super::COMPACT_ABOVE_PERCENT, 50);
