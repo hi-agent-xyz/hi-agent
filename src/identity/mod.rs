@@ -1559,8 +1559,14 @@ mod soul_tests {
         // the person filling the silence by asking "progress?".
         assert!(REACTION_BASE.contains("back_in"), "the brief must name the parameter");
         assert!(
-            REACTION_BASE.contains("only timer you have"),
-            "and must not leave Reaction thinking it has more than one"
+            REACTION_BASE.contains("only timer in this host at all"),
+            "and must not leave Reaction thinking anything else fires on a clock"
+        );
+        // The floor the host used to arm under an open-ended silence is gone, and the
+        // brief has to say what that costs: a silence with no number is one nothing ends.
+        assert!(
+            REACTION_BASE.contains("nothing brings you back"),
+            "the consequence of not naming a number must be stated, not implied"
         );
         assert!(
             !REACTION_BASE.contains("You have no timer"),

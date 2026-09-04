@@ -512,20 +512,6 @@ impl WorkerRegistry {
 
 }
 
-/// Whether the agent's own thinking is running right now.
-///
-/// The cheap half of [`render_status`]'s question, for the check-in floor: that one
-/// builds a tail nobody needs when the question is only *is anything in flight*.
-///
-/// **Cognition, and nothing else.** A worker belongs to whoever created it, and this
-/// loop creates none — so the roster of other people's work is not Reaction's to
-/// describe, and their substance comes back down the report path, which drives a turn of
-/// its own.
-pub(super) fn thinking() -> bool {
-    registry::global()
-        .session_of_role(Role::Cognition)
-        .is_some_and(|status| status.busy)
-}
 
 /// One line for Reaction's turn: whether the agent is still working on what was just
 /// asked, so Reaction can say "still on it" with a straight face instead of guessing.

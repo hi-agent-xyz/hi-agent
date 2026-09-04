@@ -355,18 +355,23 @@ exactly this small, never for letting it grow into the removed clock's replaceme
 property the removal was protecting survives: scheduling past a cadence remains the
 agent's own, arranged with the shell it has.
 
-**And a floor beneath it, because a promise can go unmade.** While the conversation's
-own thinking is still running and Reaction left the silence open-ended, the host arms
-a check-in itself — five minutes, doubling to the glance-up cadence. **The dial on that gap is
-whether the last one was worth it**: a check-in that produced speech keeps the base
-cadence, one that passed in silence widens it. Reaction is the only thing that knows
-whether there was anything to say, so it is the thing that sets the pace.
+**And nothing is armed beneath it, because a host-armed check-in is a clock covering for a
+prompt.** The host used to arm one itself when Reaction left a silence open-ended over
+running work — five minutes, doubling. It was the narrowest cadence in the design and the best
+performing one (133 wakes across the frame log, 42 of them producing speech, against the
+glance-up's 1819 and 46% doing nothing at all), and it went for the reason the glance-up
+went: a fixed interval standing in for an event that was never missing. The event is the
+number Reaction says out loud.
 
-The note says which of the two it is. A promise the person heard is a fact they hold
-too; a floor is only the agent's own rule about not going dark, and Reaction told it
-"promised" when it named nothing would be inventing one. Both are **permission to
-speak, never an instruction to**: what is worth saying is read off `## Still looking
-into` and the projected ledger, and staying quiet is a legitimate answer.
+So a silence Reaction opens without a number is a silence nothing will end — it lasts until
+the work lands or the person asks, and the person having to ask is the failure the promise
+exists to prevent. That consequence is stated in `reaction.md` rather than absorbed by the
+host, which is where a judgment belongs. A check-in is now always a promise the person
+heard, so the note says so flatly and cannot invent one nobody was told.
+
+It remains **permission to speak, never an instruction to**: what is worth saying is read
+off `## Still looking into` and the projected ledger, and staying quiet is a legitimate
+answer.
 
 A check-in **fires whether or not anyone is looking**. It used to be dropped into an
 empty room, on the reasoning that the words would be withheld anyway and a return would

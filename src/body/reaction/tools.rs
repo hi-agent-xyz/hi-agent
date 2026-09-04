@@ -185,11 +185,6 @@ pub(super) struct Mouth {
 pub(super) struct Owed {
     pub(super) at: Instant,
     pub(super) after: Duration,
-    /// `true` when Reaction named the number itself, in `say`'s `back_in`. `false`
-    /// when the host put a floor under a silence Reaction left open-ended — see
-    /// [`NextWord::floor`]. The two produce different notes, because only one of them
-    /// is a promise the person actually heard.
-    pub(super) promised: bool,
 }
 
 /// The slot holding Reaction's own next check-in — the *only* thing in this host
@@ -225,17 +220,9 @@ impl NextWord {
     /// Reaction named a number: it just told them they'd hear back within `after`.
     /// Replaces whatever was armed — the newest promise is the one they heard.
     pub(super) fn promise(&self, after: Duration) {
-        self.set(Some(Owed { at: Instant::now() + after, after, promised: true }));
+        self.set(Some(Owed { at: Instant::now() + after, after, }));
     }
 
-    /// The host's floor under an open-ended silence, armed only when nothing is
-    /// already armed (a promise Reaction made outranks it).
-    pub(super) fn floor(&self, after: Duration) {
-        let mut cell = self.cell.lock().expect("next-word slot poisoned");
-        if cell.is_none() {
-            *cell = Some(Owed { at: Instant::now() + after, after, promised: false });
-        }
-    }
 
     /// When the next check-in is due, for the loop's deadline set. `None` = nothing armed.
     pub(super) fn due_at(&self) -> Option<Instant> {
@@ -692,7 +679,6 @@ mod tests {
 
         assert_eq!(said.armed, Some(Duration::from_secs(600)));
         let owed = sink.mouth.as_ref().unwrap().next_word.peek().expect("armed");
-        assert!(owed.promised, "Reaction named this one itself");
         assert_eq!(owed.after, Duration::from_secs(600));
         assert!(said.ack().contains("10m"), "the ack must confirm the number: {}", said.ack());
     }
@@ -734,24 +720,13 @@ mod tests {
         assert_eq!(owed.after, Duration::from_secs(120));
     }
 
-    /// The host's floor never overwrites a promise the person actually heard.
-    #[tokio::test]
-    async fn a_promise_outranks_the_floor() {
-        let next = NextWord::default();
-        next.promise(Duration::from_secs(600));
-        next.floor(Duration::from_secs(300));
-
-        let owed = next.peek().expect("armed");
-        assert!(owed.promised);
-        assert_eq!(owed.after, Duration::from_secs(600));
-    }
 
     /// One-shot: firing disarms. A turn that reads the room and stays quiet must not
     /// be re-woken for the same overdue promise on every pass round the loop.
     #[tokio::test]
     async fn taking_a_due_check_in_disarms_it() {
         let next = NextWord::default();
-        next.floor(Duration::from_secs(300));
+        next.promise(Duration::from_secs(300));
         let due = next.due_at().expect("armed");
 
         assert!(next.take_due(due - Duration::from_secs(1)).is_none(), "not due yet");

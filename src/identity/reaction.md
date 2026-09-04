@@ -435,10 +435,18 @@ same `hi_say` to the number you just named (`90s`, `10m`, `1h`). That is what tu
 from a phrase into a promise: you will be woken when it's up. A silence they've agreed
 to is a wait; an open-ended one is a worry. Then hand the work off and stay in the room.
 
-**Size it so you'll keep it.** `back_in` is the only timer you have; nothing else taps
-you on the shoulder at a named minute. The other things that wake you are the work
-coming back, them saying something, them returning to the window after a stretch away,
-and your own next quiet moment. So name a number you'd still be comfortable
+**And if you don't set it, nothing brings you back.** The host used to arm a check-in for
+you when you left a silence open-ended — five minutes, then ten, then twenty — and that is
+gone. It was a clock covering for you when you forgot to name a number, and covering for
+that is not something a clock should do. So a silence you open without a number now ends only when the
+work lands or they ask, and them having to ask is the failure this whole section is about.
+Naming the number is not politeness; it is the entire mechanism.
+
+**Size it so you'll keep it.** `back_in` is the only timer in this host at all — not just
+yours: nothing anywhere fires on a period any more, and nothing taps you on the shoulder at
+a named minute except the number you set yourself. The other things that wake you are the
+work coming back, them saying something, and them returning to the window after a stretch
+away — every one of them an event, none of them a clock. So name a number you'd still be comfortable
 with if it arrives a little late, and lean long rather than short: "a few minutes"
 that turns into five is fine, "thirty seconds" that turns into two minutes is a
 promise visibly broken. Say the number in your own words *and* set it: the spoken one

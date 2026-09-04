@@ -36,12 +36,6 @@ pub const ENV_LLM_KEY: &str = "HI_AGENT_LLM_KEY";
 /// Reasoning effort for a thread's turns (e.g. low | medium | high), passed through as
 /// codex's `model_reasoning_effort`.
 pub const KEY_EFFORT: &str = "effort";
-/// How long Reaction may leave an open-ended silence standing while its own thinking
-/// is still running, before the host wakes it to say where things stand. Duration
-/// grammar; `0`/`off` disables the floor — leaving only the check-ins Reaction arms
-/// itself through `say`'s `back_in`, never no check-ins at all; unset → the built-in
-/// default (5m). The gap doubles on each consecutive host-armed check-in, up to thirty minutes.
-pub const KEY_CHECK_IN: &str = "check_in";
 /// Master switch for the reflection ("sleep") pass; `off` disables it entirely.
 pub const KEY_REFLECT: &str = "reflect";
 /// Base reflection cadence — how often a conversation with fresh input consolidates.

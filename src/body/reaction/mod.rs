@@ -151,53 +151,17 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// early, and whether speaking is welcome is answered at the mouth, not here.
 const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 
-/// The widest an unproductive check-in backs off to, and the last thing left of the
-/// glance-up cadence that used to set it.
+/// **Nothing in this host fires on a period any more.** The recurring glance-up went
+/// first; the five-minute check-in the host armed under an open-ended silence went with it,
+/// for the same reason — a fixed interval is what a design reaches for when it has no event, and
+/// here the event exists: it is the number Reaction says out loud. `hi_say`'s `back_in` is
+/// the whole of it, and it is the agent's to set, because it decided to and said so.
 ///
-/// **There is no recurring pulse any more, and its removal is the point.** A fixed period
-/// is what a system reaches for when it has no event for something, and the events it was
-/// standing in for now exist: input, mail, a worker's report, and the boot wake that is
-/// restart recovery rather than a cadence. What was left was measured — across the frame
-/// log, 1819 turns driven by the timer alone, of which 46% made no tool call and ran no
-/// command at all, against 28% for turns something actually asked for. A wake that reads a
-/// full window to conclude nothing is the most expensive kind of nothing there is, and it
-/// accumulated in the thread besides.
-///
-/// The design's own history is the other half of the argument: this cadence was taken off
-/// Reaction once already for exactly these reasons, and the failure usually cited for
-/// keeping it — a standing duty lost across a restart (`docs/user-journeys/gaps.md#1`) —
-/// was fixed by the boot wake, which is a different mechanism and survives.
-///
-/// A named time still fires: Reaction's own `back_in`, which is a promise it made out loud.
-/// That is the shape a timed wake is allowed to take here — an alarm somebody set, for a
-/// reason they can say — never a metronome.
-const CHECK_IN_CAP: Duration = Duration::from_secs(1800);
-
-/// The floor under an open-ended silence: how long Reaction may stay quiet while its
-/// own thinking is still running before the host wakes it to say where things stand.
-///
-/// Five minutes because the failure it answers was measured — an errand ran, Reaction
-/// said "I'll report once confirmed" with no number, and the person filled the next
-/// thirteen to eighteen minutes by asking "progress?" three times in one morning. It
-/// only ever fires while work is genuinely in flight, and a wake is permission to
-/// speak, not an obligation: Reaction reads the room and may stay quiet.
-const DEFAULT_CHECK_IN: Duration = Duration::from_secs(300);
-
-/// The floor gap for an open-ended silence ([`DEFAULT_CHECK_IN`]), or `None` when
-/// `check_in` is `0`/`off` — which leaves only the check-ins Reaction arms itself
-/// through `say`'s `back_in`, never no check-ins at all.
-fn check_in_interval() -> Option<Duration> {
-    duration_tunable(config::tunables::get(config::KEY_CHECK_IN), DEFAULT_CHECK_IN)
-}
-
-/// The ceiling the floor backs off to. A job that runs for hours should not be
-/// interrupted every five minutes, so each consecutive host-armed check-in doubles the
-/// gap — the reflection backoff's shape — and stops at the glance-up cadence, which is
-/// already the answer to "how often does this agent look up from what it's doing". A word
-/// from Reaction or the person resets it: the conversation is live again.
-fn check_in_cap() -> Duration {
-    CHECK_IN_CAP
-}
+/// That one was the host compensating for Reaction not naming a number. Measured across the
+/// frame log it fired 133 times and produced speech in 42 — far better than the glance-up it
+/// outlived, and still the wrong shape: a supervisor poking someone who forgot to say when.
+/// What replaces it is that saying when is Reaction's job, and `reaction.md` says so plainly:
+/// **a silence with no number is a silence nothing will end.**
 
 /// Whether the reflection ("sleep") pass runs at all. On unless the stored `reflect`
 /// tunable is `off` — a master escape hatch to disable consolidation without
@@ -1222,8 +1186,8 @@ impl Reaction {
             });
         }
 
-        // How many utterances the mouth has accepted. The loop holds the other end so a
-        // turn can tell whether it spoke while its bracket is still open.
+        // How many utterances the mouth has accepted. The mouth's own; the loop used to
+        // hold the other end to pace the check-in floor, and there is no floor now.
         let said = Arc::new(AtomicU64::new(0));
         // When Reaction next owes them a word. `say` writes it from the `/mcp` task;
         // the loop below reads it as a deadline. See [`tools::NextWord`].
@@ -1256,7 +1220,7 @@ impl Reaction {
                 task_worker_inbound,
                 control_rx,
                 control_tx,
-                Speaking { beats: beats_tx, said, next_word },
+                Speaking { beats: beats_tx, next_word },
                 registration,
             )
             .await;
@@ -1276,8 +1240,6 @@ impl Reaction {
 /// answer it while the bracket is still open.
 struct Speaking {
     beats: mpsc::Sender<sequencer::Beat>,
-    /// Utterances the mouth has accepted, ever. See [`tools::Mouth::said`].
-    said: Arc<AtomicU64>,
     /// When Reaction next owes them a word — armed by `say`, read here as a deadline.
     /// It travels with the mouth for the same reason `said` does: it is set at the
     /// instant of speech and read by the loop that has to act on it.
@@ -1397,12 +1359,6 @@ async fn reaction_loop(
         startup_warm_pending =
             warm_sessions(&reaction, &reaction_id, &mut reaction_session, &mut window_memo).await;
     }
-
-    // The check-in floor's current gap, doubling while Reaction keeps leaving an
-    // open-ended silence over running work and resetting the moment either side speaks
-    // to it. `None` = `check_in: off`, i.e. only the check-ins Reaction arms itself.
-    let check_in_base = check_in_interval();
-    let mut check_in_gap = check_in_base;
 
     // Pending turn-driving items, hoisted out of the main loop so the batch
     // survives across iterations while the vendor is down — a failed retry must not
@@ -1524,7 +1480,7 @@ async fn reaction_loop(
                         // anyway and a return would wake Reaction with a fresher read —
                         // and both of those went with the presence gate. What Reaction
                         // says now lands in the conversation and waits there.
-                        tracing::info!(promised = owed.promised, "check-in fired");
+                        tracing::info!("check-in fired");
                         enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
                             .await;
                     }
@@ -1596,12 +1552,6 @@ async fn reaction_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
-        // Why this turn is running, read before the batch is cleared — it decides how
-        // the check-in floor paces itself below.
-        let by_human = batch.iter().any(|i| matches!(i, LoopInput::Message(_) | LoopInput::Observed(_)));
-        let by_floor = batch
-            .iter()
-            .any(|i| matches!(i, LoopInput::CheckIn { owed } if !owed.promised));
         // The agent's own thinking coming back — the thing a promise made *about* it was
         // for. Captured with what was armed going in, so the discharge below can tell an
         // untouched promise from a fresh one this turn just made.
@@ -1613,7 +1563,6 @@ async fn reaction_loop(
         // is Reaction's to read — see [`LoopInput::Mail`].
         let by_thinking_back = batch.iter().any(mail_from_cognition);
         let armed_before = speaking.next_word.peek();
-        let said_before = speaking.said.load(Ordering::Relaxed);
 
         let turn_result = run_reaction_turn(
             &reaction,
@@ -1684,35 +1633,11 @@ async fn reaction_loop(
             speaking.next_word.clear();
         }
 
-        // How the check-in floor paces itself, and the dial is **whether the last one was
-        // worth it**. A word from the person, a number Reaction just named, or a check-in
-        // that actually produced speech all mean the cadence is earning its keep, so it
-        // stays at the base gap. One that came and went in silence doubles it, up to the
-        // glance-up cadence — a job running for hours must not be interrupted every five
-        // minutes, and Reaction is the only thing that knows whether there was anything to say.
-        // (The reflection backoff's shape, for the same reason.)
-        let spoke = speaking.said.load(Ordering::Relaxed) > said_before;
-        if by_human || spoke || speaking.next_word.peek().is_some_and(|o| o.promised) {
-            check_in_gap = check_in_base;
-        } else if by_floor {
-            check_in_gap = check_in_gap.map(|gap| (gap * 2).min(check_in_cap()));
-        }
-
-        // The floor itself. `reaction.md` asks Reaction to put a size on every silence
-        // it opens; when it doesn't, this is what keeps "never go dark on a long job"
-        // from resting entirely on the model remembering to. A promise Reaction made
-        // itself outranks it — `floor` leaves an armed slot alone.
-        //
-        // Only while the conversation's own thinking is still running. A quiet agent with
-        // nothing in flight owes nobody a word — and nothing else wakes this loop into an
-        // empty room. **Work handed further up is out of scope on purpose**: Cognition's
-        // workers are not this loop's to describe, and their substance comes back down
-        // the report path, which drives a turn of its own.
-        if let Some(gap) = check_in_gap
-            && workers::thinking()
-        {
-            speaking.next_word.floor(gap);
-        }
+        // **Nothing arms a check-in but Reaction.** The host used to arm one here: when it
+        // left a silence open-ended over running work, five minutes and doubling. That was a period standing in for a missing event, and the
+        // event was never missing — it is the number Reaction says out loud. A silence it
+        // opens without one is now a silence nothing will end, which is the honest state and
+        // the one `reaction.md` describes.
 
         // Coalesce mid-turn arrivals. Utterances that queued while this turn ran
         // (a generation is now seconds, not ~1s) are siblings of the thread we just
@@ -3052,30 +2977,20 @@ fn render_batch(batch: &[LoopInput]) -> String {
 /// ledger, and what is worth saying about it is Reaction's alone. It may also be
 /// nothing: the wake is permission to speak, not an instruction to.
 ///
-/// The two sources read differently on purpose. A promise Reaction made is a fact the
-/// *person* holds too — they were told a number and it has passed, so silence now is a
-/// visibly broken promise. A host floor is only the agent's own rule about going dark;
-/// nobody is waiting on a specific minute, and saying so keeps Reaction from inventing
-/// a promise it never made.
+/// There is only one source now. A check-in is always a promise Reaction made out loud, so
+/// the note can say so flatly — the person holds the same fact, they were told a number and
+/// it has passed. The host-armed variant this used to branch on is gone; nothing arms one
+/// but the utterance that named it.
 fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
     // Since the promise was made, not since the deadline: the deadline is normally
     // *now*, and "that was 0s ago" is not the sentence anyone means.
     let waited = tools::render_gap(now.saturating_duration_since(owed.at) + owed.after);
-    if owed.promised {
-        format!(
-            "(check-in) You told them they'd hear from you within {} — you said that {waited} \
-             ago and haven't spoken since. If it's done, say what came of it; if it's still \
-             running, say where it's got to and give them a new number.",
-            tools::render_gap(owed.after),
-        )
-    } else {
-        format!(
-            "(check-in) You've been quiet {waited} while your own thinking runs, and you \
-             left them no number. Nobody is waiting on a particular minute — but if \
-             there's something real to say about where it's got to, this is the moment \
-             they'd rather hear it than have to ask."
-        )
-    }
+    format!(
+        "(check-in) You told them they'd hear from you within {} — you said that {waited} \
+         ago and haven't spoken since. If it's done, say what came of it; if it's still \
+         running, say where it's got to and give them a new number.",
+        tools::render_gap(owed.after),
+    )
 }
 
 /// How one turn-driving input is recorded in the durable log, or `None` when it
@@ -3476,50 +3391,40 @@ mod check_in_tests {
     use super::*;
     use crate::body::reaction::tools::Owed;
 
-    fn owed(after_secs: u64, promised: bool) -> Owed {
-        Owed {
-            at: Instant::now(),
-            after: Duration::from_secs(after_secs),
-            promised,
-        }
+    fn owed(after_secs: u64) -> Owed {
+        Owed { at: Instant::now(), after: Duration::from_secs(after_secs) }
     }
 
-    /// A promise the person heard and a floor the host set are different situations,
-    /// and the note has to read as the one it is. Telling Reaction it "said ten
-    /// minutes" when it named no number invents a promise, which is exactly the kind of
-    /// claim `reaction.md` spends a section forbidding.
+    /// **There is one source left, and the note may finally say so.** While the host also
+    /// armed a floor, this had to branch: telling Reaction it "said ten minutes" when it
+    /// named no number invents a promise, which is the kind of claim `reaction.md` spends a
+    /// section forbidding. Nothing arms a check-in now but the utterance that named it, so
+    /// the note states the promise as fact.
     #[test]
-    fn the_two_sources_do_not_read_alike() {
-        let kept = render_check_in(&owed(600, true), Instant::now());
-        let floor = render_check_in(&owed(300, false), Instant::now());
-
-        assert!(kept.starts_with("(check-in)"), "{kept}");
-        assert!(floor.starts_with("(check-in)"), "{floor}");
-        assert_ne!(kept, floor);
-        assert!(kept.contains("10m"), "a promise names the number it made: {kept}");
-        assert!(
-            !floor.contains("told them"),
-            "a floor must not claim a promise nobody heard: {floor}"
-        );
+    fn a_check_in_reads_as_the_promise_it_is() {
+        let note = render_check_in(&owed(600), Instant::now());
+        assert!(note.starts_with("(check-in)"), "{note}");
+        assert!(note.contains("told them"), "{note}");
+        assert!(note.contains("10m"), "it names the number it made: {note}");
     }
 
     /// The elapsed span is measured from when the promise was *made*, not from the
     /// deadline — which is normally now, and "that was 0s ago" is not a sentence.
     #[test]
     fn the_span_counts_from_the_promise() {
-        let o = owed(600, true);
+        let o = owed(600);
         let note = render_check_in(&o, o.at + Duration::from_secs(60));
         assert!(note.contains("11m"), "10m promised + 1m late: {note}");
     }
 
-    /// Reaction's only clock wake must read as the moment a word was *owed*. Cognition's
-    /// `(pulse)` marker means the opposite — a quiet moment almost nothing is worth
-    /// breaking — and wearing it here would tell Reaction to stay quiet at precisely the
-    /// instant it should speak.
+    /// Reaction's only wake at a named time must read as the moment a word was *owed*.
+    /// Cognition's `(unasked)` marker means the opposite — nobody asked, so speaking is
+    /// permitted rather than due — and wearing it here would tell Reaction to stay quiet at
+    /// precisely the instant it should speak.
     #[test]
-    fn a_check_in_never_wears_the_glance_up_marker() {
-        let note = render_check_in(&owed(300, false), Instant::now());
-        assert!(!note.contains("(pulse)"), "{note}");
+    fn a_check_in_never_wears_the_unasked_marker() {
+        let note = render_check_in(&owed(300), Instant::now());
+        assert!(!note.contains("(unasked)"), "{note}");
         assert!(note.contains("(check-in)"), "{note}");
     }
 }
