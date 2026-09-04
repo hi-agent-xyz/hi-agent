@@ -122,7 +122,8 @@ async fn run(reaction: Reaction, registration: Registration) {
     let mut pending: Vec<String> = Vec::new();
 
     // Cognition's own wake. Until this existed the rung that **owns the ledger** was
-    // woken only by mail, while the pulse woke the rungs that cannot read it — so a
+    // woken only by mail, while the cadence of the day woke the rungs that cannot read it —
+    // so a
     // standing duty survived a restart on disk and nothing ever picked it back up.
     // `docs/arch/agents.md` has always specified the recovery sequence ("the glance-up
     // fires → Cognition wakes → reads active tasks → …"); this is the half of it that was
@@ -170,7 +171,8 @@ async fn run(reaction: Reaction, registration: Registration) {
                             warm_session(&reaction, &id, &mut session).await;
                             // A failed turn may already be waiting in `pending`. Retain a
                             // notify permit so the next loop iteration drives it now rather
-                            // than waiting for the recurring pulse or fresh mail.
+                            // than waiting for fresh mail, which is now the only thing
+                            // that would.
                             if !pending.is_empty() {
                                 mail.notify_one();
                             }
@@ -190,19 +192,17 @@ async fn run(reaction: Reaction, registration: Registration) {
             continue;
         }
 
-        // Resolved per iteration so a mid-session change to the `pulse` tunable takes
-        // effect at the next wake, the way it does for a conversation.
+        // **One wake, and it is restart recovery — not a cadence.** The recurring arm that
+        // used to sit beside this was a fixed period standing in for events that now exist:
+        // input, mail, a worker's report. Measured before it went, a timer-driven turn made
+        // no tool call and ran no command 46% of the time, against 28% for one something had
+        // asked for — a full window read to conclude nothing, and left in the thread
+        // afterwards. What it was kept for was a duty lost across a restart
+        // (`docs/user-journeys/gaps.md#1`), and that is this arm, which stays.
         //
-        // **`pulse: off` silences the recurring arm and not the boot one.** They are
-        // different mechanisms wearing one knob: the cadence is a preference, while
-        // restart recovery is the thing whose absence loses a promise. An operator
-        // turning pulses down should get a quieter agent, never one that forgets what
-        // it owes across a restart.
-        let wake_at = if woke_at_boot {
-            super::pulse_interval().map(|every| last_turn + every)
-        } else {
-            Some(started + BOOT_WAKE_AFTER)
-        };
+        // So the ledger is read when something finishes rather than every half hour, which
+        // is the same reason a person looks at their list: not because a bell rang.
+        let wake_at = if woke_at_boot { None } else { Some(started + BOOT_WAKE_AFTER) };
 
         tokio::select! {
             biased;
@@ -231,7 +231,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // needs startup uptime rather than time since that intervening turn.
                 let span = if first { started.elapsed() } else { last_turn.elapsed() };
                 last_turn = Instant::now();
-                match glance_note(&reaction, first, span).await {
+                match boot_note(&reaction, span).await {
                     Some(note) => pending.push(note),
                     // Nothing is owed, so there is nothing to glance at. Skipping
                     // costs one directory scan; waking would cost a subprocess and a
@@ -447,8 +447,9 @@ async fn run(reaction: Reaction, registration: Registration) {
         // Mail that landed mid-turn and was not steered in — a worker's report, or a
         // steer codex refused. It is owed either way, so it joins the next turn's batch,
         // *after* the clear above so a turn that succeeded does not carry it off. The
-        // notify is what makes "next turn" mean now rather than at the next pulse: this
-        // mail was taken out of the inbox by hand, so nothing else will wake for it.
+        // notify is what makes "next turn" mean now rather than never: this mail was taken
+        // out of the inbox by hand, so nothing else will wake for it — and since this rung
+        // has no cadence, nothing would come along later to find it.
         if !arrived.is_empty() {
             pending.append(&mut arrived);
             mail.notify_one();
@@ -477,7 +478,7 @@ async fn sleep_until_opt(at: Option<Instant>) {
 /// things we own are actually alive, and read each check's real output because a probe
 /// that returns nothing means **down**, not fine. That guidance has been in the prompt
 /// since before anything could deliver a pulse to this rung.
-async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option<String> {
+async fn boot_note(reaction: &Reaction, span: Duration) -> Option<String> {
     let data_dir = reaction.inner.memory.data_dir();
     let active = match crate::mind::memory::tasks::active_tasks(data_dir).await {
         Ok(active) => active,
@@ -486,88 +487,75 @@ async fn glance_note(reaction: &Reaction, first: bool, span: Duration) -> Option
         // opposite reading is the whole failure this arm exists to fix, one level up.
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "cognition could not read the ledger; waking anyway");
-            return Some(render_pulse(
+            return Some(unasked(
                 "I couldn't read the task ledger just now — whatever is active is not in front of me",
             ));
         }
     };
 
-    if first {
-        // Cognition can send only to live session slugs. Stand Reaction up before
-        // building this turn's window so every owed user-facing delivery has
-        // somewhere to land after a restart. `ensure_up` registers the address
-        // synchronously; its warm-up may continue while mail queues behind it.
-        reaction.ensure_up().await;
-    }
+    // Cognition can send only to live session slugs. Stand Reaction up before building
+    // this turn's window so every owed user-facing delivery has somewhere to land after a
+    // restart. `ensure_up` registers the address synchronously; its warm-up may continue
+    // while mail queues behind it.
+    reaction.ensure_up().await;
 
     let count = active.len();
-    let note = note_for(count, first, span);
-    tracing::info!(
-        active = count,
-        first_wake = first,
-        waking = note.is_some(),
-        "cognition timer fired"
-    );
+    let note = note_for(count, span);
+    tracing::info!(active = count, waking = note.is_some(), "cognition boot wake");
     note
 }
 
-/// The pure half of [`glance_note`] — split out so the two things worth pinning can be
+/// The pure half of [`boot_note`] — split out so the two things worth pinning can be
 /// tested without standing up a `Reaction`: that an empty ledger produces **no wake at
-/// all**, and that the boot note says a restart happened.
-fn note_for(active: usize, first: bool, span: Duration) -> Option<String> {
+/// all**, and that the note says a restart happened.
+fn note_for(active: usize, span: Duration) -> Option<String> {
     if active == 0 {
         return None;
     }
-    Some(pulse_line(first, span))
-}
-
-/// The situational fact a wake carries, with no opinion about whether to wake.
-///
-/// The `(pulse)` marker and the "just come back up" phrasing are both load-bearing:
-/// `cognition.md` keys on them to tell a restart from an ordinary quiet moment.
-fn pulse_line(first: bool, span: Duration) -> String {
     let m = span.as_secs() / 60;
-    render_pulse(&if first {
-        format!("you've just come back up (host process started {m}m ago)")
-    } else {
-        format!("nothing new for {m}m")
-    })
+    Some(unasked(&format!("you've just come back up (host process started {m}m ago)")))
 }
 
-/// The marker a quiet moment arrives under, and **this rung's alone**. It lived in
-/// [`super`] while the conversation loop had a pulse of its own; that loop no longer wakes
-/// itself, so the word now names exactly one thing — the brain glancing up — and lives
-/// with it. `cognition.md` keys on it.
-fn render_pulse(note: &str) -> String {
-    format!("(pulse) {note}")
+/// The marker a turn nobody asked for arrives under, and **this rung's alone**.
+///
+/// It used to read `(pulse)` and mark a recurring glance. There is no recurring glance any
+/// more — the only wake this rung gives itself is the one after the host process starts —
+/// so the word would have outlived the thing. What the marker still does is say that this
+/// turn had no sender: nothing arrived, nobody asked, and `cognition.md` keys on it to know
+/// that speaking is permitted rather than owed.
+fn unasked(note: &str) -> String {
+    format!("(unasked) {note}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The cadence must not burn a subprocess and a model turn to conclude that an
-    /// empty ledger is empty. Nothing owed, nothing to glance at.
+    /// The boot wake must not burn a subprocess and a model turn to conclude that an
+    /// empty ledger is empty. Nothing owed, nothing to come back to.
     #[test]
     fn an_empty_ledger_is_not_worth_waking_for() {
-        assert_eq!(note_for(0, true, Duration::from_secs(0)), None);
-        assert_eq!(note_for(0, false, Duration::from_secs(9_999)), None);
+        assert_eq!(note_for(0, Duration::from_secs(0)), None);
+        assert_eq!(note_for(0, Duration::from_secs(9_999)), None);
     }
 
-    /// Both notes are bare situational facts under the `(pulse)` marker — `cognition.md`
-    /// keys on that word, and on "the first pulse after the host process starts" to know a
-    /// restart is what it is looking at.
+    /// A bare situational fact under the `(unasked)` marker — `cognition.md` keys on that
+    /// word, and on "come back up", to know it is looking at a restart and that nobody
+    /// asked for this turn.
     #[test]
-    fn the_boot_note_says_a_restart_happened_and_the_others_do_not() {
-        let boot = note_for(3, true, Duration::from_secs(120)).unwrap();
-        assert!(boot.starts_with("(pulse) "), "{boot}");
+    fn the_boot_note_says_a_restart_happened() {
+        let boot = note_for(3, Duration::from_secs(120)).unwrap();
+        assert!(boot.starts_with("(unasked) "), "{boot}");
         assert!(boot.contains("just come back up"), "{boot}");
         assert!(boot.contains("2m ago"), "{boot}");
+    }
 
-        let later = note_for(3, false, Duration::from_secs(1_800)).unwrap();
-        assert!(later.starts_with("(pulse) "), "{later}");
-        assert!(!later.contains("come back up"), "{later}");
-        assert!(later.contains("nothing new for 30m"), "{later}");
+    /// **There is no recurring wake to test, and that is the change.** The timer arm fires
+    /// once per process; every turn after it has a sender. A later note with a longer span
+    /// is not a thing this rung can produce any more.
+    #[test]
+    fn the_only_self_given_wake_is_the_boot_one() {
+        assert!(note_for(3, Duration::from_secs(1_800)).unwrap().contains("come back up"));
     }
 }
 

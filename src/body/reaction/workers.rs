@@ -1183,7 +1183,7 @@ mod reopen_tests {
 /// Put back every errand the last stop caught mid-turn — same thread, same slug, same owner.
 ///
 /// **The host does this, and nothing is asked first.** What this replaces is the *offer*: a
-/// list of dead errands written into Cognition's first pulse, from which it picked with
+/// list of dead errands written into Cognition's boot wake, from which it picked with
 /// `CreateWorker(resume:)`. The judgment that list asked for — is this half-done state still
 /// worth finishing — is a question about what already landed, and the party holding the answer
 /// is the session that was doing the work, not the rung reading a title, a subject and a

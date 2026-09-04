@@ -303,9 +303,9 @@ making the call `agents.md` gives to the rung, and it would be wrong about exact
 protecting: a build that legitimately runs for an hour looks identical to a wedge until someone
 reads what it is doing.
 
-This is the sequence, not a plan for one: the glance-up is a timer arm on Cognition's own
-loop ([`host.md`](host.md#glancing-up)) — one wake shortly after
-the process starts, then on the pulse cadence while anything is owed.
+This is the sequence, not a plan for one: the wake is a timer arm on Cognition's own loop
+([`host.md`](host.md#glancing-up)) — one wake shortly after the process starts, and no
+recurring one. Every other turn this rung takes has a sender.
 
 #### The hand-down
 
@@ -374,8 +374,7 @@ has exactly one answer it may not give to an awaited reply: never.
 #### Working ahead
 
 **The reversible half of the next step is done before anyone asks for it.** Every wake this
-rung has is about something that already happened — mail, a worker's report, a pulse into
-idleness. The moment that carries the most information about what comes *next* is the one
+rung has is about something that already happened — mail, a worker's report, a restart. The moment that carries the most information about what comes *next* is the one
 where it is handing something over, and none of that moment was ever spent on it. So the
 person pays twice: once waiting for the handover, and again waiting for the obvious thing
 that follows it.
@@ -902,9 +901,9 @@ intact**; it answers its owner and Cognition staffs what it names. Its own outpu
 ledger and nothing else. The moment it starts finishing things itself it is back inside the
 loop it exists to break, and it is a worse executor than a worker briefed on the one job.
 
-**Woken by the glance-up, not by a clock of its own.** Cognition keeps the noticing — a
-`(pulse)` is still where "the ledger is worth a look" is decided — and hands the looking down.
-What moves is the filing, never the trigger.
+**Woken by Cognition, not by a clock of its own.** Cognition keeps the noticing — it is
+still where "the ledger is worth a look" is decided — and hands the looking down. What moves
+is the filing, never the trigger.
 
 **Volatile, and safely so.** It holds nothing: the ledger is on disk, and the pass that stamps
 what a status change implies is idempotent. A restart mid-file leaves a ledger part-updated and

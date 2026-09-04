@@ -303,13 +303,29 @@ to [`data/`](data.md); it appears here because it sits on the hot path.
 
 ### Glancing up
 
-**The host's whole timing surface is opening the agent's eyes on a cadence.** Two loops
-do that, each pacing itself from inside its own subsystem — **Cognition's glance-up** (one
-wake shortly after the process starts, then on the `pulse` cadence whenever anything is
-owed) and the **reflection backoff** for consolidation.
+**The host has almost no timing surface, and what is left is not a cadence.** One loop
+paces itself — the **reflection backoff** for consolidation, which is memory settling rather
+than attention. Beside it sits a single wake: **Cognition, once, shortly after the process
+starts**, which is restart recovery.
 
-**Reaction has no cadence, and that absence is deliberate.** A pulse used to wake the
-conversation loop on the same knob and run a turn into an empty room. Reaction is
+**There is no recurring glance-up, and it was removed rather than tuned.** A fixed period is
+what a design reaches for when it has no event for something, and the events exist: input,
+mail, a worker's report, a restart. What the period actually bought was measured across the
+frame log — 1819 turns driven by that timer alone, of which 46% made no tool call and ran no
+command at all, against 28% for turns something had asked for. A wake that reads a full
+window to conclude nothing is the most expensive nothing in the system, and it stayed in the
+thread afterwards. The failure usually cited for keeping it — a standing duty lost across a
+restart ([gaps #1](../user-journeys/gaps.md)) — was fixed by the boot wake, which survives.
+
+The ledger is therefore read when something finishes rather than every half hour, which is
+the shape a person's own attention has: you look at your list because you finished a thing,
+not because a bell rang. Anything that genuinely must happen on a period runs its own loop —
+a worker that owns the process — and anything that must happen at a named time is an alarm
+somebody set out loud, which is Reaction's `back_in`.
+
+**Reaction lost its cadence first, and the reasoning generalised.** A pulse used to wake the
+conversation loop on the same knob and run a turn into an empty room. Every argument below
+was later found to apply to Cognition's glance too, which is why neither has one now. Reaction is
 tools-off, so the wake handed it nothing it could not already see in the window it gets on
 *every* turn — the least-informed rung was the one deciding whether to speak. The journeys
 measured what that produced: two post-restart pulses, both concluding without a `hi_say`,
@@ -407,9 +423,9 @@ and costs an idle subprocess, which is the right price for something rare.
 
 ##### Arrival, and why it does not weaken any of the above
 
-A duty was reactive at its edge and cadence-paced at ours: the listener received a
-message the instant it was sent, wrote a row, and nothing read that row until the next
-glance — up to a pulse later. The third row closes that, under three constraints that
+A duty was reactive at its edge and unread at ours: the listener received a message the
+instant it was sent, wrote a row, and nothing read that row until something else happened to
+wake the rung that could. The third row closes that, under three constraints that
 keep it from becoming a second, weaker way of keeping a promise.
 
 **The nudge is not the truth.** A delivery carries what arrived, and the listener's own

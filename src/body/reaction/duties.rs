@@ -3,8 +3,8 @@
 //! A `serving` task is kept up by machinery the agent provisioned itself: a detached
 //! process holding a WebSocket or a long-poll, appending what arrives to its own ledger
 //! under `drive/`. Until this module existed the only way that traffic reached the agent
-//! was [`super::cognition`]'s glance-up reading the ledger on its cadence — so a message
-//! arrived in real time and was noticed up to a pulse later.
+//! was [`super::cognition`] happening to read the ledger — so a message arrived in real
+//! time and was noticed whenever something else next woke that rung, if ever.
 //!
 //! This is the other half: the listener says *something arrived*, and a working session
 //! handles it. Three things make that safe to have.

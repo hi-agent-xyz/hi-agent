@@ -1,5 +1,5 @@
 //! Cognition config → a thread's codex config + the child's env. The LLM credential
-//! (base URL, key, model) and the cognition tunables (effort, pulse, reflection cadence,
+//! (base URL, key, model) and the cognition tunables (effort, reflection cadence,
 //! …) all come from the config store (Settings). The tunables are read via [`tunables`]
 //! (a startup snapshot for the reaction's argless helpers) or
 //! [`crate::foundation::credentials::get_setting`] directly where a data dir is in scope.
@@ -36,17 +36,11 @@ pub const ENV_LLM_KEY: &str = "HI_AGENT_LLM_KEY";
 /// Reasoning effort for a thread's turns (e.g. low | medium | high), passed through as
 /// codex's `model_reasoning_effort`.
 pub const KEY_EFFORT: &str = "effort";
-/// Idle interval between Cognition's glance-ups — how often the brain looks up from what
-/// it is doing and reads down the ledger. Duration grammar (`90s`/`30m`/`1h`); `0`/`off`
-/// silences the recurring arm but never the one wake shortly after boot, which is restart
-/// recovery rather than a cadence; unset / unparseable → the built-in default. Reaction
-/// has no cadence of its own — it is woken by input, mail, and its own check-in.
-pub const KEY_PULSE: &str = "pulse";
 /// How long Reaction may leave an open-ended silence standing while its own thinking
 /// is still running, before the host wakes it to say where things stand. Duration
 /// grammar; `0`/`off` disables the floor — leaving only the check-ins Reaction arms
 /// itself through `say`'s `back_in`, never no check-ins at all; unset → the built-in
-/// default (5m). The gap doubles on each consecutive host-armed check-in, up to `pulse`.
+/// default (5m). The gap doubles on each consecutive host-armed check-in, up to thirty minutes.
 pub const KEY_CHECK_IN: &str = "check_in";
 /// Master switch for the reflection ("sleep") pass; `off` disables it entirely.
 pub const KEY_REFLECT: &str = "reflect";

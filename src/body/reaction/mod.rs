@@ -151,37 +151,27 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// early, and whether speaking is welcome is answered at the mouth, not here.
 const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 
-/// Default idle interval between glance-ups — the agent's recurring moment of
-/// self-attention, and **Cognition's alone**. It is not a schedule of work: it injects
-/// bare situational facts ("nothing new for 30m") and `cognition.md` tells the brain
-/// what such a moment is for (read down the ledger, glance at the setups it owns); most
-/// of them should conclude with nothing to do. Override via `pulse`; `0`/`off` silences
-/// the recurring arm and never the boot one, which is restart recovery rather than a
-/// cadence (see [`cognition`]).
+/// The widest an unproductive check-in backs off to, and the last thing left of the
+/// glance-up cadence that used to set it.
 ///
-/// **Reaction has no pulse, and that absence is deliberate.** The conversation loop used
-/// to wake itself on this same cadence and run a turn into an empty room. Three things
-/// killed it. Reaction is tools-off, so a wake handed it nothing it could not already see
-/// in the window it gets on *every* turn — the least-informed rung was the one deciding
-/// whether to speak. The measured outcome was silence at the exact moment there was
-/// something to do: two post-restart pulses, both concluding without a `say`, while a
-/// standing duty sat unread in the ledger (`docs/user-journeys/gaps.md#1`). And it was the
-/// most expensive wake in the system, because the projected window rides every turn and
-/// accumulates in the session. Unprompted speech now comes from the rung that can
-/// actually check: Cognition glances up, reads the ledger, and mails Reaction — which
-/// drives a turn like any other reason to speak.
-const DEFAULT_PULSE: Duration = Duration::from_secs(1800);
-
-/// Resolve the glance-up interval from the stored `pulse` tunable in duration grammar
-/// if set (`None` for `0`/`off` — the recurring arm disabled), else [`DEFAULT_PULSE`].
-/// Read by [`cognition`], which paces itself on it, and by [`check_in_cap`], which takes
-/// it as the ceiling the check-in floor widens to: one "how often does this agent look up
-/// from what it's doing" setting, not a brain one plus a conversation one that can
-/// disagree. It also keeps journey testing honest — dropping `pulse` for a session
-/// speeds up every cadence there is, rather than all but one.
-pub(super) fn pulse_interval() -> Option<Duration> {
-    duration_tunable(config::tunables::get(config::KEY_PULSE), DEFAULT_PULSE)
-}
+/// **There is no recurring pulse any more, and its removal is the point.** A fixed period
+/// is what a system reaches for when it has no event for something, and the events it was
+/// standing in for now exist: input, mail, a worker's report, and the boot wake that is
+/// restart recovery rather than a cadence. What was left was measured — across the frame
+/// log, 1819 turns driven by the timer alone, of which 46% made no tool call and ran no
+/// command at all, against 28% for turns something actually asked for. A wake that reads a
+/// full window to conclude nothing is the most expensive kind of nothing there is, and it
+/// accumulated in the thread besides.
+///
+/// The design's own history is the other half of the argument: this cadence was taken off
+/// Reaction once already for exactly these reasons, and the failure usually cited for
+/// keeping it — a standing duty lost across a restart (`docs/user-journeys/gaps.md#1`) —
+/// was fixed by the boot wake, which is a different mechanism and survives.
+///
+/// A named time still fires: Reaction's own `back_in`, which is a promise it made out loud.
+/// That is the shape a timed wake is allowed to take here — an alarm somebody set, for a
+/// reason they can say — never a metronome.
+const CHECK_IN_CAP: Duration = Duration::from_secs(1800);
 
 /// The floor under an open-ended silence: how long Reaction may stay quiet while its
 /// own thinking is still running before the host wakes it to say where things stand.
@@ -206,7 +196,7 @@ fn check_in_interval() -> Option<Duration> {
 /// already the answer to "how often does this agent look up from what it's doing". A word
 /// from Reaction or the person resets it: the conversation is live again.
 fn check_in_cap() -> Duration {
-    pulse_interval().unwrap_or(DEFAULT_PULSE)
+    CHECK_IN_CAP
 }
 
 /// Whether the reflection ("sleep") pass runs at all. On unless the stored `reflect`

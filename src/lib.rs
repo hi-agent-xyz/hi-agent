@@ -82,7 +82,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         normalize_dir(&config.data_dir).context("resolving cwd to absolutize data dir")?;
     tracing::debug!(?config, "starting hi-agent");
 
-    // Snapshot the cognition tunables (pulse, reflection cadence, compact ceiling,
+    // Snapshot the cognition tunables (reflection cadence, compact ceiling,
     // vendor-down thresholds, …) and the declared owner from the config store into the
     // process global the reaction's argless helpers read. Once, before anything reads
     // them — and for the owner that ordering is load-bearing rather than tidy: every
