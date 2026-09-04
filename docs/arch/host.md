@@ -341,8 +341,7 @@ restart ([gaps #1](../user-journeys/gaps.md)) — was fixed by the boot wake, wh
 The ledger is therefore read when something finishes rather than every half hour, which is
 the shape a person's own attention has: you look at your list because you finished a thing,
 not because a bell rang. Anything that genuinely must happen on a period runs its own loop —
-a worker that owns the process — and anything that must happen at a named time is an alarm
-somebody set out loud, which is Reaction's `back_in`.
+a worker that owns the process. **Nothing at all fires at a named time.**
 
 **Reaction lost its cadence first, and the reasoning generalised.** A pulse used to wake the
 conversation loop on the same knob and run a turn into an empty room. Every argument below
@@ -354,51 +353,35 @@ while a standing duty sat unread in the ledger ([gaps #1](../user-journeys/gaps.
 was also the most expensive wake in the system, because the projected window rides every
 turn and accumulates in the session. Unprompted speech comes instead from the rung that
 can actually check — Cognition glances up, reads the ledger, and messages Reaction, which
-is invariant 5 doing its job. **Reaction wakes on three things and no clock: input from
-the person, mail from another rung, and its own check-in.**
+is invariant 5 doing its job. **Reaction wakes on two things and no clock: input from
+the person, and mail from another rung.**
 
-That check-in is the one deadline that is *not* a cadence. It is not a third loop and not
-a scheduler — one slot, one deadline, one wake, no target and no payload.
+#### There is no timer, and the last one to go was the agent's own
 
-#### The check-in — the only thing that fires at a named time
+Reaction used to set one by naming a number in `hi_say`'s `back_in` — the same number it
+said out loud ("give me ten minutes") — and the host woke it when that was up. It was the
+best-shaped timer this design ever had: one slot, one deadline, no target, no payload, armed
+only by an utterance, so a wake could never be set for a number nobody was told. It fired
+zero times if Reaction never promised anything. Of the three wakes measured here it was also
+by far the most productive — 87% of its firings produced speech, against 11% for the
+host-armed check-in beneath it and 24% for the glance-up.
 
-Reaction sets it by naming a number in `hi_say`'s `back_in` — the same number it just
-said out loud ("give me ten minutes") — and the host wakes it when that is up. The
-size of a silence is therefore a property of *the utterance that opened it*: a
-promise is only a promise once it has been said, so there is no way to arm a wake for
-a number nobody was told.
+**It went anyway, and on a measurement the 87% was hiding.** "Produced speech" answers
+whether Reaction opened its mouth, not whether the words were worth it. Across the frame log
+it fired 53 times, and the work it was waiting on reported a median **1.2 minutes** later —
+42% within one minute, 90% within five. So what it bought was a line saying *"still going,
+give me another five minutes"* a minute or so before the real answer arrived and drove a
+turn on its own. That line is exactly the empty check-in `reaction.md` spends a paragraph
+forbidding, and each one armed the next, which is why it kept firing.
 
-**Why this is not the clock this design removed.** It holds exactly one deadline per
-Reaction, it fires nothing but that Reaction's own loop, it carries no task and no target,
-and a task's `due` still fires nothing. With the pulse gone it is the only deadline in
-Reaction's `select!` that is not vendor recovery — which is an argument for keeping it
-exactly this small, never for letting it grow into the removed clock's replacement. Every
-property the removal was protecting survives: scheduling past a cadence remains the
-agent's own, arranged with the shell it has.
+It could not be fixed by asking Reaction to promise better. Naming a number that survives
+contact requires estimating how long an unfinished thing will take; when the estimate runs
+short — which is most of the time — the timer necessarily fires just before the answer.
 
-**And nothing is armed beneath it, because a host-armed check-in is a clock covering for a
-prompt.** The host used to arm one itself when Reaction left a silence open-ended over
-running work — five minutes, doubling. It was the narrowest cadence in the design and the best
-performing one (133 wakes across the frame log, 42 of them producing speech, against the
-glance-up's 1819 and 46% doing nothing at all), and it went for the reason the glance-up
-went: a fixed interval standing in for an event that was never missing. The event is the
-number Reaction says out loud.
-
-So a silence Reaction opens without a number is a silence nothing will end — it lasts until
-the work lands or the person asks, and the person having to ask is the failure the promise
-exists to prevent. That consequence is stated in `reaction.md` rather than absorbed by the
-host, which is where a judgment belongs. A check-in is now always a promise the person
-heard, so the note says so flatly and cannot invent one nobody was told.
-
-It remains **permission to speak, never an instruction to**: what is worth saying is read
-off `## Still looking into` and the projected ledger, and staying quiet is a legitimate
-answer.
-
-A check-in **fires whether or not anyone is looking**. It used to be dropped into an
-empty room, on the reasoning that the words would be withheld anyway and a return would
-wake Reaction with a fresher read. Both halves of that went with the
-[gate](#attachment): a check-in produces a message, a message waits in the conversation,
-and there is no return edge left to defer it to.
+So a number Reaction names is a **forecast it will be judged on**, not a hook. What ends a
+silence is the work coming back, which drives a turn regardless, and if that never happens
+the person asks. `reaction.md` states that consequence rather than the host absorbing it,
+which is where a judgment belongs.
 
 Everything else an agent needs from time, **the agent arranges itself.** It has a
 shell, so it starts the process it needs, parks a worker that sleeps and messages

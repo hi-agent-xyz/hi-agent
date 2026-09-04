@@ -67,10 +67,12 @@ pub enum McpReply {
 /// refuse it — and Reaction finds out which. Text streamed into the transcript is
 /// fire-and-forget and leaves nowhere for that decision to live.
 ///
-/// It is also where a **promise** is made, via `back_in`, and that is not a second
-/// concern smuggled onto one tool: a promise is only a promise once it has been said,
-/// so the size of a silence belongs to the utterance that opened it. The alternative —
-/// a separate verb — could arm a wake for a number nobody was ever told.
+/// **It carries no timer, and nothing else here does either.** It used to take `back_in`:
+/// the size Reaction put on a silence, armed as a wake. That went on its own numbers —
+/// across the frame log it fired 53 times and the work it was waiting on reported within a
+/// further 1.2 minutes at the median. What it produced was a line saying "still going, give
+/// me another five minutes" a minute before the real answer, each one arming the next. A
+/// promise is kept by the work coming back, which drives a turn regardless.
 fn say_tool() -> Value {
     tool(
         "hi_say",
@@ -86,17 +88,6 @@ fn say_tool() -> Value {
             "type": "object",
             "properties": {
                 "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." },
-                "back_in": {
-                    "type": "string",
-                    "description": "Optional, and the only timer you have. When you put a size \
-                                    on a silence — \"give me ten minutes\" — put that same size \
-                                    here (`90s`, `10m`, `1h`) and you will be woken when it is \
-                                    up, unless something has already brought you back by then. \
-                                    Without it the number you named is only words, and they \
-                                    find out where things stand by asking. Set it on the \
-                                    utterance that makes the promise, and set it again each \
-                                    time you give them a new number.",
-                },
             },
             "required": ["text"],
         }),
@@ -1741,7 +1732,7 @@ async fn dispatch_tool(
             // that always reads "spoken" answers nothing. It also confirms the check-in
             // this call armed, so a promise the host is now holding is never something
             // Reaction has to assume it made.
-            sink.say(text, arg_opt("back_in").as_deref())
+            sink.say(text)
                 .await
                 .map(crate::body::reaction::Said::ack)
         }

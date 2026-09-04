@@ -100,11 +100,11 @@ is what speaks. (A fourth duty, the presence gate, was retired rather than inher
 see [Attachment](host.md#attachment).) See
 [`host.md`](host.md#the-social-layer-lives-in-reaction-not-here).
 
-Owning that timing includes the one deadline in this host that fires at a named minute:
-`hi_say`'s `back_in` arms the [check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
-that brings Reaction back to keep a promise it made. It belongs here for the same
-reason the rest of the social layer does — the rung that named the number is the rung
-that owes the word.
+Owning that timing no longer includes a deadline: **nothing in this host fires at a named
+minute** ([`host.md`](host.md#there-is-no-timer-and-the-last-one-to-go-was-the-agents-own)).
+A number Reaction names is a forecast it will be judged on, and what ends the silence is the
+work coming back. The rung that named the number is still the rung that owes the word — it
+just owes it to the work landing rather than to a clock.
 
 > **Enforced, not merely instructed.** This is the one place where a tool surface is a hard
 > limit rather than a division of labour: the whole argument for the rung — that it *cannot*

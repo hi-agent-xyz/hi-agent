@@ -117,11 +117,11 @@ Note what this does *not* mean: the host holds no queue of things to say later. 
 append the moment they are said and are there whenever anyone looks. What waits for a
 better moment waits in Reaction's judgment, which is where the decision lives.
 
-The same call also carries `back_in` — the size Reaction just put on a silence, which
-arms [the check-in](host.md#the-check-in--the-only-thing-that-fires-at-a-named-time)
-that brings it back to keep the promise. It rides on `hi_say` rather than on a verb of its
-own precisely because a promise is only a promise once it has been *said*: a separate
-call could arm a wake for a number nobody was ever told. Still one queue-free surface —
+The call carries nothing but the words. It used to take `back_in`, the size Reaction had
+just put on a silence, and that timer is gone
+([`host.md`](host.md#there-is-no-timer-and-the-last-one-to-go-was-the-agents-own)): it fired
+just before the work landed and said so, which is the one thing a check-in must not be.
+Still one queue-free surface —
 what is held is a deadline, not an utterance.
 
 ### Text transcript

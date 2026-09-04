@@ -151,17 +151,16 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// early, and whether speaking is welcome is answered at the mouth, not here.
 const BATCH_WHILE_COMPOSING: Duration = Duration::from_secs(5);
 
-/// **Nothing in this host fires on a period any more.** The recurring glance-up went
-/// first; the five-minute check-in the host armed under an open-ended silence went with it,
-/// for the same reason — a fixed interval is what a design reaches for when it has no event, and
-/// here the event exists: it is the number Reaction says out loud. `hi_say`'s `back_in` is
-/// the whole of it, and it is the agent's to set, because it decided to and said so.
+/// **Nothing in this host fires at a time — not on a period, and not at a named minute.**
+/// Three went, in order: the recurring glance-up, the check-in the host armed under an
+/// open-ended silence, and `back_in`, the one Reaction set itself. The first two were fixed
+/// intervals standing in for events that existed. The third was not a period at all and
+/// went on its own numbers: it fired a median 1.2 minutes before the work reported anyway,
+/// so what it bought was "still going, another five minutes" just ahead of the real answer.
 ///
-/// That one was the host compensating for Reaction not naming a number. Measured across the
-/// frame log it fired 133 times and produced speech in 42 — far better than the glance-up it
-/// outlived, and still the wrong shape: a supervisor poking someone who forgot to say when.
-/// What replaces it is that saying when is Reaction's job, and `reaction.md` says so plainly:
-/// **a silence with no number is a silence nothing will end.**
+/// What ends a silence now is the work coming back, which drives a turn regardless.
+/// `reaction.md` states the consequence rather than the host absorbing it: a number Reaction
+/// names is a forecast, not a hook.
 
 /// Whether the reflection ("sleep") pass runs at all. On unless the stored `reflect`
 /// tunable is `off` — a master escape hatch to disable consolidation without
@@ -771,15 +770,6 @@ enum LoopInput {
     /// view band. It reaches the mind and joins a turn, and nobody said it.
     Observed(Signal),
     Worker(workers::WorkerReport),
-    /// Reaction's own check-in coming due — it said they'd hear back by now, or it
-    /// left a silence open-ended while its thinking ran and the host put a floor under
-    /// it ([`tools::NextWord`]).
-    ///
-    /// **The only clock this loop still answers to**, and it never wears the `(pulse)`
-    /// marker Cognition's glance-up does. That marker means a quiet moment almost nothing
-    /// is worth breaking; this is the moment a word was *owed*, and rendering the two the
-    /// same would tell Reaction to stay quiet at precisely the instant it should speak.
-    CheckIn { owed: tools::Owed },
     /// Mail from another part of the agent, addressed to this conversation. It drives a
     /// turn on its own — that is what makes a message *reach* the person rather
     /// than sit in a mailbox until they happen to say something next.
@@ -1243,10 +1233,6 @@ impl Reaction {
         // How many utterances the mouth has accepted. The mouth's own; the loop used to
         // hold the other end to pace the check-in floor, and there is no floor now.
         let said = Arc::new(AtomicU64::new(0));
-        // When Reaction next owes them a word. `say` writes it from the `/mcp` task;
-        // the loop below reads it as a deadline. See [`tools::NextWord`].
-        let next_word = tools::NextWord::default();
-
         self.inner
             .tools
             .register(
@@ -1256,7 +1242,6 @@ impl Reaction {
                     mouth: Some(tools::Mouth {
                         beats: beats_tx.clone(),
                         said: said.clone(),
-                        next_word: next_word.clone(),
                         floor: self.inner.floor.clone(),
                     }),
                 },
@@ -1274,7 +1259,7 @@ impl Reaction {
                 task_worker_inbound,
                 control_rx,
                 control_tx,
-                Speaking { beats: beats_tx, next_word },
+                Speaking { beats: beats_tx },
                 registration,
             )
             .await;
@@ -1294,10 +1279,6 @@ impl Reaction {
 /// answer it while the bracket is still open.
 struct Speaking {
     beats: mpsc::Sender<sequencer::Beat>,
-    /// When Reaction next owes them a word — armed by `say`, read here as a deadline.
-    /// It travels with the mouth for the same reason `said` does: it is set at the
-    /// instant of speech and read by the loop that has to act on it.
-    next_word: tools::NextWord,
 }
 
 /// Why the reaction loop's wait resolved. Keeps the `select!` arms tiny so the
@@ -1441,7 +1422,6 @@ async fn reaction_loop(
             // Reaction's own check-in. Suppressed while down — it calls the model and
             // would just fail — but *not* dropped: an owed word is still owed after an
             // outage, and later rather than never is the whole point of it.
-            let check_in_at = if down { None } else { speaking.next_word.due_at() };
             // While down, the recovery timer: the backoff retry deadline (429/generic).
             // Up → no such timer.
             let recover_at = match gate {
@@ -1450,7 +1430,7 @@ async fn reaction_loop(
                 // No conversation-local deadline: the process-wide gate owns recovery.
                 TurnGate::Hold => None,
             };
-            let deadline = [recover_at, check_in_at].into_iter().flatten().min();
+            let deadline = recover_at;
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
@@ -1525,19 +1505,6 @@ async fn reaction_loop(
                         }
                         continue 'wait;
                     }
-                    // The word Reaction owes them. Taking it disarms it, so a turn that
-                    // reads the room and stays quiet is not re-woken for the same overdue
-                    // promise on the next iteration.
-                    if let Some(owed) = speaking.next_word.take_due(now) {
-                        // Fired whether or not anyone is looking. It used to be dropped
-                        // into an empty room, because the words would have been withheld
-                        // anyway and a return would wake Reaction with a fresher read —
-                        // and both of those went with the presence gate. What Reaction
-                        // says now lands in the conversation and waits there.
-                        tracing::info!("check-in fired");
-                        enqueue(&reaction, &mut workers, &mut batch, LoopInput::CheckIn { owed })
-                            .await;
-                    }
                     if !batch.is_empty() {
                         break 'wait;
                     }
@@ -1606,17 +1573,6 @@ async fn reaction_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
-        // The agent's own thinking coming back — the thing a promise made *about* it was
-        // for. Captured with what was armed going in, so the discharge below can tell an
-        // untouched promise from a fresh one this turn just made.
-        //
-        // **Mail from Cognition, whatever it says.** This is the one place the host still
-        // needs to know the brain wrote, and it needs a mechanical fact rather than a
-        // reading: a promise was made *about* work being under way, so the work reporting
-        // anything at all is what discharges it. Whether the message answers the question
-        // is Reaction's to read — see [`LoopInput::Mail`].
-        let by_thinking_back = batch.iter().any(mail_from_cognition);
-        let armed_before = speaking.next_word.peek();
 
         let turn_result = run_reaction_turn(
             &reaction,
@@ -1677,21 +1633,16 @@ async fn reaction_loop(
             }
         }
 
-        // A promise is discharged by the thing it was about coming back. This turn was
-        // handed its own thinking with an instruction to relay it, so waking Reaction
-        // later to say "you told them they'd hear by now" would be the host arguing with
-        // a word already spoken. Only when the slot is untouched: a turn that named a new
-        // number ("still on it — another five minutes") armed a *new* promise, and that
-        // one is exactly the promise worth keeping.
-        if by_thinking_back && speaking.next_word.peek() == armed_before {
-            speaking.next_word.clear();
-        }
-
-        // **Nothing arms a check-in but Reaction.** The host used to arm one here: when it
-        // left a silence open-ended over running work, five minutes and doubling. That was a period standing in for a missing event, and the
-        // event was never missing — it is the number Reaction says out loud. A silence it
-        // opens without one is now a silence nothing will end, which is the honest state and
-        // the one `reaction.md` describes.
+        // **Nothing in this loop fires at a time.** Two timers stood here and both are
+        // gone: the host-armed check-in under an open-ended silence, and before it the
+        // recurring pulse. The last to go was `back_in`, the one Reaction set itself, and
+        // it went on its own numbers — measured across the frame log it fired 53 times and
+        // the work it was waiting on reported within a further 1.2 minutes at the median,
+        // 5 minutes in 90% of cases. What it bought was a line saying "still going, give me
+        // another five minutes" a minute before the real answer, which is the noise
+        // `reaction.md` spends a paragraph forbidding, and each one armed the next.
+        //
+        // A promise is kept by the work coming back, which wakes this loop anyway.
 
         // Coalesce mid-turn arrivals. Utterances that queued while this turn ran
         // (a generation is now seconds, not ~1s) are siblings of the thread we just
@@ -1807,19 +1758,6 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
     s
 }
 
-/// Whether this input is mail Cognition wrote.
-///
-/// The one thing about mail the host still decides, and it is deliberately the dumbest
-/// possible question: *did the brain write?* — not *is this the answer?* The second used
-/// to be a host-held flag and could never be answered from here (see [`LoopInput::Mail`]);
-/// the first is a session slug comparison and discharges a promise made about work being
-/// under way ([`tools::NextWord`]), which is the only caller.
-fn mail_from_cognition(input: &LoopInput) -> bool {
-    let LoopInput::Mail { mail } = input else { return false };
-    registry::global()
-        .session_of_role(Role::Cognition)
-        .is_some_and(|brain| mail.iter().any(|m| m.from.as_ref() == Some(&brain.id)))
-}
 
 /// A reaction turn: the single fast conversational rung. An agent session
 /// ([`Role::Reaction`]) on the small model, carrying `reaction.md` as its system
@@ -3009,9 +2947,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Worker(report) => {
                 let _ = writeln!(s, "{}", workers::render_report(report));
             }
-            LoopInput::CheckIn { owed } => {
-                let _ = writeln!(s, "{}", render_check_in(owed, Instant::now()));
-            }
             // One arm, and no framing. What to do with mail — pass on what someone is
             // waiting for, weigh the timing of what nobody asked for — is standing
             // guidance in `reaction.md`, not a sentence the host picks per delivery.
@@ -3031,21 +2966,6 @@ fn render_batch(batch: &[LoopInput]) -> String {
 /// ledger, and what is worth saying about it is Reaction's alone. It may also be
 /// nothing: the wake is permission to speak, not an instruction to.
 ///
-/// There is only one source now. A check-in is always a promise Reaction made out loud, so
-/// the note can say so flatly — the person holds the same fact, they were told a number and
-/// it has passed. The host-armed variant this used to branch on is gone; nothing arms one
-/// but the utterance that named it.
-fn render_check_in(owed: &tools::Owed, now: Instant) -> String {
-    // Since the promise was made, not since the deadline: the deadline is normally
-    // *now*, and "that was 0s ago" is not the sentence anyone means.
-    let waited = tools::render_gap(now.saturating_duration_since(owed.at) + owed.after);
-    format!(
-        "(check-in) You told them they'd hear from you within {} — you said that {waited} \
-         ago and haven't spoken since. If it's done, say what came of it; if it's still \
-         running, say where it's got to and give them a new number.",
-        tools::render_gap(owed.after),
-    )
-}
 
 /// How one turn-driving input is recorded in the durable log, or `None` when it
 /// needs no row of its own.
@@ -3067,14 +2987,6 @@ fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
             Channel::Worker,
             Origin::Worker,
             workers::render_report_plainly(report),
-        )),
-        // On `Channel::Clock`, and the only thing left there: a check-in is the host
-        // noticing the time, not something the person said. It must not hold a
-        // conversation warm by itself ([`NON_ACTIVITY_CHANNELS`]).
-        LoopInput::CheckIn { owed } => Some((
-            Channel::Clock,
-            Origin::Host,
-            render_check_in(owed, Instant::now()),
         )),
         // Mail crosses no wire, so this is its only chance to be written down. It is
         // journaled as what was written, which is now also how it reached the window —
@@ -3440,45 +3352,3 @@ mod duration_tests {
     }
 }
 
-#[cfg(test)]
-mod check_in_tests {
-    use super::*;
-    use crate::body::reaction::tools::Owed;
-
-    fn owed(after_secs: u64) -> Owed {
-        Owed { at: Instant::now(), after: Duration::from_secs(after_secs) }
-    }
-
-    /// **There is one source left, and the note may finally say so.** While the host also
-    /// armed a floor, this had to branch: telling Reaction it "said ten minutes" when it
-    /// named no number invents a promise, which is the kind of claim `reaction.md` spends a
-    /// section forbidding. Nothing arms a check-in now but the utterance that named it, so
-    /// the note states the promise as fact.
-    #[test]
-    fn a_check_in_reads_as_the_promise_it_is() {
-        let note = render_check_in(&owed(600), Instant::now());
-        assert!(note.starts_with("(check-in)"), "{note}");
-        assert!(note.contains("told them"), "{note}");
-        assert!(note.contains("10m"), "it names the number it made: {note}");
-    }
-
-    /// The elapsed span is measured from when the promise was *made*, not from the
-    /// deadline — which is normally now, and "that was 0s ago" is not a sentence.
-    #[test]
-    fn the_span_counts_from_the_promise() {
-        let o = owed(600);
-        let note = render_check_in(&o, o.at + Duration::from_secs(60));
-        assert!(note.contains("11m"), "10m promised + 1m late: {note}");
-    }
-
-    /// Reaction's only wake at a named time must read as the moment a word was *owed*.
-    /// Cognition's `(unasked)` marker means the opposite — nobody asked, so speaking is
-    /// permitted rather than due — and wearing it here would tell Reaction to stay quiet at
-    /// precisely the instant it should speak.
-    #[test]
-    fn a_check_in_never_wears_the_unasked_marker() {
-        let note = render_check_in(&owed(300), Instant::now());
-        assert!(!note.contains("(unasked)"), "{note}");
-        assert!(note.contains("(check-in)"), "{note}");
-    }
-}

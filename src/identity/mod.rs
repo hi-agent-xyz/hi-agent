@@ -1547,30 +1547,31 @@ mod soul_tests {
     }
 
     #[test]
-    fn reaction_has_exactly_one_timer_and_is_told_its_name() {
+    fn reaction_has_no_timer_and_is_told_so() {
         // The retired clock stays retired: `alarm` was a general scheduler and its
         // vocabulary must not creep back (`docs/arch/host.md#glancing-up`).
         assert!(!REACTION_BASE.contains("set an alarm"));
         assert!(!REACTION_BASE.contains("When the alarm fires"));
 
-        // What replaced "you have no timer" is one deadline Reaction arms itself, on
-        // the utterance that makes the promise. The brief has to name the parameter,
-        // because a promise the model never arms is the failure this was built for —
-        // the person filling the silence by asking "progress?".
-        assert!(REACTION_BASE.contains("back_in"), "the brief must name the parameter");
+        // **And `back_in` went the same way**, last of the three. It fired 53 times across
+        // the frame log and the work it waited on reported a median 1.2 minutes later, so
+        // what it bought was "still going, another five minutes" said just before the real
+        // answer — the empty check-in `reaction.md` forbids, arming the next one each time.
         assert!(
-            REACTION_BASE.contains("only timer in this host at all"),
-            "and must not leave Reaction thinking anything else fires on a clock"
+            !REACTION_BASE.contains("back_in"),
+            "the parameter is gone; the brief must not still ask for it"
         );
-        // The floor the host used to arm under an open-ended silence is gone, and the
-        // brief has to say what that costs: a silence with no number is one nothing ends.
+
+        // What must survive is the honest consequence: a number is a forecast, and the
+        // thing that ends a silence is the work landing. A brief that leaves Reaction
+        // believing something will wake it is worse than one that never mentioned time.
         assert!(
-            REACTION_BASE.contains("nothing brings you back"),
-            "the consequence of not naming a number must be stated, not implied"
+            REACTION_BASE.contains("Nothing wakes you at that number"),
+            "the brief must say plainly that naming a size arms nothing"
         );
         assert!(
-            !REACTION_BASE.contains("You have no timer"),
-            "the brief still describes a host that cannot wake it"
+            REACTION_BASE.contains("What brings you back is the work landing"),
+            "and must say what does end the silence instead"
         );
     }
 
