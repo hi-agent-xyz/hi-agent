@@ -46,6 +46,11 @@ const T = {
     sec: { face: "Faces", voice: "Voices" },
     noun: { face: "face", voice: "voice" },
     regroup: "Regroup automatically ⟳",
+    // A gallery can drift until it no longer describes one person. Saying so is the
+    // whole point: the recognition quietly stopped, and a stop nobody is told about
+    // reads as the agent simply forgetting them.
+    mixedTag: "mixed",
+    mixed: (noun) => <>These {noun} clips have spread out until they no longer look like one person, so I've stopped naming anyone from them — I'd rather say nothing than say the wrong name. I'm learning this {noun} again from scratch and it comes back on its own; pulling out the ones that don't belong, or regrouping, just makes it quicker.</>,
     oneOnly: "Looks like just one person — no need to split.", ok: "OK",
     notThisPerson: "Not this person",
     leadNamed: (name, noun) => <> Some of <b>{name}</b>'s {noun} clips look like someone else. The bigger pile stays {name}; take a look at the other one and tell me who it is.</>,
@@ -58,6 +63,8 @@ const T = {
     emptyBig: "还没记住谁。",
     emptySub: "见过面、听过声音之后，人会一张张出现在这里，你来给他们起名字。",
     unnamed: "未命名", namePh: "加个名字…",
+    mixedTag: "混了多人",
+    mixed: (noun) => <>这些{noun}已经散得不像同一个人了，所以我不再拿它们认人——宁可什么都不说，也不叫错名字。我正在重新认识，会自己好起来；你把不属于这里的挑出去、或者重新分组，会快很多。</>,
     mergeHint: (n) => `已经有「${n}」的话，保存会合并到一起`,
     sec: { face: "人脸", voice: "声音" },
     noun: { face: "脸", voice: "声音" },
@@ -185,6 +192,7 @@ export default function PeopleReview() {
 function Card({ person, onOpen }) {
   const isFace = person.face.length > 0;
   const poster = isFace ? clipUrl(person.subject, "face", person.face[0]) : null;
+  const mixed = person.face_shape?.smeared || person.voice_shape?.smeared;
   return (
     <button type="button" data-card={person.subject} style={{ ...S.reset, ...S.card }} onClick={onOpen}
       onMouseEnter={(e) => lift(e.currentTarget, true)} onMouseLeave={(e) => lift(e.currentTarget, false)}>
@@ -193,7 +201,10 @@ function Card({ person, onOpen }) {
       ) : (
         <div style={{ ...S.poster, ...S.voicePoster }}><Eq /></div>
       )}
-      <div style={person.named ? S.name : S.nameNone}>{person.named ? person.subject : L.unnamed}</div>
+      <div style={person.named ? S.name : S.nameNone}>
+        {person.named ? person.subject : L.unnamed}
+        {mixed && <span style={S.mixedTag}>{L.mixedTag}</span>}
+      </div>
     </button>
   );
 }
@@ -242,8 +253,10 @@ function Review({ person, onClose, onChanged }) {
 
 function ModSection({ person, modality, onChanged, first }) {
   const stems = modality === "face" ? person.face : person.voice;
+  const shape = modality === "face" ? person.face_shape : person.voice_shape;
   const [proposal, setProposal] = useState(null);
-  const messy = stems.length >= 4 || person.recurring;
+  // A gallery the core has stopped trusting always offers the way out of it.
+  const messy = stems.length >= 4 || person.recurring || shape?.smeared;
 
   const regroup = async () => {
     const p = await api.preview(person.subject, modality);
@@ -256,6 +269,7 @@ function ModSection({ person, modality, onChanged, first }) {
         <span>{L.sec[modality]} <span style={S.cnt}>{stems.length}</span></span>
         {messy && <button type="button" style={{ ...S.reset, ...S.regroup }} onClick={regroup}>{L.regroup}</button>}
       </div>
+      {shape?.smeared && <div style={S.mixedNote}>{L.mixed(L.noun[modality])}</div>}
       <div style={S.clips}>
         {stems.map((stem) => (
           <Clip key={stem} subject={person.subject} modality={modality} stem={stem} onChanged={onChanged} />
@@ -453,6 +467,10 @@ const S = {
   voicePoster: { display: "flex", alignItems: "center", justifyContent: "center",
     backgroundImage: "linear-gradient(150deg,var(--line),var(--line-strong))" },
   name: { padding: "13px 15px 15px", fontSize: 15, fontWeight: 700, letterSpacing: "-.02em" },
+  mixedTag: { marginLeft: 8, padding: "1px 7px", borderRadius: 99, fontSize: 11, fontWeight: 500,
+    verticalAlign: "middle", color: "var(--fg-mute)", border: "1px solid var(--line-strong)" },
+  // Same voice as `plead` — a note the agent is telling you, not a warning banner.
+  mixedNote: { fontSize: 14, color: "var(--fg)", opacity: 0.75, margin: "0 0 14px", lineHeight: 1.5 },
   nameNone: { padding: "13px 15px 15px", fontSize: 15, fontWeight: 500, color: "var(--fg-mute)" },
 
   review: { gridColumn: "1 / -1", background: "var(--surface-strong)", borderRadius: 28,

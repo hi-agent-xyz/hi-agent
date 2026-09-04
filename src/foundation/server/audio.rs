@@ -1177,7 +1177,7 @@ mod tests {
 
     /// A candidate as `people_vectors::recognize` would return it.
     fn named(subject: &str, similarity: f32) -> Candidate {
-        Candidate { subject: subject.to_string(), similarity, support: 3 }
+        Candidate { subject: subject.to_string(), similarity, support: 3, coherence: 0.8 }
     }
 
     #[test]

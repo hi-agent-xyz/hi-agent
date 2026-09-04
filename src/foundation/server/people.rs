@@ -64,6 +64,37 @@ struct PersonDto {
     recurring: bool,
     face: Vec<String>,
     voice: Vec<String>,
+    /// How each gallery is arranged as a set — see [`ShapeDto`]. Absent for a
+    /// modality this person has nothing in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    face_shape: Option<ShapeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voice_shape: Option<ShapeDto>,
+}
+
+/// A gallery's shape for the review view: how much like one person it is, whether it
+/// grew along its own edge, and whether that has already cost it the right to name
+/// anybody. The view's job with `smeared` is to say so plainly and point at the
+/// clips — the numbers alone mean nothing to the person reading them.
+#[derive(Serialize)]
+struct ShapeDto {
+    samples: usize,
+    centre: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frontier: Option<f32>,
+    /// The gallery has stopped naming anyone and stopped taking samples.
+    smeared: bool,
+}
+
+impl From<people_vectors::GalleryShape> for ShapeDto {
+    fn from(s: people_vectors::GalleryShape) -> Self {
+        ShapeDto {
+            samples: s.samples,
+            centre: s.centre,
+            frontier: s.frontier,
+            smeared: !people_vectors::coherent(s.centre),
+        }
+    }
 }
 
 /// `GET /api/people` — every cluster with its per-modality clip stems, named first.
@@ -78,6 +109,8 @@ pub async fn get_people(State(state): State<Arc<AppState>>) -> Response {
                     recurring: c.occasions >= 2,
                     face: c.face_stems,
                     voice: c.voice_stems,
+                    face_shape: c.face_shape.map(Into::into),
+                    voice_shape: c.voice_shape.map(Into::into),
                 })
                 .collect();
             Json(serde_json::json!({ "people": people })).into_response()

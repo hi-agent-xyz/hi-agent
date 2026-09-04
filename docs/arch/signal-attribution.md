@@ -131,6 +131,24 @@ sample in it are a wrong append and an invented person. Both were happening: one
 person's gallery sat at its thousand-sample ceiling while two dozen one-second
 fragments had become two dozen one-sample "people".
 
+**A gallery that stops looking like one person can veto, but cannot vouch.** The three
+rules above all judge *this observation*; none of them can see that the thing it is
+being compared against has quietly become a mixture. So a gallery is also measured
+against itself — the mean cosine of its samples to their own centre — and one that
+falls below the floor stops being a candidate. Nothing is named from it and nothing is
+filed into it. It still counts *against* a name, because it holds that person's own
+samples and a voice that sounds like the mixture should not be handed whichever other
+name happens to be nearest; but it objects only when it is clearly the better
+explanation, never on a tie.
+
+**The asymmetry is the whole design, and it is there so nobody has to maintain
+anything.** Observations that would have gone into the bad gallery mint a fresh one
+instead; it grows, becomes coherent, and once it is no worse than the mixture it names
+again. A first version of this stopped the writes as well and required a person to open
+a review page — which is not a repair path, because most people never will. **A store
+that needs maintenance to keep working does not work.** Reviewing is the fast way, not
+the only way.
+
 The accepted consequence is **fewer senders and more `unknown`** — the same trade this
 document already takes, applied to the sense that was quietly exempt from it.
 

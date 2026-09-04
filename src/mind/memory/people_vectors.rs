@@ -79,11 +79,58 @@ const DEDUP_SIMILARITY: f32 = 0.85;
 /// averages over what it has.
 const SCORE_SAMPLES: usize = 3;
 
+/// Mean cosine to its own centre, below which a gallery is no longer treated as one
+/// person's: **it can veto but it cannot vouch.** It is not a candidate — nothing is
+/// named from it and nothing is filed into it — but it still counts against
+/// [`Recognition::margin`], so a voice that sounds like the mixture does not get
+/// handed whichever *other* name happens to be nearest.
+///
+/// **The store then re-learns the person by itself**, which is the part that matters:
+/// observations that would have gone into the bad gallery mint a fresh one, it grows
+/// coherent, and once it out-scores the mixture it starts naming again. An earlier
+/// version of this stopped the writes too, and that was a dead end — the gallery
+/// could never improve, so recognition stayed broken until a person opened a review
+/// page. Most people never will, and a store that needs maintenance to keep working
+/// does not work.
+///
+/// **Measured September 4 2026** across this install's ten galleries: nine run
+/// 0.666–0.902, and the one known to be contaminated — a thousand voice samples
+/// admitted by the old read-that-also-wrote path — sits at **0.514**. There is a
+/// wide gap and nothing in it, so the floor goes just under the worst healthy
+/// gallery rather than midway: one positive example is not enough to calibrate
+/// finely, and the cost of tripping on a healthy gallery (a person quietly stops
+/// being recognized) is higher than the cost of missing a mildly bad one.
+///
+/// A gallery too small to be spread — one sample, or two of the same look — scores
+/// 1.0 and is never caught, correctly: it has not had the chance to go wrong.
+const COHERENT_MIN: f32 = 0.55;
+
+/// Whether a gallery with this [`GalleryShape::centre`] still counts as one person's.
+/// The one place [`COHERENT_MIN`] is read from outside this module, so a surface
+/// showing the number and the matching path acting on it cannot drift apart.
+pub fn coherent(centre: f32) -> bool {
+    centre >= COHERENT_MIN
+}
+
 /// How far ahead of the runner-up the best subject must score before a match names
 /// anyone. Two subjects within this of each other are one ambiguous answer, not a
 /// winner and a loser; the honest reading is that we cannot tell which, so
 /// [`Recognition::named`] answers nobody. A guess until validated on real embeddings.
 const MARGIN_MIN: f32 = 0.05;
+
+/// Below this many samples a gallery has no shape worth reporting — see
+/// [`frontier_lead`].
+const SHAPE_MIN_SAMPLES: usize = 12;
+
+/// How far down the ranking [`recognize`] looks for a gallery still fit to name
+/// somebody. Incoherent galleries are rare, so this only has to survive a handful of
+/// them before the answer is "nobody" anyway.
+const RANK_DEPTH: usize = 8;
+
+/// How many samples [`frontier_lead`] compares pairwise before it starts measuring an
+/// evenly-spread subset instead. Keeps a thousand-sample gallery's review page from
+/// paying a million cosines for a number read to two decimal places.
+const SHAPE_MAX_PAIRWISE: usize = 300;
 
 /// The directory under [`layout::facets_dir`] holding every person's subdir.
 fn people_dir(data_dir: &Path) -> PathBuf {
@@ -176,6 +223,13 @@ pub struct Candidate {
     pub subject: String,
     pub similarity: f32,
     pub support: usize,
+    /// How much like *one person* this subject's gallery is: the mean cosine of its
+    /// samples to their own centre. Carried on every candidate because a score
+    /// against an incoherent gallery is not the same evidence as the same score
+    /// against a tight one — see [`COHERENT_MIN`]. `1.0` for a gallery with no
+    /// per-sample embeddings to measure (a legacy packed blob): we do not quarantine
+    /// what we cannot measure.
+    pub coherence: f32,
 }
 
 /// One stored sample: its uuid stem (shared with the media sibling) and embedding.
@@ -285,12 +339,25 @@ pub fn mint_id() -> String {
 #[derive(Debug, Clone)]
 pub struct Recognition {
     modality: Modality,
-    /// The best-scoring subject — `None` only when the store holds nobody at all in
-    /// this modality.
+    /// The best-scoring subject **whose gallery still looks like one person's**
+    /// ([`COHERENT_MIN`]). `None` when the store holds nobody in this modality, or
+    /// holds only galleries that have stopped being anybody in particular.
     pub top: Option<Candidate>,
-    /// The runner-up's score, which is what says whether `top` stands out or won a
-    /// coin toss. `None` when nobody else was in the running.
+    /// The best score among the *other* galleries still fit to name somebody. Two
+    /// real identities this close together is an ambiguity, so `top` has to lead it
+    /// by [`MARGIN_MIN`].
     pub runner_up: Option<f32>,
+    /// The best score among galleries too incoherent to be candidates. **A different
+    /// kind of second place, so it is weighed differently.** A coherent rival is
+    /// another identity and a tie with it means we cannot tell which; a mixture is
+    /// not an identity at all, so it only objects when it is *clearly* the better
+    /// explanation — `top` may trail it by up to [`MARGIN_MIN`] and still name.
+    ///
+    /// The asymmetry is what lets the store recover. A mixture holds this person's own
+    /// samples, so it scores well on them forever; requiring a clean gallery to beat
+    /// it outright would keep the person unnameable no matter how well the store
+    /// re-learned them.
+    pub objection: Option<f32>,
 }
 
 impl Recognition {
@@ -299,28 +366,38 @@ impl Recognition {
     /// clearing the modality's [`Modality::recognize_min`], and a [`MARGIN_MIN`] lead
     /// over the runner-up.
     pub fn named(&self) -> Option<&Candidate> {
-        self.top
-            .as_ref()
-            .filter(|c| c.similarity >= self.modality.recognize_min() && self.margin() >= MARGIN_MIN)
+        self.top.as_ref().filter(|c| {
+            c.similarity >= self.modality.recognize_min()
+                && self.margin() >= MARGIN_MIN
+                && self.objection.is_none_or(|o| c.similarity - o >= -MARGIN_MIN)
+        })
     }
 
     /// Where an observation scoring like this belongs in the store — the pure
     /// decision behind [`cluster`], exposed so a caller that has already asked
     /// [`recognize`] can act on it without paying for a second scan of every gallery.
     pub fn filing(&self) -> Filing {
-        let best = self.top.as_ref().map(|c| c.similarity).unwrap_or(f32::NEG_INFINITY);
-        if best >= self.modality.append_min() {
-            return Filing::Append(self.top.as_ref().expect("a score implies a candidate").subject.clone());
+        // `top` is already the best gallery still fit to hold anybody, so an
+        // incoherent one is simply not in this decision. An observation that would
+        // have gone into it lands wherever it belongs among the healthy galleries,
+        // and mints a fresh one if that is nowhere — which is how the store grows its
+        // way back out of a mixture without anyone being asked to intervene.
+        let Some(top) = self.top.as_ref() else {
+            return Filing::Mint; // nobody fit to file under: this is someone new
+        };
+        if top.similarity >= self.modality.append_min() {
+            return Filing::Append(top.subject.clone());
         }
-        if best < self.modality.recognize_min() {
+        if top.similarity < self.modality.recognize_min() {
             return Filing::Mint;
         }
         Filing::Unplaceable
     }
 
-    /// How far the best score leads the runner-up — its whole score when it stood
-    /// alone, since a lone candidate leads by everything it has. `0.0` with no
-    /// candidate at all.
+    /// How far the best score leads the best *other* nameable subject — its whole
+    /// score when it stood alone, since a lone candidate leads by everything it has.
+    /// `0.0` with no candidate at all. Says nothing about [`Self::objection`], which
+    /// is weighed on its own terms.
     pub fn margin(&self) -> f32 {
         match (&self.top, self.runner_up) {
             (Some(top), Some(second)) => top.similarity - second,
@@ -353,10 +430,18 @@ pub async fn recognize(
     modality: Modality,
     embedding: &[f32],
 ) -> anyhow::Result<Recognition> {
-    let mut ranked = nearest(data_dir, modality, embedding, 2).await?.into_iter();
-    let top = ranked.next();
-    let runner_up = ranked.next().map(|c| c.similarity);
-    Ok(Recognition { modality, top, runner_up })
+    // Deep enough that a coherent gallery is still found behind a few incoherent
+    // ones. Ranked best-first, so the first coherent entry is the best of them.
+    let ranked = nearest(data_dir, modality, embedding, RANK_DEPTH).await?;
+    let top = ranked.iter().find(|c| coherent(c.coherence)).cloned();
+    let is_top = |c: &Candidate| top.as_ref().is_some_and(|t| t.subject == c.subject);
+    // Ranked best-first, so the first of each kind is the best of its kind.
+    let runner_up = ranked
+        .iter()
+        .find(|c| coherent(c.coherence) && !is_top(c))
+        .map(|c| c.similarity);
+    let objection = ranked.iter().find(|c| !coherent(c.coherence)).map(|c| c.similarity);
+    Ok(Recognition { modality, top, runner_up, objection })
 }
 
 /// File one observation — `embedding` plus the `media`/`ext` it came from — into the
@@ -937,6 +1022,27 @@ pub struct ClusterListing {
     pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
     pub face_stems: Vec<String>,
     pub voice_stems: Vec<String>,
+    /// What each gallery's samples look like *as a set* — the one thing the review
+    /// view cannot get by looking at crops one at a time, and the thing that says
+    /// whether this is still one person. `None` for a modality this subject has
+    /// nothing in, or too little of to measure.
+    pub face_shape: Option<GalleryShape>,
+    pub voice_shape: Option<GalleryShape>,
+}
+
+/// How a gallery is arranged, in the two numbers that separate *one person seen many
+/// ways* from *several people fused*. Both come from the samples alone — no labels,
+/// nobody listening.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GalleryShape {
+    pub samples: usize,
+    /// Mean cosine to the gallery's own centre ([`centre_coherence`]). Under
+    /// [`COHERENT_MIN`] the gallery stops naming anyone and stops taking samples.
+    pub centre: f32,
+    /// How much closer a typical sample is to its nearest neighbours than to that
+    /// centre ([`frontier_lead`]). Positive on a gallery that grew along its edge.
+    /// `None` under [`SHAPE_MIN_SAMPLES`].
+    pub frontier: Option<f32>,
 }
 
 /// List every person in the store with their per-modality sample stems, mirroring
@@ -967,8 +1073,8 @@ pub async fn list_clusters(data_dir: &Path) -> anyhow::Result<Vec<ClusterListing
     let mut out = Vec::with_capacity(subjects.len());
     for subject in subjects {
         let vitals = cluster_vitals(data_dir, &subject).await?;
-        let face_stems = stems(data_dir, &subject, Modality::Face).await?;
-        let voice_stems = stems(data_dir, &subject, Modality::Voice).await?;
+        let (face_stems, face_shape) = gallery(data_dir, &subject, Modality::Face).await?;
+        let (voice_stems, voice_shape) = gallery(data_dir, &subject, Modality::Voice).await?;
         out.push(ClusterListing {
             subject,
             named: vitals.named,
@@ -976,6 +1082,8 @@ pub async fn list_clusters(data_dir: &Path) -> anyhow::Result<Vec<ClusterListing
             last_seen: vitals.last_seen,
             face_stems,
             voice_stems,
+            face_shape,
+            voice_shape,
         });
     }
     // Named first, then by total sample count — the people most worth naming/fixing
@@ -1022,11 +1130,24 @@ pub async fn avatar_media(data_dir: &Path, subject: &str) -> anyhow::Result<Opti
 /// The sample stems of one subject's `modality` gallery, oldest first. A thin public
 /// window onto [`read_samples`] for the review view; empty if the dir is absent.
 async fn stems(data_dir: &Path, subject: &str, modality: Modality) -> anyhow::Result<Vec<String>> {
-    Ok(read_samples(&modality_dir(data_dir, subject, modality))
-        .await?
-        .into_iter()
-        .map(|s| s.stem)
-        .collect())
+    Ok(gallery(data_dir, subject, modality).await?.0)
+}
+
+/// One gallery's sample stems and its [`GalleryShape`], from a single read. The
+/// shape's pairwise half is why this belongs to the review path and not to matching:
+/// [`nearest`] takes the cheap half ([`centre_coherence`]) in its own pass.
+async fn gallery(
+    data_dir: &Path,
+    subject: &str,
+    modality: Modality,
+) -> anyhow::Result<(Vec<String>, Option<GalleryShape>)> {
+    let samples = read_samples(&modality_dir(data_dir, subject, modality)).await?;
+    let shape = centre_coherence(&samples).map(|centre| GalleryShape {
+        samples: samples.len(),
+        centre,
+        frontier: frontier_lead(&samples),
+    });
+    Ok((samples.into_iter().map(|s| s.stem).collect(), shape))
 }
 
 /// Locate one sample's media file — `<subject>/<modality>/<stem>.<ext>` — for
@@ -1125,19 +1246,18 @@ pub async fn nearest(
         let person = ent.path();
 
         // Every sample's cosine, then the mean of the best few — see `SCORE_SAMPLES`
-        // for why this is not a max.
-        let mut scores: Vec<f32> = Vec::new();
-        // Per-sample sidecars (the current form).
-        for s in read_samples(&person.join(tag)).await? {
-            scores.push(cosine(&s.embedding, query));
-        }
+        // for why this is not a max. The gallery's own shape falls out of the same
+        // read, so measuring it costs nothing beyond the arithmetic.
+        let samples = read_samples(&person.join(tag)).await?;
+        let coherence = centre_coherence(&samples).unwrap_or(1.0);
+        let mut scores: Vec<f32> = samples.iter().map(|s| cosine(&s.embedding, query)).collect();
         // Legacy packed blob (read-only back-compat); absent for new clusters.
         if let Ok(bytes) = tokio::fs::read(person.join(&legacy_file)).await {
             scores.extend(packed_cosines(&bytes, query));
         }
 
         if let Some((similarity, support)) = top_mean(&mut scores, SCORE_SAMPLES) {
-            out.push(Candidate { subject, similarity, support });
+            out.push(Candidate { subject, similarity, support, coherence });
         }
     }
 
@@ -1269,6 +1389,71 @@ fn packed_cosines(bytes: &[u8], query: &[f32]) -> Vec<f32> {
         }
     }
     out
+}
+
+/// How much like one person a gallery is: the mean cosine of its samples to their
+/// own centre. Equal to the length of the mean of the unit vectors, which is the same
+/// quantity written two ways — so it costs one pass and no pairwise comparison.
+///
+/// `None` for a gallery with nothing usable in it. A gallery of one sample is `1.0`.
+fn centre_coherence(samples: &[Sample]) -> Option<f32> {
+    let dim = samples.first()?.embedding.len();
+    let mut sum = vec![0.0_f32; dim];
+    let mut n = 0usize;
+    for s in samples {
+        if s.embedding.len() != dim {
+            continue; // a dim mismatch contributes nothing, as everywhere else here
+        }
+        let len = norm(&s.embedding);
+        if len == 0.0 {
+            continue;
+        }
+        for (acc, v) in sum.iter_mut().zip(&s.embedding) {
+            *acc += v / len;
+        }
+        n += 1;
+    }
+    (n > 0).then(|| norm(&sum) / n as f32)
+}
+
+/// How much closer a typical sample sits to its nearest few neighbours than to the
+/// gallery's centre — the median sample's [`SCORE_SAMPLES`]-mean against the rest,
+/// minus [`centre_coherence`].
+///
+/// **Positive means the gallery grew along its own edge.** Every sample has close
+/// neighbours and the gallery as a whole has no middle, which is exactly what
+/// appending each observation to whichever part of a cluster is already nearest
+/// produces. On this install's ten galleries the two healthy large ones read −0.019
+/// and −0.001 while the contaminated one reads **+0.188**.
+///
+/// Only meaningful once a gallery is large: with four samples "the three nearest" is
+/// "all the others", which reads low for reasons that have nothing to do with shape.
+/// `None` under [`SHAPE_MIN_SAMPLES`]. Pairwise, so it is for the review surface a
+/// person opens, never the matching path; over [`SHAPE_MAX_PAIRWISE`] samples it
+/// measures an evenly-spread subset rather than growing quadratically without bound.
+fn frontier_lead(samples: &[Sample]) -> Option<f32> {
+    if samples.len() < SHAPE_MIN_SAMPLES {
+        return None;
+    }
+    let centre = centre_coherence(samples)?;
+    let stride = samples.len().div_ceil(SHAPE_MAX_PAIRWISE).max(1);
+    let mut leads: Vec<f32> = Vec::new();
+    for (i, s) in samples.iter().enumerate().step_by(stride) {
+        let mut sims: Vec<f32> = samples
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, o)| cosine(&o.embedding, &s.embedding))
+            .collect();
+        if let Some((edge, _)) = top_mean(&mut sims, SCORE_SAMPLES) {
+            leads.push(edge);
+        }
+    }
+    if leads.is_empty() {
+        return None;
+    }
+    leads.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(leads[leads.len() / 2] - centre)
 }
 
 /// Mean of the `k` largest values in `scores`, with how many were averaged — a
@@ -1556,7 +1741,135 @@ mod tests {
         let dir = td();
         let seen = recognize(dir.path(), Modality::Voice, &[1.0, 0.0]).await.unwrap();
         assert!(seen.top.is_none() && seen.named().is_none());
+        assert!(seen.objection.is_none());
         assert_eq!(seen.margin(), 0.0);
+    }
+
+    /// A gallery lying along an arc: neighbours `step` radians apart, so every sample
+    /// has close neighbours while the set as a whole spreads as far as you like. This
+    /// is the shape a cluster takes when each new sample was admitted for being near
+    /// whatever part of it was already nearest.
+    fn arc(n: usize, step: f32) -> Vec<Sample> {
+        (0..n)
+            .map(|i| {
+                let a = i as f32 * step;
+                Sample { stem: format!("{i:032}"), embedding: vec![a.cos(), a.sin()] }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn centre_coherence_is_one_for_one_look_and_falls_as_a_gallery_spreads() {
+        let same: Vec<Sample> = (0..5)
+            .map(|i| Sample { stem: format!("{i:032}"), embedding: vec![3.0, 4.0] })
+            .collect();
+        assert!((centre_coherence(&same).unwrap() - 1.0).abs() < 1e-5, "one look, any scale");
+        // Two at right angles: their mean is (0.5, 0.5), length 1/√2.
+        let square = arc(2, std::f32::consts::FRAC_PI_2);
+        assert!((centre_coherence(&square).unwrap() - 0.7071).abs() < 1e-3);
+        // A wide arc sits below the floor; a narrow one well above it.
+        assert!(centre_coherence(&arc(21, 0.20)).unwrap() < COHERENT_MIN);
+        assert!(centre_coherence(&arc(21, 0.02)).unwrap() > COHERENT_MIN);
+        assert!(centre_coherence(&[]).is_none());
+    }
+
+    #[test]
+    fn frontier_lead_is_positive_along_an_arc_and_flat_in_a_knot() {
+        // Neighbours 0.2 rad apart (cosine ~0.98) but the arc spans ~3.8 rad: every
+        // sample is close to its neighbours and the set has no middle.
+        let spread = frontier_lead(&arc(21, 0.20)).expect("21 samples is measurable");
+        assert!(spread > 0.3, "grew along its edge, got {spread}");
+        // A tight knot: nearest neighbours are barely closer than the centre.
+        let knot = frontier_lead(&arc(21, 0.01)).unwrap();
+        assert!(knot.abs() < 0.05, "one look from every side, got {knot}");
+        assert!(frontier_lead(&arc(4, 0.2)).is_none(), "too few samples to have a shape");
+    }
+
+    /// Enrol `n` samples along an arc into `subject`, bypassing `enroll`'s dedup so a
+    /// deliberately spread gallery survives being written.
+    async fn place_arc(dir: &Path, subject: &str, n: usize, step: f32) {
+        let d = modality_dir(dir, subject, Modality::Voice);
+        tokio::fs::create_dir_all(&d).await.unwrap();
+        for s in arc(n, step) {
+            let bytes: Vec<u8> = s.embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+            let stem = Uuid::now_v7().simple().to_string();
+            tokio::fs::write(d.join(format!("{stem}.f32")), &bytes).await.unwrap();
+            tokio::fs::write(d.join(format!("{stem}.wav")), b"m").await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_smeared_gallery_cannot_supply_a_name() {
+        let dir = td();
+        // One gallery spread across a wide arc — measured incoherent — and a query
+        // sitting right on it, so it wins the raw ranking by a mile.
+        place_arc(dir.path(), "mixture", 21, 0.20).await;
+        let q = [(1.0_f32).cos(), (1.0_f32).sin()]; // mid-arc: a dead-on match
+        let seen = recognize(dir.path(), Modality::Voice, &q).await.unwrap();
+        assert!(seen.top.is_none(), "no gallery here is fit to name anybody");
+        assert!(seen.named().is_none());
+        assert!(seen.runner_up.is_none(), "and it is not a runner-up either");
+        assert!(seen.objection.unwrap() > 0.9, "it objects, though: {seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_smeared_gallery_still_takes_a_name_away_from_someone_else() {
+        let dir = td();
+        place_arc(dir.path(), "mixture", 21, 0.20).await;
+        // A tight second gallery off to one side: near enough that it would be named
+        // on its own (~0.83, well past `recognize_min`), not as near as the mixture.
+        for k in 0..3 {
+            let a = 1.6_f32 + k as f32 * 0.01;
+            enroll(dir.path(), "bob", Modality::Voice, &[a.cos(), a.sin()], b"m", "wav")
+                .await
+                .unwrap();
+        }
+        let q = [(1.0_f32).cos(), (1.0_f32).sin()];
+        let seen = recognize(dir.path(), Modality::Voice, &q).await.unwrap();
+        assert_eq!(seen.top.as_ref().map(|c| c.subject.as_str()), Some("bob"), "{seen:?}");
+        assert!(
+            seen.objection.unwrap() - seen.top.as_ref().unwrap().similarity > MARGIN_MIN,
+            "the mixture is clearly the nearer explanation: {seen:?}"
+        );
+        assert!(seen.named().is_none(), "so bob does not get handed the name");
+    }
+
+    #[tokio::test]
+    async fn the_store_grows_its_way_out_of_a_mixture_with_nobody_helping() {
+        let dir = td();
+        place_arc(dir.path(), "mixture", 21, 0.20).await;
+        let q = [(1.0_f32).cos(), (1.0_f32).sin()];
+        // The observation the mixture would have swallowed starts a clean gallery
+        // instead — no human, no review page.
+        let seen = recognize(dir.path(), Modality::Voice, &q).await.unwrap();
+        assert_eq!(seen.filing(), Filing::Mint, "{seen:?}");
+        let fresh = cluster(dir.path(), Modality::Voice, &q, b"m", "wav").await.unwrap();
+        let fresh = fresh.expect("a fresh gallery for this voice");
+        assert_ne!(fresh, "mixture");
+        // The next one lands in it rather than minting again.
+        assert_eq!(
+            cluster(dir.path(), Modality::Voice, &q, b"m", "wav").await.unwrap().as_deref(),
+            Some(fresh.as_str()),
+        );
+        // And once it is the better answer, it names — the mixture never blocks it
+        // permanently.
+        let seen = recognize(dir.path(), Modality::Voice, &q).await.unwrap();
+        assert_eq!(seen.named().map(|c| c.subject.as_str()), Some(fresh.as_str()), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_listing_carries_each_gallery_s_shape() {
+        let dir = td();
+        for v in [[1.0_f32, 0.0], [0.0, 1.0]] {
+            enroll(dir.path(), "alice", Modality::Voice, &v, b"m", "wav").await.unwrap();
+        }
+        let listing = list_clusters(dir.path()).await.unwrap();
+        let alice = listing.iter().find(|c| c.subject == "alice").unwrap();
+        let shape = alice.voice_shape.expect("a voice gallery has a shape");
+        assert_eq!(shape.samples, 2);
+        assert!((shape.centre - 0.7071).abs() < 1e-3);
+        assert!(shape.frontier.is_none(), "two samples is not enough for a frontier");
+        assert!(alice.face_shape.is_none(), "no face gallery, no face shape");
     }
 
     #[test]
