@@ -66,6 +66,7 @@ use crate::body::capabilities::voiceprint;
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Candidate, Modality};
+use crate::foundation::acoustics::{self, Room};
 use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
@@ -491,11 +492,14 @@ pub async fn ingest_pcm_stream(
     // Live-mic voiceprint: who is speaking, from the vendor's diarized segments.
     // The PCM pump (below) appends raw samples to `timeline` (an absolute-clock
     // buffer); when a diarized utterance finalizes, the out task slices *that
-    // speaker's own* audio by the utterance's `[start_ms, end_ms]`, embeds it, and
-    // asks the people store who it sounds like, accumulating that under `speaker_id`
-    // until this speaker's turns agree on somebody. Only armed when the voiceprint
-    // capability is configured.
-    let vp_on = voiceprint::available();
+    // speaker's own* audio by the utterance's `[start_ms, end_ms]`, measures how it
+    // sounded, embeds it, and asks the people store who it sounds like — accumulating
+    // that under `speaker_id` until this speaker's turns agree on somebody.
+    //
+    // The timeline is armed whether or not voiceprints are: slicing a speaker's own
+    // audio is what the room reading needs too, and that runs on any install with a
+    // microphone. Only the identity half waits on the model.
+    let voiceprints_on = voiceprint::available();
     let timeline: Arc<Mutex<VpTimeline>> = Arc::new(Mutex::new(VpTimeline::default()));
     let voices: Arc<Mutex<SpeakerVoices>> = Arc::new(Mutex::new(SpeakerVoices::default()));
 
@@ -517,6 +521,11 @@ pub async fn ingest_pcm_stream(
         // line, and re-mark when a voice we could not place acquires a name.
         let mut current_speaker: Option<String> = None;
         let mut last_tagged: Option<(String, String)> = None;
+        // The room the mic is in, the reading from the newest diarized turn waiting
+        // for a sentence to ride out on, and the last reading actually stated.
+        let mut room = Room::default();
+        let mut pending_room: Option<String> = None;
+        let mut last_room: Option<String> = None;
         // The source note rides the first sentence only.
         let mut source_noted = false;
         loop {
@@ -540,8 +549,8 @@ pub async fn ingest_pcm_stream(
                         // since the last final, which spans several speakers because
                         // the diarized second pass lags) and resolve each off-thread.
                         if t.is_final {
-                            if vp_on && !t.segments.is_empty() {
-                                let sliced: Vec<(String, Vec<i16>)> = {
+                            if !t.segments.is_empty() {
+                                let sliced: Vec<(acoustics::Turn, Vec<i16>)> = {
                                     let mut tl = relay_pcm.lock().unwrap();
                                     t.segments
                                         .iter()
@@ -553,13 +562,30 @@ pub async fn ingest_pcm_stream(
                                             }
                                             let pcm = tl.slice(start, end);
                                             tl.consumed_end = tl.consumed_end.max(end);
-                                            pcm.filter(|p| p.len() as u64 >= VP_MIN_SPAN_SAMPLES)
-                                                .map(|p| (sp.speaker_id.clone(), p))
+                                            let pcm =
+                                                pcm.filter(|p| p.len() as u64 >= VP_MIN_SPAN_SAMPLES)?;
+                                            let sound = acoustics::measure(&pcm)?;
+                                            Some((
+                                                acoustics::Turn {
+                                                    speaker: sp.speaker_id.clone(),
+                                                    start_ms: sp.start_ms,
+                                                    end_ms: sp.end_ms,
+                                                    sound,
+                                                },
+                                                pcm,
+                                            ))
                                         })
                                         .collect()
                                 };
-                                for (spk, pcm) in sliced {
-                                    resolve_speaker(&relay_state, relay_voices.clone(), spk, pcm);
+                                for (turn, pcm) in sliced {
+                                    let speaker = turn.speaker.clone();
+                                    // What the room was like when this turn landed —
+                                    // the empty string for the ordinary room, which is
+                                    // not news but still a change worth remembering.
+                                    pending_room = Some(room.note(turn).note().unwrap_or_default());
+                                    if voiceprints_on {
+                                        resolve_speaker(&relay_state, relay_voices.clone(), speaker, pcm);
+                                    }
                                 }
                             }
                             // Tag the dispatched sentence with the last finalized
@@ -599,6 +625,17 @@ pub async fn ingest_pcm_stream(
                         line.push_str(&format!(" ⟨voice: {}⟩", mark.1));
                         last_tagged = Some(mark);
                     }
+                }
+                // The room note rides a sentence only when the picture changed —
+                // the same discipline as the voice mark. A condition restated on every
+                // line stops being information, and "the room is ordinary" was never
+                // information in the first place: it renders empty, and only the change
+                // back out of it is worth a mark.
+                if let Some(note) = pending_room.take()
+                    && last_room.as_deref() != Some(note.as_str())
+                {
+                    line.push_str(&note);
+                    last_room = Some(note);
                 }
                 if let Some(tag) = &relay_tag
                     && !source_noted
@@ -689,11 +726,11 @@ pub async fn ingest_pcm_stream(
             _ => {}
         }
         cap_buf.extend_from_slice(&b);
-        // Feed the voiceprint timeline (same raw 16 kHz mono PCM). Push the samples
+        // Feed the per-speaker timeline (same raw 16 kHz mono PCM). Push the samples
         // actually decoded (le_i16 drops a trailing odd byte, so a byte-derived
         // clock would drift), then prune audio the out task has already consumed —
         // bounded so a stalled diarized pass can't grow it.
-        if vp_on {
+        {
             let samples = pcm::le_i16(&b);
             let mut tl = timeline.lock().unwrap();
             tl.push(&samples);
