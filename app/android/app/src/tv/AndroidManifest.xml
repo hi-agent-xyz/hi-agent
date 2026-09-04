@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The television flavor. What a TV has instead of what a handset has: a remote
+    control rather than a touchscreen, the leanback launcher rather than the home
+    screen, and a banner rather than an icon in the app row.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required, and it is the declaration that makes this an Android TV app at
+         all: the leanback launcher only lists apps that ask for it. -->
+    <uses-feature android:name="android.software.leanback" android:required="true" />
+
+    <!-- The opposite declaration, and just as load-bearing. Every app is assumed
+         to want a touchscreen unless it says otherwise, and a TV has none, so
+         leaving this out is how a TV app becomes uninstallable on televisions. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <application android:banner="@drawable/tv_banner">
+        <!-- No `hiagent://pair` filter here, unlike the handset. The link is
+             delivered by scanning a QR or tapping it on the same device, and a
+             television can do neither; pairing here is typed. Declaring a filter
+             nothing can reach would be an entry point on paper only. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:theme="@style/Theme.HiAgent">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

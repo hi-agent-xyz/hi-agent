@@ -54,6 +54,9 @@ android {
         create("mobile") {
             dimension = "device"
         }
+        create("tv") {
+            dimension = "device"
+        }
     }
 
     buildTypes {

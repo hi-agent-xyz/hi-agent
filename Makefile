@@ -70,6 +70,12 @@ android: check-version ## build + unit-test the Android handset client (debug AP
 android-apk: check-version ## build the unsigned handset release APK for self-hosted distribution
 	cd app/android && ./gradlew --no-daemon assembleMobileRelease
 
+android-tv: check-version ## build + unit-test the Android TV client (debug APK; requires the Android SDK)
+	cd app/android && ./gradlew --no-daemon assembleTvDebug testTvDebugUnitTest
+
+android-tv-apk: check-version ## build the unsigned Android TV release APK for self-hosted distribution
+	cd app/android && ./gradlew --no-daemon assembleTvRelease
+
 # `make exe` is a Windows *build check*: it cross-compiles the binary from a
 # mac/linux host (proving the Windows code paths compile + link) without running
 # it. One-time toolchain on the host:

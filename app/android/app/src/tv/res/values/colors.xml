@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The banner sits in a row of other apps' banners on a dark launcher, so it
+         takes the app's dark canvas rather than the white the launcher icon's
+         die-cut tile needs. -->
+    <color name="tv_banner_background">#FF10141A</color>
+</resources>

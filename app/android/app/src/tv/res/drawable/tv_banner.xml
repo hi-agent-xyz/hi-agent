@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The 320x180 tile the leanback launcher shows in place of an icon.
+
+    Composed from the launcher icon's own foreground rather than drawn again: the
+    mark is sealed, and a second raster of it is a second thing to keep in step.
+    A layer-list also scales to whatever size the launcher asks for, which a
+    fixed-size PNG does not.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/tv_banner_background" />
+    <item
+        android:drawable="@mipmap/ic_launcher_foreground"
+        android:gravity="center"
+        android:width="132dp"
+        android:height="132dp" />
+</layer-list>

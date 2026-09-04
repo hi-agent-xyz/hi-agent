@@ -45,6 +45,19 @@ fun CoreWebView(
     reloadToken: Int,
     onEvent: (CoreWebViewEvent) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Put the view focus on the face as soon as it exists.
+     *
+     * A handset needs nothing here — a finger addresses whatever it lands on, and
+     * view focus is irrelevant to it. A television has no such thing: the D-pad
+     * moves *focus*, so a page that never holds it receives no keys at all and
+     * the remote appears dead. There is normally nothing else focusable on the
+     * TV stage, so this is belt and braces rather than the only route — which is
+     * why it is off by default instead of unconditional.
+     *
+     * Unverified against a device; see `docs/platforms/android-tv.md`.
+     */
+    focusOnAttach: Boolean = false,
 ) {
     val context = LocalContext.current
     val state = remember { CoreWebViewState(context.applicationContext) }
@@ -99,6 +112,11 @@ fun CoreWebView(
 
                 state.installDocumentStartScript(this, session)
                 state.install(session, this)
+
+                if (focusOnAttach) {
+                    isFocusableInTouchMode = true
+                    requestFocus()
+                }
             }
         },
         update = { webView ->
