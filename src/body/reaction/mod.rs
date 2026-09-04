@@ -1043,7 +1043,7 @@ pub async fn start(
 
     // The upkeep sweep. The only clock left in this host, and it wakes nobody to think —
     // see [`upkeep`] for why that is a different thing from the three cadences removed.
-    tokio::spawn(upkeep::sweep_forever());
+    tokio::spawn(upkeep::sweep_forever(reaction.inner.tools.clone()));
 
     // Consolidated reflection ("sleep"): one pass over the shared frontier on
     // one global clock. One writer touches the shared facet/people stores.
@@ -1336,6 +1336,13 @@ async fn apply_control(
     ctl: LoopControl,
 ) {
     match ctl {
+        // Handled by each rung's own control arm, which has the session handle this needs
+        // and which `apply_control` deliberately does not — see [`LoopControl::Compact`].
+        // Reaching here means a rung took the message without owning a session to act on,
+        // which is a wiring mistake rather than a state to recover from.
+        LoopControl::Compact => {
+            tracing::warn!("upkeep compaction reached apply_control; the rung's arm should hold it");
+        }
         LoopControl::CreateWorker {
             id,
             title,

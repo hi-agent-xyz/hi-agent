@@ -97,7 +97,6 @@ pub(super) fn spawn(reaction: Reaction, registration: Registration) {
 async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
-    let upkeep_bell = super::upkeep::bell(&id);
 
     // Its workers run under its own role-specific sink rather than Reaction's.
     let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
@@ -223,15 +222,6 @@ async fn run(reaction: Reaction, registration: Registration) {
                 continue;
             }
             _ = mail.notified() => {}
-            // The upkeep sweep has decided this thread is quiet and full enough to
-            // compact. It rings; this does it, here, where nothing else can be holding
-            // the session's one turn slot. Nothing is queued by it, so it cannot feed
-            // the loop — it compacts, or finds the conditions no longer hold, and waits
-            // again either way.
-            _ = upkeep_bell.notified() => {
-                super::compact_if_full(&id, session.as_deref()).await;
-                continue;
-            }
             _ = sleep_until_opt(wake_at) => {
                 let first = !woke_at_boot;
                 woke_at_boot = true;
@@ -257,6 +247,13 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
             ctl = control_rx.recv() => {
                 match ctl {
+                    // The upkeep sweep says this thread is quiet and full enough. Done
+                    // here because the loop owns the session handle: nothing else can be
+                    // holding its one turn slot from inside this arm.
+                    Some(super::tools::LoopControl::Compact) => {
+                        super::compact_if_full(&id, session.as_deref()).await;
+                        continue;
+                    }
                     Some(ctl) => {
                         super::apply_control(&reaction, &mut workers, ctl).await;
                         continue;

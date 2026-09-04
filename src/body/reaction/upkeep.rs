@@ -14,13 +14,15 @@
 //! single in-flight-turn slot, so a sweep holding the handle itself would collide with the
 //! loop's own `prompt` — and a rung whose prompt fails *drops its long-lived session and
 //! cold-opens* ([`super::cognition`]), losing the thread that whole design exists to keep.
-//! So the sweep only rings a bell, and the loop compacts where nothing else can be running.
+//!
+//! **It crosses on the control channel each rung already has**, as one more
+//! [`LoopControl`](super::tools::LoopControl) variant, for the reason that enum exists at
+//! all: the loop owns the state each of its messages touches. There is no second map of
+//! handles and no extra `select!` arm — the arm that already carries `CreateWorker` carries
+//! this, and a rung with no live sink is skipped, which is what a rung that is not up
+//! should be.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-
-use tokio::sync::Notify;
 
 use crate::foundation::registry::{self, SessionSlug};
 
@@ -38,50 +40,33 @@ const SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 /// grain already makes it approximate.
 const IDLE_FOR: Duration = Duration::from_secs(60 * 60);
 
-/// The bells, one per session that has asked for one. Held here rather than on the
-/// switchboard because the switchboard knows nothing about compaction, and this is the only
-/// caller.
-fn bells() -> &'static Mutex<HashMap<SessionSlug, Arc<Notify>>> {
-    static BELLS: OnceLock<Mutex<HashMap<SessionSlug, Arc<Notify>>>> = OnceLock::new();
-    BELLS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// The bell this session listens on, created on first ask. A loop takes one at startup and
-/// selects on it; a session that never takes one is simply never swept.
-pub(super) fn bell(id: &SessionSlug) -> Arc<Notify> {
-    bells()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(id.clone())
-        .or_insert_with(|| Arc::new(Notify::new()))
-        .clone()
-}
-
-/// Ring every session that has gone quiet with a full enough window, forever.
-pub(super) async fn sweep_forever() {
+/// Tell every session that has gone quiet with a full enough window to compact, forever.
+///
+/// **The message crosses on the rung's existing control channel** ([`super::tools::LoopControl`]),
+/// which is there for exactly this: work whose state the loop owns. Nothing new is wired —
+/// no second map of handles, no extra arm — and a rung with no live control sink is simply
+/// skipped, which is what a rung that is not up should be.
+pub(super) async fn sweep_forever(tools: super::tools::ToolRegistry) {
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
-        for id in due() {
-            if let Some(bell) = bells()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(&id)
-                .cloned()
-            {
-                tracing::info!(session = %id, "upkeep: ringing for a compaction");
-                bell.notify_one();
+        for (id, owner) in due() {
+            let Some(sink) = tools.get(owner).await else { continue };
+            tracing::info!(session = %id, "upkeep: asking for a compaction");
+            if sink.control.send(super::tools::LoopControl::Compact).await.is_err() {
+                tracing::warn!(session = %id, "upkeep: control channel gone");
             }
         }
     }
 }
 
-/// The sessions worth ringing: quiet, quiet for a while, and full enough to be worth a
-/// model call.
+/// The sessions worth asking: quiet, quiet for a while, and full enough to be worth a
+/// model call. Paired with the rung to send to, because only the standing rungs compact —
+/// a worker has no control channel of its own and is left to codex.
 ///
 /// The fill test is deliberately here as well as in [`super::compact_if_full`], which runs
 /// on the far side of the bell. This one keeps the sweep from waking loops for nothing; that
 /// one is the decision, made against a reading taken after the wake rather than before it.
-fn due() -> Vec<SessionSlug> {
+fn due() -> Vec<(SessionSlug, super::tools::ToolOwner)> {
     let now = chrono::Utc::now();
     registry::global()
         .statuses()
@@ -91,7 +76,10 @@ fn due() -> Vec<SessionSlug> {
             (now - st.state_since).to_std().is_ok_and(|idle| idle >= IDLE_FOR)
         })
         .filter(|st| st.window_percent.is_some_and(|pct| pct >= super::COMPACT_ABOVE_PERCENT))
-        .map(|st| st.id)
+        .filter_map(|st| {
+            let owner = super::tools::ToolOwner::from_role(Some(st.role.as_str()))?;
+            Some((st.id, owner))
+        })
         .collect()
 }
 
@@ -99,14 +87,21 @@ fn due() -> Vec<SessionSlug> {
 mod tests {
     use super::*;
 
-    /// A bell is per session and stable: the loop takes one at startup and keeps it for
-    /// the life of the process, so a sweep that rings later must reach the same one.
+    /// Only the standing rungs are asked. A worker has no control channel of its own, and
+    /// is deliberately left to codex — its window can go from a tenth full to full inside a
+    /// single turn, which no boundary policy can catch.
     #[test]
-    fn a_session_gets_one_bell_and_keeps_it() {
-        let id = registry::mint(crate::identity::Role::Cognition, None);
-        assert!(Arc::ptr_eq(&bell(&id), &bell(&id)));
-        let other = registry::mint(crate::identity::Role::Reflection, None);
-        assert!(!Arc::ptr_eq(&bell(&id), &bell(&other)));
+    fn only_a_rung_can_be_asked_to_compact() {
+        use crate::identity::{Role, WorkerType};
+        assert!(super::super::tools::ToolOwner::from_role(Some(Role::Cognition.as_str())).is_some());
+        assert!(super::super::tools::ToolOwner::from_role(Some(Role::Reflection.as_str())).is_some());
+        assert!(
+            super::super::tools::ToolOwner::from_role(Some(
+                Role::Worker(WorkerType::General).as_str()
+            ))
+            .is_none(),
+            "a worker has no control channel to be asked on"
+        );
     }
 
     /// The threshold this sweep filters on is the one the loop decides with — two numbers

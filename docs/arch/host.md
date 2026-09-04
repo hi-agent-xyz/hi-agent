@@ -361,8 +361,10 @@ turn, or only the case it finds?**
 **It decides *whether*, never *when*.** A compaction takes a session's single
 in-flight-turn slot, so a sweep holding the handle would collide with that loop's own
 `prompt` — and a rung whose prompt fails drops its long-lived session and cold-opens,
-losing the thread the design keeps it for. So the sweep rings and the loop acts, which
-makes the race structurally impossible rather than unlikely.
+losing the thread the design keeps it for. So the sweep sends, on the control channel the
+rung already has, and the loop acts. The race is structurally impossible rather than
+unlikely, and nothing new was wired to make it so: that channel exists precisely for work
+whose state the loop owns.
 
 Both numbers are deliberately loose. Ten minutes against an hour is slack nobody can
 observe: the question is "has this been quiet for about an hour", and no reader downstream

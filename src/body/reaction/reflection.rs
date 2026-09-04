@@ -111,7 +111,6 @@ enum Wake {
 async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
-    let upkeep_bell = super::upkeep::bell(&id);
 
     // Its workers run under it — see the module note's point 3. `beats: None`: Reflection
     // has no floor, no sequencer, no screen. It never speaks, and that is now a fact
@@ -231,16 +230,15 @@ async fn run(reaction: Reaction, registration: Registration) {
             // backoff. Not a wake in itself.
             _ = reaction.inner.reflect_wake.notified() => continue,
             _ = mail.notified() => Wake::Turn,
-            // The upkeep sweep says this thread is quiet and full enough. Done here, in
-            // the loop that owns the session, so it cannot collide with the loop's own
-            // prompt; behind the consolidate arm in the `biased` order, so real work wins
-            // the tie.
-            _ = upkeep_bell.notified() => {
-                super::compact_if_full(&id, session.as_deref()).await;
-                continue;
-            }
             ctl = control_rx.recv() => {
                 match ctl {
+                    // The upkeep sweep says this thread is quiet and full enough. Done
+                    // here because the loop owns the session handle: nothing else can be
+                    // holding its one turn slot from inside this arm.
+                    Some(super::tools::LoopControl::Compact) => {
+                        super::compact_if_full(&id, session.as_deref()).await;
+                        continue;
+                    }
                     Some(ctl) => {
                         super::apply_control(&reaction, &mut workers, ctl).await;
                         continue;
