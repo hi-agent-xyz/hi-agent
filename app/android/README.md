@@ -1,6 +1,15 @@
 # Hi Agent Android
 
-The native Android client for a remote hi-agent core.
+The native Android client for a remote hi-agent core, in two device shapes from
+one Gradle build:
+
+| Flavor | Shape | Shell | Doc |
+|---|---|---|---|
+| `mobile` | phones, tablets | touch, QR scanning, home-screen launcher | [`docs/platforms/android.md`](../../docs/platforms/android.md) |
+| `tv` | televisions | D-pad, typed pairing, leanback launcher | [`docs/platforms/android-tv.md`](../../docs/platforms/android-tv.md) |
+
+Everything under `core/` is shared and identical — the roster, the credential,
+session exchange, the cleartext policy and its tests. Only the shell differs.
 
 This target owns the Android shell and client state:
 
@@ -22,7 +31,8 @@ connection model and the four places Android's platform differs from iOS.
 Open `app/android` in Android Studio, or from the repository root:
 
 ```sh
-make android
+make android      # the handset flavor
+make android-tv   # the television flavor
 ```
 
 `ANDROID_HOME` must point at an Android SDK; the Gradle build compiles against

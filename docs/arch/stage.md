@@ -310,6 +310,68 @@ gesture for the same touches. It is off.
 What one run of this is supposed to look like, and whether anyone has watched one:
 [`37-hold-it-in-one-hand.md`](../user-journeys/37-hold-it-in-one-hand.md).
 
+## The television is the room, and the focus is the cursor
+
+*September 4, 2026.*
+
+The phone needed a new arrangement because it had no room. The television needs almost
+none, because it has nothing but room — the wide arrangement, a stage with surfaces in its
+corners, is already what a television is. What it does not have is a **pointer**. Nothing
+addresses a control by landing on it; a D-pad moves the focus one control at a time, and the
+focus is therefore not a courtesy to keyboard users but the cursor itself.
+
+| | |
+|---|---|
+| What a television is | **declared, never measured** — the host loads `/?shape=tv` and `installShape` writes `<html data-shape="tv">` with `data-pointer="none"` ([`lib/shape.ts`](../../src/appearance/web/src/lib/shape.ts)) |
+| The arrangement | unchanged from `wide`. The room, the corners, the panel |
+| Moving | the four arrows, nearest-in-direction, with cross-axis distance counted double ([`lib/spatial.ts`](../../src/appearance/web/src/lib/spatial.ts)) |
+| Choosing | D-pad centre, which the browser already delivers as `Enter` to the focused control |
+| Going back | the remote's Back, which never reaches the page — the shell asks, off a depth the face reports ([`lib/tvBack.ts`](../../src/appearance/web/src/lib/tvBack.ts)) |
+| The edge | overscan, written onto `--hi-safe-*` because nothing reports it |
+
+**The third shape is the first one that is not a measurement, and that is a decision rather
+than a shortcut.** A television is wide, like a monitor. Its WebView reports whatever
+`pointer` the device's manufacturer decided to report. And a browser opened full-screen on a
+TV-shaped panel is genuinely not a television — a mouse is still attached to it. There is no
+query that separates these, and writing a plausible one would be the `max-width: 420px`
+mistake again, one shape further along. So the host says which it is, exactly as the desktop
+window says it spans a titlebar by asking for `/?chrome=titlebar`.
+
+Being declared has a second consequence worth stating: **it does not change.** The phone and
+pointer flags keep listening because a phone rotates and a window is dragged narrow. A
+television is the same television all evening, so the flag is written once and no listener
+is installed.
+
+**The plane rule already settles whose arrows these are**, and spatial navigation inherits
+it rather than restating it. It registers through `onHostKey`, which runs only for keys that
+started in the cover plane or the room ([`lib/keyboard.ts`](../../src/appearance/web/src/lib/keyboard.ts)),
+so an agent view that binds the arrows to page itself keeps them the moment its own content
+holds the focus. That is correct, and it is also why **the way out of a view cannot be a
+key** — taking one back would break the rule the rest depends on. It is Back.
+
+**Back is the remote's whole navigation, and it is the shell's press, not the page's.**
+Android never delivers `KEYCODE_BACK` to a WebView, and the shell has to answer it there and
+then — consume it, or let the system close the activity. It cannot stop to ask a page a
+question. So the direction is inverted: the face *reports* how many of its own surfaces a
+press would close, on the bridge that already carries `unauthorized()`, and the shell
+dispatches `hi:back` when the answer is more than zero, the way the desktop shell already
+dispatches `hi:lifecycle`. What closes is the face's business; whether the press is the
+face's at all is the shell's. The ladder, top rung first:
+
+    focus inside a view   →  focus returns to the cover plane
+    the views navigator   →  closes
+    the conversation      →  closes
+    (face reports zero)   →  the shell's own chrome
+    chrome already up     →  not consumed; the activity closes
+
+**Accepted, and unsettled.** Whether a television has a microphone is a question about the
+box and whatever is plugged into it, not about televisions, so the channel controls are left
+alone and the face's existing error state answers a channel that cannot start. If the answer
+turns out to be "never", the honest fix is not to hide a control but to capture natively in
+the shell and post to `WS /api/in/audio/stream`, which already exists and which the browser
+mic already uses. Nothing here has been rendered on a screen; the type scale in particular
+is the `wide` one until something has been read from across a room.
+
 ## The pill is timed
 
 *August 18: the pill used to hold the newest line indefinitely — until another line

@@ -1,7 +1,11 @@
 # Android Client
 
-The Android client lives at `app/android` and targets phones and tablets from
-one target. It is a client of a remote core and never hosts one.
+The Android client lives at `app/android`. It is a client of a remote core and
+never hosts one.
+
+One Gradle build, two device shapes: this document is the `mobile` flavor —
+phones and tablets — and [`android-tv.md`](android-tv.md) is the `tv` one. The
+client layer under `core/` is shared and identical; only the shell differs.
 
 ## Ownership
 
@@ -40,8 +44,21 @@ and port, and only for permissions the app itself holds.
 
 ## Where Android differs from iOS
 
-Four things do not port, and each is solved in one named place rather than
+Five things do not port, and each is solved in one named place rather than
 spread around.
+
+**Nobody raises the capture prompts.** WebKit asks for the microphone and camera
+itself when a page calls `getUserMedia`, so the iOS client has no code at this
+seam — and that absence is what hid the gap here for as long as it lasted.
+Android hands `onPermissionRequest` to the app and expects the app to already
+hold the runtime permission. `RECORD_AUDIO` was declared in the manifest and
+never requested, so every audio request took the deny branch and the microphone
+was dead while the camera worked, because the QR scanner asks for `CAMERA` on its
+own account. `CoreWebView`'s chrome client now asks at the moment the face reaches
+for the device, denies the pending request either way so a queued grant never
+reads as a hung camera, and asks at most once per permission per view — Android
+answers a twice-refused permission instantly and invisibly, and a prompt nobody
+can see is a loop rather than a prompt.
 
 **Cleartext to a LAN core.** iOS gets `NSAllowsLocalNetworking`, which exempts
 local names and private literals from ATS while still refusing plain HTTP to a
@@ -80,6 +97,8 @@ With the Android SDK installed and `ANDROID_HOME` set:
 make android      # debug APK
 make android-apk  # unsigned release APK
 ```
+
+The television flavor has its own pair, `make android-tv` and `make android-tv-apk`.
 
 Or open `app/android` in Android Studio.
 
