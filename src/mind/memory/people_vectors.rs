@@ -64,9 +64,10 @@ const MAX_SAMPLES: usize = 1000;
 const MAX_VARIANTS: usize = 3;
 
 /// Cosine at/above which two samples count as the *same look* — essentially a
-/// duplicate frame, not a new angle. Well above [`APPEND_THRESHOLD`] (same person);
-/// a guess until validated on real embeddings. Shared across modalities, like
-/// [`APPEND_THRESHOLD`].
+/// duplicate frame, not a new angle. Well above [`Modality::append_min`] (same
+/// person); a guess until validated on real embeddings. Shared across modalities,
+/// unlike the per-modality thresholds, because "the same frame twice" is a property
+/// of the capture rather than of the sense.
 const DEDUP_SIMILARITY: f32 = 0.85;
 
 /// How many of a subject's nearest samples are averaged into their score. The max
@@ -693,9 +694,18 @@ pub async fn sweep_forgettable(
 // speech, similar timbre, imperfect diarization), sometimes faces (siblings, dim
 // light, a crop spanning two faces). It is the same shape as the contamination in
 // the 复盘 view — others fused into one identity — just from the source rather than
-// a bad merge. The append threshold ([`APPEND_THRESHOLD`]) is deliberately loose,
-// so an over-broad cluster usually still contains *tighter knots* of embeddings:
-// re-cluster its own samples at a stricter threshold and the people fall apart.
+// a bad merge. The append threshold ([`Modality::append_min`]) is deliberately
+// loose, so an over-broad cluster usually still contains *tighter knots* of
+// embeddings: re-cluster its own samples at a stricter threshold and the people fall
+// apart.
+//
+// **Measured September 4 2026: on this install's worst cluster it does not.** The
+// contaminated voice gallery — 1000 samples, internal similarity 0.25 — refuses to
+// separate at any threshold in the sweep: 959 of them stay one group at 0.55, with
+// 36 strays. Single linkage chains through whatever sits between two knots, and a
+// gallery grown by appending every near-enough fragment is exactly a cluster with no
+// gap left to cut. So this repairs a cluster that fused two *tight* identities, and
+// not one that drifted into a smear. That one needs a person listening.
 //
 // The threshold has no single right value (too loose → still one blob; too tight →
 // one person shatters), so [`propose_split`] doesn't ask for one: it **sweeps**
@@ -707,9 +717,10 @@ pub async fn sweep_forgettable(
 // minted cluster. This is the un-merge primitive that also repairs contamination:
 // point it at a *named* cluster and the mis-merged samples split off to be renamed.
 
-/// Loosest-to-tightest cosine thresholds [`propose_split`] tries. Starts at
-/// [`APPEND_THRESHOLD`] (the clustering that produced the blob → one group) and
-/// tightens; the first that yields ≥ 2 groups is the loosest real split.
+/// Loosest-to-tightest cosine thresholds [`propose_split`] tries. Starts at 0.5 —
+/// at or below every [`Modality::append_min`], so the sweep begins no tighter than
+/// the clustering that produced the blob (→ one group) — and tightens; the first
+/// that yields ≥ 2 groups is the loosest real split.
 const SPLIT_SWEEP: [f32; 9] = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9];
 
 /// Hard ceiling on the auto-proposed group count — a backstop for genuinely messy
