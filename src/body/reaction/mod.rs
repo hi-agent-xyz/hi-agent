@@ -83,6 +83,7 @@ mod floor;
 pub mod outbound;
 mod sequencer;
 mod tools;
+mod upkeep;
 mod workers;
 
 pub use duties::DutyDelivery;
@@ -196,36 +197,34 @@ pub(super) fn note_window(
 
 /// How full the window has to be before the end of a turn is spent compacting it.
 ///
-/// **Measured against codex's own behaviour, which is the only fixed point here.** Across 29
-/// compactions on 2026-09-02 codex never triggered below **78.6%** of the window (p25 83.6,
-/// median 86.7). Anything comfortably under that wins the race and gets to pick the moment;
-/// 70 leaves nine points of margin, which has to be generous rather than tight because a
-/// single turn can move the number enormously — one command that day returned 1022KB, more
-/// than the window holds.
+/// **It can sit this low because of when it is read.** Codex's own compaction never
+/// triggered below 78.6% of the window across 29 firings on 2026-09-02, so any threshold
+/// under that wins the race — the margin is what matters, not the number, because a single
+/// turn can move the fill enormously (one command that day returned 1022KB, more than the
+/// window holds). What buys the room to be well clear of it is that this is only ever read
+/// after an hour of silence ([`upkeep`]): the model call lands where nothing is waiting, so
+/// a shorter runway costs idle time rather than anyone's turn.
 ///
-/// It is not lower than that. A rung's window never empties below about 16–20%, so the
-/// runway from a compaction to this line is roughly fifty points, and buying a shorter
-/// runway costs a model call over the whole history every time.
-const COMPACT_ABOVE_PERCENT: u8 = 70;
+/// A rung's window never empties below about 16–20% — its own prompt, and the block rebuilt
+/// into every turn — so half full is around thirty points of real history.
+const COMPACT_ABOVE_PERCENT: u8 = 50;
 
-/// Compact this rung's thread if it is full enough, at the end of a turn with nothing
-/// waiting — the moment that costs least, arrived at without a clock.
+/// Compact this rung's thread if it is still worth it, on the far side of the upkeep bell.
 ///
-/// **Every condition here is an event already on the wire**, which is the whole reason this
-/// shape and not a period: `thread/tokenUsage/updated` says how full the window is on every
-/// request, `turn/completed` says the work is done, and an empty inbox says nobody is owed
-/// an answer yet. Nothing polls, and nothing had to guess what "idle" means — an empty inbox
-/// is not a proxy for it, it is the fact itself.
+/// **Called from inside the rung's own loop, and that is what makes it safe.** A compaction
+/// takes the session's single in-flight-turn slot, so anything running it from beside the
+/// loop would collide with the loop's own `prompt` — and a rung whose prompt fails drops its
+/// long-lived session and cold-opens, losing the thread. The sweep decides *whether*; this
+/// is *when*, and here nothing else can be running.
 ///
-/// **Called before the turn is marked finished**, so a compaction runs under a session the
-/// roster still reads as busy. It is a turn; reporting the rung idle while one is in flight
-/// would be the same blindness this switchboard keeps having to fix.
+/// **The conditions are read again rather than trusted from the sweep.** Ten minutes of
+/// sweep grain and a wake in between are long enough for mail to have landed, and mail means
+/// somebody is owed something — the window is theirs, not housekeeping's. Skipped too when
+/// no request has been measured, because compacting on a number nobody sent is the guess
+/// this replaces.
 ///
-/// Skipped when mail is queued: mail means somebody is owed something, so the window is
-/// theirs and not housekeeping's, and the next turn boundary will come round soon enough.
-/// Skipped when no request has been measured, because compacting on a number nobody sent is
-/// the guess this replaces. Never fatal — a failed compaction leaves the thread exactly as
-/// usable as it was, only still large, and codex's own trigger is underneath it either way.
+/// Never fatal: a failed compaction leaves the thread exactly as usable as it was, only
+/// still large, and codex's own trigger is underneath it either way.
 pub(super) async fn compact_if_full(
     id: &registry::SessionSlug,
     session: Option<&crate::foundation::codex::AgentSession>,
@@ -1041,6 +1040,10 @@ pub async fn start(
     tokio::spawn(async move {
         boot_reaction.ensure_up().await;
     });
+
+    // The upkeep sweep. The only clock left in this host, and it wakes nobody to think —
+    // see [`upkeep`] for why that is a different thing from the three cadences removed.
+    tokio::spawn(upkeep::sweep_forever());
 
     // Consolidated reflection ("sleep"): one pass over the shared frontier on
     // one global clock. One writer touches the shared facet/people stores.

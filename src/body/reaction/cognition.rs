@@ -97,6 +97,7 @@ pub(super) fn spawn(reaction: Reaction, registration: Registration) {
 async fn run(reaction: Reaction, registration: Registration) {
     let id = registration.id();
     let mail = registration.mail.clone();
+    let upkeep_bell = super::upkeep::bell(&id);
 
     // Its workers run under its own role-specific sink rather than Reaction's.
     let (control_tx, mut control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
@@ -222,6 +223,15 @@ async fn run(reaction: Reaction, registration: Registration) {
                 continue;
             }
             _ = mail.notified() => {}
+            // The upkeep sweep has decided this thread is quiet and full enough to
+            // compact. It rings; this does it, here, where nothing else can be holding
+            // the session's one turn slot. Nothing is queued by it, so it cannot feed
+            // the loop — it compacts, or finds the conditions no longer hold, and waits
+            // again either way.
+            _ = upkeep_bell.notified() => {
+                super::compact_if_full(&id, session.as_deref()).await;
+                continue;
+            }
             _ = sleep_until_opt(wake_at) => {
                 let first = !woke_at_boot;
                 woke_at_boot = true;
@@ -458,7 +468,6 @@ async fn run(reaction: Reaction, registration: Registration) {
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         last_turn = Instant::now();
-        super::compact_if_full(&id, session.as_deref()).await;
         registry::global().finish_turn(&id, outcome);
     }
 }

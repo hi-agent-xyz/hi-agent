@@ -1354,7 +1354,7 @@ async fn dispatch_tool(
             // the switchboard the only way to read it was the raw frame log.
             let window = match st.window_percent {
                 Some(pct) if pct >= 70 => {
-                    format!("; window {pct}% full, so it compacts at the end of a quiet turn")
+                    format!("; window {pct}% full, so it compacts once it has been quiet a while")
                 }
                 Some(pct) => format!("; window {pct}% full"),
                 None => String::new(),

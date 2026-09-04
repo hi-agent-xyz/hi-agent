@@ -256,8 +256,8 @@ window overflows. **Bounding that is the underlying agent's job. Choosing the mo
 ours.** The agent behind a session compacts its own context in place, automatically, near its
 real window; that automatic trigger stays, and stays as the last resort. What was added is a
 request for the same operation at a moment somebody picked — `thread/compact/start`, at the
-end of a turn with nothing queued, when codex's own token accounting says the window is 70%
-full. There is still no ceiling of our own, no character counter, and no swap.
+far side of the [upkeep sweep](#the-upkeep-sweep), once a session has been quiet about an
+hour and codex's own token accounting says its window is at least half full. There is still no ceiling of our own, no character counter, and no swap.
 
 **Why that is not the mechanism this section retired**, and the difference is two facts about
 the wire rather than a change of mind. Both halves of "we cannot" below were true when they
@@ -341,7 +341,32 @@ restart ([gaps #1](../user-journeys/gaps.md)) — was fixed by the boot wake, wh
 The ledger is therefore read when something finishes rather than every half hour, which is
 the shape a person's own attention has: you look at your list because you finished a thing,
 not because a bell rang. Anything that genuinely must happen on a period runs its own loop —
-a worker that owns the process. **Nothing at all fires at a named time.**
+a worker that owns the process. **Nothing at all fires at a named time, and only one thing
+fires on a period: the upkeep sweep, which wakes no agent to think.**
+
+#### The upkeep sweep
+
+Every ten minutes, host code walks the sessions the switchboard already holds and looks for
+one that is quiet, has been quiet about an hour, and whose window is at least half full. It
+rings that session's bell; the loop that owns the session compacts at its own next pass.
+
+**Why this is not the cadence removed three times over.** Those woke a rung to *judge* —
+read the ledger and decide, look at the room and decide whether to speak — and the wake was
+the cost: a full window read to reach a conclusion, 46% of them reaching none. This reads
+integers off a map. A sweep that finds nothing costs a lock and a comparison per session,
+and it produces a model call only when one is genuinely owed, for work with no judgment in
+it. The test to apply to anything added here is that one: **does the tick itself cost a
+turn, or only the case it finds?**
+
+**It decides *whether*, never *when*.** A compaction takes a session's single
+in-flight-turn slot, so a sweep holding the handle would collide with that loop's own
+`prompt` — and a rung whose prompt fails drops its long-lived session and cold-opens,
+losing the thread the design keeps it for. So the sweep rings and the loop acts, which
+makes the race structurally impossible rather than unlikely.
+
+Both numbers are deliberately loose. Ten minutes against an hour is slack nobody can
+observe: the question is "has this been quiet for about an hour", and no reader downstream
+can tell sixty minutes of silence from seventy.
 
 **Reaction lost its cadence first, and the reasoning generalised.** A pulse used to wake the
 conversation loop on the same knob and run a turn into an empty room. Every argument below
