@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    What every device this app runs on has in common. The launcher activity, the
+    hardware a particular device shape actually has, and the categories it is
+    launched from all live in the flavor manifests beside it, because those are
+    the things a television and a handset disagree about.
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- The microphone is the one capture device both shapes may have: a handset
+         always, a television only when something is plugged into it or its remote
+         exposes one. Declared here and requested at the moment the face asks for
+         it (`CoreWebView`), never at launch. The camera is the handset's alone
+         and is declared in its flavor. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
@@ -19,32 +28,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:theme="@style/Theme.HiAgent">
-
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
-            android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.HiAgent">
-
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <!-- The same `hiagent://pair?url=…&code=…` the core already emits from
-                 `pairing_app_url()`. Nothing about the link is Apple-specific, so
-                 a QR drawn for an iPhone scans here unchanged. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="hiagent" android:host="pair" />
-            </intent-filter>
-        </activity>
-    </application>
+        android:theme="@style/Theme.HiAgent" />
 
     <!-- Off-origin links leave for the browser rather than opening inside the
          app's own chrome; this is the visibility that lets us find one. -->

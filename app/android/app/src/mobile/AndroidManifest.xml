@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The handset and tablet flavor: a touchscreen, a camera to scan a pairing QR
+    with, and the home-screen launcher.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The camera is scanning and the face's video channel, and neither is a
+         reason to refuse to install on a handset that has no camera. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application>
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.HiAgent">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- The same `hiagent://pair?url=…&code=…` the core already emits from
+                 `pairing_app_url()`. Nothing about the link is Apple-specific, so
+                 a QR drawn for an iPhone scans here unchanged. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hiagent" android:host="pair" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

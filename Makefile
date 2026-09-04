@@ -64,11 +64,11 @@ ios: ## build the iPhone/iPad client for the simulator (requires macOS and Xcode
 		CODE_SIGNING_ALLOWED=NO \
 		build
 
-android: check-version ## build + unit-test the Android client (debug APK; requires the Android SDK)
-	cd app/android && ./gradlew --no-daemon assembleDebug testDebugUnitTest
+android: check-version ## build + unit-test the Android handset client (debug APK; requires the Android SDK)
+	cd app/android && ./gradlew --no-daemon assembleMobileDebug testMobileDebugUnitTest
 
-android-apk: check-version ## build the unsigned release APK for self-hosted distribution
-	cd app/android && ./gradlew --no-daemon assembleRelease
+android-apk: check-version ## build the unsigned handset release APK for self-hosted distribution
+	cd app/android && ./gradlew --no-daemon assembleMobileRelease
 
 # `make exe` is a Windows *build check*: it cross-compiles the binary from a
 # mac/linux host (proving the Windows code paths compile + link) without running

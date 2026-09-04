@@ -36,6 +36,26 @@ android {
         versionName = hiAgentVersion
     }
 
+    // One app, one `applicationId`, two device shapes. A flavor rather than a
+    // second Gradle build because the split is only the shell: the client layer
+    // under `core/` — the roster, the Keystore credential, session exchange, and
+    // above all `normalizeBaseUrl`'s cleartext policy and its eight tests — is the
+    // same code on a handset and on a television, and a second copy of a security
+    // policy is a copy that drifts.
+    //
+    // The `applicationId` is deliberately *not* suffixed per flavor: no device is
+    // both a phone and a television, so the two installs never meet. (Publishing
+    // both to Play as multiple APKs under one listing would need distinct
+    // version codes; that is a distribution question and Play is not the intended
+    // channel — see `docs/platforms/android.md`.)
+    flavorDimensions += "device"
+
+    productFlavors {
+        create("mobile") {
+            dimension = "device"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -94,11 +114,16 @@ dependencies {
     // Scanning is CameraX frames decoded by ZXing, deliberately not ML Kit:
     // ML Kit's barcode scanner pulls in Google Play services, which is exactly
     // the dependency that does not exist on the handsets this app is for.
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.zxing.core)
+    //
+    // Scoped to the handset flavor, because a QR is read with a camera and a
+    // television has none. This is the flavor split doing its job: the code that
+    // cannot work on a device shape is not merely unreachable there, it is not
+    // in the APK.
+    "mobileImplementation"(libs.androidx.camera.core)
+    "mobileImplementation"(libs.androidx.camera.camera2)
+    "mobileImplementation"(libs.androidx.camera.lifecycle)
+    "mobileImplementation"(libs.androidx.camera.view)
+    "mobileImplementation"(libs.zxing.core)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
