@@ -84,6 +84,10 @@ fun TvCoreStage(
     var reloadToken by remember { mutableIntStateOf(0) }
     var openToken by remember { mutableIntStateOf(0) }
 
+    /** How much the face says it has open, and the press that hands Back to it. */
+    var faceBackDepth by remember { mutableIntStateOf(0) }
+    var backToken by remember { mutableIntStateOf(0) }
+
     /** Held open by Back, until Back or a choice closes it. */
     var pinned by remember { mutableStateOf(false) }
 
@@ -92,7 +96,12 @@ fun TvCoreStage(
 
     val chromeShown = pinned || greeting || webViewState != WebViewState.READY || !isConnected
 
-    BackHandler(enabled = !chromeShown) { pinned = true }
+    // The ladder, top rung first. The face's own surfaces close before the shell
+    // shows anything; the chrome is the last rung, and a press against it is not
+    // consumed at all, so the system closes the activity.
+    BackHandler(enabled = !chromeShown) {
+        if (faceBackDepth > 0) backToken += 1 else pinned = true
+    }
 
     LaunchedEffect(greeting) {
         if (!greeting) return@LaunchedEffect
@@ -137,6 +146,12 @@ fun TvCoreStage(
                 session = open,
                 reloadToken = reloadToken,
                 focusOnAttach = true,
+                // What tells the face it is on a television: the arrows move the
+                // focus, the overscan margin is held clear, and focus is drawn
+                // whether or not the browser thinks it should be.
+                declaredShape = "tv",
+                backToken = backToken,
+                onBackDepth = { faceBackDepth = it },
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(if (webViewState == WebViewState.READY) 1f else 0f),

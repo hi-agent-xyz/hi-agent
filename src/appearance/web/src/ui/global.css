@@ -2074,3 +2074,53 @@ button,
   from { transform: translateX(100%); }
   to   { transform: translateX(0); }
 }
+
+/* ── The television ────────────────────────────────────────────────────────────
+
+   The phone block above is the face rearranged for a screen with no room. This
+   one is the opposite problem: a screen with plenty of room, no pointer at all,
+   and an edge that cannot be measured.
+
+   `<html data-shape="tv">`, and unlike the other two shapes it is *declared* by
+   the host rather than matched — `/?shape=tv`, the way the desktop window asks
+   for `/?chrome=titlebar`. No media query separates a television from a large
+   monitor, and guessing at one would be the same mistake `max-width` was for the
+   phone. See `lib/shape.ts`.
+
+   Only two things change, because the wide arrangement is already the right one:
+   a room with surfaces in its corners is exactly what a television is. */
+
+/* Where the picture actually ends.
+
+   Televisions overscan: the panel crops the frame it is sent, by an amount that
+   is the set's business and is never reported to anything. So there is no inset
+   to read — `env(safe-area-inset-*)` is 0 here and would be 0 on a set cropping
+   40 pixels. The platform's answer is a fixed 5% margin, which on the 1920x1080
+   frame Android TV lays out as 960x540dp is 48 and 27dp, the same pair leanback's
+   own browse padding uses and the same pair `Tv.overscan` holds on the shell side.
+
+   Set on the four tokens rather than on the surfaces, because every occupant of
+   the stage already pads by them — so the whole face steps inside the safe area
+   at once, and a surface added later inherits it without knowing televisions
+   exist. */
+:root[data-shape="tv"] {
+  --hi-safe-top: calc(27px + var(--hi-chrome-top));
+  --hi-safe-right: 48px;
+  --hi-safe-bottom: 27px;
+  --hi-safe-left: 48px;
+}
+
+/* The focus, which here is the cursor.
+
+   `:focus`, not `:focus-visible`. The distinction the latter draws is whether the
+   person is likely to *want* the ring — it exists so a mouse click does not leave
+   one behind. There is no mouse on this host and no click that is not a focus
+   move, so the answer is always yes, and asking a heuristic to confirm it only
+   creates a case where the cursor is invisible and the remote appears dead.
+
+   Wider and further out than the 2px rings elsewhere in this file for the plain
+   reason that this one is read from across a room rather than from arm's length. */
+:root[data-shape="tv"] :focus {
+  outline: 3px solid var(--accent-line);
+  outline-offset: 4px;
+}

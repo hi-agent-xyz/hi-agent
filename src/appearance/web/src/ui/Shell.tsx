@@ -4,7 +4,9 @@ import { useViews } from "../core/views";
 import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
 import { onHostKey } from "../lib/keyboard";
-import { useIsPhone } from "../lib/shape";
+import { useShape } from "../lib/shape";
+import { focusInViewPlane, leaveViewPlane } from "../lib/spatial";
+import { onShellBack, reportBackDepth } from "../lib/tvBack";
 import { PageEdge } from "./PageEdge";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
@@ -69,11 +71,12 @@ export function Shell() {
   const { setTextChannel } = ch;
   const sendText = useSendText();
   const { views, clear } = useViews();
-  // Whether this is the held-in-a-hand shape. Read once here and handed down,
-  // rather than each surface asking: what it decides is one arrangement of the
-  // cover plane, and two components disagreeing about it would put the back
-  // chevron on a page that is still a popover.
-  const phone = useIsPhone();
+  // Which arrangement this is. Read once here and handed down, rather than each
+  // surface asking: what it decides is one arrangement of the cover plane, and
+  // two components disagreeing about it would put the back chevron on a page that
+  // is still a popover.
+  const shape = useShape();
+  const phone = shape === "phone";
   // Whether the views band is open. A window preference like the text channel's
   // own on/off, and never server state for the same reason: it says what this
   // window is showing the person, not what the agent expressed.
@@ -121,6 +124,52 @@ export function Shell() {
       if (event.key === "Escape" && !event.defaultPrevented) setTextChannel(false);
     });
   }, [chatShown, setTextChannel]);
+
+  // The television's Escape, which is the remote's Back button.
+  //
+  // Same ladder as Escape's and in the same order, with one rung Escape does not
+  // need: a view holding the focus. On a desktop the pointer leaves a view by
+  // clicking somewhere else, and there is no pointer here — while a view has the
+  // focus the arrows are its own (`lib/keyboard.ts`), so Back is the only way
+  // out of it.
+  //
+  // Reported as a depth rather than handled by the shell, because *what* closes
+  // is this component's business and *whether Back is ours at all* is the
+  // shell's. When the count is zero the shell keeps the press and shows its own
+  // chrome, one step from leaving the app.
+  //
+  // Where the focus is has to be watched rather than read: it moves without
+  // React, so a depth computed during render would be the depth as of whatever
+  // last happened to re-render. `focusout` is listened for alongside `focusin`
+  // because focus leaving for nothing at all — a view unmounting under it — is a
+  // rung coming off the ladder and fires only the former.
+  const [focusInView, setFocusInView] = useState(false);
+  useEffect(() => {
+    if (shape !== "tv") return;
+    const update = () => setFocusInView(focusInViewPlane());
+    update();
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    return () => {
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+    };
+  }, [shape]);
+
+  const backDepth = (focusInView ? 1 : 0) + (bandOpen ? 1 : 0) + (chatShown ? 1 : 0);
+  useEffect(() => {
+    if (shape !== "tv") return;
+    reportBackDepth(backDepth);
+  }, [shape, backDepth]);
+
+  useEffect(() => {
+    if (shape !== "tv") return;
+    return onShellBack(() => {
+      if (leaveViewPlane()) return;
+      if (bandOpen) setBandOpen(false);
+      else if (chatShown) setTextChannel(false);
+    });
+  }, [shape, bandOpen, chatShown, setTextChannel]);
 
   // The other dismissal: a press on what is behind the panel. Armed only while
   // there IS something behind it — a view. With nothing on the stage the press

@@ -38,6 +38,34 @@ export const PHONE = "(max-width: 640px) and (pointer: coarse)";
 // is: one place asks the question, everywhere else reads the answer.
 export const COARSE = "(pointer: coarse)";
 
+// The third shape, and **the only one that is not measured.**
+//
+// A television is wide, like the desktop window, and it is pointed at with
+// nothing at all — the cursor is focus itself, moved a control at a time by a
+// D-pad. No media query separates it from a large monitor: it is not narrow, its
+// `pointer` is whatever the device's WebView decides to report, and a browser
+// opened full-screen on a TV-shaped panel is genuinely not a television. Asking
+// harder would repeat the mistake this file exists to record — `max-width` was
+// also a plausible way to find a phone.
+//
+// So the host says so, the way the desktop window says it spans a titlebar by
+// asking for `/?chrome=titlebar` (`lib/chrome.ts`). The Android TV client loads
+// `/?shape=tv`, and nothing else ever will.
+//
+// Being declared rather than matched has a second consequence worth stating: it
+// does not change. A phone rotates and a window is dragged narrow, so those flags
+// keep listening; a television is the same television all evening, so this one is
+// written once and no listener is installed for it.
+const TV = "tv";
+
+/** Whether this page was opened by a host that calls itself a television. */
+export function declaredTv(search: string = window.location.search): boolean {
+  return new URLSearchParams(search).get("shape") === TV;
+}
+
+/** The three arrangements the face knows how to be. */
+export type Shape = "phone" | "tv" | "wide";
+
 /** A live match, or `null` where there is no `matchMedia` (the render worker,
  * tests). Kept as objects so the flags on `<html>` and the hook below read the
  * same lists. */
@@ -60,6 +88,16 @@ const coarseQuery = query(COARSE);
  * happened to open.
  */
 export function installShape(): void {
+  if (declaredTv()) {
+    // Both flags, and no listeners. `data-pointer="none"` is not decoration: the
+    // coarse rules are about a *finger* — the browser's touch gestures, the 16px
+    // floor under which iOS zooms a focused field — and a remote control is not a
+    // finger. A television that reported itself coarse would inherit a phone's
+    // compensations for a pointer it does not have.
+    document.documentElement.setAttribute("data-shape", TV);
+    document.documentElement.setAttribute("data-pointer", "none");
+    return;
+  }
   write(phoneQuery, "data-shape", "phone", "wide");
   write(coarseQuery, "data-pointer", "coarse", "fine");
 }
@@ -76,15 +114,28 @@ function subscribe(onChange: () => void): () => void {
   return () => phoneQuery?.removeEventListener("change", onChange);
 }
 
-/** Whether this is the held-in-a-hand shape. The components that read it decide
- * *what to render* — a back chevron, the controls as the page's bar — while the
- * stylesheet decides how it looks off the same flag. */
-export function useIsPhone(): boolean {
-  return useSyncExternalStore(
+/**
+ * Which arrangement this is. The components that read it decide *what to render*
+ * — a back chevron, the controls as the page's bar — while the stylesheet decides
+ * how it looks off the same flag.
+ *
+ * The television is checked first and wins outright: it is a declaration and the
+ * other two are measurements, so there is no case where both could be true and a
+ * precedence to argue about.
+ */
+export function useShape(): Shape {
+  const phone = useSyncExternalStore(
     subscribe,
     () => phoneQuery?.matches ?? false,
     // The server/prerender answer. A view rendered off-screen has no window to
     // measure, and the wide shape is the one that needs no gesture attached.
     () => false,
   );
+  if (typeof window !== "undefined" && declaredTv()) return TV;
+  return phone ? "phone" : "wide";
+}
+
+/** Whether this is the held-in-a-hand shape — the one whose surfaces are pages. */
+export function useIsPhone(): boolean {
+  return useShape() === "phone";
 }

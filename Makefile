@@ -41,6 +41,14 @@ run: ## run the release binary
 
 test: ## run rust + web tests
 	cargo test
+	$(MAKE) test-web
+
+# The face's half on its own. Not a shortcut for the impatient: the client shells
+# under `app/` change the face without touching a line of Rust, and the hosts they
+# are developed on cannot always build the core — `cargo test` wants a toolchain
+# and tens of gigabytes of `target/`, and a disk that runs out mid-build reports
+# success while producing nothing.
+test-web: ## run the web tests alone (no Rust toolchain needed)
 # Guarded on the runner itself, not on `node_modules/` being present: a fresh
 # worktree has no deps at all and a half-installed tree has the directory, so a
 # `test -d` here is the check that passes while the thing it guards is missing.

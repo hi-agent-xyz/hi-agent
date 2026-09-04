@@ -58,10 +58,34 @@ fun CoreWebView(
      * Unverified against a device; see `docs/platforms/android-tv.md`.
      */
     focusOnAttach: Boolean = false,
+    /**
+     * What this host calls itself, appended to the loaded address as `?shape=`.
+     *
+     * The face runs in more places than it can tell apart by measuring, so each
+     * host that is not simply a window says which it is — the macOS window asks
+     * for `?chrome=titlebar`, and a television asks for `?shape=tv`. Null is the
+     * default and means the face works it out from the screen, which is the right
+     * answer for a handset.
+     */
+    declaredShape: String? = null,
+    /**
+     * Bumped to hand the remote's Back press to the face.
+     *
+     * Same shape as `reloadToken` above: a counter, because the interesting event
+     * is "it happened again" and a boolean cannot say that twice.
+     */
+    backToken: Int = 0,
+    /**
+     * How many things the face says it would close before Back should mean leave.
+     * Zero on every host that never reports, which is all of them but the TV.
+     */
+    onBackDepth: (Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val state = remember { CoreWebViewState(context.applicationContext) }
     state.onEvent = onEvent
+    state.onBackDepth = onBackDepth
+    state.declaredShape = declaredShape
 
     // The OS half of a capture grant. WebKit raises the system microphone and
     // camera prompts itself, so the iOS client needs nothing here; Android hands
@@ -122,6 +146,7 @@ fun CoreWebView(
         update = { webView ->
             state.install(session, webView)
             state.reloadIfRequested(reloadToken, webView)
+            state.dispatchBackIfRequested(backToken, webView)
         },
         onRelease = { webView ->
             state.onEvent = {}
@@ -137,6 +162,14 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
 
     /** Ask the OS for capture permissions this app does not hold yet. */
     var onNeedsPermissions: (Array<String>) -> Unit = {}
+
+    /** What the face last said about how much it has open. */
+    var onBackDepth: (Int) -> Unit = {}
+
+    /** The `?shape=` this host declares itself as, or null to let the face measure. */
+    var declaredShape: String? = null
+
+    private var backToken = 0
 
     /**
      * What has already been put to the person once. A permission refused twice
@@ -190,9 +223,37 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
             // quietly having an opinion about a policy it does not set.
             manager.setCookie(nextSession.baseUrl.toString(), nextSession.cookie.setCookieHeader) {
                 manager.flush()
-                webView.post { webView.loadUrl(nextSession.baseUrl.toString()) }
+                webView.post { webView.loadUrl(faceUrl(nextSession)) }
             }
         }
+    }
+
+    /**
+     * The address to load, which is the core's own plus whatever this host has to
+     * declare about itself. The cookie is still set against the bare base URL
+     * above — a query string is not part of a cookie's scope, and writing one
+     * into it would be this app inventing an attribute the core did not send.
+     */
+    private fun faceUrl(forSession: CoreSession): String {
+        val shape = declaredShape ?: return forSession.baseUrl.toString()
+        return forSession.baseUrl.newBuilder().setQueryParameter("shape", shape).build().toString()
+    }
+
+    /**
+     * Hand the remote's Back press to the face.
+     *
+     * A `CustomEvent` on `window`, the same direction and the same mechanism the
+     * desktop shell uses for `hi:lifecycle` (`lib/nativeBridge.ts`). Fire and
+     * forget: the shell has already decided the press is the face's, off the
+     * depth the face last reported, so there is nothing to wait for.
+     */
+    fun dispatchBackIfRequested(token: Int, webView: WebView) {
+        if (token == backToken) return
+        backToken = token
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('hi:back'))",
+            null,
+        )
     }
 
     fun reloadIfRequested(token: Int, webView: WebView) {
@@ -223,6 +284,7 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
      */
     fun installDocumentStartScript(webView: WebView, forSession: CoreSession) {
         webView.addJavascriptInterface(SessionBridge(::requestSessionRenewal), "hiAgentSession")
+        webView.addJavascriptInterface(ShellBridge(::reportBackDepth), "hiAgentShell")
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
         val base = forSession.baseUrl
         runCatching {
@@ -232,6 +294,19 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
                 setOf("${base.scheme}://${base.host}:${base.port}"),
             )
         }
+    }
+
+    /** The main thread, for the two callbacks that arrive on the JS bridge's own. */
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * The face saying how much it has open.
+     *
+     * Hopped to the main thread because `addJavascriptInterface` calls arrive on
+     * the bridge's own thread, and what this feeds is Compose state.
+     */
+    private fun reportBackDepth(depth: Int) {
+        main.post { onBackDepth(depth) }
     }
 
     private fun requestSessionRenewal() {
@@ -253,6 +328,10 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
     val webViewClient = object : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             navigationFailed = false
+            // The document about to load has told us nothing yet, and a depth left
+            // over from the last one would make Back close something that is no
+            // longer there — or, worse, refuse to leave the app.
+            reportBackDepth(0)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
             if (isTrusted(url?.let(Uri::parse))) {
                 view.evaluateJavascript(SESSION_OBSERVER, null)
@@ -428,5 +507,23 @@ class SessionBridge(private val onUnauthorized: () -> Unit) {
     @JavascriptInterface
     fun unauthorized() {
         onUnauthorized()
+    }
+}
+
+/**
+ * The other direction of the Back arrangement: the face reporting how many of its
+ * own surfaces a press would close, so the shell — which has to answer
+ * `KEYCODE_BACK` there and then and cannot ask a page a synchronous question —
+ * already knows whose press it is.
+ *
+ * Not origin-scoped, for the same reason `SessionBridge` is not and with the same
+ * consequence: the worst a page that calls it uninvited can do is lie about a
+ * number, which makes Back a no-op or makes it leave a step early. It reads
+ * nothing and returns nothing.
+ */
+class ShellBridge(private val onBackDepth: (Int) -> Unit) {
+    @JavascriptInterface
+    fun backDepth(depth: Int) {
+        onBackDepth(depth)
     }
 }

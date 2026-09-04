@@ -10,6 +10,7 @@ import { applyHostChrome } from "./lib/chrome";
 import { applyLanguage } from "./lib/language";
 import { installNativeFeel } from "./lib/nativeFeel";
 import { installShape } from "./lib/shape";
+import { installSpatialNav } from "./lib/spatial";
 import { installSoftKeyboard } from "./lib/softKeyboard";
 import { installStageReport } from "./lib/stageReport";
 import "./ui/tailwind.css";
@@ -57,6 +58,10 @@ if (!inCore().startsWith("/inspect")) {
   // of the first view import, because the guard can only silence listeners that
   // have not run yet.
   installKeyPlanes();
+  // And on a television, the arrows move the focus, because there is no pointer
+  // to move instead. After `installKeyPlanes` and through it: the plane rule is
+  // what stands this down while an agent view holds the focus.
+  installSpatialNav();
 }
 
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
