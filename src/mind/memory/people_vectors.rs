@@ -122,7 +122,27 @@ impl Modality {
     /// weaker signal — a short turn, a room's acoustics, and an overlapping second
     /// speaker all drag a genuine match down toward where strangers already sit, so
     /// the band where the two overlap is wider and has to be conceded, not split.
-    /// Guesses until validated on real embeddings.
+    ///
+    /// **Measured September 4 2026** against this install's store, with every face
+    /// identified by the person themselves: same-person scores run 0.293 at their
+    /// lowest, 0.548 at the 5th percentile, 0.819 median, while the best *different*
+    /// person tops out at 0.275. **The two do not overlap at all**, and taking each
+    /// person out of the store in turn and asking the rest to name their faces anyway
+    /// — a stranger walking in — names nobody at any floor from 0.40 up. So 0.40 sits
+    /// in the gap with room on both sides, and the 1.5% of genuine faces below it are
+    /// the price of that room.
+    ///
+    /// **The same measurement on unlabelled clusters said 16.5% and was wrong**, which
+    /// is worth keeping: two of the store's clusters were one person, so re-finding
+    /// him under the other id counted as an impostor. A leave-one-person-out error
+    /// rate is only an error rate if the people are actually people; over fragmented
+    /// clusters it counts correct recognition as failure.
+    ///
+    /// **Voice therefore has no measured number yet, and 0.45 stays a guess.** Its
+    /// clusters are exactly that unlabelled and that fragmented — 82% of every voice
+    /// sample in one cluster whose internal similarity is 0.25, and 36 clusters of a
+    /// single sample — so the same test over them cannot tell a false accept from a
+    /// reunion. Labels first, then this number.
     pub fn recognize_min(self) -> f32 {
         match self {
             Modality::Face => 0.40,
