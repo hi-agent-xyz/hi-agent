@@ -12,6 +12,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -47,6 +49,17 @@ fun CoreWebView(
     val context = LocalContext.current
     val state = remember { CoreWebViewState(context.applicationContext) }
     state.onEvent = onEvent
+
+    // The OS half of a capture grant. WebKit raises the system microphone and
+    // camera prompts itself, so the iOS client needs nothing here; Android hands
+    // `onPermissionRequest` to the app and expects the app to already hold the
+    // runtime permission, which nothing was asking for. The result is discarded
+    // on purpose — the face retries `getUserMedia` on its own and the chrome
+    // client below reads the answer fresh when it does.
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {}
+    state.onNeedsPermissions = { permissions -> permissionLauncher.launch(permissions) }
 
     AndroidView(
         modifier = modifier,
@@ -103,6 +116,18 @@ fun CoreWebView(
 
 private class CoreWebViewState(private val appContext: android.content.Context) {
     var onEvent: (CoreWebViewEvent) -> Unit = {}
+
+    /** Ask the OS for capture permissions this app does not hold yet. */
+    var onNeedsPermissions: (Array<String>) -> Unit = {}
+
+    /**
+     * What has already been put to the person once. A permission refused twice
+     * is refused for good, and Android then answers the request instantly
+     * without showing anything — so asking again on every `getUserMedia` retry
+     * would be an invisible loop rather than a prompt. Turning a refusal around
+     * is a trip to system settings, as it is for any app.
+     */
+    private val asked = mutableSetOf<String>()
 
     private var session: CoreSession? = null
     private var installedCookieValue: String? = null
@@ -286,28 +311,62 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
         /**
          * Camera and microphone, granted only to the paired core's exact origin.
          *
-         * The app's own runtime permissions are requested up front by the shell,
-         * so by the time the face asks, the answer here is about origin alone.
-         * A request this app does not hold the OS permission for is denied
-         * rather than queued — the face retries, and a silently pending grant
-         * would look like a hung camera.
+         * Two gates, and this method is only the second of them. The origin has
+         * to be the paired core's exact scheme, host and port, and the app has
+         * to hold the OS permission for the device being asked for — an app
+         * cannot pass on a grant it does not have.
+         *
+         * **Asking the OS for that permission is this method's job too**, and
+         * for a while it was nobody's: `RECORD_AUDIO` was declared in the
+         * manifest and never requested, so every audio request took the empty
+         * branch below and the microphone was dead on arrival while the camera —
+         * asked for by the QR scanner on its own account — worked. WebKit raises
+         * these prompts itself, which is why the iOS client has no equivalent of
+         * this and why the gap was invisible from that side.
+         *
+         * A request whose permission is missing is still denied rather than left
+         * pending: a silently queued grant looks like a hung camera, whereas the
+         * face retries `getUserMedia` on its own and the retry meets the answer
+         * the person just gave.
          */
         override fun onPermissionRequest(request: PermissionRequest) {
             if (!isTrusted(request.origin)) {
                 request.deny()
                 return
             }
+
             val granted = request.resources.filter { resource ->
-                when (resource) {
-                    PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
-                        hasPermission(android.Manifest.permission.CAMERA)
-                    PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
-                        hasPermission(android.Manifest.permission.RECORD_AUDIO)
-                    else -> false
-                }
+                osPermission(resource)?.let(::hasPermission) == true
             }
             if (granted.isEmpty()) request.deny() else request.grant(granted.toTypedArray())
+
+            val toAsk = request.resources
+                .mapNotNull(::osPermission)
+                .filterNot(::hasPermission)
+                .filterNot(asked::contains)
+                .distinct()
+            if (toAsk.isNotEmpty()) {
+                asked += toAsk
+                onNeedsPermissions(toAsk.toTypedArray())
+            }
         }
+    }
+
+    /**
+     * The OS permission a captured device needs, or null for a resource this app
+     * does not serve. `RESOURCE_PROTECTED_MEDIA_ID` is the one that matters here:
+     * it is a DRM identifier rather than a capture device, and answering it with
+     * a camera grant would be a category error.
+     *
+     * On the television flavor `CAMERA` is not in the manifest at all, so asking
+     * for it is refused by the system without a prompt. That costs one refusal
+     * and then the `asked` set holds, which is the right shape for a device that
+     * has no camera to grant.
+     */
+    private fun osPermission(resource: String): String? = when (resource) {
+        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
+        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
+        else -> null
     }
 
     private fun hasPermission(permission: String): Boolean =
