@@ -486,6 +486,15 @@ pub struct Status {
     /// a shell command showed a blank line on the roster, which is the same "silence read as
     /// health" this whole surface exists to end.
     pub doing: Option<String>,
+    /// How full this session's context window was on its last request, 0–100, or `None`
+    /// before it has made one.
+    ///
+    /// **The state the compaction policy runs on, and until it was here nobody could see
+    /// it.** It crossed the wire on every request as `thread/tokenUsage/updated` and was
+    /// read only inside the session handle, so "how close is this thread to being
+    /// compacted" could be answered by parsing the raw frame log and no other way — the
+    /// same blindness `doing` was added to end, one field over.
+    pub window_percent: Option<u8>,
     /// When [`doing`](Self::doing) was last replaced, or `None` alongside a `None` `doing`.
     ///
     /// A line with no age says a session is alive and nothing more. `$ cargo test` four
@@ -653,6 +662,8 @@ struct Entry {
     /// The codex thread hosting this session, once `thread/start` has answered. `None`
     /// between registration and that moment — the session exists first, deliberately.
     thread: Option<String>,
+    /// How full the window was on the last request — see [`Status::window_percent`].
+    window_percent: Option<u8>,
     /// Woken when something lands, so an idle session picks it up without polling.
     notify: std::sync::Arc<Notify>,
 }
@@ -677,6 +688,7 @@ impl Entry {
             doing: self.doing.clone(),
             doing_at: self.doing_at,
             last_turn: self.last_turn.clone(),
+            window_percent: self.window_percent,
         }
     }
 
@@ -919,6 +931,7 @@ impl Registry {
                     steps: std::collections::VecDeque::new(),
                     last_turn: None,
                     thread: None,
+                    window_percent: None,
                     notify: notify.clone(),
                 },
             );
@@ -997,6 +1010,7 @@ impl Registry {
                     steps: std::collections::VecDeque::new(),
                     last_turn: None,
                     thread: None,
+                    window_percent: None,
                     notify: notify.clone(),
                 },
             );
@@ -1644,6 +1658,17 @@ impl Registry {
     /// One line, replaced rather than appended: this answers "is it alive and on what",
     /// which only the newest answer serves. Long lines are cut, because the caller is
     /// summarizing a tool call and a shell command can be a screenful.
+    /// Record how full a session's window was on its last request.
+    ///
+    /// Written at a turn boundary by whoever holds the session, because that is where the
+    /// reading and the slug are in the same hand — [`crate::foundation::codex::WindowFill`]
+    /// lives on the session handle and the switchboard knows nothing about codex.
+    pub fn note_window(&self, id: &SessionSlug, percent: u8) {
+        if let Some(e) = self.sessions.lock().unwrap().get_mut(id) {
+            e.window_percent = Some(percent);
+        }
+    }
+
     pub fn record_activity(&self, id: &SessionSlug, what: &str) {
         let what = what.trim();
         if what.is_empty() {

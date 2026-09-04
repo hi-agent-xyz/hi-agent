@@ -135,6 +135,10 @@ struct WorkerDto {
     /// seen, which is a fact whenever it is read. A reader that draws it beside a
     /// non-running state is what made a finished session say `idle` and `thinking` at once.
     doing: Option<String>,
+    /// How full its context window was on the last request, 0–100, or `null` before it has
+    /// made one. What a reader wants it for is the same thing the compaction policy does:
+    /// a thread near the top of its window is one whose history is about to be summarised.
+    window_percent: Option<u8>,
     /// When `doing` was last replaced, RFC3339. What separates a busy session that is
     /// working from one that is hung: the line alone cannot.
     doing_at: Option<String>,
@@ -522,6 +526,7 @@ fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
         state_since: stamp(st.state_since),
         tail,
         doing: st.doing.clone(),
+        window_percent: st.window_percent,
         doing_at: st.doing_at.map(stamp),
         last_turn: st.last_turn.as_ref().map(last_turn),
     }
@@ -616,6 +621,7 @@ mod tests {
             doing: None,
             doing_at: None,
             last_turn: None,
+            window_percent: None,
         }
     }
 
@@ -649,6 +655,7 @@ mod tests {
         assert_eq!(v["owner"], serde_json::Value::Null);
         assert_eq!(v["owner_role"], serde_json::Value::Null);
         assert_eq!(v["doing"], serde_json::Value::Null);
+        assert_eq!(v["window_percent"], serde_json::Value::Null);
         assert_eq!(v["title"], "check oil prices");
         assert_eq!(v["state"], "running");
         assert_eq!(v["turns"], 3);

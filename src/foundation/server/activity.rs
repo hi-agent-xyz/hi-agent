@@ -133,6 +133,7 @@ mod tests {
             doing: None,
             doing_at: None,
             last_turn: None,
+            window_percent: None,
         }
     }
 

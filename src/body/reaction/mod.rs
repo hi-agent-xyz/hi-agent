@@ -178,6 +178,22 @@ const DEFAULT_REFLECT_EVERY: Duration = Duration::from_secs(60);
 /// conversation re-checks at most this often.
 const DEFAULT_REFLECT_MAX: Duration = Duration::from_secs(8 * 3600);
 
+/// Put this session's window reading on the switchboard, and hand it back to the caller.
+///
+/// **Called at every turn boundary, including by sessions that never compact.** A worker's
+/// fill is not the compaction policy's business — codex handles workers — but it is very
+/// much its owner's, who is deciding whether to send it more work. Until this existed the
+/// only way to answer "how close is this thread to being compacted" was to parse the raw
+/// frame log, which is how this whole policy had to be designed in the first place.
+pub(super) fn note_window(
+    id: &registry::SessionSlug,
+    session: Option<&crate::foundation::codex::AgentSession>,
+) -> Option<crate::foundation::codex::WindowFill> {
+    let fill = session?.window_fill()?;
+    registry::global().note_window(id, fill.percent());
+    Some(fill)
+}
+
 /// How full the window has to be before the end of a turn is spent compacting it.
 ///
 /// **Measured against codex's own behaviour, which is the only fixed point here.** Across 29
@@ -215,7 +231,7 @@ pub(super) async fn compact_if_full(
     session: Option<&crate::foundation::codex::AgentSession>,
 ) {
     let Some(session) = session else { return };
-    let Some(fill) = session.window_fill() else { return };
+    let Some(fill) = note_window(id, Some(session)) else { return };
     if fill.percent() < COMPACT_ABOVE_PERCENT {
         return;
     }

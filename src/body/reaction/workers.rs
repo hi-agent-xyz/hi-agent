@@ -764,6 +764,7 @@ async fn drive(
         };
         // The turn is over — say so, or `session_status` reports every session as
         // permanently mid-turn once it has taken any mail at all.
+        super::note_window(id, Some(&session));
         registry::global().finish_turn(id, outcome);
         observatory
             .record(

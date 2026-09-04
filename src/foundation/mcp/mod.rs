@@ -1347,8 +1347,20 @@ async fn dispatch_tool(
                 },
                 None => String::new(),
             };
+            // **How full its window is, because that is a fact about what it can still
+            // take on.** A session near the top of its window is one whose history is about
+            // to be summarised, so an owner deciding between "send it more" and "let it
+            // finish and open a fresh one" is deciding on this number — and until it was on
+            // the switchboard the only way to read it was the raw frame log.
+            let window = match st.window_percent {
+                Some(pct) if pct >= 70 => {
+                    format!("; window {pct}% full, so it compacts at the end of a quiet turn")
+                }
+                Some(pct) => format!("; window {pct}% full"),
+                None => String::new(),
+            };
             return tool_ok(&format!(
-                "session {} — {state}{ended}; {} turn(s) so far; on: {}{doing}",
+                "session {} — {state}{ended}; {} turn(s) so far; on: {}{doing}{window}",
                 st.id, st.turns, st.title
             ));
         }
@@ -3597,6 +3609,7 @@ mod delivered_line_tests {
             doing: None,
             doing_at: None,
             last_turn: None,
+            window_percent: None,
         }
     }
 
