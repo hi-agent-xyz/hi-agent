@@ -209,43 +209,6 @@ pub(super) fn note_window(
 /// into every turn — so half full is around thirty points of real history.
 const COMPACT_ABOVE_PERCENT: u8 = 50;
 
-/// Compact this rung's thread if it is still worth it, on the far side of the upkeep bell.
-///
-/// **Called from inside the rung's own loop, and that is what makes it safe.** A compaction
-/// takes the session's single in-flight-turn slot, so anything running it from beside the
-/// loop would collide with the loop's own `prompt` — and a rung whose prompt fails drops its
-/// long-lived session and cold-opens, losing the thread. The sweep decides *whether*; this
-/// is *when*, and here nothing else can be running.
-///
-/// **The conditions are read again rather than trusted from the sweep.** Ten minutes of
-/// sweep grain and a wake in between are long enough for mail to have landed, and mail means
-/// somebody is owed something — the window is theirs, not housekeeping's. Skipped too when
-/// no request has been measured, because compacting on a number nobody sent is the guess
-/// this replaces.
-///
-/// Never fatal: a failed compaction leaves the thread exactly as usable as it was, only
-/// still large, and codex's own trigger is underneath it either way.
-pub(super) async fn compact_if_full(
-    id: &registry::SessionSlug,
-    session: Option<&crate::foundation::codex::AgentSession>,
-) {
-    let Some(session) = session else { return };
-    let Some(fill) = note_window(id, Some(session)) else { return };
-    if fill.percent() < COMPACT_ABOVE_PERCENT {
-        return;
-    }
-    if registry::global().status(id).is_some_and(|s| s.queued) {
-        tracing::debug!(rung = %id, percent = fill.percent(), "window full, but mail is waiting");
-        return;
-    }
-    tracing::info!(rung = %id, percent = fill.percent(), used = fill.used, "compacting");
-    match session.compact().await {
-        Ok(true) => tracing::info!(rung = %id, "compacted"),
-        // Both halves mean the window is still full, and neither is worth waking anyone for.
-        Ok(false) => tracing::warn!(rung = %id, "compaction turn failed; window unchanged"),
-        Err(err) => tracing::warn!(rung = %id, error = %format!("{err:#}"), "compaction refused"),
-    }
-}
 
 /// Resolve a stored duration tunable in duration grammar (`90s`/`30m`/`1h`; bare
 /// integer = seconds): `None` for `off`/`0` (disabled), the parsed value, or
@@ -1043,7 +1006,7 @@ pub async fn start(
 
     // The upkeep sweep. The only clock left in this host, and it wakes nobody to think —
     // see [`upkeep`] for why that is a different thing from the three cadences removed.
-    tokio::spawn(upkeep::sweep_forever(reaction.inner.tools.clone()));
+    tokio::spawn(upkeep::sweep_forever());
 
     // Consolidated reflection ("sleep"): one pass over the shared frontier on
     // one global clock. One writer touches the shared facet/people stores.
@@ -1336,13 +1299,6 @@ async fn apply_control(
     ctl: LoopControl,
 ) {
     match ctl {
-        // Handled by each rung's own control arm, which has the session handle this needs
-        // and which `apply_control` deliberately does not — see [`LoopControl::Compact`].
-        // Reaching here means a rung took the message without owning a session to act on,
-        // which is a wiring mistake rather than a state to recover from.
-        LoopControl::Compact => {
-            tracing::warn!("upkeep compaction reached apply_control; the rung's arm should hold it");
-        }
         LoopControl::CreateWorker {
             id,
             title,

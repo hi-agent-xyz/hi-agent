@@ -33,6 +33,21 @@ pub struct AgentSession {
     /// six call sites because this is the only door into a session — a rung added
     /// later gets the substitution without knowing it exists.
     secrets: crate::foundation::privacy::SecretStore,
+    /// The one turn this session may have in flight, as a permit rather than a race.
+    ///
+    /// **The slot was always single, but losing it used to be an error.** `prompt` took the
+    /// update receiver and answered `session already has an in-flight turn` if it was gone,
+    /// which is the right answer to a caller prompting twice and the wrong one to anything
+    /// else wanting the session for a moment — and a rung whose prompt errors *drops its
+    /// long-lived session and cold-opens*, so a maintenance task touching a session from
+    /// outside could destroy the thread it was tidying. That is why compaction had to be
+    /// routed back through the owning loop instead of simply being called.
+    ///
+    /// A permit makes the two cases different things. `prompt` **waits** for it, so a turn
+    /// arriving during maintenance is delayed rather than failed; maintenance
+    /// [`try_compact`](Self::try_compact)s and steps aside if a turn holds it. Nothing has to
+    /// own a session exclusively to be allowed to touch it.
+    turn: Arc<tokio::sync::Semaphore>,
     /// Whether this session picked up a thread that already existed, rather than opening one.
     ///
     /// **Read by whoever hands the session its first message**, because that message is the
@@ -249,6 +264,10 @@ pub struct SessionRun {
     /// Shared with the session, so the fill outlives the turn that measured it — the
     /// moment a compaction policy can act is *after* a turn, when the run is gone.
     window: Arc<std::sync::Mutex<Option<WindowFill>>>,
+    /// Held for the life of the run, so the session's single turn slot is released when the
+    /// turn is actually over rather than when `prompt` returns — which is immediately, since
+    /// `turn/start` only means *accepted*. See [`AgentSession::turn`].
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 #[cfg(test)]
@@ -462,6 +481,7 @@ impl AgentSession {
             data_dir,
             secrets,
             resumed,
+            turn: Arc::new(tokio::sync::Semaphore::new(1)),
             window: Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -496,10 +516,19 @@ impl AgentSession {
     /// business, and its output does not come back through here.
     pub async fn prompt(&self, text: String) -> anyhow::Result<SessionRun> {
         let text = self.secrets.mask_known(&text).into_owned();
+        // **Waits rather than refuses.** Anything else holding the session — a compaction
+        // the upkeep sweep asked for — delays this turn by its duration instead of failing
+        // it, and a failed turn here is not a small thing: the caller's recovery is to drop
+        // the session and cold-open, which loses the thread. See [`AgentSession::turn`].
+        let permit = self
+            .turn
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| anyhow!("session is closing; no turn can start"))?;
         let rx = {
             let mut slot = self.rx.lock().await;
-            slot.take()
-                .ok_or_else(|| anyhow!("session already has an in-flight turn"))?
+            slot.take().ok_or_else(|| anyhow!("session already has an in-flight turn"))?
         };
 
         // Restore the receiver if starting the turn fails, so one refused `turn/start`
@@ -518,6 +547,7 @@ impl AgentSession {
             Ok(value) => value,
             Err(err) => {
                 *self.rx.lock().await = Some(rx);
+                drop(permit);
                 return Err(err);
             }
         };
@@ -542,6 +572,7 @@ impl AgentSession {
             data_dir: self.data_dir.clone(),
             text_buf: String::new(),
             window: self.window.clone(),
+            _permit: permit,
         })
     }
 
@@ -557,12 +588,24 @@ impl AgentSession {
     /// on the empty RPC response would hand a caller a session that looks free and refuses
     /// the next `prompt` for being mid-turn, so the slot is held here until the turn ends.
     ///
+    /// **Steps aside rather than waiting**, which is what makes it safe to call on a
+    /// session somebody else is using. Maintenance is never urgent: a turn holding the
+    /// permit means real work is happening, and the sweep that asked will come round again.
+    /// The opposite choice — waiting — would put a maintenance task in the queue ahead of
+    /// nothing, holding a permit it does not need.
+    ///
     /// **Returns whether the compaction turn completed rather than failed.** Failing is
     /// ordinary — it is a model call, and it can 401, time out, or be refused — and it must
     /// never be fatal to the caller: a thread whose compaction failed is exactly as usable
     /// as it was, only still large. What it must not be is silent, because a caller that
-    /// believes it compacted stops watching a window that is still full.
+    /// believes it compacted stops watching a window that is still full. `Ok(false)` covers
+    /// both "a turn had the session" and "the compaction ran and failed", because the only
+    /// thing a caller does with either is try again later.
     pub async fn compact(&self) -> anyhow::Result<bool> {
+        let Ok(_permit) = self.turn.clone().try_acquire_owned() else {
+            tracing::debug!(thread_id = %self.id, "not compacting; a turn holds the session");
+            return Ok(false);
+        };
         let mut rx = {
             let mut slot = self.rx.lock().await;
             slot.take().ok_or_else(|| anyhow!("session already has an in-flight turn"))?
@@ -748,6 +791,9 @@ mod tests {
             data_dir: PathBuf::from("/nonexistent"),
             text_buf: String::new(),
             window: Arc::new(std::sync::Mutex::new(None)),
+            _permit: Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .expect("a fresh semaphore has its permit"),
         }
     }
 

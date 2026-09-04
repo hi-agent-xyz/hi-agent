@@ -22,7 +22,11 @@
 //! this, and a rung with no live sink is skipped, which is what a rung that is not up
 //! should be.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
+
+use crate::foundation::codex::AgentSession;
 
 use crate::foundation::registry::{self, SessionSlug};
 
@@ -40,33 +44,75 @@ const SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 /// grain already makes it approximate.
 const IDLE_FOR: Duration = Duration::from_secs(60 * 60);
 
-/// Tell every session that has gone quiet with a full enough window to compact, forever.
+/// The live sessions, by slug — **the thing that was missing.**
 ///
-/// **The message crosses on the rung's existing control channel** ([`super::tools::LoopControl`]),
-/// which is there for exactly this: work whose state the loop owns. Nothing new is wired —
-/// no second map of handles, no extra arm — and a rung with no live control sink is simply
-/// skipped, which is what a rung that is not up should be.
-pub(super) async fn sweep_forever(tools: super::tools::ToolRegistry) {
+/// `docs/arch/host.md` says sessions are host-owned, and they were not: a rung's handle was
+/// a local in its own loop, so anything wanting to touch a session had to be routed back
+/// through that loop as a message. Workers already had a directory ([`super::workers`]);
+/// the three standing rungs did not, and the asymmetry was invisible until something needed
+/// to reach all of them.
+///
+/// Held as `Weak`, so this never keeps a session alive: dropping the handle is still what
+/// closes a session, and a slug whose session has gone simply stops resolving. Registering
+/// is the only thing an owner has to do, and forgetting to costs it maintenance rather than
+/// correctness.
+fn live() -> &'static Mutex<HashMap<SessionSlug, Weak<AgentSession>>> {
+    static LIVE: OnceLock<Mutex<HashMap<SessionSlug, Weak<AgentSession>>>> = OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Put a session in the directory, replacing whatever was there under that slug — a rung
+/// that cold-opens after a failure registers again, and the dead handle it replaces would
+/// otherwise sit there resolving to nothing.
+pub(super) fn attend(id: &SessionSlug, session: &Arc<AgentSession>) {
+    let mut live = live().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    live.retain(|_, weak| weak.strong_count() > 0);
+    live.insert(id.clone(), Arc::downgrade(session));
+}
+
+/// Compact every session that has gone quiet with a full enough window, forever.
+///
+/// **It calls the session directly**, which it can because the two halves that made that
+/// unsafe are gone: the handle is in the directory above, and
+/// [`AgentSession::compact`](crate::foundation::codex::AgentSession::compact) steps aside
+/// when a turn holds the session rather than colliding with it. What this replaces is a
+/// message routed back through the owning loop — real plumbing standing in for ownership
+/// the design already claimed to have.
+pub(super) async fn sweep_forever() {
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
-        for (id, owner) in due() {
-            let Some(sink) = tools.get(owner).await else { continue };
-            tracing::info!(session = %id, "upkeep: asking for a compaction");
-            if sink.control.send(super::tools::LoopControl::Compact).await.is_err() {
-                tracing::warn!(session = %id, "upkeep: control channel gone");
+        for id in due() {
+            let Some(session) = live()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&id)
+                .and_then(Weak::upgrade)
+            else {
+                continue;
+            };
+            match session.compact().await {
+                // Also the answer when a turn had the session — see `compact`. Both mean
+                // "still full, come back later", which is the only thing to do with either.
+                Ok(false) => tracing::debug!(session = %id, "upkeep: nothing compacted"),
+                Ok(true) => tracing::info!(session = %id, "upkeep: compacted"),
+                Err(err) => {
+                    tracing::warn!(session = %id, error = %format!("{err:#}"), "upkeep: compaction refused")
+                }
             }
         }
     }
 }
 
-/// The sessions worth asking: quiet, quiet for a while, and full enough to be worth a
-/// model call. Paired with the rung to send to, because only the standing rungs compact —
-/// a worker has no control channel of its own and is left to codex.
+/// The sessions worth compacting: quiet, quiet for a while, and full enough to be worth a
+/// model call. Every session in the directory is a candidate — a worker that has genuinely
+/// been idle an hour with a full window is as worth tidying as a rung, and the reason
+/// workers were excluded before was that they had no channel to be asked on, which was a
+/// fact about the plumbing rather than about workers.
 ///
-/// The fill test is deliberately here as well as in [`super::compact_if_full`], which runs
-/// on the far side of the bell. This one keeps the sweep from waking loops for nothing; that
-/// one is the decision, made against a reading taken after the wake rather than before it.
-fn due() -> Vec<(SessionSlug, super::tools::ToolOwner)> {
+/// The reading comes off the switchboard rather than the session handle, because that is
+/// what makes this a scan: no locks on live sessions, no await, just the numbers every turn
+/// boundary already writes there ([`super::note_window`]).
+fn due() -> Vec<SessionSlug> {
     let now = chrono::Utc::now();
     registry::global()
         .statuses()
@@ -76,33 +122,13 @@ fn due() -> Vec<(SessionSlug, super::tools::ToolOwner)> {
             (now - st.state_since).to_std().is_ok_and(|idle| idle >= IDLE_FOR)
         })
         .filter(|st| st.window_percent.is_some_and(|pct| pct >= super::COMPACT_ABOVE_PERCENT))
-        .filter_map(|st| {
-            let owner = super::tools::ToolOwner::from_role(Some(st.role.as_str()))?;
-            Some((st.id, owner))
-        })
+        .map(|st| st.id)
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Only the standing rungs are asked. A worker has no control channel of its own, and
-    /// is deliberately left to codex — its window can go from a tenth full to full inside a
-    /// single turn, which no boundary policy can catch.
-    #[test]
-    fn only_a_rung_can_be_asked_to_compact() {
-        use crate::identity::{Role, WorkerType};
-        assert!(super::super::tools::ToolOwner::from_role(Some(Role::Cognition.as_str())).is_some());
-        assert!(super::super::tools::ToolOwner::from_role(Some(Role::Reflection.as_str())).is_some());
-        assert!(
-            super::super::tools::ToolOwner::from_role(Some(
-                Role::Worker(WorkerType::General).as_str()
-            ))
-            .is_none(),
-            "a worker has no control channel to be asked on"
-        );
-    }
 
     /// The threshold this sweep filters on is the one the loop decides with — two numbers
     /// here would let the sweep ring for sessions the far side always declines, which is a

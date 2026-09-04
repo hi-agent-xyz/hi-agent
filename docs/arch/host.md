@@ -358,13 +358,26 @@ and it produces a model call only when one is genuinely owed, for work with no j
 it. The test to apply to anything added here is that one: **does the tick itself cost a
 turn, or only the case it finds?**
 
-**It decides *whether*, never *when*.** A compaction takes a session's single
-in-flight-turn slot, so a sweep holding the handle would collide with that loop's own
-`prompt` — and a rung whose prompt fails drops its long-lived session and cold-opens,
-losing the thread the design keeps it for. So the sweep sends, on the control channel the
-rung already has, and the loop acts. The race is structurally impossible rather than
-unlikely, and nothing new was wired to make it so: that channel exists precisely for work
-whose state the loop owns.
+**It calls the session directly, and that took making two things true.**
+
+*Sessions are actually host-owned.* They were not: a rung's handle was a local inside its
+own loop, so anything wanting to touch a session had to be routed back through that loop as
+a message — plumbing standing in for ownership this document already claimed. Workers had a
+directory; the three standing rungs did not, and nothing needed to reach all of them until
+this did. There is one now, holding `Weak` handles by slug, so registering costs an owner
+nothing and dropping a handle still closes a session.
+
+*A turn is a permit, not a race.* The single in-flight-turn slot was always single, but
+losing it was an **error** — right for a caller prompting twice, wrong for anything else
+wanting the session for a moment, and dangerous because a rung whose prompt errors drops its
+long-lived session and cold-opens. So maintenance touching a session from outside could
+destroy the thread it was tidying. Now `prompt` **waits** for the permit and `compact`
+**steps aside**: a turn arriving during a compaction is delayed by it rather than failed,
+and a sweep arriving during a turn does nothing and comes round again. Maintenance is never
+urgent, so it is never the one that waits.
+
+Neither of those is about compaction. They are what it costs to have anything at all that
+acts across sessions, and the next such thing gets them for free.
 
 Both numbers are deliberately loose. Ten minutes against an hour is slack nobody can
 observe: the question is "has this been quiet for about an hour", and no reader downstream

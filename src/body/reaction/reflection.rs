@@ -232,13 +232,6 @@ async fn run(reaction: Reaction, registration: Registration) {
             _ = mail.notified() => Wake::Turn,
             ctl = control_rx.recv() => {
                 match ctl {
-                    // The upkeep sweep says this thread is quiet and full enough. Done
-                    // here because the loop owns the session handle: nothing else can be
-                    // holding its one turn slot from inside this arm.
-                    Some(super::tools::LoopControl::Compact) => {
-                        super::compact_if_full(&id, session.as_deref()).await;
-                        continue;
-                    }
                     Some(ctl) => {
                         super::apply_control(&reaction, &mut workers, ctl).await;
                         continue;
@@ -390,6 +383,7 @@ async fn run(reaction: Reaction, registration: Registration) {
                 tracing::warn!(reflection = %id, error = %format!("{err:#}"), "reflection turn failed; mail held");
             }
         }
+        super::note_window(&id, session.as_deref());
         registry::global().finish_turn(&id, outcome);
     }
 }
@@ -406,6 +400,7 @@ async fn open_session(
     reaction: &Reaction,
     id: registry::SessionSlug,
 ) -> anyhow::Result<Arc<AgentSession>> {
+    let slug = id.clone();
     let data_dir = reaction.inner.memory.data_dir();
     // One file, whole — see `cognition.rs` for why the seed went.
     let system_prompt = crate::identity::reflection_prompt(data_dir).await;
@@ -438,6 +433,9 @@ async fn open_session(
         )
         .await;
 
+    // The directory the upkeep sweep reads. Registering is the whole of what an owner
+    // owes it; a slug whose session has gone simply stops resolving.
+    super::upkeep::attend(&slug, &opened);
     Ok(opened)
 }
 

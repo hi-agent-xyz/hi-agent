@@ -392,7 +392,11 @@ impl WorkerRegistry {
             )
             .await;
         match opened {
-            Ok(session) => Ok((Arc::new(session), mail)),
+            Ok(session) => {
+                let session = Arc::new(session);
+                super::upkeep::attend(&id, &session);
+                Ok((session, mail))
+            }
             Err(err) => {
                 registry::global().unregister(&id);
                 Err(err)

@@ -33,20 +33,10 @@ pub(super) const SAY_MAX_CHARS: usize = 240;
 /// now, through the switchboard, which needs no channel of its own.
 /// `Alarm` went with it: nothing in the host fires at a named time
 /// ([`glancing up`](../../../docs/arch/host.md)), and the agent arranges its own
-/// timing with the shell it already has. What is left is here for one reason, which the
-/// two variants share: **the loop owns the state each of them touches** — the live-session
-/// map for one, the agent session handle for the other.
+/// timing with the shell it already has. What is left is one variant, and it is
+/// here because the loop owns the state it touches.
 #[derive(Debug)]
 pub enum LoopControl {
-    /// Compact this rung's thread now, if it is still worth it.
-    ///
-    /// Sent by the [upkeep sweep](super::upkeep), which decides *whether* and never *when*.
-    /// A compaction takes the session's single in-flight-turn slot, so the sweep cannot do
-    /// it from outside: it would collide with the loop's own `prompt`, and a rung whose
-    /// prompt fails drops its long-lived session and cold-opens, losing the thread. Crossing
-    /// on this channel puts the work in the one task that can hold the handle safely — the
-    /// same reason `CreateWorker` is here.
-    Compact,
     /// Start a working session for `task` (the `create_worker` tool), owned by the
     /// session that asked.
     ///
