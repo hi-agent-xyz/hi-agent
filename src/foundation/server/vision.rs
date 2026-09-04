@@ -57,11 +57,6 @@ use crate::types::{Channel, Inbound, JournalEntry, Media, Sender, Signal};
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";
 
-/// Cosine floor for naming a recognized face in the evidence note; below it the
-/// face is shown as "unfamiliar". Deliberately low — the note is soft evidence
-/// the agent weighs, not a verdict (same-person cosine runs ~0.7+, different ~0).
-const RECOGNISE_MIN: f32 = 0.4;
-
 pub async fn post_vision(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -143,12 +138,10 @@ pub async fn post_presence(
     // needs clustering, which reflection does later.
     let mut seen_now: HashSet<String> = HashSet::new();
     for f in faces.iter().filter(|f| presence_salient(f)) {
-        let label = people_vectors::nearest(&state.data_dir, Modality::Face, &f.embedding, 1)
+        let label = people_vectors::recognize(&state.data_dir, Modality::Face, &f.embedding)
             .await
             .ok()
-            .and_then(|c| c.into_iter().next())
-            .filter(|c| c.similarity >= RECOGNISE_MIN)
-            .map(|c| c.subject)
+            .and_then(|seen| seen.named().map(|c| c.subject.clone()))
             .unwrap_or_else(|| STRANGER.to_string());
         seen_now.insert(label);
     }
@@ -403,8 +396,9 @@ fn spawn_perceive(
 /// Recognize the faces in a still image and render them as one compact evidence
 /// note to append to the caption, e.g. ` ⟨faces: 老王 ~0.83; unfamiliar⟩`. Returns
 /// `None` when no face is found or detection fails — best-effort, the signal
-/// stands either way. Each face is matched against the people store; a match
-/// below [`RECOGNISE_MIN`] reads as "unfamiliar".
+/// stands either way. Each face is matched against the people store; anything the
+/// store declines to name — too weak, or too close a tie to call — reads as
+/// "unfamiliar", which is an answer rather than a shortfall.
 async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
     let faces = match face::detect_and_embed(bytes).await {
         Ok(f) => f,
@@ -418,16 +412,16 @@ async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
     }
     let mut parts = Vec::with_capacity(faces.len());
     for f in &faces {
-        let top = people_vectors::nearest(data_dir, Modality::Face, &f.embedding, 1)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .next();
-        match top {
-            Some(c) if c.similarity >= RECOGNISE_MIN => {
-                parts.push(format!("{} ~{:.2}", c.subject, c.similarity))
+        let seen = match people_vectors::recognize(data_dir, Modality::Face, &f.embedding).await {
+            Ok(seen) => seen,
+            Err(err) => {
+                tracing::warn!(error = %format!("{err:#}"), "face match failed");
+                continue;
             }
-            _ => parts.push("unfamiliar".to_string()),
+        };
+        match seen.named() {
+            Some(c) => parts.push(format!("{} ~{:.2}", c.subject, c.similarity)),
+            None => parts.push("unfamiliar".to_string()),
         }
     }
     Some(format!(" ⟨faces: {}⟩", parts.join("; ")))

@@ -65,7 +65,7 @@ use crate::body::capabilities::stt::{self, Transcript};
 use crate::body::capabilities::voiceprint;
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
-use crate::mind::memory::people_vectors::{self, Modality};
+use crate::mind::memory::people_vectors::{self, Candidate, Modality};
 use crate::foundation::pcm;
 use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, AudioEvent, AudioInEvent};
@@ -75,11 +75,6 @@ use uuid::Uuid;
 
 const DEFAULT_MIME: &str = "audio/wav";
 
-/// Cosine floor for naming a recognized voice in the evidence note; below it the
-/// voice reads "unfamiliar". Mirrors the vision channel's `RECOGNISE_MIN` — soft
-/// evidence the agent weighs, not a verdict.
-const VOICE_RECOGNISE_MIN: f32 = 0.4;
-
 /// Sample rate of the live mic, and samples per millisecond (16 kHz mono). Used to
 /// map a diarized utterance's `[start_ms, end_ms]` onto the timeline buffer.
 const SAMPLES_PER_MS: u64 = 16;
@@ -87,6 +82,19 @@ const SAMPLES_PER_MS: u64 = 16;
 /// Minimum sliced span to voiceprint: ~1 s. Shorter turns ("嗯", "对") embed
 /// poorly and pull clusters toward a noisy centroid, so they're skipped.
 const VP_MIN_SPAN_SAMPLES: u64 = SAMPLES_PER_MS * 1_000;
+
+/// Minimum sliced span to **keep** as a sample: ~2.5 s. A turn long enough to
+/// identify from is not automatically one worth filing, and the two decisions were
+/// one call until September 2026: every second-long "嗯 对" the mic caught became a
+/// sample, and then a vote in every later match. That is how one person's gallery
+/// reached its thousand-sample ceiling and two dozen fragments became two dozen
+/// one-sample "people". Recognition still reads the short turns; only writing waits
+/// for a real one.
+const VP_ENROLL_MIN_SAMPLES: u64 = SAMPLES_PER_MS * 2_500;
+
+/// How many of a diarized speaker's turns must name the same subject before the
+/// stream calls them that. See [`SpeakerVoices::subject`].
+const VOICE_TURNS_MIN: usize = 2;
 
 /// How much audio the timeline retains *before* the last consumed utterance end —
 /// slack so a span whose diarized final lands slightly after its audio can still be
@@ -160,11 +168,71 @@ impl VpTimeline {
     }
 }
 
+/// Who each diarized speaker is, accumulated across their turns on this stream.
+///
+/// **One voiceprint is weak evidence, and the store says so.** Spontaneous speech
+/// scores a genuine match not far above where a stranger sits — a short turn, the
+/// room, an overlapping second voice all pull it down — so a name decided on one turn
+/// is wrong often enough to put somebody else's words on a person's record. Turns are
+/// cheap and a speaker keeps talking, so the answer is to wait for the second one. The
+/// vendor's `speaker_id` already groups a person's turns within the session, which is
+/// exactly the key to accumulate under; nothing here persists past the stream, and
+/// nothing here writes to the people store.
+#[derive(Default)]
+struct SpeakerVoices {
+    by_speaker: HashMap<String, SpeakerEvidence>,
+}
+
+/// One diarized speaker's turns: for each subject the store was willing to name, the
+/// score of every turn that named them. Turns that named nobody — most of them, and
+/// an ordinary outcome — are counted by their absence.
+#[derive(Default)]
+struct SpeakerEvidence {
+    named: HashMap<String, Vec<f32>>,
+}
+
+impl SpeakerVoices {
+    /// Record what one turn of `speaker_id` sounded like.
+    fn note(&mut self, speaker_id: &str, named: Option<&Candidate>) {
+        let ev = self.by_speaker.entry(speaker_id.to_string()).or_default();
+        if let Some(c) = named {
+            ev.named.entry(c.subject.clone()).or_default().push(c.similarity);
+        }
+    }
+
+    /// Who this speaker is, once their turns agree on somebody. [`VOICE_TURNS_MIN`]
+    /// turns naming the same subject settle it; a single turn settles it only when it
+    /// scored well enough to be worth filing as a sample — the store's own
+    /// [`Modality::append_min`], borrowed rather than re-invented, because "solid
+    /// enough to keep" and "solid enough to say out loud alone" are the same
+    /// judgment. Two subjects level on turns settle nothing: that is the speaker
+    /// sounding like both, which is the honest answer and leaves them unplaced.
+    fn subject(&self, speaker_id: &str) -> Option<String> {
+        let ev = self.by_speaker.get(speaker_id)?;
+        let mut ranked: Vec<(&String, usize, f32)> = ev
+            .named
+            .iter()
+            .map(|(subject, scores)| {
+                (subject, scores.len(), scores.iter().copied().fold(f32::MIN, f32::max))
+            })
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.1.cmp(&a.1).then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        let (subject, turns, best) = *ranked.first()?;
+        if ranked.get(1).is_some_and(|second| second.1 == turns) {
+            return None;
+        }
+        (turns >= VOICE_TURNS_MIN || best >= Modality::Voice.append_min())
+            .then(|| subject.clone())
+    }
+}
+
 /// Recognize the speaker of a single-voice clip: the compact evidence note to append
 /// to the agent-facing transcript, e.g. ` ⟨voice: 老王 ~0.82⟩`, **and the subject it
-/// named** when the match actually cleared [`VOICE_RECOGNISE_MIN`] — so the signal
-/// carries a grounded [`Sender`] instead of leaving its own text the only place that
-/// says who was talking. `None` for the subject means the voice was heard and not
+/// named** when the store was willing to name one — so the signal carries a grounded
+/// [`Sender`] instead of leaving its own text the only place that says who was
+/// talking. `None` for the subject means the voice was heard and not
 /// placed, which is a complete answer.
 ///
 /// The audio twin of the vision channel's `face_note`. Returns `None` outright when
@@ -194,16 +262,10 @@ async fn voice_note(
             return None;
         }
     };
-    let top = people_vectors::nearest(data_dir, Modality::Voice, &embedding, 1)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .next();
-    let (who, subject) = match top {
-        Some(c) if c.similarity >= VOICE_RECOGNISE_MIN => {
-            (format!("{} ~{:.2}", c.subject, c.similarity), Some(c.subject))
-        }
-        _ => ("unfamiliar".to_string(), None),
+    let seen = people_vectors::recognize(data_dir, Modality::Voice, &embedding).await.ok()?;
+    let (who, subject) = match seen.named() {
+        Some(c) => (format!("{} ~{:.2}", c.subject, c.similarity), Some(c.subject.clone())),
+        None => ("unfamiliar".to_string(), None),
     };
     Some((format!(" ⟨voice: {who}⟩"), subject))
 }
@@ -430,12 +492,12 @@ pub async fn ingest_pcm_stream(
     // The PCM pump (below) appends raw samples to `timeline` (an absolute-clock
     // buffer); when a diarized utterance finalizes, the out task slices *that
     // speaker's own* audio by the utterance's `[start_ms, end_ms]`, embeds it, and
-    // clusters it into the people store, caching `speaker_id → person` so each
-    // delivered sentence can be tagged with the speaker. Only armed when the
-    // voiceprint capability is configured.
+    // asks the people store who it sounds like, accumulating that under `speaker_id`
+    // until this speaker's turns agree on somebody. Only armed when the voiceprint
+    // capability is configured.
     let vp_on = voiceprint::available();
     let timeline: Arc<Mutex<VpTimeline>> = Arc::new(Mutex::new(VpTimeline::default()));
-    let speaker_names: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let voices: Arc<Mutex<SpeakerVoices>> = Arc::new(Mutex::new(SpeakerVoices::default()));
 
     // An explicit Segmenter — not the upstream's silence flag — decides where the
     // continuous word-stream is cut into sentences for the agent. A periodic tick
@@ -444,16 +506,17 @@ pub async fn ingest_pcm_stream(
     let relay_state = state.clone();
     let relay_stream = stream.clone();
     let relay_pcm = timeline.clone();
-    let relay_names = speaker_names.clone();
+    let relay_voices = voices.clone();
     let relay_tag = source_tag.clone();
     let out_task = tokio::spawn(async move {
         let mut seg = Segmenter::new(Speech::default(), Instant::now());
         let mut ticker = tokio::time::interval(Duration::from_millis(150));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // The speaker of the latest diarized final, and the last subject we tagged
-        // a sentence with — so we mark turn changes, not every line.
+        // The speaker of the latest diarized final, and the (diarized speaker, who we
+        // called them) pair the last tag stated — so we mark turn changes, not every
+        // line, and re-mark when a voice we could not place acquires a name.
         let mut current_speaker: Option<String> = None;
-        let mut last_tagged: Option<String> = None;
+        let mut last_tagged: Option<(String, String)> = None;
         // The source note rides the first sentence only.
         let mut source_noted = false;
         loop {
@@ -496,7 +559,7 @@ pub async fn ingest_pcm_stream(
                                         .collect()
                                 };
                                 for (spk, pcm) in sliced {
-                                    resolve_speaker(&relay_state, relay_names.clone(), spk, pcm);
+                                    resolve_speaker(&relay_state, relay_voices.clone(), spk, pcm);
                                 }
                             }
                             // Tag the dispatched sentence with the last finalized
@@ -518,16 +581,24 @@ pub async fn ingest_pcm_stream(
                 let mut line = sentence;
                 let speaker = current_speaker
                     .as_ref()
-                    .and_then(|spk| relay_names.lock().unwrap().get(spk).cloned());
+                    .and_then(|spk| relay_voices.lock().unwrap().subject(spk));
                 // The tag in the *text* still marks turn changes only: it is prose
                 // the mind reads, and a name restated on every sentence is noise
                 // there (a 1:1 chat shows it once; a multi-party one marks each
-                // handoff).
-                if let Some(subject) = &speaker
-                    && last_tagged.as_deref() != Some(subject.as_str())
-                {
-                    line.push_str(&format!(" ⟨voice: {subject}⟩"));
-                    last_tagged = Some(subject.clone());
+                // handoff). What it marks is the **diarized speaker** changing, not
+                // the name — so a handoff between two people neither of whom can be
+                // placed still reads as a handoff instead of one long stretch by
+                // nobody. A voice that was unfamiliar and later gets placed re-marks,
+                // because that is news.
+                if let Some(spk) = &current_speaker {
+                    let mark = (
+                        spk.clone(),
+                        speaker.clone().unwrap_or_else(|| "unfamiliar".to_string()),
+                    );
+                    if last_tagged.as_ref() != Some(&mark) {
+                        line.push_str(&format!(" ⟨voice: {}⟩", mark.1));
+                        last_tagged = Some(mark);
+                    }
                 }
                 if let Some(tag) = &relay_tag
                     && !source_noted
@@ -543,7 +614,7 @@ pub async fn ingest_pcm_stream(
             let mut line = sentence;
             let speaker = current_speaker
                 .as_ref()
-                .and_then(|spk| relay_names.lock().unwrap().get(spk).cloned());
+                .and_then(|spk| relay_voices.lock().unwrap().subject(spk));
             if let Some(tag) = &relay_tag
                 && !source_noted
             {
@@ -720,16 +791,25 @@ async fn deliver_transcript(
     true
 }
 
-/// Resolve a diarized speaker's identity off the hot path: embed the utterance's
-/// PCM into a voiceprint, cluster it into the people store
-/// ([`people_vectors::assign`] — append to a near cluster, or mint a fresh id),
-/// and cache `speaker_id → subject` so the stream can tag this speaker's
-/// sentences. Detached and best-effort — a failure just leaves the speaker
-/// untagged. Unlike clips and stills, the live mic persists no per-utterance media
-/// for the reflection pass to re-derive, so the clustering must happen inline here.
+/// Resolve a diarized speaker's identity off the hot path, in two decisions that used
+/// to be one call.
+///
+/// **Identifying is a read.** Embed the utterance's PCM, ask the people store who it
+/// sounds like, and hand that to [`SpeakerVoices`], which decides across this
+/// speaker's turns whether they can be named at all.
+///
+/// **Keeping it is a separate, stricter decision.** Only a turn of at least
+/// [`VP_ENROLL_MIN_SAMPLES`] is filed, and only where the store can place it
+/// confidently or not at all — a sample it can neither append nor call new is kept
+/// nowhere, because the alternatives are a wrong append and an invented person.
+///
+/// Detached and best-effort: a failure leaves the speaker unplaced, which is an
+/// ordinary state rather than an error. Unlike clips and stills, the live mic persists
+/// no per-utterance media for the reflection pass to re-derive, so both decisions
+/// happen inline here.
 fn resolve_speaker(
     state: &Arc<AppState>,
-    names: Arc<Mutex<HashMap<String, String>>>,
+    voices: Arc<Mutex<SpeakerVoices>>,
     speaker_id: String,
     pcm: Vec<i16>,
 ) {
@@ -737,11 +817,13 @@ fn resolve_speaker(
         return;
     }
     let data_dir = state.data_dir.clone();
-    // A playable WAV of this turn, built before the PCM is consumed by `embed`, so
-    // the cluster keeps an audible preview of the live-mic voice (the stream stores
-    // no per-utterance clip otherwise).
-    let pcm_bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
-    let wav = pcm16_mono_16k_to_wav(&pcm_bytes);
+    // A playable WAV of this turn, built before the PCM is consumed by `embed`, so a
+    // kept sample carries an audible preview of the live-mic voice (the stream stores
+    // no per-utterance clip otherwise). Built only for a turn long enough to keep.
+    let wav = (pcm.len() as u64 >= VP_ENROLL_MIN_SAMPLES).then(|| {
+        let pcm_bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
+        pcm16_mono_16k_to_wav(&pcm_bytes)
+    });
     tokio::spawn(async move {
         let embedding = match voiceprint::embed(pcm).await {
             Ok(e) => e,
@@ -750,11 +832,27 @@ fn resolve_speaker(
                 return;
             }
         };
-        match people_vectors::assign(&data_dir, Modality::Voice, &embedding, &wav, "wav").await {
-            Ok(subject) => {
-                names.lock().unwrap().insert(speaker_id, subject);
+        let seen = match people_vectors::recognize(&data_dir, Modality::Voice, &embedding).await {
+            Ok(seen) => seen,
+            Err(err) => {
+                tracing::warn!(error = %format!("{err:#}"), "live voice match failed");
+                return;
             }
-            Err(err) => tracing::warn!(error = %format!("{err:#}"), "live voice assign failed"),
+        };
+        voices.lock().unwrap().note(&speaker_id, seen.named());
+
+        let Some(wav) = wav else {
+            return; // heard and weighed; too short to be worth keeping
+        };
+        let subject = match seen.filing() {
+            people_vectors::Filing::Append(subject) => subject,
+            people_vectors::Filing::Mint => people_vectors::mint_id(),
+            people_vectors::Filing::Unplaceable => return,
+        };
+        if let Err(err) =
+            people_vectors::enroll(&data_dir, &subject, Modality::Voice, &embedding, &wav, "wav").await
+        {
+            tracing::warn!(error = %format!("{err:#}"), "live voice enroll failed");
         }
     });
 }
@@ -1030,5 +1128,71 @@ mod tests {
         assert_eq!(VP_MIN_SPAN_SAMPLES, 16_000);
         let short: Vec<i16> = vec![0; 8_000]; // 0.5 s
         assert!((short.len() as u64) < VP_MIN_SPAN_SAMPLES);
+    }
+
+    #[test]
+    fn keeping_a_sample_takes_a_longer_turn_than_hearing_one() {
+        assert!(VP_ENROLL_MIN_SAMPLES > VP_MIN_SPAN_SAMPLES);
+        let a_second_of_speech: u64 = 16_000;
+        assert!(a_second_of_speech >= VP_MIN_SPAN_SAMPLES, "long enough to identify from");
+        assert!(a_second_of_speech < VP_ENROLL_MIN_SAMPLES, "not long enough to keep");
+    }
+
+    /// A candidate as `people_vectors::recognize` would return it.
+    fn named(subject: &str, similarity: f32) -> Candidate {
+        Candidate { subject: subject.to_string(), similarity, support: 3 }
+    }
+
+    #[test]
+    fn one_middling_turn_names_nobody() {
+        let mut voices = SpeakerVoices::default();
+        // Above the store's floor — it was willing to say a name — but nowhere near
+        // solid enough to stand on its own.
+        voices.note("0", Some(&named("赵力", 0.47)));
+        assert_eq!(voices.subject("0"), None);
+    }
+
+    #[test]
+    fn a_second_turn_agreeing_settles_it() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", Some(&named("赵力", 0.47)));
+        voices.note("0", Some(&named("赵力", 0.46)));
+        assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
+    }
+
+    #[test]
+    fn one_turn_solid_enough_to_file_stands_alone() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", Some(&named("赵力", Modality::Voice.append_min() + 0.05)));
+        assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
+    }
+
+    #[test]
+    fn turns_split_between_two_people_name_neither() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", Some(&named("赵力", 0.48)));
+        voices.note("0", Some(&named("赵君宁", 0.47)));
+        assert_eq!(voices.subject("0"), None, "sounding like both is not being either");
+        // A third turn breaks the tie.
+        voices.note("0", Some(&named("赵力", 0.46)));
+        assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
+    }
+
+    #[test]
+    fn speakers_are_weighed_apart_and_an_unheard_one_is_nobody() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", Some(&named("赵力", 0.47)));
+        voices.note("1", Some(&named("赵力", 0.47)));
+        assert_eq!(voices.subject("0"), None, "one turn each, not two for either");
+        assert_eq!(voices.subject("2"), None, "a speaker with no turns is unplaced");
+    }
+
+    #[test]
+    fn turns_that_named_nobody_are_kept_as_nobody() {
+        let mut voices = SpeakerVoices::default();
+        for _ in 0..5 {
+            voices.note("0", None);
+        }
+        assert_eq!(voices.subject("0"), None, "five unplaced turns do not add up to a person");
     }
 }

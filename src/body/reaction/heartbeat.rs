@@ -535,7 +535,7 @@ fn media_dur(media: Option<&crate::types::Media>) -> Duration {
 }
 
 /// Mechanically cluster the faces in the frontier's vision signals: for each one,
-/// detect+embed and [`people_vectors::assign`] every salient face to the people
+/// detect+embed and [`people_vectors::cluster`] every salient face into the people
 /// store (append to a near cluster, or mint a fresh id). Returns, per tail index,
 /// the cluster ids the faces landed in — the stable handles the reflection prompt
 /// shows so the mind can name a face, even a first-time one. Covers both posted
@@ -604,11 +604,15 @@ async fn cluster_faces(
                     continue;
                 }
             };
-            match people_vectors::assign(data_dir, people_vectors::Modality::Face, &f.embedding, &jpg, "jpg").await {
-                Ok(id) => {
+            match people_vectors::cluster(data_dir, people_vectors::Modality::Face, &f.embedding, &jpg, "jpg").await {
+                Ok(Some(id)) => {
                     out.entry(i).or_default().push(id);
                 }
-                Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: assign failed"),
+                // Too like someone to call a stranger, too unlike them to file: the
+                // face is left out of the store and out of the report, rather than
+                // pushed into whichever of the two answers is nearer.
+                Ok(None) => {}
+                Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: face cluster failed"),
             }
         }
     }
@@ -617,8 +621,8 @@ async fn cluster_faces(
 
 /// Mechanically cluster the voices in the frontier's audio clips: for each clip
 /// that carries persisted audio, decode it, embed a voiceprint, and
-/// [`people_vectors::assign`] it to the people store (append to a near cluster, or
-/// mint a fresh id). Returns, per tail index, the cluster ids — the audio twin of
+/// [`people_vectors::cluster`] it into the people store (append to a near cluster,
+/// mint a fresh id, or — between the two thresholds — file it nowhere). Returns, per tail index, the cluster ids — the audio twin of
 /// [`cluster_faces`], so the mind can name a voice the same way it names a face.
 /// No-op (empty) without the voiceprint capability. Only clips have media here;
 /// live-mic utterances are media-less and are clustered inline on the stream.
@@ -672,11 +676,12 @@ async fn cluster_voices(
         };
         // The clip is the sample's canonical media, stored 1:1 with its voiceprint.
         let ext = std::path::Path::new(&m.file).extension().and_then(|e| e.to_str()).unwrap_or("wav");
-        match people_vectors::assign(data_dir, people_vectors::Modality::Voice, &embedding, &bytes, ext).await {
-            Ok(id) => {
+        match people_vectors::cluster(data_dir, people_vectors::Modality::Voice, &embedding, &bytes, ext).await {
+            Ok(Some(id)) => {
                 out.entry(i).or_default().push(id);
             }
-            Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: voice assign failed"),
+            Ok(None) => {} // unplaceable between the thresholds — see `cluster_faces`
+            Err(err) => tracing::warn!(error = %format!("{err:#}"), "cluster: voice cluster failed"),
         }
     }
     out

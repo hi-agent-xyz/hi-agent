@@ -6,6 +6,13 @@
 //! the **recognition samples** beside it and answers one mechanical question:
 //! *which known person is this query vector nearest to?*
 //!
+//! **Reading and writing are two verbs here, and they always were two decisions.**
+//! [`recognize`] answers who a vector looks like and touches nothing; [`cluster`] and
+//! [`enroll`] are the writes, asked for on purpose. They ran as one call until
+//! September 2026, which meant every identification also enrolled its own guess — and
+//! a gallery that grades the next observation against samples it admitted on the
+//! strength of the last one has no floor under it.
+//!
 //! A sample is a single observation, stored as a **pair sharing one uuid** in
 //! `<subject>/<modality>/` (`face/`, `voice/`): the **media** it came from
 //! (`<uuid>.jpg` face crop, `<uuid>.wav` voice turn) and its **embedding**
@@ -21,9 +28,11 @@
 //! another — so one long call full of near-duplicate frames can't crowd out genuine
 //! variety. Past either bound the oldest is dropped (uuid v7 sorts chronologically).
 //!
-//! This is the **mechanical half of identity**: [`nearest`] returns ranked
-//! *candidates* as evidence; the decision — same person? a new person? attach a
-//! name? — is the agent's, deliberately ([[project-people-recognition-design]]).
+//! This is the **mechanical half of identity**: [`recognize`] returns ranked
+//! *candidates* as evidence — with the runner-up and the support behind each score,
+//! because a match is only as good as its lead — and the decision — same person? a
+//! new person? attach a name? — is the agent's, deliberately
+//! ([[project-people-recognition-design]]).
 //! Writes are atomic (temp sibling + rename) and last-writer-wins across conversations.
 //!
 //! Legacy: older galleries stored one packed `<modality>.f32` blob at the person
@@ -60,10 +69,20 @@ const MAX_VARIANTS: usize = 3;
 /// [`APPEND_THRESHOLD`].
 const DEDUP_SIMILARITY: f32 = 0.85;
 
-/// Cosine at/above which an observation is taken to be an existing person rather
-/// than someone new (see [`assign`]). Conservative — minting a duplicate cluster
-/// (mergeable later) is cheaper than wrongly fusing two people.
-const APPEND_THRESHOLD: f32 = 0.5;
+/// How many of a subject's nearest samples are averaged into their score. The max
+/// over a gallery is monotone in its size — a thousand-sample cluster wins by having
+/// had more chances at a lucky angle, not by being more like the query — so a gallery
+/// that grows quietly lowers its own bar, and the biggest cluster ends up answering
+/// for the room. Averaging the best few asks instead whether the subject's *core*
+/// looks like the query, which does not inflate with N. A gallery smaller than this
+/// averages over what it has.
+const SCORE_SAMPLES: usize = 3;
+
+/// How far ahead of the runner-up the best subject must score before a match names
+/// anyone. Two subjects within this of each other are one ambiguous answer, not a
+/// winner and a loser; the honest reading is that we cannot tell which, so
+/// [`Recognition::named`] answers nobody. A guess until validated on real embeddings.
+const MARGIN_MIN: f32 = 0.05;
 
 /// The directory under [`layout::facets_dir`] holding every person's subdir.
 fn people_dir(data_dir: &Path) -> PathBuf {
@@ -97,15 +116,45 @@ impl Modality {
             Modality::Face => "face",
         }
     }
+
+    /// Score at/above which a match is worth *naming* someone, subject to
+    /// [`MARGIN_MIN`]. Voice sits higher than face because spontaneous speech is the
+    /// weaker signal — a short turn, a room's acoustics, and an overlapping second
+    /// speaker all drag a genuine match down toward where strangers already sit, so
+    /// the band where the two overlap is wider and has to be conceded, not split.
+    /// Guesses until validated on real embeddings.
+    pub fn recognize_min(self) -> f32 {
+        match self {
+            Modality::Face => 0.40,
+            Modality::Voice => 0.45,
+        }
+    }
+
+    /// Score at/above which an observation is *written into* an existing cluster
+    /// ([`cluster`]). Deliberately well above [`Self::recognize_min`]: a name said
+    /// out of a weak match is one sentence, revisable the moment it is contradicted,
+    /// while a sample filed under the wrong person is silent, compounds into every
+    /// later match, and is found only by listening to a thousand clips. Between the
+    /// two thresholds is the band where the store writes nothing at all.
+    pub fn append_min(self) -> f32 {
+        match self {
+            Modality::Face => 0.55,
+            Modality::Voice => 0.60,
+        }
+    }
 }
 
 /// One ranked match: the facet subject (whose `facet.md` neighbour holds the
-/// agent's prose understanding) and the best cosine similarity of the query against
-/// any of that subject's samples, in `[-1, 1]`.
+/// agent's prose understanding), how much like the query that subject scores — the
+/// mean cosine over their [`SCORE_SAMPLES`] nearest samples, in `[-1, 1]` — and how
+/// many samples that mean is actually over. `support` is part of the evidence and
+/// travels with it: one sample agreeing is a coincidence away from nothing, three
+/// agreeing is a person.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub subject: String,
     pub similarity: f32,
+    pub support: usize,
 }
 
 /// One stored sample: its uuid stem (shared with the media sibling) and embedding.
@@ -203,29 +252,119 @@ pub fn mint_id() -> String {
     s
 }
 
-/// Place one observation — `embedding` plus the `media`/`ext` it came from — into
-/// the people store: if it is within [`APPEND_THRESHOLD`] of an existing subject,
-/// [`enroll`] it there and return that subject; otherwise [`mint_id`] a fresh id,
-/// enroll under it, and return the id. This is the **mechanical half of
-/// clustering** — identity forms from biometrics alone, no name or LLM. The
-/// returned subject is an id (new person) or whatever key the matched cluster
-/// currently has (an id, or a name if already named).
-pub async fn assign(
+/// What the store has to say about one query vector: the best-scoring subject and
+/// how far ahead of the next one they are. Produced by [`recognize`], which is **a
+/// read and only a read** — the separation from [`cluster`] is the point.
+/// Identifying someone used to enrol the observation in the same breath, so every
+/// fragment the mic caught was filed under whoever it happened to score nearest and
+/// then counted as evidence for the next one. A gallery fed by its own guesses drifts
+/// where nobody can see it: on this install that path put a thousand samples under one
+/// person and minted twenty-five one-sample "people" out of noise, and nothing in the
+/// record says which of them anybody ever vouched for.
+#[derive(Debug, Clone)]
+pub struct Recognition {
+    modality: Modality,
+    /// The best-scoring subject — `None` only when the store holds nobody at all in
+    /// this modality.
+    pub top: Option<Candidate>,
+    /// The runner-up's score, which is what says whether `top` stands out or won a
+    /// coin toss. `None` when nobody else was in the running.
+    pub runner_up: Option<f32>,
+}
+
+impl Recognition {
+    /// The subject this actually names, or `None` for *seen (heard) and not placed* —
+    /// **a complete answer, not a degraded one**. Naming takes two things: a score
+    /// clearing the modality's [`Modality::recognize_min`], and a [`MARGIN_MIN`] lead
+    /// over the runner-up.
+    pub fn named(&self) -> Option<&Candidate> {
+        self.top
+            .as_ref()
+            .filter(|c| c.similarity >= self.modality.recognize_min() && self.margin() >= MARGIN_MIN)
+    }
+
+    /// Where an observation scoring like this belongs in the store — the pure
+    /// decision behind [`cluster`], exposed so a caller that has already asked
+    /// [`recognize`] can act on it without paying for a second scan of every gallery.
+    pub fn filing(&self) -> Filing {
+        let best = self.top.as_ref().map(|c| c.similarity).unwrap_or(f32::NEG_INFINITY);
+        if best >= self.modality.append_min() {
+            return Filing::Append(self.top.as_ref().expect("a score implies a candidate").subject.clone());
+        }
+        if best < self.modality.recognize_min() {
+            return Filing::Mint;
+        }
+        Filing::Unplaceable
+    }
+
+    /// How far the best score leads the runner-up — its whole score when it stood
+    /// alone, since a lone candidate leads by everything it has. `0.0` with no
+    /// candidate at all.
+    pub fn margin(&self) -> f32 {
+        match (&self.top, self.runner_up) {
+            (Some(top), Some(second)) => top.similarity - second,
+            (Some(top), None) => top.similarity,
+            (None, _) => 0.0,
+        }
+    }
+}
+
+/// Where one observation belongs, by score alone — [`Recognition::filing`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Filing {
+    /// Confidently this subject: enrol it there.
+    Append(String),
+    /// Nobody the store holds: this is someone new.
+    Mint,
+    /// **Neither.** Too like someone to call a stranger, too unlike them to file as
+    /// one. The observation is real and goes nowhere: the only alternatives are a
+    /// wrong append and an invented person, and both were happening.
+    Unplaceable,
+}
+
+/// Ask the store who a query vector looks like. **Changes nothing** — no enrolment,
+/// no minting, no side effect of any kind — so an identification can be asked for as
+/// often as it is useful, on evidence as weak as it happens to be, without the asking
+/// itself becoming the record. Every write is [`cluster`] or [`enroll`], called
+/// deliberately.
+pub async fn recognize(
+    data_dir: &Path,
+    modality: Modality,
+    embedding: &[f32],
+) -> anyhow::Result<Recognition> {
+    let mut ranked = nearest(data_dir, modality, embedding, 2).await?.into_iter();
+    let top = ranked.next();
+    let runner_up = ranked.next().map(|c| c.similarity);
+    Ok(Recognition { modality, top, runner_up })
+}
+
+/// File one observation — `embedding` plus the `media`/`ext` it came from — into the
+/// people store, the **write** half of clustering: identity forms from biometrics
+/// alone, no name and no LLM. Three outcomes, and the third is the one that matters:
+///
+/// - at/above [`Modality::append_min`] it is that person, and [`enroll`]s there;
+/// - below [`Modality::recognize_min`] it is nobody we hold, and [`mint_id`]s a
+///   fresh cluster for them;
+/// - **in between it goes nowhere and returns `None`.** An observation we cannot
+///   place is real, and filing it anyway can only pick between a wrong append and an
+///   invented person. Both were happening; both are worse than keeping nothing.
+///
+/// Returns the subject written to — an id for a new person, or whatever key the
+/// matched cluster currently has (an id, or a name if it has been named).
+pub async fn cluster(
     data_dir: &Path,
     modality: Modality,
     embedding: &[f32],
     media: &[u8],
     ext: &str,
-) -> anyhow::Result<String> {
-    if let Some(top) = nearest(data_dir, modality, embedding, 1).await?.into_iter().next()
-        && top.similarity >= APPEND_THRESHOLD
-    {
-        enroll(data_dir, &top.subject, modality, embedding, media, ext).await?;
-        return Ok(top.subject);
-    }
-    let id = mint_id();
-    enroll(data_dir, &id, modality, embedding, media, ext).await?;
-    Ok(id)
+) -> anyhow::Result<Option<String>> {
+    let subject = match recognize(data_dir, modality, embedding).await?.filing() {
+        Filing::Append(subject) => subject,
+        Filing::Mint => mint_id(),
+        Filing::Unplaceable => return Ok(None),
+    };
+    enroll(data_dir, &subject, modality, embedding, media, ext).await?;
+    Ok(Some(subject))
 }
 
 /// Move the `facets/people/<old>/` directory to `<new>/` — the structural side of
@@ -915,12 +1054,15 @@ pub async fn eject_clip(
     Ok(Some(id))
 }
 
-/// Rank known subjects by how close `query` is to their nearest `modality` sample
-/// (the max cosine over that subject's samples), best first, capped at `k`. Reads
-/// both the per-sample `<uuid>.f32` sidecars and any legacy packed `<modality>.f32`
-/// blob. Subjects with no samples for this modality are skipped; a sample whose
-/// dimension disagrees with the query contributes nothing (not fatal). Empty before
-/// anyone is enrolled.
+/// Rank known subjects by how much `query` looks like them — the mean cosine over
+/// their [`SCORE_SAMPLES`] nearest samples — best first, capped at `k`. Reads both
+/// the per-sample `<uuid>.f32` sidecars and any legacy packed `<modality>.f32` blob.
+/// Subjects with no samples for this modality are skipped; a sample whose dimension
+/// disagrees with the query contributes nothing (not fatal). Empty before anyone is
+/// enrolled.
+///
+/// This is the raw ranking. [`recognize`] is what callers want: it adds the runner-up
+/// and the thresholds that decide whether the ranking names anybody.
 pub async fn nearest(
     data_dir: &Path,
     modality: Modality,
@@ -951,24 +1093,20 @@ pub async fn nearest(
         }
         let person = ent.path();
 
-        let mut best = f32::NEG_INFINITY;
+        // Every sample's cosine, then the mean of the best few — see `SCORE_SAMPLES`
+        // for why this is not a max.
+        let mut scores: Vec<f32> = Vec::new();
         // Per-sample sidecars (the current form).
         for s in read_samples(&person.join(tag)).await? {
-            let c = cosine(&s.embedding, query);
-            if c > best {
-                best = c;
-            }
+            scores.push(cosine(&s.embedding, query));
         }
         // Legacy packed blob (read-only back-compat); absent for new clusters.
-        if let Ok(bytes) = tokio::fs::read(person.join(&legacy_file)).await
-            && let Some(c) = best_cosine(&bytes, query)
-            && c > best
-        {
-            best = c;
+        if let Ok(bytes) = tokio::fs::read(person.join(&legacy_file)).await {
+            scores.extend(packed_cosines(&bytes, query));
         }
 
-        if best.is_finite() {
-            out.push(Candidate { subject, similarity: best });
+        if let Some((similarity, support)) = top_mean(&mut scores, SCORE_SAMPLES) {
+            out.push(Candidate { subject, similarity, support });
         }
     }
 
@@ -1071,21 +1209,21 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>() / (na * nb)
 }
 
-/// Max cosine of `query` against each fixed-length sample packed in `bytes` (the
-/// legacy blob form). `None` if `bytes` is empty, doesn't divide into query-sized
-/// samples (corrupt or wrong-dim — skipped, not fatal), or the query is a zero
-/// vector.
-fn best_cosine(bytes: &[u8], query: &[f32]) -> Option<f32> {
+/// Cosine of `query` against every fixed-length sample packed in `bytes` (the legacy
+/// blob form), so they join the per-sample sidecars in one pool. Empty if `bytes` is
+/// empty, doesn't divide into query-sized samples (corrupt or wrong-dim — skipped,
+/// not fatal), or the query is a zero vector.
+fn packed_cosines(bytes: &[u8], query: &[f32]) -> Vec<f32> {
     let stride = query.len() * 4;
     if bytes.is_empty() || bytes.len() % stride != 0 {
-        return None;
+        return Vec::new();
     }
     let q_norm = norm(query);
     if q_norm == 0.0 {
-        return None;
+        return Vec::new();
     }
 
-    let mut best = f32::NEG_INFINITY;
+    let mut out = Vec::with_capacity(bytes.len() / stride);
     for sample in bytes.chunks_exact(stride) {
         let mut dot = 0.0_f32;
         let mut sq = 0.0_f32;
@@ -1096,10 +1234,23 @@ fn best_cosine(bytes: &[u8], query: &[f32]) -> Option<f32> {
         }
         let s_norm = sq.sqrt();
         if s_norm > 0.0 {
-            best = best.max(dot / (q_norm * s_norm));
+            out.push(dot / (q_norm * s_norm));
         }
     }
-    best.is_finite().then_some(best)
+    out
+}
+
+/// Mean of the `k` largest values in `scores`, with how many were averaged — a
+/// subject's score and its support. `None` for an empty pool (a subject with no
+/// usable samples in this modality, who is then simply not a candidate). Sorts
+/// `scores` in place; the caller has no further use for the order.
+fn top_mean(scores: &mut [f32], k: usize) -> Option<(f32, usize)> {
+    if scores.is_empty() || k == 0 {
+        return None;
+    }
+    scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let n = k.min(scores.len());
+    Some((scores[..n].iter().sum::<f32>() / n as f32, n))
 }
 
 fn norm(v: &[f32]) -> f32 {
@@ -1171,14 +1322,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nearest_takes_the_max_over_a_subjects_samples() {
+    async fn nearest_averages_a_subjects_best_samples_rather_than_taking_the_max() {
         let dir = td();
-        // Two orthogonal looks (not near-duplicates) — both kept.
+        // Two orthogonal looks (not near-duplicates) — both kept, and both counted:
+        // one exact hit and one miss average to 0.5, not the 1.0 a max would report.
         enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0, 0.0, 0.0]).await;
         enroll_v(dir.path(), "Alice", Modality::Voice, &[0.0, 0.0, 1.0, 0.0]).await;
         let got = nearest(dir.path(), Modality::Voice, &[0.0, 0.0, 1.0, 0.0], 5).await.unwrap();
         assert_eq!(got.len(), 1, "one subject, two samples");
-        assert!((got[0].similarity - 1.0).abs() < 1e-6);
+        assert_eq!(got[0].support, 2, "the mean is over both samples");
+        assert!((got[0].similarity - 0.5).abs() < 1e-6, "got {}", got[0].similarity);
+    }
+
+    #[tokio::test]
+    async fn a_bigger_gallery_does_not_win_on_size_alone() {
+        let dir = td();
+        // Bob is one good look. Alice is that same look plus a pile of unrelated
+        // ones — the shape a cluster takes when every stray fragment was filed into
+        // it. Under a max she ties him; her score has to sit below his.
+        enroll_v(dir.path(), "Bob", Modality::Voice, &[1.0, 0.0, 0.0, 0.0]).await;
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0, 0.0, 0.0]).await;
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[0.0, 1.0, 0.0, 0.0]).await;
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[0.0, 0.0, 1.0, 0.0]).await;
+        let got = nearest(dir.path(), Modality::Voice, &[1.0, 0.0, 0.0, 0.0], 5).await.unwrap();
+        assert_eq!(got[0].subject, "bob");
+        assert!(got[0].similarity > got[1].similarity, "{got:?}");
     }
 
     #[tokio::test]
@@ -1285,17 +1453,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assign_mints_on_empty_then_appends_close_and_mints_far() {
+    async fn cluster_mints_on_empty_then_appends_close_and_mints_far() {
         let dir = td();
         // Empty store → mints a fresh id and stores it.
-        let id = assign(dir.path(), Modality::Face, &[1.0, 0.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
+        let id = cluster(dir.path(), Modality::Face, &[1.0, 0.0, 0.0, 0.0], b"m", "jpg")
+            .await
+            .unwrap()
+            .expect("an empty store cannot be ambiguous");
         assert_eq!(id.len(), 8);
         // A near-identical observation → appends to the same id (not a new one).
-        let again = assign(dir.path(), Modality::Face, &[0.98, 0.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
-        assert_eq!(again, id);
-        // An orthogonal observation (cosine 0 < threshold) → a new id.
-        let other = assign(dir.path(), Modality::Face, &[0.0, 1.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
-        assert_ne!(other, id);
+        let again = cluster(dir.path(), Modality::Face, &[0.98, 0.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
+        assert_eq!(again.as_deref(), Some(id.as_str()));
+        // An orthogonal observation → nobody we hold, so a new id.
+        let other = cluster(dir.path(), Modality::Face, &[0.0, 1.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
+        assert_ne!(other.as_deref(), Some(id.as_str()));
+        assert!(other.is_some());
+    }
+
+    #[tokio::test]
+    async fn cluster_writes_nothing_in_the_band_between_the_thresholds() {
+        let dir = td();
+        cluster(dir.path(), Modality::Face, &[1.0, 0.0], b"m", "jpg").await.unwrap();
+        let before = people_dir(dir.path()).read_dir().unwrap().count();
+        // Cosine ~0.47: past `recognize_min` (0.40, so not a stranger) and short of
+        // `append_min` (0.55, so not confidently them). Nothing may be written.
+        let mid = [0.47_f32, 0.88];
+        assert!(cluster(dir.path(), Modality::Face, &mid, b"m", "jpg").await.unwrap().is_none());
+        assert_eq!(people_dir(dir.path()).read_dir().unwrap().count(), before, "no cluster minted");
+    }
+
+    #[tokio::test]
+    async fn recognize_writes_nothing() {
+        let dir = td();
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0, 0.0, 0.0]).await;
+        let before = sample_media_counts(dir.path(), "alice", Modality::Voice).await;
+        // A stranger, and a dead ringer: neither leaves a trace.
+        for q in [[0.0_f32, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]] {
+            recognize(dir.path(), Modality::Voice, &q).await.unwrap();
+        }
+        assert_eq!(sample_media_counts(dir.path(), "alice", Modality::Voice).await, before);
+        assert_eq!(people_dir(dir.path()).read_dir().unwrap().count(), 1, "nobody minted");
+    }
+
+    #[tokio::test]
+    async fn a_near_tie_names_nobody() {
+        let dir = td();
+        // Two people whose galleries sit almost equally close to the query. Both
+        // clear `recognize_min`; neither leads by `MARGIN_MIN`, so the store declines
+        // to pick — the answer is "someone", which is the true one.
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0]).await;
+        enroll_v(dir.path(), "Bob", Modality::Voice, &[0.95, 0.31]).await;
+        let seen = recognize(dir.path(), Modality::Voice, &[0.99, 0.16]).await.unwrap();
+        assert!(seen.top.is_some(), "there is a best candidate");
+        assert!(seen.margin() < MARGIN_MIN, "margin {}", seen.margin());
+        assert!(seen.named().is_none(), "a near tie is not a verdict");
+    }
+
+    #[tokio::test]
+    async fn a_clear_lead_over_the_recognize_floor_names_somebody() {
+        let dir = td();
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0]).await;
+        enroll_v(dir.path(), "Bob", Modality::Voice, &[0.0, 1.0]).await;
+        let seen = recognize(dir.path(), Modality::Voice, &[0.98, 0.2]).await.unwrap();
+        let named = seen.named().expect("a stand-out match names its subject");
+        assert_eq!(named.subject, "alice");
+        assert_eq!(named.support, 1);
+    }
+
+    #[tokio::test]
+    async fn an_empty_store_recognizes_nobody() {
+        let dir = td();
+        let seen = recognize(dir.path(), Modality::Voice, &[1.0, 0.0]).await.unwrap();
+        assert!(seen.top.is_none() && seen.named().is_none());
+        assert_eq!(seen.margin(), 0.0);
+    }
+
+    #[test]
+    fn top_mean_averages_only_the_best_k() {
+        let mut scores = [0.1_f32, 0.9, 0.5, 0.7];
+        assert_eq!(top_mean(&mut scores, 3), Some((0.7, 3)));
+        let mut one = [0.4_f32];
+        assert_eq!(top_mean(&mut one, 3), Some((0.4, 1)), "averages over what there is");
+        assert_eq!(top_mean(&mut [], 3), None);
     }
 
     #[test]
