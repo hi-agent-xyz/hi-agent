@@ -1,0 +1,47 @@
+[package]
+name = "hi-linux"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The Hi Agent shell for Linux desktops"
+
+# Its own workspace, deliberately. The engine's workspace is built on macOS by
+# `make test` and `make dmg`, and a member here would drag GTK4, libadwaita and
+# WebKitGTK into a resolve that has no chance of linking there. `hi-wire` is
+# reached by path across the boundary, which is all a path dependency needs.
+[workspace]
+
+# `hi-agent-shell`, beside the engine's `hi-agent`. Both land in /usr/bin, so
+# the two names have to be different and the shell is the one that moves.
+[[bin]]
+name = "hi-agent-shell"
+path = "src/main.rs"
+
+[dependencies]
+# The only crate shared with the core, and the whole reason this shell may be
+# written in Rust at all — see `docs/platforms/linux.md`. Never `hi-agent`.
+hi-wire = { path = "../../crates/hi-wire" }
+
+gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
+# Pinned to the target floor, not to a lowest common denominator: Debian 13
+# ships 2.52.6 and Ubuntu 26.04 ships newer, so there is no version below this
+# to guard against. `ClipboardPermissionRequest` is behind v2_42 and would be
+# invisible otherwise.
+webkit = { package = "webkit6", version = "0.6", features = ["v2_52", "gtk_v4_18"] }
+# The HTTP stack, and not an accident: libsoup is already in the process as
+# WebKitGTK's own networking, it drives the glib main loop rather than a second
+# runtime, and `soup_cookies_from_response` hands the session cookie across
+# without anyone parsing `Set-Cookie` by hand.
+soup = { package = "soup3", version = "0.9" }
+libsecret = "0.9"
+glib = "0.22"
+gio = "0.22"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+strip = true
+lto = "thin"

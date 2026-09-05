@@ -7,13 +7,14 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
                    app/apple/macos/Info.plist \
                    app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj \
                    app/android/app/build.gradle.kts \
-                   app/windows/HiAgentWindows/HiAgentWindows.csproj
+                   app/windows/HiAgentWindows/HiAgentWindows.csproj \
+                   app/linux/Cargo.toml app/linux/Cargo.lock
 
 # Keep the former `VERSION=x.y.z` spelling working for callers while matching
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe win-app installer bump-version version
+.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe win-app installer linux-app deb bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -116,6 +117,22 @@ win-app: check-version ## publish the Windows shell (requires Windows + .NET SDK
 
 installer: check-version ## build hi-agent-<version>-windows-x64.exe
 	./scripts/make-installer.sh
+
+# The Linux shell. Like `win-app` this needs its own platform — GTK4,
+# libadwaita and WebKitGTK have no cross build — but unlike it, that platform is
+# an ordinary Debian or Ubuntu box rather than a machine nobody here has. Build
+# dependencies beyond the engine's own cmake + libclang-dev:
+#   apt install libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libsecret-1-dev
+LINUX_SHELL_DIR := app/linux
+
+linux-app: check-version ## build the Linux shell (Debian/Ubuntu host + GTK4 dev packages)
+	cd $(LINUX_SHELL_DIR) && cargo build --release
+
+linux-test: ## run the Linux shell's tests
+	cd $(LINUX_SHELL_DIR) && cargo test
+
+deb: check-version ## package shell + engine as hi-agent_<version>_<arch>.deb
+	./scripts/make-deb.sh
 
 bump-version: ## set the committed version everywhere (usage: make bump-version V=x.y.z)
 	@test -n "$(BUMP_VERSION)" || { echo "usage: make bump-version V=x.y.z" >&2; exit 1; }

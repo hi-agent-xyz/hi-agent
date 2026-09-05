@@ -1,0 +1,41 @@
+# The engine, kept alive with no window open.
+#
+# macOS keeps the agent alive with a menu-bar item. Stock GNOME has no tray, so
+# "close the window and the agent stops living" is a real failure mode here and
+# not a cosmetic one — pulses, duties and task resumption all stop with it. This
+# unit is the answer.
+#
+# It is not a fork from the shell-owns-the-process shape the other desktops are
+# converging on, because adoption already reconciles them: the shell's rule is
+# "if something is answering /healthz, attach to it; otherwise start one as a
+# child with PR_SET_PDEATHSIG", and a unit-managed engine is simply the first
+# branch. The shell never needs to know which world it is in.
+#
+# Optional. The shell works without it, and this is the recommended install
+# because it is the answer to the tray — not because the architecture changed.
+#
+#   systemctl --user enable --now hi-agent.service
+#   journalctl --user -u hi-agent -f
+
+[Unit]
+Description=Hi Agent
+Documentation=https://hi-agent.xyz
+After=graphical-session.target
+
+[Service]
+Type=simple
+# The port and the data directory are stated here for the same reason the shell
+# states them: `default_data_dir` in src/main.rs falls back to ./data relative
+# to the working directory on everything that is not a macOS .app, and a unit's
+# working directory is not the person's.
+ExecStart=/usr/bin/hi-agent --port 12358 --data-dir %h/.local/share/hi-agent
+Restart=on-failure
+RestartSec=2
+# The engine is built to be killed: its state is on disk and its session
+# directory is written as it goes, which is what makes resuming after a restart
+# work at all. Long enough for an in-flight write, short enough not to hang a
+# logout.
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

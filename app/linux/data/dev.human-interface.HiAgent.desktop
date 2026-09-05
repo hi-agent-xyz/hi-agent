@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Hi Agent
+Comment=Your agent, on this computer
+# No arguments: the shell finds the engine beside itself and passes it
+# --port and --data-dir. Launching from a terminal and launching from here are
+# the same command — but see docs/platforms/linux.md § Verification for the one
+# place they behave differently (portal 1.20 derives app identity from the
+# systemd scope, which only a .desktop launch gives it).
+Exec=hi-agent-shell
+Icon=dev.human-interface.HiAgent
+Terminal=false
+Categories=Utility;Network;
+Keywords=agent;assistant;hi;
+# GApplication registers this as its bus name, and the shell's binary is named
+# differently from the ID, so the association has to be stated for the window to
+# match its launcher in the dock.
+StartupWMClass=dev.human-interface.HiAgent
+StartupNotify=true

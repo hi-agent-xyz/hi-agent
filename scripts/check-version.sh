@@ -37,6 +37,13 @@ check "Android version name" \
 check "Windows shell version" \
   "$(awk -F'[<>]' '/<Version>/ { print $3; exit }' \
     app/windows/HiAgentWindows/HiAgentWindows.csproj)"
+check "Linux shell version" \
+  "$(awk -F'"' '/^version *=/ { print $2; exit }' app/linux/Cargo.toml)"
+# Its own lockfile, because app/linux is its own workspace — the engine's
+# workspace is resolved on macOS, where GTK4 cannot link.
+check "Linux shell lock version" \
+  "$(awk -F'"' 'prev == "name = \"hi-linux\"" && /^version *=/ { print $2; exit } { prev=$0 }' \
+    app/linux/Cargo.lock)"
 check "web package version" \
   "$(awk -F'"' '/"version":/ { print $4; exit }' src/appearance/web/package.json)"
 check "web lock package version" \

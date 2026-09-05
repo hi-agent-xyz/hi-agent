@@ -1,9 +1,10 @@
 # Linux App
 
-**Nothing here is built.** This document is the plan for `app/linux`, written
-before the code the way [`windows.md`](windows.md) was written before a compiler
-— so that the decisions are settled in one place rather than rediscovered in a
-GTK callback.
+`app/linux` is built, and — alone among the shells written in this shape — it
+has been **run**. This document was written before the code the way
+[`windows.md`](windows.md) was written before a compiler, so that the decisions
+were settled in one place rather than rediscovered in a GTK callback.
+§ *Verification* records which of them survived contact.
 
 The Linux app is a standalone GTK4 / libadwaita build that speaks the core's
 documented HTTP API. It is the **second shell written in the target shape** —
@@ -13,10 +14,11 @@ shell to migrate. Every macOS-native crate is `cfg`-gated, every OS capability
 already answers `bail!("not supported")`, and `main.rs` routes a non-macOS start
 to the plain server path.
 
-So the engine half is not work. `Dockerfile` stage 2 is `rust:1-trixie` and its
+So the engine half was not work. `Dockerfile` stage 2 is `rust:1-trixie` and its
 runtime stage is `debian:trixie-slim` — **that is already a Debian 13 build of
-the core**, minus a display. What is missing is a face, a package, and a way to
-start.
+the core**, minus a display. What was missing was a face, a package, and a way to
+start; those are `app/linux`, `scripts/make-deb.sh` and
+`data/hi-agent.service`.
 
 ## Targets
 
@@ -146,10 +148,18 @@ would repeat the mistake in a third language.
 `CookieManager` has no raw-header entry point, so `CoreWebView.BuildCookie` has
 to parse `Set-Cookie` and carry each attribute across by hand — the longest
 comment in that file, and a silent-drop risk whenever the core adds an attribute.
-libsoup parses the header for us (`soup_cookie_parse`) and
+libsoup parses the header for us — `soup_cookies_from_response` does the whole
+message at once, with the request URI as the cookie's origin — and
 `webkit_cookie_manager_add_cookie` takes the resulting `SoupCookie`, so the core
 keeps ownership of `Path`, `Max-Age` and `SameSite` exactly as it does on the
 phones. This is the one place Linux has the easier job.
+
+**Emptying the jar is where it pays that back.** Detaching from a core has to
+clear the previous core's cookie, and WebKitGTK 6.0 has no bulk delete: the 2.x
+`webkit_cookie_manager_delete_all_cookies` is gone and
+`WebKitWebsiteDataManager` exposes no `clear` through the bindings, so it is
+`all_cookies` then `delete_cookie` per entry. One line on Windows and both
+phones; a loop here.
 
 ## Where Linux differs from the other desktops
 
@@ -158,10 +168,22 @@ and has said it does not plan to support AppIndicators. Ubuntu ships and enables
 the AppIndicator extension by default; Debian's stock GNOME does not — the
 package exists (`gnome-shell-extension-appindicator`) but installing an extension
 is not enabling it, and enabling it is a user action a `.deb` cannot perform. So
-a tray item is built as a bonus that may be absent, the systemd unit carries
-liveness, and desktop notifications — which are universal — carry the "come and
-see" acknowledgement that the macOS tray flash carries today. **The
-tray-anchored popover does not port at all**: there is nothing to anchor to.
+the systemd unit carries liveness, and desktop notifications — which are
+universal — are what should carry the "come and see" acknowledgement that the
+macOS tray flash carries today. **The tray-anchored popover does not port at
+all**: there is nothing to anchor to.
+
+**Two consequences settled while building it.** *Closing the window quits the
+shell* — with no tray to retreat into, a held process with no window would be
+invisible and unquittable, so the window is the presence and the unit is the
+liveness. That costs nothing when the unit is installed, because the shell then
+adopts rather than starts and quitting leaves the engine running. And *the tray
+item is not built*: an SNI implementation that may find nothing listening on
+either target is not worth writing, so the header bar's primary menu carries the
+short list the macOS tray and `TrayIcon.cs` carry. **Notifications are not built
+either**, and cannot be until the engine can originate a request to an app
+([`../arch/mechanisms.md`](../arch/mechanisms.md)) — so the "come and see"
+described above is a design position, not a shipped one.
 
 **The media-gesture trap is here too, under a different name.** It cost both
 phones a microphone and cost Windows an environment option: an engine gates
@@ -241,41 +263,85 @@ more than the audience they add.
 
 ```sh
 make linux-app   # build the shell   (Debian/Ubuntu host + GTK4 dev packages)
+make linux-test  # its tests
 make deb         # package shell + engine
 ```
 
 Build dependencies beyond the engine's own `cmake` + `libclang-dev`:
 `libgtk-4-dev`, `libadwaita-1-dev`, `libwebkitgtk-6.0-dev`, `libsecret-1-dev`.
 
+`SKIP_ENGINE=1 make deb` packages the shell alone — an install that only ever
+attaches to a core somewhere else, where the shell shows a stage message instead
+of starting one. The engine half is the ordinary `make build`.
+
+`app/linux` is **its own cargo workspace**, not a member of the engine's. The
+engine's workspace is resolved on macOS by `make test` and `make dmg`, and a
+member there would drag GTK4 and WebKitGTK into a resolve that has no chance of
+linking. `hi-wire` is reached by path across that boundary, which is all a path
+dependency needs — and it is why `check-version.sh` has a second lockfile to
+check.
+
 ## Verification
 
-**Nothing has been written, and there is no machine to write it against.** The
-Mac mini is macOS; the development box has neither root nor a C++ toolchain; the
-`xyz-*` servers are headless and serving production traffic. This is a harder
-version of the wall `windows.md` describes: there, the code exists and has never
-met a compiler; here there is not yet a host on which it could be attempted.
+**The development box turned out to be the target.** It is Debian 13 trixie with
+root, so the wall this section used to describe — "there is not yet a host on
+which it could be attempted" — was never real. `apt install libgtk-4-dev
+libadwaita-1-dev libwebkitgtk-6.0-dev libsecret-1-dev` produced exactly the
+versions in the target table (4.18.6 / 1.7.6 / 2.52.6), and the shell compiles,
+links, runs, and is screenshot-verifiable there. That makes this the **only shell
+in the target shape that has been watched running**; `app/windows` has still
+never met a compiler.
 
-The split is worth knowing before anyone plans around it:
+Watched on 2026-09-05, under `Xvfb` on Debian 13, against a stand-in core that
+answers `/healthz` and serves a page:
 
-- **The shell, the webview, the engine lifecycle and the packaging are
-  screenshot-verifiable headlessly** — a GTK4 window under `Xvfb` can be captured
-  and checked over SSH, the same trick that makes the iOS Simulator useful.
-- **The portals are not.** They need a real GNOME session with real consent
-  dialogs, which is the same GUI-session wall that blocks screencast and hotkey
-  testing on macOS.
+- **Adoption.** An engine already answering on 12358 is attached to, and the log
+  says so. No second engine starts.
+- **The face loads with no session exchange** for the local core, and
+  `WebKitWebView` renders it. The stage flips to the face only once the load
+  finishes.
+- **`PR_SET_PDEATHSIG`.** `SIGKILL` on the shell — where nothing orderly can run
+  — leaves the engine it started dead and the port released.
+- **An adopted engine survives the shell quitting**, which is the rule the
+  `systemd --user` unit depends on and the one thing that must not be got wrong.
+- **`--data-dir`** arrives as `~/.local/share/hi-agent`, and the four XDG
+  directories are honoured separately (config / state / data / cache).
+- **The header bar matches `--bg-1`** in both appearances — sampled, not
+  asserted: `srgb(43,39,32)` at the header in dark, `#ffffff` in light.
+- **Single instance.** The app ID takes `dev.human-interface.HiAgent` as a
+  session-bus name and a second launch exits without constructing a model. The
+  hyphen is fine: D-Bus forbids hyphens in *interface* names, not in well-known
+  *bus* names.
+- **The `.deb` installs and uninstalls**, and `/usr/bin/hi-agent-shell` behaves
+  the same as the one in `target/`.
 
-**The API names above are not guesses**, which is the one way this is better off
-than `windows.md` — that document has to flag which calls are most likely wrong,
-because nothing has restored its packages. Every WebKitGTK symbol named here was
-checked against the target's own introspection data (`gir1.2-webkit-6.0`
-2.52.6-1~deb13u1, `gir1.2-soup-3.0`): `webkit_settings_set_media_playback_requires_user_gesture`,
-`webkit_cookie_manager_add_cookie` (async — pair it with `_finish`),
-`soup_cookie_parse`, `WebKitUserMediaPermissionRequest` and the
-`permission-request` signal, and
-`get_main_resource` → `webkit_web_resource_get_response` →
-`webkit_uri_response_get_status_code`. The versions in the target table were read
-the same way, from `apt-cache policy` on a trixie host. What is unverified here is
-the design, not the vocabulary.
+Two things the run corrected that reading could not have:
+
+- `webkit_cookie_manager_delete_all_cookies` **does not exist in WebKitGTK 6.0**.
+  It went with the 2.x API and `WebKitWebsiteDataManager` has no `clear` in the
+  binding, so emptying the jar is `all_cookies` followed by `delete_cookie` per
+  entry. Windows and both phones get this in one line.
+- `g_date_time_format` is not `strftime`. It rejects `%.3f`, and the fallback
+  turned that into a blank timestamp column in every log line — the exact shape
+  of failure that looks like a field nobody set.
+
+**Still not verified, and not verifiable here:**
+
+- **The portals.** They need a real GNOME session with real consent dialogs,
+  which is the same GUI-session wall that blocks screencast and hotkey testing on
+  macOS. Nothing in `app/linux` touches them yet.
+- **The Secret Service.** A headless box has no unlocked login keyring, so
+  `credentials::save` / `load` have never round-tripped. Everything watched above
+  used the local core, which needs no credential. **A remote core has therefore
+  never been paired from this shell** — the code path is written and unexercised.
+- **The mic and camera.** `set_media_playback_requires_user_gesture(false)` and
+  the `permission-request` handler are the fix and the whole implementation
+  respectively, and neither has been exercised against a real capture device.
+- **Ubuntu 26.04.** Everything above is Debian 13 only.
+- **The repo's pinned toolchain.** Every build above used stable 1.98.1, not the
+  1.97.1 that `rust-toolchain.toml` pins — the pinned one would not finish
+  downloading on that box. The highest `rust-version` among the locked
+  dependencies is 1.92, so the pin has room, but *that* build has not been run.
 
 One trap to record now rather than discover: on portal 1.20 the `GlobalShortcuts`
 app identity is derived from the systemd scope, so **launching from a terminal

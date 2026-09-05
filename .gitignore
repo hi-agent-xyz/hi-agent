@@ -1,5 +1,12 @@
 /target
-data/
+# app/linux is its own cargo workspace, so it has its own build directory that
+# the anchored rule above does not reach.
+/app/linux/target
+# The engine's default `--data-dir`, which is `./data` relative to wherever it
+# was started. Anchored, like every other rule here: unanchored it also swallowed
+# `app/linux/data/` — the desktop entry, the icon and the systemd unit, which are
+# source and not state.
+/data/
 src/appearance/web/node_modules/
 src/appearance/web/dist/
 .DS_Store

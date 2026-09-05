@@ -65,6 +65,15 @@ edit app/windows/HiAgentWindows/HiAgentWindows.csproj '
     sub(/<Version>[^<]*<\/Version>/, "<Version>" new "</Version>"); done=1 }
   { print }'
 
+# Linux shell — its own crate, and its own lockfile, because app/linux is its
+# own workspace (the engine's is resolved on macOS, where GTK4 cannot link).
+edit app/linux/Cargo.toml '
+  !done && /^version *=/ { sub(/"[^"]*"/, "\"" new "\""); done=1 }
+  { print }'
+edit app/linux/Cargo.lock '
+  prev ~ /^name = "hi-linux"$/ && /^version *=/ { sub(/"[^"]*"/, "\"" new "\"") }
+  { prev=$0; print }'
+
 # web/package.json — the only `"version": "…"` is the package version.
 edit src/appearance/web/package.json '
   !done && /"version":/ { sub(/"version": *"[^"]*"/, "\"version\": \"" new "\""); done=1 }
@@ -81,6 +90,7 @@ echo "  VERSION, Cargo.toml, Cargo.lock, app/apple/macos/Info.plist,"
 echo "  src/appearance/web/package.json, src/appearance/web/package-lock.json,"
 echo "  app/apple/ios/HiAgentIOS.xcodeproj/project.pbxproj,"
 echo "  app/android/app/build.gradle.kts,"
-echo "  app/windows/HiAgentWindows/HiAgentWindows.csproj"
+echo "  app/windows/HiAgentWindows/HiAgentWindows.csproj,"
+echo "  app/linux/Cargo.toml, app/linux/Cargo.lock"
 ./scripts/check-version.sh
 echo "review with: git diff"
