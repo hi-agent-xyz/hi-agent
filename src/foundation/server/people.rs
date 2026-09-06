@@ -77,16 +77,13 @@ struct PersonDto {
     notes: std::collections::BTreeMap<String, String>,
 }
 
-/// A gallery's shape for the review view: how much like one person it is, whether it
-/// grew along its own edge, and whether that has already cost it the right to name
-/// anybody. The view's job with `smeared` is to say so plainly and point at the
+/// A gallery's shape for the review view: how much like one person it is, and whether
+/// that has already cost it the right to name anybody. The view's job with `smeared` is to say so plainly and point at the
 /// clips — the numbers alone mean nothing to the person reading them.
 #[derive(Serialize)]
 struct ShapeDto {
     samples: usize,
     centre: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    frontier: Option<f32>,
     /// The gallery has stopped naming anyone and stopped taking samples.
     smeared: bool,
 }
@@ -96,7 +93,6 @@ impl From<people_vectors::GalleryShape> for ShapeDto {
         ShapeDto {
             samples: s.samples,
             centre: s.centre,
-            frontier: s.frontier,
             smeared: !people_vectors::coherent(s.centre),
         }
     }

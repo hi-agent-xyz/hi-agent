@@ -95,13 +95,20 @@ const SCORE_SAMPLES: usize = 3;
 /// page. Most people never will, and a store that needs maintenance to keep working
 /// does not work.
 ///
-/// **Measured September 4 2026** across this install's ten galleries: nine run
-/// 0.666–0.902, and the one known to be contaminated — a thousand voice samples
-/// admitted by the old read-that-also-wrote path — sits at **0.514**. There is a
-/// wide gap and nothing in it, so the floor goes just under the worst healthy
-/// gallery rather than midway: one positive example is not enough to calibrate
-/// finely, and the cost of tripping on a healthy gallery (a person quietly stops
-/// being recognized) is higher than the cost of missing a mildly bad one.
+/// **Measured September 2026** across this install's ten galleries: nine run
+/// 0.666–0.902 and the one grown by the old read-that-also-wrote path sits at 0.514.
+/// The floor goes just under the worst healthy gallery rather than midway — one
+/// positive example does not calibrate finely, and the cost of tripping on a healthy
+/// gallery (a person quietly stops being recognized) is higher than missing a mildly
+/// bad one.
+///
+/// **It is insurance, and it has not yet fired on a gallery the other rules would have
+/// built.** That same store, filtered to the clips the enrollment gates would keep,
+/// scores 0.563 — above this floor — while a person listening confirmed twelve of its
+/// 442 samples are other people. Three percent of strangers barely move a mean, so
+/// this catches a gallery that has gone badly wrong and not one that is merely wrong.
+/// What kept those twelve out is [`Modality::append_min`]: each of them scores between
+/// 0.47 and 0.56 against the gallery, inside the band where nothing is written.
 ///
 /// A gallery too small to be spread — one sample, or two of the same look — scores
 /// 1.0 and is never caught, correctly: it has not had the chance to go wrong.
@@ -120,19 +127,10 @@ pub fn coherent(centre: f32) -> bool {
 /// [`Recognition::named`] answers nobody. A guess until validated on real embeddings.
 const MARGIN_MIN: f32 = 0.05;
 
-/// Below this many samples a gallery has no shape worth reporting — see
-/// [`frontier_lead`].
-const SHAPE_MIN_SAMPLES: usize = 12;
-
 /// How far down the ranking [`recognize`] looks for a gallery still fit to name
 /// somebody. Incoherent galleries are rare, so this only has to survive a handful of
 /// them before the answer is "nobody" anyway.
 const RANK_DEPTH: usize = 8;
-
-/// How many samples [`frontier_lead`] compares pairwise before it starts measuring an
-/// evenly-spread subset instead. Keeps a thousand-sample gallery's review page from
-/// paying a million cosines for a number read to two decimal places.
-const SHAPE_MAX_PAIRWISE: usize = 300;
 
 /// The directory under [`layout::facets_dir`] holding every person's subdir.
 fn people_dir(data_dir: &Path) -> PathBuf {
@@ -1042,19 +1040,22 @@ pub struct ClusterListing {
     pub notes: std::collections::BTreeMap<String, String>,
 }
 
-/// How a gallery is arranged, in the two numbers that separate *one person seen many
-/// ways* from *several people fused*. Both come from the samples alone — no labels,
-/// nobody listening.
+/// How a gallery is arranged, in the one number that comes from the samples alone —
+/// no labels, nobody listening.
+///
+/// **There was a second number here and it did not survive being checked.** It
+/// measured how much closer a sample sits to its nearest neighbours than to the
+/// centre, and was written down as catching a gallery that grew along its own edge.
+/// Then a person listened to the six worst-attached clips in this install's largest
+/// gallery, confirmed all six were other people, and taking every contaminant out
+/// moved the number from +0.204 to +0.201. It tracks how large and varied a gallery
+/// is, not how mixed. Four galleries cannot tell those apart, so it went.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GalleryShape {
     pub samples: usize,
     /// Mean cosine to the gallery's own centre ([`centre_coherence`]). Under
     /// [`COHERENT_MIN`] the gallery stops naming anyone and stops taking samples.
     pub centre: f32,
-    /// How much closer a typical sample is to its nearest neighbours than to that
-    /// centre ([`frontier_lead`]). Positive on a gallery that grew along its edge.
-    /// `None` under [`SHAPE_MIN_SAMPLES`].
-    pub frontier: Option<f32>,
 }
 
 /// List every person in the store with their per-modality sample stems, mirroring
@@ -1143,24 +1144,20 @@ pub async fn avatar_media(data_dir: &Path, subject: &str) -> anyhow::Result<Opti
 
 /// The sample stems of one subject's `modality` gallery, oldest first. A thin public
 /// window onto [`read_samples`] for the review view; empty if the dir is absent.
+#[cfg(test)]
 async fn stems(data_dir: &Path, subject: &str, modality: Modality) -> anyhow::Result<Vec<String>> {
     Ok(gallery(data_dir, subject, modality).await?.0)
 }
 
-/// One gallery's sample stems and its [`GalleryShape`], from a single read. The
-/// shape's pairwise half is why this belongs to the review path and not to matching:
-/// [`nearest`] takes the cheap half ([`centre_coherence`]) in its own pass.
+/// One gallery's sample stems and its [`GalleryShape`], from a single read.
 async fn gallery(
     data_dir: &Path,
     subject: &str,
     modality: Modality,
 ) -> anyhow::Result<(Vec<String>, Option<GalleryShape>)> {
     let samples = read_samples(&modality_dir(data_dir, subject, modality)).await?;
-    let shape = centre_coherence(&samples).map(|centre| GalleryShape {
-        samples: samples.len(),
-        centre,
-        frontier: frontier_lead(&samples),
-    });
+    let shape = centre_coherence(&samples)
+        .map(|centre| GalleryShape { samples: samples.len(), centre });
     Ok((samples.into_iter().map(|s| s.stem).collect(), shape))
 }
 
@@ -1453,46 +1450,6 @@ fn centre_coherence(samples: &[Sample]) -> Option<f32> {
         n += 1;
     }
     (n > 0).then(|| norm(&sum) / n as f32)
-}
-
-/// How much closer a typical sample sits to its nearest few neighbours than to the
-/// gallery's centre — the median sample's [`SCORE_SAMPLES`]-mean against the rest,
-/// minus [`centre_coherence`].
-///
-/// **Positive means the gallery grew along its own edge.** Every sample has close
-/// neighbours and the gallery as a whole has no middle, which is exactly what
-/// appending each observation to whichever part of a cluster is already nearest
-/// produces. On this install's ten galleries the two healthy large ones read −0.019
-/// and −0.001 while the contaminated one reads **+0.188**.
-///
-/// Only meaningful once a gallery is large: with four samples "the three nearest" is
-/// "all the others", which reads low for reasons that have nothing to do with shape.
-/// `None` under [`SHAPE_MIN_SAMPLES`]. Pairwise, so it is for the review surface a
-/// person opens, never the matching path; over [`SHAPE_MAX_PAIRWISE`] samples it
-/// measures an evenly-spread subset rather than growing quadratically without bound.
-fn frontier_lead(samples: &[Sample]) -> Option<f32> {
-    if samples.len() < SHAPE_MIN_SAMPLES {
-        return None;
-    }
-    let centre = centre_coherence(samples)?;
-    let stride = samples.len().div_ceil(SHAPE_MAX_PAIRWISE).max(1);
-    let mut leads: Vec<f32> = Vec::new();
-    for (i, s) in samples.iter().enumerate().step_by(stride) {
-        let mut sims: Vec<f32> = samples
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i)
-            .map(|(_, o)| cosine(&o.embedding, &s.embedding))
-            .collect();
-        if let Some((edge, _)) = top_mean(&mut sims, SCORE_SAMPLES) {
-            leads.push(edge);
-        }
-    }
-    if leads.is_empty() {
-        return None;
-    }
-    leads.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    Some(leads[leads.len() / 2] - centre)
 }
 
 /// Mean of the `k` largest values in `scores`, with how many were averaged — a
@@ -1812,18 +1769,6 @@ mod tests {
         assert!(centre_coherence(&[]).is_none());
     }
 
-    #[test]
-    fn frontier_lead_is_positive_along_an_arc_and_flat_in_a_knot() {
-        // Neighbours 0.2 rad apart (cosine ~0.98) but the arc spans ~3.8 rad: every
-        // sample is close to its neighbours and the set has no middle.
-        let spread = frontier_lead(&arc(21, 0.20)).expect("21 samples is measurable");
-        assert!(spread > 0.3, "grew along its edge, got {spread}");
-        // A tight knot: nearest neighbours are barely closer than the centre.
-        let knot = frontier_lead(&arc(21, 0.01)).unwrap();
-        assert!(knot.abs() < 0.05, "one look from every side, got {knot}");
-        assert!(frontier_lead(&arc(4, 0.2)).is_none(), "too few samples to have a shape");
-    }
-
     /// Enrol `n` samples along an arc into `subject`, bypassing `enroll`'s dedup so a
     /// deliberately spread gallery survives being written.
     async fn place_arc(dir: &Path, subject: &str, n: usize, step: f32) {
@@ -1907,7 +1852,6 @@ mod tests {
         let shape = alice.voice_shape.expect("a voice gallery has a shape");
         assert_eq!(shape.samples, 2);
         assert!((shape.centre - 0.7071).abs() < 1e-3);
-        assert!(shape.frontier.is_none(), "two samples is not enough for a frontier");
         assert!(alice.face_shape.is_none(), "no face gallery, no face shape");
     }
 
