@@ -137,7 +137,16 @@ const OUT_OF_ENERGY: &str = include_str!("factory/vendor-outage.jsx");
 /// honour: tasks change status, a skill deletes, a facet is rewritten; workers, tools and
 /// drive are read-only, the first because the registry has no stop, the last two because
 /// there is nothing there a person could fix.
+///
+/// `home` is in this list and is not one of them. It accumulates nothing: it is the ledger
+/// and the switchboard joined by `subject`, drawn as one chart of what the open work is
+/// *about*, and it exists because the screen someone looks at while waiting was the one
+/// surface here nobody had designed. It is a view and only a view — no floor under the
+/// content slot, no idle gate, nothing in the host that knows its name — because
+/// `docs/arch/stage.md` already refuses a host gate on what is on the screen. It belongs in
+/// this list for the five rules, which it answers to like the rest.
 const REVIEW_VIEWS: &[(&str, &str)] = &[
+    ("home", include_str!("factory/home.jsx")),
     ("stats", include_str!("factory/stats.jsx")),
     ("tasks", include_str!("factory/tasks.jsx")),
     ("skills", include_str!("factory/skills.jsx")),
