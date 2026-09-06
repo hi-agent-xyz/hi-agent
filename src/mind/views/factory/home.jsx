@@ -313,6 +313,39 @@ function ago(value) {
   return ZH ? `${days} 天` : `${days}d`;
 }
 
+// **What a session is doing, in the part of it that is the fact.** `doing` is the last thing
+// the session was seen doing, and for a shell call that is the whole invocation as the harness
+// spelt it: `$ /bin/zsh -lc "…"`, often with a script and newlines inside the quotes. Rendered
+// raw on a clamped line, the wrapper is all that fits — on the live store it produced rows
+// reading `$ /bin/zsh -lc "printf '%s\n' '-- KNQ worktrees…`, where every visible character
+// is the shell and none of it is the work. Worse, a call that ended in failure carries
+// ` (failed)` at the *end*, so the one word worth reading is the first thing off the edge.
+//
+// So: keep the failure, drop the shell, take the first line of what it actually ran. Nothing
+// is invented and nothing is looked up — this is the same string with its packaging removed.
+const SHELL = /^\S*\b(?:ba|z|d)?sh\s+-[a-z]*c\s+/;
+function plainly(text) {
+  let out = String(text || "").trim();
+  const failed = / \(failed\)$/.test(out);
+  if (failed) out = out.replace(/ \(failed\)$/, "");
+  out = out.replace(/^\$\s+/, "");
+  const bare = out.replace(SHELL, "");
+  if (bare !== out) {
+    out = bare.trim();
+    const quote = out[0];
+    if (quote === '"' || quote === "'") {
+      // The closing quote may not be there at all: `doing` is the last thing seen and a long
+      // script arrives clipped, so the opening quote outlives its partner. Drop the opener
+      // either way — a line starting with a stray quote is the packaging again.
+      const end = out.lastIndexOf(quote);
+      out = end > 0 ? out.slice(1, end) : out.slice(1);
+    }
+  }
+  // A script is many lines and a leaf is one. The first line is what it set out to do.
+  out = out.split("\n").map((line) => line.trim()).filter(Boolean)[0] || out.trim();
+  return failed ? `${out} (failed)` : out;
+}
+
 // Every live session on a row, running first, then by how recently it moved. `tasks.jsx`
 // keeps one per subject because a card has room for one; a row here can say how many, and
 // two sessions on one row is a fact worth seeing rather than a tie to break.
@@ -348,7 +381,7 @@ function read(task, crew) {
     // ends, and drawing it beside a finished session is what made one read `idle` and
     // `thinking` at once.
     const age = ago(live.doing_at || live.state_since);
-    const doing = live.doing || live.tail;
+    const doing = plainly(live.doing || live.tail);
     return { tone: "live", text: doing ? `${doing}${age ? ` · ${age}` : ""}` : "" };
   }
 
