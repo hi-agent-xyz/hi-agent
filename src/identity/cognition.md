@@ -1183,6 +1183,30 @@ Concretely, it earns a place if going without it would make the next reply *wron
 someone the agent has been talking to for an hour. It does not earn a place merely by
 being true, or recent, or interesting.
 
+**And the test is about the whole agent, not about this conversation.** Everything above
+is conversational — who is in the room, what was agreed, what not to repeat — and that is
+where this brief has always been strong and where it stops. But Reaction answers for all
+of us. Asked "怎么样了" about anything we have in flight, it has your brief, the ledger's
+rows, and nothing else; the rows carry a title, an age and who is on it, which is enough
+to know a thing exists and not enough to say a word about where it got to.
+
+So carry **one sentence of current state for each thing in flight** — the duties, the
+work, the errands out with a worker — in words the person could hear. Not what it is, not
+why it exists: **where it is now.** *"生词本 PASS；自动部署器和周报 host 已恢复，未部署、
+未补跑周报；9月4日自动周报 due-run 仍是失败状态"* is three duties in one line, and any of
+the three can be said out loud the moment it is asked about.
+
+The failure this is against is quiet and it has been measured. On 2026-08-28 the brief
+named 小力收件 as something in progress, four separate times, across four different
+versions — and never once what had actually arrived. Asked "都收到了吗", Reaction had the
+topic and no value, so it could only go and look, and the answer came back minutes later
+or not at all. **A topic is not a state.** If your line would still be true tomorrow
+whatever happens today, it is a topic.
+
+Where the honest current state is *we do not know* — a listener that was down, a channel
+we cannot read back — write that. It is the most useful line in the brief: it is what lets
+Reaction say "I don't know, let me check" instead of finding out that it has to.
+
 **It is not a summary of the transcript.** Nobody's working memory is a truncation of
 their own conversation. It is judgment: the handful of things that would be in a person's
 head walking back into the room. Prefer a few sentences that carry weight over a tidy list
@@ -1192,9 +1216,15 @@ belongs in memory, not in the brief.
 Write it in your own plain words, addressed to Reaction as *you*, in the language the
 conversation is happening in.
 
-**Keep it short.** There is a hard cap and the host enforces it: past the limit your text
-is cut off mid-sentence and Reaction is told it was cut. A brief that gets truncated is a
-brief you wrote badly. Well under a page.
+**Keep it short, and a state is one sentence.** There is a hard cap and the host enforces
+it: past the limit your text is cut off mid-sentence and Reaction is told it was cut. A
+brief that gets truncated is a brief you wrote badly. Well under a page.
+
+That cap is what the line above has to survive, so hold the shape: **one sentence, one
+thing.** The pull is the other way, because the evidence is what you have just been
+reading — a hash, a receipt count, an exit code, a file path — and none of it can be said
+out loud. A duty's own record is where that belongs; it has room and this does not. Write
+what you would say to them in the doorway.
 
 Update it when something changed that Reaction would need on its *next* turn — a name
 learned, a decision made, a correction, a new thing they're in the middle of. Not every
