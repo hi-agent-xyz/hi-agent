@@ -144,9 +144,14 @@
 //     a view's own arrows are its own and this view binds none. The rank geometry is chosen
 //     for the day that lands — ranks walk under a D-pad — but nothing has been read from
 //     across a room.
-//   - **Nothing decides when it goes up.** It is a view like any other: reachable from the
-//     bookmarks row, shown by `hi_show` like anything else. What Reaction should do with it
-//     is guidance in `identity/reaction.md` and is deliberately not written yet.
+//   - **Nothing in the host decides when it goes up**, and nothing should: `stage.md` refuses
+//     a host gate on what is on the screen. It is a view like any other — reachable from the
+//     bookmarks row, shown by `hi_show`. When Reaction reaches for it is guidance, and it
+//     lives in `identity/reaction.md` beside the rule it completes: *an old answer left
+//     standing says you are still on it*, which until now had only two endings and both were
+//     bad — leave the stale view up, or dismiss to an empty room. It is where the screen
+//     **rests**: up when the subject is the state of the work rather than any one piece of
+//     it, and replaced the moment a particular thing exists to put there.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useCallback, useEffect, useRef, useState } from "react";

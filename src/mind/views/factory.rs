@@ -157,6 +157,19 @@ const REVIEW_VIEWS: &[(&str, &str)] = &[
     ("reach", include_str!("factory/reach.jsx")),
 ];
 
+/// The ref of the one view that is never a delivery.
+///
+/// Everything else the agent puts on the screen is a piece of work reaching the person, which
+/// is what [`crate::mind::memory::snapshot::shown_recently`] is a list of and why Cognition is
+/// given it: without it, it closes tasks on a belief it cannot check. `factory/home` is
+/// structurally not that — it is where the screen rests when the subject is the state of the
+/// work rather than any one piece of it, so counting it as something shown would put a false
+/// positive into the one mechanism built to prevent one.
+///
+/// Named here beside [`WELCOME_REF`] and [`OUT_OF_ENERGY_REF`] because the same thing is true
+/// of all three for different reasons, and because two readers have to agree on the spelling.
+pub const HOME_REF: &str = "factory/home";
+
 /// The ref and the sequencer id the host shows it under. One id, reused, so the
 /// `dismiss` on recovery takes down exactly the thing the outage put up — and a second
 /// outage replaces rather than stacks.

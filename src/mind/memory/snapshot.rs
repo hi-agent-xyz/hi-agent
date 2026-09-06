@@ -278,6 +278,13 @@ pub async fn shown_recently(memory: &Memory) -> String {
         let Some(name) = shown_name(body) else {
             continue;
         };
+        // The one view that is never a delivery. This list is read as evidence that a piece
+        // of work reached the person; the resting state of the screen is not a piece of work,
+        // and letting it in would put a false positive into the mechanism that exists to
+        // prevent one (`crate::mind::views::factory::HOME_REF`).
+        if name == crate::mind::views::factory::HOME_REF {
+            continue;
+        }
         // Newest-last, one entry per destination: a view shown, moved past and shown
         // again is one place they have been, not two.
         seen.retain(|s| s != &name);
