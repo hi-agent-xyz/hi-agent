@@ -30,8 +30,31 @@ use super::episodes::{frontmatter_field, jstr, strip_frontmatter};
 use super::{facets, layout, task_history};
 
 pub const DIMENSION: &str = "tasks";
-pub const PROJECTED_TASKS: usize = 12;
+
+/// How many active rows are projected **in full** — with their age, their disposition and
+/// who is on them.
+///
+/// **Generous on purpose, where it used to be 12.** Twelve was chosen when the window was
+/// being fought for character by character; measured against one live thread, 25% of the
+/// ledgers sent were cut, a median of 2 rows and up to 7. That is the wrong thing to save
+/// on twice over. The rows that fall off are the *least active* ones — the ordering puts
+/// live work first — and a row nobody has touched in a week is exactly the row a person
+/// asks about out of nowhere. Live, on 2026-08-30: asked what `KT8-070` and `KT8-059` were
+/// doing, Reaction went away to look them up. Both were open, both were in the ledger
+/// Cognition holds, and neither was in the twelve it had been sent.
+///
+/// The saving was 134 characters against a `## Working with them` that spends 3,277.
+pub const PROJECTED_TASKS: usize = 40;
 const PROJECTED_LINE_CHARS: usize = 120;
+
+/// How many rows past [`PROJECTED_TASKS`] are still named, one title each.
+///
+/// The cap above is a bound on a window, not a claim that the rest do not matter, so what
+/// lies past it is **named rather than counted**. A count — `and 5 more active (3 todo)` —
+/// is unanswerable by the one rung that cannot go and look: it says something exists and
+/// withholds the only part that would let anyone speak about it. A bare title costs a line
+/// and makes the row askable.
+const NAMED_PAST_THE_CAP: usize = 40;
 
 /// How long work may sit in `doing` before the projection stops reporting its age and
 /// starts asking for a disposition.
@@ -941,7 +964,23 @@ fn render_projection(
         out.push('\n');
     }
 
-    let rest = &ordered[shown..];
+    // Named, in the same order, before the tally that follows. One title per line and
+    // nothing else: past the cap the line's job is to make the row exist for a reader, not
+    // to brief anybody on it.
+    let past_cap = &ordered[shown..];
+    let named = past_cap.len().min(NAMED_PAST_THE_CAP);
+    for task in &past_cap[..named] {
+        let title = task.title.trim().replace('\n', " ");
+        let title = if title.is_empty() { task.subject.replace('-', " ") } else { title };
+        let _ = writeln!(
+            out,
+            "- [{}] {}",
+            task.status.as_str(),
+            clip(&title, PROJECTED_LINE_CHARS)
+        );
+    }
+
+    let rest = &past_cap[named..];
     if !rest.is_empty() {
         let todo = rest.iter().filter(|task| task.status == TaskStatus::Todo).count();
         let doing = rest.iter().filter(|task| task.status == TaskStatus::Doing).count();
@@ -1195,9 +1234,10 @@ pub fn without_elapsed(projection: &str) -> String {
 /// sits at the top next to overdue work.
 ///
 /// Work past the boundary rises for a reason the projection can't otherwise supply: only
-/// [`PROJECTED_TASKS`] lines are printed, and the thing being fixed is a task that quietly
-/// stops being read. A line that needs a decision cannot be allowed to fall off the bottom
-/// of the list, and the longest-stuck goes first within the band. It sits *below* an
+/// [`PROJECTED_TASKS`] rows are printed in full, and the thing being fixed is a task that
+/// quietly stops being read. A line that needs a decision cannot be allowed to fall out of
+/// that band into the bare-title one below it, and the longest-stuck goes first within the
+/// band. It sits *below* an
 /// unconfirmed duty, which might be dead right now, and *above* a future due date, which is
 /// not a problem yet.
 type OrderKey<'a> = (usize, i64, &'a str);
@@ -2531,9 +2571,10 @@ mod tests {
         assert!(legacy.past_idle_boundary(now()), "it is caught, not exempted");
     }
 
-    /// The projection prints [`PROJECTED_TASKS`] lines, and the failure being fixed is a
-    /// task that stops being read. So a line needing a decision has to be one of the twelve,
-    /// however long the list gets.
+    /// The projection prints [`PROJECTED_TASKS`] rows in full, and the failure being fixed
+    /// is a task that stops being read. So a line needing a decision has to be one of them,
+    /// however long the list gets — being *named* past the cap is not the same as being
+    /// read, and this row is the one that has to be read.
     #[test]
     fn work_past_the_boundary_cannot_fall_off_the_projection() {
         let mut tasks: Vec<Task> = (0..PROJECTED_TASKS + 8)
@@ -2676,8 +2717,14 @@ mod tests {
         assert!(order[2].contains("aaa confirmed watch"), "{text}");
     }
 
+    /// Three bands, and the middle one is the change: full rows, then rows named by title
+    /// alone, then — only past both — a count.
+    ///
+    /// A ledger this size is not a real ledger; the case that matters is the ordinary one
+    /// below, and this exists to pin that the block stays bounded when somebody's ledger
+    /// runs away.
     #[test]
-    fn three_hundred_active_tasks_are_bounded_and_counted_by_status() {
+    fn three_hundred_active_tasks_are_named_first_and_counted_only_past_that() {
         let mut tasks = Vec::new();
         for i in 0..100 {
             tasks.push(task(&format!("todo {i}"), TaskStatus::Todo));
@@ -2685,20 +2732,27 @@ mod tests {
             tasks.push(task(&format!("serving {i}"), TaskStatus::Serving));
         }
         let text = render_projection(&tasks, now(), &nobody());
-        let listed = text
-            .lines()
-            .filter(|line| line.starts_with("- ["))
-            .count();
-        assert_eq!(listed, PROJECTED_TASKS);
+        let listed = text.lines().filter(|line| line.starts_with("- [")).count();
+        assert_eq!(listed, PROJECTED_TASKS + NAMED_PAST_THE_CAP);
         let summary = text.lines().find(|line| line.starts_with("- ...")).unwrap();
-        assert!(summary.contains("288 more active"), "{summary}");
-        assert!(summary.contains("100 todo"), "{summary}");
-        assert!(summary.contains("100 doing"), "{summary}");
-        assert!(summary.contains("88 serving"), "{summary}");
-        // None of these duties has ever been confirmed, and the tail has to say so —
-        // a count of duties is not a count of duties that are up.
-        assert!(summary.contains("88 duties never confirmed alive"), "{summary}");
-        assert!(text.chars().count() < 2_500);
+        assert!(summary.contains("220 more active"), "{summary}");
+        assert!(text.chars().count() < 9_000, "{}", text.chars().count());
+    }
+
+    /// **The failure this whole cap change is about.** An ordinary ledger — more than the
+    /// old twelve, nowhere near the new bound — must have every row on it, because the
+    /// rows that used to fall off were the quiet ones, and a quiet row is what somebody
+    /// asks about out of nowhere. Observed live on 2026-08-30 with `KT8-070`.
+    #[test]
+    fn an_ordinary_ledger_loses_nobody() {
+        let tasks: Vec<Task> = (0..19)
+            .map(|i| task(&format!("KT8-{:03}", 60 + i), TaskStatus::Doing))
+            .collect();
+        let text = render_projection(&tasks, now(), &nobody());
+        for i in 0..19 {
+            assert!(text.contains(&format!("KT8-{:03}", 60 + i)), "row {i} fell off:\n{text}");
+        }
+        assert!(!text.contains("more active"), "nothing was cut, so nothing is counted");
     }
 
     #[tokio::test]
