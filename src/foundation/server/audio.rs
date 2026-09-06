@@ -97,6 +97,26 @@ const VP_ENROLL_MIN_SAMPLES: u64 = SAMPLES_PER_MS * 2_500;
 /// stream calls them that. See [`SpeakerVoices::subject`].
 const VOICE_TURNS_MIN: usize = 2;
 
+/// Seconds of **actual speech** a turn must hold before it is worth keeping as a
+/// sample of somebody's voice — not seconds of recording, which is what
+/// [`VP_ENROLL_MIN_SAMPLES`] bounds.
+///
+/// Measured over the 1278 voice samples this install had already stored: the median
+/// holds **1.46 s** of speech inside 2.75 s of audio, and the worst hold 0.16 s — a
+/// single syllable in a second of room. Neither duration nor signal-to-noise catches
+/// those: 97% of them clear 15 dB, because a grunt in a quiet room is a fine ratio of
+/// two levels. A person could not identify anybody from those clips either, and the
+/// gallery they went into is the one that stopped being one person.
+const ENROLL_MIN_VOICED_SECS: f32 = 1.5;
+
+/// Words (or CJK characters) a turn must have been transcribed to before it is kept.
+/// The acoustic gates measure whether *something* was sounding; this is the only one
+/// that can tell speech from a television, a cough, or music — the recognizer heard
+/// energy, and the transcriber found no words in it. Small on purpose: the length
+/// requirement is [`ENROLL_MIN_VOICED_SECS`]'s job, and this one only has to catch
+/// "nothing was actually said".
+const ENROLL_MIN_UNITS: usize = 5;
+
 /// How much audio the timeline retains *before* the last consumed utterance end —
 /// slack so a span whose diarized final lands slightly after its audio can still be
 /// sliced. ~2 s.
@@ -167,6 +187,44 @@ impl VpTimeline {
             self.base += drop as u64;
         }
     }
+}
+
+/// How much was said in a line, counting a CJK character and a run of letters or
+/// digits as one unit each. Punctuation and spacing are not speech. A rough measure
+/// deliberately — it separates "a sentence" from "one syllable" and nothing finer.
+fn speech_units(text: &str) -> usize {
+    let mut units = 0;
+    let mut in_word = false;
+    for c in text.chars() {
+        let cjk = matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF);
+        if cjk {
+            units += 1;
+            in_word = false;
+        } else if c.is_alphanumeric() {
+            if !in_word {
+                units += 1;
+            }
+            in_word = true;
+        } else {
+            in_word = false;
+        }
+    }
+    units
+}
+
+/// Whether a diarized turn is worth **keeping** as a sample of somebody's voice — a
+/// far higher bar than the one for identifying from it, and deliberately so.
+///
+/// Recognition may work from whatever it gets; the answer is a sentence the agent can
+/// revise a moment later. A gallery is what every future answer is graded against, so
+/// a clip that nobody could identify anyone from does not belong in one no matter how
+/// confidently it was matched. **The judgment is used and the sample is dropped** —
+/// those were one decision until September 2026, which is how a gallery ends up
+/// holding a thousand fragments.
+fn worth_keeping(samples: usize, sound: &acoustics::Sound, said: &str) -> bool {
+    samples as u64 >= VP_ENROLL_MIN_SAMPLES
+        && sound.voiced_secs(samples) >= ENROLL_MIN_VOICED_SECS
+        && speech_units(said) >= ENROLL_MIN_UNITS
 }
 
 /// Who each diarized speaker is, accumulated across their turns on this stream.
@@ -577,14 +635,31 @@ pub async fn ingest_pcm_stream(
                                         })
                                         .collect()
                                 };
+                                // A final naming one speaker is that speaker's
+                                // words; one naming several has no per-speaker text
+                                // to hand out, so nothing from it is ever kept.
+                                let alone = t
+                                    .segments
+                                    .first()
+                                    .map(|f| t.segments.iter().all(|sp| sp.speaker_id == f.speaker_id))
+                                    .unwrap_or(false);
+                                let said = alone.then(|| t.text.clone());
                                 for (turn, pcm) in sliced {
                                     let speaker = turn.speaker.clone();
+                                    let sound = turn.sound;
                                     // What the room was like when this turn landed —
                                     // the empty string for the ordinary room, which is
                                     // not news but still a change worth remembering.
                                     pending_room = Some(room.note(turn).note().unwrap_or_default());
                                     if voiceprints_on {
-                                        resolve_speaker(&relay_state, relay_voices.clone(), speaker, pcm);
+                                        resolve_speaker(
+                                            &relay_state,
+                                            relay_voices.clone(),
+                                            speaker,
+                                            pcm,
+                                            sound,
+                                            said.clone(),
+                                        );
                                     }
                                 }
                             }
@@ -835,10 +910,10 @@ async fn deliver_transcript(
 /// sounds like, and hand that to [`SpeakerVoices`], which decides across this
 /// speaker's turns whether they can be named at all.
 ///
-/// **Keeping it is a separate, stricter decision.** Only a turn of at least
-/// [`VP_ENROLL_MIN_SAMPLES`] is filed, and only where the store can place it
-/// confidently or not at all — a sample it can neither append nor call new is kept
-/// nowhere, because the alternatives are a wrong append and an invented person.
+/// **Keeping it is a separate, much stricter decision** — [`worth_keeping`], plus a
+/// store that can place it confidently or not at all. `said` is what the transcriber
+/// made of this turn, and `None` means the utterance it came from held more than one
+/// speaker, which is never kept and never has text that belongs to one person.
 ///
 /// Detached and best-effort: a failure leaves the speaker unplaced, which is an
 /// ordinary state rather than an error. Unlike clips and stills, the live mic persists
@@ -849,6 +924,8 @@ fn resolve_speaker(
     voices: Arc<Mutex<SpeakerVoices>>,
     speaker_id: String,
     pcm: Vec<i16>,
+    sound: acoustics::Sound,
+    said: Option<String>,
 ) {
     if pcm.is_empty() {
         return;
@@ -856,8 +933,9 @@ fn resolve_speaker(
     let data_dir = state.data_dir.clone();
     // A playable WAV of this turn, built before the PCM is consumed by `embed`, so a
     // kept sample carries an audible preview of the live-mic voice (the stream stores
-    // no per-utterance clip otherwise). Built only for a turn long enough to keep.
-    let wav = (pcm.len() as u64 >= VP_ENROLL_MIN_SAMPLES).then(|| {
+    // no per-utterance clip otherwise). Built only for a turn actually worth keeping.
+    let keep = said.filter(|t| worth_keeping(pcm.len(), &sound, t));
+    let wav = keep.as_ref().map(|_| {
         let pcm_bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
         pcm16_mono_16k_to_wav(&pcm_bytes)
     });
@@ -878,8 +956,8 @@ fn resolve_speaker(
         };
         voices.lock().unwrap().note(&speaker_id, seen.named());
 
-        let Some(wav) = wav else {
-            return; // heard and weighed; too short to be worth keeping
+        let (Some(wav), Some(said)) = (wav, keep) else {
+            return; // heard and weighed, and that is all this turn was good for
         };
         let subject = match seen.filing() {
             people_vectors::Filing::Append(subject) => subject,
@@ -887,7 +965,8 @@ fn resolve_speaker(
             people_vectors::Filing::Unplaceable => return,
         };
         if let Err(err) =
-            people_vectors::enroll(&data_dir, &subject, Modality::Voice, &embedding, &wav, "wav").await
+            people_vectors::enroll(&data_dir, &subject, Modality::Voice, &embedding, &wav, "wav", Some(&said))
+                .await
         {
             tracing::warn!(error = %format!("{err:#}"), "live voice enroll failed");
         }
@@ -1165,6 +1244,54 @@ mod tests {
         assert_eq!(VP_MIN_SPAN_SAMPLES, 16_000);
         let short: Vec<i16> = vec![0; 8_000]; // 0.5 s
         assert!((short.len() as u64) < VP_MIN_SPAN_SAMPLES);
+    }
+
+    /// A turn of `secs` whose speech occupies `voiced` of it.
+    fn turn(secs: f32, voiced: f32) -> (usize, acoustics::Sound) {
+        let n = (16_000.0 * secs) as usize;
+        (n, acoustics::Sound { speech_dbfs: -20.0, floor_dbfs: -60.0, clipped: 0.0, voiced })
+    }
+
+    #[test]
+    fn speech_units_counts_characters_and_words_and_not_punctuation() {
+        assert_eq!(speech_units("嗯"), 1);
+        assert_eq!(speech_units("嗯，对。"), 2);
+        assert_eq!(speech_units("帮我看看明天会不会下雨"), 11);
+        assert_eq!(speech_units("ok, sure — see you at five"), 6);
+        assert_eq!(speech_units("… ,,, !!"), 0, "no speech in punctuation");
+        assert_eq!(speech_units(""), 0);
+    }
+
+    #[test]
+    fn a_long_recording_of_almost_nothing_is_not_worth_keeping() {
+        // Four seconds of audio holding 0.4 s of speech: past every length bar, and
+        // its levels are healthy, which is exactly why neither of those catches it.
+        let (n, sound) = turn(4.0, 0.1);
+        assert!(sound.snr_db() > 20.0, "the levels look fine");
+        assert!(!worth_keeping(n, &sound, "嗯 对 好 的 是"));
+    }
+
+    #[test]
+    fn a_turn_with_no_words_in_it_is_not_worth_keeping() {
+        // A television, a cough, music: energy for two seconds, nothing transcribed.
+        let (n, sound) = turn(4.0, 0.6);
+        assert!(!worth_keeping(n, &sound, ""), "no words, whatever the acoustics say");
+        assert!(!worth_keeping(n, &sound, "嗯。"), "one syllable is not a voice sample");
+    }
+
+    #[test]
+    fn a_real_sentence_at_a_normal_pace_is_kept() {
+        let (n, sound) = turn(4.0, 0.6);
+        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨"));
+    }
+
+    #[test]
+    fn a_short_turn_is_still_identified_from_but_never_kept() {
+        // One second, densely spoken: enough to voiceprint (VP_MIN_SPAN_SAMPLES),
+        // never enough to become part of who somebody is.
+        let (n, sound) = turn(1.0, 0.9);
+        assert!(n as u64 >= VP_MIN_SPAN_SAMPLES, "we do embed it");
+        assert!(!worth_keeping(n, &sound, "明天会不会下雨"), "and we do not keep it");
     }
 
     #[test]

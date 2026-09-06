@@ -604,7 +604,7 @@ async fn cluster_faces(
                     continue;
                 }
             };
-            match people_vectors::cluster(data_dir, people_vectors::Modality::Face, &f.embedding, &jpg, "jpg").await {
+            match people_vectors::cluster(data_dir, people_vectors::Modality::Face, &f.embedding, &jpg, "jpg", None).await {
                 Ok(Some(id)) => {
                     out.entry(i).or_default().push(id);
                 }
@@ -676,7 +676,20 @@ async fn cluster_voices(
         };
         // The clip is the sample's canonical media, stored 1:1 with its voiceprint.
         let ext = std::path::Path::new(&m.file).extension().and_then(|e| e.to_str()).unwrap_or("wav");
-        match people_vectors::cluster(data_dir, people_vectors::Modality::Voice, &embedding, &bytes, ext).await {
+        // What was said in the clip, minus the carriers' own ⟨…⟩ marks — those are
+        // the boundary talking, not the person, and a gallery note should read back
+        // as speech.
+        let said = body.split('⟨').next().unwrap_or("").trim().to_string();
+        match people_vectors::cluster(
+            data_dir,
+            people_vectors::Modality::Voice,
+            &embedding,
+            &bytes,
+            ext,
+            Some(&said).filter(|s| !s.is_empty()).map(String::as_str),
+        )
+        .await
+        {
             Ok(Some(id)) => {
                 out.entry(i).or_default().push(id);
             }

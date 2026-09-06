@@ -16,7 +16,9 @@
 //! A sample is a single observation, stored as a **pair sharing one uuid** in
 //! `<subject>/<modality>/` (`face/`, `voice/`): the **media** it came from
 //! (`<uuid>.jpg` face crop, `<uuid>.wav` voice turn) and its **embedding**
-//! (`<uuid>.f32`, raw little-endian f32). The media is the canonical artifact — it
+//! (`<uuid>.f32`, raw little-endian f32). A voice sample also keeps `<uuid>.txt`,
+//! **what was said in it** — so a person reviewing a gallery can see which clips are
+//! sentences and which are one syllable, without listening to a thousand of them. The media is the canonical artifact — it
 //! shows *whose* face/voice a cluster is, and an embedding can always be recomputed
 //! from it (the capabilities do); the `.f32` is just a cached vector so matching
 //! never re-runs a model. The two live and die together — dropping a sample deletes
@@ -253,6 +255,7 @@ pub async fn enroll(
     embedding: &[f32],
     media: &[u8],
     ext: &str,
+    note: Option<&str>,
 ) -> anyhow::Result<String> {
     let subj = facets::slug(subject);
     anyhow::ensure!(!subj.is_empty(), "subject must contain a usable character");
@@ -272,6 +275,11 @@ pub async fn enroll(
     let stem = Uuid::now_v7().simple().to_string();
     let ext = sanitize_ext(ext);
     write_atomic(&dir, &format!("{stem}.{ext}"), media).await?;
+    // Before the embedding, like the media: a crash leaves an unmatched sidecar at
+    // worst, never an embedding whose provenance has gone missing.
+    if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
+        write_atomic(&dir, &format!("{stem}.txt"), note.as_bytes()).await?;
+    }
     let emb_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
     write_atomic(&dir, &format!("{stem}.f32"), &emb_bytes).await?;
 
@@ -463,13 +471,14 @@ pub async fn cluster(
     embedding: &[f32],
     media: &[u8],
     ext: &str,
+    note: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
     let subject = match recognize(data_dir, modality, embedding).await?.filing() {
         Filing::Append(subject) => subject,
         Filing::Mint => mint_id(),
         Filing::Unplaceable => return Ok(None),
     };
-    enroll(data_dir, &subject, modality, embedding, media, ext).await?;
+    enroll(data_dir, &subject, modality, embedding, media, ext, note).await?;
     Ok(Some(subject))
 }
 
@@ -1028,6 +1037,9 @@ pub struct ClusterListing {
     /// nothing in, or too little of to measure.
     pub face_shape: Option<GalleryShape>,
     pub voice_shape: Option<GalleryShape>,
+    /// What was said in a sample, by stem, for those that kept it. Voice only, and
+    /// only for samples enrolled since the sidecar existed.
+    pub notes: std::collections::BTreeMap<String, String>,
 }
 
 /// How a gallery is arranged, in the two numbers that separate *one person seen many
@@ -1075,6 +1087,7 @@ pub async fn list_clusters(data_dir: &Path) -> anyhow::Result<Vec<ClusterListing
         let vitals = cluster_vitals(data_dir, &subject).await?;
         let (face_stems, face_shape) = gallery(data_dir, &subject, Modality::Face).await?;
         let (voice_stems, voice_shape) = gallery(data_dir, &subject, Modality::Voice).await?;
+        let notes = read_notes(data_dir, &subject, Modality::Voice).await;
         out.push(ClusterListing {
             subject,
             named: vitals.named,
@@ -1084,6 +1097,7 @@ pub async fn list_clusters(data_dir: &Path) -> anyhow::Result<Vec<ClusterListing
             voice_stems,
             face_shape,
             voice_shape,
+            notes,
         });
     }
     // Named first, then by total sample count — the people most worth naming/fixing
@@ -1150,6 +1164,30 @@ async fn gallery(
     Ok((samples.into_iter().map(|s| s.stem).collect(), shape))
 }
 
+/// Every `<stem>.txt` in a gallery — what was said in each clip that kept it. Best
+/// effort: a missing dir, an unreadable sidecar, or a sample older than the sidecar
+/// simply has no entry.
+async fn read_notes(
+    data_dir: &Path,
+    subject: &str,
+    modality: Modality,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(mut rd) = tokio::fs::read_dir(&modality_dir(data_dir, subject, modality)).await else {
+        return out;
+    };
+    while let Ok(Some(ent)) = rd.next_entry().await {
+        if let Ok(name) = ent.file_name().into_string()
+            && !name.starts_with('.')
+            && let Some(stem) = name.strip_suffix(".txt")
+            && let Ok(text) = tokio::fs::read_to_string(ent.path()).await
+        {
+            out.insert(stem.to_string(), text);
+        }
+    }
+    out
+}
+
 /// Locate one sample's media file — `<subject>/<modality>/<stem>.<ext>` — for
 /// serving a crop/clip, returning its full path and extension. The extension isn't
 /// fixed (`enroll` takes whatever the source gave), so we scan for the `<stem>.*`
@@ -1172,6 +1210,7 @@ pub async fn clip_media_path(
         if let Ok(name) = ent.file_name().into_string()
             && name.starts_with(&prefix)
             && !name.ends_with(".f32")
+            && !name.ends_with(".txt")
         {
             return Ok(Some(dir.join(name)));
         }
@@ -1484,7 +1523,7 @@ mod tests {
     /// Enroll an embedding with a tiny dummy media sibling — the common test shape.
     async fn enroll_v(dir: &Path, subject: &str, modality: Modality, emb: &[f32]) -> String {
         let ext = if modality == Modality::Face { "jpg" } else { "wav" };
-        enroll(dir, subject, modality, emb, b"media", ext).await.unwrap()
+        enroll(dir, subject, modality, emb, b"media", ext, None).await.unwrap()
     }
 
     /// Count a subject's `.f32` sidecars and its media siblings in a modality dir.
@@ -1523,7 +1562,7 @@ mod tests {
     #[tokio::test]
     async fn enroll_writes_a_one_to_one_media_pair() {
         let dir = td();
-        enroll(dir.path(), "Alice", Modality::Face, &[1.0, 0.0], b"jpgbytes", "jpg").await.unwrap();
+        enroll(dir.path(), "Alice", Modality::Face, &[1.0, 0.0], b"jpgbytes", "jpg", None).await.unwrap();
         assert_eq!(sample_media_counts(dir.path(), "alice", Modality::Face).await, (1, 1));
     }
 
@@ -1606,9 +1645,9 @@ mod tests {
     #[tokio::test]
     async fn empty_subject_embedding_or_media_is_rejected() {
         let dir = td();
-        assert!(enroll(dir.path(), "??", Modality::Voice, &[1.0], b"m", "wav").await.is_err());
-        assert!(enroll(dir.path(), "Alice", Modality::Voice, &[], b"m", "wav").await.is_err());
-        assert!(enroll(dir.path(), "Alice", Modality::Voice, &[1.0], b"", "wav").await.is_err());
+        assert!(enroll(dir.path(), "??", Modality::Voice, &[1.0], b"m", "wav", None).await.is_err());
+        assert!(enroll(dir.path(), "Alice", Modality::Voice, &[], b"m", "wav", None).await.is_err());
+        assert!(enroll(dir.path(), "Alice", Modality::Voice, &[1.0], b"", "wav", None).await.is_err());
     }
 
     #[tokio::test]
@@ -1672,16 +1711,16 @@ mod tests {
     async fn cluster_mints_on_empty_then_appends_close_and_mints_far() {
         let dir = td();
         // Empty store → mints a fresh id and stores it.
-        let id = cluster(dir.path(), Modality::Face, &[1.0, 0.0, 0.0, 0.0], b"m", "jpg")
+        let id = cluster(dir.path(), Modality::Face, &[1.0, 0.0, 0.0, 0.0], b"m", "jpg", None)
             .await
             .unwrap()
             .expect("an empty store cannot be ambiguous");
         assert_eq!(id.len(), 8);
         // A near-identical observation → appends to the same id (not a new one).
-        let again = cluster(dir.path(), Modality::Face, &[0.98, 0.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
+        let again = cluster(dir.path(), Modality::Face, &[0.98, 0.0, 0.0, 0.0], b"m", "jpg", None).await.unwrap();
         assert_eq!(again.as_deref(), Some(id.as_str()));
         // An orthogonal observation → nobody we hold, so a new id.
-        let other = cluster(dir.path(), Modality::Face, &[0.0, 1.0, 0.0, 0.0], b"m", "jpg").await.unwrap();
+        let other = cluster(dir.path(), Modality::Face, &[0.0, 1.0, 0.0, 0.0], b"m", "jpg", None).await.unwrap();
         assert_ne!(other.as_deref(), Some(id.as_str()));
         assert!(other.is_some());
     }
@@ -1689,12 +1728,12 @@ mod tests {
     #[tokio::test]
     async fn cluster_writes_nothing_in_the_band_between_the_thresholds() {
         let dir = td();
-        cluster(dir.path(), Modality::Face, &[1.0, 0.0], b"m", "jpg").await.unwrap();
+        cluster(dir.path(), Modality::Face, &[1.0, 0.0], b"m", "jpg", None).await.unwrap();
         let before = people_dir(dir.path()).read_dir().unwrap().count();
         // Cosine ~0.47: past `recognize_min` (0.40, so not a stranger) and short of
         // `append_min` (0.55, so not confidently them). Nothing may be written.
         let mid = [0.47_f32, 0.88];
-        assert!(cluster(dir.path(), Modality::Face, &mid, b"m", "jpg").await.unwrap().is_none());
+        assert!(cluster(dir.path(), Modality::Face, &mid, b"m", "jpg", None).await.unwrap().is_none());
         assert_eq!(people_dir(dir.path()).read_dir().unwrap().count(), before, "no cluster minted");
     }
 
@@ -1820,7 +1859,7 @@ mod tests {
         // on its own (~0.83, well past `recognize_min`), not as near as the mixture.
         for k in 0..3 {
             let a = 1.6_f32 + k as f32 * 0.01;
-            enroll(dir.path(), "bob", Modality::Voice, &[a.cos(), a.sin()], b"m", "wav")
+            enroll(dir.path(), "bob", Modality::Voice, &[a.cos(), a.sin()], b"m", "wav", None)
                 .await
                 .unwrap();
         }
@@ -1843,12 +1882,12 @@ mod tests {
         // instead — no human, no review page.
         let seen = recognize(dir.path(), Modality::Voice, &q).await.unwrap();
         assert_eq!(seen.filing(), Filing::Mint, "{seen:?}");
-        let fresh = cluster(dir.path(), Modality::Voice, &q, b"m", "wav").await.unwrap();
+        let fresh = cluster(dir.path(), Modality::Voice, &q, b"m", "wav", None).await.unwrap();
         let fresh = fresh.expect("a fresh gallery for this voice");
         assert_ne!(fresh, "mixture");
         // The next one lands in it rather than minting again.
         assert_eq!(
-            cluster(dir.path(), Modality::Voice, &q, b"m", "wav").await.unwrap().as_deref(),
+            cluster(dir.path(), Modality::Voice, &q, b"m", "wav", None).await.unwrap().as_deref(),
             Some(fresh.as_str()),
         );
         // And once it is the better answer, it names — the mixture never blocks it
@@ -1861,7 +1900,7 @@ mod tests {
     async fn a_listing_carries_each_gallery_s_shape() {
         let dir = td();
         for v in [[1.0_f32, 0.0], [0.0, 1.0]] {
-            enroll(dir.path(), "alice", Modality::Voice, &v, b"m", "wav").await.unwrap();
+            enroll(dir.path(), "alice", Modality::Voice, &v, b"m", "wav", None).await.unwrap();
         }
         let listing = list_clusters(dir.path()).await.unwrap();
         let alice = listing.iter().find(|c| c.subject == "alice").unwrap();
@@ -2322,9 +2361,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_voice_sample_keeps_what_was_said_in_it() {
+        let dir = td();
+        enroll(dir.path(), "alice", Modality::Voice, &[1.0, 0.0], b"wavbytes", "wav",
+               Some("帮我看看明天会不会下雨")).await.unwrap();
+        let listing = list_clusters(dir.path()).await.unwrap();
+        let alice = listing.iter().find(|c| c.subject == "alice").unwrap();
+        let stem = &alice.voice_stems[0];
+        assert_eq!(alice.notes.get(stem).map(String::as_str), Some("帮我看看明天会不会下雨"));
+        // The note is not the clip: serving the media must still find the wav.
+        let p = clip_media_path(dir.path(), "alice", Modality::Voice, stem).await.unwrap().unwrap();
+        assert!(p.to_string_lossy().ends_with(".wav"), "got {p:?}");
+        // An empty note writes no sidecar at all.
+        enroll(dir.path(), "bob", Modality::Voice, &[0.0, 1.0], b"w", "wav", Some("  ")).await.unwrap();
+        let listing = list_clusters(dir.path()).await.unwrap();
+        assert!(listing.iter().find(|c| c.subject == "bob").unwrap().notes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ejecting_a_clip_carries_its_words_along(){
+        let dir = td();
+        for (v, said) in [([1.0_f32, 0.0], "第一句话说得挺长的"), ([0.0, 1.0], "第二句完全不同")] {
+            enroll(dir.path(), "mix", Modality::Voice, &v, b"w", "wav", Some(said)).await.unwrap();
+        }
+        let victim = stems(dir.path(), "mix", Modality::Voice).await.unwrap()[0].clone();
+        let moved = eject_clip(dir.path(), "mix", Modality::Voice, &victim).await.unwrap().unwrap();
+        let listing = list_clusters(dir.path()).await.unwrap();
+        let fresh = listing.iter().find(|c| c.subject == moved).unwrap();
+        assert_eq!(fresh.notes.get(&victim).map(String::as_str), Some("第一句话说得挺长的"));
+    }
+
+    #[tokio::test]
     async fn clip_media_path_finds_the_media_sibling_not_the_embedding() {
         let dir = td();
-        enroll(dir.path(), "alice", Modality::Face, &near(0, 0.0), b"jpgbytes", "jpg").await.unwrap();
+        enroll(dir.path(), "alice", Modality::Face, &near(0, 0.0), b"jpgbytes", "jpg", None).await.unwrap();
         let stem = stems(dir.path(), "alice", Modality::Face).await.unwrap().pop().unwrap();
         let p = clip_media_path(dir.path(), "alice", Modality::Face, &stem).await.unwrap().unwrap();
         assert!(p.to_string_lossy().ends_with(&format!("{stem}.jpg")));

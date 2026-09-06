@@ -70,6 +70,11 @@ struct PersonDto {
     face_shape: Option<ShapeDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     voice_shape: Option<ShapeDto>,
+    /// What was said in each voice clip that kept it, by stem. The review view shows
+    /// it under the clip: a gallery is far quicker to judge by reading than by
+    /// listening to every one of a thousand.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    notes: std::collections::BTreeMap<String, String>,
 }
 
 /// A gallery's shape for the review view: how much like one person it is, whether it
@@ -111,6 +116,7 @@ pub async fn get_people(State(state): State<Arc<AppState>>) -> Response {
                     voice: c.voice_stems,
                     face_shape: c.face_shape.map(Into::into),
                     voice_shape: c.voice_shape.map(Into::into),
+                    notes: c.notes,
                 })
                 .collect();
             Json(serde_json::json!({ "people": people })).into_response()

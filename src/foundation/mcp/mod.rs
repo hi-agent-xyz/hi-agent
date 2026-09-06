@@ -2763,7 +2763,7 @@ mod name_tests {
     async fn name_person_renames_a_cluster_to_the_name() {
         let dir = tempfile::tempdir().unwrap();
         // A clustered-but-unnamed face id with a gallery.
-        people_vectors::enroll(dir.path(), "ff32ce3w", people_vectors::Modality::Face, &[1.0, 0.0], b"m", "jpg")
+        people_vectors::enroll(dir.path(), "ff32ce3w", people_vectors::Modality::Face, &[1.0, 0.0], b"m", "jpg", None)
             .await
             .unwrap();
         let r = reflection_name_person(
@@ -2782,7 +2782,7 @@ mod name_tests {
     async fn name_person_renames_a_voice_cluster_too() {
         let dir = tempfile::tempdir().unwrap();
         // A clustered-but-unnamed voice id with a gallery.
-        people_vectors::enroll(dir.path(), "ab12cd34", people_vectors::Modality::Voice, &[1.0, 0.0], b"m", "wav")
+        people_vectors::enroll(dir.path(), "ab12cd34", people_vectors::Modality::Voice, &[1.0, 0.0], b"m", "wav", None)
             .await
             .unwrap();
         let r = reflection_name_person(
@@ -2801,10 +2801,10 @@ mod name_tests {
     async fn merge_people_ties_a_voice_id_to_a_named_face() {
         let dir = tempfile::tempdir().unwrap();
         // 赵力 is already known by face; their voice is still a separate opaque id.
-        people_vectors::enroll(dir.path(), "赵力", people_vectors::Modality::Face, &[1.0, 0.0], b"m", "jpg")
+        people_vectors::enroll(dir.path(), "赵力", people_vectors::Modality::Face, &[1.0, 0.0], b"m", "jpg", None)
             .await
             .unwrap();
-        people_vectors::enroll(dir.path(), "ab12cd34", people_vectors::Modality::Voice, &[0.0, 1.0], b"m", "wav")
+        people_vectors::enroll(dir.path(), "ab12cd34", people_vectors::Modality::Voice, &[0.0, 1.0], b"m", "wav", None)
             .await
             .unwrap();
         let r = reflection_merge_people(

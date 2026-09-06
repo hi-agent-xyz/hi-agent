@@ -272,7 +272,8 @@ function ModSection({ person, modality, onChanged, first }) {
       {shape?.smeared && <div style={S.mixedNote}>{L.mixed(L.noun[modality])}</div>}
       <div style={S.clips}>
         {stems.map((stem) => (
-          <Clip key={stem} subject={person.subject} modality={modality} stem={stem} onChanged={onChanged} />
+          <Clip key={stem} subject={person.subject} modality={modality} stem={stem}
+            said={person.notes?.[stem]} onChanged={onChanged} />
         ))}
       </div>
       {proposal && !proposal.none && (
@@ -288,7 +289,7 @@ function ModSection({ person, modality, onChanged, first }) {
   );
 }
 
-function Clip({ subject, modality, stem, onChanged }) {
+function Clip({ subject, modality, stem, said, onChanged }) {
   const [playing, setPlaying] = useState(false);
   const [gone, setGone] = useState(false);
   const audioRef = useRef(null);
@@ -327,6 +328,9 @@ function Clip({ subject, modality, stem, onChanged }) {
       {isVoice && <Eq small live={playing} />}
       <button type="button" style={S.eject} title={L.notThisPerson} aria-label={L.notThisPerson} onClick={eject}>✕</button>
       {isVoice && <div style={S.clipPlay}>▶</div>}
+      {/* What was said in it. Reading a gallery is much faster than listening to it,
+          and it is the one thing that shows at a glance which clips are sentences. */}
+      {isVoice && said && <div style={S.said} title={said}>{said}</div>}
     </div>
   );
 }
@@ -492,6 +496,9 @@ const S = {
   secttl: { fontSize: 14, fontWeight: 700, margin: "14px 0", display: "flex", alignItems: "center", justifyContent: "space-between" },
   cnt: { color: "var(--fg-mute)", fontWeight: 500, marginLeft: 6 },
   regroup: { fontSize: 12.5, fontWeight: 600, color: "var(--fg-dim)", cursor: "pointer", padding: "6px 12px", borderRadius: 999 },
+  said: { position: "absolute", left: 0, right: 0, bottom: 0, padding: "3px 5px", fontSize: 10,
+    lineHeight: 1.25, maxHeight: "2.5em", overflow: "hidden", textAlign: "left",
+    color: "var(--fg-mute)", background: "linear-gradient(transparent,rgba(0,0,0,.35))" },
   clips: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(72px,100%),1fr))", gap: 10 },
   clip: { position: "relative", borderRadius: 13, overflow: "hidden", backgroundColor: "var(--line-strong)", aspectRatio: "1/1",
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
