@@ -211,6 +211,41 @@ the only way.
 The accepted consequence is **fewer senders and more `unknown`** — the same trade this
 document already takes, applied to the sense that was quietly exempt from it.
 
+## A face is a sender too, and being seen is taking part
+
+**Amended September 7, 2026.** The basis table has said `cluster` means *a face or a
+voiceprint matched* since this document was written, and no face had ever set one. The
+vision channel filled the field with `unknown` on every signal, next to a recognition
+it had already performed and written into the body as `⟨faces: 老王 ~0.83⟩` — where the
+settling pass is forbidden to read it, correctly, because a name in a body is a topic.
+So the one modality whose threshold is actually *measured* — same-person scores bottom
+out at 0.293 here against a best-different-person of 0.275, no overlap at all — was the
+only one whose answer had nowhere to go. That was an oversight in the commit that
+introduced the field, not a decision: face recognition at receive time predates
+attribution by two months, and the comment claiming "a person we cannot name" was
+already false about the code above it.
+
+A camera signal now carries the person the store named, basis `cluster`, on **one
+condition: exactly one face in frame**. `Sender` holds one person; a frame with two
+people in it has no single answer to *who was perceived*, and the note still lists
+everybody because prose can hold a crowd. This is the same rule that makes a diarized
+multi-speaker clip skip rather than blend.
+
+**Being seen counts as having taken part.** The rule that a person-reader may only be
+dispatched for someone who *sent signals* now fires for someone who was only in the
+room, and that is intended: presence is a fact the boundary established, not an
+inference from content, and a stretch in which somebody sat in view is a stretch they
+were in. The forbidden move was ever only deriving a person from what a signal *says*.
+
+**The presence lane does not do this yet, deliberately.** Its salience test is a
+detection score and a box size — nothing in it can tell a person from a face on a
+television, a photograph on a wall, or a video a child is watching. Those already leak
+into the prose, where they are soft and visible; letting them set a grounded sender
+would make them people who were *present*, and a wrong record of who was in the room is
+the expensive kind. The captured-still path is safe from this in a way the always-on
+lane is not: somebody chose to take that picture. Presence waits for a way to say *that
+is a screen*.
+
 ## Sender is not subject
 
 Attribution answers *who sent this*. It never answers *who this is about*.

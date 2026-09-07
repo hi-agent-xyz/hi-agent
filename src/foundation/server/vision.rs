@@ -52,7 +52,7 @@ use crate::mind::memory::media;
 use crate::mind::memory::people_vectors::{self, Modality};
 use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::{AppState, FacePresence, PartialMinute, VideoInEvent, VideoSource};
-use crate::types::{Channel, Inbound, JournalEntry, Media, Sender, Signal};
+use crate::types::{Channel, Inbound, JournalEntry, Media, Sender, SenderBasis, Signal};
 
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
 const DEFAULT_VIDEO_MIME: &str = "video/webm";
@@ -349,13 +349,17 @@ fn spawn_perceive(
     tokio::spawn(async move {
         // Receive-time face reflex (soft evidence): best-effort, never blocks/fails.
         // Works for a still and for a camera minute (one keyframe decoded out).
-        let face = if face::available()
+        let seen = if face::available()
             && let Some(src) = recognise
             && let Some(img) = src.into_image().await
         {
             face_note(img, &state.data_dir).await
         } else {
             None
+        };
+        let (face, subject) = match seen {
+            Some((note, subject)) => (Some(note), subject),
+            None => (None, None),
         };
 
         let body = match kind {
@@ -384,8 +388,14 @@ fn spawn_perceive(
             body,
             stream: None,
             media: Some(Media { file: blob_rel, mime, duration_ms, width: None, height: None }),
-            // Ambient. "Someone's on camera" is precisely a person we cannot name.
-            sender: Some(Sender::unknown()),
+            // Ambient — a camera sees whoever is in frame, so this is never the owner
+            // default. But the field is *who was perceived*, and one recognized face
+            // alone in a frame is exactly that, so it is filled when the store named
+            // one and left empty otherwise. See [`face_note`] for why "one".
+            sender: Some(match &subject {
+                Some(s) => Sender { subject: Some(s.clone()), basis: SenderBasis::Cluster },
+                None => Sender::unknown(),
+            }),
         };
         if let Err(err) = state.memory.journal.append(entry).await {
             tracing::warn!(error = %format!("{err:#}"), "journal append failed for vision perception");
@@ -394,12 +404,30 @@ fn spawn_perceive(
 }
 
 /// Recognize the faces in a still image and render them as one compact evidence
-/// note to append to the caption, e.g. ` ⟨faces: 老王 ~0.83; unfamiliar⟩`. Returns
-/// `None` when no face is found or detection fails — best-effort, the signal
-/// stands either way. Each face is matched against the people store; anything the
-/// store declines to name — too weak, or too close a tie to call — reads as
-/// "unfamiliar", which is an answer rather than a shortfall.
-async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
+/// note to append to the caption, e.g. ` ⟨faces: 老王 ~0.83; unfamiliar⟩`, **and the
+/// subject to record as having been perceived** when there is exactly one and the
+/// store named them. Returns `None` when no face is found or detection fails —
+/// best-effort, the signal stands either way. Each face is matched against the people
+/// store; anything the store declines to name — too weak, or too close a tie to call —
+/// reads as "unfamiliar", which is an answer rather than a shortfall.
+///
+/// **Only one face in frame yields a subject.** `Sender` holds one person, and a
+/// frame with two people in it has no single answer to *who was perceived* — the same
+/// reason a diarized multi-speaker clip is skipped rather than blended. The note still
+/// lists everybody; that is prose, and prose can hold a crowd.
+///
+/// **The bar is [`Recognition::named`] itself, without the extra one a posted voice
+/// clip takes.** A still is a one-look signal like a clip, and the rule there is that
+/// evidence standing alone has to be strong — but for faces `recognize_min` already
+/// *is* strong: measured on this install, same-person scores bottom out at 0.293 and
+/// the best different-person score is 0.275, so the floor sits in a gap with room on
+/// both sides. Voice takes the higher bar because its floor is a guess in the region
+/// where the two distributions meet. Copying the remedy across would drop genuine
+/// faces to fix a problem this modality does not have.
+async fn face_note(
+    bytes: Bytes,
+    data_dir: &std::path::Path,
+) -> Option<(String, Option<String>)> {
     let faces = match face::detect_and_embed(bytes).await {
         Ok(f) => f,
         Err(err) => {
@@ -410,6 +438,8 @@ async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
     if faces.is_empty() {
         return None;
     }
+    let alone = faces.len() == 1;
+    let mut subject = None;
     let mut parts = Vec::with_capacity(faces.len());
     for f in &faces {
         let seen = match people_vectors::recognize(data_dir, Modality::Face, &f.embedding).await {
@@ -420,11 +450,16 @@ async fn face_note(bytes: Bytes, data_dir: &std::path::Path) -> Option<String> {
             }
         };
         match seen.named() {
-            Some(c) => parts.push(format!("{} ~{:.2}", c.subject, c.similarity)),
+            Some(c) => {
+                parts.push(format!("{} ~{:.2}", c.subject, c.similarity));
+                if alone {
+                    subject = Some(c.subject.clone());
+                }
+            }
             None => parts.push("unfamiliar".to_string()),
         }
     }
-    Some(format!(" ⟨faces: {}⟩", parts.join("; ")))
+    Some((format!(" ⟨faces: {}⟩", parts.join("; ")), subject))
 }
 
 /// Persist one wall-clock minute of camera media as
