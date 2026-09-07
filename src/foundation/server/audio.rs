@@ -221,8 +221,14 @@ fn speech_units(text: &str) -> usize {
 /// confidently it was matched. **The judgment is used and the sample is dropped** —
 /// those were one decision until September 2026, which is how a gallery ends up
 /// holding a thousand fragments.
-fn worth_keeping(samples: usize, sound: &acoustics::Sound, said: &str) -> bool {
-    samples as u64 >= VP_ENROLL_MIN_SAMPLES
+fn worth_keeping(samples: usize, sound: &acoustics::Sound, said: &str, overlapped: bool) -> bool {
+    // Two people talking at once is one waveform holding two voices, and the
+    // embedding of it is a blend belonging to neither. Diarization separates speakers
+    // *in time* — that is what the per-span slicing already uses — and nothing here
+    // separates them when they overlap. Pulling them apart would be a source-separation
+    // model and a new dependency; declining to keep the turn costs one sample.
+    !overlapped
+        && samples as u64 >= VP_ENROLL_MIN_SAMPLES
         && sound.voiced_secs(samples) >= ENROLL_MIN_VOICED_SECS
         && speech_units(said) >= ENROLL_MIN_UNITS
 }
@@ -647,10 +653,15 @@ pub async fn ingest_pcm_stream(
                                 for (turn, pcm) in sliced {
                                     let speaker = turn.speaker.clone();
                                     let sound = turn.sound;
-                                    // What the room was like when this turn landed —
-                                    // the empty string for the ordinary room, which is
-                                    // not news but still a change worth remembering.
-                                    pending_room = Some(room.note(turn).note().unwrap_or_default());
+                                    // What the room was like when this turn landed. The
+                                    // note is the empty string for the ordinary room —
+                                    // not news, but still a change worth remembering —
+                                    // and the reading also says whether anyone was
+                                    // talking across this turn, which decides whether
+                                    // it can be kept.
+                                    let reading = room.note(turn);
+                                    let overlapped = reading.crosstalk;
+                                    pending_room = Some(reading.note().unwrap_or_default());
                                     if voiceprints_on {
                                         resolve_speaker(
                                             &relay_state,
@@ -659,6 +670,7 @@ pub async fn ingest_pcm_stream(
                                             pcm,
                                             sound,
                                             said.clone(),
+                                            overlapped,
                                         );
                                     }
                                 }
@@ -914,6 +926,7 @@ async fn deliver_transcript(
 /// store that can place it confidently or not at all. `said` is what the transcriber
 /// made of this turn, and `None` means the utterance it came from held more than one
 /// speaker, which is never kept and never has text that belongs to one person.
+/// `overlapped` says somebody else was talking across this span.
 ///
 /// Detached and best-effort: a failure leaves the speaker unplaced, which is an
 /// ordinary state rather than an error. Unlike clips and stills, the live mic persists
@@ -926,6 +939,7 @@ fn resolve_speaker(
     pcm: Vec<i16>,
     sound: acoustics::Sound,
     said: Option<String>,
+    overlapped: bool,
 ) {
     if pcm.is_empty() {
         return;
@@ -934,7 +948,7 @@ fn resolve_speaker(
     // A playable WAV of this turn, built before the PCM is consumed by `embed`, so a
     // kept sample carries an audible preview of the live-mic voice (the stream stores
     // no per-utterance clip otherwise). Built only for a turn actually worth keeping.
-    let keep = said.filter(|t| worth_keeping(pcm.len(), &sound, t));
+    let keep = said.filter(|t| worth_keeping(pcm.len(), &sound, t, overlapped));
     let wav = keep.as_ref().map(|_| {
         let pcm_bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
         pcm16_mono_16k_to_wav(&pcm_bytes)
@@ -1268,21 +1282,30 @@ mod tests {
         // its levels are healthy, which is exactly why neither of those catches it.
         let (n, sound) = turn(4.0, 0.1);
         assert!(sound.snr_db() > 20.0, "the levels look fine");
-        assert!(!worth_keeping(n, &sound, "嗯 对 好 的 是"));
+        assert!(!worth_keeping(n, &sound, "嗯 对 好 的 是", false));
     }
 
     #[test]
     fn a_turn_with_no_words_in_it_is_not_worth_keeping() {
         // A television, a cough, music: energy for two seconds, nothing transcribed.
         let (n, sound) = turn(4.0, 0.6);
-        assert!(!worth_keeping(n, &sound, ""), "no words, whatever the acoustics say");
-        assert!(!worth_keeping(n, &sound, "嗯。"), "one syllable is not a voice sample");
+        assert!(!worth_keeping(n, &sound, "", false), "no words, whatever the acoustics say");
+        assert!(!worth_keeping(n, &sound, "嗯。", false), "one syllable is not a voice sample");
     }
 
     #[test]
     fn a_real_sentence_at_a_normal_pace_is_kept() {
         let (n, sound) = turn(4.0, 0.6);
-        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨"));
+        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨", false));
+    }
+
+    #[test]
+    fn a_turn_somebody_talked_across_is_never_kept() {
+        // Everything else about it is ideal. The waveform still holds two voices and
+        // its embedding belongs to neither of them.
+        let (n, sound) = turn(4.0, 0.6);
+        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨", false));
+        assert!(!worth_keeping(n, &sound, "帮我看看明天会不会下雨", true));
     }
 
     #[test]
@@ -1291,7 +1314,7 @@ mod tests {
         // never enough to become part of who somebody is.
         let (n, sound) = turn(1.0, 0.9);
         assert!(n as u64 >= VP_MIN_SPAN_SAMPLES, "we do embed it");
-        assert!(!worth_keeping(n, &sound, "明天会不会下雨"), "and we do not keep it");
+        assert!(!worth_keeping(n, &sound, "明天会不会下雨", false), "and we do not keep it");
     }
 
     #[test]
