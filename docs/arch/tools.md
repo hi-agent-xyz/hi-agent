@@ -186,6 +186,20 @@ The job's own rule is unchanged and narrower: **get hold of what this job needs*
 ask once for the step only the person can do, and never hand back a worse answer while implying
 it is the answer. That is about not stalling. It is not about leaving something behind.
 
+**And that holds for an ordinary note too, not only for a tool.** Nothing in the paragraph above
+is about a command: a rung that has just done something once cannot know it was the fifth time,
+whichever kind of thing it is thinking of writing down. Scoping it to tools left two rules for
+one act, and the seam showed — four worker prompts asked the hands to leave a note behind while
+`equipping-a-tool.md`, which those same workers read on the way in, told them not to. So the
+hands **read** the workshop and never write it; what they owe is a report saying what was hard,
+what worked, and whether the shape looked familiar. Reflection is the only entrance.
+
+What differs between the two is not who decides but **what it costs, and therefore the bar**. A
+note is a few lines and a place in the resident set, and nothing about it can break: the bar is
+that it was hard-won and likely to recur, and reflection writes it itself. A tool is a build
+session, an install, something to trust, and a line in every future window: it keeps all three
+conditions above, and a worker to build it.
+
 ### The note records a call that succeeded
 
 Not a plan that should work. `foundation.md`'s verification rule, pointed at tools: research
@@ -432,6 +446,8 @@ fits in a window.
 | Lookup and authorship are **separate tempos** | Lookup is in every job's critical path; installing software is not |
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
 | A tool is **an investment reflection decides**, not a job-time reflex | Only the rung reading across days can see recurrence; inside one job the guess always resolves to build |
+| **Reflection writes the whole workshop** — notes as much as tools | The same blindness applies to both; two rules for one act put four worker prompts at odds with a note they read |
+| Cost sets **the bar**, never **the owner** | A note risks a line and cannot break; a tool risks a session, an install and every future window |
 | **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
 | **Bundled tools may be named in another rung's prompt**; hot and the workshop may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
 

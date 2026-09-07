@@ -50,10 +50,15 @@ start from the note rather than from scratch.
 
 A note is a starting point, not gospel: the parts that move fast (which tool is best,
 the current style) you re-check the way you would anything fast-moving, while the
-durable steps you reuse as they are. And when you crack something that was hard and
-will likely come up again, leave a short note behind — flagging which parts are the
-fast-moving ones — so next time starts ahead of where this one did. Don't note the
-easy or the one-off; a workshop you can't find anything in is no workshop.
+durable steps you reuse as they are.
+
+**Reading the workshop is yours; writing it is not.** When you crack something hard, put
+it in your report — what was hard, what actually worked, and whether it looked like a
+shape that has come up before — and stop there. A note written from inside one job is
+written without the evidence that would justify it: you know what you are doing right
+now, and not whether the same shape came up four times last month. That call belongs to
+the part of the agent that reads across days. The one exception is the boring one: if
+making something reusable *was* the job you were handed, that is the job.
 
 # You keep the drive findable
 

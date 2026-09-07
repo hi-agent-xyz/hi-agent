@@ -65,6 +65,33 @@ const WORKER_DRIVE_ORGANIZER_BASE: &str = include_str!("workers/drive-organizer.
 const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
 const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
 
+/// Every prompt, for the cross-tree test in [`crate::mind::skills`]. **The list is of
+/// all of them rather than of the ones that see the workshop**, and the test picks its
+/// own subjects out of it by looking for `{skills_dir}` — so a prompt that grows a
+/// workshop section later is covered by having grown one, with nothing to remember to
+/// add here.
+///
+/// That distinction is the whole point of the accessor. The paragraph carrying the
+/// read-it-never-write-it rule is copied verbatim into four worker prompts — the
+/// accepted cost of retiring `common.md` — and the first pass at this change fixed the
+/// two that happened to be open, leaving three specialists still telling the hands to
+/// leave a note behind. An enumerated list of subjects would have shipped that.
+#[cfg(test)]
+pub(crate) fn all_bases() -> [(&'static str, &'static str); 10] {
+    [
+        ("reaction", REACTION_BASE),
+        ("cognition", COGNITION_BASE),
+        ("reflection", REFLECTION_BASE),
+        ("worker/general", WORKER_GENERAL_BASE),
+        ("worker/view-builder", WORKER_VIEW_BUILDER_BASE),
+        ("worker/view-reviewer", WORKER_VIEW_REVIEWER_BASE),
+        ("worker/decision-maker", WORKER_DECISION_MAKER_BASE),
+        ("worker/drive-organizer", WORKER_DRIVE_ORGANIZER_BASE),
+        ("worker/person-reader", WORKER_PERSON_READER_BASE),
+        ("worker/task-manager", WORKER_TASK_MANAGER_BASE),
+    ]
+}
+
 /// Reference pages under `craft/`, installed beside the prompts and read from disk only
 /// when a job touches them.
 ///
@@ -479,8 +506,13 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
         // For a note naming a command there is no schema to attach, so "resident"
         // means exactly this: its `purpose` line is in the window, and everything
         // below the cut is one grep away.
+        //
+        // Named for what it holds, which is notes — every resident one, including a
+        // procedure that runs nothing. It was `{tools_in_hand}`, and that promised a
+        // classification the workshop does not have: a tool is a note that happens to
+        // name a command, not a second kind of thing.
         .replace(
-            "{tools_in_hand}",
+            "{in_hand}",
             &crate::mind::skills::hot_inventory(
                 &base,
                 crate::mind::skills::HOT_BUDGET_BYTES,

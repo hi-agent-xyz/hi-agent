@@ -829,9 +829,14 @@ mod tests {
         assert_eq!(fm.run, None);
     }
 
-    /// The ROI decision belongs to reflection, and nowhere else may claim it.
+    /// Writing the workshop belongs to reflection, and nowhere else may claim it —
+    /// a note as much as a tool. The argument was always general: a note written from
+    /// inside one job is written without the evidence that would justify it, and the
+    /// rung that just did something once cannot know it was the fifth time. It used to
+    /// be applied to tools only, so two prompts asked the hands to leave a note behind
+    /// while the note they read on the way told them not to.
     #[test]
-    fn only_reflection_decides_that_a_tool_should_exist() {
+    fn only_reflection_writes_the_workshop() {
         let reflection = crate::identity::reflection_base();
         assert!(
             reflection.contains("an intention is not evidence"),
@@ -845,6 +850,33 @@ mod tests {
             reflection.contains("the deciding is yours, the building is not"),
             "reflection weighs it and dispatches; it does not build inline"
         );
+        // Being the only entrance is load-bearing and has to be said as such: whatever
+        // this pass does not write down is what the agent forgets.
+        assert!(
+            reflection.contains("nothing that does the work writes the workshop"),
+            "the rule has to be stated where it is applied"
+        );
+
+        // Every prompt that has a workshop section, found by having one rather than by
+        // being listed here — the paragraph is copied verbatim across four workers, and
+        // fixing the ones that came to mind left three of them contradicting the note
+        // those same workers read on the way in.
+        let mut checked = 0;
+        for (name, base) in crate::identity::all_bases() {
+            if !base.contains("{skills_dir}") || name == "reflection" {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                base.contains("Reading the workshop is yours; writing it is not"),
+                "{name} sees the workshop and is not told which half is its"
+            );
+            assert!(
+                !base.contains("leave a note behind") && !base.contains("leave a short note"),
+                "{name} still asks the hands to write the workshop mid-errand"
+            );
+        }
+        assert!(checked >= 5, "only {checked} prompts checked; the filter stopped matching");
     }
 
     #[test]
