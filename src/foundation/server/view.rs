@@ -16,7 +16,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::foundation::server::AppState;
-use crate::foundation::server::headers::AuthBearer;
+use crate::foundation::server::headers::{AuthBearer, FaceHeader};
 use crate::foundation::server::view_bus;
 use crate::types::{Channel, JournalEntry, Sender};
 
@@ -79,12 +79,13 @@ pub struct ListedView {
     pub shot_url: Option<String>,
 }
 
-/// How many first pictures one inventory read may start rendering. The band is the only
+/// How many pictures one inventory read may start rendering. The band is the only
 /// caller and a person opens it a few times an hour, so this warms the shipped dozen
 /// over a handful of opens instead of putting twelve Chromiums on the machine at the
-/// moment someone reaches for their tasks. Missing pictures only: keeping one current is
-/// the job of opening the view, which is also the only evidence anyone cares what is
-/// on it.
+/// moment someone reaches for their tasks. Missing pictures, and pictures of a frame the
+/// asking face is not in — the two things a band can see are wrong about its own tiles.
+/// Age is still not chased here: keeping a picture current is the job of opening the
+/// view, which is also the only evidence anyone cares what is on it.
 const WARM_PER_READ: usize = 3;
 
 /// Refs a warm-up is already working on. The band re-reads the inventory every few
@@ -146,8 +147,9 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
 pub async fn list_views(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
+    FaceHeader(face): FaceHeader,
 ) -> impl IntoResponse {
-    tracing::debug!(auth = ?auth, "GET /api/views");
+    tracing::debug!(auth = ?auth, face = ?face, "GET /api/views");
     let root = state.data_dir.join("views");
     let mut found = Vec::new();
     collect_views(&root, &root, &mut found).await;
@@ -159,21 +161,38 @@ pub async fn list_views(
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
 
-    // The row's own views, and only the ones with no picture at all. Reading the
+    // Every named tile this band draws: its own row, and the trail above it. Reading the
     // inventory *is* the signal that the band is open, which is the one moment the
-    // pictures are about to be looked at.
+    // pictures are about to be looked at — and the one moment the host knows whose frame
+    // they are about to be looked at in. The trail matters because that is where the
+    // agent's shows land, and a show has no asking face: a tile it captured at the
+    // primary's frame can only be corrected here.
+    let trail: std::collections::HashSet<String> =
+        state.views.shown().await.into_iter().map(|s| s.view_ref).collect();
     let cold: Vec<String> = {
-        let mut warming = WARMING.lock().unwrap_or_else(|held| held.into_inner());
-        found
+        let mut drawn: Vec<&ListedView> = found
             .iter()
-            .filter(|v| (v.system || v.bookmarked) && v.shot_url.is_none())
+            .filter(|v| v.system || v.bookmarked || trail.contains(&v.view_ref))
+            .collect();
+        // No picture at all beats a picture of the wrong shape, when the budget only
+        // covers some of them: the first tile is a coloured letter, the second is at
+        // least a picture of the view.
+        drawn.sort_by_key(|v| v.shot_url.is_some());
+        let mut warming = WARMING.lock().unwrap_or_else(|held| held.into_inner());
+        drawn
+            .into_iter()
+            .filter(|v| {
+                super::view_shots::wants_shot(&state.data_dir, &v.view_ref, face.as_deref())
+            })
             .map(|v| v.view_ref.clone())
             .filter(|view_ref| warming.insert(view_ref.clone()))
             .take(WARM_PER_READ)
             .collect()
     };
     if !cold.is_empty() {
-        tokio::spawn(warm_shots(state.clone(), cold));
+        // Rendered at *this* face's frame. Reading the inventory is what says the band
+        // is open, and the band that is open is the one about to show these pictures.
+        tokio::spawn(warm_shots(state.clone(), cold, face));
     }
     axum::Json(found)
 }
@@ -185,9 +204,9 @@ pub async fn list_views(
 /// own open does. Everything here is best-effort — a view that no longer resolves or
 /// compiles simply keeps the mark it already had, and the band never learns there was
 /// an attempt.
-async fn warm_shots(state: Arc<AppState>, refs: Vec<String>) {
+async fn warm_shots(state: Arc<AppState>, refs: Vec<String>, face: Option<String>) {
     for view_ref in refs {
-        if warm_one(&state, &view_ref).await {
+        if warm_one(&state, &view_ref, face.as_deref()).await {
             // Same bump a show's capture makes: the picture has to reach the windows
             // whose long-poll was answered before it existed.
             state.views.note_shot().await;
@@ -197,7 +216,7 @@ async fn warm_shots(state: Arc<AppState>, refs: Vec<String>) {
 }
 
 /// One warm-up: resolve, compile, render. `true` if a picture landed.
-async fn warm_one(state: &Arc<AppState>, view_ref: &str) -> bool {
+async fn warm_one(state: &Arc<AppState>, view_ref: &str, face: Option<&str>) -> bool {
     let Some(render) = crate::mind::views::render_context() else {
         return false;
     };
@@ -207,7 +226,7 @@ async fn warm_one(state: &Arc<AppState>, view_ref: &str) -> bool {
     let Ok(module_url) = render.compiler.compile(&source).await else {
         return false;
     };
-    super::view_shots::take_ref(&state.data_dir, view_ref, &module_url).await
+    super::view_shots::take_ref(&state.data_dir, view_ref, &module_url, face).await
 }
 
 #[derive(serde::Deserialize)]
@@ -379,6 +398,7 @@ pub struct OpenedView {
 pub async fn open_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
+    FaceHeader(face): FaceHeader,
     axum::Json(body): axum::Json<OpenViewRequest>,
 ) -> impl IntoResponse {
     let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -450,6 +470,9 @@ pub async fn open_view(
                 state.data_dir.clone(),
                 view_ref.clone(),
                 module_url.clone(),
+                // At the frame of the face that went there — the picture is for the
+                // band they are about to open, not for whichever face spoke last.
+                face,
                 move || {
                     tokio::spawn(async move { bus.note_shot().await });
                 },

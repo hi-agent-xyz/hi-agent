@@ -29,6 +29,14 @@
 //! screen waits for this — [`ViewBus::apply`](super::view_bus::ViewBus::apply) has
 //! already returned by the time the browser opens.
 //!
+//! **A picture is taken for a face, and the band's read is where a wrong one is caught.**
+//! A render nobody asked for — the agent's own `hi_show` — goes to the primary surface,
+//! because there is no better guess. That guess is wrong whenever the primary is not where
+//! anyone is looking, and reporting is edge-triggered, so a phone opened once holds the
+//! head while someone reads on the desktop. The band's own read is the correction: it
+//! names its face (`X-HI-Face`), and a tile whose picture is of a frame that face is not
+//! in counts as needing one, exactly like a tile with no picture at all.
+//!
 //! **A named surface's picture is keyed by its ref, and a record's by its artifact.**
 //! Content-addressing alone froze the wrong half of this: `factory/tasks` renders once
 //! and then shows that morning's board forever, while re-opening it deliberately
@@ -65,6 +73,13 @@ const KEEP: usize = 200;
 /// claim is a lie the person can see through, and a per-open re-render is a browser per
 /// click. Fifteen minutes is where a picture stops being about the same working stretch.
 const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// How far a picture's aspect may sit from the asking face's before it is a picture of
+/// a different composition. Two desktop windows a few hundred pixels apart lay a view
+/// out the same way and are not worth a re-render (1920x1050 against 1512x856 is 1.04
+/// here); a portrait phone against a landscape Mac is 3.97, and they are not the same
+/// picture of anything.
+const SHAPE_TOLERANCE: f64 = 1.25;
 
 /// Renders happen one at a time. See the module docs: the alternative is a show
 /// sequence spawning a browser per beat.
@@ -132,6 +147,24 @@ pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
     Some(format!("/views/_shots/ref/{view_ref}.png?v={stamp}"))
 }
 
+/// Does the picture behind `view_ref` need taking for `face` — is there none at all, or
+/// is the one on disk of a frame this face is not in?
+///
+/// The band's read is the only moment the host knows *who* is about to look at these
+/// tiles, so it is the only moment a wrong-shaped one can be noticed. Deliberately not
+/// the whole of [`take_ref`]'s rule: the fifteen-minute clock and the source's mtime are
+/// re-checked under the capture lock anyway, and chasing them from here would put a
+/// browser behind every poll of an open band.
+pub fn wants_shot(data_dir: &Path, view_ref: &str, face: Option<&str>) -> bool {
+    let Some(path) = ref_shot_path(data_dir, view_ref) else {
+        return false;
+    };
+    if !path.exists() {
+        return true;
+    }
+    !same_shape(&path, view_render::face_frame(face).0)
+}
+
 /// Capture `module_url` in the background, then call `done` if a new shot landed.
 ///
 /// Returns immediately. `done` is how the picture reaches the people already
@@ -139,7 +172,9 @@ pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
 /// existed, so something has to bump the version once it does.
 pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send + 'static) {
     let path = shots_dir(&data_dir).join(shot_name(&module_url));
-    spawn_capture(path, module_url, None, done);
+    // Write-once, and no asking face: this is the agent putting something up, so the
+    // frame is the primary surface's — the best guess available when nobody asked.
+    spawn_capture(path, module_url, Keep::write_once(), None, done);
 }
 
 /// Capture a *named* surface — the picture behind `factory/tasks` rather than behind
@@ -148,14 +183,18 @@ pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send
 /// Unlike a record shot this one is re-taken once it has gone stale — see [`take_ref`]
 /// — because the thing it is a picture of has moved on. Same browser, same lock, same
 /// silence on failure.
+///
+/// `face` is the surface that asked for this, when one did — the person opening the
+/// view. `None` is the agent's own show, which has no asker.
 pub fn capture_ref(
     data_dir: PathBuf,
     view_ref: String,
     module_url: String,
+    face: Option<String>,
     done: impl FnOnce() + Send + 'static,
 ) {
     tokio::spawn(async move {
-        if take_ref(&data_dir, &view_ref, &module_url).await {
+        if take_ref(&data_dir, &view_ref, &module_url, face.as_deref()).await {
             done();
         }
     });
@@ -164,7 +203,12 @@ pub fn capture_ref(
 /// The same capture, waited on. For a caller working through a list, which needs to
 /// know when one is finished before starting the next — see the band's warm-up in
 /// [`super::view::list_views`]. `true` if a new picture landed.
-pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool {
+pub async fn take_ref(
+    data_dir: &Path,
+    view_ref: &str,
+    module_url: &str,
+    face: Option<&str>,
+) -> bool {
     let Some(path) = ref_shot_path(data_dir, view_ref) else {
         return false;
     };
@@ -173,7 +217,9 @@ pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool
     // current. This is the one staleness that cannot wait for the clock.
     let source = data_dir.join("views").join(format!("{view_ref}.jsx"));
     let written = std::fs::metadata(&source).ok().and_then(|m| m.modified().ok());
-    match run(&path, module_url, Some(REFRESH_AFTER), written).await {
+    let keep =
+        Keep { stale_after: Some(REFRESH_AFTER), newer_than: written, shaped_like_asker: true };
+    match run(&path, module_url, keep, face).await {
         Ok(landed) => landed,
         // A thumbnail is decoration on a row that works without it — see `spawn_capture`.
         Err(error) => {
@@ -183,41 +229,79 @@ pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool
     }
 }
 
-/// Is `path` a picture we are content to keep?
-///
-/// `stale_after: None` is write-once — any file there will do, which is what a record of
-/// a show wants. `Some(ttl)` also requires it to be younger than `ttl`, and
-/// `newer_than` requires it to postdate the source it claims to be a picture of.
-fn good_enough(
-    path: &Path,
+/// When a picture already at a key may be kept rather than re-taken.
+#[derive(Debug, Clone, Copy, Default)]
+struct Keep {
+    /// `None` is write-once — any file there will do, which is what a record of a show
+    /// wants. `Some(ttl)` also requires it to be younger than `ttl`.
     stale_after: Option<std::time::Duration>,
+    /// The picture must postdate the source it claims to be a picture of.
     newer_than: Option<std::time::SystemTime>,
-) -> bool {
+    /// The picture must be of roughly the frame the asking face is in. A named
+    /// surface's tile is one file every face reads, so without this a portrait picture
+    /// taken for a phone stays in the desktop's band for the whole of `stale_after` —
+    /// which is how a 1920-wide window ended up showing 390-wide pictures of its own
+    /// views. Off for a record shot, which is written once by definition.
+    shaped_like_asker: bool,
+}
+
+impl Keep {
+    /// Any file at the key will do. What a record of a show wants: the artifact it is a
+    /// picture of cannot change, so neither can the right picture of it.
+    fn write_once() -> Self {
+        Self::default()
+    }
+}
+
+/// Is `path` a picture we are content to keep, for someone whose frame is `frame`?
+fn good_enough(path: &Path, keep: Keep, frame: view_render::Viewport) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
+    if keep.shaped_like_asker && !same_shape(path, frame) {
+        return false;
+    }
     let Ok(taken) = meta.modified() else {
         // A filesystem that cannot say when the file was written can still say it is
         // there, which is all a write-once key needs.
-        return stale_after.is_none() && newer_than.is_none();
+        return keep.stale_after.is_none() && keep.newer_than.is_none();
     };
-    if newer_than.is_some_and(|written| taken < written) {
+    if keep.newer_than.is_some_and(|written| taken < written) {
         return false;
     }
-    match stale_after {
+    match keep.stale_after {
         None => true,
         Some(ttl) => taken.elapsed().is_ok_and(|age| age < ttl),
     }
 }
 
+/// Is the picture at `path` of roughly the same shape as `frame`?
+///
+/// Reads the PNG header only — [`image::image_dimensions`] does not decode the pixels —
+/// so this is a `stat` and a few bytes on a path that is already being `stat`ed. A file
+/// whose dimensions cannot be read is not a picture worth keeping, so it answers false
+/// and the caller re-takes it.
+fn same_shape(path: &Path, frame: view_render::Viewport) -> bool {
+    let Ok((width, height)) = image::image_dimensions(path) else {
+        return false;
+    };
+    let have = width as f64 / height.max(1) as f64;
+    let want = frame.width as f64 / frame.height.max(1) as f64;
+    if !(have.is_finite() && want.is_finite() && want > 0.0) {
+        return false;
+    }
+    (1.0 / SHAPE_TOLERANCE..=SHAPE_TOLERANCE).contains(&(have / want))
+}
+
 fn spawn_capture(
     path: PathBuf,
     module_url: String,
-    stale_after: Option<std::time::Duration>,
+    keep: Keep,
+    face: Option<String>,
     done: impl FnOnce() + Send + 'static,
 ) {
     tokio::spawn(async move {
-        match run(&path, &module_url, stale_after, None).await {
+        match run(&path, &module_url, keep, face.as_deref()).await {
             Ok(true) => done(),
             Ok(false) => {}
             // A thumbnail is decoration on a record that is complete without it, so a
@@ -235,10 +319,14 @@ fn spawn_capture(
 async fn run(
     path: &Path,
     module_url: &str,
-    stale_after: Option<std::time::Duration>,
-    newer_than: Option<std::time::SystemTime>,
+    keep: Keep,
+    face: Option<&str>,
 ) -> anyhow::Result<bool> {
-    if good_enough(path, stale_after, newer_than) {
+    // Resolved once, and used for both halves of the decision: whether the picture on
+    // disk is already of this frame, and what frame to render if it is not. Two lookups
+    // could disagree across a resize and re-take a picture into the frame it already had.
+    let (viewport, theme) = view_render::face_frame(face);
+    if good_enough(path, keep, viewport) {
         return Ok(false);
     }
     // Published at startup; absent in a unit test and on a process that never stood
@@ -249,17 +337,21 @@ async fn run(
 
     let _one_at_a_time = CAPTURING.lock().await;
     // Another capture of the same key may have finished while we queued.
-    if good_enough(path, stale_after, newer_than) {
+    if good_enough(path, keep, viewport) {
         return Ok(false);
     }
 
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url);
-    // The frame the window reported, at 1× — the shot is about to be scaled down to
-    // a tile, so rendering it at retina density would only cost time and memory.
+    // The frame of the face this picture is *for* — the one whose band is about to show
+    // it — falling back to the primary when nobody asked. `RenderRequest::new` starts
+    // from the primary, which is right for a review and wrong for a tile.
+    req.viewport = viewport;
+    // At 1×: the shot is about to be scaled down to a tile, so rendering it at retina
+    // density would only cost time and memory.
     req.viewport.scale = 1.0;
-    // The skin the person is actually in. A light picture of a view they saw dark is
-    // a wrong record, and the window reports its theme for exactly this.
-    req.theme = view_render::stage_theme();
+    // The skin that face is actually in. A light picture of a view they saw dark is
+    // a wrong record, and every face reports its theme for exactly this.
+    req.theme = theme;
     // And the language they picked, for the same reason: the system views carry both
     // copies and choose per render, so without this every tile of them is a picture of
     // a screen in English that the person has never seen.
@@ -375,20 +467,81 @@ mod tests {
         }
     }
 
+    /// A frame to age-check against; these two say nothing about shape.
+    fn any_frame() -> view_render::Viewport {
+        view_render::Viewport::default()
+    }
+
+    fn aged(stale_after: Option<std::time::Duration>) -> Keep {
+        Keep { stale_after, newer_than: None, shaped_like_asker: false }
+    }
+
+    /// Write a real PNG of exactly `width`x`height`. The shape rule reads the header,
+    /// so these tests need a file a PNG decoder will accept.
+    fn write_png(path: &Path, width: u32, height: u32) {
+        image::RgbImage::new(width, height).save(path).expect("write a png");
+    }
+
     /// A record shot is written once; a surface shot is written again once it is old.
     #[test]
     fn a_surface_picture_goes_stale_and_a_record_does_not() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shot.png");
-        assert!(!good_enough(&path, None, None), "nothing there yet");
+        assert!(!good_enough(&path, Keep::write_once(), any_frame()), "nothing there yet");
         std::fs::write(&path, b"x").unwrap();
 
-        assert!(good_enough(&path, None, None), "a record is any file at the key");
-        assert!(good_enough(&path, Some(REFRESH_AFTER), None), "a fresh surface stands");
         assert!(
-            !good_enough(&path, Some(std::time::Duration::ZERO), None),
+            good_enough(&path, Keep::write_once(), any_frame()),
+            "a record is any file at the key",
+        );
+        assert!(
+            good_enough(&path, aged(Some(REFRESH_AFTER)), any_frame()),
+            "a fresh surface stands",
+        );
+        assert!(
+            !good_enough(&path, aged(Some(std::time::Duration::ZERO)), any_frame()),
             "an aged-out surface is re-taken",
         );
+    }
+
+    /// The failure this closes, seen live on 2026-09-07: a phone had reported last, so
+    /// `stage_frame()` was portrait, and a 1920x1050 desktop window opening the band was
+    /// handed 393x852 pictures of its own views — legible 17px type inside a 160px tile.
+    /// There is one file per ref and every face reads it, so the asking face's frame has
+    /// to be part of what makes the picture on disk good enough.
+    #[test]
+    fn a_picture_taken_for_another_face_is_re_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        let keep =
+            Keep { stale_after: Some(REFRESH_AFTER), newer_than: None, shaped_like_asker: true };
+        let frame = |width, height| view_render::Viewport { width, height, scale: 1.0 };
+        let desktop = frame(1920, 1050);
+        let phone = frame(393, 852);
+
+        write_png(&path, 393, 852);
+        assert!(good_enough(&path, keep, phone), "the face it was taken for keeps it");
+        assert!(!good_enough(&path, keep, desktop), "the desktop band re-takes it");
+
+        write_png(&path, 480, 262);
+        assert!(good_enough(&path, keep, desktop), "and then the desktop keeps it");
+        assert!(
+            good_enough(&path, keep, frame(1512, 856)),
+            "two desktop windows lay a view out the same way — not worth a re-render",
+        );
+        assert!(!good_enough(&path, keep, phone), "and now the phone is the one re-taking");
+    }
+
+    /// A record shot is a picture of an artifact that cannot change, so who is asking
+    /// is not a reason to take it again — that would re-render every inline view in the
+    /// trail every time a second face opened the band.
+    #[test]
+    fn a_record_shot_ignores_the_asking_face() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        write_png(&path, 393, 852);
+        let desktop = view_render::Viewport { width: 1920, height: 1050, scale: 1.0 };
+        assert!(good_enough(&path, Keep::write_once(), desktop));
     }
 
     /// The agent rewrites views, and a picture of the build before the rewrite is wrong
@@ -402,8 +555,13 @@ mod tests {
 
         let before = taken - std::time::Duration::from_secs(60);
         let after = taken + std::time::Duration::from_secs(60);
-        assert!(good_enough(&path, Some(REFRESH_AFTER), Some(before)), "source is older");
-        assert!(!good_enough(&path, Some(REFRESH_AFTER), Some(after)), "source is newer");
+        let rewritten = |at| Keep {
+            stale_after: Some(REFRESH_AFTER),
+            newer_than: Some(at),
+            shaped_like_asker: false,
+        };
+        assert!(good_enough(&path, rewritten(before), any_frame()), "source is older");
+        assert!(!good_enough(&path, rewritten(after), any_frame()), "source is newer");
     }
 
     #[test]

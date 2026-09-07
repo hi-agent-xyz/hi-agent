@@ -967,11 +967,12 @@ would otherwise pin the first picture in the browser forever.
 Two paths take it, and both are the same act as the capture on a show — a second camera on
 what someone is looking at right now. `POST /api/views/open` re-takes the picture of the
 view being opened. `GET /api/views` — which is read when the band opens, and only then —
-takes a **first** picture for up to three of the row's own views that have none, so the
-shipped surfaces stop being a row of coloured letters without putting a browser per
-bookmark on the machine at the moment someone reaches for their tasks. Staleness is not
-chased there: keeping a picture current is what opening the view is for, and opening it
-is also the only evidence anyone cares what is on it.
+takes a picture for up to three of the tiles it draws that have none, so the shipped
+surfaces stop being a row of coloured letters without putting a browser per bookmark on
+the machine at the moment someone reaches for their tasks. Staleness is not chased there:
+keeping a picture current is what opening the view is for, and opening it is also the only
+evidence anyone cares what is on it. *(Amended September 7, 2026 — that read also re-takes
+a tile whose picture is of another face's frame; see* The frame is a surface*, below.)*
 
 The render is given the person's **language** as well as their skin, for the same reason
 and by the same lane: the bundled surfaces carry both copies and pick per render, so
@@ -1015,6 +1016,49 @@ So `STAGE` holds **one entry per attached surface**, each face reports its own, 
 plausible ones**. With more than one attached, the primary is the surface that reported most
 recently, because reporting follows a resize, a theme flip or a load, and all three are
 someone looking. The others are not a second review; they are the background pass below.
+
+**A thumbnail is rendered for the face that asked, and only a render nobody asked for takes
+the primary.** Amended September 7, 2026. The primary is the right target for a review and
+for the agent's own show — nobody asked for either, so the last face to move is the best
+guess available. A tile is asked for: the band is drawn *by* a face, and that face knows its
+own frame, so guessing is not the only option and the primary is a wrong answer whenever it
+is not the asker. Reporting is edge-triggered, which makes it wrong often: a window someone
+is reading on reports nothing while they read, so a phone opened once and put away holds the
+head indefinitely. Seen live: a phone reported at 12:11 that day and never yielded, and by
+the afternoon 13 of ~50 named-surface pictures on that instance were 393×852 — including
+the one in the band of a 1920×1050 desktop window, where 17px type came out legible inside
+a 160px tile because the picture was of a layout that window was not showing.
+
+So `GET /api/views` and `POST /api/views/open` carry **`X-HI-Face`** — the id the face
+already mints to report its frame — and the picture is rendered at that face's frame and
+skin. `hi_show`'s capture sends none and keeps the primary, which is the honest answer:
+nobody asked, so the last face to move is the best guess there is.
+
+**The band's read is where that guess gets corrected**, and this is the half that reaches
+the observed case, whose tile came from a show and so had no asker at all. Reading the
+inventory says the band is open, and now says whose: a tile whose picture is of a frame the
+asking face is not in counts as needing one, exactly like a tile with no picture. The
+candidates widen from the row to **every named tile the band draws** — the row and the
+trail — because the trail is where shows land, and narrow again to the same three per read,
+missing pictures first. Age is still not chased there; a wrong shape is not a staleness, it
+is a picture of somewhere else.
+
+**The shape is part of what makes a picture good enough**, because there is still one file
+per ref and every face reads it. A tile whose aspect is more than 1.25× off the asking
+face's is re-taken, beside the fifteen-minute clock and the source's mtime — without that,
+the phone's picture simply survives in the desktop's band for the whole of the TTL, which is
+the bug and not a fix for it. The tolerance is what separates a different composition from a
+different window: 1920×1050 against 1512×856 is 1.04 and not worth a re-render; a portrait
+phone against a landscape Mac is 3.97 and is not a picture of the same thing.
+
+*Accepted: two bands open at once on faces of different shapes re-take each other's
+pictures for as long as both are open. Bounded — three per read, one browser at a time —
+and against the premise this section rests on, which is that there is one screen and
+someone is in front of it.*
+
+**Not amended: what a review renders.** It reads like the same idea and it is not. A review
+is a bet about the frame the view *will be read on*, made before anyone has opened it; a tile
+is a picture *for a band that is open right now*, and the face holding it open is not a bet.
 
 **The skin stays swept, and this is the asymmetry worth writing down.** A dark render sends
 the builder back to the source 4% of the time — the same rate as a light one — because

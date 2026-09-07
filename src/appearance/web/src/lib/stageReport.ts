@@ -41,7 +41,12 @@ interface StageFrame {
  *  entry it already had instead of minting a second one beside it. */
 const SURFACE_KEY = "hi.surface";
 
-function surfaceId(): string {
+/** This face's id, for anything that has to say *which face is asking*. Exported
+ *  because the views calls carry it (`X-HI-Face`): a thumbnail is a picture for the
+ *  band that is about to show it, so it is rendered at this face's frame rather than
+ *  at whichever face reported to `/api/stage` most recently. Same id either way — the
+ *  frame it names is the one reported here. */
+export function surfaceId(): string {
   try {
     const kept = sessionStorage.getItem(SURFACE_KEY);
     if (kept) return kept;

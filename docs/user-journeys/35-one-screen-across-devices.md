@@ -100,3 +100,31 @@ special tool, just write the file」),没有任何一个工具调用可以挂钩
   (`a_rewrite_reaches_the_view_the_agent_has_up`)。
 - ⚠️ **没在浏览器里看过**。看的是 wire 上的 module_url 变了;`ViewMount` 的 `[moduleUrl]`
   依赖会重新 import,这一步是读代码推的,不是看见的。
+
+## 实测 2026-09-07 · band 里的缩略图是谁那张脸的图
+
+**又是在用户自己那台开发机上撞见的,还是同一个 view。**人在一扇 1920×1050 的桌面窗口里看
+`knq-project-architecture/editing-live-commentary-overview`,band 的 history 第一格却是一张
+390 宽的手机页面 —— 160px 的格子里 17px 正文还读得清,因为底图根本不是这扇窗的排版。
+
+盘上的证据是齐的:`data/views/_shots/ref/` 里,桌面拍的图一律 `479x262`(= 1920×1050 ÷ 4,
+`THUMB_WIDTH` 的长边上限),而 10:24 之后 12:11、12:48、12:59 三张全是 `393x852` —— iPhone
+的竖屏视口。当天 50 张具名 surface 的图里有 13 张是手机形状的。
+
+原因在 `view_render::stage_frame()`:它取 `STAGE.first()`,也就是**最近一次上报**的 surface。
+而上报是边沿触发的(resize、主题翻转、页面加载),所以一扇有人正在读、但尺寸没动的桌面窗口
+永远抢不回队首,手机开一次揣兜里就一直是 primary。
+
+**修法与复测**(release 二进制,独立 `--data-dir`,端口 12360;桌面 1920×1050 先报、手机
+393×852 后报,所以手机是 primary):
+
+- ✅ **桌面开 band,拿到的是桌面的图**:`GET /api/views` 带 `X-HI-Face: deskface`,warm 出来的
+  十张全部 `479x262` —— primary 仍然是手机。这条在 main 上会是十张 `393x852`。
+- ✅ **手机开 band,同样十张被重拍**:带 `X-HI-Face: phoneface` 再读,十张全部变成 `393x852`。
+  当时每张图只有几分钟大、源码一个字没动,所以走的确实是新加的形状判断 —— 在 main 上
+  `good_enough` 会把它们全留下。
+- ⚠️ **只测了 band 的 inventory 那条路**。`POST /api/views/open` 也带了 `X-HI-Face`,那半是
+  单测(`a_picture_taken_for_another_face_is_re_taken`)+ 读代码,没在活实例上点过。
+- ⚠️ **没在浏览器里看过格子**。看的是盘上 PNG 的宽高,band 里那张图实际长什么样是推的。
+- ⚠️ **两张脸同时开着 band 会互相重拍**。设计里按 accepted 写下了(三张一轮、一次一个浏览器),
+  没去实测它到底有多吵。

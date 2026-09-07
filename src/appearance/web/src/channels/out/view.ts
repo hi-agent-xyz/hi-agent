@@ -1,4 +1,5 @@
 import { url } from "../../lib/base";
+import { surfaceId } from "../../lib/stageReport";
 // Client for the outbound view channel — the conversation's retained appearance state.
 //
 // GET /api/out/view serves the conversation's whole appearance (active views in
@@ -90,7 +91,10 @@ export interface ListedView {
 export async function listViews(): Promise<ListedView[]> {
   const res = await fetch(url("/api/views"), {
     method: "GET",
-    headers: { Accept: "application/json" },
+    // Which face is asking. Reading the inventory is what says this band is open, so
+    // this is where the server learns whose frame its tiles are about to be seen in: a
+    // tile with no picture, or one taken for another face, is rendered for this window.
+    headers: { Accept: "application/json", "X-HI-Face": surfaceId() },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`/api/views failed: ${res.status} ${res.statusText}`);
@@ -123,7 +127,14 @@ export interface Destination {
 export async function goToView(dest: Destination): Promise<void> {
   const res = await fetch(url("/api/views/open"), {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-HI-Surface": "1" },
+    // `X-HI-Surface: 1` is the CSRF marker and always that constant; `X-HI-Face` is
+    // who is asking, so the surface's picture is re-taken at the frame of the window
+    // that went there.
+    headers: {
+      "Content-Type": "application/json",
+      "X-HI-Surface": "1",
+      "X-HI-Face": surfaceId(),
+    },
     body: JSON.stringify({
       ref: dest.viewRef,
       module: dest.moduleUrl,
