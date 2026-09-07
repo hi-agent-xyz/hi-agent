@@ -282,10 +282,41 @@ export default defineConfig({
     // base64 data URLs — and the worklet is small enough to be inlined, which
     // silently breaks mic capture. Force it to be emitted as a hashed file.
     assetsInlineLimit: (filePath) => (filePath.endsWith("pcmWorklet.js") ? false : undefined),
+    // The default 500 kB fires on every build here, and on nothing that is a
+    // problem. Each chunk over it is a file-format renderer the OFV plugins reach
+    // through `await import()` — heic2any (1.4 MB), the pptx renderer, xlsx,
+    // hls.js, pdf.js and its worker — plus mermaid's diagram bundles. None of them
+    // load until someone opens that format; the eagerly-loaded entry graph
+    // (`index` + `global`) is ~260 kB, and `src/shared/ofv.ts` records why size is
+    // deliberately not the axis these are selected on. The limit is set just above
+    // the largest of them so a chunk that *does* grow past the pack still warns.
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       // Keep each shim entry's full export surface (don't tree-shake an entry's
       // re-exports just because nothing in this build imports it).
       preserveEntrySignatures: "exports-only",
+      // `rolldown:vite-resolve` warns the moment any module imports a Node
+      // builtin, which is before tree-shaking gets a chance to drop it. All four
+      // it prints on this build come from node-only branches inside
+      // `@open-file-viewer/core`'s dependency tree: `require('util').inspect` in
+      // ag-psd's unknown-brush-classId error path, and safe-buffer/safer-buffer
+      // reached through jszip's readable-stream and msgreader's iconv-lite. None
+      // of them survive into `dist/` — no sourcemap there mentions safer-buffer
+      // or `Unknown brush classId` — so the warning names code the browser never
+      // loads.
+      //
+      // Only warnings whose importer is under `node_modules` are dropped. Our own
+      // source reaching for a builtin is a real bug and still prints, and a
+      // third-party one that ever did survive tree-shaking would throw Vite's
+      // named stub error on first property access, so this is not the only guard.
+      onLog(level, log, handler) {
+        const externalized =
+          log.plugin === "rolldown:vite-resolve" &&
+          log.message?.includes("has been externalized for browser compatibility") &&
+          log.message.includes("/node_modules/");
+        if (level === "warn" && externalized) return;
+        handler(level, log);
+      },
       input: {
         index: r("index.html"),
         // The headless render page (served by Rust at `/render/view`). A second
