@@ -186,6 +186,10 @@ const DEFAULT_REFLECT_MAX: Duration = Duration::from_secs(8 * 3600);
 /// much its owner's, who is deciding whether to send it more work. Until this existed the
 /// only way to answer "how close is this thread to being compacted" was to parse the raw
 /// frame log, which is how this whole policy had to be designed in the first place.
+///
+/// **And once by [`upkeep`], after a compaction it asked for** — the one turn that does not
+/// reach a rung's or a worker's turn boundary, so it is the one turn that would otherwise
+/// leave the switchboard holding a reading from before it ran.
 pub(super) fn note_window(
     id: &registry::SessionSlug,
     session: Option<&crate::foundation::codex::AgentSession>,

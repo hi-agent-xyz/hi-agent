@@ -88,7 +88,17 @@ pub(super) async fn sweep_forever() {
             else {
                 continue;
             };
-            match session.compact().await {
+            let outcome = session.compact().await;
+            // **Publish the reading before doing anything else with the result**, because
+            // the number this sweep decides on is the number a turn boundary last wrote —
+            // and a compaction is the one turn that does not go through one. Without this
+            // the sweep re-selected the session it had just compacted, every cycle, for as
+            // long as it stayed idle: 27 firings in five hours on 2026-09-06, on a thread
+            // that was 8% full after the first. Unconditional because the reading is worth
+            // republishing whatever happened — a compaction that failed leaves the thread
+            // exactly as full as it was, which is the answer that correctly selects it again.
+            super::note_window(&id, Some(&session));
+            match outcome {
                 // Also the answer when a turn had the session — see `compact`. Both mean
                 // "still full, come back later", which is the only thing to do with either.
                 Ok(false) => tracing::debug!(session = %id, "upkeep: nothing compacted"),
@@ -109,11 +119,20 @@ pub(super) async fn sweep_forever() {
 ///
 /// The reading comes off the switchboard rather than the session handle, because that is
 /// what makes this a scan: no locks on live sessions, no await, just the numbers every turn
-/// boundary already writes there ([`super::note_window`]).
+/// boundary already writes there ([`super::note_window`]) — and, since a compaction reaches
+/// no such boundary, the one [`sweep_forever`] writes there itself.
 fn due() -> Vec<SessionSlug> {
-    let now = chrono::Utc::now();
-    registry::global()
-        .statuses()
+    due_among(registry::global().statuses(), chrono::Utc::now())
+}
+
+/// The selection itself, over a roster handed in — so the one property that matters can be
+/// asserted without a live registry: **a session this returns must stop being returned once
+/// it has been compacted.** It did not, for as long as the reading stayed stale.
+fn due_among(
+    statuses: Vec<registry::Status>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<SessionSlug> {
+    statuses
         .into_iter()
         .filter(|st| !st.busy && !st.queued)
         .filter(|st| {
@@ -143,5 +162,62 @@ mod tests {
     fn the_sweep_is_coarse_against_the_idle_window() {
         assert!(SWEEP_EVERY < IDLE_FOR, "a sweep rarer than the window would miss sessions");
         assert!(SWEEP_EVERY * 4 <= IDLE_FOR, "and it should be slack, not precision");
+    }
+
+    /// A quiet worker with a full window, as the switchboard held it at 05:35 on 2026-09-06.
+    fn quiet_and_full(window_percent: Option<u8>) -> registry::Status {
+        let now = chrono::Utc::now();
+        registry::Status {
+            id: registry::mint(
+                crate::identity::Role::Worker(crate::identity::WorkerType::General),
+                Some("wecom-xiaoli-standing-listener"),
+            ),
+            role: crate::identity::Role::Worker(crate::identity::WorkerType::General),
+            owner: None,
+            title: "run persistent WeCom Xiaoli listener".into(),
+            subject: Some("wecom-xiaoli-standing-listener".into()),
+            busy: false,
+            queued: false,
+            turns: 12,
+            started: now - chrono::Duration::hours(6),
+            state_since: now - chrono::Duration::hours(2),
+            doing: None,
+            doing_at: None,
+            last_turn: None,
+            window_percent,
+        }
+    }
+
+    /// **The loop that ran 27 times.** Selecting an idle, full session is right; selecting
+    /// it *again* after compacting it is the bug, and the only thing standing between the
+    /// two is that the compaction wrote a fresh reading back. codex ends a compaction turn
+    /// reporting `last.inputTokens` of 0, so that is the reading the sweep leaves behind —
+    /// imprecise (the thread was really 8% full) and sufficient, because the next real turn
+    /// overwrites it. What must never happen again is the reading not moving at all.
+    #[test]
+    fn a_compacted_session_stops_being_due() {
+        let now = chrono::Utc::now();
+        assert_eq!(
+            due_among(vec![quiet_and_full(Some(82))], now).len(),
+            1,
+            "an idle session at 82% is exactly what this sweep is for"
+        );
+        assert!(
+            due_among(vec![quiet_and_full(Some(0))], now).is_empty(),
+            "compacted, and still selected: this is the five-hour loop of 2026-09-06"
+        );
+    }
+
+    /// The reading is the *only* thing that changes after a compaction: it takes the session
+    /// through no turn the registry sees, so `state_since` does not move and the session
+    /// stays as idle as it was. A fix that leaned on the clock instead would not have held.
+    #[test]
+    fn nothing_else_about_a_compacted_session_changes() {
+        let now = chrono::Utc::now();
+        let before = quiet_and_full(Some(82));
+        let after = quiet_and_full(Some(0));
+        assert_eq!(before.busy, after.busy);
+        assert_eq!(before.queued, after.queued);
+        assert!((now - after.state_since).to_std().expect("idle") >= IDLE_FOR);
     }
 }

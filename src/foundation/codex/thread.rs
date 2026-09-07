@@ -235,6 +235,55 @@ impl WindowFill {
     }
 }
 
+/// Read a `thread/tokenUsage/updated` payload into a fill reading.
+///
+/// **Shared because the two paths that see this frame are not one code path.** A turn's
+/// notifications are folded in by [`SessionRun::absorb`]; a compaction's are pulled off the
+/// same channel by [`AgentSession::compact`]'s own loop. Until this was shared only the
+/// first of them recorded anything, so a session's reading was always the one taken
+/// *before* its last compaction — and the upkeep sweep, which acts on exactly that number,
+/// re-compacted an already-compacted thread every ten minutes for as long as the session
+/// stayed idle. Measured on 2026-09-06: 27 firings in five hours on a thread that was 8%
+/// full from the first one onwards, and it stopped only when a real turn arrived and
+/// finally wrote a fresh reading.
+fn window_from_usage(params: Option<&Value>) -> Option<WindowFill> {
+    let usage = params?.get("tokenUsage")?;
+    let used = usage.get("last")?.get("inputTokens")?.as_u64()?;
+    let total = usage.get("modelContextWindow")?.as_u64()?;
+    Some(WindowFill { used, total })
+}
+
+/// Fold one frame of a compaction turn: keep the fill reading, and answer `Some(completed)`
+/// on the frame that ends the turn.
+///
+/// **A named step rather than a loop body, so the reading can be asserted.** Frames seen
+/// during a compaction are not *projected* — a compaction is housekeeping on the thread, not
+/// something the session said — and the wire tap records them all regardless. Exactly one is
+/// kept, and it was the one being dropped: without it a session carried the fill it had
+/// before the compaction, forever, which is a state no test could reach while this lived
+/// inside [`AgentSession::compact`] behind a live codex process.
+fn absorb_compaction(
+    window: &std::sync::Mutex<Option<WindowFill>>,
+    note: &Value,
+) -> Option<bool> {
+    match note.get("method").and_then(Value::as_str)? {
+        "thread/tokenUsage/updated" => {
+            if let Some(fill) = window_from_usage(note.get("params")) {
+                *window.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(fill);
+            }
+            None
+        }
+        "turn/completed" => Some(
+            note.get("params")
+                .and_then(|p| p.get("turn"))
+                .and_then(|t| t.get("status"))
+                .and_then(Value::as_str)
+                == Some("completed"),
+        ),
+        _ => None,
+    }
+}
+
 pub struct SessionRun {
     rx_slot: Arc<Mutex<Option<mpsc::UnboundedReceiver<Value>>>>,
     rx: Option<mpsc::UnboundedReceiver<Value>>,
@@ -297,6 +346,7 @@ mod window_fill_tests {
         assert_eq!(WindowFill { used: 258_400, total: 258_400 }.percent(), 100);
         assert_eq!(WindowFill { used: 300_000, total: 258_400 }.percent(), 100);
     }
+
     /// The line the policy runs on, against the only fixed point there is: codex triggered
     /// its own compaction 29 times on 2026-09-02 and never below 78.6% of the window. A
     /// threshold that does not clear that reliably is a threshold that loses the race and
@@ -308,6 +358,80 @@ mod window_fill_tests {
         assert!(codex_floor.percent() > ours, "measured floor {}%", codex_floor.percent());
     }
 
+    /// The two frames either side of a compaction, verbatim off the 2026-09-06 wire log.
+    /// The terminal one is what `compact` now keeps: not the compacted thread's size — that
+    /// is not reported until its next request — but a reading that no longer says *full*,
+    /// which is the whole job. Dropping it is what re-selected the session 27 times.
+    #[test]
+    fn a_compaction_ends_on_a_reading_that_no_longer_says_full() {
+        let usage = |last: u64| {
+            json!({"tokenUsage": {
+                "last": {"inputTokens": last, "outputTokens": 0},
+                "total": {"inputTokens": last, "outputTokens": 0},
+                "modelContextWindow": 258_400,
+            }})
+        };
+        let before = window_from_usage(Some(&usage(213_380))).expect("a reading");
+        let terminal = window_from_usage(Some(&usage(0))).expect("a reading");
+        assert_eq!(before.percent(), 82);
+        assert_eq!(terminal.percent(), 0);
+    }
+
+    /// **The 2026-09-06 compaction, frame for frame**, replayed through the fold the real
+    /// loop runs. Before this, a session came out of a compaction still carrying 82% — the
+    /// reading its last real turn left — and the upkeep sweep, which selects on exactly that
+    /// number, picked it again ten minutes later, and again, 27 times in five hours.
+    #[test]
+    fn a_compaction_leaves_behind_the_reading_it_ended_on() {
+        let window = std::sync::Mutex::new(Some(WindowFill { used: 213_380, total: 258_400 }));
+        let usage = |last: u64| {
+            json!({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {
+                "last": {"inputTokens": last},
+                "modelContextWindow": 258_400,
+            }}})
+        };
+
+        // The echo of the pre-compaction reading, then the summarising call's own input.
+        assert_eq!(absorb_compaction(&window, &usage(213_380)), None);
+        assert_eq!(absorb_compaction(&window, &usage(195_299)), None);
+        // Frames a compaction also emits, and this fold has no business with.
+        assert_eq!(absorb_compaction(&window, &json!({"method": "item/started"})), None);
+        assert_eq!(absorb_compaction(&window, &json!({"method": "warning"})), None);
+        // The reset codex ends on.
+        assert_eq!(absorb_compaction(&window, &usage(0)), None);
+
+        let done = json!({"method": "turn/completed", "params": {"turn": {"status": "completed"}}});
+        assert_eq!(absorb_compaction(&window, &done), Some(true), "the frame that ends the loop");
+
+        let left = window.lock().expect("uncontended").expect("a reading");
+        assert_eq!(left.percent(), 0, "still reading 82% is the five-hour loop");
+    }
+
+    /// A compaction that failed leaves the thread exactly as full as it was, and the reading
+    /// has to say so — selecting it again next sweep is the correct answer there.
+    #[test]
+    fn a_failed_compaction_is_reported_as_one() {
+        let window = std::sync::Mutex::new(Some(WindowFill { used: 213_380, total: 258_400 }));
+        let failed = json!({"method": "turn/completed", "params": {"turn": {"status": "failed"}}});
+        assert_eq!(absorb_compaction(&window, &failed), Some(false));
+        assert_eq!(window.lock().expect("uncontended").expect("a reading").percent(), 82);
+    }
+
+    /// A payload without the numbers is not a reading of zero — that would report every
+    /// malformed frame as an empty window and stop a genuinely full session compacting.
+    #[test]
+    fn a_usage_frame_missing_its_numbers_is_no_reading_at_all() {
+        assert_eq!(window_from_usage(None), None);
+        assert_eq!(window_from_usage(Some(&json!({}))), None);
+        assert_eq!(window_from_usage(Some(&json!({"tokenUsage": {"last": {}}}))), None);
+        assert_eq!(
+            window_from_usage(Some(&json!({"tokenUsage": {
+                "last": {"inputTokens": 100}
+            }}))),
+            None,
+            "no window to measure against"
+        );
+    }
 }
 
 impl SessionRun {
@@ -372,15 +496,9 @@ impl SessionRun {
             // outlives this run. `last` rather than `total`: what matters is how much room
             // the *next* request starts with, not what the turn has cost so far.
             "thread/tokenUsage/updated" => {
-                let usage = params.and_then(|p| p.get("tokenUsage"));
-                let used = usage
-                    .and_then(|u| u.get("last"))
-                    .and_then(|l| l.get("inputTokens"))
-                    .and_then(Value::as_u64);
-                let total = usage.and_then(|u| u.get("modelContextWindow")).and_then(Value::as_u64);
-                if let (Some(used), Some(total)) = (used, total) {
+                if let Some(fill) = window_from_usage(params) {
                     *self.window.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        Some(WindowFill { used, total });
+                        Some(fill);
                 }
             }
             // Emitted for upstream failures (model errors, quota) and may precede the
@@ -594,6 +712,15 @@ impl AgentSession {
     /// The opposite choice — waiting — would put a maintenance task in the queue ahead of
     /// nothing, holding a permit it does not need.
     ///
+    /// **The reading it leaves behind is "no longer full", not the new size.** codex ends a
+    /// compaction turn with a `last.inputTokens` of 0, and the true post-compaction size is
+    /// not reported until the thread's next request — measured on 2026-09-06, a thread that
+    /// read 0 here was 39,782 tokens on the following turn. That is precise enough for every
+    /// caller there is: what a policy must not go on believing is that the window is still
+    /// as full as it was before this ran, and the next real turn overwrites the placeholder
+    /// with the truth. Nothing should read this number as a measurement of the compacted
+    /// thread.
+    ///
     /// **Returns whether the compaction turn completed rather than failed.** Failing is
     /// ordinary — it is a model call, and it can 401, time out, or be refused — and it must
     /// never be fatal to the caller: a thread whose compaction failed is exactly as usable
@@ -625,18 +752,11 @@ impl AgentSession {
         // The response carries no turn id, so the end is read off the stream. Holding `rx`
         // is what makes "any `turn/completed`" unambiguous rather than sloppy: a session has
         // at most one turn in flight, this call owns that slot, so the completion that
-        // arrives is this one's. Frames seen here are dropped rather than projected — a
-        // compaction is housekeeping on the thread, not something the session said — and the
-        // wire tap still records every one of them.
+        // arrives is this one's.
         let completed = loop {
             let Some(note) = rx.recv().await else { break false };
-            if note.get("method").and_then(Value::as_str) == Some("turn/completed") {
-                break note
-                    .get("params")
-                    .and_then(|p| p.get("turn"))
-                    .and_then(|t| t.get("status"))
-                    .and_then(Value::as_str)
-                    == Some("completed");
+            if let Some(done) = absorb_compaction(&self.window, &note) {
+                break done;
             }
         };
 
